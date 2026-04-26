@@ -202,11 +202,7 @@ impl Handler for JsonHandler {
         let mut line = String::new();
         line.push('{');
         let _ = write!(line, "\"level\":\"{}\"", record.level.tag());
-        let _ = write!(
-            line,
-            ",\"msg\":{}",
-            json_string(&record.message)
-        );
+        let _ = write!(line, ",\"msg\":{}", json_string(&record.message));
         for field in &record.fields {
             let _ = write!(
                 line,
@@ -282,7 +278,9 @@ mod tests {
 
     fn handler_captures_text(min: Level) -> (Logger, Arc<Mutex<Vec<u8>>>) {
         let buf = Arc::new(Mutex::new(Vec::new()));
-        let capture = Capture { buf: Arc::clone(&buf) };
+        let capture = Capture {
+            buf: Arc::clone(&buf),
+        };
         (Logger::new(Arc::new(TextHandler::new(capture, min))), buf)
     }
 
@@ -314,7 +312,9 @@ mod tests {
     #[test]
     fn json_handler_escapes_special_chars() {
         let buf = Arc::new(Mutex::new(Vec::new()));
-        let capture = Capture { buf: Arc::clone(&buf) };
+        let capture = Capture {
+            buf: Arc::clone(&buf),
+        };
         let logger = Logger::new(Arc::new(JsonHandler::new(capture, Level::Info)));
         logger.info("quote: \"x\"", []);
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();

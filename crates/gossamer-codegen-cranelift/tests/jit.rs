@@ -11,8 +11,8 @@ use std::mem;
 use gossamer_codegen_cranelift::compile_to_jit;
 use gossamer_lex::SourceMap;
 use gossamer_mir::{
-    BasicBlock, BinOp, Body, ConstValue, LocalDecl, Operand, Place, Projection, Rvalue,
-    Statement, StatementKind, Terminator,
+    BasicBlock, BinOp, Body, ConstValue, LocalDecl, Operand, Place, Projection, Rvalue, Statement,
+    StatementKind, Terminator,
 };
 use gossamer_types::{IntTy, TyCtxt};
 
@@ -38,7 +38,11 @@ fn jit_compiles_const_int_returning_main() {
         name: "main".to_string(),
         def: None,
         arity: 0,
-        locals: vec![LocalDecl { ty: i64_ty, debug_name: None, mutable: false }],
+        locals: vec![LocalDecl {
+            ty: i64_ty,
+            debug_name: None,
+            mutable: false,
+        }],
         blocks: vec![BasicBlock {
             id: gossamer_mir::BlockId(0),
             stmts: vec![Statement {
@@ -74,9 +78,21 @@ fn jit_compiles_simple_arithmetic_function() {
         def: None,
         arity: 2,
         locals: vec![
-            LocalDecl { ty: i64_ty, debug_name: None, mutable: false },
-            LocalDecl { ty: i64_ty, debug_name: None, mutable: false },
-            LocalDecl { ty: i64_ty, debug_name: None, mutable: false },
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+            },
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+            },
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+            },
         ],
         blocks: vec![BasicBlock {
             id: gossamer_mir::BlockId(0),
@@ -113,7 +129,11 @@ fn jit_artifact_drops_without_panic() {
         name: "main".to_string(),
         def: None,
         arity: 0,
-        locals: vec![LocalDecl { ty: i64_ty, debug_name: None, mutable: false }],
+        locals: vec![LocalDecl {
+            ty: i64_ty,
+            debug_name: None,
+            mutable: false,
+        }],
         blocks: vec![BasicBlock {
             id: gossamer_mir::BlockId(0),
             stmts: vec![Statement {

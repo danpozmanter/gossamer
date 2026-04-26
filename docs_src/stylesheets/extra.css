@@ -19,3 +19,57 @@ blockquote {
     margin: 1em 0;
     background: #f5f7fa;
 }
+
+/* Landing page — name, logo, CTAs. */
+.landing-hero {
+    text-align: center;
+    padding: 1.5em 0 0.5em;
+}
+.landing-hero h1 {
+    margin-top: 0.25em;
+    font-size: 2.6em;
+    letter-spacing: -0.02em;
+}
+.landing-hero p {
+    font-size: 1.1em;
+    color: #444;
+    max-width: 640px;
+    margin: 0.4em auto;
+}
+.landing-logo {
+    width: 180px;
+    height: auto;
+    display: inline-block;
+}
+.landing-ctas {
+    margin-top: 1.4em;
+}
+.landing-cta,
+.landing-cta-secondary {
+    display: inline-block;
+    padding: 0.65em 1.4em;
+    margin: 0.25em 0.4em;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1.05em;
+    transition: filter 120ms ease;
+}
+.landing-cta {
+    background: #4a90d9;
+    color: #fff;
+    border: 1px solid #4a90d9;
+}
+.landing-cta:hover {
+    filter: brightness(1.08);
+    color: #fff;
+}
+.landing-cta-secondary {
+    background: transparent;
+    color: #4a90d9;
+    border: 1px solid #4a90d9;
+}
+.landing-cta-secondary:hover {
+    background: #eef4fb;
+    color: #4a90d9;
+}

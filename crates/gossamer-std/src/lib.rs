@@ -12,12 +12,12 @@
 pub mod bufio;
 pub mod bytes;
 pub mod collections;
+#[cfg(feature = "compress")]
+pub mod compress;
 pub mod context;
 #[cfg(feature = "crypto")]
 pub mod crypto;
 pub mod encoding;
-#[cfg(feature = "compress")]
-pub mod compress;
 pub mod errors;
 pub mod exec;
 pub mod flag;
@@ -32,11 +32,11 @@ pub mod net;
 pub mod os;
 pub mod panic;
 pub mod path;
-pub mod signal;
 #[cfg(feature = "regex")]
 pub mod regex;
 pub mod registry;
 pub mod runtime;
+pub mod signal;
 pub mod slog;
 pub mod sort;
 pub mod strconv;

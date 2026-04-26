@@ -12,8 +12,8 @@ use std::borrow::Cow;
 use gossamer_lex::{Punct, SourceMap, TokenKind, tokenize};
 use rustyline::Helper;
 use rustyline::completion::Completer;
-use rustyline::hint::Hinter;
 use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
 
 /// ANSI colour escapes used by the REPL. Chosen to read well on both
@@ -49,10 +49,7 @@ impl Hinter for GosReplHelper {
 }
 
 impl Validator for GosReplHelper {
-    fn validate(
-        &self,
-        ctx: &mut ValidationContext<'_>,
-    ) -> rustyline::Result<ValidationResult> {
+    fn validate(&self, ctx: &mut ValidationContext<'_>) -> rustyline::Result<ValidationResult> {
         let input = ctx.input();
         if input.is_empty() {
             return Ok(ValidationResult::Valid(None));
@@ -153,11 +150,7 @@ impl Highlighter for GosReplHelper {
                     out.push_str(RESET);
                 }
                 TokenKind::Ident => {
-                    if text
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_uppercase())
-                    {
+                    if text.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
                         out.push_str(MAGENTA);
                         out.push_str(text);
                         out.push_str(RESET);
@@ -165,9 +158,9 @@ impl Highlighter for GosReplHelper {
                         out.push_str(text);
                     }
                 }
-                TokenKind::Punct(_)
-                | TokenKind::Whitespace
-                | TokenKind::Invalid => out.push_str(text),
+                TokenKind::Punct(_) | TokenKind::Whitespace | TokenKind::Invalid => {
+                    out.push_str(text);
+                }
             }
             cursor = end.max(cursor);
         }

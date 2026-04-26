@@ -19,8 +19,8 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 
 mod doc;
-mod repl_helper;
 mod repl;
+mod repl_helper;
 
 /// Top-level parsed command line for the `gos` binary.
 #[derive(Debug, Parser)]
@@ -267,14 +267,27 @@ fn main() -> ExitCode {
         None => repl::cmd_repl(),
         Some(Command::Parse { file }) => cmd_parse(&file),
         Some(Command::Check { file, timings }) => cmd_check(&file, timings),
-        Some(Command::Run { file, tree_walker, no_jit, args }) => {
-            let mode = if tree_walker { RunMode::TreeWalker } else { RunMode::Vm };
+        Some(Command::Run {
+            file,
+            tree_walker,
+            no_jit,
+            args,
+        }) => {
+            let mode = if tree_walker {
+                RunMode::TreeWalker
+            } else {
+                RunMode::Vm
+            };
             if no_jit {
                 gossamer_interp::set_jit_disabled();
             }
             cmd_run(&file, mode, &args)
         }
-        Some(Command::Build { file, target, release }) => cmd_build(&file, target.as_deref(), release),
+        Some(Command::Build {
+            file,
+            target,
+            release,
+        }) => cmd_build(&file, target.as_deref(), release),
         Some(Command::Init { id }) => cmd_init(&id),
         Some(Command::New { id, path, template }) => cmd_new(&id, path, &template),
         Some(Command::Add { spec, manifest }) => cmd_add(&spec, manifest),
@@ -285,9 +298,7 @@ fn main() -> ExitCode {
         Some(Command::Fmt { file, check }) => cmd_fmt(&file, check),
         Some(Command::Doc { file, html }) => doc::cmd_doc(&file, html.as_deref()),
         Some(Command::Test { path }) => cmd_test(path.as_deref()),
-        Some(Command::Bench { file, iterations }) => {
-            cmd_bench(&file, iterations.unwrap_or(100))
-        }
+        Some(Command::Bench { file, iterations }) => cmd_bench(&file, iterations.unwrap_or(100)),
         Some(Command::Lint {
             path,
             deny_warnings,
@@ -337,10 +348,11 @@ fn load_or_parse(
     file_id: gossamer_lex::FileId,
     cache_key: &gossamer_driver::FrontendCacheKey,
     trace: bool,
-) -> (gossamer_ast::SourceFile, Vec<gossamer_parse::ParseDiagnostic>) {
-    if let Some(cached) =
-        gossamer_driver::load_blob::<gossamer_ast::SourceFile>(cache_key)
-    {
+) -> (
+    gossamer_ast::SourceFile,
+    Vec<gossamer_parse::ParseDiagnostic>,
+) {
+    if let Some(cached) = gossamer_driver::load_blob::<gossamer_ast::SourceFile>(cache_key) {
         if trace {
             eprintln!("cache: parse skipped for {}", cache_key.as_hex());
         }
@@ -448,7 +460,13 @@ fn cmd_check(file: &PathBuf, timings: bool) -> Result<()> {
     gossamer_driver::store_blob(&cache_key, &sf);
     println!("check: ok ({} items typed)", sf.items.len());
     if timings {
-        print_timings(source.len(), parse_elapsed, resolve_elapsed, typeck_elapsed, exhaust_elapsed);
+        print_timings(
+            source.len(),
+            parse_elapsed,
+            resolve_elapsed,
+            typeck_elapsed,
+            exhaust_elapsed,
+        );
     }
     Ok(())
 }
@@ -493,15 +511,25 @@ fn load_and_check_with_sf(
     source: &str,
     file_id: gossamer_lex::FileId,
     map: &gossamer_lex::SourceMap,
-) -> Result<(gossamer_hir::HirProgram, gossamer_ast::SourceFile, gossamer_types::TyCtxt)> {
+) -> Result<(
+    gossamer_hir::HirProgram,
+    gossamer_ast::SourceFile,
+    gossamer_types::TyCtxt,
+)> {
     let render_opts = gossamer_diagnostics::RenderOptions::default();
     let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file_id);
     if !parse_diags.is_empty() {
         for diag in &parse_diags {
             let structured = diag.to_diagnostic();
-            eprintln!("parse: {}", gossamer_diagnostics::render(&structured, map, render_opts));
+            eprintln!(
+                "parse: {}",
+                gossamer_diagnostics::render(&structured, map, render_opts)
+            );
         }
-        return Err(anyhow!("{} parse error(s); refusing to execute", parse_diags.len()));
+        return Err(anyhow!(
+            "{} parse error(s); refusing to execute",
+            parse_diags.len()
+        ));
     }
     let (resolutions, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
     let in_scope: Vec<&str> = collect_top_level_names(&sf);
@@ -518,7 +546,10 @@ fn load_and_check_with_sf(
     if !unresolved.is_empty() {
         for diag in &unresolved {
             let structured = diag.to_diagnostic(&in_scope);
-            eprintln!("resolve: {}", gossamer_diagnostics::render(&structured, map, render_opts));
+            eprintln!(
+                "resolve: {}",
+                gossamer_diagnostics::render(&structured, map, render_opts)
+            );
         }
         return Err(anyhow!(
             "{} resolve error(s); refusing to execute",
@@ -530,7 +561,10 @@ fn load_and_check_with_sf(
     if !type_diags.is_empty() {
         for diag in &type_diags {
             let structured = diag.to_diagnostic();
-            eprintln!("type: {}", gossamer_diagnostics::render(&structured, map, render_opts));
+            eprintln!(
+                "type: {}",
+                gossamer_diagnostics::render(&structured, map, render_opts)
+            );
         }
         return Err(anyhow!(
             "{} type error(s); refusing to execute",
@@ -554,10 +588,7 @@ fn load_and_check_with_sf(
         return Err(anyhow!("non-exhaustive match; refusing to execute"));
     }
     let program = gossamer_hir::lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    let cache_key = gossamer_driver::FrontendCacheKey::new(
-        source,
-        env!("CARGO_PKG_VERSION"),
-    );
+    let cache_key = gossamer_driver::FrontendCacheKey::new(source, env!("CARGO_PKG_VERSION"));
     if std::env::var_os("GOSSAMER_CACHE_TRACE").is_some()
         && gossamer_driver::observe_hit(&cache_key)
     {
@@ -669,14 +700,20 @@ fn cmd_build(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> 
         for diag in &parse_diags {
             eprintln!("parse: {diag}");
         }
-        return Err(anyhow!("{} parse error(s); refusing to build", parse_diags.len()));
+        return Err(anyhow!(
+            "{} parse error(s); refusing to build",
+            parse_diags.len()
+        ));
     }
     let (resolutions, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
     if !resolve_diags.is_empty() {
         for diag in &resolve_diags {
             eprintln!("resolve: {diag}");
         }
-        return Err(anyhow!("{} resolve error(s); refusing to build", resolve_diags.len()));
+        return Err(anyhow!(
+            "{} resolve error(s); refusing to build",
+            resolve_diags.len()
+        ));
     }
     let mut tcx = gossamer_types::TyCtxt::new();
     let (_table, type_diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
@@ -684,7 +721,10 @@ fn cmd_build(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> 
         for diag in &type_diags {
             eprintln!("type: {diag}");
         }
-        return Err(anyhow!("{} type error(s); refusing to build", type_diags.len()));
+        return Err(anyhow!(
+            "{} type error(s); refusing to build",
+            type_diags.len()
+        ));
     }
 
     // Validate `--target` if explicitly provided. The Cranelift
@@ -712,9 +752,8 @@ fn cmd_build(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> 
         let host = gossamer_driver::TargetTriple::host();
         if options.target.as_str() != host.as_str() {
             let artifact = gossamer_driver::compile_source(&source, unit_name, &options);
-            fs::write(&out_path, &artifact.bytes).map_err(|err| {
-                anyhow!("build: writing {}: {err}", out_path.display())
-            })?;
+            fs::write(&out_path, &artifact.bytes)
+                .map_err(|err| anyhow!("build: writing {}: {err}", out_path.display()))?;
             set_executable(&out_path)?;
             println!(
                 "build: {bytes}B artifact at {path} (target {triple}, cross-link pending)",
@@ -783,36 +822,48 @@ fn find_runtime_lib() -> std::result::Result<PathBuf, NativeBuildError> {
             return Ok(p);
         }
     }
+    // Static-lib name varies by toolchain: GNU emits
+    // `libgossamer_runtime.a`; MSVC emits `gossamer_runtime.lib`.
+    let lib_names: &[&str] = if cfg!(target_env = "msvc") {
+        &["gossamer_runtime.lib", "libgossamer_runtime.a"]
+    } else {
+        &["libgossamer_runtime.a", "gossamer_runtime.lib"]
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let mut push_with_names = |dir: &Path| {
+        for name in lib_names {
+            candidates.push(dir.join(name));
+        }
+    };
     // Walk up from the current executable, which lives under
     // `target/<profile>/gos` in development and at the OS install
     // prefix (`<prefix>/bin/gos`) post-`install.sh`.
-    let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            // 1. Sibling: `target/<profile>/libgossamer_runtime.a`
-            //    (development) or `<prefix>/bin/libgossamer_runtime.a`
-            //    if the install script staged the lib next to the
-            //    binary as a fallback.
-            candidates.push(parent.join("libgossamer_runtime.a"));
-            // 2. Standard install layout: `<prefix>/lib/libgossamer_runtime.a`
-            //    paired with `<prefix>/bin/gos`. install.sh wires
-            //    this up for both `--user` (`~/.local`) and
-            //    `--system` (`/usr/local`).
-            if let Some(prefix) = parent.parent() {
-                candidates.push(prefix.join("lib").join("libgossamer_runtime.a"));
+            // 1. Sibling of the binary — `target/<profile>/` in dev,
+            //    `<prefix>/bin/` for an install.sh layout that staged
+            //    the lib next to the binary.
+            push_with_names(parent);
+            // 2. `target/<profile>/deps/` (the `cargo test` exe lives
+            //    here; the staticlib is one directory up).
+            if let Some(grandparent) = parent.parent() {
+                push_with_names(grandparent);
+                // 3. Standard install layout: `<prefix>/lib/`.
+                push_with_names(&grandparent.join("lib"));
             }
         }
     }
-    // Fall back to the workspace-root `target/release/` path.
-    candidates.push(PathBuf::from("target/release/libgossamer_runtime.a"));
-    candidates.push(PathBuf::from("target/debug/libgossamer_runtime.a"));
+    // Workspace-root fallbacks (cargo's default target dir layout).
+    push_with_names(Path::new("target/release"));
+    push_with_names(Path::new("target/debug"));
     for c in &candidates {
         if c.exists() {
             return Ok(c.clone());
         }
     }
     Err(NativeBuildError::LinkerMissing(format!(
-        "libgossamer_runtime.a not found; set GOS_RUNTIME_LIB or run \
+        "runtime static lib not found (tried both libgossamer_runtime.a \
+         and gossamer_runtime.lib); set GOS_RUNTIME_LIB or run \
          `cargo build --release --package gossamer-runtime`. tried: {candidates:?}"
     )))
 }
@@ -829,16 +880,11 @@ fn try_native_build(
     // bodies the LLVM lowerer cannot cover yet. The two
     // objects are linked together so a partial-LLVM module
     // still gets the optimised path on the bodies it accepts.
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "gos-build-{}-{}",
-        std::process::id(),
-        unit_name
-    ));
-    fs::create_dir_all(&tmp_dir).map_err(|err| {
-        NativeBuildError::Io(anyhow!("creating {}: {err}", tmp_dir.display()))
-    })?;
-    let (object_paths, object_triple) =
-        emit_native_objects(source, unit_name, &tmp_dir, release)?;
+    let tmp_dir =
+        std::env::temp_dir().join(format!("gos-build-{}-{}", std::process::id(), unit_name));
+    fs::create_dir_all(&tmp_dir)
+        .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", tmp_dir.display())))?;
+    let (object_paths, object_triple) = emit_native_objects(source, unit_name, &tmp_dir, release)?;
     let runtime_lib = find_runtime_lib()?;
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let mut cmd = std::process::Command::new(&cc);
@@ -869,9 +915,7 @@ fn try_native_build(
         Ok(status) => Err(NativeBuildError::LinkerFailed(format!(
             "{cc} exited with {status}"
         ))),
-        Err(err) => Err(NativeBuildError::LinkerMissing(format!(
-            "{cc}: {err}"
-        ))),
+        Err(err) => Err(NativeBuildError::LinkerMissing(format!("{cc}: {err}"))),
     }
 }
 
@@ -943,12 +987,10 @@ fn set_executable(path: &PathBuf) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let meta = fs::metadata(path)
-            .with_context(|| format!("stat {}", path.display()))?;
+        let meta = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
         let mut perms = meta.permissions();
         perms.set_mode(perms.mode() | 0o111);
-        fs::set_permissions(path, perms)
-            .with_context(|| format!("chmod +x {}", path.display()))?;
+        fs::set_permissions(path, perms).with_context(|| format!("chmod +x {}", path.display()))?;
     }
     #[cfg(not(unix))]
     {
@@ -966,11 +1008,16 @@ fn cmd_clean(vendor: bool, dry_run: bool) -> Result<()> {
     if cache.is_dir() {
         let bytes = dir_size(&cache);
         if dry_run {
-            println!("would remove frontend cache at {} ({bytes} bytes)", cache.display());
+            println!(
+                "would remove frontend cache at {} ({bytes} bytes)",
+                cache.display()
+            );
         } else {
-            fs::remove_dir_all(&cache)
-                .with_context(|| format!("remove {}", cache.display()))?;
-            println!("removed frontend cache at {} ({bytes} bytes)", cache.display());
+            fs::remove_dir_all(&cache).with_context(|| format!("remove {}", cache.display()))?;
+            println!(
+                "removed frontend cache at {} ({bytes} bytes)",
+                cache.display()
+            );
         }
         removed_bytes += bytes;
         removed_files += 1;
@@ -982,11 +1029,17 @@ fn cmd_clean(vendor: bool, dry_run: bool) -> Result<()> {
         if vendor_dir.is_dir() {
             let bytes = dir_size(&vendor_dir);
             if dry_run {
-                println!("would remove vendor tree at {} ({bytes} bytes)", vendor_dir.display());
+                println!(
+                    "would remove vendor tree at {} ({bytes} bytes)",
+                    vendor_dir.display()
+                );
             } else {
                 fs::remove_dir_all(&vendor_dir)
                     .with_context(|| format!("remove {}", vendor_dir.display()))?;
-                println!("removed vendor tree at {} ({bytes} bytes)", vendor_dir.display());
+                println!(
+                    "removed vendor tree at {} ({bytes} bytes)",
+                    vendor_dir.display()
+                );
             }
             removed_bytes += bytes;
             removed_files += 1;
@@ -1006,7 +1059,9 @@ fn dir_size(root: &std::path::Path) -> u64 {
     let mut total: u64 = 0;
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let Ok(meta) = entry.metadata() else { continue };
@@ -1082,8 +1137,7 @@ fn resolve_output_path(file: &PathBuf, unit_name: &str) -> Result<PathBuf> {
 
 pub(crate) fn read_source(file: &PathBuf) -> Result<String> {
     let resolved = resolve_gos_source(file);
-    fs::read_to_string(&resolved)
-        .with_context(|| format!("reading {}", resolved.display()))
+    fs::read_to_string(&resolved).with_context(|| format!("reading {}", resolved.display()))
 }
 
 /// When `path` is a shell launcher script (starts with `#!`) or has no
@@ -1153,14 +1207,10 @@ fn cmd_new(id: &str, path: Option<PathBuf>, template: &str) -> Result<()> {
             fs::create_dir_all(dir.join("src"))
                 .with_context(|| format!("creating {}", dir.display()))?;
             fs::write(dir.join("project.toml"), &manifest)?;
-            fs::write(
-                dir.join("src/main.gos"),
-                service_template_source(&project),
-            )?;
+            fs::write(dir.join("src/main.gos"), service_template_source(&project))?;
         }
         "workspace" => {
-            fs::create_dir_all(&dir)
-                .with_context(|| format!("creating {}", dir.display()))?;
+            fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
             fs::write(
                 dir.join("project.toml"),
                 workspace_template_manifest(&project),
@@ -1370,7 +1420,6 @@ fn cmd_vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-
 fn cmd_fmt(file: &PathBuf, check_only: bool) -> Result<()> {
     let source = read_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
@@ -1380,7 +1429,10 @@ fn cmd_fmt(file: &PathBuf, check_only: bool) -> Result<()> {
         for diag in &diags {
             eprintln!("{diag}");
         }
-        return Err(anyhow!("{} parse error(s); refusing to format", diags.len()));
+        return Err(anyhow!(
+            "{} parse error(s); refusing to format",
+            diags.len()
+        ));
     }
     let formatted = format!("{sf}");
     let formatted = if formatted.ends_with('\n') {
@@ -1403,7 +1455,6 @@ fn cmd_fmt(file: &PathBuf, check_only: bool) -> Result<()> {
     }
     Ok(())
 }
-
 
 fn item_has_attr(item: &gossamer_ast::Item, name: &str) -> bool {
     item.attrs.outer.iter().any(|a| {
@@ -1484,7 +1535,10 @@ fn cmd_test(path: Option<&Path>) -> Result<()> {
     };
     let files = collect_lint_targets(&resolved)?;
     if files.is_empty() {
-        return Err(anyhow!("no `.gos` sources found under {}", resolved.display()));
+        return Err(anyhow!(
+            "no `.gos` sources found under {}",
+            resolved.display()
+        ));
     }
     let mut total_passes = 0u32;
     let mut total_failures = 0u32;
@@ -1500,8 +1554,10 @@ fn cmd_test(path: Option<&Path>) -> Result<()> {
         total_doc_tests += doc_summary.passes + doc_summary.failures;
         total_passes += doc_summary.passes;
         total_failures += doc_summary.failures;
-        if summary.passes == 0 && summary.failures == 0
-            && doc_summary.passes == 0 && doc_summary.failures == 0
+        if summary.passes == 0
+            && summary.failures == 0
+            && doc_summary.passes == 0
+            && doc_summary.failures == 0
         {
             empty_files += 1;
             if files.len() > 1 {
@@ -1546,7 +1602,10 @@ struct DocTestFileSummary {
 /// error counts as a failure but does not abort sibling files.
 fn run_doc_tests_in_file(file: &std::path::Path) -> DocTestFileSummary {
     let Ok(source) = fs::read_to_string(file) else {
-        return DocTestFileSummary { passes: 0, failures: 0 };
+        return DocTestFileSummary {
+            passes: 0,
+            failures: 0,
+        };
     };
     let tests = extract_doc_tests(&source, &file.display().to_string());
     let mut passes = 0u32;
@@ -1685,10 +1744,7 @@ fn run_tests_in_file(file: &PathBuf) -> Result<TestFileSummary> {
                 if !reason.is_empty() {
                     reason.push_str(" · ");
                 }
-                reason.push_str(&format!(
-                    "{} assertion(s) failed",
-                    tally.failures
-                ));
+                reason.push_str(&format!("{} assertion(s) failed", tally.failures));
                 if let Some(first) = tally.first_failure.as_ref() {
                     reason.push_str(" — ");
                     reason.push_str(first);
@@ -1704,8 +1760,10 @@ fn run_tests_in_file(file: &PathBuf) -> Result<TestFileSummary> {
     })
 }
 
-/// Embedded Gossamer skill-card. Updated whenever `docs/SKILL.md` changes.
-const SKILL_CARD: &str = include_str!("../../../docs/SKILL.md");
+/// Embedded Gossamer skill-card. The canonical source lives in
+/// `docs_src/skill_card.md` (mkdocs input); embedding it directly
+/// avoids depending on the generated `docs/` output.
+const SKILL_CARD: &str = include_str!("../../../docs_src/skill_card.md");
 
 fn cmd_skill_prompt() {
     print!("{SKILL_CARD}");
@@ -1733,52 +1791,86 @@ fn cmd_explain(code: &str) -> Result<()> {
 
 fn diagnostic_explanation(code: &str) -> Option<&'static str> {
     Some(match code {
-        "GP0001" => "The parser saw a token where it expected a different one.\n\
+        "GP0001" => {
+            "The parser saw a token where it expected a different one.\n\
                      Check for missing punctuation, an unmatched delimiter, or an \n\
-                     out-of-place keyword.",
-        "GP0002" => "The parser reached end-of-file in the middle of a construct.\n\
-                     Finish the expression, statement, or item — or remove it.",
-        "GP0003" => "A balanced construct (block, tuple, array, string literal) was\n\
-                     left unterminated. Add the matching closing delimiter.",
-        "GP0004" => "Comparison operators like `==` / `!=` / `<` are not associative.\n\
-                     Parenthesise the operands: `(a == b) && (b == c)`.",
-        "GR0001" => "A name used in source could not be resolved to a declaration.\n\
+                     out-of-place keyword."
+        }
+        "GP0002" => {
+            "The parser reached end-of-file in the middle of a construct.\n\
+                     Finish the expression, statement, or item — or remove it."
+        }
+        "GP0003" => {
+            "A balanced construct (block, tuple, array, string literal) was\n\
+                     left unterminated. Add the matching closing delimiter."
+        }
+        "GP0004" => {
+            "Comparison operators like `==` / `!=` / `<` are not associative.\n\
+                     Parenthesise the operands: `(a == b) && (b == c)`."
+        }
+        "GR0001" => {
+            "A name used in source could not be resolved to a declaration.\n\
                      Check the spelling, whether a `use` brings the name into scope,\n\
-                     and whether the item is visible at this location.",
-        "GR0003" => "Two items in the same module share a name. Rename one of them\n\
-                     or move it into a distinct `mod`.",
-        "GT0001" => "The type checker could not reconcile two types it expected to\n\
+                     and whether the item is visible at this location."
+        }
+        "GR0003" => {
+            "Two items in the same module share a name. Rename one of them\n\
+                     or move it into a distinct `mod`."
+        }
+        "GT0001" => {
+            "The type checker could not reconcile two types it expected to\n\
                      match. The primary label shows the location of the mismatch;\n\
-                     the `note:` line names the conflicting types.",
-        "GT0002" => "The type checker could not find a method with the supplied\n\
+                     the `note:` line names the conflicting types."
+        }
+        "GT0002" => {
+            "The type checker could not find a method with the supplied\n\
                      name on the receiver type. Check for a typo, a missing `use`,\n\
-                     or a trait impl that lives in an unreachable module.",
-        "GT0004" => "A `match` expression does not cover every possible value. Add\n\
-                     an arm for the pattern(s) listed under `help:`.",
-                "GT0005" => "The `as` cast is restricted to a whitelist of conversions:\n\
+                     or a trait impl that lives in an unreachable module."
+        }
+        "GT0004" => {
+            "A `match` expression does not cover every possible value. Add\n\
+                     an arm for the pattern(s) listed under `help:`."
+        }
+        "GT0005" => {
+            "The `as` cast is restricted to a whitelist of conversions:\n\
                      numeric <-> numeric, `bool`/`char` -> integer, `u8` -> `char`,\n\
                      and same-type no-ops. Struct / enum / String sources are\n\
                      rejected. Use a conversion method when you need serialisation;\n\
-                     `as` does not run code.",
-"GX0001" => "A runtime value had the wrong shape for the operation. The\n\
+                     `as` does not run code."
+        }
+        "GX0001" => {
+            "A runtime value had the wrong shape for the operation. The\n\
                      interpreter catches this at execution time; the native\n\
-                     backend aborts with the same code.",
-        "GX0002" => "A name resolved at parse/resolve time to nothing callable at\n\
+                     backend aborts with the same code."
+        }
+        "GX0002" => {
+            "A name resolved at parse/resolve time to nothing callable at\n\
                      runtime. Usually means a stdlib builtin is not wired into the\n\
-                     execution path that reached the call.",
-        "GX0003" => "A call supplied the wrong number of arguments for the callee's\n\
-                     declared arity. Fix the call site or update the declaration.",
-        "GX0004" => "An arithmetic operation overflowed, divided by zero, or produced\n\
-                     a value outside the representable range.",
-        "GX0005" => "Explicit `panic!(...)` or an assertion failure aborted the\n\
+                     execution path that reached the call."
+        }
+        "GX0003" => {
+            "A call supplied the wrong number of arguments for the callee's\n\
+                     declared arity. Fix the call site or update the declaration."
+        }
+        "GX0004" => {
+            "An arithmetic operation overflowed, divided by zero, or produced\n\
+                     a value outside the representable range."
+        }
+        "GX0005" => {
+            "Explicit `panic!(...)` or an assertion failure aborted the\n\
                      program. Wrap the fallible operation in a `Result` path if the\n\
-                     failure is recoverable.",
-        "GX0006" => "A `match` expression failed to match any arm at runtime. The\n\
+                     failure is recoverable."
+        }
+        "GX0006" => {
+            "A `match` expression failed to match any arm at runtime. The\n\
                      exhaustiveness checker catches most of these statically; a\n\
-                     `GX0006` at runtime means a refinement check slipped through.",
-        "GX0007" => "The execution path (interpreter or native) does not yet\n\
+                     `GX0006` at runtime means a refinement check slipped through."
+        }
+        "GX0007" => {
+            "The execution path (interpreter or native) does not yet\n\
                      implement the construct reached. File the example and use\n\
-                     the other path in the meantime.",
+                     the other path in the meantime."
+        }
         _ => return None,
     })
 }
@@ -1807,10 +1899,7 @@ fn lint_id_for_code(code: &str) -> Option<&'static str> {
 fn cmd_watch(command: &str, path: &PathBuf, forward: &[String]) -> Result<()> {
     let targets = collect_lint_targets(path)?;
     if targets.is_empty() {
-        return Err(anyhow!(
-            "no `.gos` files found under {}",
-            path.display()
-        ));
+        return Err(anyhow!("no `.gos` files found under {}", path.display()));
     }
     eprintln!(
         "watch: running `gos {command} <file>` on change under {} ({} files)",
@@ -1841,8 +1930,7 @@ fn snapshot_mtimes(files: &[PathBuf]) -> Vec<(PathBuf, Option<std::time::SystemT
 }
 
 fn run_watch_command(command: &str, targets: &[PathBuf], forward: &[String]) {
-    let exe = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("gos"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("gos"));
     for target in targets {
         let mut child = std::process::Command::new(&exe);
         child.arg(command).arg(target);
@@ -1963,9 +2051,7 @@ fn collect_lint_targets(root: &PathBuf) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     let mut stack = vec![root.clone()];
     while let Some(dir) = stack.pop() {
-        for entry in fs::read_dir(&dir)
-            .with_context(|| format!("read_dir {}", dir.display()))?
-        {
+        for entry in fs::read_dir(&dir).with_context(|| format!("read_dir {}", dir.display()))? {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
@@ -1995,9 +2081,7 @@ fn cmd_bench(file: &PathBuf, iterations: u32) -> Result<()> {
     } else {
         total_nanos / u128::from(runs)
     };
-    println!(
-        "bench: {runs} iterations across #[bench] functions; mean {mean} ns/iter"
-    );
+    println!("bench: {runs} iterations across #[bench] functions; mean {mean} ns/iter");
     Ok(())
 }
 
@@ -2053,6 +2137,9 @@ mod tests {
     #[test]
     fn build_subcommand_rejects_output_flag() {
         let err = Cli::try_parse_from(["gos", "build", "hello.gos", "-o", "hello"]);
-        assert!(err.is_err(), "-o should be rejected now that output lives in project.toml");
+        assert!(
+            err.is_err(),
+            "-o should be rejected now that output lives in project.toml"
+        );
     }
 }

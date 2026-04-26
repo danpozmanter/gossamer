@@ -35,8 +35,8 @@ impl SourceFile {
         };
         let line_start = self.line_starts[line_index];
         let column_bytes = &self.source.as_bytes()[line_start as usize..offset as usize];
-        let column_chars = std::str::from_utf8(column_bytes)
-            .map_or(column_bytes.len(), |s| s.chars().count());
+        let column_chars =
+            std::str::from_utf8(column_bytes).map_or(column_bytes.len(), |s| s.chars().count());
         LineCol {
             line: u32::try_from(line_index + 1).unwrap_or(u32::MAX),
             column: u32::try_from(column_chars + 1).unwrap_or(u32::MAX),

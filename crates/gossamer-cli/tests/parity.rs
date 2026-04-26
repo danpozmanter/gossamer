@@ -81,11 +81,10 @@ fn run_native(source: &Path) -> Option<Run> {
 
 fn rel_to_workspace(path: &Path) -> String {
     let root = workspace_root();
-    path.strip_prefix(&root)
-        .map_or_else(
-            |_| path.display().to_string(),
-            |p| p.to_string_lossy().into_owned(),
-        )
+    path.strip_prefix(&root).map_or_else(
+        |_| path.display().to_string(),
+        |p| p.to_string_lossy().into_owned(),
+    )
 }
 
 /// Single example used by the always-on smoke tests. Picked because
@@ -140,8 +139,7 @@ fn every_example_with_committed_expected_matches_interpreter_stdout() {
     let mut failures = Vec::new();
     for path in gos_examples_with_expected() {
         let expected_path = path.with_extension("expected.txt");
-        let expected = std::fs::read_to_string(&expected_path)
-            .expect("read expected.txt");
+        let expected = std::fs::read_to_string(&expected_path).expect("read expected.txt");
         let run = run_interpreter(&path);
         if run.stdout != expected {
             failures.push(format!(

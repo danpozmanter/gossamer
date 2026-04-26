@@ -2,7 +2,6 @@
 //! fallback. Kept in its own module so `main.rs` stays under the
 //! 2000-line hard limit defined in `GUIDELINES.md`.
 
-
 use std::fs;
 use std::path::PathBuf;
 
@@ -24,8 +23,7 @@ pub(crate) fn cmd_doc(file: &PathBuf, html_out: Option<&std::path::Path>) -> Res
     let entries = collect_doc_entries(&sf, &source);
     if let Some(path) = html_out {
         let html = render_doc_html(file, &entries);
-        fs::write(path, html)
-            .with_context(|| format!("writing {}", path.display()))?;
+        fs::write(path, html).with_context(|| format!("writing {}", path.display()))?;
         println!("doc: wrote {} items to {}", entries.len(), path.display());
     } else {
         println!("# Items in {}", file.display());
@@ -196,7 +194,11 @@ fn render_doc_html(source_path: &std::path::Path, entries: &[DocEntry]) -> Strin
     out.push_str("</style>\n</head><body>\n");
     out.push_str("<aside id=\"sidebar\"><h2>Items</h2>\n<input id=\"q\" type=\"search\" placeholder=\"Search…\" autofocus>\n<ul id=\"index\">\n");
     for (kind, group) in &buckets {
-        out.push_str(&format!("<li class=\"kind-header\">{} ({})</li>\n", html_escape(kind), group.len()));
+        out.push_str(&format!(
+            "<li class=\"kind-header\">{} ({})</li>\n",
+            html_escape(kind),
+            group.len()
+        ));
         for entry in group {
             out.push_str(&format!(
                 "<li class=\"entry\" data-name=\"{}\"><a href=\"#{}\"><code>{}</code></a></li>\n",

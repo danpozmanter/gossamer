@@ -174,10 +174,7 @@ pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_concat(
-    a: *const c_char,
-    b: *const c_char,
-) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     let a_bytes: &[u8] = if a.is_null() {
         &[]
     } else {
@@ -228,10 +225,7 @@ pub unsafe extern "C" fn gos_rt_str_to_lower(s: *const c_char) -> *mut c_char {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_contains(
-    s: *const c_char,
-    needle: *const c_char,
-) -> i32 {
+pub unsafe extern "C" fn gos_rt_str_contains(s: *const c_char, needle: *const c_char) -> i32 {
     if s.is_null() || needle.is_null() {
         return 0;
     }
@@ -252,10 +246,7 @@ pub unsafe extern "C" fn gos_rt_str_contains(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_starts_with(
-    s: *const c_char,
-    prefix: *const c_char,
-) -> i32 {
+pub unsafe extern "C" fn gos_rt_str_starts_with(s: *const c_char, prefix: *const c_char) -> i32 {
     if s.is_null() || prefix.is_null() {
         return 0;
     }
@@ -265,10 +256,7 @@ pub unsafe extern "C" fn gos_rt_str_starts_with(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_ends_with(
-    s: *const c_char,
-    suffix: *const c_char,
-) -> i32 {
+pub unsafe extern "C" fn gos_rt_str_ends_with(s: *const c_char, suffix: *const c_char) -> i32 {
     if s.is_null() || suffix.is_null() {
         return 0;
     }
@@ -278,10 +266,7 @@ pub unsafe extern "C" fn gos_rt_str_ends_with(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_find(
-    s: *const c_char,
-    needle: *const c_char,
-) -> i64 {
+pub unsafe extern "C" fn gos_rt_str_find(s: *const c_char, needle: *const c_char) -> i64 {
     if s.is_null() || needle.is_null() {
         return -1;
     }
@@ -391,7 +376,10 @@ pub unsafe extern "C" fn gos_rt_bool_to_str(b: i32) -> *mut c_char {
 /// > U+10FFFF) render as `\u{FFFD}` (REPLACEMENT CHARACTER).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_char_to_str(c: i32) -> *mut c_char {
-    let scalar = u32::try_from(c).ok().and_then(char::from_u32).unwrap_or('\u{FFFD}');
+    let scalar = u32::try_from(c)
+        .ok()
+        .and_then(char::from_u32)
+        .unwrap_or('\u{FFFD}');
     let mut buf = [0u8; 4];
     let s = scalar.encode_utf8(&mut buf);
     alloc_cstring(s.as_bytes())
@@ -447,9 +435,7 @@ unsafe fn raw_write_stdout(bytes: &[u8]) {
     }
     let mut off = 0usize;
     while off < bytes.len() {
-        let n = unsafe {
-            write(1, bytes.as_ptr().add(off), bytes.len() - off)
-        };
+        let n = unsafe { write(1, bytes.as_ptr().add(off), bytes.len() - off) };
         if n <= 0 {
             return;
         }
@@ -471,10 +457,7 @@ unsafe fn write_stdout(bytes: &[u8]) {
     if bytes.len() >= STDOUT_BUF_SIZE {
         if len > 0 {
             unsafe {
-                raw_write_stdout(std::slice::from_raw_parts(
-                    (*bytes_ptr).as_ptr(),
-                    len,
-                ));
+                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), len));
                 *len_ptr = 0;
             }
         }
@@ -483,15 +466,8 @@ unsafe fn write_stdout(bytes: &[u8]) {
     }
     if len + bytes.len() > STDOUT_BUF_SIZE {
         unsafe {
-            raw_write_stdout(std::slice::from_raw_parts(
-                (*bytes_ptr).as_ptr(),
-                len,
-            ));
-            std::ptr::copy_nonoverlapping(
-                bytes.as_ptr(),
-                (*bytes_ptr).as_mut_ptr(),
-                bytes.len(),
-            );
+            raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), len));
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), (*bytes_ptr).as_mut_ptr(), bytes.len());
             *len_ptr = bytes.len();
         }
     } else {
@@ -517,10 +493,7 @@ pub unsafe extern "C" fn gos_rt_flush_stdout() {
     let len = unsafe { *len_ptr };
     if len > 0 {
         unsafe {
-            raw_write_stdout(std::slice::from_raw_parts(
-                (*bytes_ptr).as_ptr(),
-                len,
-            ));
+            raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), len));
             *len_ptr = 0;
         }
     }
@@ -638,9 +611,7 @@ unsafe fn raw_write_fd(fd: i32, bytes: &[u8]) {
     }
     let mut off = 0usize;
     while off < bytes.len() {
-        let n = unsafe {
-            write(fd, bytes.as_ptr().add(off), bytes.len() - off)
-        };
+        let n = unsafe { write(fd, bytes.as_ptr().add(off), bytes.len() - off) };
         if n <= 0 {
             return;
         }
@@ -674,10 +645,7 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte(stream: *const GosStream, b: i
         }
         // Buffer full — flush and stash the new byte.
         unsafe {
-            raw_write_stdout(std::slice::from_raw_parts(
-                (*bytes_ptr).as_ptr(),
-                len,
-            ));
+            raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), len));
             *(*bytes_ptr).as_mut_ptr() = b as u8;
             *len_ptr = 1;
         }
@@ -690,10 +658,7 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte(stream: *const GosStream, b: i
 /// Writes every byte of the passed C-string through `stream`.
 /// `stream.write(s)` and `stream.write_str(s)` both land here.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_stream_write_str(
-    stream: *const GosStream,
-    s: *const c_char,
-) {
+pub unsafe extern "C" fn gos_rt_stream_write_str(stream: *const GosStream, s: *const c_char) {
     let fd = unsafe { stream_fd(stream) };
     let bytes = if s.is_null() {
         b"" as &[u8]
@@ -748,10 +713,7 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte_array(
         // Slow path: block doesn't fit. Flush and recurse with
         // a now-empty buffer.
         unsafe {
-            raw_write_stdout(std::slice::from_raw_parts(
-                (*bytes_ptr).as_ptr(),
-                cur,
-            ));
+            raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
             *len_ptr = 0;
             // Block bigger than the buffer? Pack into a heap
             // vec and write it directly.
@@ -851,10 +813,7 @@ pub unsafe extern "C" fn gos_rt_println() {
     let len = unsafe { *len_ptr };
     if len >= STDOUT_BUF_SIZE / 2 {
         unsafe {
-            raw_write_stdout(std::slice::from_raw_parts(
-                (*bytes_ptr).as_ptr(),
-                len,
-            ));
+            raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), len));
             *len_ptr = 0;
         }
     }
@@ -886,10 +845,7 @@ pub unsafe extern "C" fn gos_rt_vec_new(elem_bytes: u32) -> *mut GosVec {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_with_capacity(
-    elem_bytes: u32,
-    cap: i64,
-) -> *mut GosVec {
+pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> *mut GosVec {
     if cap <= 0 {
         return unsafe { gos_rt_vec_new(elem_bytes) };
     }
@@ -941,10 +897,7 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
         vec.cap = new_cap;
         std::mem::forget(buf);
     }
-    let dst = unsafe {
-        vec.ptr
-            .add((vec.len as usize) * (vec.elem_bytes as usize))
-    };
+    let dst = unsafe { vec.ptr.add((vec.len as usize) * (vec.elem_bytes as usize)) };
     unsafe {
         std::ptr::copy_nonoverlapping(elem, dst, vec.elem_bytes as usize);
     }
@@ -976,10 +929,7 @@ pub unsafe extern "C" fn gos_rt_vec_pop(v: *mut GosVec, out: *mut u8) -> i32 {
         return 0;
     }
     vec.len -= 1;
-    let src = unsafe {
-        vec.ptr
-            .add((vec.len as usize) * (vec.elem_bytes as usize))
-    };
+    let src = unsafe { vec.ptr.add((vec.len as usize) * (vec.elem_bytes as usize)) };
     unsafe {
         std::ptr::copy_nonoverlapping(src, out, vec.elem_bytes as usize);
     }
@@ -1023,11 +973,7 @@ pub unsafe extern "C" fn gos_rt_map_len(m: *const GosMap) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_insert(
-    m: *mut GosMap,
-    key: *const u8,
-    val: *const u8,
-) {
+pub unsafe extern "C" fn gos_rt_map_insert(m: *mut GosMap, key: *const u8, val: *const u8) {
     if m.is_null() || key.is_null() || val.is_null() {
         return;
     }
@@ -1043,11 +989,7 @@ pub unsafe extern "C" fn gos_rt_map_insert(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_get(
-    m: *const GosMap,
-    key: *const u8,
-    val_out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn gos_rt_map_get(m: *const GosMap, key: *const u8, val_out: *mut u8) -> i32 {
     if m.is_null() || key.is_null() || val_out.is_null() {
         return 0;
     }
@@ -1092,7 +1034,7 @@ use std::sync::Mutex as StdMutex;
 
 pub struct GosChan {
     pub elem_bytes: u32,
-    pub cap: i64,     // 0 = unbounded
+    pub cap: i64, // 0 = unbounded
     pub closed: StdMutex<bool>,
     pub buf: StdMutex<VecDeque<Vec<u8>>>,
     pub not_empty: StdCondvar,
@@ -1279,12 +1221,7 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_2(fn_addr: usize, arg0: i64, arg1:
 /// worker takes a shared buffer pointer, an index / chunk
 /// argument, and a `WaitGroup` to signal completion.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_go_spawn_call_3(
-    fn_addr: usize,
-    arg0: i64,
-    arg1: i64,
-    arg2: i64,
-) {
+pub unsafe extern "C" fn gos_rt_go_spawn_call_3(fn_addr: usize, arg0: i64, arg1: i64, arg2: i64) {
     if fn_addr == 0 {
         return;
     }
@@ -1803,10 +1740,7 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_lines_to_stdout(
         // Need at least 1 byte; if buffer full, flush.
         if cur >= STDOUT_BUF_SIZE {
             unsafe {
-                raw_write_stdout(std::slice::from_raw_parts(
-                    (*bytes_ptr).as_ptr(),
-                    cur,
-                ));
+                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
             }
             cur = 0;
         }
@@ -1815,14 +1749,10 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_lines_to_stdout(
         // buffer space and doesn't cross the next newline.
         let chars_to_eol = (line_width - col) as usize;
         let chars_left = end - idx;
-        let take = std::cmp::min(
-            chars_to_eol,
-            std::cmp::min(chars_left, avail),
-        );
+        let take = std::cmp::min(chars_to_eol, std::cmp::min(chars_left, avail));
         unsafe {
             for i in 0..take {
-                *(*bytes_ptr).as_mut_ptr().add(cur + i) =
-                    *v_ref.data.add(idx + i) as u8;
+                *(*bytes_ptr).as_mut_ptr().add(cur + i) = *v_ref.data.add(idx + i) as u8;
             }
         }
         cur += take;
@@ -1832,10 +1762,7 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_lines_to_stdout(
             // Append newline if room (otherwise flush first).
             if cur >= STDOUT_BUF_SIZE {
                 unsafe {
-                    raw_write_stdout(std::slice::from_raw_parts(
-                        (*bytes_ptr).as_ptr(),
-                        cur,
-                    ));
+                    raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
                 }
                 cur = 0;
             }
@@ -1852,10 +1779,7 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_lines_to_stdout(
     if col > 0 {
         if cur >= STDOUT_BUF_SIZE {
             unsafe {
-                raw_write_stdout(std::slice::from_raw_parts(
-                    (*bytes_ptr).as_ptr(),
-                    cur,
-                ));
+                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
             }
             cur = 0;
         }
@@ -1901,8 +1825,7 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_bytes_to_stdout(
         let take = std::cmp::min(avail, n - written);
         unsafe {
             for i in 0..take {
-                *(*bytes_ptr).as_mut_ptr().add(cur + i) =
-                    *v_ref.data.add(idx + i) as u8;
+                *(*bytes_ptr).as_mut_ptr().add(cur + i) = *v_ref.data.add(idx + i) as u8;
             }
         }
         cur += take;
@@ -1910,10 +1833,7 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_bytes_to_stdout(
         written += take;
         if cur == STDOUT_BUF_SIZE {
             unsafe {
-                raw_write_stdout(std::slice::from_raw_parts(
-                    (*bytes_ptr).as_ptr(),
-                    cur,
-                ));
+                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
             }
             cur = 0;
         }
@@ -2031,20 +1951,14 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_lines_to_stdout(
     while idx < end {
         if cur >= STDOUT_BUF_SIZE {
             unsafe {
-                raw_write_stdout(std::slice::from_raw_parts(
-                    (*bytes_ptr).as_ptr(),
-                    cur,
-                ));
+                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
             }
             cur = 0;
         }
         let avail = STDOUT_BUF_SIZE - cur;
         let chars_to_eol = (line_width - col) as usize;
         let chars_left = end - idx;
-        let take = std::cmp::min(
-            chars_to_eol,
-            std::cmp::min(chars_left, avail),
-        );
+        let take = std::cmp::min(chars_to_eol, std::cmp::min(chars_left, avail));
         // u8 → u8 plain memcpy.
         unsafe {
             std::ptr::copy_nonoverlapping(
@@ -2059,10 +1973,7 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_lines_to_stdout(
         if col >= line_width {
             if cur >= STDOUT_BUF_SIZE {
                 unsafe {
-                    raw_write_stdout(std::slice::from_raw_parts(
-                        (*bytes_ptr).as_ptr(),
-                        cur,
-                    ));
+                    raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
                 }
                 cur = 0;
             }
@@ -2076,10 +1987,7 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_lines_to_stdout(
     if col > 0 {
         if cur >= STDOUT_BUF_SIZE {
             unsafe {
-                raw_write_stdout(std::slice::from_raw_parts(
-                    (*bytes_ptr).as_ptr(),
-                    cur,
-                ));
+                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
             }
             cur = 0;
         }
@@ -2122,10 +2030,7 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_bytes_to_stdout(
     while written < n {
         if cur >= STDOUT_BUF_SIZE {
             unsafe {
-                raw_write_stdout(std::slice::from_raw_parts(
-                    (*bytes_ptr).as_ptr(),
-                    cur,
-                ));
+                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
             }
             cur = 0;
         }
@@ -2143,10 +2048,7 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_bytes_to_stdout(
         written += take;
         if cur == STDOUT_BUF_SIZE {
             unsafe {
-                raw_write_stdout(std::slice::from_raw_parts(
-                    (*bytes_ptr).as_ptr(),
-                    cur,
-                ));
+                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
             }
             cur = 0;
         }
@@ -2192,10 +2094,7 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_store(a: *mut GosAtomicI64, val: i64)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_atomic_i64_fetch_add(
-    a: *mut GosAtomicI64,
-    delta: i64,
-) -> i64 {
+pub unsafe extern "C" fn gos_rt_atomic_i64_fetch_add(a: *mut GosAtomicI64, delta: i64) -> i64 {
     if a.is_null() {
         return 0;
     }
@@ -2218,13 +2117,7 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_fetch_add(
 /// `s' = (s * ia + ic) mod im`. Returns the state after `n`
 /// applications. `n` is clamped to non-negative.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_lcg_jump(
-    state: i64,
-    ia: i64,
-    ic: i64,
-    im: i64,
-    n: i64,
-) -> i64 {
+pub unsafe extern "C" fn gos_rt_lcg_jump(state: i64, ia: i64, ic: i64, im: i64, n: i64) -> i64 {
     if n <= 0 || im <= 0 {
         return state;
     }
@@ -2289,37 +2182,28 @@ fn mul_mod(a: i64, b: i64, m: i64) -> i64 {
 pub unsafe extern "C" fn gos_rt_fn_tramp_0(env: *const u8) -> i64 {
     // SAFETY: `env` was constructed by the MIR coercion site as a
     // 16-byte blob whose word at offset 8 is the real fn ptr.
-    let real_fn_addr =
-        unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+    let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
     let real_fn: extern "C" fn() -> i64 = unsafe { core::mem::transmute(real_fn_addr) };
     real_fn()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fn_tramp_1(env: *const u8, a0: i64) -> i64 {
-    let real_fn_addr =
-        unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+    let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
     let real_fn: extern "C" fn(i64) -> i64 = unsafe { core::mem::transmute(real_fn_addr) };
     real_fn(a0)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fn_tramp_2(env: *const u8, a0: i64, a1: i64) -> i64 {
-    let real_fn_addr =
-        unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+    let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
     let real_fn: extern "C" fn(i64, i64) -> i64 = unsafe { core::mem::transmute(real_fn_addr) };
     real_fn(a0, a1)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_fn_tramp_3(
-    env: *const u8,
-    a0: i64,
-    a1: i64,
-    a2: i64,
-) -> i64 {
-    let real_fn_addr =
-        unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+pub unsafe extern "C" fn gos_rt_fn_tramp_3(env: *const u8, a0: i64, a1: i64, a2: i64) -> i64 {
+    let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
     let real_fn: extern "C" fn(i64, i64, i64) -> i64 =
         unsafe { core::mem::transmute(real_fn_addr) };
     real_fn(a0, a1, a2)
@@ -2333,8 +2217,7 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_4(
     a2: i64,
     a3: i64,
 ) -> i64 {
-    let real_fn_addr =
-        unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+    let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
     let real_fn: extern "C" fn(i64, i64, i64, i64) -> i64 =
         unsafe { core::mem::transmute(real_fn_addr) };
     real_fn(a0, a1, a2, a3)
@@ -2349,8 +2232,7 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_5(
     a3: i64,
     a4: i64,
 ) -> i64 {
-    let real_fn_addr =
-        unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+    let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
     let real_fn: extern "C" fn(i64, i64, i64, i64, i64) -> i64 =
         unsafe { core::mem::transmute(real_fn_addr) };
     real_fn(a0, a1, a2, a3, a4)
@@ -2366,8 +2248,7 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_6(
     a4: i64,
     a5: i64,
 ) -> i64 {
-    let real_fn_addr =
-        unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+    let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
     let real_fn: extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64 =
         unsafe { core::mem::transmute(real_fn_addr) };
     real_fn(a0, a1, a2, a3, a4, a5)
@@ -2384,8 +2265,7 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_7(
     a5: i64,
     a6: i64,
 ) -> i64 {
-    let real_fn_addr =
-        unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+    let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
     let real_fn: extern "C" fn(i64, i64, i64, i64, i64, i64, i64) -> i64 =
         unsafe { core::mem::transmute(real_fn_addr) };
     real_fn(a0, a1, a2, a3, a4, a5, a6)
@@ -2403,8 +2283,7 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_8(
     a6: i64,
     a7: i64,
 ) -> i64 {
-    let real_fn_addr =
-        unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+    let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
     let real_fn: extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64) -> i64 =
         unsafe { core::mem::transmute(real_fn_addr) };
     real_fn(a0, a1, a2, a3, a4, a5, a6, a7)

@@ -101,7 +101,7 @@ pub struct LinkerOptions {
     /// Target triple driving the output header.
     pub target: TargetTriple,
     /// Prebuilt runtime archive to embed into the artifact. Provided
- /// by the toolchain for every supported target.
+    /// by the toolchain for every supported target.
     pub runtime: Option<crate::target::PrebuiltRuntime>,
     /// Drop functions not reachable from the entry point before
     /// emitting the artifact. Off by default for backwards
@@ -158,8 +158,7 @@ impl LinkerOptions {
 #[must_use]
 pub fn link(units: &[TranslationUnit], options: &LinkerOptions) -> Artifact {
     let effective_units: Vec<TranslationUnit> = if options.dead_code_elim {
-        let reachable =
-            reachable_symbols(units, options.entry.as_deref().unwrap_or("main"));
+        let reachable = reachable_symbols(units, options.entry.as_deref().unwrap_or("main"));
         dce_units(units, &reachable)
     } else {
         units.to_vec()
@@ -226,10 +225,7 @@ fn reachable_symbols(units: &[TranslationUnit], entry: &str) -> BTreeMap<String,
     let mut function_by_name: BTreeMap<String, (String, &FunctionText)> = BTreeMap::new();
     for unit in units {
         for function in &unit.module.functions {
-            function_by_name.insert(
-                function.name.clone(),
-                (unit.name.clone(), function),
-            );
+            function_by_name.insert(function.name.clone(), (unit.name.clone(), function));
         }
     }
     let mut reachable: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -238,9 +234,7 @@ fn reachable_symbols(units: &[TranslationUnit], entry: &str) -> BTreeMap<String,
         let Some((unit_name, function)) = function_by_name.get(&name) else {
             continue;
         };
-        let entry = reachable
-            .entry(unit_name.clone())
-            .or_default();
+        let entry = reachable.entry(unit_name.clone()).or_default();
         if entry.iter().any(|n| n == &function.name) {
             continue;
         }

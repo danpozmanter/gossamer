@@ -8,7 +8,7 @@
 //! - `textDocument/definition` — jumps to the declaring item when
 //!   the cursor is on a path expression.
 //!
-//! 
+//!
 
 #![forbid(unsafe_code)]
 

@@ -86,10 +86,7 @@ fn parse_url(url: &str) -> Result<ParsedUrl, TransportError> {
             p.parse::<u16>()
                 .map_err(|_| TransportError::BadUrl(url.to_string()))?,
         ),
-        None => (
-            authority,
-            if scheme == "https" { 443 } else { 80 },
-        ),
+        None => (authority, if scheme == "https" { 443 } else { 80 }),
     };
     Ok(ParsedUrl {
         scheme: scheme.to_string(),
@@ -301,9 +298,7 @@ fn decode_chunked(body: &[u8]) -> Result<Vec<u8>, TransportError> {
 }
 
 fn find_crlf(bytes: &[u8]) -> Option<usize> {
-    bytes
-        .windows(2)
-        .position(|window| window == b"\r\n")
+    bytes.windows(2).position(|window| window == b"\r\n")
 }
 
 /// Fetches `url` through `transport` and returns the body only if its
@@ -361,8 +356,8 @@ mod tests {
             fetch_verified(&t, "https://example.test/foo", &good).unwrap(),
             b"hello"
         );
-        let err = fetch_verified(&t, "https://example.test/foo", "00".repeat(32).as_str())
-            .unwrap_err();
+        let err =
+            fetch_verified(&t, "https://example.test/foo", "00".repeat(32).as_str()).unwrap_err();
         assert!(matches!(err, TransportError::DigestMismatch { .. }));
     }
 

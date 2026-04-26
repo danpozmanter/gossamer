@@ -17,7 +17,6 @@ use crate::builtins::{
 };
 use crate::value::{RuntimeResult, SmolStr, Value};
 
-
 pub(crate) fn builtin_flag_set_new(args: &[Value]) -> RuntimeResult<Value> {
     let _name = args.first().and_then(as_str).unwrap_or("");
     let id = NEXT_SET_ID.with(|cell| {
@@ -26,11 +25,7 @@ pub(crate) fn builtin_flag_set_new(args: &[Value]) -> RuntimeResult<Value> {
         *v += 1;
         id
     });
-    let set_name = args
-        .first()
-        .and_then(as_str)
-        .unwrap_or("")
-        .to_string();
+    let set_name = args.first().and_then(as_str).unwrap_or("").to_string();
     SET_REGISTRY.with(|reg| {
         reg.borrow_mut().insert(
             id,
@@ -272,7 +267,11 @@ pub(crate) fn builtin_flag_set_parse(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn print_flag_help(state: &SetState) {
-    let program = if state.name.is_empty() { "program" } else { &state.name };
+    let program = if state.name.is_empty() {
+        "program"
+    } else {
+        &state.name
+    };
     println!("Usage: {program} [OPTIONS]");
     if state.flag_order.is_empty() {
         return;
@@ -281,7 +280,9 @@ fn print_flag_help(state: &SetState) {
     println!("Options:");
     let mut col = Vec::new();
     for name in &state.flag_order {
-        let Some(def) = state.flags.get(name) else { continue };
+        let Some(def) = state.flags.get(name) else {
+            continue;
+        };
         let short = def
             .short
             .map_or_else(|| "    ".to_string(), |c| format!("-{c}, "));
@@ -294,7 +295,11 @@ fn print_flag_help(state: &SetState) {
         let flag_col = format!("  {short}--{name}{value_hint}");
         col.push((flag_col, def));
     }
-    let max_width = col.iter().map(|(c, _)| c.chars().count()).max().unwrap_or(0);
+    let max_width = col
+        .iter()
+        .map(|(c, _)| c.chars().count())
+        .max()
+        .unwrap_or(0);
     for (flag_col, def) in col {
         let pad = max_width.saturating_sub(flag_col.chars().count());
         let default_text = match &def.default {
@@ -304,13 +309,12 @@ fn print_flag_help(state: &SetState) {
             Value::Bool(false) => " [default: false]".to_string(),
             _ => String::new(),
         };
-        println!(
-            "{flag_col}{}  {}{default_text}",
-            " ".repeat(pad),
-            def.help
-        );
+        println!("{flag_col}{}  {}{default_text}", " ".repeat(pad), def.help);
     }
-    println!("      --help, -h{}  print this message and exit", " ".repeat(max_width.saturating_sub(15)));
+    println!(
+        "      --help, -h{}  print this message and exit",
+        " ".repeat(max_width.saturating_sub(15))
+    );
 }
 
 fn parse_long_flag(
@@ -355,11 +359,7 @@ fn parse_short_flag(
     let mut chars = rest.chars();
     let first = chars.next().unwrap();
     let remainder = chars.as_str();
-    let Some((flag_name, def)) = state
-        .flags
-        .iter()
-        .find(|(_, d)| d.short == Some(first))
-    else {
+    let Some((flag_name, def)) = state.flags.iter().find(|(_, d)| d.short == Some(first)) else {
         return 1;
     };
     let flag_name = flag_name.clone();
@@ -397,5 +397,3 @@ fn set_parse_value(def: &FlagDef, raw: &str) -> Value {
         }
     }
 }
-
-

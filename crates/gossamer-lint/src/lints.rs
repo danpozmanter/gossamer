@@ -8,8 +8,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gossamer_ast::{
-    AssignOp, BinaryOp, Block, Expr, ExprKind, ImplItem, ItemKind, Literal, Mutability, Pattern,
-    PatternKind, PathExpr, SourceFile, Stmt, StmtKind, UnaryOp, UseDecl, UseListEntry, UseTarget,
+    AssignOp, BinaryOp, Block, Expr, ExprKind, ImplItem, ItemKind, Literal, Mutability, PathExpr,
+    Pattern, PatternKind, SourceFile, Stmt, StmtKind, UnaryOp, UseDecl, UseListEntry, UseTarget,
 };
 use gossamer_lex::Span;
 
@@ -72,7 +72,6 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile) -> Vec<Finding> {
         _ => Vec::new(),
     }
 }
-
 
 fn each_fn_body<'a>(sf: &'a SourceFile, mut visitor: impl FnMut(&'a Expr)) {
     for item in &sf.items {
@@ -149,7 +148,9 @@ pub(crate) fn walk_expr(expr: &Expr, visitor: &mut dyn FnMut(&Expr)) {
             }
         }
         ExprKind::Loop { body, .. } => walk_expr(body, visitor),
-        ExprKind::While { condition, body, .. } => {
+        ExprKind::While {
+            condition, body, ..
+        } => {
             walk_expr(condition, visitor);
             walk_expr(body, visitor);
         }
@@ -207,7 +208,9 @@ pub(crate) fn walk_block(block: &Block, visitor: &mut dyn FnMut(&Expr)) {
 
 fn walk_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {
     match &stmt.kind {
-        StmtKind::Let { init: Some(init), .. } => walk_expr(init, visitor),
+        StmtKind::Let {
+            init: Some(init), ..
+        } => walk_expr(init, visitor),
         StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
             walk_expr(expr, visitor);
         }
@@ -339,11 +342,7 @@ fn block_reassigns(block: &Block, target: &str) -> bool {
         }
         if let ExprKind::Assign { place, .. } = &expr.kind {
             if let ExprKind::Path(path) = &place.kind {
-                if path
-                    .segments
-                    .first()
-                    .is_some_and(|s| s.name.name == target)
-                {
+                if path.segments.first().is_some_and(|s| s.name.name == target) {
                     found = true;
                 }
             }
@@ -369,8 +368,8 @@ fn check_use(decl: &UseDecl, uses: &Uses, out: &mut Vec<Finding>) {
         }
         return;
     }
-    let name = decl.alias.as_ref().map_or_else(|| {
-        match &decl.target {
+    let name = decl.alias.as_ref().map_or_else(
+        || match &decl.target {
             UseTarget::Module(path) => path
                 .segments
                 .last()
@@ -380,8 +379,9 @@ fn check_use(decl: &UseDecl, uses: &Uses, out: &mut Vec<Finding>) {
                 .as_ref()
                 .and_then(|p| p.segments.last().map(|s| s.name.clone()))
                 .unwrap_or_else(|| id.clone()),
-        }
-    }, |a| a.name.clone());
+        },
+        |a| a.name.clone(),
+    );
     if !name.is_empty() && !uses.contains(&name) {
         out.push((
             decl.span,
@@ -573,9 +573,7 @@ fn lint_unchecked_result(sf: &SourceFile) -> Vec<Finding> {
                     out.push((
                         stmt.span,
                         "`Result` discarded with `let _`".to_string(),
-                        Some(
-                            "handle the `Err` explicitly or propagate with `?`".to_string(),
-                        ),
+                        Some("handle the `Err` explicitly or propagate with `?`".to_string()),
                     ));
                 }
             }
@@ -630,8 +628,7 @@ fn lint_panic_in_main(sf: &SourceFile) -> Vec<Finding> {
                                     "`panic!` inside `main` aborts without a clean exit code"
                                         .to_string(),
                                     Some(
-                                        "return a `Result` or use `std::process::exit`"
-                                            .to_string(),
+                                        "return a `Result` or use `std::process::exit`".to_string(),
                                     ),
                                 ));
                             }
@@ -643,10 +640,7 @@ fn lint_panic_in_main(sf: &SourceFile) -> Vec<Finding> {
                                 expr.span,
                                 "`panic!` inside `main` aborts without a clean exit code"
                                     .to_string(),
-                                Some(
-                                    "return a `Result` or use `std::process::exit`"
-                                        .to_string(),
-                                ),
+                                Some("return a `Result` or use `std::process::exit`".to_string()),
                             ));
                         }
                     }
@@ -661,7 +655,13 @@ fn lint_redundant_clone(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            if let ExprKind::MethodCall { name, receiver, args, .. } = &expr.kind {
+            if let ExprKind::MethodCall {
+                name,
+                receiver,
+                args,
+                ..
+            } = &expr.kind
+            {
                 if name.name == "clone"
                     && args.is_empty()
                     && matches!(&receiver.kind, ExprKind::Literal(_))
@@ -745,34 +745,34 @@ fn path_eq(a: &Expr, b: &Expr) -> bool {
 fn lint_todo_macro(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
-        walk_expr(body, &mut |expr| {
-            match &expr.kind {
-                ExprKind::MacroCall(mc) => {
-                    if let Some(name) = mc.path.segments.last().map(|s| s.name.name.as_str()) {
+        walk_expr(body, &mut |expr| match &expr.kind {
+            ExprKind::MacroCall(mc) => {
+                if let Some(name) = mc.path.segments.last().map(|s| s.name.name.as_str()) {
+                    if matches!(name, "todo" | "unimplemented") {
+                        out.push((
+                            expr.span,
+                            format!("`{name}!` is a placeholder, not a shippable expression"),
+                            Some("implement the branch before merging".to_string()),
+                        ));
+                    }
+                }
+            }
+            ExprKind::Call { callee, .. } => {
+                if let ExprKind::Path(path) = &callee.kind {
+                    if let Some(name) = path.segments.last().map(|s| s.name.name.as_str()) {
                         if matches!(name, "todo" | "unimplemented") {
                             out.push((
                                 expr.span,
-                                format!("`{name}!` is a placeholder, not a shippable expression"),
+                                format!(
+                                    "`{name}(...)` is a placeholder, not a shippable expression"
+                                ),
                                 Some("implement the branch before merging".to_string()),
                             ));
                         }
                     }
                 }
-                ExprKind::Call { callee, .. } => {
-                    if let ExprKind::Path(path) = &callee.kind {
-                        if let Some(name) = path.segments.last().map(|s| s.name.name.as_str()) {
-                            if matches!(name, "todo" | "unimplemented") {
-                                out.push((
-                                    expr.span,
-                                    format!("`{name}(...)` is a placeholder, not a shippable expression"),
-                                    Some("implement the branch before merging".to_string()),
-                                ));
-                            }
-                        }
-                    }
-                }
-                _ => {}
             }
+            _ => {}
         });
     });
     out
@@ -829,11 +829,17 @@ fn lint_let_and_return(sf: &SourceFile) -> Vec<Finding> {
                 return;
             };
             if path.segments.len() == 1
-                && path.segments.first().is_some_and(|s| s.name.name == name.name)
+                && path
+                    .segments
+                    .first()
+                    .is_some_and(|s| s.name.name == name.name)
             {
                 out.push((
                     last.span,
-                    format!("`let {0} = ...; {0}` can be collapsed to the expression", name.name),
+                    format!(
+                        "`let {0} = ...; {0}` can be collapsed to the expression",
+                        name.name
+                    ),
                     Some("return the value directly instead of binding it first".to_string()),
                 ));
             }
@@ -916,13 +922,21 @@ fn lint_redundant_field_init(sf: &SourceFile) -> Vec<Finding> {
             };
             for field in fields {
                 let Some(value) = &field.value else { continue };
-                let ExprKind::Path(path) = &value.kind else { continue };
+                let ExprKind::Path(path) = &value.kind else {
+                    continue;
+                };
                 if path.segments.len() == 1
-                    && path.segments.first().is_some_and(|s| s.name.name == field.name.name)
+                    && path
+                        .segments
+                        .first()
+                        .is_some_and(|s| s.name.name == field.name.name)
                 {
                     out.push((
                         value.span,
-                        format!("redundant `{0}: {0}` — field shorthand suffices", field.name.name),
+                        format!(
+                            "redundant `{0}: {0}` — field shorthand suffices",
+                            field.name.name
+                        ),
                         Some("drop the `: <name>` — shorthand `{ x, y }` works".to_string()),
                     ));
                 }
@@ -948,7 +962,10 @@ fn lint_needless_else_after_return(sf: &SourceFile) -> Vec<Finding> {
                 out.push((
                     else_branch.span,
                     "needless `else` after a returning `if`".to_string(),
-                    Some("un-nest the else body — the fallthrough is already unreachable".to_string()),
+                    Some(
+                        "un-nest the else body — the fallthrough is already unreachable"
+                            .to_string(),
+                    ),
                 ));
             }
         });
@@ -984,18 +1001,27 @@ fn lint_self_compare(sf: &SourceFile) -> Vec<Finding> {
             };
             if !matches!(
                 op,
-                BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
+                BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
             ) {
                 return;
             }
-            let (ExprKind::Path(lhs_path), ExprKind::Path(rhs_path)) = (&lhs.kind, &rhs.kind) else {
+            let (ExprKind::Path(lhs_path), ExprKind::Path(rhs_path)) = (&lhs.kind, &rhs.kind)
+            else {
                 return;
             };
             if path_text(lhs_path) == path_text(rhs_path) {
                 out.push((
                     expr.span,
                     "comparing a value to itself — the result is a constant".to_string(),
-                    Some("use the constant `true` / `false` directly if that is what you meant".to_string()),
+                    Some(
+                        "use the constant `true` / `false` directly if that is what you meant"
+                            .to_string(),
+                    ),
                 ));
             }
         });
@@ -1023,8 +1049,12 @@ fn lint_identity_op(sf: &SourceFile) -> Vec<Finding> {
             let lhs_one = is_int_literal(lhs, 1);
             let rhs_one = is_int_literal(rhs, 1);
             let hit = match op {
-                BinaryOp::Add | BinaryOp::Sub => rhs_zero || (matches!(op, BinaryOp::Add) && lhs_zero),
-                BinaryOp::Mul | BinaryOp::Div => rhs_one || (matches!(op, BinaryOp::Mul) && lhs_one),
+                BinaryOp::Add | BinaryOp::Sub => {
+                    rhs_zero || (matches!(op, BinaryOp::Add) && lhs_zero)
+                }
+                BinaryOp::Mul | BinaryOp::Div => {
+                    rhs_one || (matches!(op, BinaryOp::Mul) && lhs_one)
+                }
                 _ => false,
             };
             if hit {
@@ -1048,13 +1078,22 @@ fn is_int_literal(expr: &Expr, target: i128) -> bool {
     if let Ok(n) = clean.parse::<i128>() {
         return n == target;
     }
-    if let Some(hex) = clean.strip_prefix("0x").or_else(|| clean.strip_prefix("0X")) {
+    if let Some(hex) = clean
+        .strip_prefix("0x")
+        .or_else(|| clean.strip_prefix("0X"))
+    {
         return i128::from_str_radix(hex, 16).ok() == Some(target);
     }
-    if let Some(oct) = clean.strip_prefix("0o").or_else(|| clean.strip_prefix("0O")) {
+    if let Some(oct) = clean
+        .strip_prefix("0o")
+        .or_else(|| clean.strip_prefix("0O"))
+    {
         return i128::from_str_radix(oct, 8).ok() == Some(target);
     }
-    if let Some(bin) = clean.strip_prefix("0b").or_else(|| clean.strip_prefix("0B")) {
+    if let Some(bin) = clean
+        .strip_prefix("0b")
+        .or_else(|| clean.strip_prefix("0B"))
+    {
         return i128::from_str_radix(bin, 2).ok() == Some(target);
     }
     false
@@ -1063,7 +1102,9 @@ fn is_int_literal(expr: &Expr, target: i128) -> bool {
 fn lint_unit_let(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
-        let Some(block) = as_block_ref(body) else { return };
+        let Some(block) = as_block_ref(body) else {
+            return;
+        };
         for stmt in &block.stmts {
             let StmtKind::Let {
                 init: Some(init), ..
@@ -1186,8 +1227,10 @@ fn lint_needless_parens(sf: &SourceFile) -> Vec<Finding> {
                     expr.span,
                     "`(x,)` is a one-tuple; `(x)` without the comma is a needless pair of parens"
                         .to_string(),
-                    Some("drop the parens or add a trailing comma if you meant a one-tuple"
-                        .to_string()),
+                    Some(
+                        "drop the parens or add a trailing comma if you meant a one-tuple"
+                            .to_string(),
+                    ),
                 ));
             }
         });
@@ -1240,7 +1283,8 @@ fn lint_nested_ternary_if(sf: &SourceFile) -> Vec<Finding> {
             };
             let Some(tail) = tail else { return };
             if let ExprKind::If {
-                else_branch: Some(_), ..
+                else_branch: Some(_),
+                ..
             } = &tail.kind
             {
                 if let ExprKind::If {
@@ -1248,7 +1292,13 @@ fn lint_nested_ternary_if(sf: &SourceFile) -> Vec<Finding> {
                     ..
                 } = &tail.kind
                 {
-                    if matches!(&inner_else.kind, ExprKind::If { else_branch: Some(_), .. }) {
+                    if matches!(
+                        &inner_else.kind,
+                        ExprKind::If {
+                            else_branch: Some(_),
+                            ..
+                        }
+                    ) {
                         out.push((
                             expr.span,
                             "deeply nested `if/else if` chain reads better as `match`".to_string(),
@@ -1270,7 +1320,12 @@ fn lint_absurd_range(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Range { start: Some(start), end: Some(end), .. } = &expr.kind else {
+            let ExprKind::Range {
+                start: Some(start),
+                end: Some(end),
+                ..
+            } = &expr.kind
+            else {
                 return;
             };
             let (ExprKind::Literal(Literal::Int(a)), ExprKind::Literal(Literal::Int(b))) =
@@ -1303,7 +1358,12 @@ fn lint_string_literal_concat(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Binary { op: BinaryOp::Add, lhs, rhs } = &expr.kind else {
+            let ExprKind::Binary {
+                op: BinaryOp::Add,
+                lhs,
+                rhs,
+            } = &expr.kind
+            else {
                 return;
             };
             if matches!(&lhs.kind, ExprKind::Literal(Literal::String(_)))
@@ -1325,10 +1385,20 @@ fn lint_chained_negation_literals(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Unary { op: UnaryOp::Neg, operand } = &expr.kind else {
+            let ExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } = &expr.kind
+            else {
                 return;
             };
-            if matches!(&operand.kind, ExprKind::Unary { op: UnaryOp::Neg, .. }) {
+            if matches!(
+                &operand.kind,
+                ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    ..
+                }
+            ) {
                 out.push((
                     expr.span,
                     "`-(-x)` collapses to `x`".to_string(),
@@ -1344,10 +1414,21 @@ fn lint_if_not_else(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::If { condition, else_branch: Some(_), .. } = &expr.kind else {
+            let ExprKind::If {
+                condition,
+                else_branch: Some(_),
+                ..
+            } = &expr.kind
+            else {
                 return;
             };
-            if matches!(&condition.kind, ExprKind::Unary { op: UnaryOp::Not, .. }) {
+            if matches!(
+                &condition.kind,
+                ExprKind::Unary {
+                    op: UnaryOp::Not,
+                    ..
+                }
+            ) {
                 out.push((
                     expr.span,
                     "`if !cond { A } else { B }` reads better as `if cond { B } else { A }`"
@@ -1364,10 +1445,16 @@ fn lint_empty_string_concat(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Binary { op: BinaryOp::Add, lhs, rhs } = &expr.kind else {
+            let ExprKind::Binary {
+                op: BinaryOp::Add,
+                lhs,
+                rhs,
+            } = &expr.kind
+            else {
                 return;
             };
-            let is_empty = |e: &Expr| matches!(&e.kind, ExprKind::Literal(Literal::String(s)) if s.is_empty());
+            let is_empty =
+                |e: &Expr| matches!(&e.kind, ExprKind::Literal(Literal::String(s)) if s.is_empty());
             if is_empty(lhs) || is_empty(rhs) {
                 out.push((
                     expr.span,
@@ -1387,8 +1474,12 @@ fn lint_println_newline_only(sf: &SourceFile) -> Vec<Finding> {
             let ExprKind::Call { callee, args } = &expr.kind else {
                 return;
             };
-            let ExprKind::Path(path) = &callee.kind else { return };
-            let Some(last) = path.segments.last() else { return };
+            let ExprKind::Path(path) = &callee.kind else {
+                return;
+            };
+            let Some(last) = path.segments.last() else {
+                return;
+            };
             if !matches!(last.name.name.as_str(), "println" | "print") {
                 return;
             }
@@ -1399,7 +1490,10 @@ fn lint_println_newline_only(sf: &SourceFile) -> Vec<Finding> {
                         expr.span,
                         "`println(\"\")` / `println(\"\\n\")` is the same as `println(\"\")`"
                             .to_string(),
-                        Some("call `println(\"\")` once with no argument-side whitespace".to_string()),
+                        Some(
+                            "call `println(\"\")` once with no argument-side whitespace"
+                                .to_string(),
+                        ),
                     ));
                 }
             }
@@ -1425,7 +1519,9 @@ fn lint_match_same_arms(sf: &SourceFile) -> Vec<Finding> {
                         out.push((
                             arms[j].body.span,
                             "match arm has the same body as an earlier arm".to_string(),
-                            Some("merge with `|` alternation or extract the shared body".to_string()),
+                            Some(
+                                "merge with `|` alternation or extract the shared body".to_string(),
+                            ),
                         ));
                         break;
                     }
@@ -1443,21 +1539,46 @@ fn lint_match_same_arms(sf: &SourceFile) -> Vec<Finding> {
 fn lint_manual_swap(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
-        let Some(block) = as_block_ref(body) else { return };
+        let Some(block) = as_block_ref(body) else {
+            return;
+        };
         let stmts = &block.stmts;
         for i in 0..stmts.len().saturating_sub(2) {
             let (s1, s2, s3) = (&stmts[i], &stmts[i + 1], &stmts[i + 2]);
-            let StmtKind::Let { pattern: tmp_pat, init: Some(tmp_init), .. } = &s1.kind else {
+            let StmtKind::Let {
+                pattern: tmp_pat,
+                init: Some(tmp_init),
+                ..
+            } = &s1.kind
+            else {
                 continue;
             };
-            let Some((tmp_name, _, _)) = ident_name_of(tmp_pat) else { continue };
-            let ExprKind::Path(tmp_rhs) = &tmp_init.kind else { continue };
-            let StmtKind::Expr { expr: assign1, .. } = &s2.kind else { continue };
-            let StmtKind::Expr { expr: assign2, .. } = &s3.kind else { continue };
-            let ExprKind::Assign { op: AssignOp::Assign, place: p1, value: v1 } = &assign1.kind else {
+            let Some((tmp_name, _, _)) = ident_name_of(tmp_pat) else {
                 continue;
             };
-            let ExprKind::Assign { op: AssignOp::Assign, place: p2, value: v2 } = &assign2.kind else {
+            let ExprKind::Path(tmp_rhs) = &tmp_init.kind else {
+                continue;
+            };
+            let StmtKind::Expr { expr: assign1, .. } = &s2.kind else {
+                continue;
+            };
+            let StmtKind::Expr { expr: assign2, .. } = &s3.kind else {
+                continue;
+            };
+            let ExprKind::Assign {
+                op: AssignOp::Assign,
+                place: p1,
+                value: v1,
+            } = &assign1.kind
+            else {
+                continue;
+            };
+            let ExprKind::Assign {
+                op: AssignOp::Assign,
+                place: p2,
+                value: v2,
+            } = &assign2.kind
+            else {
                 continue;
             };
             let (ExprKind::Path(p1), ExprKind::Path(v1), ExprKind::Path(p2), ExprKind::Path(v2)) =
@@ -1482,7 +1603,10 @@ fn lint_manual_swap(sf: &SourceFile) -> Vec<Finding> {
 }
 
 fn ident_name_of(pattern: &Pattern) -> Option<(String, Span, Mutability)> {
-    if let PatternKind::Ident { mutability, name, .. } = &pattern.kind {
+    if let PatternKind::Ident {
+        mutability, name, ..
+    } = &pattern.kind
+    {
         Some((name.name.clone(), pattern.span, *mutability))
     } else {
         None
@@ -1492,7 +1616,9 @@ fn ident_name_of(pattern: &Pattern) -> Option<(String, Span, Mutability)> {
 fn lint_consecutive_assignment(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
-        let Some(block) = as_block_ref(body) else { return };
+        let Some(block) = as_block_ref(body) else {
+            return;
+        };
         let stmts = &block.stmts;
         for i in 0..stmts.len().saturating_sub(1) {
             let (StmtKind::Expr { expr: e1, .. }, StmtKind::Expr { expr: e2, .. }) =
@@ -1500,8 +1626,18 @@ fn lint_consecutive_assignment(sf: &SourceFile) -> Vec<Finding> {
             else {
                 continue;
             };
-            let (ExprKind::Assign { op: o1, place: p1, value: v1 },
-                 ExprKind::Assign { op: o2, place: p2, value: v2 }) = (&e1.kind, &e2.kind)
+            let (
+                ExprKind::Assign {
+                    op: o1,
+                    place: p1,
+                    value: v1,
+                },
+                ExprKind::Assign {
+                    op: o2,
+                    place: p2,
+                    value: v2,
+                },
+            ) = (&e1.kind, &e2.kind)
             else {
                 continue;
             };
@@ -1532,7 +1668,9 @@ fn lint_large_unreadable_literal(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Literal(Literal::Int(src)) = &expr.kind else { return };
+            let ExprKind::Literal(Literal::Int(src)) = &expr.kind else {
+                return;
+            };
             if src.contains('_') {
                 return;
             }
@@ -1576,21 +1714,32 @@ fn lint_redundant_closure(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Closure { params, body: closure_body, .. } = &expr.kind else {
+            let ExprKind::Closure {
+                params,
+                body: closure_body,
+                ..
+            } = &expr.kind
+            else {
                 return;
             };
             if params.len() != 1 {
                 return;
             }
-            let ExprKind::Call { callee, args } = &closure_body.kind else { return };
+            let ExprKind::Call { callee, args } = &closure_body.kind else {
+                return;
+            };
             if args.len() != 1 {
                 return;
             }
-            let ExprKind::Path(arg_path) = &args[0].kind else { return };
+            let ExprKind::Path(arg_path) = &args[0].kind else {
+                return;
+            };
             if arg_path.segments.len() != 1 {
                 return;
             }
-            let Some((param_name, _, _)) = ident_name_of(&params[0].pattern) else { return };
+            let Some((param_name, _, _)) = ident_name_of(&params[0].pattern) else {
+                return;
+            };
             if arg_path
                 .segments
                 .first()
@@ -1612,13 +1761,20 @@ fn lint_empty_if_body(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::If { then_branch, else_branch, .. } = &expr.kind else {
+            let ExprKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } = &expr.kind
+            else {
                 return;
             };
             if else_branch.is_none() {
                 return;
             }
-            let ExprKind::Block(block) = &then_branch.kind else { return };
+            let ExprKind::Block(block) = &then_branch.kind else {
+                return;
+            };
             if block.stmts.is_empty() && block.tail.is_none() {
                 out.push((
                     then_branch.span,
@@ -1635,13 +1791,17 @@ fn lint_bool_to_int_match(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Match { arms, .. } = &expr.kind else { return };
+            let ExprKind::Match { arms, .. } = &expr.kind else {
+                return;
+            };
             if arms.len() != 2 {
                 return;
             }
             let (Some(t_arm), Some(f_arm)) = (
-                arms.iter().find(|a| matches!(a.pattern.kind, PatternKind::Literal(Literal::Bool(true)))),
-                arms.iter().find(|a| matches!(a.pattern.kind, PatternKind::Literal(Literal::Bool(false)))),
+                arms.iter()
+                    .find(|a| matches!(a.pattern.kind, PatternKind::Literal(Literal::Bool(true)))),
+                arms.iter()
+                    .find(|a| matches!(a.pattern.kind, PatternKind::Literal(Literal::Bool(false)))),
             ) else {
                 return;
             };
@@ -1662,12 +1822,17 @@ fn lint_bool_to_int_match(sf: &SourceFile) -> Vec<Finding> {
 fn lint_fn_returns_unit_explicit(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     for item in &sf.items {
-        let ItemKind::Fn(func) = &item.kind else { continue };
+        let ItemKind::Fn(func) = &item.kind else {
+            continue;
+        };
         let Some(ret) = &func.ret else { continue };
         if matches!(ret.kind, gossamer_ast::TypeKind::Unit) {
             out.push((
                 ret.span,
-                format!("`fn {}() -> ()` is the same as `fn {}()`", func.name.name, func.name.name),
+                format!(
+                    "`fn {}() -> ()` is the same as `fn {}()`",
+                    func.name.name, func.name.name
+                ),
                 Some("drop the explicit `-> ()` return type".to_string()),
             ));
         }
@@ -1678,9 +1843,13 @@ fn lint_fn_returns_unit_explicit(sf: &SourceFile) -> Vec<Finding> {
 fn lint_let_with_unit_type(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
-        let Some(block) = as_block_ref(body) else { return };
+        let Some(block) = as_block_ref(body) else {
+            return;
+        };
         for stmt in &block.stmts {
-            let StmtKind::Let { ty: Some(ty), .. } = &stmt.kind else { continue };
+            let StmtKind::Let { ty: Some(ty), .. } = &stmt.kind else {
+                continue;
+            };
             if matches!(ty.kind, gossamer_ast::TypeKind::Unit) {
                 out.push((
                     stmt.span,
@@ -1697,13 +1866,13 @@ fn lint_useless_default_only_match(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Match { arms, .. } = &expr.kind else { return };
+            let ExprKind::Match { arms, .. } = &expr.kind else {
+                return;
+            };
             if arms.len() != 1 {
                 return;
             }
-            if matches!(arms[0].pattern.kind, PatternKind::Wildcard)
-                && arms[0].guard.is_none()
-            {
+            if matches!(arms[0].pattern.kind, PatternKind::Wildcard) && arms[0].guard.is_none() {
                 out.push((
                     expr.span,
                     "`match x { _ => expr }` discards `x` — the scrutinee is evaluated but never inspected".to_string(),
@@ -1745,12 +1914,15 @@ fn lint_pattern_matching_unit(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Match { scrutinee, .. } = &expr.kind else { return };
+            let ExprKind::Match { scrutinee, .. } = &expr.kind else {
+                return;
+            };
             if let ExprKind::Tuple(elems) = &scrutinee.kind {
                 if elems.is_empty() {
                     out.push((
                         expr.span,
-                        "matching on the unit value `()` — there is exactly one possible arm".to_string(),
+                        "matching on the unit value `()` — there is exactly one possible arm"
+                            .to_string(),
                         Some("drop the match and run the body directly".to_string()),
                     ));
                 }
@@ -1764,16 +1936,23 @@ fn lint_panic_without_message(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Call { callee, args } = &expr.kind else { return };
+            let ExprKind::Call { callee, args } = &expr.kind else {
+                return;
+            };
             if !args.is_empty() {
                 return;
             }
-            let ExprKind::Path(path) = &callee.kind else { return };
-            let Some(last) = path.segments.last() else { return };
+            let ExprKind::Path(path) = &callee.kind else {
+                return;
+            };
+            let Some(last) = path.segments.last() else {
+                return;
+            };
             if last.name.name == "panic" {
                 out.push((
                     expr.span,
-                    "`panic()` without a message — the post-mortem has nothing to go on".to_string(),
+                    "`panic()` without a message — the post-mortem has nothing to go on"
+                        .to_string(),
                     Some("pass a brief explanation as the first argument".to_string()),
                 ));
             }
@@ -1786,13 +1965,23 @@ fn lint_empty_loop(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
-            let ExprKind::Loop { body: loop_body, .. } = &expr.kind else { return };
-            let ExprKind::Block(block) = &loop_body.kind else { return };
+            let ExprKind::Loop {
+                body: loop_body, ..
+            } = &expr.kind
+            else {
+                return;
+            };
+            let ExprKind::Block(block) = &loop_body.kind else {
+                return;
+            };
             if block.stmts.is_empty() && block.tail.is_none() {
                 out.push((
                     expr.span,
                     "empty `loop {}` will busy-wait forever".to_string(),
-                    Some("put a `break`, a `continue`, or replace with a real wait primitive".to_string()),
+                    Some(
+                        "put a `break`, a `continue`, or replace with a real wait primitive"
+                            .to_string(),
+                    ),
                 ));
             }
         });

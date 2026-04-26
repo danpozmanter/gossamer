@@ -88,7 +88,7 @@ impl Error {
     }
 
     /// Returns an iterator over `self` and every ancestor cause.
-    #[must_use] 
+    #[must_use]
     pub fn chain(&self) -> Chain<'_> {
         Chain { next: Some(self) }
     }

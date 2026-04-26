@@ -154,13 +154,30 @@ impl ScopeStack {
 }
 
 const PRELUDE_TYPES: &[&str] = &[
-    "str", "Result", "Option", "Vec", "HashMap", "HashSet", "BTreeMap", "BTreeSet", "VecDeque",
-    "Box", "Arc", "Rc", "Range", "Sender", "Receiver",
+    "str",
+    "Result",
+    "Option",
+    "Vec",
+    "HashMap",
+    "HashSet",
+    "BTreeMap",
+    "BTreeSet",
+    "VecDeque",
+    "Box",
+    "Arc",
+    "Rc",
+    "Range",
+    "Sender",
+    "Receiver",
     // Sync primitives matched to Go's `sync` package: a
     // mutex (lock/unlock), a wait group (add/done/wait), a
     // heap-allocated `[i64]` for cross-goroutine writes, and
     // an `AtomicI64` for lock-free counters.
-    "Mutex", "WaitGroup", "I64Vec", "U8Vec", "Atomic",
+    "Mutex",
+    "WaitGroup",
+    "I64Vec",
+    "U8Vec",
+    "Atomic",
 ];
 
 const PRELUDE_VALUES: &[&str] = &[

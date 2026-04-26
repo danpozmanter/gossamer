@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use gossamer_pkg::{
-    Cache, CacheError, FetchOptions, Fetcher, ProjectId, Resolved, ResolvedSource,
-    StaticTransport, Transport, sha256,
+    Cache, CacheError, FetchOptions, Fetcher, ProjectId, Resolved, ResolvedSource, StaticTransport,
+    Transport, sha256,
 };
 
 /// Builds a single-entry USTAR tarball in memory so tests do not

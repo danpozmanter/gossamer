@@ -10,8 +10,7 @@ pub mod base64 {
 
     use crate::errors::Error;
 
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     /// Encodes `input` to a base64 string (with `=` padding).
     #[must_use]
@@ -19,9 +18,7 @@ pub mod base64 {
         let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
         let mut chunks = input.chunks_exact(3);
         for chunk in chunks.by_ref() {
-            let n = (u32::from(chunk[0]) << 16)
-                | (u32::from(chunk[1]) << 8)
-                | u32::from(chunk[2]);
+            let n = (u32::from(chunk[0]) << 16) | (u32::from(chunk[1]) << 8) | u32::from(chunk[2]);
             out.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
             out.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
             out.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
@@ -51,10 +48,7 @@ pub mod base64 {
     /// Decodes a base64 string, tolerating whitespace between
     /// characters.
     pub fn decode(input: &str) -> Result<Vec<u8>, Error> {
-        let filtered: Vec<u8> = input
-            .bytes()
-            .filter(|b| !b.is_ascii_whitespace())
-            .collect();
+        let filtered: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
         if filtered.len() % 4 != 0 {
             return Err(Error::new("base64 input length must be a multiple of 4"));
         }
@@ -68,12 +62,13 @@ pub mod base64 {
                     values[i] = 0;
                 } else {
                     values[i] = index(*byte)
-                        .ok_or_else(|| Error::new(format!("bad base64 character `{}`", *byte as char)))?
+                        .ok_or_else(|| {
+                            Error::new(format!("bad base64 character `{}`", *byte as char))
+                        })?
                         .into();
                 }
             }
-            let n =
-                (values[0] << 18) | (values[1] << 12) | (values[2] << 6) | values[3];
+            let n = (values[0] << 18) | (values[1] << 12) | (values[2] << 6) | values[3];
             out.push((n >> 16) as u8);
             if pad < 2 {
                 out.push((n >> 8) as u8);

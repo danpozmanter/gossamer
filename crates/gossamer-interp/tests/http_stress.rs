@@ -90,9 +90,7 @@ fn sequential_multi_connection_server_serves_every_request() {
                 let Ok(mut stream) = TcpStream::connect(client_addr) else {
                     continue;
                 };
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .ok();
+                stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
                 if stream
                     .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
                     .is_err()
@@ -120,9 +118,7 @@ fn sequential_multi_connection_server_serves_every_request() {
         .map(|h| h.join().expect("client thread panicked"))
         .sum();
 
-    let _ = server_thread
-        .join()
-        .expect("server thread panicked");
+    let _ = server_thread.join().expect("server thread panicked");
 
     // Connections can occasionally race the GOSSAMER_HTTP_MAX_REQUESTS
     // counter — a client may successfully send a request the server

@@ -70,7 +70,12 @@ fn render_label(out: &mut String, label: &Label, map: &SourceMap) {
         let gutter = format!("{line:>4}");
         let _ = writeln!(out, "  {gutter} | {source_line}");
         let padding = " ".repeat(column.saturating_sub(1) as usize);
-        let span_len = label.location.span.end.saturating_sub(label.location.span.start).max(1);
+        let span_len = label
+            .location
+            .span
+            .end
+            .saturating_sub(label.location.span.start)
+            .max(1);
         let caret = "^".repeat(span_len as usize);
         let _ = writeln!(out, "       | {padding}{caret}");
     }

@@ -94,29 +94,49 @@ fn active_key_value(key: &str) -> Option<&'static str> {
     match key {
         "target_os" => {
             #[cfg(target_os = "linux")]
-            { Some("linux") }
+            {
+                Some("linux")
+            }
             #[cfg(target_os = "macos")]
-            { Some("macos") }
+            {
+                Some("macos")
+            }
             #[cfg(target_os = "windows")]
-            { Some("windows") }
+            {
+                Some("windows")
+            }
             #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            { None }
+            {
+                None
+            }
         }
         "target_family" => {
             #[cfg(unix)]
-            { Some("unix") }
+            {
+                Some("unix")
+            }
             #[cfg(windows)]
-            { Some("windows") }
+            {
+                Some("windows")
+            }
             #[cfg(not(any(unix, windows)))]
-            { None }
+            {
+                None
+            }
         }
         "target_arch" => {
             #[cfg(target_arch = "x86_64")]
-            { Some("x86_64") }
+            {
+                Some("x86_64")
+            }
             #[cfg(target_arch = "aarch64")]
-            { Some("aarch64") }
+            {
+                Some("aarch64")
+            }
             #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            { None }
+            {
+                None
+            }
         }
         _ => None,
     }
@@ -244,9 +264,7 @@ impl<'src> CfgParser<'src> {
             if b == b'"' {
                 let end = self.cursor;
                 self.cursor += 1;
-                return Some(
-                    String::from_utf8_lossy(&self.bytes[start..end]).into_owned(),
-                );
+                return Some(String::from_utf8_lossy(&self.bytes[start..end]).into_owned());
             }
             self.cursor += 1;
         }
@@ -287,16 +305,13 @@ mod tests {
         );
         assert_eq!(
             parse_cfg_expr("not ( windows )"),
-            Some(CfgExpr::Not(Box::new(CfgExpr::Flag(
-                "windows".to_string()
-            ))))
+            Some(CfgExpr::Not(Box::new(CfgExpr::Flag("windows".to_string()))))
         );
     }
 
     #[test]
     fn all_and_any_compose() {
-        let expr =
-            parse_cfg_expr("all ( unix , not ( windows ) )").expect("all parses");
+        let expr = parse_cfg_expr("all ( unix , not ( windows ) )").expect("all parses");
         // On unix both clauses are true.
         #[cfg(unix)]
         assert!(evaluate(&expr));

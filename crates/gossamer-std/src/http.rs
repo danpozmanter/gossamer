@@ -268,7 +268,7 @@ pub fn parse_status_line(line: &str) -> Option<(String, StatusCode, String)> {
 pub struct Server;
 
 impl Server {
- /// Constructs a stub server; integration replaces this.
+    /// Constructs a stub server; integration replaces this.
     #[must_use]
     pub fn new() -> Self {
         Self
@@ -280,8 +280,8 @@ impl Server {
 pub mod server {
     use std::io::{self, BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener, TcpStream};
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use super::{Method, Request, Response};
@@ -342,12 +342,11 @@ pub mod server {
     where
         H: FnMut(Request) -> Response,
     {
-        use std::sync::mpsc::{channel, RecvTimeoutError};
+        use std::sync::mpsc::{RecvTimeoutError, channel};
 
         let bound_addr = listener.local_addr()?;
 
-        let (dispatch_tx, dispatch_rx) =
-            channel::<(Request, std::sync::mpsc::Sender<Response>)>();
+        let (dispatch_tx, dispatch_rx) = channel::<(Request, std::sync::mpsc::Sender<Response>)>();
 
         // Acceptor thread: blocking accept, one worker per
         // connection. No poll sleep.
@@ -356,7 +355,14 @@ pub mod server {
         let tx_for_accept = dispatch_tx.clone();
         let acceptor = std::thread::Builder::new()
             .name("gossamer-http-accept".to_string())
-            .spawn(move || accept_loop(listener, shutdown_for_accept, cfg_for_workers, tx_for_accept))
+            .spawn(move || {
+                accept_loop(
+                    listener,
+                    shutdown_for_accept,
+                    cfg_for_workers,
+                    tx_for_accept,
+                );
+            })
             .map_err(|e| io::Error::other(format!("spawn accept: {e}")))?;
 
         // Drop our extra sender so the dispatch channel sees
@@ -557,10 +563,7 @@ pub mod server {
             if header_bytes_read > config.max_header_bytes {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!(
-                        "header block exceeded {}-byte cap",
-                        config.max_header_bytes
-                    ),
+                    format!("header block exceeded {}-byte cap", config.max_header_bytes),
                 ));
             }
             let stripped = line.trim_end_matches(&['\r', '\n'][..]);
@@ -610,11 +613,7 @@ pub mod server {
         }
         // Connection header is set by the worker based on the
         // request's HTTP version and the peer's / handler's intent.
-        let mut out = format!(
-            "HTTP/1.1 {} {}\r\n",
-            response.status.as_u16(),
-            reason,
-        );
+        let mut out = format!("HTTP/1.1 {} {}\r\n", response.status.as_u16(), reason);
         for (name, value) in headers.iter() {
             let cased = canonical_header_name(name);
             out.push_str(&cased);

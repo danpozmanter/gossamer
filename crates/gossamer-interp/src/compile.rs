@@ -45,8 +45,7 @@ pub(crate) struct TypedReg {
 
 /// Struct declaration-order field tables the compiler uses to
 /// resolve field-access offsets at compile time.
-pub(crate) type StructLayouts =
-    std::collections::HashMap<gossamer_resolve::DefId, Vec<String>>;
+pub(crate) type StructLayouts = std::collections::HashMap<gossamer_resolve::DefId, Vec<String>>;
 
 /// Trivial-wrapper inlining table: for each user function
 /// whose body is `return intrinsic(param)` (a pattern common
@@ -235,8 +234,7 @@ impl<'tcx> FnBuilder<'tcx> {
         if let Some(idx) = self.f64_const_cache.get(&key) {
             return *idx;
         }
-        let idx = ConstIdx::try_from(self.f64_consts.len())
-            .expect("f64 const pool overflow");
+        let idx = ConstIdx::try_from(self.f64_consts.len()).expect("f64 const pool overflow");
         self.f64_consts.push(value);
         self.f64_const_cache.insert(key, idx);
         idx
@@ -246,8 +244,7 @@ impl<'tcx> FnBuilder<'tcx> {
         if let Some(idx) = self.i64_const_cache.get(&value) {
             return *idx;
         }
-        let idx = ConstIdx::try_from(self.i64_consts.len())
-            .expect("i64 const pool overflow");
+        let idx = ConstIdx::try_from(self.i64_consts.len()).expect("i64 const pool overflow");
         self.i64_consts.push(value);
         self.i64_const_cache.insert(value, idx);
         idx
@@ -340,11 +337,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// the offset of `field_name` within its declaration-order
     /// field list. Used to fold field reads/writes to the
     /// `ByOffset` op variants that skip the runtime name scan.
-    fn resolve_struct_field_offset(
-        &self,
-        ty: gossamer_types::Ty,
-        field_name: &str,
-    ) -> Option<u16> {
+    fn resolve_struct_field_offset(&self, ty: gossamer_types::Ty, field_name: &str) -> Option<u16> {
         let ty = self.unwrap_ref(ty);
         let kind = self.tcx.kind(ty)?;
         let def = match kind {
@@ -373,7 +366,9 @@ impl<'tcx> FnBuilder<'tcx> {
     fn array_elem_ty(&self, ty: gossamer_types::Ty) -> Option<gossamer_types::Ty> {
         let ty = self.unwrap_ref(ty);
         match self.tcx.kind(ty) {
-            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => Some(*elem),
+            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => {
+                Some(*elem)
+            }
             _ => None,
         }
     }
@@ -385,12 +380,18 @@ impl<'tcx> FnBuilder<'tcx> {
             RegKind::Value => tr.reg,
             RegKind::F64 => {
                 let dst = self.alloc_reg();
-                self.emit(Op::BoxF64 { dst_v: dst, src_f: tr.reg });
+                self.emit(Op::BoxF64 {
+                    dst_v: dst,
+                    src_f: tr.reg,
+                });
                 dst
             }
             RegKind::I64 => {
                 let dst = self.alloc_reg();
-                self.emit(Op::BoxI64 { dst_v: dst, src_i: tr.reg });
+                self.emit(Op::BoxI64 {
+                    dst_v: dst,
+                    src_i: tr.reg,
+                });
                 dst
             }
         }
@@ -398,20 +399,30 @@ impl<'tcx> FnBuilder<'tcx> {
 
     /// Coerces a typed-reg into the float register file.
     fn as_f64(&mut self, tr: TypedReg) -> Reg {
-        if tr.kind == RegKind::F64 { tr.reg } else {
+        if tr.kind == RegKind::F64 {
+            tr.reg
+        } else {
             let v = self.as_value(tr);
             let dst = self.alloc_float();
-            self.emit(Op::UnboxF64 { dst_f: dst, src_v: v });
+            self.emit(Op::UnboxF64 {
+                dst_f: dst,
+                src_v: v,
+            });
             dst
         }
     }
 
     /// Coerces a typed-reg into the int register file.
     fn as_i64(&mut self, tr: TypedReg) -> Reg {
-        if tr.kind == RegKind::I64 { tr.reg } else {
+        if tr.kind == RegKind::I64 {
+            tr.reg
+        } else {
             let v = self.as_value(tr);
             let dst = self.alloc_int();
-            self.emit(Op::UnboxI64 { dst_i: dst, src_v: v });
+            self.emit(Op::UnboxI64 {
+                dst_i: dst,
+                src_v: v,
+            });
             dst
         }
     }
@@ -425,17 +436,32 @@ impl<'tcx> FnBuilder<'tcx> {
             RegKind::Value => {
                 let dst = self.alloc_reg();
                 self.emit(Op::Move { dst, src: tr.reg });
-                TypedReg { reg: dst, kind: RegKind::Value }
+                TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                }
             }
             RegKind::F64 => {
                 let dst = self.alloc_float();
-                self.emit(Op::MoveF64 { dst_f: dst, src_f: tr.reg });
-                TypedReg { reg: dst, kind: RegKind::F64 }
+                self.emit(Op::MoveF64 {
+                    dst_f: dst,
+                    src_f: tr.reg,
+                });
+                TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                }
             }
             RegKind::I64 => {
                 let dst = self.alloc_int();
-                self.emit(Op::MoveI64 { dst_i: dst, src_i: tr.reg });
-                TypedReg { reg: dst, kind: RegKind::I64 }
+                self.emit(Op::MoveI64 {
+                    dst_i: dst,
+                    src_i: tr.reg,
+                });
+                TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                }
             }
         }
     }
@@ -447,15 +473,24 @@ impl<'tcx> FnBuilder<'tcx> {
         match dst.kind {
             RegKind::Value => {
                 let src_v = self.as_value(src);
-                self.emit(Op::Move { dst: dst.reg, src: src_v });
+                self.emit(Op::Move {
+                    dst: dst.reg,
+                    src: src_v,
+                });
             }
             RegKind::F64 => {
                 let src_f = self.as_f64(src);
-                self.emit(Op::MoveF64 { dst_f: dst.reg, src_f });
+                self.emit(Op::MoveF64 {
+                    dst_f: dst.reg,
+                    src_f,
+                });
             }
             RegKind::I64 => {
                 let src_i = self.as_i64(src);
-                self.emit(Op::MoveI64 { dst_i: dst.reg, src_i });
+                self.emit(Op::MoveI64 {
+                    dst_i: dst.reg,
+                    src_i,
+                });
             }
         }
     }
@@ -484,7 +519,10 @@ impl<'tcx> FnBuilder<'tcx> {
         if let HirPatKind::Binding { name, .. } = &pattern.kind {
             self.bind_local(
                 &name.name,
-                TypedReg { reg, kind: RegKind::Value },
+                TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                },
             );
         }
     }
@@ -568,7 +606,10 @@ impl<'tcx> FnBuilder<'tcx> {
                         let reg = self.alloc_reg();
                         self.bind_local(
                             &name.name,
-                            TypedReg { reg, kind: RegKind::Value },
+                            TypedReg {
+                                reg,
+                                kind: RegKind::Value,
+                            },
                         );
                     }
                 } else if let Some(init) = init {
@@ -614,24 +655,24 @@ impl<'tcx> FnBuilder<'tcx> {
                     return Ok(tr);
                 }
                 let reg = self.compile_path(segments)?;
-                Ok(TypedReg { reg, kind: RegKind::Value })
+                Ok(TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                })
             }
-            HirExprKind::Binary { op, lhs, rhs } => {
-                self.compile_binary_ex(*op, lhs, rhs)
-            }
-            HirExprKind::Unary { op, operand } => {
-                self.compile_unary_ex(*op, operand)
-            }
+            HirExprKind::Binary { op, lhs, rhs } => self.compile_binary_ex(*op, lhs, rhs),
+            HirExprKind::Unary { op, operand } => self.compile_unary_ex(*op, operand),
             HirExprKind::Call { callee, args } => {
                 if let Some(tr) = self.try_intrinsic_call(callee, args)? {
                     return Ok(tr);
                 }
                 let reg = self.compile_call(callee, args)?;
-                Ok(TypedReg { reg, kind: RegKind::Value })
+                Ok(TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                })
             }
-            HirExprKind::Field { receiver, name } => {
-                self.compile_field_ex(receiver, name, expr.ty)
-            }
+            HirExprKind::Field { receiver, name } => self.compile_field_ex(receiver, name, expr.ty),
             // Typed numeric cast. We classify the result and the
             // source by the existing `expr_kind` helper. The four
             // tractable combinations land directly in the right
@@ -653,24 +694,32 @@ impl<'tcx> FnBuilder<'tcx> {
                         let src_i = self.as_i64(src_tr);
                         let dst_f = self.alloc_float();
                         self.emit(Op::IntToFloatF64 { dst_f, src_i });
-                        Ok(TypedReg { reg: dst_f, kind: RegKind::F64 })
+                        Ok(TypedReg {
+                            reg: dst_f,
+                            kind: RegKind::F64,
+                        })
                     }
                     (RegKind::I64, RegKind::F64) => {
                         let src_tr = self.compile_expr_ex(value)?;
                         let src_f = self.as_f64(src_tr);
                         let dst_i = self.alloc_int();
                         self.emit(Op::FloatToIntI64 { dst_i, src_f });
-                        Ok(TypedReg { reg: dst_i, kind: RegKind::I64 })
+                        Ok(TypedReg {
+                            reg: dst_i,
+                            kind: RegKind::I64,
+                        })
                     }
-                    (RegKind::F64, RegKind::F64)
-                    | (RegKind::I64, RegKind::I64) => {
+                    (RegKind::F64, RegKind::F64) | (RegKind::I64, RegKind::I64) => {
                         // No-op cast — re-classify the inner
                         // expression's typed result directly.
                         self.compile_expr_ex(value)
                     }
                     _ => {
                         let reg = self.compile_deferred(expr)?;
-                        Ok(TypedReg { reg, kind: RegKind::Value })
+                        Ok(TypedReg {
+                            reg,
+                            kind: RegKind::Value,
+                        })
                     }
                 }
             }
@@ -693,33 +742,45 @@ impl<'tcx> FnBuilder<'tcx> {
                         base: base_reg,
                         index_i: idx_i,
                     });
-                    return Ok(TypedReg { reg: dst_i, kind: RegKind::I64 });
+                    return Ok(TypedReg {
+                        reg: dst_i,
+                        kind: RegKind::I64,
+                    });
                 }
                 // Slow path: generic IndexGet → boxed Value reg.
                 let idx_reg = self.compile_expr(index)?;
                 let dst = self.alloc_reg();
-                self.emit(Op::IndexGet { dst, base: base_reg, index: idx_reg });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::IndexGet {
+                    dst,
+                    base: base_reg,
+                    index: idx_reg,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) => {
-                if let Some(tr) =
-                    self.try_build_float_array(expr.ty, elems.as_slice())?
-                {
+                if let Some(tr) = self.try_build_float_array(expr.ty, elems.as_slice())? {
                     return Ok(tr);
                 }
-                if let Some(tr) =
-                    self.try_build_int_array(expr.ty, elems.as_slice())?
-                {
+                if let Some(tr) = self.try_build_int_array(expr.ty, elems.as_slice())? {
                     return Ok(tr);
                 }
                 let reg = self.compile_expr(expr)?;
-                Ok(TypedReg { reg, kind: RegKind::Value })
+                Ok(TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                })
             }
             // Everything else goes through the generic path,
             // which always yields a `Value` register.
             _ => {
                 let reg = self.compile_expr(expr)?;
-                Ok(TypedReg { reg, kind: RegKind::Value })
+                Ok(TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                })
             }
         }
     }
@@ -739,9 +800,14 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::Call { callee, args } => {
                 let tr = {
                     let intr = self.try_intrinsic_call(callee, args)?;
-                    if let Some(tr) = intr { tr } else {
+                    if let Some(tr) = intr {
+                        tr
+                    } else {
                         let reg = self.compile_call(callee, args)?;
-                        TypedReg { reg, kind: RegKind::Value }
+                        TypedReg {
+                            reg,
+                            kind: RegKind::Value,
+                        }
                     }
                 };
                 Ok(self.as_value(tr))
@@ -789,15 +855,22 @@ impl<'tcx> FnBuilder<'tcx> {
             // Native method dispatch — avoids the `EvalDeferred`
             // env-rebuild cost that dominated tight loops
             // (fasta's inner `out.write_byte(…)` etc.).
-            HirExprKind::MethodCall { receiver, name, args, .. } => {
-                self.compile_method_call(receiver, name, args)
-            }
+            HirExprKind::MethodCall {
+                receiver,
+                name,
+                args,
+                ..
+            } => self.compile_method_call(receiver, name, args),
             // Native indexed read.
             HirExprKind::Index { base, index } => {
                 let base_reg = self.compile_expr(base)?;
                 let idx_reg = self.compile_expr(index)?;
                 let dst = self.alloc_reg();
-                self.emit(Op::IndexGet { dst, base: base_reg, index: idx_reg });
+                self.emit(Op::IndexGet {
+                    dst,
+                    base: base_reg,
+                    index: idx_reg,
+                });
                 Ok(dst)
             }
             // Native struct-field read.
@@ -808,14 +881,22 @@ impl<'tcx> FnBuilder<'tcx> {
                     Value::String(SmolStr::from(name.name.clone())),
                 );
                 let dst = self.alloc_reg();
-                self.emit(Op::FieldGet { dst, receiver: recv_reg, name_idx });
+                self.emit(Op::FieldGet {
+                    dst,
+                    receiver: recv_reg,
+                    name_idx,
+                });
                 Ok(dst)
             }
             // Native tuple / positional-field read.
             HirExprKind::TupleIndex { receiver, index } => {
                 let recv_reg = self.compile_expr(receiver)?;
                 let dst = self.alloc_reg();
-                self.emit(Op::TupleIndex { dst, receiver: recv_reg, index: *index });
+                self.emit(Op::TupleIndex {
+                    dst,
+                    receiver: recv_reg,
+                    index: *index,
+                });
                 Ok(dst)
             }
             // Cast — delegate to the typed compile path so the
@@ -836,7 +917,11 @@ impl<'tcx> FnBuilder<'tcx> {
                     // BuildTuple with count 0 to keep semantics
                     // honest.
                     let dst = self.alloc_reg();
-                    self.emit(Op::BuildTuple { dst, first: 0, count: 0 });
+                    self.emit(Op::BuildTuple {
+                        dst,
+                        first: 0,
+                        count: 0,
+                    });
                     return Ok(dst);
                 }
                 // Allocate a contiguous block of value registers
@@ -905,13 +990,19 @@ impl<'tcx> FnBuilder<'tcx> {
                 RegKind::Value => tr.reg,
                 RegKind::F64 => {
                     let dst = self.alloc_reg();
-                    self.emit(Op::BoxF64 { dst_v: dst, src_f: tr.reg });
+                    self.emit(Op::BoxF64 {
+                        dst_v: dst,
+                        src_f: tr.reg,
+                    });
                     writebacks.push((tr, dst));
                     dst
                 }
                 RegKind::I64 => {
                     let dst = self.alloc_reg();
-                    self.emit(Op::BoxI64 { dst_v: dst, src_i: tr.reg });
+                    self.emit(Op::BoxI64 {
+                        dst_v: dst,
+                        src_i: tr.reg,
+                    });
                     writebacks.push((tr, dst));
                     dst
                 }
@@ -919,8 +1010,8 @@ impl<'tcx> FnBuilder<'tcx> {
             names.push(name);
             regs.push(value_reg);
         }
-        let expr_idx = u32::try_from(self.deferred_exprs.len())
-            .expect("deferred expression index overflow");
+        let expr_idx =
+            u32::try_from(self.deferred_exprs.len()).expect("deferred expression index overflow");
         self.deferred_exprs.push(expr.clone());
         self.deferred_envs.push(names);
         self.deferred_env_regs.push(regs);
@@ -929,10 +1020,16 @@ impl<'tcx> FnBuilder<'tcx> {
         for (tr, vr) in writebacks {
             match tr.kind {
                 RegKind::F64 => {
-                    self.emit(Op::UnboxF64 { dst_f: tr.reg, src_v: vr });
+                    self.emit(Op::UnboxF64 {
+                        dst_f: tr.reg,
+                        src_v: vr,
+                    });
                 }
                 RegKind::I64 => {
-                    self.emit(Op::UnboxI64 { dst_i: tr.reg, src_v: vr });
+                    self.emit(Op::UnboxI64 {
+                        dst_i: tr.reg,
+                        src_v: vr,
+                    });
                 }
                 RegKind::Value => {}
             }
@@ -1029,7 +1126,10 @@ impl<'tcx> FnBuilder<'tcx> {
     ) -> RuntimeResult<TypedReg> {
         if matches!(op, HirBinaryOp::And | HirBinaryOp::Or) {
             let reg = self.compile_short_circuit(op, lhs, rhs)?;
-            return Ok(TypedReg { reg, kind: RegKind::Value });
+            return Ok(TypedReg {
+                reg,
+                kind: RegKind::Value,
+            });
         }
         let lk = self.expr_kind(lhs);
         let rk = self.expr_kind(rhs);
@@ -1062,10 +1162,14 @@ impl<'tcx> FnBuilder<'tcx> {
         let lhs_reg = self.compile_expr(lhs)?;
         let rhs_reg = self.compile_expr(rhs)?;
         let dst = self.alloc_reg();
-        let instr = self.binary_op(op, dst, lhs_reg, rhs_reg)
+        let instr = self
+            .binary_op(op, dst, lhs_reg, rhs_reg)
             .ok_or(RuntimeError::Unsupported("binary op kind"))?;
         self.emit(instr);
-        Ok(TypedReg { reg: dst, kind: RegKind::Value })
+        Ok(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        })
     }
 
     /// Allocates a fresh `arith_caches` slot for a Tier-C2
@@ -1085,19 +1189,34 @@ impl<'tcx> FnBuilder<'tcx> {
     fn binary_op(&mut self, op: HirBinaryOp, dst: Reg, lhs: Reg, rhs: Reg) -> Option<Op> {
         Some(match op {
             HirBinaryOp::Add => Op::AddInt {
-                dst, lhs, rhs, cache_idx: self.next_arith_cache(),
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
             },
             HirBinaryOp::Sub => Op::SubInt {
-                dst, lhs, rhs, cache_idx: self.next_arith_cache(),
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
             },
             HirBinaryOp::Mul => Op::MulInt {
-                dst, lhs, rhs, cache_idx: self.next_arith_cache(),
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
             },
             HirBinaryOp::Div => Op::DivInt {
-                dst, lhs, rhs, cache_idx: self.next_arith_cache(),
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
             },
             HirBinaryOp::Rem => Op::RemInt {
-                dst, lhs, rhs, cache_idx: self.next_arith_cache(),
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
             },
             HirBinaryOp::Eq => Op::Eq { dst, lhs, rhs },
             HirBinaryOp::Ne => Op::Ne { dst, lhs, rhs },
@@ -1139,8 +1258,16 @@ impl<'tcx> FnBuilder<'tcx> {
                         let b_f = self.as_f64(b_tr);
                         let c_f = self.as_f64(c_tr);
                         let dst = self.alloc_float();
-                        self.emit(Op::MulAddF64 { dst_f: dst, a_f, b_f, c_f });
-                        return Ok(Some(TypedReg { reg: dst, kind: RegKind::F64 }));
+                        self.emit(Op::MulAddF64 {
+                            dst_f: dst,
+                            a_f,
+                            b_f,
+                            c_f,
+                        });
+                        return Ok(Some(TypedReg {
+                            reg: dst,
+                            kind: RegKind::F64,
+                        }));
                     }
                 }
                 // c + a * b
@@ -1161,8 +1288,16 @@ impl<'tcx> FnBuilder<'tcx> {
                         let b_f = self.as_f64(b_tr);
                         let c_f = self.as_f64(c_tr);
                         let dst = self.alloc_float();
-                        self.emit(Op::MulAddF64 { dst_f: dst, a_f, b_f, c_f });
-                        return Ok(Some(TypedReg { reg: dst, kind: RegKind::F64 }));
+                        self.emit(Op::MulAddF64 {
+                            dst_f: dst,
+                            a_f,
+                            b_f,
+                            c_f,
+                        });
+                        return Ok(Some(TypedReg {
+                            reg: dst,
+                            kind: RegKind::F64,
+                        }));
                     }
                 }
             }
@@ -1185,8 +1320,16 @@ impl<'tcx> FnBuilder<'tcx> {
                         let b_f = self.as_f64(b_tr);
                         let c_f = self.as_f64(c_tr);
                         let dst = self.alloc_float();
-                        self.emit(Op::MulSubF64 { dst_f: dst, a_f, b_f, c_f });
-                        return Ok(Some(TypedReg { reg: dst, kind: RegKind::F64 }));
+                        self.emit(Op::MulSubF64 {
+                            dst_f: dst,
+                            a_f,
+                            b_f,
+                            c_f,
+                        });
+                        return Ok(Some(TypedReg {
+                            reg: dst,
+                            kind: RegKind::F64,
+                        }));
                     }
                 }
             }
@@ -1204,55 +1347,125 @@ impl<'tcx> FnBuilder<'tcx> {
         match op {
             HirBinaryOp::Add => {
                 let dst = self.alloc_float();
-                self.emit(Op::AddF64 { dst_f: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::F64 })
+                self.emit(Op::AddF64 {
+                    dst_f: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
             }
             HirBinaryOp::Sub => {
                 let dst = self.alloc_float();
-                self.emit(Op::SubF64 { dst_f: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::F64 })
+                self.emit(Op::SubF64 {
+                    dst_f: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
             }
             // (handled by the caller via `try_compile_fma` —
             // this arm is the non-fused fallback)
             HirBinaryOp::Mul => {
                 let dst = self.alloc_float();
-                self.emit(Op::MulF64 { dst_f: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::F64 })
+                self.emit(Op::MulF64 {
+                    dst_f: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
             }
             HirBinaryOp::Div => {
                 let dst = self.alloc_float();
-                self.emit(Op::DivF64 { dst_f: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::F64 })
+                self.emit(Op::DivF64 {
+                    dst_f: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
             }
             HirBinaryOp::Lt => {
                 let dst = self.alloc_reg();
-                self.emit(Op::LtF64 { dst_v: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::LtF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Le => {
                 let dst = self.alloc_reg();
-                self.emit(Op::LeF64 { dst_v: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::LeF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Gt => {
                 let dst = self.alloc_reg();
-                self.emit(Op::GtF64 { dst_v: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::GtF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Ge => {
                 let dst = self.alloc_reg();
-                self.emit(Op::GeF64 { dst_v: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::GeF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Eq => {
                 let dst = self.alloc_reg();
-                self.emit(Op::EqF64 { dst_v: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::EqF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Ne => {
                 let dst = self.alloc_reg();
-                self.emit(Op::NeF64 { dst_v: dst, lhs_f, rhs_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::NeF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             _ => Err(RuntimeError::Unsupported("f64 binary op kind")),
         }
@@ -1267,68 +1480,141 @@ impl<'tcx> FnBuilder<'tcx> {
         match op {
             HirBinaryOp::Add => {
                 let dst = self.alloc_int();
-                self.emit(Op::AddI64 { dst_i: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::I64 })
+                self.emit(Op::AddI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
             }
             HirBinaryOp::Sub => {
                 let dst = self.alloc_int();
-                self.emit(Op::SubI64 { dst_i: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::I64 })
+                self.emit(Op::SubI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
             }
             HirBinaryOp::Mul => {
                 let dst = self.alloc_int();
-                self.emit(Op::MulI64 { dst_i: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::I64 })
+                self.emit(Op::MulI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
             }
             HirBinaryOp::Div => {
                 let dst = self.alloc_int();
-                self.emit(Op::DivI64 { dst_i: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::I64 })
+                self.emit(Op::DivI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
             }
             HirBinaryOp::Rem => {
                 let dst = self.alloc_int();
-                self.emit(Op::RemI64 { dst_i: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::I64 })
+                self.emit(Op::RemI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
             }
             HirBinaryOp::Lt => {
                 let dst = self.alloc_reg();
-                self.emit(Op::LtI64 { dst_v: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::LtI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Le => {
                 let dst = self.alloc_reg();
-                self.emit(Op::LeI64 { dst_v: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::LeI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Gt => {
                 let dst = self.alloc_reg();
-                self.emit(Op::GtI64 { dst_v: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::GtI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Ge => {
                 let dst = self.alloc_reg();
-                self.emit(Op::GeI64 { dst_v: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::GeI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Eq => {
                 let dst = self.alloc_reg();
-                self.emit(Op::EqI64 { dst_v: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::EqI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             HirBinaryOp::Ne => {
                 let dst = self.alloc_reg();
-                self.emit(Op::NeI64 { dst_v: dst, lhs_i, rhs_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::Value })
+                self.emit(Op::NeI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
             }
             _ => Err(RuntimeError::Unsupported("i64 binary op kind")),
         }
     }
 
-    fn compile_unary_ex(
-        &mut self,
-        op: HirUnaryOp,
-        operand: &HirExpr,
-    ) -> RuntimeResult<TypedReg> {
+    fn compile_unary_ex(&mut self, op: HirUnaryOp, operand: &HirExpr) -> RuntimeResult<TypedReg> {
         let kind = self.expr_kind(operand);
         match (op, kind) {
             (HirUnaryOp::Neg, RegKind::F64) => {
@@ -1336,48 +1622,65 @@ impl<'tcx> FnBuilder<'tcx> {
                 let src_f = self.as_f64(tr);
                 let dst = self.alloc_float();
                 self.emit(Op::NegF64 { dst_f: dst, src_f });
-                Ok(TypedReg { reg: dst, kind: RegKind::F64 })
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
             }
             (HirUnaryOp::Neg, RegKind::I64) => {
                 let tr = self.compile_expr_ex(operand)?;
                 let src_i = self.as_i64(tr);
                 let dst = self.alloc_int();
                 self.emit(Op::NegI64 { dst_i: dst, src_i });
-                Ok(TypedReg { reg: dst, kind: RegKind::I64 })
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
             }
             _ => {
                 let reg = self.compile_unary(op, operand)?;
-                Ok(TypedReg { reg, kind: RegKind::Value })
+                Ok(TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                })
             }
         }
     }
 
-    fn compile_literal_ex(
-        &mut self,
-        lit: &HirLiteral,
-        _ty: Ty,
-    ) -> RuntimeResult<TypedReg> {
+    fn compile_literal_ex(&mut self, lit: &HirLiteral, _ty: Ty) -> RuntimeResult<TypedReg> {
         match lit {
             HirLiteral::Float(text) => {
                 let value = strip_float_suffix(text).parse::<f64>().unwrap_or(0.0);
                 let idx = self.f64_const_idx(value);
                 let dst = self.alloc_float();
                 self.emit(Op::LoadConstF64 { dst_f: dst, idx });
-                Ok(TypedReg { reg: dst, kind: RegKind::F64 })
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
             }
             HirLiteral::Int(text) => {
                 if let Some(n) = parse_int(text) {
                     let idx = self.i64_const_idx(n);
                     let dst = self.alloc_int();
                     self.emit(Op::LoadConstI64 { dst_i: dst, idx });
-                    return Ok(TypedReg { reg: dst, kind: RegKind::I64 });
+                    return Ok(TypedReg {
+                        reg: dst,
+                        kind: RegKind::I64,
+                    });
                 }
                 let reg = self.compile_literal(lit)?;
-                Ok(TypedReg { reg, kind: RegKind::Value })
+                Ok(TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                })
             }
             _ => {
                 let reg = self.compile_literal(lit)?;
-                Ok(TypedReg { reg, kind: RegKind::Value })
+                Ok(TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                })
             }
         }
     }
@@ -1424,9 +1727,9 @@ impl<'tcx> FnBuilder<'tcx> {
         // sees the actual field values, so a later type mismatch
         // would just fall back at runtime.
         if let Some(tys) = self.tcx.struct_field_tys(def) {
-            let all_f64 = tys.iter().all(|t| {
-                matches!(self.tcx.kind(*t), Some(TyKind::Float(FloatTy::F64)))
-            });
+            let all_f64 = tys
+                .iter()
+                .all(|t| matches!(self.tcx.kind(*t), Some(TyKind::Float(FloatTy::F64))));
             if !all_f64 {
                 return Ok(None);
             }
@@ -1474,8 +1777,7 @@ impl<'tcx> FnBuilder<'tcx> {
             let rest = &args[1..];
             let mut i = 0;
             while i + 1 < rest.len() {
-                let HirExprKind::Literal(HirLiteral::String(fname)) = &rest[i].kind
-                else {
+                let HirExprKind::Literal(HirLiteral::String(fname)) = &rest[i].kind else {
                     return Ok(None);
                 };
                 map.insert(fname.clone(), &rest[i + 1]);
@@ -1499,13 +1801,13 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(value_expr) = fields.get(fname) {
                     let tr = self.compile_expr_ex(value_expr)?;
                     let src_f = self.as_f64(tr);
-                    self.emit(Op::MoveF64 { dst_f: target, src_f });
+                    self.emit(Op::MoveF64 {
+                        dst_f: target,
+                        src_f,
+                    });
                 } else {
                     let idx = self.f64_const_idx(0.0);
-                    self.emit(Op::LoadConstF64 {
-                        dst_f: target,
-                        idx,
-                    });
+                    self.emit(Op::LoadConstF64 { dst_f: target, idx });
                 }
             }
         }
@@ -1523,8 +1825,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 .map(|n| Value::String(SmolStr::from(n.clone())))
                 .collect::<Vec<_>>(),
         ));
-        let fields_idx =
-            self.const_idx(ConstKey::String(fields_key), fields_value);
+        let fields_idx = self.const_idx(ConstKey::String(fields_key), fields_value);
         let dst = self.alloc_reg();
         self.emit(Op::BuildFloatArray {
             dst_v: dst,
@@ -1539,7 +1840,10 @@ impl<'tcx> FnBuilder<'tcx> {
         // `Flat{Get,Set}F64` and skip the runtime
         // discriminant check.
         self.flat_locals.insert(dst, stride);
-        Ok(Some(TypedReg { reg: dst, kind: RegKind::Value }))
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
     }
 
     /// Mirror of [`Self::try_build_float_array`] for the
@@ -1583,14 +1887,24 @@ impl<'tcx> FnBuilder<'tcx> {
             let target = first_i + u16::try_from(i).expect("count overflow");
             let tr = self.compile_expr_ex(elem)?;
             let src_i = self.as_i64(tr);
-            self.emit(Op::MoveI64 { dst_i: target, src_i });
+            self.emit(Op::MoveI64 {
+                dst_i: target,
+                src_i,
+            });
         }
         let dst = self.alloc_reg();
-        self.emit(Op::BuildIntArray { dst_v: dst, first_i, count });
+        self.emit(Op::BuildIntArray {
+            dst_v: dst,
+            first_i,
+            count,
+        });
         // Track for the indexing fast path so subsequent
         // `arr[k]` reads route through `Op::IntArrayGetI64`.
         self.flat_int_locals.insert(dst);
-        Ok(Some(TypedReg { reg: dst, kind: RegKind::Value }))
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
     }
 
     /// Phase-2 field-read fast path. When the field's own
@@ -1605,10 +1919,7 @@ impl<'tcx> FnBuilder<'tcx> {
         name: &Ident,
         field_ty: Ty,
     ) -> RuntimeResult<TypedReg> {
-        let field_is_f64 = matches!(
-            self.tcx.kind(field_ty),
-            Some(TyKind::Float(FloatTy::F64))
-        );
+        let field_is_f64 = matches!(self.tcx.kind(field_ty), Some(TyKind::Float(FloatTy::F64)));
         // Try to resolve the receiver's struct field layout
         // for a compile-time offset. When present, emit an
         // offset-based op so the runtime skips the field-name
@@ -1617,8 +1928,7 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::Index { base, .. } => self.array_elem_ty(base.ty),
             _ => Some(self.unwrap_ref(receiver.ty)),
         };
-        let offset = elem_ty
-            .and_then(|t| self.resolve_struct_field_offset(t, name.name.as_str()));
+        let offset = elem_ty.and_then(|t| self.resolve_struct_field_offset(t, name.name.as_str()));
         let name_idx = self.const_idx(
             ConstKey::String(name.name.clone()),
             Value::String(SmolStr::from(name.name.clone())),
@@ -1642,7 +1952,10 @@ impl<'tcx> FnBuilder<'tcx> {
                             stride,
                             offset,
                         });
-                        return Ok(TypedReg { reg: dst, kind: RegKind::F64 });
+                        return Ok(TypedReg {
+                            reg: dst,
+                            kind: RegKind::F64,
+                        });
                     }
                     let dst = self.alloc_float();
                     self.emit(Op::IndexedFieldGetF64ByOffset {
@@ -1651,7 +1964,10 @@ impl<'tcx> FnBuilder<'tcx> {
                         index: idx_reg,
                         offset,
                     });
-                    return Ok(TypedReg { reg: dst, kind: RegKind::F64 });
+                    return Ok(TypedReg {
+                        reg: dst,
+                        kind: RegKind::F64,
+                    });
                 }
                 let dst = self.alloc_float();
                 self.emit(Op::IndexedFieldGetF64 {
@@ -1660,7 +1976,10 @@ impl<'tcx> FnBuilder<'tcx> {
                     index: idx_reg,
                     name_idx,
                 });
-                return Ok(TypedReg { reg: dst, kind: RegKind::F64 });
+                return Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                });
             }
             let dst = self.alloc_reg();
             self.emit(Op::IndexedFieldGet {
@@ -1669,7 +1988,10 @@ impl<'tcx> FnBuilder<'tcx> {
                 index: idx_reg,
                 name_idx,
             });
-            return Ok(TypedReg { reg: dst, kind: RegKind::Value });
+            return Ok(TypedReg {
+                reg: dst,
+                kind: RegKind::Value,
+            });
         }
         // Plain `value.field` — the receiver itself is a
         // single value, so we already avoid the indexed
@@ -1684,7 +2006,10 @@ impl<'tcx> FnBuilder<'tcx> {
                     receiver: recv_reg,
                     offset,
                 });
-                return Ok(TypedReg { reg: dst, kind: RegKind::F64 });
+                return Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                });
             }
             let dst = self.alloc_float();
             self.emit(Op::FieldGetF64 {
@@ -1692,7 +2017,10 @@ impl<'tcx> FnBuilder<'tcx> {
                 receiver: recv_reg,
                 name_idx,
             });
-            return Ok(TypedReg { reg: dst, kind: RegKind::F64 });
+            return Ok(TypedReg {
+                reg: dst,
+                kind: RegKind::F64,
+            });
         }
         let dst = self.alloc_reg();
         self.emit(Op::FieldGet {
@@ -1700,7 +2028,10 @@ impl<'tcx> FnBuilder<'tcx> {
             receiver: recv_reg,
             name_idx,
         });
-        Ok(TypedReg { reg: dst, kind: RegKind::Value })
+        Ok(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        })
     }
 
     /// Recognise pure single-arg f64 math intrinsics
@@ -1732,7 +2063,10 @@ impl<'tcx> FnBuilder<'tcx> {
         } else {
             full.clone()
         };
-        let segs_str: Vec<&str> = effective_segs.iter().map(std::string::String::as_str).collect();
+        let segs_str: Vec<&str> = effective_segs
+            .iter()
+            .map(std::string::String::as_str)
+            .collect();
         let kind = match segs_str.as_slice() {
             ["math", "sqrt"] | ["sqrt"] => "sqrt",
             ["math", "sin"] | ["sin"] => "sin",
@@ -1762,7 +2096,10 @@ impl<'tcx> FnBuilder<'tcx> {
             _ => unreachable!(),
         };
         self.emit(op);
-        Ok(Some(TypedReg { reg: dst, kind: RegKind::F64 }))
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::F64,
+        }))
     }
 
     fn compile_short_circuit(
@@ -1888,19 +2225,15 @@ impl<'tcx> FnBuilder<'tcx> {
                                     // offset-based op when possible.
                                     let elem_ty = self.array_elem_ty(base.ty);
                                     let offset = elem_ty.and_then(|t| {
-                                        self.resolve_struct_field_offset(
-                                            t,
-                                            name.name.as_str(),
-                                        )
+                                        self.resolve_struct_field_offset(t, name.name.as_str())
                                     });
                                     let idx_reg = self.compile_expr(index)?;
                                     let value_tr = self.compile_expr_ex(value)?;
                                     let value_f = self.as_f64(value_tr);
                                     // Known-flat fast path.
-                                    if let (Some(offset), Some(&stride)) = (
-                                        offset,
-                                        self.flat_locals.get(&target.reg),
-                                    ) {
+                                    if let (Some(offset), Some(&stride)) =
+                                        (offset, self.flat_locals.get(&target.reg))
+                                    {
                                         self.emit(Op::FlatSetF64 {
                                             base: target.reg,
                                             index: idx_reg,
@@ -2122,7 +2455,8 @@ impl<'tcx> FnBuilder<'tcx> {
             Some(self.emit_fused_exit_branch(op, kind, lhs_reg, rhs_reg))
         } else {
             self.try_compile_fused_exit_branch(condition)?
-        }.unwrap_or_else(|| {
+        }
+        .unwrap_or_else(|| {
             let cond_reg = self.compile_expr(condition).unwrap_or(0);
             self.emit(Op::BranchIfNot {
                 cond: cond_reg,
@@ -2165,10 +2499,7 @@ impl<'tcx> FnBuilder<'tcx> {
         };
         if !matches!(
             op,
-            HirBinaryOp::Lt
-                | HirBinaryOp::Le
-                | HirBinaryOp::Gt
-                | HirBinaryOp::Ge
+            HirBinaryOp::Lt | HirBinaryOp::Le | HirBinaryOp::Gt | HirBinaryOp::Ge
         ) {
             return Ok(None);
         }
@@ -2300,10 +2631,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // the comparison falls back to the generic path.
         if !matches!(
             op,
-            HirBinaryOp::Lt
-                | HirBinaryOp::Le
-                | HirBinaryOp::Gt
-                | HirBinaryOp::Ge
+            HirBinaryOp::Lt | HirBinaryOp::Le | HirBinaryOp::Gt | HirBinaryOp::Ge
         ) {
             return Ok(None);
         }
@@ -2320,7 +2648,11 @@ impl<'tcx> FnBuilder<'tcx> {
             //   > → Ge(rhs, lhs)       [NOT (lhs > rhs) ⟺ rhs >= lhs]
             //   >= → Lt(lhs, rhs)
             let op_emit = match op {
-                HirBinaryOp::Lt => Op::BranchIfGeI64 { lhs_i, rhs_i, target: 0 },
+                HirBinaryOp::Lt => Op::BranchIfGeI64 {
+                    lhs_i,
+                    rhs_i,
+                    target: 0,
+                },
                 HirBinaryOp::Le => Op::BranchIfLtI64 {
                     lhs_i: rhs_i,
                     rhs_i: lhs_i,
@@ -2331,7 +2663,11 @@ impl<'tcx> FnBuilder<'tcx> {
                     rhs_i: lhs_i,
                     target: 0,
                 },
-                HirBinaryOp::Ge => Op::BranchIfLtI64 { lhs_i, rhs_i, target: 0 },
+                HirBinaryOp::Ge => Op::BranchIfLtI64 {
+                    lhs_i,
+                    rhs_i,
+                    target: 0,
+                },
                 _ => unreachable!(),
             };
             return Ok(Some(self.emit(op_emit)));
@@ -2342,7 +2678,11 @@ impl<'tcx> FnBuilder<'tcx> {
             let lhs_f = self.as_f64(lhs_tr);
             let rhs_f = self.as_f64(rhs_tr);
             let op_emit = match op {
-                HirBinaryOp::Lt => Op::BranchIfGeF64 { lhs_f, rhs_f, target: 0 },
+                HirBinaryOp::Lt => Op::BranchIfGeF64 {
+                    lhs_f,
+                    rhs_f,
+                    target: 0,
+                },
                 HirBinaryOp::Le => Op::BranchIfLtF64 {
                     lhs_f: rhs_f,
                     rhs_f: lhs_f,
@@ -2353,7 +2693,11 @@ impl<'tcx> FnBuilder<'tcx> {
                     rhs_f: lhs_f,
                     target: 0,
                 },
-                HirBinaryOp::Ge => Op::BranchIfLtF64 { lhs_f, rhs_f, target: 0 },
+                HirBinaryOp::Ge => Op::BranchIfLtF64 {
+                    lhs_f,
+                    rhs_f,
+                    target: 0,
+                },
                 _ => unreachable!(),
             };
             return Ok(Some(self.emit(op_emit)));
@@ -2483,8 +2827,7 @@ fn body_contains_unsupported(expr: &HirExpr) -> bool {
         H::Tuple(elems) => elems.iter().any(body_contains_unsupported),
         H::Cast { value, .. } => body_contains_unsupported(value),
         H::MethodCall { receiver, args, .. } => {
-            body_contains_unsupported(receiver)
-                || args.iter().any(body_contains_unsupported)
+            body_contains_unsupported(receiver) || args.iter().any(body_contains_unsupported)
         }
         H::Field { receiver, .. } => body_contains_unsupported(receiver),
         H::TupleIndex { receiver, .. } => body_contains_unsupported(receiver),
@@ -2500,10 +2843,13 @@ fn body_contains_unsupported(expr: &HirExpr) -> bool {
             body_contains_unsupported(place) || body_contains_unsupported(value)
         }
         H::Call { callee, args } => {
-            body_contains_unsupported(callee)
-                || args.iter().any(body_contains_unsupported)
+            body_contains_unsupported(callee) || args.iter().any(body_contains_unsupported)
         }
-        H::If { condition, then_branch, else_branch } => {
+        H::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             body_contains_unsupported(condition)
                 || body_contains_unsupported(then_branch)
                 || else_branch
@@ -2521,9 +2867,7 @@ fn body_contains_unsupported(expr: &HirExpr) -> bool {
                     .as_ref()
                     .is_some_and(|t| body_contains_unsupported(t))
         }
-        H::Return(v) | H::Break(v) => {
-            v.as_ref().is_some_and(|e| body_contains_unsupported(e))
-        }
+        H::Return(v) | H::Break(v) => v.as_ref().is_some_and(|e| body_contains_unsupported(e)),
         H::Placeholder => true,
         // Native `continue` jumps to loop_start; only an
         // unsupported sub-expression in the surrounding shape
@@ -2541,15 +2885,12 @@ fn body_contains_unsupported(expr: &HirExpr) -> bool {
 fn stmt_contains_unsupported(stmt: &gossamer_hir::HirStmt) -> bool {
     use gossamer_hir::HirStmtKind as S;
     match &stmt.kind {
-        S::Let { init, .. } => {
-            init.as_ref().is_some_and(body_contains_unsupported)
-        }
+        S::Let { init, .. } => init.as_ref().is_some_and(body_contains_unsupported),
         S::Expr { expr, .. } => body_contains_unsupported(expr),
         S::Defer(_) | S::Go(_) => true,
         S::Item(_) => false,
     }
 }
-
 
 fn parse_int(text: &str) -> Option<i64> {
     let cleaned = strip_int_suffix(text).replace('_', "");

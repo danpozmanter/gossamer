@@ -18,9 +18,9 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
         Some(TyKind::Int(IntTy::I8 | IntTy::U8)) => "i8".to_string(),
         Some(TyKind::Int(IntTy::I16 | IntTy::U16)) => "i16".to_string(),
         Some(TyKind::Int(IntTy::I32 | IntTy::U32)) => "i32".to_string(),
-        Some(TyKind::Int(
-            IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize,
-        )) => "i64".to_string(),
+        Some(TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize)) => {
+            "i64".to_string()
+        }
         Some(TyKind::Int(IntTy::I128 | IntTy::U128)) => "i128".to_string(),
         Some(TyKind::Float(FloatTy::F32)) => "float".to_string(),
         Some(TyKind::Float(FloatTy::F64)) => "double".to_string(),
@@ -28,9 +28,17 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
         Some(TyKind::String) => "ptr".to_string(),
         Some(TyKind::Ref { .. }) => "ptr".to_string(),
         Some(TyKind::FnPtr(_) | TyKind::FnDef { .. }) => "ptr".to_string(),
-        Some(TyKind::Array { .. } | TyKind::Slice(_) | TyKind::Vec(_) | TyKind::Adt {
-.. } | TyKind::Tuple(_) | TyKind::Dyn(_) | TyKind::HashMap { .. } |
-TyKind::Sender(_) | TyKind::Receiver(_)) => "ptr".to_string(),
+        Some(
+            TyKind::Array { .. }
+            | TyKind::Slice(_)
+            | TyKind::Vec(_)
+            | TyKind::Adt { .. }
+            | TyKind::Tuple(_)
+            | TyKind::Dyn(_)
+            | TyKind::HashMap { .. }
+            | TyKind::Sender(_)
+            | TyKind::Receiver(_),
+        ) => "ptr".to_string(),
         // `Never` / `Error` / `Var` / `Param` / `Closure` /
         // `Alias` — treated as opaque pointers by the runtime
         // so the backend can still emit a signature that
@@ -137,7 +145,9 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
 /// `a[i].field` projections.
 pub(crate) fn elem_slots(tcx: &TyCtxt, ty: Ty) -> u32 {
     match tcx.kind(ty) {
-        Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => slot_count(tcx, *elem).unwrap_or(1),
+        Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
+            slot_count(tcx, *elem).unwrap_or(1)
+        }
         _ => 1,
     }
 }

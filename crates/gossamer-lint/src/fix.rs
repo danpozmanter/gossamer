@@ -300,11 +300,7 @@ fn block_reassigns(block: &Block, target: &str) -> bool {
         }
         if let ExprKind::Assign { place, .. } = &expr.kind {
             if let ExprKind::Path(path) = &place.kind {
-                if path
-                    .segments
-                    .first()
-                    .is_some_and(|s| s.name.name == target)
-                {
+                if path.segments.first().is_some_and(|s| s.name.name == target) {
                     found = true;
                 }
             }

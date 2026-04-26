@@ -560,11 +560,7 @@ impl Parser<'_> {
         self.expect_punct(Punct::Eq, "in type alias");
         let ty = self.parse_type();
         self.eat_punct(Punct::Semi);
-        TypeAliasDecl {
-            name,
-            generics,
-            ty,
-        }
+        TypeAliasDecl { name, generics, ty }
     }
 
     fn parse_const_decl(&mut self) -> ConstDecl {
@@ -644,4 +640,3 @@ impl Parser<'_> {
         Ident::new("<error>")
     }
 }
-

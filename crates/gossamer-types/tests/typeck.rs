@@ -255,16 +255,23 @@ fn unsuffixed_integer_literal_defaults_to_i64_when_unconstrained() {
     );
     // Walk the AST and find the binding's type entry; it must
     // have resolved to a concrete i64 by the end of typecheck.
-    let main = checked.source.items.iter().find_map(|item| {
-        if let ItemKind::Fn(f) = &item.kind {
-            if f.name.name == "main" {
-                return Some(f);
+    let main = checked
+        .source
+        .items
+        .iter()
+        .find_map(|item| {
+            if let ItemKind::Fn(f) = &item.kind {
+                if f.name.name == "main" {
+                    return Some(f);
+                }
             }
-        }
-        None
-    }).expect("main fn");
+            None
+        })
+        .expect("main fn");
     let body = main.body.as_ref().expect("main body");
-    let ExprKind::Block(block) = &body.kind else { panic!("expected block body"); };
+    let ExprKind::Block(block) = &body.kind else {
+        panic!("expected block body");
+    };
     let StmtKind::Let { init, .. } = &block.stmts[0].kind else {
         panic!("expected let statement");
     };
@@ -291,7 +298,10 @@ fn unsuffixed_integer_literal_rejected_in_string_position() {
         checked.diagnostics,
     );
     let TypeError::TypeMismatch { expected, found } = &checked.diagnostics[0].error else {
-        panic!("expected TypeMismatch, got {:?}", checked.diagnostics[0].error);
+        panic!(
+            "expected TypeMismatch, got {:?}",
+            checked.diagnostics[0].error
+        );
     };
     assert_eq!(expected, "String");
     assert_eq!(found, "{integer}");

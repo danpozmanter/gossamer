@@ -105,7 +105,14 @@ pub(crate) fn invoke(jit: &JitFn, args: &[Value]) -> Dispatch {
     // after its parameter and return types were classified into
     // `JitKind`s, so each fn-pointer cast below pairs with a slot
     // shape we know cranelift produced.
-    let outcome = unsafe { dispatch(jit.ptr, &jit.params, &slots[..jit.params.len()], jit.returns) };
+    let outcome = unsafe {
+        dispatch(
+            jit.ptr,
+            &jit.params,
+            &slots[..jit.params.len()],
+            jit.returns,
+        )
+    };
     match outcome {
         Some(value) => Dispatch::Ok(value),
         None => Dispatch::Fallback,
@@ -176,16 +183,24 @@ macro_rules! call_through {
 /// Maps the per-slot shape token (`i` / `f`) to the matching
 /// `slot_*` accessor.
 macro_rules! slot_for {
-    (i, $s:expr, $idx:expr) => { slot_i($s[$idx]) };
-    (f, $s:expr, $idx:expr) => { slot_f($s[$idx]) };
+    (i, $s:expr, $idx:expr) => {
+        slot_i($s[$idx])
+    };
+    (f, $s:expr, $idx:expr) => {
+        slot_f($s[$idx])
+    };
 }
 
 /// Maps the per-slot shape token (`i` / `f`) to the corresponding
 /// Rust ABI type. Used to spell out the `extern "C" fn(...)`
 /// signature inside `call_through!`.
 macro_rules! ty_for {
-    (i) => { i64 };
-    (f) => { f64 };
+    (i) => {
+        i64
+    };
+    (f) => {
+        f64
+    };
 }
 
 /// Generates a `call_<arity><shape>` function for one (arity, shape)
@@ -469,7 +484,10 @@ pub(crate) fn jit_enabled() -> bool {
     if JIT_DISABLED.load(Ordering::Relaxed) {
         return false;
     }
-    !matches!(std::env::var("GOS_JIT").ok().as_deref(), Some("0" | "false"))
+    !matches!(
+        std::env::var("GOS_JIT").ok().as_deref(),
+        Some("0" | "false")
+    )
 }
 
 /// Returns `true` when `GOS_JIT_TRACE` is set, in which case the VM
@@ -477,4 +495,3 @@ pub(crate) fn jit_enabled() -> bool {
 pub(crate) fn jit_trace() -> bool {
     matches!(std::env::var("GOS_JIT_TRACE").ok().as_deref(), Some(s) if !s.is_empty() && s != "0")
 }
-

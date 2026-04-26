@@ -121,7 +121,10 @@ fn initialize_result() -> Value {
     let mut completion = BTreeMap::new();
     completion.insert(
         "triggerCharacters".to_string(),
-        Value::Array(vec![Value::String(".".to_string()), Value::String(":".to_string())]),
+        Value::Array(vec![
+            Value::String(".".to_string()),
+            Value::String(":".to_string()),
+        ]),
     );
     caps.insert("completionProvider".to_string(), Value::Object(completion));
     let mut info = BTreeMap::new();
@@ -207,10 +210,7 @@ impl ServerState {
             markdown.push_str("\n\nDeclared at the top level of this file.");
         }
         let mut contents = BTreeMap::new();
-        contents.insert(
-            "kind".to_string(),
-            Value::String("markdown".to_string()),
-        );
+        contents.insert("kind".to_string(), Value::String("markdown".to_string()));
         contents.insert("value".to_string(), Value::String(markdown));
         let mut hover = BTreeMap::new();
         hover.insert("contents".to_string(), Value::Object(contents));
@@ -344,7 +344,9 @@ impl ServerState {
 
 fn is_valid_identifier(name: &str) -> bool {
     let mut chars = name.chars();
-    let Some(first) = chars.next() else { return false };
+    let Some(first) = chars.next() else {
+        return false;
+    };
     if !(first.is_ascii_alphabetic() || first == '_') {
         return false;
     }
@@ -369,7 +371,10 @@ fn diagnostic_to_lsp(doc: &DocumentAnalysis, diag: &GossamerDiagnostic) -> Value
         .map_or(Span::new(doc.file, 0, 0), |l| l.location.span);
     let mut entry = BTreeMap::new();
     entry.insert("range".to_string(), span_to_range(doc, span));
-    entry.insert("severity".to_string(), Value::Number(severity_tag(diag.severity)));
+    entry.insert(
+        "severity".to_string(),
+        Value::Number(severity_tag(diag.severity)),
+    );
     entry.insert(
         "code".to_string(),
         Value::String(diag.code.as_str().to_string()),
@@ -380,17 +385,35 @@ fn diagnostic_to_lsp(doc: &DocumentAnalysis, diag: &GossamerDiagnostic) -> Value
 }
 
 const KEYWORDS: &[&str] = &[
-    "fn", "let", "mut", "if", "else", "match", "while", "loop", "for", "in", "return",
-    "break", "continue", "struct", "enum", "trait", "impl", "pub", "use", "mod", "const",
-    "static", "true", "false", "go", "select", "defer", "where", "as",
+    "fn", "let", "mut", "if", "else", "match", "while", "loop", "for", "in", "return", "break",
+    "continue", "struct", "enum", "trait", "impl", "pub", "use", "mod", "const", "static", "true",
+    "false", "go", "select", "defer", "where", "as",
 ];
 
 const BUILTIN_COMPLETIONS: &[&str] = &[
-    "println", "print", "eprintln", "eprint", "format", "panic",
-    "Some", "None", "Ok", "Err",
-    "len", "push", "to_string", "clone",
-    "unwrap", "unwrap_or", "is_some", "is_none", "is_ok", "is_err", "map",
-    "spawn", "channel",
+    "println",
+    "print",
+    "eprintln",
+    "eprint",
+    "format",
+    "panic",
+    "Some",
+    "None",
+    "Ok",
+    "Err",
+    "len",
+    "push",
+    "to_string",
+    "clone",
+    "unwrap",
+    "unwrap_or",
+    "is_some",
+    "is_none",
+    "is_ok",
+    "is_err",
+    "map",
+    "spawn",
+    "channel",
 ];
 
 fn completion_item(label: &str, kind: u32) -> Value {
@@ -456,7 +479,9 @@ mod tests {
     #[test]
     fn initialize_result_advertises_completion() {
         let v = initialize_result();
-        let Value::Object(top) = v else { panic!("not object") };
+        let Value::Object(top) = v else {
+            panic!("not object")
+        };
         let Value::Object(caps) = top.get("capabilities").unwrap() else {
             panic!("no caps");
         };
@@ -519,7 +544,9 @@ mod tests {
         };
         assert_eq!(edits.len(), 3);
         for edit in edits {
-            let Value::Object(fields) = edit else { panic!("edit not object") };
+            let Value::Object(fields) = edit else {
+                panic!("edit not object")
+            };
             let Value::String(new_text) = fields.get("newText").unwrap() else {
                 panic!("no newText");
             };
@@ -533,16 +560,25 @@ mod tests {
         state.update("file:///bad.gos", "fn greet() { }\n");
         let mut params = locate_params("file:///bad.gos", 0, 4);
         if let Value::Object(fields) = &mut params {
-            fields.insert("newName".to_string(), Value::String("not valid!".to_string()));
+            fields.insert(
+                "newName".to_string(),
+                Value::String("not valid!".to_string()),
+            );
         }
         let response = state.rename(&params);
-        assert!(matches!(response, Value::Null), "expected null for invalid ident");
+        assert!(
+            matches!(response, Value::Null),
+            "expected null for invalid ident"
+        );
     }
 
     #[test]
     fn completion_surfaces_top_level_functions_matching_prefix() {
         let mut state = ServerState::new();
-        state.update("file:///c.gos", "fn greet() { }\nfn greeter() { }\nfn main() { gr }\n");
+        state.update(
+            "file:///c.gos",
+            "fn greet() { }\nfn greeter() { }\nfn main() { gr }\n",
+        );
         let response = state.completion(&locate_params("file:///c.gos", 2, 13));
         let labels = extract_labels(&response);
         assert!(labels.iter().any(|l| l == "greet"), "labels: {labels:?}");

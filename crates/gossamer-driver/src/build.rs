@@ -155,10 +155,7 @@ impl BuildCache {
     /// `.gossamer/build` directory when `HOME` is unset.
     #[must_use]
     pub fn user_default() -> Self {
-        let home = std::env::var_os("HOME").map_or_else(
-            || PathBuf::from("."),
-            PathBuf::from,
-        );
+        let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
         Self::new(home.join(".gossamer").join("build"))
     }
 
@@ -255,9 +252,7 @@ impl Accumulator {
 
 /// Computes fingerprints for every crate in `graph`, in topological
 /// order. Returns the per-crate fingerprint map.
-pub fn fingerprint_all(
-    graph: &BuildGraph,
-) -> Result<BTreeMap<String, String>, BuildError> {
+pub fn fingerprint_all(graph: &BuildGraph) -> Result<BTreeMap<String, String>, BuildError> {
     let order = topological_order(graph)?;
     let mut fingerprints: BTreeMap<String, String> = BTreeMap::new();
     for idx in order {
@@ -332,10 +327,7 @@ fn visit(
 /// Groups a topological order into level-sets. All crates in one level
 /// can be compiled in parallel because every dependency sits in a
 /// strictly earlier level.
-fn schedule_levels(
-    graph: &BuildGraph,
-    order: &[usize],
-) -> Vec<Vec<usize>> {
+fn schedule_levels(graph: &BuildGraph, order: &[usize]) -> Vec<Vec<usize>> {
     let mut level_of: Vec<u32> = vec![0; graph.crates.len()];
     let dep_index: BTreeMap<&str, usize> = graph
         .crates
@@ -531,7 +523,10 @@ mod tests {
     fn topo_order_places_leaf_before_app() {
         let graph = sample_graph();
         let order = topological_order(&graph).unwrap();
-        let names: Vec<&str> = order.iter().map(|&i| graph.crates[i].name.as_str()).collect();
+        let names: Vec<&str> = order
+            .iter()
+            .map(|&i| graph.crates[i].name.as_str())
+            .collect();
         assert_eq!(names, vec!["leaf", "app"]);
     }
 

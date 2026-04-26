@@ -98,8 +98,8 @@ impl ResolveDiagnostic {
         use gossamer_diagnostics::{Code, Diagnostic, Location, suggest};
         let location = Location::new(self.span.file, self.span);
         let title = format!("{}", self.error);
-        let mut out = Diagnostic::error(Code(self.error.code()), title.clone())
-            .with_primary(location, title);
+        let mut out =
+            Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title);
         if let ResolveError::UnresolvedName { name } = &self.error {
             if let Some(suggestion) = suggest(name, in_scope.iter().copied(), 2) {
                 out = out.with_help(format!("did you mean `{suggestion}`?"));

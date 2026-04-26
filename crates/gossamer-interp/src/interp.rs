@@ -137,7 +137,9 @@ impl Interpreter {
         let updated: Vec<Value> = bindings
             .iter()
             .map(|(name, original)| {
-                env.lookup(name).cloned().unwrap_or_else(|| original.clone())
+                env.lookup(name)
+                    .cloned()
+                    .unwrap_or_else(|| original.clone())
             })
             .collect();
         Ok((result, updated))
@@ -340,8 +342,12 @@ impl Interpreter {
                 Ok(Flow::Value(Value::Tuple(Arc::new(parts))))
             }
             HirExprKind::Array(arr) => self.eval_array(arr, env),
-            HirExprKind::Cast { value, .. } => Ok(Flow::Value(self.eval_expr_to_value(value, env)?)),
-            HirExprKind::Range { start, end, .. } => self.eval_range(start.as_deref(), end.as_deref(), env),
+            HirExprKind::Cast { value, .. } => {
+                Ok(Flow::Value(self.eval_expr_to_value(value, env)?))
+            }
+            HirExprKind::Range { start, end, .. } => {
+                self.eval_range(start.as_deref(), end.as_deref(), env)
+            }
             HirExprKind::Go(inner) => {
                 // `go expr` spawns a real OS thread. We capture the
                 // current env into a clone-owned vector and clone
@@ -378,7 +384,10 @@ impl Interpreter {
                 // Construct a synthetic struct value so downstream
                 // code that immediately field-accesses it can read
                 // back stub fields without crashing.
-                Ok(Flow::Value(Value::struct_("<stub>".to_string(), Arc::new(Vec::new()))))
+                Ok(Flow::Value(Value::struct_(
+                    "<stub>".to_string(),
+                    Arc::new(Vec::new()),
+                )))
             }
         }
     }
@@ -410,9 +419,6 @@ impl Interpreter {
         };
         Ok(Flow::Value(Value::Array(Arc::new(elems))))
     }
-
-
-
 
     pub(crate) fn eval_expr_to_value(
         &mut self,
@@ -666,8 +672,7 @@ impl Interpreter {
                         _ => None,
                     })
                     .unwrap_or("");
-                crate::builtins::resolve_cell(set_id, flag_name)
-                    .unwrap_or(Value::Unit)
+                crate::builtins::resolve_cell(set_id, flag_name).unwrap_or(Value::Unit)
             }
             (HirUnaryOp::Deref, other) => other,
             (op, other) => {
@@ -726,11 +731,6 @@ impl Interpreter {
         }
         Ok(Flow::Value(rhs_value))
     }
-
-
-
-
-
 
     fn eval_assign(
         &mut self,
@@ -799,7 +799,9 @@ impl Interpreter {
                 let updated = update_array_index(&current, &idx_value, new_value)?;
                 self.write_back(base, updated, env)
             }
-            _ => Err(RuntimeError::Unsupported("write-back to non-place expression")),
+            _ => Err(RuntimeError::Unsupported(
+                "write-back to non-place expression",
+            )),
         }
     }
 
@@ -852,7 +854,7 @@ impl Interpreter {
         // stub-shaped stdlib returns (e.g. Unit in place of
         // `Result<T, E>`), so degrading to Unit keeps simple demos
         // running. Exhaustiveness is already checked up-front by
- // so this fallback cannot mask a real mistake.
+        // so this fallback cannot mask a real mistake.
         Ok(Flow::Value(Value::Unit))
     }
 
@@ -1113,9 +1115,7 @@ impl Default for Interpreter {
 
 fn callee_label(expr: &HirExpr) -> Option<String> {
     match &expr.kind {
-        HirExprKind::Path { segments, .. } => {
-            segments.last().map(|ident| ident.name.clone())
-        }
+        HirExprKind::Path { segments, .. } => segments.last().map(|ident| ident.name.clone()),
         _ => None,
     }
 }
@@ -1464,7 +1464,9 @@ fn bind_pattern(env: &mut Env, pattern: &HirPat, value: Value) -> RuntimeResult<
             }
             _ => Ok(()),
         },
-        HirPatKind::Ref { inner: ref_inner, .. } => bind_pattern(env, ref_inner, value),
+        HirPatKind::Ref {
+            inner: ref_inner, ..
+        } => bind_pattern(env, ref_inner, value),
         HirPatKind::Or(alts) => {
             if let Some(first) = alts.first() {
                 bind_pattern(env, first, value)?;
@@ -1491,8 +1493,7 @@ fn match_pattern(env: &mut Env, pattern: &HirPat, value: &Value) -> bool {
         },
         HirPatKind::Variant { name, fields } => match value {
             Value::Variant(var_inner)
-                if var_inner.name == name.name
-                    && var_inner.fields.len() == fields.len() =>
+                if var_inner.name == name.name && var_inner.fields.len() == fields.len() =>
             {
                 fields
                     .iter()
@@ -1516,7 +1517,8 @@ fn match_pattern(env: &mut Env, pattern: &HirPat, value: &Value) -> bool {
                             }
                         } else {
                             env.bind(field.name.name.clone(), value);
-                        } }
+                        }
+                    }
                 }
                 true
             }
@@ -1595,11 +1597,7 @@ fn update_struct_field(
 /// Returns a fresh `Value::Array` with `index`-th element replaced by
 /// `new_value`; the remaining elements are cloned from `current`. Any
 /// aliasing array value keeps its old elements.
-fn update_array_index(
-    current: &Value,
-    index: &Value,
-    new_value: Value,
-) -> RuntimeResult<Value> {
+fn update_array_index(current: &Value, index: &Value, new_value: Value) -> RuntimeResult<Value> {
     let Value::Array(parts) = current else {
         return Err(RuntimeError::Type(format!(
             "cannot index-assign on non-array `{}`",

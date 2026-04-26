@@ -92,7 +92,10 @@ mod tests {
     fn round_trips_long_repeating_text() {
         let plain: Vec<u8> = b"abcdefghij".repeat(10_000);
         let cipher = encode(&plain, Level::BEST).unwrap();
-        assert!(cipher.len() < plain.len() / 5, "expected good ratio on repeating data");
+        assert!(
+            cipher.len() < plain.len() / 5,
+            "expected good ratio on repeating data"
+        );
         let back = decode(&cipher).unwrap();
         assert_eq!(back, plain);
     }

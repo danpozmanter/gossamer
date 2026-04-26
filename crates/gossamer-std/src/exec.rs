@@ -104,7 +104,9 @@ impl Child {
             .inner
             .wait()
             .map_err(|e| IoError::from_std(e, "wait"))?;
-        Ok(ExitStatus { code: status.code() })
+        Ok(ExitStatus {
+            code: status.code(),
+        })
     }
 
     /// Sends SIGKILL (Unix) / `TerminateProcess` (Windows). The
@@ -224,7 +226,9 @@ impl Command {
             .output()
             .map_err(|e| IoError::from_std(e, &self.program))?;
         Ok(Output {
-            status: ExitStatus { code: raw.status.code() },
+            status: ExitStatus {
+                code: raw.status.code(),
+            },
             stdout: raw.stdout,
             stderr: raw.stderr,
         })
@@ -264,7 +268,11 @@ mod tests {
     use super::*;
 
     fn echo_program() -> &'static str {
-        if cfg!(target_os = "windows") { "cmd" } else { "sh" }
+        if cfg!(target_os = "windows") {
+            "cmd"
+        } else {
+            "sh"
+        }
     }
 
     fn echo_args(text: &str) -> Vec<String> {

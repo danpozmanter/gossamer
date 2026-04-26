@@ -157,9 +157,7 @@ impl Parser<'_> {
         } else {
             None
         };
-        let end_span = end
-            .as_ref()
-            .map_or(self.last_span(), |expr| expr.span);
+        let end_span = end.as_ref().map_or(self.last_span(), |expr| expr.span);
         let span = self.join(lhs.span, end_span);
         let id = self.alloc_id();
         Expr::new(
@@ -244,8 +242,8 @@ impl Parser<'_> {
         if let Some(prefix_op) = self.peek_unary_op() {
             let op_span = self.peek_span();
             self.bump();
-            let mutability_consumed = prefix_op == UnaryOp::RefShared
-                && self.eat_keyword(Keyword::Mut);
+            let mutability_consumed =
+                prefix_op == UnaryOp::RefShared && self.eat_keyword(Keyword::Mut);
             let actual_op = if mutability_consumed {
                 UnaryOp::RefMut
             } else {
@@ -353,14 +351,9 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_method_or_field(
-        &mut self,
-        receiver: Expr,
-        name: Ident,
-        name_span: Span,
-    ) -> Expr {
-        let generics = if self.at_punct(Punct::ColonColon) && self.peek_nth(1).kind
-            == TokenKind::Punct(Punct::Lt)
+    fn parse_method_or_field(&mut self, receiver: Expr, name: Ident, name_span: Span) -> Expr {
+        let generics = if self.at_punct(Punct::ColonColon)
+            && self.peek_nth(1).kind == TokenKind::Punct(Punct::Lt)
         {
             self.bump();
             let checkpoint = self.tokens.checkpoint();
@@ -869,10 +862,7 @@ impl Parser<'_> {
             self.peek().kind,
             TokenKind::Ident
                 | TokenKind::Keyword(
-                    Keyword::SelfUpper
-                        | Keyword::SelfLower
-                        | Keyword::Super
-                        | Keyword::Crate
+                    Keyword::SelfUpper | Keyword::SelfLower | Keyword::Super | Keyword::Crate
                 )
         )
     }
@@ -882,7 +872,10 @@ impl Parser<'_> {
         if self.at_punct(Punct::Bang) {
             return self.parse_macro_tail(path);
         }
-        if self.at_punct(Punct::LBrace) && !self.struct_literal_forbidden() && self.can_begin_struct_literal() {
+        if self.at_punct(Punct::LBrace)
+            && !self.struct_literal_forbidden()
+            && self.can_begin_struct_literal()
+        {
             return self.parse_struct_literal_tail(path);
         }
         ExprKind::Path(path)
@@ -1108,11 +1101,7 @@ impl Parser<'_> {
     fn alloc_path_expr(&mut self, name: &str) -> Expr {
         let id = self.alloc_id();
         let span = self.last_span();
-        Expr::new(
-            id,
-            span,
-            ExprKind::Path(PathExpr::single(name.to_string())),
-        )
+        Expr::new(id, span, ExprKind::Path(PathExpr::single(name.to_string())))
     }
 
     fn collect_delimited_tokens(&mut self, open: Punct, close: Punct) -> String {
@@ -1230,7 +1219,9 @@ impl Parser<'_> {
             }
             TokenKind::StringLit => {
                 self.bump();
-                Some(Literal::String(string_literal_value(self.slice(token.span))))
+                Some(Literal::String(string_literal_value(
+                    self.slice(token.span),
+                )))
             }
             TokenKind::RawStringLit { hashes } => {
                 self.bump();
@@ -1390,7 +1381,9 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                 i += 2;
             }
             b'{' => {
-                let close = if let Some(off) = template[i + 1..].find('}') { i + 1 + off } else {
+                let close = if let Some(off) = template[i + 1..].find('}') {
+                    i + 1 + off
+                } else {
                     literal.push('{');
                     i += 1;
                     continue;
@@ -1484,5 +1477,4 @@ mod tests {
         };
         assert_eq!(inner_op, BinaryOp::Mul);
     }
-
 }

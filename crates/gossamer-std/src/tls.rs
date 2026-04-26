@@ -78,7 +78,9 @@ pub fn server_config(cert: CertKey) -> Result<ServerConfig, Error> {
     install_ring_provider();
     let certs = read_certs(&cert.cert_pem).map_err(|e| wrap_err("cert parse", e))?;
     if certs.is_empty() {
-        return Err(Error::new("std::tls::server_config: no certificates in PEM"));
+        return Err(Error::new(
+            "std::tls::server_config: no certificates in PEM",
+        ));
     }
     let key = read_private_key(&cert.key_pem).map_err(|e| wrap_err("key parse", e))?;
     let config = RustlsServerConfig::builder()

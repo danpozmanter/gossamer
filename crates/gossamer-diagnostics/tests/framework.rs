@@ -43,8 +43,8 @@ fn render_plain_includes_code_severity_and_primary_label() {
     let mut map = SourceMap::new();
     let file = map.add_file("x.gos", "fn main() {}\n");
     let loc = Location::new(file, Span::new(file, 0, 2));
-    let diag = Diagnostic::error(Code("GP0002"), "unexpected token")
-        .with_primary(loc, "unexpected `fn`");
+    let diag =
+        Diagnostic::error(Code("GP0002"), "unexpected token").with_primary(loc, "unexpected `fn`");
     let text = render_plain(&diag);
     assert!(text.contains("error"));
     assert!(text.contains("GP0002"));
@@ -55,10 +55,7 @@ fn render_plain_includes_code_severity_and_primary_label() {
 #[test]
 fn render_puts_file_line_column_on_primary_label() {
     let mut map = SourceMap::new();
-    let file = map.add_file(
-        "snippet.gos",
-        "fn main() {\n    let x = 1\n}\n",
-    );
+    let file = map.add_file("snippet.gos", "fn main() {\n    let x = 1\n}\n");
     let loc = Location::new(file, Span::new(file, 16, 17));
     let diag = Diagnostic::error(Code("GP0003"), "missing semicolon")
         .with_primary(loc, "expected after statement");
@@ -90,14 +87,8 @@ fn suggest_returns_closest_within_budget() {
 fn primary_and_secondary_labels_use_distinct_prefixes() {
     let mut map = SourceMap::new();
     let file = map.add_file("x.gos", "abc\n");
-    let primary = Label::primary(
-        Location::new(file, Span::new(file, 0, 1)),
-        "primary",
-    );
-    let secondary = Label::secondary(
-        Location::new(file, Span::new(file, 2, 3)),
-        "secondary",
-    );
+    let primary = Label::primary(Location::new(file, Span::new(file, 0, 1)), "primary");
+    let secondary = Label::secondary(Location::new(file, Span::new(file, 2, 3)), "secondary");
     let diag = Diagnostic::error(Code("GP0001"), "demo")
         .with_label(primary)
         .with_label(secondary);

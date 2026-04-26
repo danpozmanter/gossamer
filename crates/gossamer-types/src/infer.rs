@@ -244,8 +244,9 @@ impl InferCtxt {
                     inner: bi,
                 },
             ) if am == bm => self.unify(tcx, *ai, *bi),
-            (TyKind::FnPtr(a), TyKind::FnPtr(b))
-            | (TyKind::FnTrait(a), TyKind::FnTrait(b)) => self.unify_fn_sig(tcx, a, b),
+            (TyKind::FnPtr(a), TyKind::FnPtr(b)) | (TyKind::FnTrait(a), TyKind::FnTrait(b)) => {
+                self.unify_fn_sig(tcx, a, b)
+            }
             // `Fn(args) -> ret` accepts any callable with a
             // matching signature: bare `fn`, named `fn item`, or a
             // closure (capturing or not). The MIR coercion site
@@ -254,8 +255,9 @@ impl InferCtxt {
             // assigned to a bare `fn(_)`) is rejected — capturing
             // closures need an env that bare `fn` can't carry. See
             // closure_fn_trait_plan.md.
-            (TyKind::FnTrait(t), TyKind::FnPtr(s))
-            | (TyKind::FnPtr(s), TyKind::FnTrait(t)) => self.unify_fn_sig(tcx, t, s),
+            (TyKind::FnTrait(t), TyKind::FnPtr(s)) | (TyKind::FnPtr(s), TyKind::FnTrait(t)) => {
+                self.unify_fn_sig(tcx, t, s)
+            }
             (TyKind::FnTrait(t), TyKind::FnDef { .. })
             | (TyKind::FnDef { .. }, TyKind::FnTrait(t)) => {
                 // FnDef has no signature on the type itself — the

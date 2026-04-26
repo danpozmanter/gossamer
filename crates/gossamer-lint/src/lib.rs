@@ -194,14 +194,8 @@ pub fn run(source_file: &SourceFile, registry: &Registry) -> Vec<Diagnostic> {
         }
     }
     out.sort_by(|a, b| {
-        let a_span = a
-            .labels
-            .first()
-            .map_or(0, |l| l.location.span.start);
-        let b_span = b
-            .labels
-            .first()
-            .map_or(0, |l| l.location.span.start);
+        let a_span = a.labels.first().map_or(0, |l| l.location.span.start);
+        let b_span = b.labels.first().map_or(0, |l| l.location.span.start);
         a.code
             .as_str()
             .cmp(b.code.as_str())
@@ -283,22 +277,18 @@ pub fn apply_attributes(attrs: &Attrs, registry: &mut Registry) {
         let Some(text) = attr.tokens.as_deref() else {
             continue;
         };
-        let normalised: String = text
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join("");
+        let normalised: String = text.split_whitespace().collect::<Vec<_>>().join("");
         for part in normalised.split(',') {
             let part = part.trim();
-            let (level, body) = if let Some(rest) =
-                part.strip_prefix("allow(").and_then(|r| r.strip_suffix(')'))
+            let (level, body) = if let Some(rest) = part
+                .strip_prefix("allow(")
+                .and_then(|r| r.strip_suffix(')'))
             {
                 (Level::Allow, rest.trim())
-            } else if let Some(rest) =
-                part.strip_prefix("warn(").and_then(|r| r.strip_suffix(')'))
+            } else if let Some(rest) = part.strip_prefix("warn(").and_then(|r| r.strip_suffix(')'))
             {
                 (Level::Warn, rest.trim())
-            } else if let Some(rest) =
-                part.strip_prefix("deny(").and_then(|r| r.strip_suffix(')'))
+            } else if let Some(rest) = part.strip_prefix("deny(").and_then(|r| r.strip_suffix(')'))
             {
                 (Level::Deny, rest.trim())
             } else {

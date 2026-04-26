@@ -140,11 +140,19 @@ pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
         let ptr = module.get_finalized_function(id);
         functions.insert(
             body.name.clone(),
-            JitFn { name: body.name.clone(), ptr, params, returns },
+            JitFn {
+                name: body.name.clone(),
+                ptr,
+                params,
+                returns,
+            },
         );
     }
 
-    Ok(JitArtifact { module: Some(module), functions })
+    Ok(JitArtifact {
+        module: Some(module),
+        functions,
+    })
 }
 
 fn body_kinds(body: &Body, tcx: &TyCtxt) -> Option<(Vec<JitKind>, JitKind)> {

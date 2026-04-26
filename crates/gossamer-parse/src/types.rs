@@ -2,9 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use gossamer_ast::{
-    FnTypeKind, GenericArg, Mutability, Type, TypeKind, TypePath, TypePathSegment,
-};
+use gossamer_ast::{FnTypeKind, GenericArg, Mutability, Type, TypeKind, TypePath, TypePathSegment};
 use gossamer_lex::{Keyword, Punct, TokenKind};
 
 use crate::diagnostic::ParseError;
@@ -208,7 +206,6 @@ impl Parser<'_> {
         }
         GenericArg::Type(self.parse_type())
     }
-
 }
 
 /// Returns `true` when the upcoming generic argument is a const expression

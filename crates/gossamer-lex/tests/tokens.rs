@@ -219,8 +219,7 @@ fn block_comments_nest() {
 /// diagnoses as unterminated.
 #[test]
 fn unbalanced_nested_block_comment_is_unterminated() {
-    let (_tokens, diagnostics) =
-        tokenize("/* outer /* inner still open", test_file());
+    let (_tokens, diagnostics) = tokenize("/* outer /* inner still open", test_file());
     assert!(matches!(
         diagnostics.as_slice(),
         [LexError::UnterminatedBlockComment { .. }],

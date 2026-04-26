@@ -9,8 +9,8 @@ use std::process::Command;
 use gossamer_codegen_cranelift::compile_to_object;
 use gossamer_lex::SourceMap;
 use gossamer_mir::{
-    BasicBlock, BinOp, Body, ConstValue, LocalDecl, Operand, Place, Projection, Rvalue,
-    Statement, StatementKind, Terminator,
+    BasicBlock, BinOp, Body, ConstValue, LocalDecl, Operand, Place, Projection, Rvalue, Statement,
+    StatementKind, Terminator,
 };
 use gossamer_types::TyCtxt;
 
@@ -60,9 +60,10 @@ struct Builder {
 
 impl Builder {
     fn push(&mut self, stmt: StatementKind) {
-        self.body.blocks[0]
-            .stmts
-            .push(Statement { span: dummy_span(), kind: stmt });
+        self.body.blocks[0].stmts.push(Statement {
+            span: dummy_span(),
+            kind: stmt,
+        });
     }
 }
 
@@ -84,10 +85,7 @@ fn cranelift_compiles_integer_constant_main_to_runnable_binary() {
     });
     let object = compile_to_object(&[body], &tcx).expect("codegen");
 
-    let dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-test-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("gossamer-cranelift-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let object_path = dir.join("main.o");
     std::fs::write(&object_path, &object.bytes).unwrap();
@@ -186,10 +184,7 @@ fn cranelift_heap_allocator_roundtrips_value_through_gos_store_and_load() {
     });
     let object = compile_to_object(&[body], &tcx).expect("codegen");
 
-    let dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-heap-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("gossamer-cranelift-heap-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let object_path = dir.join("main.o");
     std::fs::write(&object_path, &object.bytes).unwrap();
@@ -245,10 +240,7 @@ fn cranelift_compiles_arithmetic_main_to_runnable_binary() {
     });
     let object = compile_to_object(&[body], &tcx).expect("codegen");
 
-    let dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-arith-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("gossamer-cranelift-arith-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let object_path = dir.join("main.o");
     std::fs::write(&object_path, &object.bytes).unwrap();
@@ -275,10 +267,8 @@ fn cranelift_compiles_arithmetic_main_to_runnable_binary() {
 
 #[test]
 fn gos_build_handles_tuple_destructuring_let() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-detup-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-detup-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("d.gos");
     std::fs::write(
@@ -293,25 +283,23 @@ fn gos_build_handles_tuple_destructuring_let() {
         .current_dir(workspace_root())
         .output()
         .expect("spawn gos build");
-    if !build.status.success()
-        || String::from_utf8_lossy(&build.stdout).contains("launcher")
-    {
+    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("d"))
-        .output()
-        .expect("run d");
-    assert_eq!(run.status.code(), Some(33), "let (a, b) = (11, 22); a + b == 33");
+    let run = Command::new(fixture_dir.join("d")).output().expect("run d");
+    assert_eq!(
+        run.status.code(),
+        Some(33),
+        "let (a, b) = (11, 22); a + b == 33"
+    );
     let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_handles_numeric_cast() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-cast-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-cast-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("c.gos");
     std::fs::write(
@@ -326,25 +314,19 @@ fn gos_build_handles_numeric_cast() {
         .current_dir(workspace_root())
         .output()
         .expect("spawn gos build");
-    if !build.status.success()
-        || String::from_utf8_lossy(&build.stdout).contains("launcher")
-    {
+    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("c"))
-        .output()
-        .expect("run c");
+    let run = Command::new(fixture_dir.join("c")).output().expect("run c");
     assert_eq!(run.status.code(), Some(12), "7 as i64 + 5 == 12");
     let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_handles_int_literal_match() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-match-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-match-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("m.gos");
     std::fs::write(
@@ -373,19 +355,15 @@ fn gos_build_handles_int_literal_match() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("m"))
-        .output()
-        .expect("run m");
+    let run = Command::new(fixture_dir.join("m")).output().expect("run m");
     assert_eq!(run.status.code(), Some(20), "match arm 1 should return 20");
     let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_handles_tuples_and_arrays() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-agg-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-agg-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
 
     let tuple_src = fixture_dir.join("tup.gos");
@@ -438,9 +416,7 @@ fn gos_build_handles_tuples_and_arrays() {
         .current_dir(workspace_root())
         .output()
         .expect("spawn gos build for repeat");
-    if build.status.success()
-        && !String::from_utf8_lossy(&build.stdout).contains("launcher")
-    {
+    if build.status.success() && !String::from_utf8_lossy(&build.stdout).contains("launcher") {
         let run = Command::new(fixture_dir.join("rep"))
             .output()
             .expect("run rep");
@@ -470,7 +446,9 @@ fn gos_build_handles_tuples_and_arrays() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("arr")).output().expect("run arr");
+    let run = Command::new(fixture_dir.join("arr"))
+        .output()
+        .expect("run arr");
     assert_eq!(run.status.code(), Some(9));
 
     let _ = std::fs::remove_dir_all(&fixture_dir);
@@ -478,10 +456,8 @@ fn gos_build_handles_tuples_and_arrays() {
 
 #[test]
 fn gos_build_monomorphises_generic_function_calls() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-mono-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-mono-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("mono.gos");
     // Two distinct generic call-sites with different type arguments
@@ -499,9 +475,7 @@ fn gos_build_monomorphises_generic_function_calls() {
         .current_dir(workspace_root())
         .output()
         .expect("spawn gos build");
-    if !build.status.success()
-        || String::from_utf8_lossy(&build.stdout).contains("launcher")
-    {
+    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
@@ -519,10 +493,8 @@ fn gos_build_monomorphises_generic_function_calls() {
 
 #[test]
 fn gos_build_handles_first_class_closure_passed_to_higher_order_function() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-fcc-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-fcc-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("fcc.gos");
     // Capturing closure passed through a `Fn(_)` parameter to a
@@ -549,9 +521,7 @@ fn gos_build_handles_first_class_closure_passed_to_higher_order_function() {
         .current_dir(workspace_root())
         .output()
         .expect("spawn gos build");
-    if !build.status.success()
-        || String::from_utf8_lossy(&build.stdout).contains("launcher")
-    {
+    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         eprintln!(
             "skipping — gos build failed/launcher: stdout={} stderr={}",
             String::from_utf8_lossy(&build.stdout),
@@ -574,10 +544,8 @@ fn gos_build_handles_first_class_closure_passed_to_higher_order_function() {
 
 #[test]
 fn gos_build_handles_capturing_closure_via_heap_allocated_env() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-capcl-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-capcl-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("cap.gos");
     // `|y| x + y` captures `x`. lift_closures emits an
@@ -595,9 +563,7 @@ fn gos_build_handles_capturing_closure_via_heap_allocated_env() {
         .current_dir(workspace_root())
         .output()
         .expect("spawn gos build");
-    if !build.status.success()
-        || String::from_utf8_lossy(&build.stdout).contains("launcher")
-    {
+    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         eprintln!(
             "skipping — gos build failed/launcher: stdout={} stderr={}",
             String::from_utf8_lossy(&build.stdout),
@@ -620,10 +586,8 @@ fn gos_build_handles_capturing_closure_via_heap_allocated_env() {
 
 #[test]
 fn gos_build_handles_non_capturing_closure_via_direct_call() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-closure-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-closure-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("cl.gos");
     // `|x| x + 1` captures nothing, so lift_closures promotes it to
@@ -640,9 +604,7 @@ fn gos_build_handles_non_capturing_closure_via_direct_call() {
         .current_dir(workspace_root())
         .output()
         .expect("spawn gos build");
-    if !build.status.success()
-        || String::from_utf8_lossy(&build.stdout).contains("launcher")
-    {
+    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
@@ -660,10 +622,8 @@ fn gos_build_handles_non_capturing_closure_via_direct_call() {
 
 #[test]
 fn gos_build_handles_for_loop_over_range() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-for-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-for-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("fr.gos");
     std::fs::write(
@@ -678,9 +638,7 @@ fn gos_build_handles_for_loop_over_range() {
         .current_dir(workspace_root())
         .output()
         .expect("spawn gos build");
-    if !build.status.success()
-        || String::from_utf8_lossy(&build.stdout).contains("launcher")
-    {
+    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
@@ -698,10 +656,8 @@ fn gos_build_handles_for_loop_over_range() {
 
 #[test]
 fn gos_build_handles_struct_literal_and_field_access() {
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-struct-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-struct-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("s.gos");
     std::fs::write(
@@ -716,9 +672,7 @@ fn gos_build_handles_struct_literal_and_field_access() {
         .current_dir(workspace_root())
         .output()
         .expect("spawn gos build");
-    if !build.status.success()
-        || String::from_utf8_lossy(&build.stdout).contains("launcher")
-    {
+    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
@@ -740,10 +694,8 @@ fn gos_build_produces_native_println_binary() {
     // source. Asserts that the output is a real executable (not a
     // launcher shell script) and that running it prints the string
     // to stdout.
-    let fixture_dir = std::env::temp_dir().join(format!(
-        "gossamer-cranelift-println-{}",
-        std::process::id()
-    ));
+    let fixture_dir =
+        std::env::temp_dir().join(format!("gossamer-cranelift-println-{}", std::process::id()));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src_path = fixture_dir.join("hi.gos");
     std::fs::write(&src_path, "fn main() { println(\"native says hi\") }\n").unwrap();

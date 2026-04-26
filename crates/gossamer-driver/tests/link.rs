@@ -24,11 +24,7 @@ fn dce_drops_unreachable_functions() {
     let source = "fn main() -> i64 { 0i64 }\nfn unused() -> i64 { 1i64 }\n";
     let options = LinkerOptions::default().release();
     let artifact = compile_source(source, "dce", &options);
-    let names: Vec<_> = artifact
-        .symbols
-        .iter()
-        .map(|s| s.name.as_str())
-        .collect();
+    let names: Vec<_> = artifact.symbols.iter().map(|s| s.name.as_str()).collect();
     assert!(names.contains(&"main"));
     assert!(
         !names.contains(&"unused"),

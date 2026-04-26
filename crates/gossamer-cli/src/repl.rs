@@ -3,19 +3,17 @@
 //! Kept in its own module so `main.rs` stays under the 2000-line
 //! hard limit defined in `GUIDELINES.md`.
 
-
-
 use anyhow::{Result, anyhow};
 
-use crate::repl_history_path;
 #[allow(unused_imports)]
 use crate::repl_helper::GosReplHelper;
+use crate::repl_history_path;
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_repl() -> Result<()> {
     use rustyline::error::ReadlineError;
-    use rustyline::{ColorMode, Config, EditMode, Editor};
     use rustyline::history::FileHistory;
+    use rustyline::{ColorMode, Config, EditMode, Editor};
 
     use crate::repl_helper::GosReplHelper;
 
@@ -211,7 +209,10 @@ fn rebuild_interpreter(
     Ok(interp)
 }
 
-fn build_and_call(source: &str, entry: &str) -> std::result::Result<gossamer_interp::Value, String> {
+fn build_and_call(
+    source: &str,
+    entry: &str,
+) -> std::result::Result<gossamer_interp::Value, String> {
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl".to_string(), source.to_string());
     let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file);
@@ -224,7 +225,5 @@ fn build_and_call(source: &str, entry: &str) -> std::result::Result<gossamer_int
     let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
     let mut interp = gossamer_interp::Interpreter::new();
     interp.load(&program);
-    interp
-        .call(entry, Vec::new())
-        .map_err(|e| format!("{e}"))
+    interp.call(entry, Vec::new()).map_err(|e| format!("{e}"))
 }

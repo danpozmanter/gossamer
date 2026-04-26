@@ -41,10 +41,7 @@ pub fn check_eq<T: std::fmt::Debug + PartialEq>(
 }
 
 /// Asserts `result` is `Ok`, returning the wrapped value.
-pub fn check_ok<T, E: std::fmt::Debug>(
-    result: Result<T, E>,
-    message: &str,
-) -> Result<T, Error> {
+pub fn check_ok<T, E: std::fmt::Debug>(result: Result<T, E>, message: &str) -> Result<T, Error> {
     result.map_err(|err| Error::new(format!("{message}: {err:?}")))
 }
 

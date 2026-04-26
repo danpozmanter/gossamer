@@ -156,7 +156,10 @@ fn build_subcommand_produces_runnable_output() {
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(&binary).unwrap().permissions().mode();
-        assert!(mode & 0o111 != 0, "output should be chmod +x: mode {mode:o}");
+        assert!(
+            mode & 0o111 != 0,
+            "output should be chmod +x: mode {mode:o}"
+        );
     }
     // Either path prints a single build: line to stdout.
     assert!(String::from_utf8_lossy(&out.stdout).contains("build:"));
@@ -215,7 +218,11 @@ fn build_defaults_output_to_source_stem_without_extension() {
         String::from_utf8_lossy(&out.stderr)
     );
     let binary = dir.join("line_count");
-    assert!(binary.exists(), "expected build output at {}", binary.display());
+    assert!(
+        binary.exists(),
+        "expected build output at {}",
+        binary.display()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -326,9 +333,8 @@ fn web_server_example_binds_and_serves_real_requests() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
-            let _ = stream.write_all(
-                b"GET /echo?name=jane&x=1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
-            );
+            let _ =
+                stream.write_all(b"GET /echo?name=jane&x=1 HTTP/1.1\r\nHost: localhost\r\n\r\n");
             stream.shutdown(std::net::Shutdown::Write).unwrap();
             let mut buf = Vec::new();
             if stream.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
@@ -345,10 +351,7 @@ fn web_server_example_binds_and_serves_real_requests() {
         return;
     };
     let text = String::from_utf8_lossy(&body);
-    assert!(
-        text.starts_with("HTTP/1.1 "),
-        "unexpected response: {text}"
-    );
+    assert!(text.starts_with("HTTP/1.1 "), "unexpected response: {text}");
     assert!(
         text.contains("method") && text.contains("GET"),
         "echo body missing fields: {text}"
@@ -392,10 +395,7 @@ fn fmt_check_flag_fails_on_unformatted_file() {
 
 #[test]
 fn doc_lists_items_defined_in_the_file() {
-    let fixture = write_fixture(
-        "doc",
-        "struct Widget { }\nfn main() { }\nfn helper() { }\n",
-    );
+    let fixture = write_fixture("doc", "struct Widget { }\nfn main() { }\nfn helper() { }\n");
     let out = Command::new(gos_bin())
         .args(["doc"])
         .arg(&fixture)
@@ -488,7 +488,10 @@ fn every_top_level_example_parses() {
                 .is_some_and(|ext| ext == "gos")
         })
         .collect();
-    assert!(!entries.is_empty(), "examples/ must contain at least one .gos");
+    assert!(
+        !entries.is_empty(),
+        "examples/ must contain at least one .gos"
+    );
     for entry in entries {
         let path = entry.path();
         let out = Command::new(gos_bin())
@@ -606,7 +609,10 @@ fn clean_dry_run_reports_sizes_without_touching_the_cache() {
         .expect("spawn clean --dry-run");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "dry-run should succeed: {out:?}");
-    assert!(tmp.exists(), "cache dir should NOT be removed during dry run");
+    assert!(
+        tmp.exists(),
+        "cache dir should NOT be removed during dry run"
+    );
     assert!(
         stdout.contains("would remove frontend cache"),
         "expected would-remove line in {stdout}"
@@ -767,7 +773,12 @@ fn fmt_is_idempotent_on_the_full_examples_tree() {
             entry.path().display()
         );
         let rechecked = std::fs::read_to_string(&temp).unwrap();
-        assert_eq!(canonical, rechecked, "fmt is not idempotent on {}", entry.path().display());
+        assert_eq!(
+            canonical,
+            rechecked,
+            "fmt is not idempotent on {}",
+            entry.path().display()
+        );
         let _ = std::fs::remove_file(&temp);
     }
 }
@@ -998,7 +1009,6 @@ fn tidy_canonicalises_existing_manifest() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-
 #[test]
 fn run_refuses_type_invalid_program_with_diagnostic() {
     // Interpreter must not execute programs that fail static checks
@@ -1056,14 +1066,12 @@ fn test_refuses_statically_invalid_program_with_diagnostic() {
     let _ = std::fs::remove_file(&fixture);
 }
 
-
 // Post-L4 there's no launcher path — the old
 // `unsupported_native_path_fails_loudly_by_default` /
 // `allow_launcher_emits_shell_launcher_when_codegen_bails` tests
 // exercised a flag that no longer exists. Every program the
 // resolver + typechecker accepts now lowers to a native binary;
 // a codegen bail is a compiler bug, not an expected path.
-
 
 #[test]
 fn explain_recognises_runtime_error_codes() {
@@ -1092,10 +1100,7 @@ fn runtime_panic_stderr_carries_gx_code_prefix() {
     // Unified error-code catalogue: every runtime failure's stderr
     // is prefixed with `error[GXNNNN]:`. An explicit `panic!(...)`
     // exercises the `GX0005` branch end-to-end.
-    let fixture = write_fixture(
-        "runtime-panic",
-        "fn main() {\n    panic(\"boom\")\n}\n",
-    );
+    let fixture = write_fixture("runtime-panic", "fn main() {\n    panic(\"boom\")\n}\n");
     let out = Command::new(gos_bin())
         .arg("run")
         .arg(&fixture)

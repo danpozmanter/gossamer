@@ -6,8 +6,8 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::Duration;
 
@@ -195,9 +195,7 @@ fn server_handles_many_concurrent_connections() {
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
             stream
-                .write_all(
-                    format!("GET /{i} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes(),
-                )
+                .write_all(format!("GET /{i} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
                 .unwrap();
             stream.shutdown(std::net::Shutdown::Write).unwrap();
             let mut buf = Vec::new();

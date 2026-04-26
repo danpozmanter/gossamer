@@ -14,7 +14,12 @@ fn hello_world_parses_cleanly() {
     let mut map = SourceMap::new();
     let file = map.add_file(&path, source.clone());
     let (sf, diags) = parse_source_file(&source, file);
-    eprintln!("hello_world: {} uses, {} items, {} diags", sf.uses.len(), sf.items.len(), diags.len());
+    eprintln!(
+        "hello_world: {} uses, {} items, {} diags",
+        sf.uses.len(),
+        sf.items.len(),
+        diags.len()
+    );
     for diag in &diags {
         eprintln!("  {diag}");
     }
@@ -28,7 +33,12 @@ fn web_server_parses_cleanly() {
     let mut map = SourceMap::new();
     let file = map.add_file(&path, source.clone());
     let (sf, diags) = parse_source_file(&source, file);
-    eprintln!("web_server: {} uses, {} items, {} diags", sf.uses.len(), sf.items.len(), diags.len());
+    eprintln!(
+        "web_server: {} uses, {} items, {} diags",
+        sf.uses.len(),
+        sf.items.len(),
+        diags.len()
+    );
     for diag in &diags {
         eprintln!("  {diag}");
     }
@@ -42,7 +52,12 @@ fn line_count_parses_cleanly() {
     let mut map = SourceMap::new();
     let file = map.add_file(&path, source.clone());
     let (sf, diags) = parse_source_file(&source, file);
-    eprintln!("line_count: {} uses, {} items, {} diags", sf.uses.len(), sf.items.len(), diags.len());
+    eprintln!(
+        "line_count: {} uses, {} items, {} diags",
+        sf.uses.len(),
+        sf.items.len(),
+        diags.len()
+    );
     for diag in &diags {
         eprintln!("  {diag}");
     }

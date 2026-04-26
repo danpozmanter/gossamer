@@ -38,9 +38,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
                 && a.fields
                     .iter()
                     .zip(b.fields.iter())
-                    .all(|((ia, va), (ib, vb))| {
-                        ia.name == ib.name && values_equal(va, vb)
-                    })
+                    .all(|((ia, va), (ib, vb))| ia.name == ib.name && values_equal(va, vb))
         }
         (Value::Channel(_), Value::Channel(_)) => {
             // Channels have no structural equality; roundtrip is
@@ -99,7 +97,10 @@ fn char_roundtrips() {
 fn string_roundtrips() {
     for text in ["", "hello", "hello, world", "unicode: ñ 中 🎉"] {
         let v = Value::String(SmolStr::from(text.to_string()));
-        assert!(values_equal(&Value::from_raw(v.to_raw()), &v), "string {text:?}");
+        assert!(
+            values_equal(&Value::from_raw(v.to_raw()), &v),
+            "string {text:?}"
+        );
     }
 }
 

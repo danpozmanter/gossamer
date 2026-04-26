@@ -158,7 +158,7 @@ impl<R: Read> Scanner<R> {
 }
 
 /// Default line-splitter used by [`Scanner::new`].
-#[must_use] 
+#[must_use]
 pub fn split_lines(data: &[u8], at_eof: bool) -> Option<(usize, Vec<u8>)> {
     if let Some(idx) = data.iter().position(|b| *b == b'\n') {
         let mut line = data[..idx].to_vec();
@@ -175,7 +175,7 @@ pub fn split_lines(data: &[u8], at_eof: bool) -> Option<(usize, Vec<u8>)> {
 
 /// Whitespace-splitter suitable for `set_split` — emits tokens
 /// separated by any run of ASCII whitespace.
-#[must_use] 
+#[must_use]
 pub fn split_words(data: &[u8], at_eof: bool) -> Option<(usize, Vec<u8>)> {
     let mut cursor = 0;
     while cursor < data.len() && data[cursor].is_ascii_whitespace() {

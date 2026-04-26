@@ -42,11 +42,13 @@
     clippy::too_many_lines,
     clippy::cognitive_complexity,
     clippy::if_not_else,
-    clippy::comparison_chain,
+    clippy::comparison_chain
 )]
 
 mod emit;
 mod lower;
 mod ty;
 
-pub use emit::{BuildError, CompileOutcome, NativeObject, compile_to_object, compile_with_fallback};
+pub use emit::{
+    BuildError, CompileOutcome, NativeObject, compile_to_object, compile_with_fallback,
+};

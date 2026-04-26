@@ -13,7 +13,6 @@ use gossamer_ast::Ident;
 
 use crate::value::{RuntimeError, RuntimeResult, SmolStr, Value};
 
-
 fn as_str(value: &Value) -> Option<&str> {
     match value {
         Value::String(s) => Some(s.as_str()),
@@ -173,8 +172,8 @@ fn http_get_plain(url: &str) -> Result<Value, String> {
         None => (host.as_str(), "80"),
     };
     let address = format!("{host_part}:{port}");
-    let mut stream = std::net::TcpStream::connect(&address)
-        .map_err(|e| format!("connect {address}: {e}"))?;
+    let mut stream =
+        std::net::TcpStream::connect(&address).map_err(|e| format!("connect {address}: {e}"))?;
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(30)))
         .ok();
@@ -185,8 +184,7 @@ fn http_get_plain(url: &str) -> Result<Value, String> {
     std::io::Write::write_all(&mut stream, request.as_bytes())
         .map_err(|e| format!("write: {e}"))?;
     let mut response = Vec::new();
-    std::io::Read::read_to_end(&mut stream, &mut response)
-        .map_err(|e| format!("read: {e}"))?;
+    std::io::Read::read_to_end(&mut stream, &mut response).map_err(|e| format!("read: {e}"))?;
     let response_str = String::from_utf8_lossy(&response);
     let Some((header_block, body)) = response_str.split_once("\r\n\r\n") else {
         return Err("invalid HTTP response".to_string());

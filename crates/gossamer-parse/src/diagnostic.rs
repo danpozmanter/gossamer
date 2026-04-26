@@ -162,16 +162,8 @@ impl ParseDiagnostic {
                 "assignment is only valid at statement position".to_string(),
                 None,
             ),
-            ParseError::ExpectedInt => (
-                "GP0009",
-                "expected an integer literal".to_string(),
-                None,
-            ),
-            ParseError::ExpectedString => (
-                "GP0010",
-                "expected a string literal".to_string(),
-                None,
-            ),
+            ParseError::ExpectedInt => ("GP0009", "expected an integer literal".to_string(), None),
+            ParseError::ExpectedString => ("GP0010", "expected a string literal".to_string(), None),
             ParseError::InvalidTupleIndex => (
                 "GP0011",
                 "invalid tuple index".to_string(),
@@ -182,24 +174,11 @@ impl ParseDiagnostic {
                 "expected a label identifier after `'`".to_string(),
                 None,
             ),
-            ParseError::MalformedAttribute => (
-                "GP0013",
-                "malformed attribute".to_string(),
-                None,
-            ),
-            ParseError::MalformedUse => (
-                "GP0014",
-                "malformed `use` declaration".to_string(),
-                None,
-            ),
-            ParseError::UnexpectedConstruct => (
-                "GP0015",
-                "unexpected construct".to_string(),
-                None,
-            ),
+            ParseError::MalformedAttribute => ("GP0013", "malformed attribute".to_string(), None),
+            ParseError::MalformedUse => ("GP0014", "malformed `use` declaration".to_string(), None),
+            ParseError::UnexpectedConstruct => ("GP0015", "unexpected construct".to_string(), None),
         };
-        let mut out = Diagnostic::error(Code(code), title.clone())
-            .with_primary(location, title);
+        let mut out = Diagnostic::error(Code(code), title.clone()).with_primary(location, title);
         if let Some(help) = help {
             out = out.with_help(help);
         }

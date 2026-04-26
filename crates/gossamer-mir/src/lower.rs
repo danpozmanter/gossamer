@@ -38,7 +38,13 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     let mut bodies = Vec::new();
     for item in &program.items {
         collect_item(
-            item, tcx, &structs, &struct_defs, &fn_returns, &fn_inputs, &mut bodies,
+            item,
+            tcx,
+            &structs,
+            &struct_defs,
+            &fn_returns,
+            &fn_inputs,
+            &mut bodies,
         );
     }
     bodies
@@ -49,9 +55,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
 /// site argument coercion can detect when a `Fn(args) -> ret`
 /// parameter is being supplied with a bare `fn item` that needs
 /// trampoline-wrapping into the env+code shape.
-fn collect_fn_inputs(
-    program: &HirProgram,
-) -> HashMap<gossamer_resolve::DefId, Vec<Ty>> {
+fn collect_fn_inputs(program: &HirProgram) -> HashMap<gossamer_resolve::DefId, Vec<Ty>> {
     let mut out = HashMap::new();
     for item in &program.items {
         if let HirItemKind::Fn(decl) = &item.kind {
@@ -69,9 +73,7 @@ fn collect_fn_inputs(
 /// site destinations can be typed with the callee's concrete
 /// return type instead of the call expression's inference-variable
 /// placeholder.
-fn collect_fn_returns(
-    program: &HirProgram,
-) -> HashMap<gossamer_resolve::DefId, Ty> {
+fn collect_fn_returns(program: &HirProgram) -> HashMap<gossamer_resolve::DefId, Ty> {
     let mut out = HashMap::new();
     for item in &program.items {
         match &item.kind {
@@ -143,7 +145,14 @@ fn collect_item(
     match &item.kind {
         HirItemKind::Fn(decl) => {
             if let Some(body) = lower_fn(
-                decl, item.def, item.span, tcx, structs, struct_defs, fn_returns, fn_inputs,
+                decl,
+                item.def,
+                item.span,
+                tcx,
+                structs,
+                struct_defs,
+                fn_returns,
+                fn_inputs,
             ) {
                 out.push(body);
             }
@@ -151,7 +160,14 @@ fn collect_item(
         HirItemKind::Impl(decl) => {
             for method in &decl.methods {
                 if let Some(body) = lower_fn(
-                    method, None, item.span, tcx, structs, struct_defs, fn_returns, fn_inputs,
+                    method,
+                    None,
+                    item.span,
+                    tcx,
+                    structs,
+                    struct_defs,
+                    fn_returns,
+                    fn_inputs,
                 ) {
                     out.push(body);
                 }
@@ -583,10 +599,7 @@ impl<'a> Builder<'a> {
                             let substs = self.substs_of(callee.ty);
                             self.emit_assign(
                                 Place::local(fn_addr_local),
-                                Rvalue::Use(Operand::FnRef {
-                                    def: *def,
-                                    substs,
-                                }),
+                                Rvalue::Use(Operand::FnRef { def: *def, substs }),
                                 expr.span,
                             );
                             let mut operands = Vec::with_capacity(args.len() + 1);
@@ -600,9 +613,7 @@ impl<'a> Builder<'a> {
                             let dest = self.fresh(unit_ty);
                             let next = self.new_block(expr.span);
                             self.terminate(Terminator::Call {
-                                callee: Operand::Const(ConstValue::Str(
-                                    sym.to_string(),
-                                )),
+                                callee: Operand::Const(ConstValue::Str(sym.to_string())),
                                 args: operands,
                                 destination: Place::local(dest),
                                 target: Some(next),
@@ -675,7 +686,9 @@ impl<'a> Builder<'a> {
                 // reject this; if it slips through, fall back to
                 // `Unreachable` rather than emit a dangling jump.
                 if let Some(ctx) = self.loop_stack.last().copied() {
-                    self.terminate(Terminator::Goto { target: ctx.break_to });
+                    self.terminate(Terminator::Goto {
+                        target: ctx.break_to,
+                    });
                 } else {
                     self.terminate(Terminator::Unreachable);
                 }
@@ -683,7 +696,9 @@ impl<'a> Builder<'a> {
             }
             HirExprKind::Continue => {
                 if let Some(ctx) = self.loop_stack.last().copied() {
-                    self.terminate(Terminator::Goto { target: ctx.continue_to });
+                    self.terminate(Terminator::Goto {
+                        target: ctx.continue_to,
+                    });
                 } else {
                     self.terminate(Terminator::Unreachable);
                 }
@@ -714,9 +729,11 @@ impl<'a> Builder<'a> {
             HirExprKind::LiftedClosure { name, captures } => {
                 self.lower_lifted_closure(name, captures, expr.ty, expr.span)
             }
-            HirExprKind::MethodCall { receiver, name, args } => {
-                self.lower_method_call(receiver, name, args, expr.ty, expr.span)
-            }
+            HirExprKind::MethodCall {
+                receiver,
+                name,
+                args,
+            } => self.lower_method_call(receiver, name, args, expr.ty, expr.span),
             HirExprKind::Go(inner) => {
                 let go_span = expr.span;
                 // Real spawn for `go f(args)` where f is a named
@@ -747,10 +764,7 @@ impl<'a> Builder<'a> {
                             let substs = self.substs_of(callee.ty);
                             self.emit_assign(
                                 Place::local(fn_addr_local),
-                                Rvalue::Use(Operand::FnRef {
-                                    def: *def,
-                                    substs,
-                                }),
+                                Rvalue::Use(Operand::FnRef { def: *def, substs }),
                                 go_span,
                             );
                             let mut operands = Vec::with_capacity(args.len() + 1);
@@ -786,8 +800,7 @@ impl<'a> Builder<'a> {
                 let mut result: Option<Local> = None;
                 for (i, arm) in arms.iter().enumerate() {
                     match &arm.op {
-                        HirSelectOp::Recv { channel, .. }
-                        | HirSelectOp::Send { channel, .. } => {
+                        HirSelectOp::Recv { channel, .. } | HirSelectOp::Send { channel, .. } => {
                             let _ = self.lower_expr(channel);
                         }
                         HirSelectOp::Default => {}
@@ -798,9 +811,7 @@ impl<'a> Builder<'a> {
                 }
                 result.or_else(|| Some(self.lower_unit(expr.span)))
             }
-            HirExprKind::Range { .. }
-            | HirExprKind::Closure { .. }
-            | HirExprKind::Placeholder => {
+            HirExprKind::Range { .. } | HirExprKind::Closure { .. } | HirExprKind::Placeholder => {
                 // Lowering of these constructs is left to later
                 // milestones; emit an unreachable placeholder so the
                 // block is still well-formed.
@@ -957,10 +968,12 @@ impl<'a> Builder<'a> {
             .map(|s| s.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
-        let operand = if let Some(def) = def { Operand::FnRef {
-            def,
-            substs: self.substs_of(ty),
-        } } else {
+        let operand = if let Some(def) = def {
+            Operand::FnRef {
+                def,
+                substs: self.substs_of(ty),
+            }
+        } else {
             // Record that `local` holds a function-name constant
             // so a later `let` binding + call can still dispatch
             // directly to the named function without treating
@@ -1114,8 +1127,7 @@ impl<'a> Builder<'a> {
                     .cloned()
                     .or_else(|| self.struct_name_from_expr(receiver))?;
                 let order = self.structs.get(&struct_name)?;
-                let idx = u32::try_from(order.iter().position(|f| f == &name.name)?)
-                    .ok()?;
+                let idx = u32::try_from(order.iter().position(|f| f == &name.name)?).ok()?;
                 base.projection.push(crate::ir::Projection::Field(idx));
                 Some(base)
             }
@@ -1127,7 +1139,9 @@ impl<'a> Builder<'a> {
             HirExprKind::Index { base, index } => {
                 let mut base_place = self.lower_place_expr(base)?;
                 let index_local = self.lower_expr(index)?;
-                base_place.projection.push(crate::ir::Projection::Index(index_local));
+                base_place
+                    .projection
+                    .push(crate::ir::Projection::Index(index_local));
                 Some(base_place)
             }
             _ => None,
@@ -1171,34 +1185,26 @@ impl<'a> Builder<'a> {
         // or int-typed registers. Fix the printable kind here.
         let ty = {
             use gossamer_types::TyKind;
-            if let HirExprKind::Path { segments, def: None, .. } = &callee.kind {
+            if let HirExprKind::Path {
+                segments,
+                def: None,
+                ..
+            } = &callee.kind
+            {
                 let joined = segments
                     .iter()
                     .map(|s| s.name.as_str())
                     .collect::<Vec<_>>()
                     .join("::");
-                if matches!(
-                    self.tcx.kind_of(ty),
-                    TyKind::Error | TyKind::Var(_)
-                ) {
+                if matches!(self.tcx.kind_of(ty), TyKind::Error | TyKind::Var(_)) {
                     match joined.as_str() {
-                        "math::sqrt"
-                        | "math::sin"
-                        | "math::cos"
-                        | "math::ln"
-                        | "math::log"
-                        | "math::exp"
-                        | "math::abs"
-                        | "math::floor"
-                        | "math::ceil"
-                        | "math::pow"
-                        | "time::now" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
-                        "time::now_ns"
-                        | "time::now_ms"
-                        | "strconv::parse_i64"
-                        | "gos_rt_math_sqrt" => {
-                            self.tcx.int_ty(gossamer_types::IntTy::I64)
+                        "math::sqrt" | "math::sin" | "math::cos" | "math::ln" | "math::log"
+                        | "math::exp" | "math::abs" | "math::floor" | "math::ceil"
+                        | "math::pow" | "time::now" => {
+                            self.tcx.float_ty(gossamer_types::FloatTy::F64)
                         }
+                        "time::now_ns" | "time::now_ms" | "strconv::parse_i64"
+                        | "gos_rt_math_sqrt" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                         _ => ty,
                     }
                 } else {
@@ -1215,14 +1221,17 @@ impl<'a> Builder<'a> {
         // previously registered as a lifted closure, dispatch
         // statically to that closure's top-level function and pass
         // the env pointer as the implicit first argument.
-        if let HirExprKind::Path { segments, def: None, .. } = &callee.kind {
+        if let HirExprKind::Path {
+            segments,
+            def: None,
+            ..
+        } = &callee.kind
+        {
             if segments.len() == 1 {
                 if let Some(local) = self.lookup_local(&segments[0].name) {
                     if let Some(fn_name) = self.local_closure.get(&local).cloned() {
-                        let mut arg_operands =
-                            Vec::with_capacity(args.len() + 1);
-                        arg_operands
-                            .push(Operand::Copy(Place::local(local)));
+                        let mut arg_operands = Vec::with_capacity(args.len() + 1);
+                        arg_operands.push(Operand::Copy(Place::local(local)));
                         for arg in args {
                             let a = self.lower_expr(arg)?;
                             arg_operands.push(Operand::Copy(Place::local(a)));
@@ -1246,7 +1255,11 @@ impl<'a> Builder<'a> {
                 def: *def,
                 substs: self.substs_of(callee.ty),
             },
-            HirExprKind::Path { segments, def: None, .. } => {
+            HirExprKind::Path {
+                segments,
+                def: None,
+                ..
+            } => {
                 // Only treat a bare local as an indirect closure
                 // callee when it came from a function parameter.
                 // Other locals (e.g. bound to `Const(Str(name))`
@@ -1322,10 +1335,7 @@ impl<'a> Builder<'a> {
             let arg_is_fn_item = !in_closure_map
                 && (in_fn_name_map
                     || local_kind_is_fn
-                    || matches!(
-                        &arg.kind,
-                        HirExprKind::Path { def: Some(_), .. }
-                    ));
+                    || matches!(&arg.kind, HirExprKind::Path { def: Some(_), .. }));
             let local = if arg_is_fn_item {
                 if let Some(params) = callee_param_tys.as_ref() {
                     if let Some(expected) = params.get(idx).copied() {
@@ -1374,10 +1384,7 @@ impl<'a> Builder<'a> {
         let arity = sig.inputs.len();
         let source_ty = self.locals[source_local.0 as usize].ty;
         let source_kind = self.tcx.kind_of(source_ty);
-        let needs_wrap = matches!(
-            source_kind,
-            TyKind::FnDef { .. } | TyKind::FnPtr(_)
-        );
+        let needs_wrap = matches!(source_kind, TyKind::FnDef { .. } | TyKind::FnPtr(_));
         if !needs_wrap {
             // Source is already a closure / FnTrait / non-callable
             // (the typeck would have rejected the latter).
@@ -1463,9 +1470,7 @@ impl<'a> Builder<'a> {
         // `gos_fn_addr` so the trampoline forwards to the actual
         // code. Direct fn references (FnDef/FnPtr-typed locals)
         // already hold the right value.
-        let real_fn_operand = if let Some(name) =
-            self.local_fn_name.get(&source_local).cloned()
-        {
+        let real_fn_operand = if let Some(name) = self.local_fn_name.get(&source_local).cloned() {
             let addr_local = self.fresh(env_ty);
             self.emit_assign(
                 Place::local(addr_local),
@@ -1645,13 +1650,7 @@ impl<'a> Builder<'a> {
     }
 
     /// Lowers `expr as T` into `Rvalue::Cast { operand, target }`.
-    fn lower_cast(
-        &mut self,
-        value: &HirExpr,
-        target: Ty,
-        ty: Ty,
-        span: Span,
-    ) -> Option<Local> {
+    fn lower_cast(&mut self, value: &HirExpr, target: Ty, ty: Ty, span: Span) -> Option<Local> {
         let value_local = self.lower_expr(value)?;
         let dest = self.fresh(ty);
         self.emit_assign(
@@ -1800,7 +1799,10 @@ impl<'a> Builder<'a> {
             .get(&receiver_local)
             .cloned()
             .or_else(|| self.struct_name_of(receiver.ty));
-        let field_order = struct_name.as_ref().and_then(|n| self.structs.get(n)).cloned();
+        let field_order = struct_name
+            .as_ref()
+            .and_then(|n| self.structs.get(n))
+            .cloned();
         let Some(order) = field_order else {
             return self.lower_unsupported_placeholder(ty, span);
         };
@@ -1867,9 +1869,7 @@ impl<'a> Builder<'a> {
             "len" => match &receiver_kind_flat {
                 TyKind::String => Some("gos_rt_str_len"),
                 TyKind::HashMap { .. } => Some("gos_rt_map_len"),
-                TyKind::Vec(_) | TyKind::Array { .. } | TyKind::Slice(_) => {
-                    Some("gos_rt_len")
-                }
+                TyKind::Vec(_) | TyKind::Array { .. } | TyKind::Slice(_) => Some("gos_rt_len"),
                 _ => Some("gos_rt_len"),
             },
             "trim" => Some("gos_rt_str_trim"),
@@ -1895,9 +1895,7 @@ impl<'a> Builder<'a> {
             // / `io::stdin()` handles). Mirrors Rust's `Write` /
             // `BufRead` trait surface.
             "write_byte" => Some("gos_rt_stream_write_byte"),
-            "write_byte_array" | "write_bytes" => {
-                Some("gos_rt_stream_write_byte_array")
-            }
+            "write_byte_array" | "write_bytes" => Some("gos_rt_stream_write_byte_array"),
             "write" | "write_str" => Some("gos_rt_stream_write_str"),
             "flush" => Some("gos_rt_stream_flush"),
             "read_line" => Some("gos_rt_stream_read_line"),
@@ -1921,12 +1919,8 @@ impl<'a> Builder<'a> {
             "set_at" => Some("gos_rt_heap_i64_set"),
             "get_at" => Some("gos_rt_heap_i64_get"),
             "vec_len" => Some("gos_rt_heap_i64_len"),
-            "write_range_to_stdout" => {
-                Some("gos_rt_heap_i64_write_bytes_to_stdout")
-            }
-            "write_lines_to_stdout" => {
-                Some("gos_rt_heap_i64_write_lines_to_stdout")
-            }
+            "write_range_to_stdout" => Some("gos_rt_heap_i64_write_bytes_to_stdout"),
+            "write_lines_to_stdout" => Some("gos_rt_heap_i64_write_lines_to_stdout"),
             // U8Vec methods. Distinct names from the I64Vec
             // family because MIR's method dispatch is by name
             // alone — sharing `set_at` between i64 and u8
@@ -1936,12 +1930,8 @@ impl<'a> Builder<'a> {
             "set_byte" => Some("gos_rt_heap_u8_set"),
             "get_byte" => Some("gos_rt_heap_u8_get"),
             "byte_len" => Some("gos_rt_heap_u8_len"),
-            "write_byte_range_to_stdout" => {
-                Some("gos_rt_heap_u8_write_bytes_to_stdout")
-            }
-            "write_byte_lines_to_stdout" => {
-                Some("gos_rt_heap_u8_write_lines_to_stdout")
-            }
+            "write_byte_range_to_stdout" => Some("gos_rt_heap_u8_write_bytes_to_stdout"),
+            "write_byte_lines_to_stdout" => Some("gos_rt_heap_u8_write_lines_to_stdout"),
             _ => None,
         };
         let _ = receiver_kind;
@@ -2003,9 +1993,9 @@ impl<'a> Builder<'a> {
                 | "gos_rt_f64_to_str"
                 | "gos_rt_stream_read_line"
                 | "gos_rt_stream_read_to_string" => self.tcx.string_ty(),
-                "gos_rt_str_contains"
-                | "gos_rt_str_starts_with"
-                | "gos_rt_str_ends_with" => self.tcx.bool_ty(),
+                "gos_rt_str_contains" | "gos_rt_str_starts_with" | "gos_rt_str_ends_with" => {
+                    self.tcx.bool_ty()
+                }
                 "gos_rt_str_find"
                 | "gos_rt_str_len"
                 | "gos_rt_str_byte_at"
@@ -2015,12 +2005,9 @@ impl<'a> Builder<'a> {
                 | "gos_rt_chan_recv"
                 | "gos_rt_chan_try_recv"
                 | "gos_rt_vec_pop" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                "gos_rt_chan_try_send"
-                | "gos_rt_map_remove" => self.tcx.bool_ty(),
+                "gos_rt_chan_try_send" | "gos_rt_map_remove" => self.tcx.bool_ty(),
                 _ => match self.tcx.kind_of(ty) {
-                    TyKind::Error | TyKind::Var(_) => {
-                        self.tcx.int_ty(gossamer_types::IntTy::I64)
-                    }
+                    TyKind::Error | TyKind::Var(_) => self.tcx.int_ty(gossamer_types::IntTy::I64),
                     _ => ty,
                 },
             };
@@ -2078,12 +2065,7 @@ impl<'a> Builder<'a> {
 
     /// Lowers an explicit array literal (`[a, b, c]`) into an
     /// `Rvalue::Aggregate { kind: Array }`.
-    fn lower_array_list(
-        &mut self,
-        elems: &[HirExpr],
-        ty: Ty,
-        span: Span,
-    ) -> Option<Local> {
+    fn lower_array_list(&mut self, elems: &[HirExpr], ty: Ty, span: Span) -> Option<Local> {
         let mut operands = Vec::with_capacity(elems.len());
         let mut elem_struct: Option<String> = None;
         for elem in elems {
@@ -2272,11 +2254,7 @@ impl<'a> Builder<'a> {
     /// a counter-driven CFG when `iter` is a range or an array-shaped
     /// expression. Returns `None` when the iterator's shape is not
     /// recognised so the generic `loop` fallback handles it.
-    fn try_lower_for_loop(
-        &mut self,
-        for_loop: &ForLoopShape<'_>,
-        span: Span,
-    ) -> Option<Local> {
+    fn try_lower_for_loop(&mut self, for_loop: &ForLoopShape<'_>, span: Span) -> Option<Local> {
         use gossamer_types::TyKind;
         match &for_loop.iter_expr.kind {
             HirExprKind::Range {
@@ -2298,7 +2276,13 @@ impl<'a> Builder<'a> {
                         literal_u64(count).and_then(|c| i64::try_from(c).ok())?
                     }
                 };
-                self.lower_for_array(for_loop.iter_expr, for_loop.loop_pat, for_loop.body, len, span)
+                self.lower_for_array(
+                    for_loop.iter_expr,
+                    for_loop.loop_pat,
+                    for_loop.body,
+                    len,
+                    span,
+                )
             }
             _ => {
                 // Fallback: if the iter expression's HIR type is a
@@ -2315,7 +2299,13 @@ impl<'a> Builder<'a> {
                     }
                 };
                 let len = len_opt?;
-                self.lower_for_array(for_loop.iter_expr, for_loop.loop_pat, for_loop.body, len, span)
+                self.lower_for_array(
+                    for_loop.iter_expr,
+                    for_loop.loop_pat,
+                    for_loop.body,
+                    len,
+                    span,
+                )
             }
         }
     }

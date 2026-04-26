@@ -230,10 +230,7 @@ mod tests {
     #[test]
     fn split_and_join_round_trip() {
         let parts = split(b"a,b,,c", b",");
-        let joined = join(
-            &parts.iter().map(Vec::as_slice).collect::<Vec<_>>(),
-            b",",
-        );
+        let joined = join(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>(), b",");
         assert_eq!(joined, b"a,b,,c");
     }
 

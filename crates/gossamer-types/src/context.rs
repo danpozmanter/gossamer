@@ -154,11 +154,7 @@ impl TyCtxt {
 
     /// Records the field types of a named struct in source order.
     /// Called by the typechecker once per struct declaration.
-    pub fn register_struct_fields(
-        &mut self,
-        def: gossamer_resolve::DefId,
-        fields: Vec<Ty>,
-    ) {
+    pub fn register_struct_fields(&mut self, def: gossamer_resolve::DefId, fields: Vec<Ty>) {
         self.struct_fields.insert(def, fields);
     }
 

@@ -57,8 +57,14 @@ fn first_build_is_a_full_compile_second_is_all_cache_hits() {
     let second = build_workspace(&graph, &cache, &options).unwrap();
     assert!(second.iter().all(|o| o.from_cache));
     assert_eq!(
-        first.iter().map(|o| o.fingerprint.clone()).collect::<Vec<_>>(),
-        second.iter().map(|o| o.fingerprint.clone()).collect::<Vec<_>>(),
+        first
+            .iter()
+            .map(|o| o.fingerprint.clone())
+            .collect::<Vec<_>>(),
+        second
+            .iter()
+            .map(|o| o.fingerprint.clone())
+            .collect::<Vec<_>>(),
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -77,7 +83,10 @@ fn touching_leaf_forces_every_downstream_crate_to_recompile() {
     let leaf = after.iter().find(|o| o.crate_name == "leaf").unwrap();
     let app = after.iter().find(|o| o.crate_name == "app").unwrap();
     assert!(!leaf.from_cache, "leaf must rebuild");
-    assert!(!app.from_cache, "app must rebuild because leaf's fingerprint moved");
+    assert!(
+        !app.from_cache,
+        "app must rebuild because leaf's fingerprint moved"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

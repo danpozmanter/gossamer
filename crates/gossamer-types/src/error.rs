@@ -112,8 +112,8 @@ impl TypeDiagnostic {
         use gossamer_diagnostics::{Code, Diagnostic, Location};
         let location = Location::new(self.span.file, self.span);
         let title = format!("{}", self.error);
-        let mut out = Diagnostic::error(Code(self.error.code()), title.clone())
-            .with_primary(location, title);
+        let mut out =
+            Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title);
         match &self.error {
             TypeError::TypeMismatch { expected, found } => {
                 out = out.with_note(format!("expected `{expected}`, found `{found}`"));

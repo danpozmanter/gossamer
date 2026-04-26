@@ -75,9 +75,8 @@ fn jit_fallback_for_value_typed_args() {
     // `concat` with `Value::String` operands forces the fallback
     // path; we still want the right answer.
     let _g = GosJitGuard::new();
-    let (vm, _) = build_vm(
-        "fn double(n: i64) -> i64 { n * 2i64 }\nfn main() -> i64 { double(21i64) }\n",
-    );
+    let (vm, _) =
+        build_vm("fn double(n: i64) -> i64 { n * 2i64 }\nfn main() -> i64 { double(21i64) }\n");
     let result = vm.call("main", Vec::new()).expect("main");
     assert!(matches!(result, Value::Int(42)));
 }
@@ -88,7 +87,10 @@ fn jit_fib_recursion_returns_correctly() {
     let source = "fn fib(n: i64) -> i64 {\n  if n < 2i64 { n } else { fib(n - 1i64) + fib(n - 2i64) }\n}\nfn main() -> i64 { fib(10i64) }\n";
     let (vm, _) = build_vm(source);
     let result = vm.call("main", Vec::new()).expect("main");
-    assert!(matches!(result, Value::Int(55)), "fib(10) result: {result:?}");
+    assert!(
+        matches!(result, Value::Int(55)),
+        "fib(10) result: {result:?}"
+    );
 }
 
 #[test]
@@ -101,5 +103,8 @@ fn jit_falls_back_when_signature_unsupported() {
         "fn pick(b: bool) -> i64 { if b { 1i64 } else { 0i64 } }\nfn main() -> i64 { pick(true) + pick(false) }\n",
     );
     let result = vm.call("main", Vec::new()).expect("main");
-    assert!(matches!(result, Value::Int(1)), "pick(true) + pick(false): {result:?}");
+    assert!(
+        matches!(result, Value::Int(1)),
+        "pick(true) + pick(false): {result:?}"
+    );
 }

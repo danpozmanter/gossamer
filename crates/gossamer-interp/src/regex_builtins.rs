@@ -54,10 +54,14 @@ fn regex_handle(id: u64, source: &str) -> Value {
 
 fn regex_id_from(value: &Value) -> RuntimeResult<u64> {
     let Value::Struct(inner) = value else {
-        return Err(RuntimeError::Type("regex: expected Pattern handle".to_string()));
+        return Err(RuntimeError::Type(
+            "regex: expected Pattern handle".to_string(),
+        ));
     };
     if inner.name != "regex::Pattern" {
-        return Err(RuntimeError::Type("regex: expected Pattern handle".to_string()));
+        return Err(RuntimeError::Type(
+            "regex: expected Pattern handle".to_string(),
+        ));
     }
     for (ident, v) in inner.fields.iter() {
         if ident.name == "__regex_id" {
@@ -66,7 +70,9 @@ fn regex_id_from(value: &Value) -> RuntimeResult<u64> {
             }
         }
     }
-    Err(RuntimeError::Type("regex: Pattern handle missing id".to_string()))
+    Err(RuntimeError::Type(
+        "regex: Pattern handle missing id".to_string(),
+    ))
 }
 
 fn with_regex<T>(value: &Value, f: impl FnOnce(&regex_std::Pattern) -> T) -> RuntimeResult<T> {
@@ -82,7 +88,9 @@ fn with_regex<T>(value: &Value, f: impl FnOnce(&regex_std::Pattern) -> T) -> Run
 fn arg_string<'a>(args: &'a [Value], idx: usize, context: &'static str) -> RuntimeResult<&'a str> {
     match args.get(idx) {
         Some(Value::String(s)) => Ok(s.as_str()),
-        _ => Err(RuntimeError::Type(format!("{context}: expected string argument"))),
+        _ => Err(RuntimeError::Type(format!(
+            "{context}: expected string argument"
+        ))),
     }
 }
 
@@ -98,7 +106,9 @@ fn captures_to_array(caps: Vec<Option<String>>) -> Value {
     Value::Array(Arc::new(
         caps.into_iter()
             .map(|opt| match opt {
-                Some(s) => Value::variant("Some".to_string(), Arc::new(vec![Value::String(s.into())])),
+                Some(s) => {
+                    Value::variant("Some".to_string(), Arc::new(vec![Value::String(s.into())]))
+                }
                 None => Value::variant("None".to_string(), Arc::new(vec![])),
             })
             .collect(),
@@ -123,51 +133,68 @@ fn builtin_regex_compile(args: &[Value]) -> RuntimeResult<Value> {
                 Arc::new(vec![regex_handle(id, pattern)]),
             ))
         }
-        Err(err) => Ok(Value::variant("Err".to_string(), Arc::new(vec![Value::String(SmolStr::from(err.to_string()))]))),
+        Err(err) => Ok(Value::variant(
+            "Err".to_string(),
+            Arc::new(vec![Value::String(SmolStr::from(err.to_string()))]),
+        )),
     }
 }
 
 fn builtin_regex_is_match(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().ok_or_else(|| RuntimeError::Type("regex::is_match: missing Pattern".to_string()))?;
+    let handle = args
+        .first()
+        .ok_or_else(|| RuntimeError::Type("regex::is_match: missing Pattern".to_string()))?;
     let text = arg_string(args, 1, "regex::is_match")?;
     let matched = with_regex(handle, |p| regex_std::is_match(p, text))?;
     Ok(Value::Bool(matched))
 }
 
 fn builtin_regex_find(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().ok_or_else(|| RuntimeError::Type("regex::find: missing Pattern".to_string()))?;
+    let handle = args
+        .first()
+        .ok_or_else(|| RuntimeError::Type("regex::find: missing Pattern".to_string()))?;
     let text = arg_string(args, 1, "regex::find")?;
     let hit = with_regex(handle, |p| regex_std::find(p, text))?;
     Ok(match hit {
-        Some((s, e, t)) => Value::variant(
-            "Some".to_string(),
-            Arc::new(vec![match_triple(s, e, t)]),
-        ),
+        Some((s, e, t)) => {
+            Value::variant("Some".to_string(), Arc::new(vec![match_triple(s, e, t)]))
+        }
         None => Value::variant("None".to_string(), Arc::new(vec![])),
     })
 }
 
 fn builtin_regex_find_all(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().ok_or_else(|| RuntimeError::Type("regex::find_all: missing Pattern".to_string()))?;
+    let handle = args
+        .first()
+        .ok_or_else(|| RuntimeError::Type("regex::find_all: missing Pattern".to_string()))?;
     let text = arg_string(args, 1, "regex::find_all")?;
     let hits = with_regex(handle, |p| regex_std::find_all(p, text))?;
     Ok(Value::Array(Arc::new(
-        hits.into_iter().map(|(s, e, t)| match_triple(s, e, t)).collect(),
+        hits.into_iter()
+            .map(|(s, e, t)| match_triple(s, e, t))
+            .collect(),
     )))
 }
 
 fn builtin_regex_captures(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().ok_or_else(|| RuntimeError::Type("regex::captures: missing Pattern".to_string()))?;
+    let handle = args
+        .first()
+        .ok_or_else(|| RuntimeError::Type("regex::captures: missing Pattern".to_string()))?;
     let text = arg_string(args, 1, "regex::captures")?;
     let caps = with_regex(handle, |p| regex_std::captures(p, text))?;
     Ok(match caps {
-        Some(groups) => Value::variant("Some".to_string(), Arc::new(vec![captures_to_array(groups)])),
+        Some(groups) => Value::variant(
+            "Some".to_string(),
+            Arc::new(vec![captures_to_array(groups)]),
+        ),
         None => Value::variant("None".to_string(), Arc::new(vec![])),
     })
 }
 
 fn builtin_regex_captures_all(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().ok_or_else(|| RuntimeError::Type("regex::captures_all: missing Pattern".to_string()))?;
+    let handle = args
+        .first()
+        .ok_or_else(|| RuntimeError::Type("regex::captures_all: missing Pattern".to_string()))?;
     let text = arg_string(args, 1, "regex::captures_all")?;
     let rows = with_regex(handle, |p| regex_std::captures_all(p, text))?;
     Ok(Value::Array(Arc::new(
@@ -176,7 +203,9 @@ fn builtin_regex_captures_all(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_regex_replace(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().ok_or_else(|| RuntimeError::Type("regex::replace: missing Pattern".to_string()))?;
+    let handle = args
+        .first()
+        .ok_or_else(|| RuntimeError::Type("regex::replace: missing Pattern".to_string()))?;
     let text = arg_string(args, 1, "regex::replace")?;
     let repl = arg_string(args, 2, "regex::replace")?;
     let out = with_regex(handle, |p| regex_std::replace(p, text, repl))?;
@@ -184,7 +213,9 @@ fn builtin_regex_replace(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_regex_replace_all(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().ok_or_else(|| RuntimeError::Type("regex::replace_all: missing Pattern".to_string()))?;
+    let handle = args
+        .first()
+        .ok_or_else(|| RuntimeError::Type("regex::replace_all: missing Pattern".to_string()))?;
     let text = arg_string(args, 1, "regex::replace_all")?;
     let repl = arg_string(args, 2, "regex::replace_all")?;
     let out = with_regex(handle, |p| regex_std::replace_all(p, text, repl))?;
@@ -192,7 +223,9 @@ fn builtin_regex_replace_all(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_regex_split(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = args.first().ok_or_else(|| RuntimeError::Type("regex::split: missing Pattern".to_string()))?;
+    let handle = args
+        .first()
+        .ok_or_else(|| RuntimeError::Type("regex::split: missing Pattern".to_string()))?;
     let text = arg_string(args, 1, "regex::split")?;
     let parts = with_regex(handle, |p| regex_std::split(p, text))?;
     Ok(Value::Array(Arc::new(

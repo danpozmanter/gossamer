@@ -87,7 +87,9 @@ static REGISTRY: OnceLock<Registry> = OnceLock::new();
 fn registry() -> &'static Registry {
     REGISTRY.get_or_init(|| {
         install_native_handlers();
-        Registry { inner: Mutex::new(Vec::new()) }
+        Registry {
+            inner: Mutex::new(Vec::new()),
+        }
     })
 }
 
@@ -142,10 +144,7 @@ pub fn on(sig: Signal) -> Notifier {
 /// signals.
 pub fn deliver(sig: Signal) {
     let reg = registry();
-    let entries = reg
-        .inner
-        .lock()
-        .expect("signal registry poisoned");
+    let entries = reg.inner.lock().expect("signal registry poisoned");
     for (s, flag) in entries.iter() {
         if *s == sig {
             flag.store(true, Ordering::Release);

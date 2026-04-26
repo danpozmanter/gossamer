@@ -28,8 +28,7 @@ pub fn encode(scalar: char, out: &mut [u8]) -> usize {
 /// Returns the number of scalar values in `input`.
 #[must_use]
 pub fn rune_count(input: &[u8]) -> usize {
-    std::str::from_utf8(input)
-        .map_or(0, |s| s.chars().count())
+    std::str::from_utf8(input).map_or(0, |s| s.chars().count())
 }
 
 #[cfg(test)]

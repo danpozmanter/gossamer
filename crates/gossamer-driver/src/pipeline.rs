@@ -3,11 +3,10 @@
 
 #![forbid(unsafe_code)]
 
-use gossamer_codegen_cranelift::{
-    CompileOptions, NativeObject, compile_to_object, compile_to_object_with_options,
-    emit_module,
-};
 use anyhow::anyhow;
+use gossamer_codegen_cranelift::{
+    CompileOptions, NativeObject, compile_to_object, compile_to_object_with_options, emit_module,
+};
 use gossamer_hir::{lift_closures, lower_source_file};
 use gossamer_lex::SourceMap;
 use gossamer_mir::{Body, check_generic_layouts, lower_program, optimise};

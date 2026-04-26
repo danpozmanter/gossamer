@@ -46,7 +46,9 @@ pub enum TarError {
     },
     /// Gzipped archive detected (first two bytes are the gzip magic).
     /// Callers that want `.tar.gz` support must decompress upstream.
-    #[error("gzipped archive detected — .tar.gz support is a follow-up; decompress before calling [`unpack`]")]
+    #[error(
+        "gzipped archive detected — .tar.gz support is a follow-up; decompress before calling [`unpack`]"
+    )]
     Gzipped,
 }
 
@@ -89,10 +91,7 @@ pub fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, TarError> {
                 // files only.
             }
             other => {
-                return Err(TarError::Unsupported {
-                    name,
-                    flag: other,
-                });
+                return Err(TarError::Unsupported { name, flag: other });
             }
         }
         offset = payload_end;
@@ -133,9 +132,7 @@ fn parse_size(header: &[u8]) -> Option<usize> {
 
 fn verify_checksum(header: &[u8], name: &str) -> Result<(), TarError> {
     let stored_text = std::str::from_utf8(&header[148..156]).unwrap_or("");
-    let stored_trimmed = stored_text
-        .trim_end_matches(['\0', ' '])
-        .trim();
+    let stored_trimmed = stored_text.trim_end_matches(['\0', ' ']).trim();
     let Some(stored) = u32::from_str_radix(stored_trimmed, 8).ok() else {
         return Err(TarError::BadChecksum(name.to_string()));
     };
@@ -363,6 +360,9 @@ mod tests {
         input.insert("b.txt".to_string(), b"beta".to_vec());
         let a = pack(&input).expect("pack a");
         let b = pack(&input).expect("pack b");
-        assert_eq!(a, b, "two pack calls on identical input must produce identical bytes");
+        assert_eq!(
+            a, b,
+            "two pack calls on identical input must produce identical bytes"
+        );
     }
 }

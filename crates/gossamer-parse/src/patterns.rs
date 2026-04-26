@@ -153,7 +153,9 @@ impl Parser<'_> {
             }
             TokenKind::StringLit | TokenKind::RawStringLit { .. } => {
                 self.bump();
-                Some(Literal::String(string_literal_value(self.slice(token.span))))
+                Some(Literal::String(string_literal_value(
+                    self.slice(token.span),
+                )))
             }
             TokenKind::CharLit => {
                 self.bump();
@@ -172,7 +174,10 @@ impl Parser<'_> {
                 Some(Literal::Bool(false))
             }
             TokenKind::Punct(Punct::Minus) => {
-                if matches!(self.peek_nth(1).kind, TokenKind::IntLit | TokenKind::FloatLit) {
+                if matches!(
+                    self.peek_nth(1).kind,
+                    TokenKind::IntLit | TokenKind::FloatLit
+                ) {
                     self.bump();
                     let number = self.peek();
                     self.bump();
@@ -208,10 +213,7 @@ impl Parser<'_> {
             self.peek().kind,
             TokenKind::Ident
                 | TokenKind::Keyword(
-                    Keyword::SelfUpper
-                        | Keyword::SelfLower
-                        | Keyword::Super
-                        | Keyword::Crate
+                    Keyword::SelfUpper | Keyword::SelfLower | Keyword::Super | Keyword::Crate
                 )
         )
     }
@@ -305,7 +307,10 @@ impl Parser<'_> {
 /// the parser accepts the raw body between the quotes verbatim; future
 /// phases may implement full escape decoding.
 pub(crate) fn string_literal_value(source: &str) -> String {
-    if let Some(stripped) = source.strip_prefix('"').and_then(|text| text.strip_suffix('"')) {
+    if let Some(stripped) = source
+        .strip_prefix('"')
+        .and_then(|text| text.strip_suffix('"'))
+    {
         return decode_string_escapes(stripped);
     }
     if let Some(stripped) = source

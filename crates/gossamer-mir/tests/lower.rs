@@ -178,11 +178,9 @@ fn loop_with_body_as_function_tail_does_not_emit_return_assign() {
     let (bodies, _) = build(source);
     let body = &bodies[0];
     assert!(!body.blocks.is_empty());
-    let assigns_to_return = body
-        .blocks
-        .iter()
-        .flat_map(|b| b.stmts.iter())
-        .any(|s| matches!(&s.kind, StatementKind::Assign { place, .. } if place.local == Local::RETURN));
+    let assigns_to_return = body.blocks.iter().flat_map(|b| b.stmts.iter()).any(
+        |s| matches!(&s.kind, StatementKind::Assign { place, .. } if place.local == Local::RETURN),
+    );
     assert!(
         !assigns_to_return,
         "diverging loop tail must not produce a RETURN assign"
@@ -315,7 +313,10 @@ fn match_with_guard_falls_back_to_unsupported_placeholder() {
         matches!(
             &s.kind,
             StatementKind::Assign {
-                rvalue: Rvalue::CallIntrinsic { name: "unsupported", .. },
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "unsupported",
+                    ..
+                },
                 ..
             }
         )
@@ -425,7 +426,10 @@ fn main() -> i64 {
         "expected at least one mangled specialised body; bodies: {:?}",
         bodies.iter().map(|b| &b.name).collect::<Vec<_>>()
     );
-    assert!(bodies.len() > before_count, "specialisation should add bodies");
+    assert!(
+        bodies.len() > before_count,
+        "specialisation should add bodies"
+    );
 }
 
 #[test]
@@ -467,7 +471,10 @@ fn for_loop_over_exclusive_range_lowers_to_counter_loop() {
         matches!(
             &s.kind,
             StatementKind::Assign {
-                rvalue: Rvalue::CallIntrinsic { name: "unsupported", .. },
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "unsupported",
+                    ..
+                },
                 ..
             }
         )
@@ -504,7 +511,10 @@ fn for_loop_over_array_literal_lowers_to_indexed_loop() {
         matches!(
             &s.kind,
             StatementKind::Assign {
-                rvalue: Rvalue::CallIntrinsic { name: "unsupported", .. },
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "unsupported",
+                    ..
+                },
                 ..
             }
         )
@@ -534,13 +544,19 @@ fn main() -> i64 {
                 if operands.len() == 2
         )
     });
-    assert!(has_aggregate, "struct literal should lower to Rvalue::Aggregate");
+    assert!(
+        has_aggregate,
+        "struct literal should lower to Rvalue::Aggregate"
+    );
     let field_reads = body
         .blocks
         .iter()
         .flat_map(|b| &b.stmts)
         .filter(|s| match &s.kind {
-            StatementKind::Assign { rvalue: Rvalue::Use(Operand::Copy(place)), .. } => place
+            StatementKind::Assign {
+                rvalue: Rvalue::Use(Operand::Copy(place)),
+                ..
+            } => place
                 .projection
                 .iter()
                 .any(|p| matches!(p, gossamer_mir::Projection::Field(_))),
@@ -719,7 +735,8 @@ fn main() -> i64 {
         .filter(|b| b.name.starts_with("fn#") && b.name.contains("__mono__"))
         .count();
     assert_eq!(
-        mangled_count, 0,
+        mangled_count,
+        0,
         "monomorphic call must not produce a specialised body; bodies: {:?}",
         bodies.iter().map(|b| &b.name).collect::<Vec<_>>()
     );

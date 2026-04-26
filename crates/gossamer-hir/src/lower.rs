@@ -47,11 +47,7 @@ pub fn lower_source_file(
 /// that `#[test]`-annotated functions inside `mod tests { ... }` reach
 /// HIR (and thus the interpreter + test runner) the same way they
 /// would if declared at the top level.
-fn lower_items(
-    lowerer: &mut Lowerer<'_>,
-    items: &[AstItem],
-    out: &mut Vec<HirItem>,
-) {
+fn lower_items(lowerer: &mut Lowerer<'_>, items: &[AstItem], out: &mut Vec<HirItem>) {
     for item in items {
         if !gossamer_resolve::item_is_active(&item.attrs) {
             continue;
@@ -201,9 +197,7 @@ impl Lowerer<'_> {
     fn lower_impl(&mut self, decl: &ImplDecl, span: Span) -> HirImpl {
         let self_ty = self.ty_of(decl.self_ty.id);
         let self_name = match &decl.self_ty.kind {
-            gossamer_ast::TypeKind::Path(path) => {
-                path.segments.last().map(|seg| seg.name.clone())
-            }
+            gossamer_ast::TypeKind::Path(path) => path.segments.last().map(|seg| seg.name.clone()),
             _ => None,
         };
         let trait_name = decl
@@ -557,14 +551,18 @@ impl Lowerer<'_> {
             .iter()
             .map(|arm| {
                 let op = match &arm.op {
-                    gossamer_ast::SelectOp::Recv { pattern, channel } => crate::tree::HirSelectOp::Recv {
-                        pattern: self.lower_pat(pattern),
-                        channel: self.lower_expr(channel),
-                    },
-                    gossamer_ast::SelectOp::Send { channel, value } => crate::tree::HirSelectOp::Send {
-                        channel: self.lower_expr(channel),
-                        value: self.lower_expr(value),
-                    },
+                    gossamer_ast::SelectOp::Recv { pattern, channel } => {
+                        crate::tree::HirSelectOp::Recv {
+                            pattern: self.lower_pat(pattern),
+                            channel: self.lower_expr(channel),
+                        }
+                    }
+                    gossamer_ast::SelectOp::Send { channel, value } => {
+                        crate::tree::HirSelectOp::Send {
+                            channel: self.lower_expr(channel),
+                            value: self.lower_expr(value),
+                        }
+                    }
                     gossamer_ast::SelectOp::Default => crate::tree::HirSelectOp::Default,
                 };
                 crate::tree::HirSelectArm {

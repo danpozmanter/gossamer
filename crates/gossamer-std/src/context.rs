@@ -88,7 +88,10 @@ impl Context {
     #[must_use]
     pub fn deadline(&self) -> Option<Instant> {
         let local = *self.inner.deadline.lock().unwrap();
-        match (local, self.inner.parent.as_ref().and_then(Context::deadline)) {
+        match (
+            local,
+            self.inner.parent.as_ref().and_then(Context::deadline),
+        ) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) => Some(a),
             (None, Some(b)) => Some(b),
@@ -146,9 +149,7 @@ pub struct Cancel {
 impl Cancel {
     /// Cancels the associated context with the supplied reason.
     pub fn cancel_with(&self, reason: impl Into<String>) {
-        self.inner
-            .cancelled
-            .store(true, Ordering::Release);
+        self.inner.cancelled.store(true, Ordering::Release);
         *self.inner.reason.lock().unwrap() = Some(reason.into());
     }
 

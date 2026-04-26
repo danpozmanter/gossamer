@@ -408,9 +408,9 @@ impl<'a> TypeChecker<'a> {
                 loop {
                     match self.tcx.kind_of(cur).clone() {
                         TyKind::Ref { inner, .. } => cur = inner,
-                        TyKind::Array { elem, .. }
-                        | TyKind::Slice(elem)
-                        | TyKind::Vec(elem) => return elem,
+                        TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                            return elem;
+                        }
                         TyKind::String => {
                             return self.tcx.int_ty(IntTy::I64);
                         }
@@ -476,8 +476,10 @@ impl<'a> TypeChecker<'a> {
                 let struct_ty = if let Some(res) = self.resolutions.get(head_node) {
                     match res {
                         Resolution::Def {
-def, kind: gossamer_resolve::DefKind::Struct | gossamer_resolve::DefKind::Enum
-} => self.tcx.intern(TyKind::Adt {
+                            def,
+                            kind:
+                                gossamer_resolve::DefKind::Struct | gossamer_resolve::DefKind::Enum,
+                        } => self.tcx.intern(TyKind::Adt {
                             def,
                             substs: crate::Substs::new(),
                         }),
@@ -496,9 +498,8 @@ def, kind: gossamer_resolve::DefKind::Struct | gossamer_resolve::DefKind::Enum
                     if let Some(value) = &field.value {
                         let val_ty = self.check_expr(value);
                         if let Some(declared_fields) = declared.as_ref() {
-                            if let Some((_, dty)) = declared_fields
-                                .iter()
-                                .find(|(n, _)| n == &field.name.name)
+                            if let Some((_, dty)) =
+                                declared_fields.iter().find(|(n, _)| n == &field.name.name)
                             {
                                 self.unify(*dty, val_ty, value.span);
                             }
@@ -697,9 +698,9 @@ def, kind: gossamer_resolve::DefKind::Struct | gossamer_resolve::DefKind::Enum
             loop {
                 match self.tcx.kind_of(cur).clone() {
                     TyKind::Ref { inner, .. } => cur = inner,
-                    TyKind::Array { elem, .. }
-                    | TyKind::Slice(elem)
-                    | TyKind::Vec(elem) => break Some(elem),
+                    TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                        break Some(elem);
+                    }
                     _ => break None,
                 }
             }
@@ -852,9 +853,7 @@ def, kind: gossamer_resolve::DefKind::Struct | gossamer_resolve::DefKind::Enum
         let args: Vec<crate::GenericArg> = generics
             .iter()
             .map(|arg| match arg {
-                gossamer_ast::GenericArg::Type(t) => {
-                    crate::GenericArg::Type(self.type_from_ast(t))
-                }
+                gossamer_ast::GenericArg::Type(t) => crate::GenericArg::Type(self.type_from_ast(t)),
                 gossamer_ast::GenericArg::Const(_) => crate::GenericArg::Const(0),
             })
             .collect();
@@ -1281,7 +1280,6 @@ fn cast_allowed(from: &TyKind, to: &TyKind) -> bool {
     }
     matches!(
         (from, to),
-        (TyKind::Bool | TyKind::Char, TyKind::Int(_))
-            | (TyKind::Int(IntTy::U8), TyKind::Char),
+        (TyKind::Bool | TyKind::Char, TyKind::Int(_)) | (TyKind::Int(IntTy::U8), TyKind::Char),
     )
 }

@@ -20,7 +20,10 @@ fn collect_diagnostics(source: &str, file_name: &str) -> Vec<Diagnostic> {
     let mut map = SourceMap::new();
     let file = map.add_file(file_name.to_string(), source.to_string());
     let (sf, parse_diags) = parse_source_file(source, file);
-    let mut out: Vec<Diagnostic> = parse_diags.iter().map(gossamer_parse::ParseDiagnostic::to_diagnostic).collect();
+    let mut out: Vec<Diagnostic> = parse_diags
+        .iter()
+        .map(gossamer_parse::ParseDiagnostic::to_diagnostic)
+        .collect();
 
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
     let in_scope = collect_names(&sf);
@@ -149,7 +152,10 @@ fn did_you_mean_suggests_a_close_match() {
         .filter(|d| matches!(d.error, ResolveError::UnresolvedName { .. }))
         .map(|d| d.to_diagnostic(&in_scope))
         .collect();
-    assert!(!rendered.is_empty(), "expected an unresolved-name diagnostic");
+    assert!(
+        !rendered.is_empty(),
+        "expected an unresolved-name diagnostic"
+    );
     assert!(
         rendered
             .iter()

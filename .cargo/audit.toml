@@ -1,0 +1,14 @@
+# cargo-audit configuration. Mirrored in `deny.toml`.
+# Active CVEs are NOT ignored here — only unmaintained/archived
+# advisories whose upgrade is owned by an upstream we don't
+# control.
+
+[advisories]
+ignore = [
+    # bincode 1.x — development ceased; no CVE. Pulled in transitively
+    # via cranelift-codegen; drop when cranelift moves to bincode 2.x.
+    "RUSTSEC-2025-0141",
+    # rustls-pemfile 2.x — archived; functionality folded into
+    # rustls-pki-types. Drop when our transitive consumers migrate.
+    "RUSTSEC-2025-0134",
+]

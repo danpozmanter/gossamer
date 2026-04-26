@@ -16,8 +16,8 @@ use gossamer_lex::Span;
 
 use crate::ids::HirIdGenerator;
 use crate::tree::{
-    HirArrayExpr, HirBlock, HirBody, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind,
-    HirParam, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind,
+    HirArrayExpr, HirBlock, HirBody, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind, HirParam,
+    HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind,
 };
 
 /// Walks `program` and lifts every closure with no free variables
@@ -68,7 +68,9 @@ impl Lifter {
 
     fn visit_stmt(&mut self, stmt: &mut HirStmt) {
         match &mut stmt.kind {
-            HirStmtKind::Let { init: Some(expr), .. } => self.visit_expr(expr),
+            HirStmtKind::Let {
+                init: Some(expr), ..
+            } => self.visit_expr(expr),
             HirStmtKind::Let { init: None, .. } => {}
             HirStmtKind::Expr { expr, .. } => self.visit_expr(expr),
             HirStmtKind::Go(inner) => self.visit_expr(inner),
@@ -108,7 +110,11 @@ impl Lifter {
                 self.visit_expr(place);
                 self.visit_expr(value);
             }
-            HirExprKind::If { condition, then_branch, else_branch } => {
+            HirExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.visit_expr(condition);
                 self.visit_expr(then_branch);
                 if let Some(else_branch) = else_branch {
@@ -176,7 +182,9 @@ impl Lifter {
                     self.visit_expr(&mut arm.body);
                 }
             }
-            HirExprKind::Literal(_) | HirExprKind::Path { .. } | HirExprKind::Continue
+            HirExprKind::Literal(_)
+            | HirExprKind::Path { .. }
+            | HirExprKind::Continue
             | HirExprKind::Placeholder => {}
         }
 
@@ -305,7 +313,9 @@ impl Lifter {
             name: name.clone(),
             params: new_params,
             ret,
-            body: Some(HirBody { block: wrapper_block }),
+            body: Some(HirBody {
+                block: wrapper_block,
+            }),
             is_unsafe: false,
             has_self: false,
         };
@@ -417,33 +427,30 @@ fn is_closed(expr: &HirExpr, bound: &HashSet<String>) -> bool {
             true
         }
         HirExprKind::Literal(_) | HirExprKind::Continue | HirExprKind::Placeholder => true,
-        HirExprKind::Return(inner) | HirExprKind::Break(inner) => inner
-            .as_ref()
-            .is_none_or(|e| is_closed(e, bound)),
+        HirExprKind::Return(inner) | HirExprKind::Break(inner) => {
+            inner.as_ref().is_none_or(|e| is_closed(e, bound))
+        }
         HirExprKind::Call { callee, args } => {
             is_closed(callee, bound) && args.iter().all(|a| is_closed(a, bound))
         }
         HirExprKind::MethodCall { receiver, args, .. } => {
             is_closed(receiver, bound) && args.iter().all(|a| is_closed(a, bound))
         }
-        HirExprKind::Field { receiver, .. }
-        | HirExprKind::TupleIndex { receiver, .. } => is_closed(receiver, bound),
-        HirExprKind::Index { base, index } => {
-            is_closed(base, bound) && is_closed(index, bound)
+        HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
+            is_closed(receiver, bound)
         }
+        HirExprKind::Index { base, index } => is_closed(base, bound) && is_closed(index, bound),
         HirExprKind::Unary { operand, .. } => is_closed(operand, bound),
-        HirExprKind::Binary { lhs, rhs, .. } => {
-            is_closed(lhs, bound) && is_closed(rhs, bound)
-        }
-        HirExprKind::Assign { place, value } => {
-            is_closed(place, bound) && is_closed(value, bound)
-        }
-        HirExprKind::If { condition, then_branch, else_branch } => {
+        HirExprKind::Binary { lhs, rhs, .. } => is_closed(lhs, bound) && is_closed(rhs, bound),
+        HirExprKind::Assign { place, value } => is_closed(place, bound) && is_closed(value, bound),
+        HirExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             is_closed(condition, bound)
                 && is_closed(then_branch, bound)
-                && else_branch
-                    .as_ref()
-                    .is_none_or(|e| is_closed(e, bound))
+                && else_branch.as_ref().is_none_or(|e| is_closed(e, bound))
         }
         HirExprKind::Match { scrutinee, arms } => {
             if !is_closed(scrutinee, bound) {
@@ -463,9 +470,7 @@ fn is_closed(expr: &HirExpr, bound: &HashSet<String>) -> bool {
             }
             true
         }
-        HirExprKind::Loop { body } | HirExprKind::While { body, .. } => {
-            is_closed(body, bound)
-        }
+        HirExprKind::Loop { body } | HirExprKind::While { body, .. } => is_closed(body, bound),
         HirExprKind::Block(block) => is_closed_block(block, bound),
         HirExprKind::Closure { params, body, .. } => {
             let mut inner_bound = bound.clone();
@@ -474,9 +479,7 @@ fn is_closed(expr: &HirExpr, bound: &HashSet<String>) -> bool {
             }
             is_closed(body, &inner_bound)
         }
-        HirExprKind::LiftedClosure { captures, .. } => {
-            captures.iter().all(|c| is_closed(c, bound))
-        }
+        HirExprKind::LiftedClosure { captures, .. } => captures.iter().all(|c| is_closed(c, bound)),
         HirExprKind::Select { arms } => arms.iter().all(|arm| {
             let ops_closed = match &arm.op {
                 crate::tree::HirSelectOp::Recv { channel, .. } => is_closed(channel, bound),
@@ -488,9 +491,7 @@ fn is_closed(expr: &HirExpr, bound: &HashSet<String>) -> bool {
             ops_closed && is_closed(&arm.body, bound)
         }),
         HirExprKind::Tuple(elems) => elems.iter().all(|e| is_closed(e, bound)),
-        HirExprKind::Array(HirArrayExpr::List(elems)) => {
-            elems.iter().all(|e| is_closed(e, bound))
-        }
+        HirExprKind::Array(HirArrayExpr::List(elems)) => elems.iter().all(|e| is_closed(e, bound)),
         HirExprKind::Array(HirArrayExpr::Repeat { value, count }) => {
             is_closed(value, bound) && is_closed(count, bound)
         }
@@ -565,7 +566,11 @@ fn walk_free(
             walk_free(place, bound, out, seen);
             walk_free(value, bound, out, seen);
         }
-        HirExprKind::If { condition, then_branch, else_branch } => {
+        HirExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             walk_free(condition, bound, out, seen);
             walk_free(then_branch, bound, out, seen);
             if let Some(e) = else_branch {
@@ -660,9 +665,9 @@ fn walk_free_block(
                 }
                 collect_pattern_names(pattern, &mut local);
             }
-            HirStmtKind::Expr { expr, .. }
-            | HirStmtKind::Go(expr)
-            | HirStmtKind::Defer(expr) => walk_free(expr, &local, out, seen),
+            HirStmtKind::Expr { expr, .. } | HirStmtKind::Go(expr) | HirStmtKind::Defer(expr) => {
+                walk_free(expr, &local, out, seen);
+            }
             HirStmtKind::Item(_) => {}
         }
     }
@@ -683,9 +688,7 @@ fn is_closed_block(block: &HirBlock, bound: &HashSet<String>) -> bool {
                 }
                 collect_pattern_names(pattern, &mut local);
             }
-            HirStmtKind::Expr { expr, .. }
-            | HirStmtKind::Go(expr)
-            | HirStmtKind::Defer(expr) => {
+            HirStmtKind::Expr { expr, .. } | HirStmtKind::Go(expr) | HirStmtKind::Defer(expr) => {
                 if !is_closed(expr, &local) {
                     return false;
                 }
@@ -693,5 +696,8 @@ fn is_closed_block(block: &HirBlock, bound: &HashSet<String>) -> bool {
             HirStmtKind::Item(_) => {}
         }
     }
-    block.tail.as_ref().is_none_or(|tail| is_closed(tail, &local))
+    block
+        .tail
+        .as_ref()
+        .is_none_or(|tail| is_closed(tail, &local))
 }

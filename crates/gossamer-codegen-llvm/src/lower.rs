@@ -10,15 +10,15 @@
 use std::fmt::Write;
 
 use gossamer_mir::{
-    BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement,
-    StatementKind, Terminator, UnOp,
+    BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement, StatementKind,
+    Terminator, UnOp,
 };
 use gossamer_types::{FloatTy, Ty, TyCtxt, TyKind};
 
 use crate::emit::BuildError;
 use crate::ty::{
-    elem_slots, int_signed, int_width, is_aggregate, is_unit, numeric_kind, render_ty,
-    slot_count, NumericKind,
+    NumericKind, elem_slots, int_signed, int_width, is_aggregate, is_unit, numeric_kind, render_ty,
+    slot_count,
 };
 
 /// Emits one function's LLVM IR text, including the required
@@ -310,9 +310,7 @@ impl<'a> Lowerer<'a> {
         // scalar representation — memcpy the flat storage
         // rather than trying to load/store it as a single
         // value.
-        if place.projection.is_empty()
-            && is_aggregate(self.tcx, dest_ty_mir)
-        {
+        if place.projection.is_empty() && is_aggregate(self.tcx, dest_ty_mir) {
             if let Rvalue::Use(Operand::Copy(src_place)) = rvalue {
                 if src_place.projection.is_empty()
                     && is_aggregate(self.tcx, self.body.local_ty(src_place.local))
@@ -423,11 +421,7 @@ impl<'a> Lowerer<'a> {
         if count <= 16 {
             for i in 0..count {
                 let dst = self.fresh();
-                writeln!(
-                    self.out,
-                    "  {dst} = getelementptr i64, ptr {base}, i64 {i}"
-                )
-                .unwrap();
+                writeln!(self.out, "  {dst} = getelementptr i64, ptr {base}, i64 {i}").unwrap();
                 writeln!(self.out, "  store {v_llvm} {v}, ptr {dst}").unwrap();
             }
         } else {
@@ -443,11 +437,7 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {cur} = load i64, ptr {counter}").unwrap();
             let cond = self.fresh();
             writeln!(self.out, "  {cond} = icmp ult i64 {cur}, {count}").unwrap();
-            writeln!(
-                self.out,
-                "  br i1 {cond}, label %{body}, label %{done}"
-            )
-            .unwrap();
+            writeln!(self.out, "  br i1 {cond}, label %{body}, label %{done}").unwrap();
             writeln!(self.out, "{body}:").unwrap();
             let dst = self.fresh();
             writeln!(
@@ -471,20 +461,12 @@ impl<'a> Lowerer<'a> {
         format!("{prefix}_{n}")
     }
 
-    fn lower_rvalue(
-        &mut self,
-        rvalue: &Rvalue,
-        dest_local: Local,
-    ) -> Result<String, BuildError> {
+    fn lower_rvalue(&mut self, rvalue: &Rvalue, dest_local: Local) -> Result<String, BuildError> {
         match rvalue {
             Rvalue::Use(op) => self.lower_operand(op),
             Rvalue::UnaryOp { op, operand } => self.lower_unary(*op, operand, dest_local),
-            Rvalue::BinaryOp { op, lhs, rhs } => {
-                self.lower_binary(*op, lhs, rhs, dest_local)
-            }
-            Rvalue::Cast { operand, target } => {
-                self.lower_cast(operand, *target, dest_local)
-            }
+            Rvalue::BinaryOp { op, lhs, rhs } => self.lower_binary(*op, lhs, rhs, dest_local),
+            Rvalue::Cast { operand, target } => self.lower_cast(operand, *target, dest_local),
             Rvalue::CallIntrinsic { name, args } => {
                 self.lower_call_intrinsic(name, args, dest_local)
             }
@@ -529,11 +511,7 @@ impl<'a> Lowerer<'a> {
                     self.lower_place_address(place)
                 };
                 let tmp = self.fresh();
-                writeln!(
-                    self.out,
-                    "  {tmp} = call i64 @gos_rt_len(ptr {ptr})"
-                )
-                .unwrap();
+                writeln!(self.out, "  {tmp} = call i64 @gos_rt_len(ptr {ptr})").unwrap();
                 Ok(tmp)
             }
             Rvalue::Aggregate { .. } | Rvalue::Repeat { .. } => {
@@ -573,21 +551,16 @@ impl<'a> Lowerer<'a> {
             "f64.exp" | "exp" => ("llvm.exp.f64", 1),
             "f64.ln" | "ln" | "f64.log" | "log" => ("llvm.log.f64", 1),
             _ => {
-                return Err(BuildError::Unsupported(
-                    "unknown CallIntrinsic name",
-                ));
+                return Err(BuildError::Unsupported("unknown CallIntrinsic name"));
             }
         };
         if args.len() != expected_arity {
-            return Err(BuildError::Unsupported(
-                "CallIntrinsic arity mismatch",
-            ));
+            return Err(BuildError::Unsupported("CallIntrinsic arity mismatch"));
         }
         // Ensure a `declare` for this intrinsic lands in the
         // module header.
-        self.runtime_refs.insert(format!(
-            "declare double @{llvm_intrinsic}(double)"
-        ));
+        self.runtime_refs
+            .insert(format!("declare double @{llvm_intrinsic}(double)"));
         let arg_v = self.lower_operand(&args[0])?;
         let dest_llvm = render_ty(self.tcx, self.body.local_ty(dest_local));
         let tmp = self.fresh();
@@ -619,16 +592,10 @@ impl<'a> Lowerer<'a> {
                 // `store` / `call` consumes it.
                 if let Some(name) = self.fn_name_by_def.get(&def.local).cloned() {
                     let tmp = self.fresh();
-                    writeln!(
-                        self.out,
-                        "  {tmp} = ptrtoint ptr @\"{name}\" to i64"
-                    )
-                    .unwrap();
+                    writeln!(self.out, "  {tmp} = ptrtoint ptr @\"{name}\" to i64").unwrap();
                     return Ok(tmp);
                 }
-                Err(BuildError::Unsupported(
-                    "FnRef operand not yet lowered",
-                ))
+                Err(BuildError::Unsupported("FnRef operand not yet lowered"))
             }
         }
     }
@@ -675,11 +642,7 @@ impl<'a> Lowerer<'a> {
         }
         let addr = self.lower_place_address(place);
         let tmp = self.fresh();
-        writeln!(
-            self.out,
-            "  {tmp} = load {leaf_llvm}, ptr {addr}"
-        )
-        .unwrap();
+        writeln!(self.out, "  {tmp} = load {leaf_llvm}, ptr {addr}").unwrap();
         tmp
     }
 
@@ -712,13 +675,13 @@ impl<'a> Lowerer<'a> {
                         .struct_field_tys(*def)
                         .and_then(|tys| tys.get(*i as usize).copied())
                         .unwrap_or(ty),
-                    Some(TyKind::Tuple(elems)) => {
-                        elems.get(*i as usize).copied().unwrap_or(ty)
-                    }
+                    Some(TyKind::Tuple(elems)) => elems.get(*i as usize).copied().unwrap_or(ty),
                     _ => ty,
                 },
                 Projection::Index(_) => match self.tcx.kind(ty) {
-                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => *elem,
+                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
+                        *elem
+                    }
                     _ => ty,
                 },
                 Projection::Deref => self.unwrap_ref(ty),
@@ -810,11 +773,7 @@ impl<'a> Lowerer<'a> {
                     // and add to the base pointer.
                     let idx_slot = local_slot(*index_local);
                     let idx_raw = self.fresh();
-                    writeln!(
-                        self.out,
-                        "  {idx_raw} = load i64, ptr {idx_slot}"
-                    )
-                    .unwrap();
+                    writeln!(self.out, "  {idx_raw} = load i64, ptr {idx_slot}").unwrap();
                     let next = self.fresh();
                     if stride_slots == 1 {
                         writeln!(
@@ -824,11 +783,8 @@ impl<'a> Lowerer<'a> {
                         .unwrap();
                     } else {
                         let scaled = self.fresh();
-                        writeln!(
-                            self.out,
-                            "  {scaled} = mul i64 {idx_raw}, {stride_slots}"
-                        )
-                        .unwrap();
+                        writeln!(self.out, "  {scaled} = mul i64 {idx_raw}, {stride_slots}")
+                            .unwrap();
                         writeln!(
                             self.out,
                             "  {next} = getelementptr i64, ptr {current}, i64 {scaled}"
@@ -844,11 +800,7 @@ impl<'a> Lowerer<'a> {
                 }
                 Projection::Deref => {
                     let next = self.fresh();
-                    writeln!(
-                        self.out,
-                        "  {next} = load ptr, ptr {current}"
-                    )
-                    .unwrap();
+                    writeln!(self.out, "  {next} = load ptr, ptr {current}").unwrap();
                     current = next;
                     stride_slots = 1;
                 }
@@ -895,13 +847,13 @@ impl<'a> Lowerer<'a> {
                         .struct_field_tys(*def)
                         .and_then(|tys| tys.get(*idx as usize).copied())
                         .unwrap_or(ty),
-                    Some(TyKind::Tuple(elems)) => {
-                        elems.get(*idx as usize).copied().unwrap_or(ty)
-                    }
+                    Some(TyKind::Tuple(elems)) => elems.get(*idx as usize).copied().unwrap_or(ty),
                     _ => ty,
                 },
                 Projection::Index(_) => match self.tcx.kind(ty) {
-                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => *elem,
+                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
+                        *elem
+                    }
                     _ => ty,
                 },
                 Projection::Deref => match self.tcx.kind(ty) {
@@ -930,18 +882,25 @@ impl<'a> Lowerer<'a> {
     fn is_pointer_local_ty(tcx: &TyCtxt, ty: Ty) -> bool {
         if matches!(
             tcx.kind(ty),
-            Some(TyKind::Ref { .. } | TyKind::Vec(_) | TyKind::Slice(_) | TyKind::String |
-TyKind::HashMap { .. } | TyKind::Sender(_) | TyKind::Receiver(_) |
-TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
+            Some(
+                TyKind::Ref { .. }
+                    | TyKind::Vec(_)
+                    | TyKind::Slice(_)
+                    | TyKind::String
+                    | TyKind::HashMap { .. }
+                    | TyKind::Sender(_)
+                    | TyKind::Receiver(_)
+                    | TyKind::Dyn(_)
+                    | TyKind::FnPtr(_)
+                    | TyKind::FnDef { .. }
+            )
         ) {
             return true;
         }
         // For unresolved inference variables / opaque shapes,
         // the alloca was built as `ptr` (see `emit_allocas`).
         // Treat those as pointer-bearing too.
-        !is_aggregate(tcx, ty)
-            && render_ty(tcx, ty) == "ptr"
-            && !is_unit(tcx, ty)
+        !is_aggregate(tcx, ty) && render_ty(tcx, ty) == "ptr" && !is_unit(tcx, ty)
     }
 
     /// Peels any `&T` / `&mut T` layers off `ty` so subsequent
@@ -1223,12 +1182,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
                 )
                 .unwrap();
                 for (cst, target) in arms {
-                    writeln!(
-                        self.out,
-                        "    {ty} {cst}, label %bb{}",
-                        target.as_u32()
-                    )
-                    .unwrap();
+                    writeln!(self.out, "    {ty} {cst}, label %bb{}", target.as_u32()).unwrap();
                 }
                 writeln!(self.out, "  ]").unwrap();
                 Ok(())
@@ -1276,11 +1230,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
         self.runtime_refs.insert(format!(
             "{msg_name} = private unnamed_addr constant [{size} x i8] c\"{escaped}\\00\""
         ));
-        writeln!(
-            self.out,
-            "  call void @gos_rt_panic(ptr {msg_name})"
-        )
-        .unwrap();
+        writeln!(self.out, "  call void @gos_rt_panic(ptr {msg_name})").unwrap();
         writeln!(self.out, "  unreachable").unwrap();
     }
 
@@ -1329,11 +1279,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
             "{msg_name} = private unnamed_addr constant [{size} x i8] c\"{escaped}\\00\""
         ));
         writeln!(self.out, "{fail_label}:").unwrap();
-        writeln!(
-            self.out,
-            "  call void @gos_rt_panic(ptr {msg_name})"
-        )
-        .unwrap();
+        writeln!(self.out, "  call void @gos_rt_panic(ptr {msg_name})").unwrap();
         writeln!(self.out, "  unreachable").unwrap();
         Ok(())
     }
@@ -1397,11 +1343,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
             writeln!(self.out, "  call void {fn_ptr}({arg_text})").unwrap();
         } else {
             let tmp = self.fresh();
-            writeln!(
-                self.out,
-                "  {tmp} = call {dest_llvm} {fn_ptr}({arg_text})"
-            )
-            .unwrap();
+            writeln!(self.out, "  {tmp} = call {dest_llvm} {fn_ptr}({arg_text})").unwrap();
             let slot = local_slot(destination.local);
             writeln!(self.out, "  store {dest_llvm} {tmp}, ptr {slot}").unwrap();
         }
@@ -1473,11 +1415,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
     /// emits a `gos_rt_print_str(separator)` call between each
     /// pair of args (used by `println(a, b, c)` for the
     /// space-separated form; empty for `__concat`'s tight join).
-    fn emit_per_arg_print(
-        &mut self,
-        args: &[Operand],
-        separator: &str,
-    ) -> Result<(), BuildError> {
+    fn emit_per_arg_print(&mut self, args: &[Operand], separator: &str) -> Result<(), BuildError> {
         let sep_name = if separator.is_empty() {
             None
         } else {
@@ -1486,11 +1424,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
         for (idx, arg) in args.iter().enumerate() {
             if idx > 0 {
                 if let Some(name) = &sep_name {
-                    writeln!(
-                        self.out,
-                        "  call void @gos_rt_print_str(ptr {name})"
-                    )
-                    .unwrap();
+                    writeln!(self.out, "  call void @gos_rt_print_str(ptr {name})").unwrap();
                 }
             }
             let kind = self.concat_print_kind(arg);
@@ -1506,43 +1440,23 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
             let value = self.lower_operand(arg)?;
             match kind {
                 ConcatKind::StrPtr => {
-                    writeln!(
-                        self.out,
-                        "  call void @gos_rt_print_str(ptr {value})"
-                    )
-                    .unwrap();
+                    writeln!(self.out, "  call void @gos_rt_print_str(ptr {value})").unwrap();
                 }
                 ConcatKind::Int => {
                     let widened = self.widen_to_i64(arg, &value);
-                    writeln!(
-                        self.out,
-                        "  call void @gos_rt_print_i64(i64 {widened})"
-                    )
-                    .unwrap();
+                    writeln!(self.out, "  call void @gos_rt_print_i64(i64 {widened})").unwrap();
                 }
                 ConcatKind::Float => {
                     let widened = self.widen_to_f64(arg, &value);
-                    writeln!(
-                        self.out,
-                        "  call void @gos_rt_print_f64(double {widened})"
-                    )
-                    .unwrap();
+                    writeln!(self.out, "  call void @gos_rt_print_f64(double {widened})").unwrap();
                 }
                 ConcatKind::Bool => {
                     let widened = self.widen_bool_to_i32(arg, &value);
-                    writeln!(
-                        self.out,
-                        "  call void @gos_rt_print_bool(i32 {widened})"
-                    )
-                    .unwrap();
+                    writeln!(self.out, "  call void @gos_rt_print_bool(i32 {widened})").unwrap();
                 }
                 ConcatKind::Char => {
                     let widened = self.widen_char_to_i32(arg, &value);
-                    writeln!(
-                        self.out,
-                        "  call void @gos_rt_print_char(i32 {widened})"
-                    )
-                    .unwrap();
+                    writeln!(self.out, "  call void @gos_rt_print_char(i32 {widened})").unwrap();
                 }
                 ConcatKind::Unsupported => unreachable!("checked above"),
             }
@@ -1700,12 +1614,8 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
                     Some(TyKind::Bool) => ConcatKind::Bool,
                     Some(TyKind::Char) => ConcatKind::Char,
                     Some(TyKind::Float(_)) => ConcatKind::Float,
-                    Some(TyKind::String | TyKind::Ref { .. }) => {
-                        ConcatKind::StrPtr
-                    }
-                    Some(TyKind::Int(_) | TyKind::Unit | TyKind::Never) => {
-                        ConcatKind::Int
-                    }
+                    Some(TyKind::String | TyKind::Ref { .. }) => ConcatKind::StrPtr,
+                    Some(TyKind::Int(_) | TyKind::Unit | TyKind::Never) => ConcatKind::Int,
                     // Unresolved inference variable: the dominant
                     // producer that flows into println is
                     // `__concat`, which returns a String pointer
@@ -1732,8 +1642,9 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
                         | TyKind::FnTrait(_)
                         | TyKind::Dyn(_),
                     ) => ConcatKind::Unsupported,
-                    Some(TyKind::Param { .. } | TyKind::Alias { .. } | TyKind::Error)
-                    | None => ConcatKind::Int,
+                    Some(TyKind::Param { .. } | TyKind::Alias { .. } | TyKind::Error) | None => {
+                        ConcatKind::Int
+                    }
                 }
             }
             Operand::FnRef { .. } => ConcatKind::Int,
@@ -1819,9 +1730,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
         if !destination.projection.is_empty() {
-            return Err(BuildError::Unsupported(
-                "call with projected destination",
-            ));
+            return Err(BuildError::Unsupported("call with projected destination"));
         }
         let target_name: Option<String> = match callee {
             Operand::FnRef { def, .. } => {
@@ -1874,10 +1783,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
         // arity-0, so an inline `gos_rt_print_str(arg)` then
         // `gos_rt_println()` reproduces the user-level
         // `println(s)` semantics.
-        if matches!(
-            name.as_str(),
-            "println" | "print" | "eprintln" | "eprint"
-        ) {
+        if matches!(name.as_str(), "println" | "print" | "eprintln" | "eprint") {
             self.lower_print_call(&name, args, destination, target)?;
             return Ok(());
         }
@@ -2047,11 +1953,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
         writeln!(self.out, "  {len} = load i64, ptr @GOS_RT_STDOUT_LEN").unwrap();
         let full = self.fresh();
         writeln!(self.out, "  {full} = icmp uge i64 {len}, 65536").unwrap();
-        writeln!(
-            self.out,
-            "  br i1 {full}, label %{slow}, label %{append}"
-        )
-        .unwrap();
+        writeln!(self.out, "  br i1 {full}, label %{slow}, label %{append}").unwrap();
 
         // append: store the byte at bytes[len], bump len.
         writeln!(self.out, "{append}:").unwrap();
@@ -2315,11 +2217,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
         writeln!(self.out, "  store i8 {byte}, ptr {dst}").unwrap();
         // increment counter — must use the exact name we
         // forward-referenced in the PHI above.
-        writeln!(
-            self.out,
-            "  %t_inext_{suffix} = add i64 {i_phi}, 1"
-        )
-        .unwrap();
+        writeln!(self.out, "  %t_inext_{suffix} = add i64 {i_phi}, 1").unwrap();
         writeln!(self.out, "  br label %{pack_header}").unwrap();
 
         // Store the new length once we've packed the whole block.
@@ -2391,9 +2289,8 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
     ) -> Result<(), BuildError> {
         let arg_v = self.lower_operand(arg)?;
         let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
-        self.runtime_refs.insert(format!(
-            "declare double @{intrinsic_name}(double)"
-        ));
+        self.runtime_refs
+            .insert(format!("declare double @{intrinsic_name}(double)"));
         let tmp = self.fresh();
         writeln!(
             self.out,
@@ -2428,8 +2325,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
             let _ = write!(arg_text, "{a_ty} {a_v}");
         }
         let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
-        if dest_ty == "void" || is_unit(self.tcx, self.body.local_ty(destination.local))
-        {
+        if dest_ty == "void" || is_unit(self.tcx, self.body.local_ty(destination.local)) {
             writeln!(self.out, "  call void @\"{symbol}\"({arg_text})").unwrap();
         } else {
             let tmp = self.fresh();
@@ -2489,9 +2385,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
             }
             Operand::Const(value) => match value {
                 ConstValue::Float(_) => self
-                    .borrow_kind_ty(|k| {
-                        matches!(k, TyKind::Float(gossamer_types::FloatTy::F64))
-                    })
+                    .borrow_kind_ty(|k| matches!(k, TyKind::Float(gossamer_types::FloatTy::F64)))
                     .unwrap_or_else(|| self.body.local_ty(Local::RETURN)),
                 ConstValue::Int(_) | ConstValue::Char(_) | ConstValue::Bool(_) => self
                     .borrow_i64_ty()
@@ -2535,13 +2429,13 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
                         .struct_field_tys(*def)
                         .and_then(|tys| tys.get(*i as usize).copied())
                         .unwrap_or(ty),
-                    Some(TyKind::Tuple(elems)) => {
-                        elems.get(*i as usize).copied().unwrap_or(ty)
-                    }
+                    Some(TyKind::Tuple(elems)) => elems.get(*i as usize).copied().unwrap_or(ty),
                     _ => ty,
                 },
                 Projection::Index(_) => match self.tcx.kind(ty) {
-                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => *elem,
+                    Some(TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem)) => {
+                        *elem
+                    }
                     _ => ty,
                 },
                 Projection::Deref => self.unwrap_ref(ty),

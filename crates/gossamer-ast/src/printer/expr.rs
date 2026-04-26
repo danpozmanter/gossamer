@@ -233,9 +233,7 @@ impl Printer {
                 probe.print_expr(arg);
             }
         });
-        if self.current_column() + inline.len() < super::MAX_LINE_WIDTH
-            && !inline.contains('\n')
-        {
+        if self.current_column() + inline.len() < super::MAX_LINE_WIDTH && !inline.contains('\n') {
             self.write(&inline);
             self.write(")");
             return;

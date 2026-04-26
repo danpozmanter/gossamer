@@ -225,12 +225,7 @@ impl Set {
         Ok(positional)
     }
 
-    fn apply_long(
-        &self,
-        rest: &str,
-        idx: usize,
-        tokens: &[String],
-    ) -> Result<usize, Error> {
+    fn apply_long(&self, rest: &str, idx: usize, tokens: &[String]) -> Result<usize, Error> {
         let (name, explicit_value) = match rest.split_once('=') {
             Some((n, v)) => (n.to_string(), Some(v.to_string())),
             None => (rest.to_string(), None),
@@ -241,12 +236,7 @@ impl Set {
         self.apply_value(def, explicit_value, idx, tokens, 2)
     }
 
-    fn apply_short(
-        &self,
-        rest: &str,
-        idx: usize,
-        tokens: &[String],
-    ) -> Result<usize, Error> {
+    fn apply_short(&self, rest: &str, idx: usize, tokens: &[String]) -> Result<usize, Error> {
         let letter = rest.chars().next().unwrap();
         let remainder = &rest[letter.len_utf8()..];
         let def = self
@@ -311,7 +301,10 @@ impl Set {
             }
             Value::Duration(cell) => {
                 *cell.borrow_mut() = parse_duration(&raw).ok_or_else(|| {
-                    Error::new(format!("flag `--{}` expects a duration like `5s`", def.name))
+                    Error::new(format!(
+                        "flag `--{}` expects a duration like `5s`",
+                        def.name
+                    ))
                 })?;
             }
             Value::StringList(cell) => cell.borrow_mut().push(raw),
@@ -446,7 +439,10 @@ mod tests {
         fs.parse(argv(&["--tag", "a", "--tag", "b", "--tag", "c"]))
             .unwrap();
         let snap = tags.borrow().clone();
-        assert_eq!(snap, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(
+            snap,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
     }
 
     #[test]
@@ -455,10 +451,7 @@ mod tests {
         let flag = fs.bool("x", false, "x");
         let positional = fs.parse(argv(&["--", "--x", "trailing"])).unwrap();
         assert!(!*flag.borrow());
-        assert_eq!(
-            positional,
-            vec!["--x".to_string(), "trailing".to_string()]
-        );
+        assert_eq!(positional, vec!["--x".to_string(), "trailing".to_string()]);
     }
 
     #[test]

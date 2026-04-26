@@ -45,11 +45,7 @@ pub fn base(path: &str) -> String {
 #[must_use]
 pub fn dir(path: &str) -> String {
     let (d, _) = split(path);
-    if d.is_empty() {
-        ".".to_string()
-    } else {
-        d
-    }
+    if d.is_empty() { ".".to_string() } else { d }
 }
 
 /// Returns the extension (including the leading `.`) of `path`, or
@@ -91,11 +87,7 @@ pub fn clean(path: &str) -> String {
         out.push('/');
     }
     out.push_str(&parts.join("/"));
-    if out.is_empty() {
-        ".".to_string()
-    } else {
-        out
-    }
+    if out.is_empty() { ".".to_string() } else { out }
 }
 
 /// Returns `true` when `path` starts with `/`.

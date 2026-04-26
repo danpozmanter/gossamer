@@ -148,12 +148,18 @@ fn describe(x: Option<i64>) -> String {
     let some = call_and_return(
         source,
         "describe",
-        vec![Value::variant("Some".to_string(), std::sync::Arc::new(vec![Value::Int(5)]))],
+        vec![Value::variant(
+            "Some".to_string(),
+            std::sync::Arc::new(vec![Value::Int(5)]),
+        )],
     );
     let none = call_and_return(
         source,
         "describe",
-        vec![Value::variant("None".to_string(), std::sync::Arc::new(Vec::new()))],
+        vec![Value::variant(
+            "None".to_string(),
+            std::sync::Arc::new(Vec::new()),
+        )],
     );
     assert!(matches!(some, Value::String(ref s) if s.contains('5')));
     assert!(matches!(none, Value::String(ref s) if s.as_str() == "missing"));
@@ -244,11 +250,7 @@ fn sum(n: i64, acc: i64) -> i64 {
     if n <= 0i64 { acc } else { sum(n - 1i64, acc + n) }
 }
 "#;
-    let result = call_and_return(
-        source,
-        "sum",
-        vec![Value::Int(50), Value::Int(0)],
-    );
+    let result = call_and_return(source, "sum", vec![Value::Int(50), Value::Int(0)]);
     assert!(matches!(result, Value::Int(1275)));
 }
 
@@ -426,7 +428,10 @@ fn describe(s: Shape) -> String {
     let circle = call_and_return(
         source,
         "describe",
-        vec![Value::variant("Circle".to_string(), std::sync::Arc::new(vec![Value::Float(1.5)]))],
+        vec![Value::variant(
+            "Circle".to_string(),
+            std::sync::Arc::new(vec![Value::Float(1.5)]),
+        )],
     );
     assert!(matches!(circle, Value::String(ref s) if s.contains("circle") && s.contains("1.5")));
 }
@@ -638,7 +643,13 @@ fn run(s: String) -> Result<i64, String> {
     Ok(n + 1i64)
 }
 "#;
-    let result = call_and_return(source, "run", vec![Value::String(SmolStr::from(std::sync::Arc::new("42".to_string())))]);
+    let result = call_and_return(
+        source,
+        "run",
+        vec![Value::String(SmolStr::from(std::sync::Arc::new(
+            "42".to_string(),
+        )))],
+    );
     assert!(
         matches!(&result, Value::Variant(inner) if inner.name == "Ok" && matches!(inner.fields.first(), Some(Value::Int(43))))
     );
@@ -662,7 +673,6 @@ fn run() -> Result<i64, String> {
         "expected Err, got {result:?}"
     );
 }
-
 
 #[test]
 fn select_picks_ready_channel_over_default() {

@@ -73,8 +73,7 @@ mod tests {
 
     #[test]
     fn sort_by_key_uses_extractor() {
-        let mut data: Vec<(i32, &'static str)> =
-            vec![(2, "b"), (1, "a"), (3, "c")];
+        let mut data: Vec<(i32, &'static str)> = vec![(2, "b"), (1, "a"), (3, "c")];
         sort_by_key(&mut data, |pair| pair.0);
         assert_eq!(data[0].0, 1);
         assert_eq!(data[2].0, 3);

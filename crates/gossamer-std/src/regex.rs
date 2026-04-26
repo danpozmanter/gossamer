@@ -132,11 +132,7 @@ pub fn replace_all(pattern: &Pattern, text: &str, replacement: &str) -> String {
 /// intervening segments.
 #[must_use]
 pub fn split(pattern: &Pattern, text: &str) -> Vec<String> {
-    pattern
-        .engine
-        .split(text)
-        .map(str::to_string)
-        .collect()
+    pattern.engine.split(text).map(str::to_string).collect()
 }
 
 #[cfg(test)]
@@ -211,7 +207,12 @@ mod tests {
         let re = compile(r"\s*,\s*").unwrap();
         assert_eq!(
             split(&re, "a,  b , c,d"),
-            vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string()
+            ]
         );
     }
 }

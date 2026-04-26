@@ -68,7 +68,10 @@ fn read_expected(expected_path: &Path) -> String {
 }
 
 #[derive(Debug)]
-#[allow(dead_code, reason = "fields are surfaced in failure messages via Debug")]
+#[allow(
+    dead_code,
+    reason = "fields are surfaced in failure messages via Debug"
+)]
 struct TierOutcome {
     stdout: String,
     stderr: String,
@@ -105,10 +108,7 @@ fn run_compiled(src: &Path, release: bool, scratch: &Path) -> TierOutcome {
     if !build.status.success() {
         return TierOutcome {
             stdout: String::new(),
-            stderr: format!(
-                "build failed: {}",
-                String::from_utf8_lossy(&build.stderr)
-            ),
+            stderr: format!("build failed: {}", String::from_utf8_lossy(&build.stderr)),
             exit: build.status.code(),
         };
     }
@@ -135,8 +135,8 @@ fn run_compiled(src: &Path, release: bool, scratch: &Path) -> TierOutcome {
 fn collect_programs() -> Vec<PathBuf> {
     let dir = correct_dir();
     let mut out = Vec::new();
-    let entries = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
+    let entries =
+        std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
     for entry in entries {
         let path = entry.expect("entry").path();
         if path.extension().and_then(|s| s.to_str()) == Some("gos") {
@@ -175,10 +175,7 @@ fn every_correct_program_matches_across_tiers() {
         correct_dir().display()
     );
 
-    let scratch = std::env::temp_dir().join(format!(
-        "gossamer-correct-{}",
-        std::process::id()
-    ));
+    let scratch = std::env::temp_dir().join(format!("gossamer-correct-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).expect("create scratch dir");
 
     let mut failures: Vec<String> = Vec::new();

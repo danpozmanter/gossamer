@@ -7,7 +7,7 @@
 //! its generic source under the flat-i64-per-slot layout — but the
 //! copy is registered under a stable mangled name so each call site
 //! can dispatch to its own specialisation.
-//! 
+//!
 
 #![forbid(unsafe_code)]
 
@@ -41,7 +41,9 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
     let mut emitted: HashSet<String> = HashSet::new();
     let mut specialised: Vec<Body> = Vec::new();
     for (def, subst_list) in &needs {
-        let Some(src_idx) = sources.get(&def.local) else { continue };
+        let Some(src_idx) = sources.get(&def.local) else {
+            continue;
+        };
         for substs in subst_list {
             if substs.is_empty() {
                 continue;

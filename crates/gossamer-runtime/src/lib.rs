@@ -16,7 +16,7 @@ pub mod value;
 
 pub use layout::{HEAP_ALIGN, ObjHeader, Ptr, TypeInfo, WORD_BYTES, header_align, header_size};
 pub use value::{
-    GossamerValue, TAG_FLOAT, TAG_HEAP, TAG_IMMEDIATE, TAG_MASK, TAG_SINGLETON,
-    SINGLETON_FALSE, SINGLETON_TRUE, SINGLETON_UNIT, fits_i56, from_f64, from_heap_handle,
-    from_i64, from_singleton, tag_of, to_f64, to_heap_handle, to_i64, to_singleton,
+    GossamerValue, SINGLETON_FALSE, SINGLETON_TRUE, SINGLETON_UNIT, TAG_FLOAT, TAG_HEAP,
+    TAG_IMMEDIATE, TAG_MASK, TAG_SINGLETON, fits_i56, from_f64, from_heap_handle, from_i64,
+    from_singleton, tag_of, to_f64, to_heap_handle, to_i64, to_singleton,
 };

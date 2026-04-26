@@ -47,15 +47,40 @@ pub enum Op {
     /// dispatches branch directly into the specialised arm and
     /// skip the per-call `(Value, Value)` discriminant match.
     /// Tier C2 of the interp wow plan.
-    AddInt { dst: Reg, lhs: Reg, rhs: Reg, cache_idx: u16 },
+    AddInt {
+        dst: Reg,
+        lhs: Reg,
+        rhs: Reg,
+        cache_idx: u16,
+    },
     /// `dst = lhs - rhs` on boxed `Value`. Adaptive — see [`Op::AddInt`].
-    SubInt { dst: Reg, lhs: Reg, rhs: Reg, cache_idx: u16 },
+    SubInt {
+        dst: Reg,
+        lhs: Reg,
+        rhs: Reg,
+        cache_idx: u16,
+    },
     /// `dst = lhs * rhs` on boxed `Value`. Adaptive — see [`Op::AddInt`].
-    MulInt { dst: Reg, lhs: Reg, rhs: Reg, cache_idx: u16 },
+    MulInt {
+        dst: Reg,
+        lhs: Reg,
+        rhs: Reg,
+        cache_idx: u16,
+    },
     /// `dst = lhs / rhs` on boxed `Value`. Adaptive — see [`Op::AddInt`].
-    DivInt { dst: Reg, lhs: Reg, rhs: Reg, cache_idx: u16 },
+    DivInt {
+        dst: Reg,
+        lhs: Reg,
+        rhs: Reg,
+        cache_idx: u16,
+    },
     /// `dst = lhs % rhs` on boxed `Value`. Adaptive — see [`Op::AddInt`].
-    RemInt { dst: Reg, lhs: Reg, rhs: Reg, cache_idx: u16 },
+    RemInt {
+        dst: Reg,
+        lhs: Reg,
+        rhs: Reg,
+        cache_idx: u16,
+    },
     /// `dst = -operand` on `Int` or `Float`.
     Neg { dst: Reg, operand: Reg },
     /// `dst = !operand` on `Bool`.
@@ -312,7 +337,6 @@ pub enum Op {
     // regular `Value` register file. All other Reg slots in
     // these ops refer to the indicated file — the compiler
     // keeps them straight.
-
     /// `floats[dst_f] = f64_consts[idx]`. Uses a dedicated
     /// f64 constant pool so the `Op` enum stays small (the
     /// largest variant drives enum size, which the dispatch
@@ -370,14 +394,23 @@ pub enum Op {
     /// common in vector math (`x + dt * vx`). Saves one op
     /// per use plus enables a single `fma` or `vfmadd*`
     /// instruction when a JIT later consumes this bytecode.
-    MulAddF64 { dst_f: Reg, a_f: Reg, b_f: Reg, c_f: Reg },
+    MulAddF64 {
+        dst_f: Reg,
+        a_f: Reg,
+        b_f: Reg,
+        c_f: Reg,
+    },
     /// Fused multiply-subtract: `floats[dst_f] = floats[c_f] -
     /// floats[a_f] * floats[b_f]`. Matches the nbody
     /// inner-loop pattern `vx - dx * mag`.
-    MulSubF64 { dst_f: Reg, a_f: Reg, b_f: Reg, c_f: Reg },
+    MulSubF64 {
+        dst_f: Reg,
+        a_f: Reg,
+        b_f: Reg,
+        c_f: Reg,
+    },
 
     // ----- Phase 1: unboxed i64 register-file ops -----
-
     /// `ints[dst_i] = i64_consts[idx]`.
     LoadConstI64 { dst_i: Reg, idx: ConstIdx },
     /// Wrapping `ints[dst_i] = ints[lhs_i] + ints[rhs_i]`.
@@ -421,7 +454,6 @@ pub enum Op {
     // `IndexGet` and `FieldGet`. The receiver's aggregate is
     // walked by-reference and only the scalar field value is
     // cloned or unboxed.
-
     /// `floats[dst_f] = receiver.field_name` for a
     /// `Value::Struct` whose named field is a `Value::Float`.
     /// Skips the intermediate `Value::Float` → `UnboxF64`
@@ -485,7 +517,6 @@ pub enum Op {
     // every matching literal in declaration order, so a
     // compile-time `offset` is guaranteed correct and the
     // runtime scan over field names goes away.
-
     /// `floats[dst_f] = base[index].<struct field at offset>`.
     IndexedFieldGetF64ByOffset {
         /// Destination float register.
@@ -516,13 +547,29 @@ pub enum Op {
     /// per loop iteration.
     ///
     /// Branch to `target` when `ints[lhs_i] < ints[rhs_i]`.
-    BranchIfLtI64 { lhs_i: Reg, rhs_i: Reg, target: InstrIdx },
+    BranchIfLtI64 {
+        lhs_i: Reg,
+        rhs_i: Reg,
+        target: InstrIdx,
+    },
     /// Branch to `target` when `ints[lhs_i] >= ints[rhs_i]`.
-    BranchIfGeI64 { lhs_i: Reg, rhs_i: Reg, target: InstrIdx },
+    BranchIfGeI64 {
+        lhs_i: Reg,
+        rhs_i: Reg,
+        target: InstrIdx,
+    },
     /// Branch to `target` when `floats[lhs_f] < floats[rhs_f]`.
-    BranchIfLtF64 { lhs_f: Reg, rhs_f: Reg, target: InstrIdx },
+    BranchIfLtF64 {
+        lhs_f: Reg,
+        rhs_f: Reg,
+        target: InstrIdx,
+    },
     /// Branch to `target` when `floats[lhs_f] >= floats[rhs_f]`.
-    BranchIfGeF64 { lhs_f: Reg, rhs_f: Reg, target: InstrIdx },
+    BranchIfGeF64 {
+        lhs_f: Reg,
+        rhs_f: Reg,
+        target: InstrIdx,
+    },
 
     /// `floats[dst_f] = receiver.<struct field at offset>`.
     FieldGetF64ByOffset {

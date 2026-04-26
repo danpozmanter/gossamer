@@ -99,15 +99,21 @@ fn struct_decl_renders_named_fields_with_trailing_commas() {
     assert!(rendered.contains("pub struct FileCount {"));
     // Fields render with their colons column-aligned: `path` is
     // padded to match `lines` (the longest name).
-    assert!(rendered.contains("    path : String,\n"), "rendered:\n{rendered}");
-    assert!(rendered.contains("    lines: u64,\n"), "rendered:\n{rendered}");
+    assert!(
+        rendered.contains("    path : String,\n"),
+        "rendered:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("    lines: u64,\n"),
+        "rendered:\n{rendered}"
+    );
 }
 
 #[test]
 fn struct_decl_aligns_three_field_colons_in_column() {
     use gossamer_ast::{
-        Ident, ItemKind, NodeId, StructBody, StructDecl, StructField, Generics,
-        Type, TypeKind, TypePath, Visibility, WhereClause,
+        Generics, Ident, ItemKind, NodeId, StructBody, StructDecl, StructField, Type, TypeKind,
+        TypePath, Visibility, WhereClause,
     };
     let names = [("x", "i64"), ("item", "String"), ("y", "i64")];
     let fields: Vec<StructField> = names
@@ -128,9 +134,18 @@ fn struct_decl_aligns_three_field_colons_in_column() {
     let item = public_item(ItemKind::Struct(decl));
     let source = source_file(vec![], vec![item]);
     let rendered = source.to_string();
-    assert!(rendered.contains("    x   : i64,\n"), "rendered:\n{rendered}");
-    assert!(rendered.contains("    item: String,\n"), "rendered:\n{rendered}");
-    assert!(rendered.contains("    y   : i64,\n"), "rendered:\n{rendered}");
+    assert!(
+        rendered.contains("    x   : i64,\n"),
+        "rendered:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("    item: String,\n"),
+        "rendered:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("    y   : i64,\n"),
+        "rendered:\n{rendered}"
+    );
 }
 
 #[test]

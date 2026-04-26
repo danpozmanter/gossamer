@@ -61,8 +61,7 @@ pub(crate) fn set_runtime_args(args: &[String]) {
     #[allow(unsafe_code)]
     unsafe impl Send for ArgPtr {}
 
-    static OWNED: Mutex<(Vec<CString>, Vec<ArgPtr>)> =
-        Mutex::new((Vec::new(), Vec::new()));
+    static OWNED: Mutex<(Vec<CString>, Vec<ArgPtr>)> = Mutex::new((Vec::new(), Vec::new()));
 
     let mut owned = OWNED.lock().expect("runtime-args mutex poisoned");
     let mut all = vec![CString::new("gos").expect("static label")];

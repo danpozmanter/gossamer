@@ -56,7 +56,8 @@ pub fn set_program_args(args: &[String]) {
 // `Set::string` / `int` / `uint` / `bool` return a `__Cell` struct
 // that `*` dereferences in `interp.rs` via [`resolve_cell`].
 
-pub(crate) type CellMap = std::collections::HashMap<(u64, String), std::sync::Arc<parking_lot::Mutex<Value>>>;
+pub(crate) type CellMap =
+    std::collections::HashMap<(u64, String), std::sync::Arc<parking_lot::Mutex<Value>>>;
 
 thread_local! {
     pub(crate) static NEXT_SET_ID: RefCell<u64> = const { RefCell::new(1) };
@@ -118,7 +119,10 @@ pub(crate) fn make_cell(set_id: u64, flag_name: &str, default: Value) -> Value {
         "__Cell".to_string(),
         Arc::new(vec![
             (Ident::new("__set_id"), Value::Int(set_id as i64)),
-            (Ident::new("__flag_name"), Value::String(SmolStr::from(flag_name.to_string()))),
+            (
+                Ident::new("__flag_name"),
+                Value::String(SmolStr::from(flag_name.to_string())),
+            ),
         ]),
     )
 }
@@ -185,17 +189,38 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     // back to a global named `write_byte`. Register one each
     // under the bare name + the `Stream::…` qualified key so
     // both lookup paths succeed.
-    globals.push(("write_byte", builtin("write_byte", builtin_stream_write_byte)));
-    globals.push(("Stream::write_byte", builtin("Stream::write_byte", builtin_stream_write_byte)));
+    globals.push((
+        "write_byte",
+        builtin("write_byte", builtin_stream_write_byte),
+    ));
+    globals.push((
+        "Stream::write_byte",
+        builtin("Stream::write_byte", builtin_stream_write_byte),
+    ));
     globals.push(("write", builtin("write", builtin_stream_write_str)));
-    globals.push(("Stream::write", builtin("Stream::write", builtin_stream_write_str)));
+    globals.push((
+        "Stream::write",
+        builtin("Stream::write", builtin_stream_write_str),
+    ));
     globals.push(("write_str", builtin("write_str", builtin_stream_write_str)));
-    globals.push(("Stream::write_str", builtin("Stream::write_str", builtin_stream_write_str)));
+    globals.push((
+        "Stream::write_str",
+        builtin("Stream::write_str", builtin_stream_write_str),
+    ));
     globals.push(("flush", builtin("flush", builtin_stream_flush)));
-    globals.push(("Stream::flush", builtin("Stream::flush", builtin_stream_flush)));
+    globals.push((
+        "Stream::flush",
+        builtin("Stream::flush", builtin_stream_flush),
+    ));
     globals.push(("read_line", builtin("read_line", builtin_stream_read_line)));
-    globals.push(("Stream::read_line", builtin("Stream::read_line", builtin_stream_read_line)));
-    globals.push(("read_to_string", builtin("read_to_string", builtin_stream_read_to_string)));
+    globals.push((
+        "Stream::read_line",
+        builtin("Stream::read_line", builtin_stream_read_line),
+    ));
+    globals.push((
+        "read_to_string",
+        builtin("read_to_string", builtin_stream_read_to_string),
+    ));
     globals.push((
         "Stream::read_to_string",
         builtin("Stream::read_to_string", builtin_stream_read_to_string),
@@ -228,19 +253,31 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
     ));
     globals.push((
         "http::Client::new",
-        builtin("http::Client::new", crate::http_client_builtins::builtin_http_client_new),
+        builtin(
+            "http::Client::new",
+            crate::http_client_builtins::builtin_http_client_new,
+        ),
     ));
     globals.push((
         "Client::get",
-        builtin("Client::get", crate::http_client_builtins::builtin_http_client_get),
+        builtin(
+            "Client::get",
+            crate::http_client_builtins::builtin_http_client_get,
+        ),
     ));
     globals.push((
         "Request::send",
-        builtin("Request::send", crate::http_client_builtins::builtin_http_request_send),
+        builtin(
+            "Request::send",
+            crate::http_client_builtins::builtin_http_request_send,
+        ),
     ));
     globals.push((
         "Response::bytes",
-        builtin("Response::bytes", crate::http_client_builtins::builtin_http_response_bytes),
+        builtin(
+            "Response::bytes",
+            crate::http_client_builtins::builtin_http_response_bytes,
+        ),
     ));
     globals.push(("path", builtin("path", builtin_field::<'p'>)));
     globals.push(("method", builtin("method", builtin_field::<'m'>)));
@@ -257,73 +294,104 @@ fn install_variant_builtins(globals: &mut Vec<(&'static str, Value)>) {
 }
 
 fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
-    install_module("os", &[
-        ("args", builtin_os_args),
-        ("env", builtin_os_env),
-        ("exit", builtin_os_exit),
-        ("read_file", builtin_os_read_file),
-        ("read_file_to_string", builtin_os_read_file_to_string),
-        ("write_file", builtin_os_write_file),
-        ("remove_file", builtin_os_remove_file),
-        ("rename", builtin_os_rename),
-        ("exists", builtin_os_exists),
-        ("mkdir", builtin_os_mkdir),
-        ("mkdir_all", builtin_os_mkdir_all),
-        ("read_dir", builtin_os_read_dir),
-    ], globals);
-    install_module("time", &[
-        ("now", builtin_time_now),
-        ("now_ms", builtin_time_now_ms),
-        ("sleep", builtin_time_sleep),
-        ("format_rfc3339", builtin_time_format_rfc3339),
-        ("parse_rfc3339", builtin_time_parse_rfc3339),
-    ], globals);
-    install_module("exec", &[
-        ("run", builtin_exec_run),
-    ], globals);
-    install_module("os::exec", &[
-        ("run", builtin_exec_run),
-    ], globals);
-    install_module("fs", &[
-        ("walk_dir", builtin_fs_walk_dir),
-    ], globals);
-    install_module("path", &[
-        ("walk", builtin_fs_walk_dir),
-    ], globals);
-    install_module("gzip", &[
-        ("encode", builtin_gzip_encode),
-        ("decode", builtin_gzip_decode),
-    ], globals);
-    install_module("compress::gzip", &[
-        ("encode", builtin_gzip_encode),
-        ("decode", builtin_gzip_decode),
-    ], globals);
-    install_module("slog", &[
-        ("info", builtin_slog_info),
-        ("warn", builtin_slog_warn),
-        ("error", builtin_slog_error),
-        ("debug", builtin_slog_debug),
-    ], globals);
-    install_module("bufio", &[
-        ("read_lines", builtin_bufio_read_lines),
-    ], globals);
-    install_module("json", &[
-        ("parse", builtin_json_parse),
-        ("render", builtin_json_render),
-        ("encode", builtin_json_render),
-        ("decode", builtin_json_decode),
-    ], globals);
-    install_module("testing", &[
-        ("check", builtin_testing_check),
-        ("check_eq", builtin_testing_check_eq),
-        ("check_ok", builtin_testing_check_ok),
-    ], globals);
+    install_module(
+        "os",
+        &[
+            ("args", builtin_os_args),
+            ("env", builtin_os_env),
+            ("exit", builtin_os_exit),
+            ("read_file", builtin_os_read_file),
+            ("read_file_to_string", builtin_os_read_file_to_string),
+            ("write_file", builtin_os_write_file),
+            ("remove_file", builtin_os_remove_file),
+            ("rename", builtin_os_rename),
+            ("exists", builtin_os_exists),
+            ("mkdir", builtin_os_mkdir),
+            ("mkdir_all", builtin_os_mkdir_all),
+            ("read_dir", builtin_os_read_dir),
+        ],
+        globals,
+    );
+    install_module(
+        "time",
+        &[
+            ("now", builtin_time_now),
+            ("now_ms", builtin_time_now_ms),
+            ("sleep", builtin_time_sleep),
+            ("format_rfc3339", builtin_time_format_rfc3339),
+            ("parse_rfc3339", builtin_time_parse_rfc3339),
+        ],
+        globals,
+    );
+    install_module("exec", &[("run", builtin_exec_run)], globals);
+    install_module("os::exec", &[("run", builtin_exec_run)], globals);
+    install_module("fs", &[("walk_dir", builtin_fs_walk_dir)], globals);
+    install_module("path", &[("walk", builtin_fs_walk_dir)], globals);
+    install_module(
+        "gzip",
+        &[
+            ("encode", builtin_gzip_encode),
+            ("decode", builtin_gzip_decode),
+        ],
+        globals,
+    );
+    install_module(
+        "compress::gzip",
+        &[
+            ("encode", builtin_gzip_encode),
+            ("decode", builtin_gzip_decode),
+        ],
+        globals,
+    );
+    install_module(
+        "slog",
+        &[
+            ("info", builtin_slog_info),
+            ("warn", builtin_slog_warn),
+            ("error", builtin_slog_error),
+            ("debug", builtin_slog_debug),
+        ],
+        globals,
+    );
+    install_module(
+        "bufio",
+        &[("read_lines", builtin_bufio_read_lines)],
+        globals,
+    );
+    install_module(
+        "json",
+        &[
+            ("parse", builtin_json_parse),
+            ("render", builtin_json_render),
+            ("encode", builtin_json_render),
+            ("decode", builtin_json_decode),
+        ],
+        globals,
+    );
+    install_module(
+        "testing",
+        &[
+            ("check", builtin_testing_check),
+            ("check_eq", builtin_testing_check_eq),
+            ("check_ok", builtin_testing_check_ok),
+        ],
+        globals,
+    );
 }
 
 fn install_flag_builtins(globals: &mut Vec<(&'static str, Value)>) {
-    globals.push(("flag::Value::Int", Value::variant("Int".to_string(), Arc::new(Vec::new()))));
-    globals.push(("flag::Value::Str", Value::variant("Str".to_string(), Arc::new(Vec::new()))));
-    globals.push(("flag::Value::Bool", Value::variant("Bool".to_string(), Arc::new(Vec::new()))));
+    globals.push((
+        "flag::Value::Int",
+        Value::variant("Int".to_string(), Arc::new(Vec::new())),
+    ));
+    globals.push((
+        "flag::Value::Str",
+        Value::variant("Str".to_string(), Arc::new(Vec::new())),
+    ));
+    globals.push((
+        "flag::Value::Bool",
+        Value::variant("Bool".to_string(), Arc::new(Vec::new())),
+    ));
     globals.push(("flag::parse", builtin("flag::parse", builtin_flag_parse)));
     globals.push((
         "FlagMap::get",
@@ -331,11 +399,17 @@ fn install_flag_builtins(globals: &mut Vec<(&'static str, Value)>) {
     ));
     globals.push((
         "flag::Set::new",
-        builtin("flag::Set::new", crate::flag_set_builtins::builtin_flag_set_new),
+        builtin(
+            "flag::Set::new",
+            crate::flag_set_builtins::builtin_flag_set_new,
+        ),
     ));
     globals.push((
         "Set::string",
-        builtin("Set::string", crate::flag_set_builtins::builtin_flag_set_string),
+        builtin(
+            "Set::string",
+            crate::flag_set_builtins::builtin_flag_set_string,
+        ),
     ));
     globals.push((
         "Set::int",
@@ -351,31 +425,28 @@ fn install_flag_builtins(globals: &mut Vec<(&'static str, Value)>) {
     ));
     globals.push((
         "Set::short",
-        builtin("Set::short", crate::flag_set_builtins::builtin_flag_set_short),
+        builtin(
+            "Set::short",
+            crate::flag_set_builtins::builtin_flag_set_short,
+        ),
     ));
     globals.push((
         "Set::parse",
-        builtin("Set::parse", crate::flag_set_builtins::builtin_flag_set_parse),
+        builtin(
+            "Set::parse",
+            crate::flag_set_builtins::builtin_flag_set_parse,
+        ),
     ));
     // Declarative builder: one expression produces a ready-to-use
     // flags struct whose fields deref through `__Cell` to the current
     // value. Avoids the mutate-the-set chain the Set:: builders use.
-    globals.push((
-        "flag::int",
-        builtin("flag::int", builtin_flag_spec_int),
-    ));
+    globals.push(("flag::int", builtin("flag::int", builtin_flag_spec_int)));
     globals.push((
         "flag::string",
         builtin("flag::string", builtin_flag_spec_string),
     ));
-    globals.push((
-        "flag::bool",
-        builtin("flag::bool", builtin_flag_spec_bool),
-    ));
-    globals.push((
-        "flag::define",
-        builtin("flag::define", builtin_flag_define),
-    ));
+    globals.push(("flag::bool", builtin("flag::bool", builtin_flag_spec_bool)));
+    globals.push(("flag::define", builtin("flag::define", builtin_flag_define)));
 }
 
 /// Shape of a single spec produced by [`flag::int`] / [`flag::string`]
@@ -567,7 +638,6 @@ fn builtin_flag_define(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_("Flags".to_string(), Arc::new(fields)))
 }
 
-
 fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("len", builtin("len", builtin_len)));
     globals.push(("to_string", builtin("to_string", builtin_to_string)));
@@ -578,8 +648,14 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     // String surface that the MIR method-dispatch table already
     // wires for compiled mode. Keep the interpreter's coverage
     // in lockstep so `gos run` and `gos build` agree.
-    globals.push(("to_uppercase", builtin("to_uppercase", builtin_to_uppercase)));
-    globals.push(("to_lowercase", builtin("to_lowercase", builtin_to_lowercase)));
+    globals.push((
+        "to_uppercase",
+        builtin("to_uppercase", builtin_to_uppercase),
+    ));
+    globals.push((
+        "to_lowercase",
+        builtin("to_lowercase", builtin_to_lowercase),
+    ));
     globals.push(("contains", builtin("contains", builtin_contains)));
     globals.push(("starts_with", builtin("starts_with", builtin_starts_with)));
     globals.push(("ends_with", builtin("ends_with", builtin_ends_with)));
@@ -591,7 +667,10 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "unwrap_or_else",
         native("unwrap_or_else", native_variant_unwrap_or_else),
     ));
-    globals.push(("unwrap_or_default", builtin("unwrap_or_default", builtin_variant_unwrap_or_default)));
+    globals.push((
+        "unwrap_or_default",
+        builtin("unwrap_or_default", builtin_variant_unwrap_or_default),
+    ));
     globals.push(("is_some", builtin("is_some", builtin_variant_is::<'S'>)));
     globals.push(("is_none", builtin("is_none", builtin_variant_is::<'N'>)));
     globals.push(("is_ok", builtin("is_ok", builtin_variant_is::<'O'>)));
@@ -602,57 +681,117 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("map_or", native("map_or", native_variant_map_or)));
 }
 
+// Pure registration list — splitting it would obscure the
+// concurrency surface area without making any function shorter.
+#[allow(clippy::too_many_lines)]
 fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("spawn", native("spawn", native_spawn)));
     globals.push(("channel", builtin("channel", builtin_channel_new)));
     globals.push(("channel::new", builtin("channel::new", builtin_channel_new)));
-    globals.push(("sync::channel", builtin("sync::channel", builtin_channel_new)));
-    globals.push(("Channel::send", builtin("Channel::send", builtin_channel_send)));
-    globals.push(("Channel::recv", builtin("Channel::recv", builtin_channel_recv)));
-    globals.push(("sync::Channel::new", builtin("sync::Channel::new", builtin_channel_new)));
+    globals.push((
+        "sync::channel",
+        builtin("sync::channel", builtin_channel_new),
+    ));
+    globals.push((
+        "Channel::send",
+        builtin("Channel::send", builtin_channel_send),
+    ));
+    globals.push((
+        "Channel::recv",
+        builtin("Channel::recv", builtin_channel_recv),
+    ));
+    globals.push((
+        "sync::Channel::new",
+        builtin("sync::Channel::new", builtin_channel_new),
+    ));
 
     // Shared atomic-i64 buffer used by goroutine fan-out programs
     // (`fasta.gos`'s multi-threaded variant). Backed by a global
     // side table keyed on a u32 handle stuffed into the
     // `I64Vec.__handle` struct field.
     globals.push(("I64Vec::new", builtin("I64Vec::new", builtin_i64vec_new)));
-    globals.push(("I64Vec::set_at", builtin("I64Vec::set_at", builtin_i64vec_set_at)));
-    globals.push(("I64Vec::get_at", builtin("I64Vec::get_at", builtin_i64vec_get_at)));
-    globals.push(("I64Vec::vec_len", builtin("I64Vec::vec_len", builtin_i64vec_vec_len)));
+    globals.push((
+        "I64Vec::set_at",
+        builtin("I64Vec::set_at", builtin_i64vec_set_at),
+    ));
+    globals.push((
+        "I64Vec::get_at",
+        builtin("I64Vec::get_at", builtin_i64vec_get_at),
+    ));
+    globals.push((
+        "I64Vec::vec_len",
+        builtin("I64Vec::vec_len", builtin_i64vec_vec_len),
+    ));
     globals.push((
         "I64Vec::write_range_to_stdout",
-        builtin("I64Vec::write_range_to_stdout", builtin_i64vec_write_range_to_stdout),
+        builtin(
+            "I64Vec::write_range_to_stdout",
+            builtin_i64vec_write_range_to_stdout,
+        ),
     ));
     globals.push((
         "I64Vec::write_lines_to_stdout",
-        builtin("I64Vec::write_lines_to_stdout", builtin_i64vec_write_lines_to_stdout),
+        builtin(
+            "I64Vec::write_lines_to_stdout",
+            builtin_i64vec_write_lines_to_stdout,
+        ),
     ));
 
     // U8Vec: 1-byte-per-element heap vec. Same shape as I64Vec
     // but with byte-aligned storage — fasta-style scratch
     // buffers no longer pay the 8x storage tax.
     globals.push(("U8Vec::new", builtin("U8Vec::new", builtin_u8vec_new)));
-    globals.push(("U8Vec::set_byte", builtin("U8Vec::set_byte", builtin_u8vec_set_byte)));
-    globals.push(("U8Vec::get_byte", builtin("U8Vec::get_byte", builtin_u8vec_get_byte)));
-    globals.push(("U8Vec::byte_len", builtin("U8Vec::byte_len", builtin_u8vec_byte_len)));
+    globals.push((
+        "U8Vec::set_byte",
+        builtin("U8Vec::set_byte", builtin_u8vec_set_byte),
+    ));
+    globals.push((
+        "U8Vec::get_byte",
+        builtin("U8Vec::get_byte", builtin_u8vec_get_byte),
+    ));
+    globals.push((
+        "U8Vec::byte_len",
+        builtin("U8Vec::byte_len", builtin_u8vec_byte_len),
+    ));
     globals.push((
         "U8Vec::write_byte_range_to_stdout",
-        builtin("U8Vec::write_byte_range_to_stdout", builtin_u8vec_write_byte_range_to_stdout),
+        builtin(
+            "U8Vec::write_byte_range_to_stdout",
+            builtin_u8vec_write_byte_range_to_stdout,
+        ),
     ));
     globals.push((
         "U8Vec::write_byte_lines_to_stdout",
-        builtin("U8Vec::write_byte_lines_to_stdout", builtin_u8vec_write_byte_lines_to_stdout),
+        builtin(
+            "U8Vec::write_byte_lines_to_stdout",
+            builtin_u8vec_write_byte_lines_to_stdout,
+        ),
     ));
 
     // `sync::WaitGroup` mirroring Go's API.
-    globals.push(("WaitGroup::new", builtin("WaitGroup::new", builtin_waitgroup_new)));
-    globals.push(("WaitGroup::add", builtin("WaitGroup::add", builtin_waitgroup_add)));
-    globals.push(("WaitGroup::done", builtin("WaitGroup::done", builtin_waitgroup_done)));
-    globals.push(("WaitGroup::wait", builtin("WaitGroup::wait", builtin_waitgroup_wait)));
+    globals.push((
+        "WaitGroup::new",
+        builtin("WaitGroup::new", builtin_waitgroup_new),
+    ));
+    globals.push((
+        "WaitGroup::add",
+        builtin("WaitGroup::add", builtin_waitgroup_add),
+    ));
+    globals.push((
+        "WaitGroup::done",
+        builtin("WaitGroup::done", builtin_waitgroup_done),
+    ));
+    globals.push((
+        "WaitGroup::wait",
+        builtin("WaitGroup::wait", builtin_waitgroup_wait),
+    ));
 
     // O(log n) Lehmer LCG affine-transform jump-ahead.
     globals.push(("lcg_jump", builtin("lcg_jump", builtin_lcg_jump)));
-    globals.push(("gos_rt_lcg_jump", builtin("gos_rt_lcg_jump", builtin_lcg_jump)));
+    globals.push((
+        "gos_rt_lcg_jump",
+        builtin("gos_rt_lcg_jump", builtin_lcg_jump),
+    ));
 
     // Bulk byte-array writer used by `out.write_byte_array(&line, n)`
     // in the `fasta` block-write hot path.
@@ -1131,10 +1270,7 @@ fn render_args(args: &[Value]) -> String {
 /// Graceful shutdown is driven by the `GOSSAMER_HTTP_MAX_REQUESTS`
 /// environment variable (stop after N requests) or by the process
 /// receiving SIGINT.
-fn native_http_serve(
-    dispatch: &mut dyn NativeDispatch,
-    args: &[Value],
-) -> RuntimeResult<Value> {
+fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
     if args.len() < 2 {
         return Err(RuntimeError::Arity {
             expected: 2,
@@ -1143,7 +1279,11 @@ fn native_http_serve(
     }
     let addr: String = match &args[0] {
         Value::String(s) => s.as_str().to_string(),
-        other => return Err(RuntimeError::Type(format!("expected address string, got {other}"))),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected address string, got {other}"
+            )));
+        }
     };
     let handler = args[1].clone();
 
@@ -1171,15 +1311,19 @@ fn native_http_serve(
         let dispatched = guard.call_fn("serve", vec![handler.clone(), request_value]);
         drop(guard);
         match dispatched {
-            Ok(value) => if let Some(response) = value_to_response(&value) { response } else {
-                let mut errs = errors.lock().unwrap();
-                errs.push("handler did not return http::Response".to_string());
-                drop(errs);
-                http_std::Response::text(
-                    http_std::StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal server error",
-                )
-            },
+            Ok(value) => {
+                if let Some(response) = value_to_response(&value) {
+                    response
+                } else {
+                    let mut errs = errors.lock().unwrap();
+                    errs.push("handler did not return http::Response".to_string());
+                    drop(errs);
+                    http_std::Response::text(
+                        http_std::StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal server error",
+                    )
+                }
+            }
             Err(err) => {
                 let mut errs = errors.lock().unwrap();
                 errs.push(format!("{err}"));
@@ -1193,7 +1337,10 @@ fn native_http_serve(
     });
 
     match result {
-        Ok(()) => Ok(Value::variant("Ok".to_string(), Arc::new(vec![Value::Unit]))),
+        Ok(()) => Ok(Value::variant(
+            "Ok".to_string(),
+            Arc::new(vec![Value::Unit]),
+        )),
         Err(err) => Err(RuntimeError::Panic(format!("http::serve: {err}"))),
     }
 }
@@ -1233,26 +1380,14 @@ fn request_to_value(request: &http_std::Request) -> Value {
             Ident::new("method"),
             Value::String(SmolStr::from(request.method.as_str().to_string())),
         ),
-        (
-            Ident::new("path"),
-            Value::String(bare_path.into()),
-        ),
-        (
-            Ident::new("query"),
-            Value::String(query_string.into()),
-        ),
+        (Ident::new("path"), Value::String(bare_path.into())),
+        (Ident::new("query"), Value::String(query_string.into())),
         (
             Ident::new("query_pairs"),
             Value::Array(Arc::new(query_pairs)),
         ),
-        (
-            Ident::new("headers"),
-            Value::Array(Arc::new(headers)),
-        ),
-        (
-            Ident::new("body"),
-            Value::String(body_text.into()),
-        ),
+        (Ident::new("headers"), Value::Array(Arc::new(headers))),
+        (Ident::new("body"), Value::String(body_text.into())),
     ];
     Value::struct_("Request".to_string(), Arc::new(fields))
 }
@@ -1316,9 +1451,7 @@ fn value_to_response(value: &Value) -> Option<http_std::Response> {
 
 fn unwrap_result(value: &Value) -> &Value {
     match value {
-        Value::Variant(inner) if inner.name == "Ok" && !inner.fields.is_empty() => {
-            &inner.fields[0]
-        }
+        Value::Variant(inner) if inner.name == "Ok" && !inner.fields.is_empty() => &inner.fields[0],
         other => other,
     }
 }
@@ -1353,7 +1486,10 @@ pub(crate) fn ok_variant(value: Value) -> Value {
 
 /// Builds a `Result::Err(message)` Gossamer variant carrying a string.
 pub(crate) fn err_variant(message: impl Into<String>) -> Value {
-    Value::variant("Err".to_string(), Arc::new(vec![Value::String(SmolStr::from(message.into()))]))
+    Value::variant(
+        "Err".to_string(),
+        Arc::new(vec![Value::String(SmolStr::from(message.into()))]),
+    )
 }
 
 /// Builds a `Option::Some(value)` Gossamer variant.
@@ -1394,7 +1530,10 @@ fn builtin_os_read_file(args: &[Value]) -> RuntimeResult<Value> {
     };
     match os_std::read_file(path) {
         Ok(bytes) => {
-            let values: Vec<Value> = bytes.into_iter().map(|b| Value::Int(i64::from(b))).collect();
+            let values: Vec<Value> = bytes
+                .into_iter()
+                .map(|b| Value::Int(i64::from(b)))
+                .collect();
             Ok(ok_variant(Value::Array(Arc::new(values))))
         }
         Err(e) => Ok(err_variant(format!("{e}"))),
@@ -1403,7 +1542,9 @@ fn builtin_os_read_file(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_os_read_file_to_string(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
-        return Ok(err_variant("read_file_to_string: path argument must be a string"));
+        return Ok(err_variant(
+            "read_file_to_string: path argument must be a string",
+        ));
     };
     match os_std::read_file_to_string(path) {
         Ok(text) => Ok(ok_variant(Value::String(text.into()))),
@@ -1424,7 +1565,11 @@ fn builtin_os_write_file(args: &[Value]) -> RuntimeResult<Value> {
                 _ => None,
             })
             .collect(),
-        _ => return Ok(err_variant("write_file: contents must be string or byte array")),
+        _ => {
+            return Ok(err_variant(
+                "write_file: contents must be string or byte array",
+            ));
+        }
     };
     match os_std::write_file(path, &bytes) {
         Ok(()) => Ok(ok_variant(Value::Unit)),
@@ -1525,7 +1670,9 @@ fn builtin_time_format_rfc3339(args: &[Value]) -> RuntimeResult<Value> {
 /// unix milliseconds; the inverse of `format_rfc3339`.
 fn builtin_time_parse_rfc3339(args: &[Value]) -> RuntimeResult<Value> {
     let Some(s) = args.first().and_then(as_str) else {
-        return Ok(err_variant("time::parse_rfc3339: argument must be a string"));
+        return Ok(err_variant(
+            "time::parse_rfc3339: argument must be a string",
+        ));
     };
     match time_std::parse_rfc3339(s) {
         Ok(when) => {
@@ -1716,7 +1863,9 @@ fn json_escape_str(value: &str) -> String {
 /// 95% case where you just want the lines.
 fn builtin_bufio_read_lines(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
-        return Ok(err_variant("bufio::read_lines: path argument must be a string"));
+        return Ok(err_variant(
+            "bufio::read_lines: path argument must be a string",
+        ));
     };
     match std::fs::read_to_string(path) {
         Ok(contents) => {
@@ -1770,9 +1919,9 @@ fn json_value_to_gossamer(value: &json_std::Value) -> Value {
             }
         }
         json_std::Value::String(s) => Value::String(SmolStr::from(s.clone())),
-        json_std::Value::Array(items) => Value::Array(Arc::new(
-            items.iter().map(json_value_to_gossamer).collect(),
-        )),
+        json_std::Value::Array(items) => {
+            Value::Array(Arc::new(items.iter().map(json_value_to_gossamer).collect()))
+        }
         json_std::Value::Object(entries) => {
             let fields: Vec<(Ident, Value)> = entries
                 .iter()
@@ -1812,10 +1961,9 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
                 json_std::Value::Array(fields.iter().map(gossamer_to_json_value).collect())
             }
         }
-        Value::Closure(_)
-        | Value::Builtin(_)
-        | Value::Native(_)
-        | Value::Channel(_) => json_std::Value::Null,
+        Value::Closure(_) | Value::Builtin(_) | Value::Native(_) | Value::Channel(_) => {
+            json_std::Value::Null
+        }
         Value::FloatArray { .. } => {
             let fallback = value.float_array_to_value_array();
             gossamer_to_json_value(&fallback)
@@ -1873,7 +2021,7 @@ fn builtin_split(args: &[Value]) -> RuntimeResult<Value> {
             .split(&delim)
             .map(|p| Value::String(SmolStr::from(p.to_string())))
             .collect()
-    }; 
+    };
     Ok(Value::Array(Arc::new(parts)))
 }
 
@@ -1977,13 +2125,9 @@ fn builtin_clone(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_variant_unwrap(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Variant(inner)) if inner.name == "Ok" || inner.name == "Some" => {
-            inner
-                .fields
-                .first()
-                .cloned()
-                .ok_or_else(|| {
-                    RuntimeError::Panic(format!("unwrap on empty `{}` variant", inner.name))
-                })
+            inner.fields.first().cloned().ok_or_else(|| {
+                RuntimeError::Panic(format!("unwrap on empty `{}` variant", inner.name))
+            })
         }
         Some(Value::Variant(inner)) => Err(RuntimeError::Panic(format!(
             "unwrap on `{}` variant: {}",
@@ -2003,8 +2147,7 @@ fn builtin_variant_unwrap_or(args: &[Value]) -> RuntimeResult<Value> {
     let default = args.get(1).cloned().unwrap_or(Value::Unit);
     match args.first() {
         Some(Value::Variant(inner))
-            if (inner.name == "Ok" || inner.name == "Some")
-                && !inner.fields.is_empty() =>
+            if (inner.name == "Ok" || inner.name == "Some") && !inner.fields.is_empty() =>
         {
             Ok(inner.fields[0].clone())
         }
@@ -2020,8 +2163,7 @@ fn native_variant_unwrap_or_else(
     let fallback = args.get(1).cloned().unwrap_or(Value::Unit);
     match &receiver {
         Value::Variant(inner)
-            if (inner.name == "Ok" || inner.name == "Some")
-                && !inner.fields.is_empty() =>
+            if (inner.name == "Ok" || inner.name == "Some") && !inner.fields.is_empty() =>
         {
             Ok(inner.fields[0].clone())
         }
@@ -2036,8 +2178,7 @@ fn native_variant_unwrap_or_else(
 fn builtin_variant_unwrap_or_default(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Variant(inner))
-            if (inner.name == "Ok" || inner.name == "Some")
-                && !inner.fields.is_empty() =>
+            if (inner.name == "Ok" || inner.name == "Some") && !inner.fields.is_empty() =>
         {
             Ok(inner.fields[0].clone())
         }
@@ -2062,9 +2203,7 @@ fn builtin_variant_is<const TAG: char>(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_variant_ok(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
-        Some(Value::Variant(inner))
-            if inner.name == "Ok" && !inner.fields.is_empty() =>
-        {
+        Some(Value::Variant(inner)) if inner.name == "Ok" && !inner.fields.is_empty() => {
             Ok(some_variant(inner.fields[0].clone()))
         }
         _ => Ok(none_variant()),
@@ -2073,29 +2212,21 @@ fn builtin_variant_ok(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_variant_err(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
-        Some(Value::Variant(inner))
-            if inner.name == "Err" && !inner.fields.is_empty() =>
-        {
+        Some(Value::Variant(inner)) if inner.name == "Err" && !inner.fields.is_empty() => {
             Ok(some_variant(inner.fields[0].clone()))
         }
         _ => Ok(none_variant()),
     }
 }
 
-fn native_variant_map(
-    dispatch: &mut dyn NativeDispatch,
-    args: &[Value],
-) -> RuntimeResult<Value> {
+fn native_variant_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
     let receiver = args.first().cloned().unwrap_or(Value::Unit);
     let transform = args.get(1).cloned().unwrap_or(Value::Unit);
     match &receiver {
         Value::Variant(inner)
-            if (inner.name == "Some" || inner.name == "Ok")
-                && !inner.fields.is_empty() =>
+            if (inner.name == "Some" || inner.name == "Ok") && !inner.fields.is_empty() =>
         {
-            let mapped = invoke_callable(
-                dispatch, &transform, vec![inner.fields[0].clone()],
-            )?;
+            let mapped = invoke_callable(dispatch, &transform, vec![inner.fields[0].clone()])?;
             Ok(Value::variant(inner.name.clone(), Arc::new(vec![mapped])))
         }
         other => Ok(other.clone()),
@@ -2111,8 +2242,7 @@ fn native_variant_map_or(
     let mapper = args.get(2).cloned().unwrap_or(Value::Unit);
     match &receiver {
         Value::Variant(inner)
-            if (inner.name == "Some" || inner.name == "Ok")
-                && !inner.fields.is_empty() =>
+            if (inner.name == "Some" || inner.name == "Ok") && !inner.fields.is_empty() =>
         {
             invoke_callable(dispatch, &mapper, vec![inner.fields[0].clone()])
         }
@@ -2128,10 +2258,7 @@ fn invoke_callable(
     dispatch.call_value(callable, args)
 }
 
-fn native_spawn(
-    dispatch: &mut dyn NativeDispatch,
-    args: &[Value],
-) -> RuntimeResult<Value> {
+fn native_spawn(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
     let Some(callable) = args.first().cloned() else {
         return Ok(Value::Unit);
     };
@@ -2173,9 +2300,7 @@ fn builtin_testing_check_ok(args: &[Value]) -> RuntimeResult<Value> {
     let result = args.first().cloned().unwrap_or(Value::Unit);
     let message = args.get(1).and_then(as_str).unwrap_or("check_ok failed");
     match &result {
-        Value::Variant(inner)
-            if inner.name == "Ok" && !inner.fields.is_empty() =>
-        {
+        Value::Variant(inner) if inner.name == "Ok" && !inner.fields.is_empty() => {
             observe_assertion(true, format!("check_ok: {message}"));
             Ok(ok_variant(inner.fields[0].clone()))
         }
@@ -2214,7 +2339,9 @@ fn values_equal_for_assertion(a: &Value, b: &Value) -> bool {
         (Value::String(x), Value::String(y)) => x == y,
         (Value::Tuple(x), Value::Tuple(y)) | (Value::Array(x), Value::Array(y)) => {
             x.len() == y.len()
-                && x.iter().zip(y.iter()).all(|(a, b)| values_equal_for_assertion(a, b))
+                && x.iter()
+                    .zip(y.iter())
+                    .all(|(a, b)| values_equal_for_assertion(a, b))
         }
         (Value::Variant(a), Value::Variant(b)) => {
             a.name == b.name
@@ -2425,12 +2552,10 @@ fn extract_flag_decls(values: &[Value]) -> Vec<FlagDeclEntry> {
         let Some(Value::String(flag_name)) = field_map.get("name") else {
             continue;
         };
-        let short = field_map
-            .get("short")
-            .and_then(|v| match v {
-                Value::Char(c) => Some(*c),
-                _ => None,
-            });
+        let short = field_map.get("short").and_then(|v| match v {
+            Value::Char(c) => Some(*c),
+            _ => None,
+        });
         let default = field_map
             .get("value")
             .copied()
@@ -2451,9 +2576,10 @@ fn flag_parse_value(default: &Value, raw: &str) -> Value {
             let n = raw.parse::<i64>().unwrap_or(0);
             Value::variant("Int".to_string(), Arc::new(vec![Value::Int(n)]))
         }
-        Value::Variant(inner) if inner.name == "Str" => {
-            Value::variant("Str".to_string(), Arc::new(vec![Value::String(SmolStr::from(raw.to_string()))]))
-        }
+        Value::Variant(inner) if inner.name == "Str" => Value::variant(
+            "Str".to_string(),
+            Arc::new(vec![Value::String(SmolStr::from(raw.to_string()))]),
+        ),
         Value::Variant(inner) if inner.name == "Bool" => {
             let b = matches!(raw, "true" | "1" | "yes" | "on");
             Value::variant("Bool".to_string(), Arc::new(vec![Value::Bool(b)]))
@@ -2636,9 +2762,8 @@ fn builtin_i64vec_vec_len(args: &[Value]) -> RuntimeResult<Value> {
         .first()
         .and_then(|v| struct_handle(v, "I64Vec"))
         .ok_or_else(|| RuntimeError::Type("vec_len: receiver must be I64Vec".to_string()))?;
-    let vec_arc = i64vec_lookup(handle).ok_or_else(|| {
-        RuntimeError::Type("vec_len: stale I64Vec handle".to_string())
-    })?;
+    let vec_arc = i64vec_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("vec_len: stale I64Vec handle".to_string()))?;
     Ok(Value::Int(vec_arc.len() as i64))
 }
 
@@ -2647,9 +2772,7 @@ fn builtin_i64vec_write_range_to_stdout(args: &[Value]) -> RuntimeResult<Value> 
         .first()
         .and_then(|v| struct_handle(v, "I64Vec"))
         .ok_or_else(|| {
-            RuntimeError::Type(
-                "write_range_to_stdout: receiver must be I64Vec".to_string(),
-            )
+            RuntimeError::Type("write_range_to_stdout: receiver must be I64Vec".to_string())
         })?;
     let vec_arc = i64vec_lookup(handle).ok_or_else(|| {
         RuntimeError::Type("write_range_to_stdout: stale I64Vec handle".to_string())
@@ -2670,9 +2793,7 @@ fn builtin_i64vec_write_lines_to_stdout(args: &[Value]) -> RuntimeResult<Value> 
         .first()
         .and_then(|v| struct_handle(v, "I64Vec"))
         .ok_or_else(|| {
-            RuntimeError::Type(
-                "write_lines_to_stdout: receiver must be I64Vec".to_string(),
-            )
+            RuntimeError::Type("write_lines_to_stdout: receiver must be I64Vec".to_string())
         })?;
     let vec_arc = i64vec_lookup(handle).ok_or_else(|| {
         RuntimeError::Type("write_lines_to_stdout: stale I64Vec handle".to_string())
@@ -2764,9 +2885,9 @@ fn builtin_u8vec_get_byte(args: &[Value]) -> RuntimeResult<Value> {
     let idx = arg_int(args, 1)
         .ok_or_else(|| RuntimeError::Type("get_byte: idx must be i64".to_string()))?;
     let v = if idx >= 0 {
-        vec_arc
-            .get(idx as usize)
-            .map_or(0, |s| i64::from(s.load(std::sync::atomic::Ordering::Relaxed)))
+        vec_arc.get(idx as usize).map_or(0, |s| {
+            i64::from(s.load(std::sync::atomic::Ordering::Relaxed))
+        })
     } else {
         0
     };
@@ -2778,9 +2899,8 @@ fn builtin_u8vec_byte_len(args: &[Value]) -> RuntimeResult<Value> {
         .first()
         .and_then(|v| struct_handle(v, "U8Vec"))
         .ok_or_else(|| RuntimeError::Type("byte_len: receiver must be U8Vec".to_string()))?;
-    let vec_arc = u8vec_lookup(handle).ok_or_else(|| {
-        RuntimeError::Type("byte_len: stale U8Vec handle".to_string())
-    })?;
+    let vec_arc = u8vec_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("byte_len: stale U8Vec handle".to_string()))?;
     Ok(Value::Int(vec_arc.len() as i64))
 }
 
@@ -2789,9 +2909,7 @@ fn builtin_u8vec_write_byte_range_to_stdout(args: &[Value]) -> RuntimeResult<Val
         .first()
         .and_then(|v| struct_handle(v, "U8Vec"))
         .ok_or_else(|| {
-            RuntimeError::Type(
-                "write_byte_range_to_stdout: receiver must be U8Vec".to_string(),
-            )
+            RuntimeError::Type("write_byte_range_to_stdout: receiver must be U8Vec".to_string())
         })?;
     let vec_arc = u8vec_lookup(handle).ok_or_else(|| {
         RuntimeError::Type("write_byte_range_to_stdout: stale U8Vec handle".to_string())
@@ -2812,9 +2930,7 @@ fn builtin_u8vec_write_byte_lines_to_stdout(args: &[Value]) -> RuntimeResult<Val
         .first()
         .and_then(|v| struct_handle(v, "U8Vec"))
         .ok_or_else(|| {
-            RuntimeError::Type(
-                "write_byte_lines_to_stdout: receiver must be U8Vec".to_string(),
-            )
+            RuntimeError::Type("write_byte_lines_to_stdout: receiver must be U8Vec".to_string())
         })?;
     let vec_arc = u8vec_lookup(handle).ok_or_else(|| {
         RuntimeError::Type("write_byte_lines_to_stdout: stale U8Vec handle".to_string())
@@ -2853,9 +2969,8 @@ fn builtin_waitgroup_add(args: &[Value]) -> RuntimeResult<Value> {
         .ok_or_else(|| {
             RuntimeError::Type("WaitGroup::add: receiver must be WaitGroup".to_string())
         })?;
-    let cell = wg_lookup(handle).ok_or_else(|| {
-        RuntimeError::Type("WaitGroup::add: stale WaitGroup handle".to_string())
-    })?;
+    let cell = wg_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("WaitGroup::add: stale WaitGroup handle".to_string()))?;
     let n = arg_int(args, 1).unwrap_or(1);
     *cell.counter.lock() += n;
     Ok(Value::Unit)
@@ -2866,13 +2981,10 @@ fn builtin_waitgroup_done(args: &[Value]) -> RuntimeResult<Value> {
         .first()
         .and_then(|v| struct_handle(v, "WaitGroup"))
         .ok_or_else(|| {
-            RuntimeError::Type(
-                "WaitGroup::done: receiver must be WaitGroup".to_string(),
-            )
+            RuntimeError::Type("WaitGroup::done: receiver must be WaitGroup".to_string())
         })?;
-    let cell = wg_lookup(handle).ok_or_else(|| {
-        RuntimeError::Type("WaitGroup::done: stale WaitGroup handle".to_string())
-    })?;
+    let cell = wg_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("WaitGroup::done: stale WaitGroup handle".to_string()))?;
     let mut count = cell.counter.lock();
     *count -= 1;
     if *count <= 0 {
@@ -2886,13 +2998,10 @@ fn builtin_waitgroup_wait(args: &[Value]) -> RuntimeResult<Value> {
         .first()
         .and_then(|v| struct_handle(v, "WaitGroup"))
         .ok_or_else(|| {
-            RuntimeError::Type(
-                "WaitGroup::wait: receiver must be WaitGroup".to_string(),
-            )
+            RuntimeError::Type("WaitGroup::wait: receiver must be WaitGroup".to_string())
         })?;
-    let cell = wg_lookup(handle).ok_or_else(|| {
-        RuntimeError::Type("WaitGroup::wait: stale WaitGroup handle".to_string())
-    })?;
+    let cell = wg_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("WaitGroup::wait: stale WaitGroup handle".to_string()))?;
     let mut count = cell.counter.lock();
     while *count > 0 {
         cell.cond.wait(&mut count);
@@ -3002,7 +3111,10 @@ mod tests {
     #[test]
     fn absolute_redirect_resolves_root_relative_location() {
         assert_eq!(
-            crate::http_client_builtins::absolute_redirect("http://xkcd.com/info.0.json", "/info.1.json"),
+            crate::http_client_builtins::absolute_redirect(
+                "http://xkcd.com/info.0.json",
+                "/info.1.json"
+            ),
             "http://xkcd.com/info.1.json"
         );
     }
@@ -3010,7 +3122,10 @@ mod tests {
     #[test]
     fn absolute_redirect_resolves_bare_relative_location() {
         assert_eq!(
-            crate::http_client_builtins::absolute_redirect("http://xkcd.com/info.0.json", "info.1.json"),
+            crate::http_client_builtins::absolute_redirect(
+                "http://xkcd.com/info.0.json",
+                "info.1.json"
+            ),
             "http://xkcd.com/info.1.json"
         );
     }

@@ -228,7 +228,9 @@ impl SmolStr {
         // Length in the high byte (offset 7). High bit is 0,
         // so the heap tag is implicitly clear.
         buf[7] = bytes.len() as u8;
-        Self { raw: u64::from_le_bytes(buf) }
+        Self {
+            raw: u64::from_le_bytes(buf),
+        }
     }
 
     fn new_heap(arc: Arc<String>) -> Self {
@@ -241,7 +243,9 @@ impl SmolStr {
             ptr & SMOL_HEAP_TAG == 0,
             "Arc<String> pointer must have high bit clear"
         );
-        Self { raw: ptr | SMOL_HEAP_TAG }
+        Self {
+            raw: ptr | SMOL_HEAP_TAG,
+        }
     }
 
     /// Returns the borrowed string contents. Inline storage
@@ -560,8 +564,7 @@ impl Value {
         let mut out = Vec::with_capacity(elem_count);
         for i in 0..elem_count {
             let base = i * stride;
-            let mut fields: Vec<(Ident, Value)> =
-                Vec::with_capacity(inner.field_names.len());
+            let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(inner.field_names.len());
             for (j, fname) in inner.field_names.iter().enumerate() {
                 fields.push((
                     Ident::new(fname.as_str()),
@@ -613,9 +616,7 @@ impl Value {
                 // raw-layout side table. Inline `SmolStr` content
                 // is copied; heap content is reference-bumped via
                 // a re-Arc.
-                let id = register_heap(RegistryEntry::String(Arc::new(
-                    s.as_str().to_string(),
-                )));
+                let id = register_heap(RegistryEntry::String(Arc::new(s.as_str().to_string())));
                 from_heap_handle(id)
             }
             Self::Tuple(t) => {
@@ -704,12 +705,8 @@ impl Value {
                     Some(RegistryEntry::String(s)) => Self::String(SmolStr::from_arc(s)),
                     Some(RegistryEntry::Tuple(t)) => Self::Tuple(t),
                     Some(RegistryEntry::Array(a)) => Self::Array(a),
-                    Some(RegistryEntry::Variant { name, fields }) => {
-                        Self::variant(name, fields)
-                    }
-                    Some(RegistryEntry::Struct { name, fields }) => {
-                        Self::struct_(name, fields)
-                    }
+                    Some(RegistryEntry::Variant { name, fields }) => Self::variant(name, fields),
+                    Some(RegistryEntry::Struct { name, fields }) => Self::struct_(name, fields),
                     Some(RegistryEntry::Closure(c)) => Self::Closure(c),
                     Some(RegistryEntry::Channel(ch)) => Self::Channel(ch),
                     None => Self::Void,

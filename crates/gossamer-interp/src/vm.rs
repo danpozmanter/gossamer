@@ -212,15 +212,14 @@ struct FrameGuard<'a> {
 }
 
 impl<'a> FrameGuard<'a> {
-    fn take(
-        pool: &'a RefCell<FramePool>,
-        n_val: usize,
-        n_float: usize,
-        n_int: usize,
-    ) -> Self {
+    fn take(pool: &'a RefCell<FramePool>, n_val: usize, n_float: usize, n_int: usize) -> Self {
         let (registers, floats, ints) = {
             let mut p = pool.borrow_mut();
-            (p.take_values(n_val), p.take_floats(n_float), p.take_ints(n_int))
+            (
+                p.take_values(n_val),
+                p.take_floats(n_float),
+                p.take_ints(n_int),
+            )
         };
         Self {
             pool,
@@ -306,8 +305,7 @@ impl Vm {
         // runtime `__struct` reorder, and `def_layouts` (by
         // DefId) for compile-time offset resolution.
         let mut name_layouts: HashMap<String, Vec<String>> = HashMap::new();
-        let mut def_layouts: HashMap<gossamer_resolve::DefId, Vec<String>> =
-            HashMap::new();
+        let mut def_layouts: HashMap<gossamer_resolve::DefId, Vec<String>> = HashMap::new();
         // Trivial-wrapper table. `fn fsqrt(x: f64) -> f64 { math::sqrt(x) }`
         // and similar single-expression passthroughs get recorded
         // so the compiler can emit the intrinsic directly at
@@ -318,8 +316,7 @@ impl Vm {
             match &item.kind {
                 HirItemKind::Adt(adt) => {
                     if let gossamer_hir::HirAdtKind::Struct(fields) = &adt.kind {
-                        let names: Vec<String> =
-                            fields.iter().map(|f| f.name.clone()).collect();
+                        let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                         name_layouts.insert(adt.name.name.clone(), names.clone());
                         if let Some(def) = item.def {
                             def_layouts.insert(def, names);
@@ -474,10 +471,8 @@ impl Vm {
                     // the tree-walker finds the same chunk the VM
                     // sees under its short name.
                     if let Some(type_name) = &decl.self_name {
-                        let qualified =
-                            format!("{}::{}", type_name.name, method.name.name);
-                        self.globals
-                            .insert(qualified, Global::Fn(shared.clone()));
+                        let qualified = format!("{}::{}", type_name.name, method.name.name);
+                        self.globals.insert(qualified, Global::Fn(shared.clone()));
                     }
                     self.globals
                         .insert(method.name.name.clone(), Global::Fn(shared));
@@ -644,10 +639,7 @@ impl Vm {
             // release. `Op` is `Copy`, so dereferencing gives
             // us a by-value copy of the enum for destructuring
             // without invoking `<Op as Clone>::clone`.
-            debug_assert!(
-                (pc as usize) < instr_count,
-                "fell off end of bytecode"
-            );
+            debug_assert!((pc as usize) < instr_count, "fell off end of bytecode");
             let _ = instr_count;
             let op = unsafe { *instrs.get_unchecked(pc as usize) };
             pc += 1;
@@ -659,9 +651,7 @@ impl Vm {
                     let name = &chunk.globals[idx as usize];
                     let value = match self.globals.get(name) {
                         Some(Global::Value(v)) => v.clone(),
-                        Some(Global::Fn(_)) => {
-                            Value::String(SmolStr::from(name.clone()))
-                        }
+                        Some(Global::Fn(_)) => Value::String(SmolStr::from(name.clone())),
                         None => return Err(RuntimeError::UnresolvedName(name.clone())),
                     };
                     let _ = self.resolve_global(name)?;
@@ -670,64 +660,77 @@ impl Vm {
                 Op::Move { dst, src } => {
                     registers[dst as usize] = registers[src as usize].clone();
                 }
-                Op::AddInt { dst, lhs, rhs, cache_idx } => {
+                Op::AddInt {
+                    dst,
+                    lhs,
+                    rhs,
+                    cache_idx,
+                } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk
-                        .arith_caches
-                        .borrow()[cache_idx as usize]
-                        .shape
-                        .get();
+                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
                     registers[dst as usize] = adaptive_add(chunk, cache_idx, shape, a, b)?;
                 }
-                Op::SubInt { dst, lhs, rhs, cache_idx } => {
+                Op::SubInt {
+                    dst,
+                    lhs,
+                    rhs,
+                    cache_idx,
+                } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk
-                        .arith_caches
-                        .borrow()[cache_idx as usize]
-                        .shape
-                        .get();
+                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
                     registers[dst as usize] = adaptive_arith(
-                        chunk, cache_idx, shape, a, b,
+                        chunk,
+                        cache_idx,
+                        shape,
+                        a,
+                        b,
                         i64::wrapping_sub,
                         |x, y| x - y,
                         "subtraction",
                     )?;
                 }
-                Op::MulInt { dst, lhs, rhs, cache_idx } => {
+                Op::MulInt {
+                    dst,
+                    lhs,
+                    rhs,
+                    cache_idx,
+                } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk
-                        .arith_caches
-                        .borrow()[cache_idx as usize]
-                        .shape
-                        .get();
+                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
                     registers[dst as usize] = adaptive_arith(
-                        chunk, cache_idx, shape, a, b,
+                        chunk,
+                        cache_idx,
+                        shape,
+                        a,
+                        b,
                         i64::wrapping_mul,
                         |x, y| x * y,
                         "multiplication",
                     )?;
                 }
-                Op::DivInt { dst, lhs, rhs, cache_idx } => {
+                Op::DivInt {
+                    dst,
+                    lhs,
+                    rhs,
+                    cache_idx,
+                } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk
-                        .arith_caches
-                        .borrow()[cache_idx as usize]
-                        .shape
-                        .get();
+                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
                     registers[dst as usize] = adaptive_div(chunk, cache_idx, shape, a, b)?;
                 }
-                Op::RemInt { dst, lhs, rhs, cache_idx } => {
+                Op::RemInt {
+                    dst,
+                    lhs,
+                    rhs,
+                    cache_idx,
+                } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk
-                        .arith_caches
-                        .borrow()[cache_idx as usize]
-                        .shape
-                        .get();
+                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
                     registers[dst as usize] = adaptive_rem(chunk, cache_idx, shape, a, b)?;
                 }
                 Op::Neg { dst, operand } => {
@@ -799,8 +802,7 @@ impl Vm {
                     cache_idx,
                 } => {
                     let argc_usz = argc as usize;
-                    let mut arg_values =
-                        self.pool.borrow_mut().take_args(argc_usz);
+                    let mut arg_values = self.pool.borrow_mut().take_args(argc_usz);
                     for i in 0..argc_usz {
                         arg_values.push(registers[args as usize + i].clone());
                     }
@@ -819,7 +821,8 @@ impl Vm {
                             slot.resolved.clone()
                         } else {
                             None
-                        } } else {
+                        }
+                    } else {
                         None
                     };
                     let result = if let Some(g) = cached {
@@ -875,20 +878,18 @@ impl Vm {
                     // chain. Closures / JIT-promoted bodies fall to
                     // the slower `resolved` field.
                     type BuiltinFn = fn(&[Value]) -> RuntimeResult<Value>;
-                    let (cached_builtin, cached_general): (
-                        Option<BuiltinFn>,
-                        Option<Global>,
-                    ) = if recv_token != 0 {
-                        let cache = chunk.call_caches.borrow();
-                        let slot = &cache[cache_idx as usize];
-                        if slot.type_token == recv_token {
-                            (slot.builtin_fn, slot.resolved.clone())
+                    let (cached_builtin, cached_general): (Option<BuiltinFn>, Option<Global>) =
+                        if recv_token != 0 {
+                            let cache = chunk.call_caches.borrow();
+                            let slot = &cache[cache_idx as usize];
+                            if slot.type_token == recv_token {
+                                (slot.builtin_fn, slot.resolved.clone())
+                            } else {
+                                (None, None)
+                            }
                         } else {
                             (None, None)
-                        }
-                    } else {
-                        (None, None)
-                    };
+                        };
                     let cached = cached_general;
 
                     // Materialise call args. Stack buffer for argc
@@ -897,8 +898,14 @@ impl Vm {
                     const SMALL: usize = 8;
                     let result = if total <= SMALL {
                         let mut buf: [Value; SMALL] = [
-                            Value::Void, Value::Void, Value::Void, Value::Void,
-                            Value::Void, Value::Void, Value::Void, Value::Void,
+                            Value::Void,
+                            Value::Void,
+                            Value::Void,
+                            Value::Void,
+                            Value::Void,
+                            Value::Void,
+                            Value::Void,
+                            Value::Void,
                         ];
                         buf[0] = registers[receiver as usize].clone();
                         for i in 0..argc_usz {
@@ -920,8 +927,7 @@ impl Vm {
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = chunk.call_caches.borrow_mut();
-                                    cache[cache_idx as usize] =
-                                        fill_cache_slot(recv_token, g);
+                                    cache[cache_idx as usize] = fill_cache_slot(recv_token, g);
                                 }
                             }
                             match r {
@@ -955,8 +961,7 @@ impl Vm {
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = chunk.call_caches.borrow_mut();
-                                    cache[cache_idx as usize] =
-                                        fill_cache_slot(recv_token, g);
+                                    cache[cache_idx as usize] = fill_cache_slot(recv_token, g);
                                 }
                             }
                             match r {
@@ -972,7 +977,11 @@ impl Vm {
                     };
                     registers[dst as usize] = result;
                 }
-                Op::StreamWriteByte { dst, stream_reg, byte_reg } => {
+                Op::StreamWriteByte {
+                    dst,
+                    stream_reg,
+                    byte_reg,
+                } => {
                     // Super-instruction for `<stream>.write_byte(<b>)`.
                     // Hot path: receiver is a `Value::Struct{name="Stream",
                     // fields=[("fd", Int(fd))]}`, byte is a
@@ -1021,10 +1030,10 @@ impl Vm {
                         let recv_clone = recv.clone();
                         let byte_clone = byte_val.clone();
                         let resolved = match &recv_clone {
-                            Value::Struct(_) | Value::Channel(_) => qualified_key(
-                                &recv_clone, "write_byte",
-                            )
-                            .and_then(|q| self.globals.get(q).cloned()),
+                            Value::Struct(_) | Value::Channel(_) => {
+                                qualified_key(&recv_clone, "write_byte")
+                                    .and_then(|q| self.globals.get(q).cloned())
+                            }
                             _ => None,
                         }
                         .or_else(|| self.globals.get("write_byte").cloned());
@@ -1034,12 +1043,13 @@ impl Vm {
                                 (builtin_inner.call)(&args)?
                             }
                             Some(g) => self.apply(g, args)?,
-                            None => return Err(RuntimeError::UnresolvedName(
-                                "write_byte".to_string(),
-                            )),
+                            None => {
+                                return Err(RuntimeError::UnresolvedName("write_byte".to_string()));
+                            }
                         };
                         registers[dst as usize] = result;
-                    } }
+                    }
+                }
                 Op::IndexGet { dst, base, index } => {
                     let b = &registers[base as usize];
                     let i = &registers[index as usize];
@@ -1056,9 +1066,7 @@ impl Vm {
                             ));
                         }
                         _ => {
-                            return Err(RuntimeError::Type(
-                                "index must be integer".to_string(),
-                            ));
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
                         }
                     };
                     let b = &mut registers[base as usize];
@@ -1099,7 +1107,11 @@ impl Vm {
                         }
                     }
                 }
-                Op::FieldGet { dst, receiver, name_idx } => {
+                Op::FieldGet {
+                    dst,
+                    receiver,
+                    name_idx,
+                } => {
                     let field_name = match &chunk.consts[name_idx as usize] {
                         Value::String(s) => s.clone(),
                         _ => {
@@ -1112,7 +1124,11 @@ impl Vm {
                     let v = field_get(recv, field_name.as_str())?;
                     registers[dst as usize] = v;
                 }
-                Op::FieldSet { receiver, name_idx, value } => {
+                Op::FieldSet {
+                    receiver,
+                    name_idx,
+                    value,
+                } => {
                     let field_name = match &chunk.consts[name_idx as usize] {
                         Value::String(s) => s.clone(),
                         _ => {
@@ -1125,16 +1141,19 @@ impl Vm {
                     let recv = &mut registers[receiver as usize];
                     field_set(recv, field_name.as_str(), new_value)?;
                 }
-                Op::TupleIndex { dst, receiver, index } => {
+                Op::TupleIndex {
+                    dst,
+                    receiver,
+                    index,
+                } => {
                     let recv = &registers[receiver as usize];
                     let idx = index as usize;
                     registers[dst as usize] = match recv {
-                        Value::Tuple(items) | Value::Array(items) => items
-                            .get(idx)
-                            .cloned()
-                            .ok_or_else(|| RuntimeError::Arithmetic(
-                                "tuple index out of bounds".to_string(),
-                            ))?,
+                        Value::Tuple(items) | Value::Array(items) => {
+                            items.get(idx).cloned().ok_or_else(|| {
+                                RuntimeError::Arithmetic("tuple index out of bounds".to_string())
+                            })?
+                        }
                         _ => {
                             return Err(RuntimeError::Type(format!(
                                 "value of kind `{recv}` has no tuple fields"
@@ -1142,7 +1161,12 @@ impl Vm {
                         }
                     };
                 }
-                Op::IndexedFieldSet { base, index, name_idx, value } => {
+                Op::IndexedFieldSet {
+                    base,
+                    index,
+                    name_idx,
+                    value,
+                } => {
                     let idx = match &registers[index as usize] {
                         Value::Int(n) if *n >= 0 => *n as usize,
                         Value::Int(_) => {
@@ -1151,19 +1175,17 @@ impl Vm {
                             ));
                         }
                         _ => {
-                            return Err(RuntimeError::Type(
-                                "index must be integer".to_string(),
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
+                        }
+                    };
+                    let field_name_arc = match &chunk.consts[name_idx as usize] {
+                        Value::String(s) => s.clone(),
+                        _ => {
+                            return Err(RuntimeError::Panic(
+                                "IndexedFieldSet: name must be string const".to_string(),
                             ));
                         }
                     };
-                    let field_name_arc =
-                        match &chunk.consts[name_idx as usize] {
-                            Value::String(s) => s.clone(),
-                            _ => return Err(RuntimeError::Panic(
-                                "IndexedFieldSet: name must be string const"
-                                    .to_string(),
-                            )),
-                        };
                     let field_name: &str = &field_name_arc;
                     let new_value = registers[value as usize].clone();
                     let b = &mut registers[base as usize];
@@ -1197,8 +1219,7 @@ impl Vm {
                     let expr = &chunk.deferred_exprs[idx];
                     let names = &chunk.deferred_envs[idx];
                     let regs = &chunk.deferred_env_regs[idx];
-                    let mut env_values: Vec<(String, Value)> =
-                        Vec::with_capacity(regs.len());
+                    let mut env_values: Vec<(String, Value)> = Vec::with_capacity(regs.len());
                     for (i, reg) in regs.iter().enumerate() {
                         let value = registers[*reg as usize].clone();
                         let name = names.get(i).cloned().unwrap_or_default();
@@ -1227,66 +1248,105 @@ impl Vm {
                 // bytecode (the compiler emits a fresh index for
                 // every destination and carries it through
                 // compile_expr_ex).
-
                 Op::LoadConstF64 { dst_f, idx } => unsafe {
                     *floats.get_unchecked_mut(dst_f as usize) =
                         *chunk.f64_consts.get_unchecked(idx as usize);
                 },
-                Op::AddF64 { dst_f, lhs_f, rhs_f } => unsafe {
-                    *floats.get_unchecked_mut(dst_f as usize) =
-                        *floats.get_unchecked(lhs_f as usize)
-                            + *floats.get_unchecked(rhs_f as usize);
+                Op::AddF64 {
+                    dst_f,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
+                    *floats.get_unchecked_mut(dst_f as usize) = *floats
+                        .get_unchecked(lhs_f as usize)
+                        + *floats.get_unchecked(rhs_f as usize);
                 },
-                Op::SubF64 { dst_f, lhs_f, rhs_f } => unsafe {
-                    *floats.get_unchecked_mut(dst_f as usize) =
-                        *floats.get_unchecked(lhs_f as usize)
-                            - *floats.get_unchecked(rhs_f as usize);
+                Op::SubF64 {
+                    dst_f,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
+                    *floats.get_unchecked_mut(dst_f as usize) = *floats
+                        .get_unchecked(lhs_f as usize)
+                        - *floats.get_unchecked(rhs_f as usize);
                 },
-                Op::MulF64 { dst_f, lhs_f, rhs_f } => unsafe {
-                    *floats.get_unchecked_mut(dst_f as usize) =
-                        *floats.get_unchecked(lhs_f as usize)
-                            * *floats.get_unchecked(rhs_f as usize);
+                Op::MulF64 {
+                    dst_f,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
+                    *floats.get_unchecked_mut(dst_f as usize) = *floats
+                        .get_unchecked(lhs_f as usize)
+                        * *floats.get_unchecked(rhs_f as usize);
                 },
-                Op::DivF64 { dst_f, lhs_f, rhs_f } => unsafe {
-                    *floats.get_unchecked_mut(dst_f as usize) =
-                        *floats.get_unchecked(lhs_f as usize)
-                            / *floats.get_unchecked(rhs_f as usize);
+                Op::DivF64 {
+                    dst_f,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
+                    *floats.get_unchecked_mut(dst_f as usize) = *floats
+                        .get_unchecked(lhs_f as usize)
+                        / *floats.get_unchecked(rhs_f as usize);
                 },
                 Op::NegF64 { dst_f, src_f } => unsafe {
                     *floats.get_unchecked_mut(dst_f as usize) =
                         -*floats.get_unchecked(src_f as usize);
                 },
-                Op::LtF64 { dst_v, lhs_f, rhs_f } => unsafe {
+                Op::LtF64 {
+                    dst_v,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
                         *floats.get_unchecked(lhs_f as usize)
                             < *floats.get_unchecked(rhs_f as usize),
                     );
                 },
-                Op::LeF64 { dst_v, lhs_f, rhs_f } => unsafe {
+                Op::LeF64 {
+                    dst_v,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
                         *floats.get_unchecked(lhs_f as usize)
                             <= *floats.get_unchecked(rhs_f as usize),
                     );
                 },
-                Op::GtF64 { dst_v, lhs_f, rhs_f } => unsafe {
+                Op::GtF64 {
+                    dst_v,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
                         *floats.get_unchecked(lhs_f as usize)
                             > *floats.get_unchecked(rhs_f as usize),
                     );
                 },
-                Op::GeF64 { dst_v, lhs_f, rhs_f } => unsafe {
+                Op::GeF64 {
+                    dst_v,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
                         *floats.get_unchecked(lhs_f as usize)
                             >= *floats.get_unchecked(rhs_f as usize),
                     );
                 },
-                Op::EqF64 { dst_v, lhs_f, rhs_f } => unsafe {
+                Op::EqF64 {
+                    dst_v,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
                         *floats.get_unchecked(lhs_f as usize)
                             == *floats.get_unchecked(rhs_f as usize),
                     );
                 },
-                Op::NeF64 { dst_v, lhs_f, rhs_f } => unsafe {
+                Op::NeF64 {
+                    dst_v,
+                    lhs_f,
+                    rhs_f,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
                         *floats.get_unchecked(lhs_f as usize)
                             != *floats.get_unchecked(rhs_f as usize),
@@ -1332,18 +1392,26 @@ impl Vm {
                 Op::LnF64 { dst_f, src_f } => {
                     floats[dst_f as usize] = floats[src_f as usize].ln();
                 }
-                Op::MulAddF64 { dst_f, a_f, b_f, c_f } => unsafe {
-                    *floats.get_unchecked_mut(dst_f as usize) = floats
-                        .get_unchecked(a_f as usize)
-                        .mul_add(
+                Op::MulAddF64 {
+                    dst_f,
+                    a_f,
+                    b_f,
+                    c_f,
+                } => unsafe {
+                    *floats.get_unchecked_mut(dst_f as usize) =
+                        floats.get_unchecked(a_f as usize).mul_add(
                             *floats.get_unchecked(b_f as usize),
                             *floats.get_unchecked(c_f as usize),
                         );
                 },
-                Op::MulSubF64 { dst_f, a_f, b_f, c_f } => unsafe {
-                    *floats.get_unchecked_mut(dst_f as usize) = floats
-                        .get_unchecked(a_f as usize)
-                        .mul_add(
+                Op::MulSubF64 {
+                    dst_f,
+                    a_f,
+                    b_f,
+                    c_f,
+                } => unsafe {
+                    *floats.get_unchecked_mut(dst_f as usize) =
+                        floats.get_unchecked(a_f as usize).mul_add(
                             -*floats.get_unchecked(b_f as usize),
                             *floats.get_unchecked(c_f as usize),
                         );
@@ -1353,76 +1421,110 @@ impl Vm {
                     *ints.get_unchecked_mut(dst_i as usize) =
                         *chunk.i64_consts.get_unchecked(idx as usize);
                 },
-                Op::AddI64 { dst_i, lhs_i, rhs_i } => unsafe {
+                Op::AddI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
                     *ints.get_unchecked_mut(dst_i as usize) = ints
                         .get_unchecked(lhs_i as usize)
                         .wrapping_add(*ints.get_unchecked(rhs_i as usize));
                 },
-                Op::SubI64 { dst_i, lhs_i, rhs_i } => unsafe {
+                Op::SubI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
                     *ints.get_unchecked_mut(dst_i as usize) = ints
                         .get_unchecked(lhs_i as usize)
                         .wrapping_sub(*ints.get_unchecked(rhs_i as usize));
                 },
-                Op::MulI64 { dst_i, lhs_i, rhs_i } => unsafe {
+                Op::MulI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
                     *ints.get_unchecked_mut(dst_i as usize) = ints
                         .get_unchecked(lhs_i as usize)
                         .wrapping_mul(*ints.get_unchecked(rhs_i as usize));
                 },
-                Op::DivI64 { dst_i, lhs_i, rhs_i } => {
+                Op::DivI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => {
                     let r = ints[rhs_i as usize];
                     if r == 0 {
-                        return Err(RuntimeError::Arithmetic(
-                            "division by zero".to_string(),
-                        ));
+                        return Err(RuntimeError::Arithmetic("division by zero".to_string()));
                     }
                     ints[dst_i as usize] = ints[lhs_i as usize].wrapping_div(r);
                 }
-                Op::RemI64 { dst_i, lhs_i, rhs_i } => {
+                Op::RemI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => {
                     let r = ints[rhs_i as usize];
                     if r == 0 {
-                        return Err(RuntimeError::Arithmetic(
-                            "remainder by zero".to_string(),
-                        ));
+                        return Err(RuntimeError::Arithmetic("remainder by zero".to_string()));
                     }
                     ints[dst_i as usize] = ints[lhs_i as usize].wrapping_rem(r);
                 }
                 Op::NegI64 { dst_i, src_i } => {
                     ints[dst_i as usize] = ints[src_i as usize].wrapping_neg();
                 }
-                Op::LtI64 { dst_v, lhs_i, rhs_i } => unsafe {
+                Op::LtI64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
-                        *ints.get_unchecked(lhs_i as usize)
-                            < *ints.get_unchecked(rhs_i as usize),
+                        *ints.get_unchecked(lhs_i as usize) < *ints.get_unchecked(rhs_i as usize),
                     );
                 },
-                Op::LeI64 { dst_v, lhs_i, rhs_i } => unsafe {
+                Op::LeI64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
-                        *ints.get_unchecked(lhs_i as usize)
-                            <= *ints.get_unchecked(rhs_i as usize),
+                        *ints.get_unchecked(lhs_i as usize) <= *ints.get_unchecked(rhs_i as usize),
                     );
                 },
-                Op::GtI64 { dst_v, lhs_i, rhs_i } => unsafe {
+                Op::GtI64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
-                        *ints.get_unchecked(lhs_i as usize)
-                            > *ints.get_unchecked(rhs_i as usize),
+                        *ints.get_unchecked(lhs_i as usize) > *ints.get_unchecked(rhs_i as usize),
                     );
                 },
-                Op::GeI64 { dst_v, lhs_i, rhs_i } => unsafe {
+                Op::GeI64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
-                        *ints.get_unchecked(lhs_i as usize)
-                            >= *ints.get_unchecked(rhs_i as usize),
+                        *ints.get_unchecked(lhs_i as usize) >= *ints.get_unchecked(rhs_i as usize),
                     );
                 },
-                Op::EqI64 { dst_v, lhs_i, rhs_i } => unsafe {
+                Op::EqI64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
-                        *ints.get_unchecked(lhs_i as usize)
-                            == *ints.get_unchecked(rhs_i as usize),
+                        *ints.get_unchecked(lhs_i as usize) == *ints.get_unchecked(rhs_i as usize),
                     );
                 },
-                Op::NeI64 { dst_v, lhs_i, rhs_i } => unsafe {
+                Op::NeI64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
-                        *ints.get_unchecked(lhs_i as usize)
-                            != *ints.get_unchecked(rhs_i as usize),
+                        *ints.get_unchecked(lhs_i as usize) != *ints.get_unchecked(rhs_i as usize),
                     );
                 },
                 Op::UnboxI64 { dst_i, src_v } => {
@@ -1448,10 +1550,12 @@ impl Vm {
                 }
 
                 // ----- Phase 2 fused / typed field access -----
-
-                Op::FieldGetF64 { dst_f, receiver, name_idx } => {
-                    let Value::String(field_name) = &chunk.consts[name_idx as usize]
-                    else {
+                Op::FieldGetF64 {
+                    dst_f,
+                    receiver,
+                    name_idx,
+                } => {
+                    let Value::String(field_name) = &chunk.consts[name_idx as usize] else {
                         return Err(RuntimeError::Panic(
                             "FieldGetF64: name must be string const".to_string(),
                         ));
@@ -1475,7 +1579,12 @@ impl Vm {
                     }
                     floats[dst_f as usize] = val;
                 }
-                Op::IndexedFieldGet { dst, base, index, name_idx } => {
+                Op::IndexedFieldGet {
+                    dst,
+                    base,
+                    index,
+                    name_idx,
+                } => {
                     let idx = match &registers[index as usize] {
                         Value::Int(n) if *n >= 0 => *n as usize,
                         Value::Int(_) => {
@@ -1484,13 +1593,10 @@ impl Vm {
                             ));
                         }
                         _ => {
-                            return Err(RuntimeError::Type(
-                                "index must be integer".to_string(),
-                            ));
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
                         }
                     };
-                    let Value::String(field_name) = &chunk.consts[name_idx as usize]
-                    else {
+                    let Value::String(field_name) = &chunk.consts[name_idx as usize] else {
                         return Err(RuntimeError::Panic(
                             "IndexedFieldGet: name must be string const".to_string(),
                         ));
@@ -1518,7 +1624,12 @@ impl Vm {
                     }
                     registers[dst as usize] = found.cloned().unwrap_or(Value::Unit);
                 }
-                Op::IndexedFieldGetF64 { dst_f, base, index, name_idx } => {
+                Op::IndexedFieldGetF64 {
+                    dst_f,
+                    base,
+                    index,
+                    name_idx,
+                } => {
                     let idx = match &registers[index as usize] {
                         Value::Int(n) if *n >= 0 => *n as usize,
                         Value::Int(_) => {
@@ -1527,13 +1638,10 @@ impl Vm {
                             ));
                         }
                         _ => {
-                            return Err(RuntimeError::Type(
-                                "index must be integer".to_string(),
-                            ));
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
                         }
                     };
-                    let Value::String(field_name) = &chunk.consts[name_idx as usize]
-                    else {
+                    let Value::String(field_name) = &chunk.consts[name_idx as usize] else {
                         return Err(RuntimeError::Panic(
                             "IndexedFieldGetF64: name must be string const".to_string(),
                         ));
@@ -1579,7 +1687,12 @@ impl Vm {
                     }
                     floats[dst_f as usize] = val;
                 }
-                Op::IndexedFieldSetF64 { base, index, name_idx, value_f } => {
+                Op::IndexedFieldSetF64 {
+                    base,
+                    index,
+                    name_idx,
+                    value_f,
+                } => {
                     let idx = match &registers[index as usize] {
                         Value::Int(n) if *n >= 0 => *n as usize,
                         Value::Int(_) => {
@@ -1588,19 +1701,17 @@ impl Vm {
                             ));
                         }
                         _ => {
-                            return Err(RuntimeError::Type(
-                                "index must be integer".to_string(),
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
+                        }
+                    };
+                    let field_name_arc = match &chunk.consts[name_idx as usize] {
+                        Value::String(s) => s.clone(),
+                        _ => {
+                            return Err(RuntimeError::Panic(
+                                "IndexedFieldSetF64: name must be string const".to_string(),
                             ));
                         }
                     };
-                    let field_name_arc =
-                        match &chunk.consts[name_idx as usize] {
-                            Value::String(s) => s.clone(),
-                            _ => return Err(RuntimeError::Panic(
-                                "IndexedFieldSetF64: name must be string const"
-                                    .to_string(),
-                            )),
-                        };
                     let field_name = field_name_arc.as_str();
                     let new_value = Value::Float(floats[value_f as usize]);
                     let b = &mut registers[base as usize];
@@ -1631,15 +1742,17 @@ impl Vm {
                 }
 
                 // ----- Phase 2 offset-resolved ops -----
-
-                Op::IndexedFieldGetF64ByOffset { dst_f, base, index, offset } => {
+                Op::IndexedFieldGetF64ByOffset {
+                    dst_f,
+                    base,
+                    index,
+                    offset,
+                } => {
                     // SAFETY: `index`, `base`, `dst_f` are
                     // compile-time allocated register slots,
                     // so the indexed accesses into `registers`
                     // and `floats` are always in bounds.
-                    let idx = match unsafe {
-                        registers.get_unchecked(index as usize)
-                    } {
+                    let idx = match unsafe { registers.get_unchecked(index as usize) } {
                         Value::Int(n) if *n >= 0 => *n as usize,
                         Value::Int(_) => {
                             return Err(RuntimeError::Arithmetic(
@@ -1647,9 +1760,7 @@ impl Vm {
                             ));
                         }
                         _ => {
-                            return Err(RuntimeError::Type(
-                                "index must be integer".to_string(),
-                            ));
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
                         }
                     };
                     let b = unsafe { registers.get_unchecked(base as usize) };
@@ -1695,10 +1806,13 @@ impl Vm {
                         floats[dst_f as usize] = f;
                     }
                 }
-                Op::IndexedFieldSetF64ByOffset { base, index, offset, value_f } => {
-                    let idx = match unsafe {
-                        registers.get_unchecked(index as usize)
-                    } {
+                Op::IndexedFieldSetF64ByOffset {
+                    base,
+                    index,
+                    offset,
+                    value_f,
+                } => {
+                    let idx = match unsafe { registers.get_unchecked(index as usize) } {
                         Value::Int(n) if *n >= 0 => *n as usize,
                         Value::Int(_) => {
                             return Err(RuntimeError::Arithmetic(
@@ -1706,9 +1820,7 @@ impl Vm {
                             ));
                         }
                         _ => {
-                            return Err(RuntimeError::Type(
-                                "index must be integer".to_string(),
-                            ));
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
                         }
                     };
                     // SAFETY: `value_f` and `base` are
@@ -1756,28 +1868,39 @@ impl Vm {
                         }
                     }
                 }
-                Op::BranchIfLtI64 { lhs_i, rhs_i, target } => unsafe {
-                    if *ints.get_unchecked(lhs_i as usize)
-                        < *ints.get_unchecked(rhs_i as usize)
+                Op::BranchIfLtI64 {
+                    lhs_i,
+                    rhs_i,
+                    target,
+                } => unsafe {
+                    if *ints.get_unchecked(lhs_i as usize) < *ints.get_unchecked(rhs_i as usize) {
+                        pc = target;
+                    }
+                },
+                Op::BranchIfGeI64 {
+                    lhs_i,
+                    rhs_i,
+                    target,
+                } => unsafe {
+                    if *ints.get_unchecked(lhs_i as usize) >= *ints.get_unchecked(rhs_i as usize) {
+                        pc = target;
+                    }
+                },
+                Op::BranchIfLtF64 {
+                    lhs_f,
+                    rhs_f,
+                    target,
+                } => unsafe {
+                    if *floats.get_unchecked(lhs_f as usize) < *floats.get_unchecked(rhs_f as usize)
                     {
                         pc = target;
                     }
                 },
-                Op::BranchIfGeI64 { lhs_i, rhs_i, target } => unsafe {
-                    if *ints.get_unchecked(lhs_i as usize)
-                        >= *ints.get_unchecked(rhs_i as usize)
-                    {
-                        pc = target;
-                    }
-                },
-                Op::BranchIfLtF64 { lhs_f, rhs_f, target } => unsafe {
-                    if *floats.get_unchecked(lhs_f as usize)
-                        < *floats.get_unchecked(rhs_f as usize)
-                    {
-                        pc = target;
-                    }
-                },
-                Op::BranchIfGeF64 { lhs_f, rhs_f, target } => unsafe {
+                Op::BranchIfGeF64 {
+                    lhs_f,
+                    rhs_f,
+                    target,
+                } => unsafe {
                     if *floats.get_unchecked(lhs_f as usize)
                         >= *floats.get_unchecked(rhs_f as usize)
                     {
@@ -1785,7 +1908,11 @@ impl Vm {
                     }
                 },
 
-                Op::FieldGetF64ByOffset { dst_f, receiver, offset } => {
+                Op::FieldGetF64ByOffset {
+                    dst_f,
+                    receiver,
+                    offset,
+                } => {
                     let recv = &registers[receiver as usize];
                     let Value::Struct(struct_inner) = recv else {
                         return Err(RuntimeError::Type(format!(
@@ -1799,7 +1926,13 @@ impl Vm {
                     };
                     floats[dst_f as usize] = f;
                 }
-                Op::FlatGetF64 { dst_f, base, index, stride, offset } => unsafe {
+                Op::FlatGetF64 {
+                    dst_f,
+                    base,
+                    index,
+                    stride,
+                    offset,
+                } => unsafe {
                     let idx = match registers.get_unchecked(index as usize) {
                         Value::Int(n) if *n >= 0 => *n as usize,
                         Value::Int(_) => {
@@ -1808,9 +1941,7 @@ impl Vm {
                             ));
                         }
                         _ => {
-                            return Err(RuntimeError::Type(
-                                "index must be integer".to_string(),
-                            ));
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
                         }
                     };
                     let b = registers.get_unchecked(base as usize);
@@ -1822,14 +1953,17 @@ impl Vm {
                     };
                     let pos = idx * stride as usize + offset as usize;
                     if pos >= fa_inner.data.len() {
-                        return Err(RuntimeError::Arithmetic(
-                            "index out of bounds".to_string(),
-                        ));
+                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
                     }
-                    *floats.get_unchecked_mut(dst_f as usize) =
-                        *fa_inner.data.get_unchecked(pos);
+                    *floats.get_unchecked_mut(dst_f as usize) = *fa_inner.data.get_unchecked(pos);
                 },
-                Op::FlatSetF64 { base, index, stride, offset, value_f } => unsafe {
+                Op::FlatSetF64 {
+                    base,
+                    index,
+                    stride,
+                    offset,
+                    value_f,
+                } => unsafe {
                     let idx = match registers.get_unchecked(index as usize) {
                         Value::Int(n) if *n >= 0 => *n as usize,
                         Value::Int(_) => {
@@ -1838,9 +1972,7 @@ impl Vm {
                             ));
                         }
                         _ => {
-                            return Err(RuntimeError::Type(
-                                "index must be integer".to_string(),
-                            ));
+                            return Err(RuntimeError::Type("index must be integer".to_string()));
                         }
                     };
                     let new_f = *floats.get_unchecked(value_f as usize);
@@ -1866,19 +1998,15 @@ impl Vm {
                     elem_count,
                     first_f,
                 } => {
-                    let Value::String(name_arc) = &chunk.consts[name_idx as usize]
-                    else {
+                    let Value::String(name_arc) = &chunk.consts[name_idx as usize] else {
                         return Err(RuntimeError::Panic(
                             "BuildFloatArray: name must be string const".to_string(),
                         ));
                     };
                     let name = name_arc.as_str().to_string();
-                    let Value::Array(field_names_arr) =
-                        &chunk.consts[fields_idx as usize]
-                    else {
+                    let Value::Array(field_names_arr) = &chunk.consts[fields_idx as usize] else {
                         return Err(RuntimeError::Panic(
-                            "BuildFloatArray: fields must be array of strings"
-                                .to_string(),
+                            "BuildFloatArray: fields must be array of strings".to_string(),
                         ));
                     };
                     let field_names: Vec<String> = field_names_arr
@@ -1892,14 +2020,14 @@ impl Vm {
                     let start = first_f as usize;
                     let end = start + total;
                     let data: Vec<f64> = floats[start..end].to_vec();
-                    registers[dst_v as usize] = Value::float_array(
-                        name,
-                        stride,
-                        Arc::new(field_names),
-                        Arc::new(data),
-                    );
+                    registers[dst_v as usize] =
+                        Value::float_array(name, stride, Arc::new(field_names), Arc::new(data));
                 }
-                Op::BuildIntArray { dst_v, first_i, count } => {
+                Op::BuildIntArray {
+                    dst_v,
+                    first_i,
+                    count,
+                } => {
                     let start = first_i as usize;
                     let end = start + count as usize;
                     let data: Vec<i64> = ints[start..end].to_vec();
@@ -1927,7 +2055,11 @@ impl Vm {
                     }
                     registers[dst as usize] = Value::Tuple(Arc::new(items));
                 }
-                Op::IntArrayGetI64 { dst_i, base, index_i } => unsafe {
+                Op::IntArrayGetI64 {
+                    dst_i,
+                    base,
+                    index_i,
+                } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
                     if idx < 0 {
                         return Err(RuntimeError::Arithmetic(
@@ -1942,12 +2074,9 @@ impl Vm {
                         ));
                     };
                     if i >= data.len() {
-                        return Err(RuntimeError::Arithmetic(
-                            "index out of bounds".to_string(),
-                        ));
+                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
                     }
-                    *ints.get_unchecked_mut(dst_i as usize) =
-                        *data.get_unchecked(i);
+                    *ints.get_unchecked_mut(dst_i as usize) = *data.get_unchecked(i);
                 },
             }
         }
@@ -1969,9 +2098,7 @@ impl Vm {
             // constructor) delegates to the bundled tree-walker
             // which already knows how to extend envs, bind
             // params, and evaluate the body.
-            Value::Closure(_)
-            | Value::Native(_)
-            | Value::Variant(_) => self
+            Value::Closure(_) | Value::Native(_) | Value::Variant(_) => self
                 .walker
                 .borrow_mut()
                 .invoke_callable_value(callee.clone(), args),
@@ -2007,9 +2134,7 @@ fn detect_trivial_wrapper(decl: &gossamer_hir::HirFn) -> Option<Vec<String>> {
     // the matcher simple and the wrapper table small.
     let call_expr = match &tail.kind {
         gossamer_hir::HirExprKind::Call { .. } => tail,
-        gossamer_hir::HirExprKind::Block(inner)
-            if inner.stmts.is_empty() =>
-        {
+        gossamer_hir::HirExprKind::Block(inner) if inner.stmts.is_empty() => {
             inner.tail.as_deref()?
         }
         _ => return None,
@@ -2020,7 +2145,10 @@ fn detect_trivial_wrapper(decl: &gossamer_hir::HirFn) -> Option<Vec<String>> {
     if args.len() != 1 {
         return None;
     }
-    let gossamer_hir::HirExprKind::Path { segments: arg_segments, .. } = &args[0].kind
+    let gossamer_hir::HirExprKind::Path {
+        segments: arg_segments,
+        ..
+    } = &args[0].kind
     else {
         return None;
     };
@@ -2039,8 +2167,6 @@ fn detect_trivial_wrapper(decl: &gossamer_hir::HirFn) -> Option<Vec<String>> {
     };
     Some(segments.iter().map(|s| s.name.clone()).collect())
 }
-
-
 
 /// Native indexed read: `base[i]`. Matches the tree-walker's
 /// `eval_index` shape so both code paths produce the same
@@ -2068,12 +2194,9 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
             let stride = fa_inner.stride as usize;
             let base_idx = i * stride;
             if base_idx + stride > fa_inner.data.len() {
-                return Err(RuntimeError::Arithmetic(
-                    "index out of bounds".to_string(),
-                ));
+                return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
             }
-            let mut fields: Vec<(Ident, Value)> =
-                Vec::with_capacity(fa_inner.field_names.len());
+            let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(fa_inner.field_names.len());
             for (j, fname) in fa_inner.field_names.iter().enumerate() {
                 fields.push((
                     Ident::new(fname.as_str()),
@@ -2238,8 +2361,7 @@ fn intern_qualified(type_name: &str, method: &str) -> &'static str {
                 return *joined;
             }
         }
-        let joined: &'static str =
-            Box::leak(format!("{type_name}::{method}").into_boxed_str());
+        let joined: &'static str = Box::leak(format!("{type_name}::{method}").into_boxed_str());
         entries.push((type_name.to_string(), method.to_string(), joined));
         joined
     })
@@ -2263,9 +2385,9 @@ fn bin_arith(
         (Value::Float(x), Value::Int(y)) => Ok(Value::Float(float_fn(*x, *y as f64))),
         // String concat is handled separately in the dispatch
         // loop (Add on two strings).
-        _ => Err(RuntimeError::Type(
-            format!("{label} on unsupported value kinds"),
-        )),
+        _ => Err(RuntimeError::Type(format!(
+            "{label} on unsupported value kinds"
+        ))),
     }
 }
 
@@ -2277,9 +2399,7 @@ fn classify_pair(a: &Value, b: &Value, allow_string: bool) -> u8 {
     match (a, b) {
         (Value::Int(_), Value::Int(_)) => bytecode::ARITH_INT_INT,
         (Value::Float(_), Value::Float(_)) => bytecode::ARITH_FLOAT_FLOAT,
-        (Value::String(_), Value::String(_)) if allow_string => {
-            bytecode::ARITH_STRING_STRING
-        }
+        (Value::String(_), Value::String(_)) if allow_string => bytecode::ARITH_STRING_STRING,
         _ => bytecode::ARITH_POLYMORPHIC,
     }
 }
@@ -2446,7 +2566,9 @@ fn div_int(a: &Value, b: &Value) -> RuntimeResult<Value> {
         (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x / y)),
         (Value::Int(x), Value::Float(y)) => Ok(Value::Float((*x as f64) / y)),
         (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x / (*y as f64))),
-        _ => Err(RuntimeError::Type("division on non-numeric values".to_string())),
+        _ => Err(RuntimeError::Type(
+            "division on non-numeric values".to_string(),
+        )),
     }
 }
 

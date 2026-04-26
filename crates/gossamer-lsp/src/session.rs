@@ -44,9 +44,17 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     let (types, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
 
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
-    diagnostics.extend(parse_diags.iter().map(gossamer_parse::ParseDiagnostic::to_diagnostic));
+    diagnostics.extend(
+        parse_diags
+            .iter()
+            .map(gossamer_parse::ParseDiagnostic::to_diagnostic),
+    );
     diagnostics.extend(resolve_diags.iter().map(|d| d.to_diagnostic(&[])));
-    diagnostics.extend(type_diags.iter().map(gossamer_types::TypeDiagnostic::to_diagnostic));
+    diagnostics.extend(
+        type_diags
+            .iter()
+            .map(gossamer_types::TypeDiagnostic::to_diagnostic),
+    );
 
     let top_level = collect_top_level(&sf);
 

@@ -34,7 +34,12 @@ pub fn const_branch_elim(body: &mut Body) {
     use crate::ir::Terminator;
     let const_locals: HashMap<u32, i128> = const_int_locals(body);
     for block in &mut body.blocks {
-        let Terminator::SwitchInt { discriminant, arms, default } = &block.terminator else {
+        let Terminator::SwitchInt {
+            discriminant,
+            arms,
+            default,
+        } = &block.terminator
+        else {
             continue;
         };
         let known = match discriminant {

@@ -55,7 +55,11 @@ impl<'src> Parser<'src> {
     /// Builds a span covering [`lo.start`, `hi.end`) in the current file.
     #[must_use]
     pub(crate) fn join(&self, lo: Span, hi: Span) -> Span {
-        Span::new(self.tokens.file(), lo.start.min(hi.start), lo.end.max(hi.end))
+        Span::new(
+            self.tokens.file(),
+            lo.start.min(hi.start),
+            lo.end.max(hi.end),
+        )
     }
 
     /// Records a diagnostic without stopping the parser.

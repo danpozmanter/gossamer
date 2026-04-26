@@ -107,7 +107,6 @@ pub fn analyse(body: &Body) -> EscapeSet {
     set
 }
 
-
 #[cfg(test)]
 mod tests {
     use gossamer_hir::lower_source_file;
@@ -154,7 +153,9 @@ mod tests {
 
     #[test]
     fn call_arguments_mark_their_source_as_escaping() {
-        let bodies = build("fn helper(x: i64) -> i64 { x }\nfn caller() { let a = 7i64 let _ = helper(a) }\n");
+        let bodies = build(
+            "fn helper(x: i64) -> i64 { x }\nfn caller() { let a = 7i64 let _ = helper(a) }\n",
+        );
         let caller = bodies.iter().find(|b| b.name == "caller").unwrap();
         let set = analyse(caller);
         let had_call_escape = caller

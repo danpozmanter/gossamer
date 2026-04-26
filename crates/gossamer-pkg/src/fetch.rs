@@ -85,14 +85,12 @@ impl Fetcher {
     fn fetch_one(&self, resolved: &Resolved, cache: &mut Cache) -> Result<Fetched, CacheError> {
         let source = match &resolved.pin {
             ResolvedSource::Path(path) => fetch_path(resolved, Path::new(path))?,
-            ResolvedSource::Git { url, reference } => synthetic_source(
-                resolved,
-                &format!("git\0{url}\0{reference}"),
-            ),
-            ResolvedSource::Registry(version) => synthetic_source(
-                resolved,
-                &format!("registry\0{}\0{version}", resolved.id),
-            ),
+            ResolvedSource::Git { url, reference } => {
+                synthetic_source(resolved, &format!("git\0{url}\0{reference}"))
+            }
+            ResolvedSource::Registry(version) => {
+                synthetic_source(resolved, &format!("registry\0{}\0{version}", resolved.id))
+            }
             ResolvedSource::Tarball { url, sha256: hash } => {
                 self.fetch_tarball(resolved, url, hash)?
             }
@@ -123,7 +121,10 @@ impl Fetcher {
         url: &str,
         expected_sha256: &str,
     ) -> Result<CachedSource, CacheError> {
-        let bytes = self.transport.get(url).map_err(|e| map_transport_error(&resolved.id, e))?;
+        let bytes = self
+            .transport
+            .get(url)
+            .map_err(|e| map_transport_error(&resolved.id, e))?;
         let actual = sha256::hex(&bytes);
         if actual != expected_sha256 {
             return Err(CacheError::DigestMismatch {
@@ -132,10 +133,9 @@ impl Fetcher {
                 found: actual,
             });
         }
-        let files = tar::unpack(&bytes).map_err(|e| CacheError::Unsupported(format!(
-            "{}: tarball unpack failed: {e}",
-            resolved.id
-        )))?;
+        let files = tar::unpack(&bytes).map_err(|e| {
+            CacheError::Unsupported(format!("{}: tarball unpack failed: {e}", resolved.id))
+        })?;
         Ok(CachedSource::build(resolved.id.clone(), files))
     }
 }
@@ -180,7 +180,10 @@ fn walk_path(
 fn relative_key(base: &Path, file: &Path) -> String {
     file.strip_prefix(base)
         .ok()
-        .map_or_else(|| file.display().to_string(), |p| p.to_string_lossy().into_owned())
+        .map_or_else(
+            || file.display().to_string(),
+            |p| p.to_string_lossy().into_owned(),
+        )
         .replace('\\', "/")
 }
 
@@ -210,8 +213,7 @@ pub fn vendor(
     std::fs::create_dir_all(dest_dir)?;
     let mut out = BTreeMap::new();
     for entry in fetched {
-        let project_dir =
-            dest_dir.join(entry.resolved.id.as_str().replace('/', "__"));
+        let project_dir = dest_dir.join(entry.resolved.id.as_str().replace('/', "__"));
         std::fs::create_dir_all(&project_dir)?;
         let mut written = Vec::new();
         for (path, bytes) in &entry.source.files {

@@ -90,10 +90,7 @@ pub fn compile_to_object(bodies: &[Body], tcx: &TyCtxt) -> Result<NativeObject> 
 /// accepted bodies plus an `extern` declaration for each
 /// fallback symbol so the linker can resolve them against the
 /// Cranelift-built companion object.
-pub fn compile_with_fallback(
-    bodies: &[Body],
-    tcx: &TyCtxt,
-) -> Result<CompileOutcome> {
+pub fn compile_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<CompileOutcome> {
     if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
         for body in bodies {
             eprintln!("=== MIR {} ===", body.name);
@@ -121,10 +118,7 @@ fn render_module(bodies: &[Body], tcx: &TyCtxt) -> Result<String> {
     Ok(ir)
 }
 
-fn render_module_with_fallback(
-    bodies: &[Body],
-    tcx: &TyCtxt,
-) -> Result<(String, Vec<String>)> {
+fn render_module_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<(String, Vec<String>)> {
     render_module_inner(bodies, tcx, /*allow_fallback=*/ true)
 }
 
@@ -271,12 +265,8 @@ fn extern_declare(body: &Body, tcx: &TyCtxt) -> String {
 }
 
 fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "gos-llvm-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&tmp_dir)
-        .with_context(|| format!("creating {}", tmp_dir.display()))?;
+    let tmp_dir = std::env::temp_dir().join(format!("gos-llvm-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_dir).with_context(|| format!("creating {}", tmp_dir.display()))?;
     let ll_path = tmp_dir.join("unit.ll");
     let opt_path = tmp_dir.join("unit.opt.bc");
     let obj_path = tmp_dir.join("unit.o");
@@ -351,8 +341,8 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
             stderr = String::from_utf8_lossy(&output.stderr)
         ));
     }
-    let bytes = std::fs::read(&obj_path)
-        .with_context(|| format!("reading {}", obj_path.display()))?;
+    let bytes =
+        std::fs::read(&obj_path).with_context(|| format!("reading {}", obj_path.display()))?;
     if keep_artifacts {
         eprintln!("llvm backend: IR at {}", ll_path.display());
     } else {
@@ -445,7 +435,8 @@ fn host_triple() -> String {
         .arg("-m")
         .output()
         .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok()).map_or_else(|| "x86_64".to_string(), |s| s.trim().to_string());
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map_or_else(|| "x86_64".to_string(), |s| s.trim().to_string());
     format!("{arch}-unknown-linux-gnu")
 }
 

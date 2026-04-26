@@ -25,8 +25,8 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -43,9 +43,11 @@ fn pick_port() -> SocketAddr {
 fn fire_one(addr: SocketAddr, deadline: Instant) -> Result<u16, String> {
     let mut stream = TcpStream::connect(addr).map_err(|e| e.to_string())?;
     stream
-        .set_read_timeout(Some(deadline.saturating_duration_since(Instant::now()).max(
-            Duration::from_millis(100),
-        )))
+        .set_read_timeout(Some(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .max(Duration::from_millis(100)),
+        ))
         .ok();
     stream
         .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")

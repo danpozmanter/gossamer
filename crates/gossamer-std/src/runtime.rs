@@ -40,8 +40,7 @@ pub fn set_max_procs(n: usize) -> usize {
 /// fails.
 #[must_use]
 pub fn num_cpus() -> usize {
-    thread::available_parallelism()
-        .map_or(1, std::num::NonZero::get)
+    thread::available_parallelism().map_or(1, std::num::NonZero::get)
 }
 
 /// Read-only snapshot of memory usage surfaced to Gossamer

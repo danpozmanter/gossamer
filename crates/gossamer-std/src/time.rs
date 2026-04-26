@@ -104,8 +104,7 @@ impl SystemTime {
         let inner = if ms >= 0 {
             std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms as u64)
         } else {
-            std::time::UNIX_EPOCH
-                - std::time::Duration::from_millis((-ms) as u64)
+            std::time::UNIX_EPOCH - std::time::Duration::from_millis((-ms) as u64)
         };
         Self(inner)
     }
@@ -200,13 +199,11 @@ pub fn parse_rfc3339(s: &str) -> Result<SystemTime, FormatError> {
                     return Err(bad());
                 }
                 let sign: i64 = if bytes[cursor] == b'+' { 1 } else { -1 };
-                let oh: u32 = parse_unsigned(&bytes[cursor + 1..cursor + 3])
-                    .ok_or_else(bad)?;
+                let oh: u32 = parse_unsigned(&bytes[cursor + 1..cursor + 3]).ok_or_else(bad)?;
                 if bytes[cursor + 3] != b':' {
                     return Err(bad());
                 }
-                let om: u32 = parse_unsigned(&bytes[cursor + 4..cursor + 6])
-                    .ok_or_else(bad)?;
+                let om: u32 = parse_unsigned(&bytes[cursor + 4..cursor + 6]).ok_or_else(bad)?;
                 offset_seconds = sign * i64::from(oh * 3600 + om * 60);
                 cursor += 6;
             }
@@ -278,7 +275,11 @@ const fn days_in_month(year: i32, month: u32) -> u32 {
 fn civil_to_days(y: i32, m: u32, d: u32) -> i64 {
     let m_i = m as i32;
     let y_adj = y - i32::from(m_i <= 2);
-    let era = if y_adj >= 0 { y_adj / 400 } else { (y_adj - 399) / 400 };
+    let era = if y_adj >= 0 {
+        y_adj / 400
+    } else {
+        (y_adj - 399) / 400
+    };
     let yoe = (y_adj - era * 400) as u32;
     let m_eff = if m_i > 2 { m_i - 3 } else { m_i + 9 };
     let doy = (153 * m_eff as u32 + 2) / 5 + d - 1;
@@ -310,7 +311,9 @@ fn civil_to_unix(c: &CivilTime) -> i64 {
 
 fn unix_to_civil(secs: i128) -> Result<CivilTime, FormatError> {
     if secs > i128::from(i64::MAX) || secs < i128::from(i64::MIN) {
-        return Err(FormatError::OutOfRange(format!("{secs} seconds out of range")));
+        return Err(FormatError::OutOfRange(format!(
+            "{secs} seconds out of range"
+        )));
     }
     let secs = secs as i64;
     let days = secs.div_euclid(86_400);
@@ -328,7 +331,11 @@ fn unix_to_civil(secs: i128) -> Result<CivilTime, FormatError> {
 
 fn days_to_civil(days: i64) -> CivilDate {
     let z = days + 719_468;
-    let era = if z >= 0 { z / 146_097 } else { (z - 146_096) / 146_097 };
+    let era = if z >= 0 {
+        z / 146_097
+    } else {
+        (z - 146_096) / 146_097
+    };
     let doe = (z - era * 146_097) as u32;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let year = yoe as i32 + era as i32 * 400;

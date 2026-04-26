@@ -100,7 +100,10 @@ pub fn fits_i56(n: i64) -> bool {
 /// Panics in debug builds when `handle` exceeds `u32::MAX`.
 #[must_use]
 pub fn from_heap_handle(handle: u32) -> GossamerValue {
-    debug_assert!(handle <= 0x1FFF_FFFF, "heap handle {handle} exceeds 29 bits");
+    debug_assert!(
+        handle <= 0x1FFF_FFFF,
+        "heap handle {handle} exceeds 29 bits"
+    );
     (u64::from(handle) << 3) | TAG_HEAP
 }
 
@@ -133,7 +136,10 @@ pub fn to_f64(v: GossamerValue) -> f64 {
 /// Packs a singleton value into a [`GossamerValue`].
 #[must_use]
 pub fn from_singleton(discriminant: u64) -> GossamerValue {
-    debug_assert!(discriminant <= 0x1FFF_FFFF_FFFF_FFFF, "singleton discriminant overflow");
+    debug_assert!(
+        discriminant <= 0x1FFF_FFFF_FFFF_FFFF,
+        "singleton discriminant overflow"
+    );
     (discriminant << 3) | TAG_SINGLETON
 }
 

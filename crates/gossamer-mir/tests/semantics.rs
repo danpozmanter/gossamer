@@ -71,9 +71,11 @@ fn if_else_produces_switchint_on_bool_discriminant() {
     let bodies = build("fn main() -> i64 { if true { 1i64 } else { 0i64 } }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let switch = main.blocks.iter().find_map(|b| match &b.terminator {
-        Terminator::SwitchInt { discriminant, arms, default } => {
-            Some((discriminant.clone(), arms.clone(), *default))
-        }
+        Terminator::SwitchInt {
+            discriminant,
+            arms,
+            default,
+        } => Some((discriminant.clone(), arms.clone(), *default)),
         _ => None,
     });
     let (discriminant, arms, default) =
@@ -82,10 +84,16 @@ fn if_else_produces_switchint_on_bool_discriminant() {
         matches!(discriminant, Operand::Copy(Place { local, .. }) if local.as_u32() != 0),
         "discriminant must be a fresh boolean local, not the return slot"
     );
-    assert_eq!(arms.len(), 1, "bool SwitchInt has one explicit arm (false = 0)");
+    assert_eq!(
+        arms.len(),
+        1,
+        "bool SwitchInt has one explicit arm (false = 0)"
+    );
     assert_eq!(arms[0].0, 0, "false arm matches discriminant == 0");
-    assert!(default.as_u32() > arms[0].1.as_u32() || default.as_u32() < arms[0].1.as_u32(),
-        "default (true) and explicit (false) targets must be different blocks");
+    assert!(
+        default.as_u32() > arms[0].1.as_u32() || default.as_u32() < arms[0].1.as_u32(),
+        "default (true) and explicit (false) targets must be different blocks"
+    );
 }
 
 #[test]
@@ -95,17 +103,13 @@ fn while_loop_produces_conditional_back_edge_to_header() {
     let header_id = main
         .blocks
         .iter()
-        .position(|b| {
-            matches!(
-                &b.terminator,
-                Terminator::SwitchInt { .. }
-            )
-        })
+        .position(|b| matches!(&b.terminator, Terminator::SwitchInt { .. }))
         .map(|i| BlockId(u32::try_from(i).unwrap()))
         .expect("while header must end in SwitchInt");
-    let has_back_edge = main.blocks.iter().any(|b| {
-        matches!(&b.terminator, Terminator::Goto { target } if *target == header_id)
-    });
+    let has_back_edge = main
+        .blocks
+        .iter()
+        .any(|b| matches!(&b.terminator, Terminator::Goto { target } if *target == header_id));
     assert!(
         has_back_edge,
         "loop body must jump back to the SwitchInt header"
@@ -114,9 +118,8 @@ fn while_loop_produces_conditional_back_edge_to_header() {
 
 #[test]
 fn match_on_int_produces_ordered_arms_in_switchint() {
-    let bodies = build(
-        "fn main() -> i64 { match 2i64 { 1i64 => 10i64, 2i64 => 20i64, _ => 30i64 } }\n",
-    );
+    let bodies =
+        build("fn main() -> i64 { match 2i64 { 1i64 => 10i64, 2i64 => 20i64, _ => 30i64 } }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let switch = main.blocks.iter().find_map(|b| match &b.terminator {
         Terminator::SwitchInt { arms, .. } => Some(arms.clone()),
@@ -201,7 +204,9 @@ fn struct_literal_obeys_declaration_order_in_aggregate_operands() {
 
 #[test]
 fn for_range_produces_counter_loop_with_add_increment() {
-    let bodies = build("fn main() -> i64 { let mut sum = 0i64; for n in 0i64..3i64 { sum = sum + n } sum }\n");
+    let bodies = build(
+        "fn main() -> i64 { let mut sum = 0i64; for n in 0i64..3i64 { sum = sum + n } sum }\n",
+    );
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let has_counter_add = main.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(
@@ -220,7 +225,8 @@ fn for_range_produces_counter_loop_with_add_increment() {
 
 #[test]
 fn function_call_preserves_argument_order_in_terminator() {
-    let bodies = build("fn f(a: i64, b: i64) -> i64 { a + b }\nfn main() -> i64 { f(1i64, 2i64) }\n");
+    let bodies =
+        build("fn f(a: i64, b: i64) -> i64 { a + b }\nfn main() -> i64 { f(1i64, 2i64) }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     // The constants 1 and 2 are first assigned to temporaries;
     // the Call terminator then copies those temporaries in source
@@ -234,15 +240,16 @@ fn function_call_preserves_argument_order_in_terminator() {
     assert_eq!(args.len(), 2, "f takes two arguments");
 
     let local_const = |local: Local| -> Option<i128> {
-        main.blocks.iter().flat_map(|b| &b.stmts).find_map(|s| {
-            match &s.kind {
+        main.blocks
+            .iter()
+            .flat_map(|b| &b.stmts)
+            .find_map(|s| match &s.kind {
                 StatementKind::Assign {
                     place: Place { local: l, .. },
                     rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(n))),
                 } if *l == local => Some(*n),
                 _ => None,
-            }
-        })
+            })
     };
 
     let first_local = match &args[0] {
@@ -294,16 +301,12 @@ fn return_slot_is_assigned_before_return_terminator() {
         matches!(&entry.terminator, Terminator::Return),
         "tail expression must end in Return"
     );
-    let assigns_to_return = main
-        .blocks
-        .iter()
-        .flat_map(|b| &b.stmts)
-        .any(|s| {
-            matches!(
-                &s.kind,
-                StatementKind::Assign { place, .. } if place.local == Local::RETURN
-            )
-        });
+    let assigns_to_return = main.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
+        matches!(
+            &s.kind,
+            StatementKind::Assign { place, .. } if place.local == Local::RETURN
+        )
+    });
     assert!(
         assigns_to_return,
         "return slot Local(0) must be assigned the result before Return"

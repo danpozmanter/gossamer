@@ -1,33 +1,22 @@
-# Gossamer
+<div class="landing-hero" markdown="1">
 
-<p align="center">
-  <img src="img/GossamerLogo.png" alt="Gossamer logo" width="220" />
-</p>
+<img src="img/GossamerLogo.png" alt="Gossamer logo" class="landing-logo" />
+
+# Gossamer
 
 A garbage-collected, goroutine-powered, fast-compiling systems
 language with Rust-flavoured syntax and Go-shaped runtime.
 
-- Source on GitHub: [gossamer-lang/gossamer](https://github.com/gossamer-lang/gossamer)
-- Language spec: [`SPEC.md`](https://github.com/gossamer-lang/gossamer/blob/main/SPEC.md)
-- Project style guide: [`GUIDELINES.md`](https://github.com/gossamer-lang/gossamer/blob/main/GUIDELINES.md)
-- Security policy: [`SECURITY.md`](https://github.com/gossamer-lang/gossamer/blob/main/SECURITY.md)
+<p class="landing-ctas">
+  <a class="landing-cta" href="install/">Get started &rarr;</a>
+  <a class="landing-cta-secondary" href="syntax/">Read the docs</a>
+</p>
 
-**Status**: pre-1.0.0. Nothing here is stable.
+</div>
 
-## Hello, Gossamer
+---
 
-```gossamer
-fn main() {
-    println("hello, world")
-}
-```
-
-## Gossamer at a glance
-
-The forward-pipe operator (`|>`) threads a value through successive
-calls left-to-right. `x |> f(a, b)` desugars to `f(a, b, x)`, placing
-the piped value in the trailing positional slot. It composes
-uniformly across functions, methods, and closures:
+## Read left-to-right with `|>`
 
 ```gossamer
 fn double(x: i64) -> i64 { x * 2 }
@@ -37,70 +26,39 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 fn main() {
-    let n = 3i64 |> double |> add(10i64) |> clamp(0i64, 100i64)
-    println("arithmetic:", n)
-
-    let words = "  Hello  World  ".to_string()
-        |> str::trim
-        |> str::to_lowercase
-        |> str::split(" ")
-        |> iter::count
-
-    println("words:", words)
+    let n = 3i64
+        |> double
+        |> add(10i64)
+        |> clamp(0i64, 100i64)
+    println("answer:", n)
 }
 ```
 
-Goroutines and channels use the same syntax:
+`x |> f(a, b)` desugars to `f(a, b, x)` — left-associative, low
+precedence, no parentheses needed in a chain.
+
+## Spin up a web server
 
 ```gossamer
-fn main() {
-    let (tx, rx) = channel::<i64>()
-    go fn() { tx.send(40i64 |> add(2i64)) }()
-    println("answer:", rx.recv())
+use std::http
+
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&self, request: http::Request) -> Result<http::Response, http::Error> {
+        Ok(http::Response::text(200, "hello, gossamer".to_string()))
+    }
+}
+
+fn main() -> Result<(), http::Error> {
+    http::serve("0.0.0.0:8080".to_string(), App { })
 }
 ```
 
-## Why Gossamer
+`http::serve` runs the handler on a cooperative-scheduler goroutine
+pool; `gos run` is enough to bring it up.
 
-- **Fast front-end compile times.** `gos check` is built around an
-  incremental cache so iterative editing stays interactive.
-- **Go-style goroutines** (`go expr`) with typed channels and a
-  cooperative scheduler.
-- **Rust-style type system** — statically-typed, generics with
-  trait bounds, pattern-matching, `Option<T>` / `Result<T, E>`.
-- **Garbage-collected** — no lifetimes, no borrow checker surface.
-  `&` and `&mut` still express aliasing intent. Capturing closures
-  flow through `Fn(args) -> ret` parameters without `move` /
-  trait-bound ceremony.
-- **Safe Rust** implementation — no `unsafe` in the compiler or
-  runtime. Every crate carries `#![forbid(unsafe_code)]`.
-- **Batteries-included stdlib** — `fmt`, `io`, `os`, `http`,
-  `encoding::json`, `sync`, `time`, plus a growing list of
-  libraries for context, path/fs, bytes/bufio, URL, logging,
-  encoding, crypto, regex, sort, CLI flags.
-- **One-binary toolchain**: `gos parse / check / run / build /
-  fmt / doc / test / bench / lint / explain / watch / new / init
-  / add / remove / tidy / fetch / vendor`. Bare `gos` drops into
-  an interactive REPL.
+---
 
-## Who should try it
-
-- Developers writing small-to-medium network services that want
-  Go's deployment story without Go's language idiosyncrasies.
-- Rust authors who want their trait + generics vocabulary without
-  lifetimes and with a GC.
-- Python developers moving to compiled code who want something
-  friendlier than Rust and more structured than Go.
-
-## Where to go next
-
-- [Install](install.md) — build from source today, prebuilt
-  binaries coming with the 1.0.0 release.
-- [Running](running.md) — `gos` cheat-sheet.
-- [Syntax](syntax.md) — grammar tour with worked examples.
-- [Memory model](memory.md) — how values, references, and the
-  GC fit together.
-- [Writing libraries](libraries.md) — `project.toml`, module
-  layout, publishing.
-- [Standard library](stdlib.md) — module index.
-- [Toolchain](toolchain.md) — every subcommand.
+- Source on GitHub: [gossamer-lang/gossamer](https://github.com/gossamer-lang/gossamer)
+- Status: pre-1.0.0 — nothing here is stable yet.

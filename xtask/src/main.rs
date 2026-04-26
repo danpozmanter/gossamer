@@ -60,8 +60,7 @@ fn regenerate_stdlib_docs() -> Result<()> {
     let workspace_root = locate_workspace_root()?;
     let out_path = workspace_root.join("docs_src/stdlib.md");
     let page = render_stdlib_page(modules());
-    fs::write(&out_path, page)
-        .with_context(|| format!("writing {}", out_path.display()))?;
+    fs::write(&out_path, page).with_context(|| format!("writing {}", out_path.display()))?;
     println!("xtask: wrote {}", out_path.display());
     Ok(())
 }
@@ -69,7 +68,8 @@ fn regenerate_stdlib_docs() -> Result<()> {
 /// Walks parent directories from `CARGO_MANIFEST_DIR` until it finds
 /// one containing a workspace-root `Cargo.toml`.
 fn locate_workspace_root() -> Result<PathBuf> {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").map_or_else(|_| PathBuf::from("."), PathBuf::from);
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").map_or_else(|_| PathBuf::from("."), PathBuf::from);
     let mut cursor: &Path = &manifest_dir;
     loop {
         if cursor.join("Cargo.lock").exists() {
@@ -207,8 +207,7 @@ fn regenerate_lint_docs() -> Result<()> {
     fs::create_dir_all(&out_dir).with_context(|| format!("mkdir {}", out_dir.display()))?;
     let out_path = out_dir.join("lints.md");
     let page = render_lints_page(gossamer_lint::DAY_ONE_LINTS);
-    fs::write(&out_path, page)
-        .with_context(|| format!("writing {}", out_path.display()))?;
+    fs::write(&out_path, page).with_context(|| format!("writing {}", out_path.display()))?;
     println!("xtask: wrote {}", out_path.display());
     Ok(())
 }
@@ -272,8 +271,7 @@ fn regenerate_diagnostic_docs() -> Result<()> {
     fs::create_dir_all(&out_dir).with_context(|| format!("mkdir {}", out_dir.display()))?;
     let out_path = out_dir.join("diagnostics.md");
     let page = render_diagnostics_page(DIAGNOSTIC_CATALOGUE);
-    fs::write(&out_path, page)
-        .with_context(|| format!("writing {}", out_path.display()))?;
+    fs::write(&out_path, page).with_context(|| format!("writing {}", out_path.display()))?;
     println!("xtask: wrote {}", out_path.display());
     Ok(())
 }
@@ -283,34 +281,90 @@ fn regenerate_diagnostic_docs() -> Result<()> {
 /// emitters in `gossamer-parse`, `gossamer-resolve`, `gossamer-types`,
 /// and `gossamer-pkg`.
 const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
-    ("GP0001", "Parser", "unexpected token",
-     "The parser saw a token where it expected a different one. Check for missing punctuation, an unmatched delimiter, or an out-of-place keyword."),
-    ("GP0002", "Parser", "unexpected end of input",
-     "The parser reached end-of-file in the middle of a construct. Finish the expression, statement, or item — or remove it."),
-    ("GP0003", "Parser", "unterminated delimiter",
-     "A balanced construct (block, tuple, array, string literal) was left unterminated. Add the matching closing delimiter."),
-    ("GP0004", "Parser", "chained comparison without parentheses",
-     "Comparison operators like `==` / `!=` / `<` are not associative. Parenthesise the operands: `(a == b) && (b == c)`."),
-    ("GR0001", "Resolve", "unresolved name",
-     "A name used in source could not be resolved to a declaration. Check the spelling, whether a `use` brings the name into scope, and whether the item is visible at this location."),
-    ("GR0002", "Resolve", "wrong namespace",
-     "A name was resolved to the wrong namespace (value vs. type). Check the declaration and the spelling."),
-    ("GR0003", "Resolve", "duplicate item",
-     "Two items in the same module share a name. Rename one of them or move it into a distinct `mod`."),
-    ("GR0004", "Resolve", "duplicate import",
-     "The same path was imported twice in the same `use` list. Drop the duplicate."),
-    ("GT0001", "Types", "type mismatch",
-     "The type checker could not reconcile two types it expected to match. The primary label shows the location of the mismatch; the `note:` line names the conflicting types."),
-    ("GT0002", "Types", "unresolved method",
-     "The type checker could not find a method with the supplied name on the receiver type. Check for a typo, a missing `use`, or a trait impl that lives in an unreachable module."),
-    ("GT0003", "Types", "unresolved operator",
-     "The operator is not defined for the operand types. Check the operand types and use the correct operator."),
-    ("GT0004", "Match exhaustiveness", "non-exhaustive match",
-     "A `match` expression does not cover every possible value. Add an arm for the pattern(s) listed under `help:`."),
-    ("GT0005", "Types", "non-primitive cast",
-     "The `as` cast is restricted to a whitelist: numeric ↔ numeric, `bool`/`char` → integer, `u8` → `char`, and same-type no-ops. Struct / enum / String sources are rejected. Use a conversion method when you need serialisation; `as` does not run code."),
-    ("GK0001", "Package manager", "manifest parse error",
-     "The package manifest (`gos.toml`) could not be parsed. Check the TOML syntax and required fields."),
+    (
+        "GP0001",
+        "Parser",
+        "unexpected token",
+        "The parser saw a token where it expected a different one. Check for missing punctuation, an unmatched delimiter, or an out-of-place keyword.",
+    ),
+    (
+        "GP0002",
+        "Parser",
+        "unexpected end of input",
+        "The parser reached end-of-file in the middle of a construct. Finish the expression, statement, or item — or remove it.",
+    ),
+    (
+        "GP0003",
+        "Parser",
+        "unterminated delimiter",
+        "A balanced construct (block, tuple, array, string literal) was left unterminated. Add the matching closing delimiter.",
+    ),
+    (
+        "GP0004",
+        "Parser",
+        "chained comparison without parentheses",
+        "Comparison operators like `==` / `!=` / `<` are not associative. Parenthesise the operands: `(a == b) && (b == c)`.",
+    ),
+    (
+        "GR0001",
+        "Resolve",
+        "unresolved name",
+        "A name used in source could not be resolved to a declaration. Check the spelling, whether a `use` brings the name into scope, and whether the item is visible at this location.",
+    ),
+    (
+        "GR0002",
+        "Resolve",
+        "wrong namespace",
+        "A name was resolved to the wrong namespace (value vs. type). Check the declaration and the spelling.",
+    ),
+    (
+        "GR0003",
+        "Resolve",
+        "duplicate item",
+        "Two items in the same module share a name. Rename one of them or move it into a distinct `mod`.",
+    ),
+    (
+        "GR0004",
+        "Resolve",
+        "duplicate import",
+        "The same path was imported twice in the same `use` list. Drop the duplicate.",
+    ),
+    (
+        "GT0001",
+        "Types",
+        "type mismatch",
+        "The type checker could not reconcile two types it expected to match. The primary label shows the location of the mismatch; the `note:` line names the conflicting types.",
+    ),
+    (
+        "GT0002",
+        "Types",
+        "unresolved method",
+        "The type checker could not find a method with the supplied name on the receiver type. Check for a typo, a missing `use`, or a trait impl that lives in an unreachable module.",
+    ),
+    (
+        "GT0003",
+        "Types",
+        "unresolved operator",
+        "The operator is not defined for the operand types. Check the operand types and use the correct operator.",
+    ),
+    (
+        "GT0004",
+        "Match exhaustiveness",
+        "non-exhaustive match",
+        "A `match` expression does not cover every possible value. Add an arm for the pattern(s) listed under `help:`.",
+    ),
+    (
+        "GT0005",
+        "Types",
+        "non-primitive cast",
+        "The `as` cast is restricted to a whitelist: numeric ↔ numeric, `bool`/`char` → integer, `u8` → `char`, and same-type no-ops. Struct / enum / String sources are rejected. Use a conversion method when you need serialisation; `as` does not run code.",
+    ),
+    (
+        "GK0001",
+        "Package manager",
+        "manifest parse error",
+        "The package manifest (`gos.toml`) could not be parsed. Check the TOML syntax and required fields.",
+    ),
 ];
 
 fn render_diagnostics_page(entries: &[(&str, &str, &str, &str)]) -> String {
@@ -363,7 +417,10 @@ struct StdlibSupport {
 }
 
 #[derive(Clone, Copy)]
-#[allow(dead_code, reason = "Missing is used by the table only when a module regresses")]
+#[allow(
+    dead_code,
+    reason = "Missing is used by the table only when a module regresses"
+)]
 enum Coverage {
     Full,
     Partial,
@@ -381,84 +438,279 @@ impl Coverage {
 }
 
 const STDLIB_SUPPORT: &[StdlibSupport] = &[
-    item("std::fmt", Coverage::Full, Coverage::Full, Coverage::Full,
-         "println / print / eprintln / eprint / format / write / writeln."),
-    item("std::io", Coverage::Full, Coverage::Full, Coverage::Full,
-         "stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string."),
-    item("std::os", Coverage::Full, Coverage::Full, Coverage::Full,
-         "args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir."),
-    item("std::os::exec", Coverage::Partial, Coverage::Partial, Coverage::Full,
-         "Command builder + output / status / spawn / kill / wait. Stdlib + tests; interp/MIR wiring pending."),
-    item("std::os::signal", Coverage::Partial, Coverage::Partial, Coverage::Full,
-         "on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT). Stdlib + tests; runtime signal-handler bridge pending."),
-    item("std::strings", Coverage::Full, Coverage::Full, Coverage::Full,
-         "split, trim, contains, find, replace, to_lowercase, to_uppercase, starts_with, ends_with."),
-    item("std::strconv", Coverage::Full, Coverage::Full, Coverage::Full,
-         "parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64."),
-    item("std::collections", Coverage::Full, Coverage::Full, Coverage::Full,
-         "Vec, HashMap. VecDeque/BTreeMap/HashSet/BTreeSet declared."),
-    item("std::net", Coverage::Full, Coverage::Full, Coverage::Full,
-         "TcpListener, TcpStream. UdpSocket partial."),
-    item("std::http", Coverage::Full, Coverage::Full, Coverage::Full,
-         "HTTP/1.1 server + client. HTTP/2 deferred to v1.x."),
-    item("std::encoding::json", Coverage::Full, Coverage::Full, Coverage::Full,
-         "encode + decode + Value."),
-    item("std::encoding::base64", Coverage::Full, Coverage::Full, Coverage::Full,
-         "encode + decode."),
-    item("std::encoding::hex", Coverage::Full, Coverage::Full, Coverage::Full,
-         "encode + decode."),
-    item("std::encoding::binary", Coverage::Partial, Coverage::Partial, Coverage::Partial,
-         "put_u16_be, put_u32_be only — get_*, le variants pending."),
-    item("std::sync", Coverage::Full, Coverage::Full, Coverage::Full,
-         "Mutex, WaitGroup, AtomicI64. RwLock, Once partial."),
-    item("std::time", Coverage::Full, Coverage::Full, Coverage::Full,
-         "now, sleep, format_rfc3339, parse_rfc3339."),
-    item("std::panic", Coverage::Full, Coverage::Full, Coverage::Full,
-         "panic + catch_unwind."),
-    item("std::errors", Coverage::Full, Coverage::Full, Coverage::Full,
-         "new, wrap, is, chain, join."),
-    item("std::flag", Coverage::Full, Coverage::Full, Coverage::Full,
-         "Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x."),
-    item("std::path", Coverage::Full, Coverage::Full, Coverage::Full,
-         "join, split, base, dir, ext, clean."),
-    item("std::path::native", Coverage::Full, Coverage::Full, Coverage::Full,
-         "SEPARATOR, join, clean, to_posix, to_native."),
-    item("std::fs", Coverage::Full, Coverage::Full, Coverage::Full,
-         "read_dir, walk_dir, mkdir_all, remove_all, copy, rename."),
-    item("std::bytes", Coverage::Full, Coverage::Full, Coverage::Full,
-         "Buffer, Builder, index_of, split, replace."),
-    item("std::bufio", Coverage::Full, Coverage::Full, Coverage::Full,
-         "Reader, Writer, Scanner with split_lines / split_words."),
-    item("std::net::url", Coverage::Full, Coverage::Full, Coverage::Full,
-         "Url, query_escape, query_unescape."),
-    item("std::slog", Coverage::Full, Coverage::Full, Coverage::Full,
-         "Logger, Field, TextHandler, JsonHandler with escape coverage."),
-    item("std::context", Coverage::Full, Coverage::Full, Coverage::Full,
-         "background, with_cancel, with_deadline, with_timeout."),
-    item("std::crypto::rand", Coverage::Full, Coverage::Full, Coverage::Full,
-         "fill, bytes."),
-    item("std::crypto::sha256", Coverage::Full, Coverage::Full, Coverage::Full,
-         "digest, hex."),
-    item("std::crypto::hmac", Coverage::Full, Coverage::Full, Coverage::Full,
-         "sha256_mac."),
-    item("std::crypto::subtle", Coverage::Full, Coverage::Full, Coverage::Full,
-         "constant_time_eq."),
-    item("std::sort", Coverage::Full, Coverage::Full, Coverage::Full,
-         "sort, sort_stable, binary_search."),
-    item("std::utf8", Coverage::Full, Coverage::Full, Coverage::Full,
-         "is_valid, rune_count."),
-    item("std::math::rand", Coverage::Full, Coverage::Full, Coverage::Full,
-         "Rng (SplitMix64)."),
-    item("std::testing", Coverage::Full, Coverage::Full, Coverage::Full,
-         "Runner, check, check_eq, check_ok."),
-    item("std::runtime", Coverage::Partial, Coverage::Partial, Coverage::Partial,
-         "max_procs, set_max_procs, num_cpus. mem_stats partial."),
-    item("std::tls", Coverage::Full, Coverage::Full, Coverage::Full,
-         "rustls-backed; ServerConfig, ClientConfig."),
-    item("std::regex", Coverage::Full, Coverage::Full, Coverage::Full,
-         "compile, is_match, find, find_all, captures, replace, split."),
-    item("std::compress::gzip", Coverage::Partial, Coverage::Partial, Coverage::Full,
-         "encode/decode + Level. Stdlib + tests via flate2; interp/MIR wiring pending."),
+    item(
+        "std::fmt",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "println / print / eprintln / eprint / format / write / writeln.",
+    ),
+    item(
+        "std::io",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string.",
+    ),
+    item(
+        "std::os",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir.",
+    ),
+    item(
+        "std::os::exec",
+        Coverage::Partial,
+        Coverage::Partial,
+        Coverage::Full,
+        "Command builder + output / status / spawn / kill / wait. Stdlib + tests; interp/MIR wiring pending.",
+    ),
+    item(
+        "std::os::signal",
+        Coverage::Partial,
+        Coverage::Partial,
+        Coverage::Full,
+        "on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT). Stdlib + tests; runtime signal-handler bridge pending.",
+    ),
+    item(
+        "std::strings",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "split, trim, contains, find, replace, to_lowercase, to_uppercase, starts_with, ends_with.",
+    ),
+    item(
+        "std::strconv",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64.",
+    ),
+    item(
+        "std::collections",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "Vec, HashMap. VecDeque/BTreeMap/HashSet/BTreeSet declared.",
+    ),
+    item(
+        "std::net",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "TcpListener, TcpStream. UdpSocket partial.",
+    ),
+    item(
+        "std::http",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "HTTP/1.1 server + client. HTTP/2 deferred to v1.x.",
+    ),
+    item(
+        "std::encoding::json",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "encode + decode + Value.",
+    ),
+    item(
+        "std::encoding::base64",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "encode + decode.",
+    ),
+    item(
+        "std::encoding::hex",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "encode + decode.",
+    ),
+    item(
+        "std::encoding::binary",
+        Coverage::Partial,
+        Coverage::Partial,
+        Coverage::Partial,
+        "put_u16_be, put_u32_be only — get_*, le variants pending.",
+    ),
+    item(
+        "std::sync",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "Mutex, WaitGroup, AtomicI64. RwLock, Once partial.",
+    ),
+    item(
+        "std::time",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "now, sleep, format_rfc3339, parse_rfc3339.",
+    ),
+    item(
+        "std::panic",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "panic + catch_unwind.",
+    ),
+    item(
+        "std::errors",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "new, wrap, is, chain, join.",
+    ),
+    item(
+        "std::flag",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x.",
+    ),
+    item(
+        "std::path",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "join, split, base, dir, ext, clean.",
+    ),
+    item(
+        "std::path::native",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "SEPARATOR, join, clean, to_posix, to_native.",
+    ),
+    item(
+        "std::fs",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "read_dir, walk_dir, mkdir_all, remove_all, copy, rename.",
+    ),
+    item(
+        "std::bytes",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "Buffer, Builder, index_of, split, replace.",
+    ),
+    item(
+        "std::bufio",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "Reader, Writer, Scanner with split_lines / split_words.",
+    ),
+    item(
+        "std::net::url",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "Url, query_escape, query_unescape.",
+    ),
+    item(
+        "std::slog",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "Logger, Field, TextHandler, JsonHandler with escape coverage.",
+    ),
+    item(
+        "std::context",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "background, with_cancel, with_deadline, with_timeout.",
+    ),
+    item(
+        "std::crypto::rand",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "fill, bytes.",
+    ),
+    item(
+        "std::crypto::sha256",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "digest, hex.",
+    ),
+    item(
+        "std::crypto::hmac",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "sha256_mac.",
+    ),
+    item(
+        "std::crypto::subtle",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "constant_time_eq.",
+    ),
+    item(
+        "std::sort",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "sort, sort_stable, binary_search.",
+    ),
+    item(
+        "std::utf8",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "is_valid, rune_count.",
+    ),
+    item(
+        "std::math::rand",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "Rng (SplitMix64).",
+    ),
+    item(
+        "std::testing",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "Runner, check, check_eq, check_ok.",
+    ),
+    item(
+        "std::runtime",
+        Coverage::Partial,
+        Coverage::Partial,
+        Coverage::Partial,
+        "max_procs, set_max_procs, num_cpus. mem_stats partial.",
+    ),
+    item(
+        "std::tls",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "rustls-backed; ServerConfig, ClientConfig.",
+    ),
+    item(
+        "std::regex",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "compile, is_match, find, find_all, captures, replace, split.",
+    ),
+    item(
+        "std::compress::gzip",
+        Coverage::Partial,
+        Coverage::Partial,
+        Coverage::Full,
+        "encode/decode + Level. Stdlib + tests via flate2; interp/MIR wiring pending.",
+    ),
 ];
 
 const fn item(
@@ -468,7 +720,13 @@ const fn item(
     tested: Coverage,
     notes: &'static str,
 ) -> StdlibSupport {
-    StdlibSupport { path, interp, compiled, tested, notes }
+    StdlibSupport {
+        path,
+        interp,
+        compiled,
+        tested,
+        notes,
+    }
 }
 
 /// Rewrites `docs_src/stdlib_coverage.md` from the curated table.
@@ -476,8 +734,7 @@ fn regenerate_stdlib_coverage() -> Result<()> {
     let workspace_root = locate_workspace_root()?;
     let out_path = workspace_root.join("docs_src/stdlib_coverage.md");
     let page = render_stdlib_coverage_page(STDLIB_SUPPORT);
-    fs::write(&out_path, page)
-        .with_context(|| format!("writing {}", out_path.display()))?;
+    fs::write(&out_path, page).with_context(|| format!("writing {}", out_path.display()))?;
     println!("xtask: wrote {}", out_path.display());
     Ok(())
 }
