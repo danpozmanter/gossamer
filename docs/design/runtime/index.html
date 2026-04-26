@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/design/runtime/" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Runtime internals - Gossamer</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Runtime internals";
+        var mkdocs_page_input_path = "design/runtime.md";
+        var mkdocs_page_url = "/gossamer/design/runtime/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Runtime internals</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#stages">Stages</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#evaluator">Evaluator</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#garbage-collector">Garbage collector</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#scheduler">Scheduler</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#http-server">HTTP server</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#goroutines">Goroutines</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#panic-recovery">Panic recovery</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#where-each-stage-is-tested">Where each stage is tested</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Design notes</li>
+      <li class="breadcrumb-item active">Runtime internals</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/design/runtime.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="runtime-internals">Runtime internals<a class="headerlink" href="#runtime-internals" title="Permanent link">&para;</a></h1>
+<p>This page is a map — not a specification — of what happens between
+<code>gos run</code> and <code>main</code> returning. Each section links to the crate that
+owns the stage so a new contributor can find the real source.</p>
+<h2 id="stages">Stages<a class="headerlink" href="#stages" title="Permanent link">&para;</a></h2>
+<pre><code>source.gos
+   │
+   ▼
+┌──────────────┐  gossamer-lex        tokens + source map
+│  Lexing      │
+└──────────────┘
+   │
+   ▼
+┌──────────────┐  gossamer-parse      AST (items + uses)
+│  Parsing     │  gossamer-ast        + diagnostics
+└──────────────┘
+   │
+   ▼
+┌──────────────┐  gossamer-resolve    name resolution, imports
+│  Resolution  │                      path → DefId mapping
+└──────────────┘
+   │
+   ▼
+┌──────────────┐  gossamer-types      type inference, trait solve,
+│  Type check  │                      exhaustiveness
+└──────────────┘
+   │
+   ▼
+┌──────────────┐  gossamer-hir        lowered program tree
+│  HIR lower   │                      (match-desugars, for → loop)
+└──────────────┘
+   │
+   ▼
+┌──────────────┐  gossamer-interp     tree-walker VM; the bytecode
+│  Evaluation  │                      and Cranelift backends live in
+└──────────────┘                      gossamer-mir / -codegen-*.
+</code></pre>
+<h2 id="evaluator">Evaluator<a class="headerlink" href="#evaluator" title="Permanent link">&para;</a></h2>
+<p>The tree-walker in <code>gossamer-interp</code> is the default engine. It:</p>
+<ol>
+<li>Accepts an <code>HirProgram</code>.</li>
+<li>Installs every top-level function and inherent-impl method under
+   both the unqualified (<code>foo</code>) and type-qualified (<code>Type::foo</code>)
+   names in a <code>HashMap&lt;String, Value&gt;</code>.</li>
+<li>Registers builtin callables for stdlib functions (<code>os::args</code>,
+   <code>time::sleep</code>, <code>json::parse</code>, …) and variant constructors for
+   every user enum.</li>
+<li>Walks HIR expressions directly, keeping local bindings in an
+   <code>Env</code> stack.</li>
+</ol>
+<p>Struct values are <code>Rc&lt;Vec&lt;(Ident, Value)&gt;&gt;</code>. Field assignment runs
+through a copy-on-write helper that allocates a fresh <code>Rc</code> so alias
+bindings never observe each other's mutations.</p>
+<h2 id="garbage-collector">Garbage collector<a class="headerlink" href="#garbage-collector" title="Permanent link">&para;</a></h2>
+<p><code>gossamer-gc</code> is the off-line design of the real concurrent GC — a
+tri-colour mark-sweep collector with write-barriers for generations
+and weak references. The tree-walker currently piggy-backs on Rust's
+<code>Rc</code> / <code>Arc</code> reference counting; the concurrent GC comes online once
+the Arc-based interpreter lands.</p>
+<h2 id="scheduler">Scheduler<a class="headerlink" href="#scheduler" title="Permanent link">&para;</a></h2>
+<p><code>gossamer-sched</code> holds the scheduler skeleton. Today <code>go expr</code> in
+the tree-walker is inlined (the body runs on the calling stack);
+real parallelism arrives with the Arc-based <code>Interpreter: Send</code>
+transition that lets the scheduler own a real
+worker pool.</p>
+<h2 id="http-server">HTTP server<a class="headerlink" href="#http-server" title="Permanent link">&para;</a></h2>
+<p><code>gossamer-std::http::server::bind_and_run</code> runs an accept-loop on
+the main thread and spawns one OS thread per accepted connection.
+Each worker parses the request, sends the parsed form over an
+<code>mpsc::channel</code> back to the interpreter thread, and awaits a
+response on a return channel.</p>
+<p>Graceful shutdown is driven by:</p>
+<ul>
+<li><code>GOSSAMER_HTTP_MAX_REQUESTS=N</code> — env var, stop after N requests.</li>
+<li><code>gossamer_interp::set_http_max_requests(N)</code> — safe-Rust test hook.</li>
+<li><code>config.shutdown: Arc&lt;AtomicBool&gt;</code> — for in-process callers.</li>
+</ul>
+<h2 id="goroutines">Goroutines<a class="headerlink" href="#goroutines" title="Permanent link">&para;</a></h2>
+<p>Today <code>go expr</code> evaluates <code>expr</code> inline — the body runs to
+completion on the caller's stack before the <code>go</code> expression
+finishes. A real scheduler-backed implementation depends on two
+prior pieces:</p>
+<ol>
+<li><code>Value: Send</code> (the Arc-based interpreter).</li>
+<li>A multi-worker dispatch in <code>gossamer-sched</code>.</li>
+</ol>
+<p>Both land together under the risks backlog.</p>
+<h2 id="panic-recovery">Panic recovery<a class="headerlink" href="#panic-recovery" title="Permanent link">&para;</a></h2>
+<p><code>panic(msg)</code> in user code returns <code>RuntimeError::Panic(msg)</code> from
+the evaluator. The native HTTP server catches that per-request,
+logs it, and returns a 500. A panic inside a <code>go expr</code> body crashes
+the process today because the tree-walker runs the body inline —
+proper goroutine panic isolation lands with the scheduler (§1.6).</p>
+<h2 id="where-each-stage-is-tested">Where each stage is tested<a class="headerlink" href="#where-each-stage-is-tested" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Test location</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lexing</td>
+<td><code>gossamer-lex/tests/</code></td>
+</tr>
+<tr>
+<td>Parsing</td>
+<td><code>gossamer-parse/tests/</code></td>
+</tr>
+<tr>
+<td>Resolution</td>
+<td><code>gossamer-resolve/tests/smoke.rs</code></td>
+</tr>
+<tr>
+<td>Type check</td>
+<td><code>gossamer-types/tests/typeck.rs</code>, <code>tests/exhaustiveness.rs</code></td>
+</tr>
+<tr>
+<td>HIR lower</td>
+<td><code>gossamer-hir/tests/lower.rs</code></td>
+</tr>
+<tr>
+<td>Interpreter</td>
+<td><code>gossamer-interp/tests/{eval,run_pass,vm,http_end_to_end}.rs</code></td>
+</tr>
+<tr>
+<td>Stdlib</td>
+<td><code>gossamer-std/src/*</code> (<code>#[cfg(test)]</code> modules)</td>
+</tr>
+<tr>
+<td>Driver</td>
+<td><code>gossamer-driver/tests/</code></td>
+</tr>
+<tr>
+<td>CLI</td>
+<td><code>gossamer-cli/tests/cli.rs</code></td>
+</tr>
+</tbody>
+</table>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../binary_size_baseline/" class="btn btn-neutral float-left" title="Binary-size baseline"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../selfhosting/" class="btn btn-neutral float-right" title="Self-hosting study">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../binary_size_baseline/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../selfhosting/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../js/hljs_gossamer.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

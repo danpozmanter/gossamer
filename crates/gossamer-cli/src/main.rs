@@ -178,10 +178,14 @@ enum Command {
     },
     /// Discover and run `#[test]` functions through the tree-walker.
     /// Accepts either a single `.gos` file or a directory; when
-    /// given a directory, walks every `.gos` under it.
+    /// given a directory, walks every `.gos` under it. When no
+    /// path is supplied, walks `src/` from the nearest enclosing
+    /// `project.toml` (or the current directory when no project
+    /// manifest is found).
     Test {
         /// Path to a `.gos` source file or a directory to walk.
-        path: PathBuf,
+        /// Optional: defaults to the project's `src/` directory.
+        path: Option<PathBuf>,
     },
     /// Discover and time `#[bench]` functions.
     Bench {
@@ -280,7 +284,7 @@ fn main() -> ExitCode {
         Some(Command::Vendor { manifest, out }) => cmd_vendor(manifest, out),
         Some(Command::Fmt { file, check }) => cmd_fmt(&file, check),
         Some(Command::Doc { file, html }) => doc::cmd_doc(&file, html.as_deref()),
-        Some(Command::Test { path }) => cmd_test(&path),
+        Some(Command::Test { path }) => cmd_test(path.as_deref()),
         Some(Command::Bench { file, iterations }) => {
             cmd_bench(&file, iterations.unwrap_or(100))
         }
@@ -780,11 +784,23 @@ fn find_runtime_lib() -> std::result::Result<PathBuf, NativeBuildError> {
         }
     }
     // Walk up from the current executable, which lives under
-    // `target/<profile>/gos`.
+    // `target/<profile>/gos` in development and at the OS install
+    // prefix (`<prefix>/bin/gos`) post-`install.sh`.
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(profile_dir) = exe.parent() {
-            candidates.push(profile_dir.join("libgossamer_runtime.a"));
+        if let Some(parent) = exe.parent() {
+            // 1. Sibling: `target/<profile>/libgossamer_runtime.a`
+            //    (development) or `<prefix>/bin/libgossamer_runtime.a`
+            //    if the install script staged the lib next to the
+            //    binary as a fallback.
+            candidates.push(parent.join("libgossamer_runtime.a"));
+            // 2. Standard install layout: `<prefix>/lib/libgossamer_runtime.a`
+            //    paired with `<prefix>/bin/gos`. install.sh wires
+            //    this up for both `--user` (`~/.local`) and
+            //    `--system` (`/usr/local`).
+            if let Some(prefix) = parent.parent() {
+                candidates.push(prefix.join("lib").join("libgossamer_runtime.a"));
+            }
         }
     }
     // Fall back to the workspace-root `target/release/` path.
@@ -1460,11 +1476,15 @@ fn run_selected_fns(
     Ok((passes, failures, total_nanos))
 }
 
-fn cmd_test(path: &PathBuf) -> Result<()> {
+fn cmd_test(path: Option<&Path>) -> Result<()> {
     gossamer_resolve::set_test_cfg(true);
-    let files = collect_lint_targets(path)?;
+    let resolved = match path {
+        Some(p) => p.to_path_buf(),
+        None => default_test_root()?,
+    };
+    let files = collect_lint_targets(&resolved)?;
     if files.is_empty() {
-        return Err(anyhow!("no `.gos` sources found under {}", path.display()));
+        return Err(anyhow!("no `.gos` sources found under {}", resolved.display()));
     }
     let mut total_passes = 0u32;
     let mut total_failures = 0u32;
@@ -1911,6 +1931,28 @@ fn cmd_lint(path: &PathBuf, deny_warnings: bool, explain: Option<&str>, fix: boo
         return Err(anyhow!("{errors} lint error(s)"));
     }
     Ok(())
+}
+
+/// Returns the directory `gos test` walks when invoked with no
+/// path argument: the `src/` directory of the nearest enclosing
+/// `project.toml` if there is one, otherwise the current
+/// directory. Mirrors `cargo test`'s "find the workspace and run
+/// everything in it" reflex.
+fn default_test_root() -> Result<PathBuf> {
+    let cwd = std::env::current_dir().context("read current directory")?;
+    let mut cursor: &Path = &cwd;
+    loop {
+        if cursor.join("project.toml").is_file() {
+            let src = cursor.join("src");
+            if src.is_dir() {
+                return Ok(src);
+            }
+            return Ok(cursor.to_path_buf());
+        }
+        let Some(parent) = cursor.parent() else { break };
+        cursor = parent;
+    }
+    Ok(cwd)
 }
 
 fn collect_lint_targets(root: &PathBuf) -> Result<Vec<PathBuf>> {

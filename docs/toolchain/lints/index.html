@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/toolchain/lints/" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Lints - Gossamer</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Lints";
+        var mkdocs_page_input_path = "toolchain/lints.md";
+        var mkdocs_page_url = "/gossamer/toolchain/lints/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../">Overview</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Lints</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#unused_variable">unused_variable</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#unused_import">unused_import</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#unused_mut_variable">unused_mut_variable</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#needless_return">needless_return</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#needless_bool">needless_bool</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#comparison_to_bool_literal">comparison_to_bool_literal</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#single_match">single_match</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#shadowed_binding">shadowed_binding</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#unchecked_result">unchecked_result</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#empty_block">empty_block</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#panic_in_main">panic_in_main</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#redundant_clone">redundant_clone</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#double_negation">double_negation</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#self_assignment">self_assignment</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#todo_macro">todo_macro</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#bool_literal_in_condition">bool_literal_in_condition</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#let_and_return">let_and_return</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#collapsible_if">collapsible_if</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#if_same_then_else">if_same_then_else</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#redundant_field_init">redundant_field_init</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#needless_else_after_return">needless_else_after_return</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#self_compare">self_compare</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#identity_op">identity_op</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#unit_let">unit_let</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#float_eq_zero">float_eq_zero</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#empty_else">empty_else</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#match_bool">match_bool</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#needless_parens">needless_parens</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#manual_not_equal">manual_not_equal</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#nested_ternary_if">nested_ternary_if</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#absurd_range">absurd_range</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#string_literal_concat">string_literal_concat</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#chained_negation_literals">chained_negation_literals</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#if_not_else">if_not_else</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#empty_string_concat">empty_string_concat</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#println_newline_only">println_newline_only</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#match_same_arms">match_same_arms</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#manual_swap">manual_swap</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#consecutive_assignment">consecutive_assignment</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#large_unreadable_literal">large_unreadable_literal</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#redundant_closure">redundant_closure</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#empty_if_body">empty_if_body</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#bool_to_int_match">bool_to_int_match</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#fn_returns_unit_explicit">fn_returns_unit_explicit</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#let_with_unit_type">let_with_unit_type</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#useless_default_only_match">useless_default_only_match</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#unnecessary_parens_in_condition">unnecessary_parens_in_condition</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#pattern_matching_unit">pattern_matching_unit</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#panic_without_message">panic_without_message</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#empty_loop">empty_loop</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Toolchain</li>
+      <li class="breadcrumb-item active">Lints</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/toolchain/lints.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <!-- generated by `cargo xtask docs-lints` -->
+<h1 id="lints">Lints<a class="headerlink" href="#lints" title="Permanent link">&para;</a></h1>
+<p>The Gossamer linter ships 50 day-one checks. Each has a short
+identifier suitable for <code>#[lint(allow(...))]</code> and a long-form
+explanation available via <code>gos lint --explain &lt;id&gt;</code>. This page
+is auto-generated from <code>gossamer-lint</code>; hand edits are
+overwritten on the next run of <code>cargo xtask docs-lints</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Identifier</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GL0001</code></td>
+<td><a href="#unused_variable"><code>unused_variable</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0002</code></td>
+<td><a href="#unused_import"><code>unused_import</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0003</code></td>
+<td><a href="#unused_mut_variable"><code>unused_mut_variable</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0004</code></td>
+<td><a href="#needless_return"><code>needless_return</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0005</code></td>
+<td><a href="#needless_bool"><code>needless_bool</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0006</code></td>
+<td><a href="#comparison_to_bool_literal"><code>comparison_to_bool_literal</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0007</code></td>
+<td><a href="#single_match"><code>single_match</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0008</code></td>
+<td><a href="#shadowed_binding"><code>shadowed_binding</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0009</code></td>
+<td><a href="#unchecked_result"><code>unchecked_result</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0010</code></td>
+<td><a href="#empty_block"><code>empty_block</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0011</code></td>
+<td><a href="#panic_in_main"><code>panic_in_main</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0012</code></td>
+<td><a href="#redundant_clone"><code>redundant_clone</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0013</code></td>
+<td><a href="#double_negation"><code>double_negation</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0014</code></td>
+<td><a href="#self_assignment"><code>self_assignment</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0015</code></td>
+<td><a href="#todo_macro"><code>todo_macro</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0016</code></td>
+<td><a href="#bool_literal_in_condition"><code>bool_literal_in_condition</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0017</code></td>
+<td><a href="#let_and_return"><code>let_and_return</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0018</code></td>
+<td><a href="#collapsible_if"><code>collapsible_if</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0019</code></td>
+<td><a href="#if_same_then_else"><code>if_same_then_else</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0020</code></td>
+<td><a href="#redundant_field_init"><code>redundant_field_init</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0021</code></td>
+<td><a href="#needless_else_after_return"><code>needless_else_after_return</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0022</code></td>
+<td><a href="#self_compare"><code>self_compare</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0023</code></td>
+<td><a href="#identity_op"><code>identity_op</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0024</code></td>
+<td><a href="#unit_let"><code>unit_let</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0025</code></td>
+<td><a href="#float_eq_zero"><code>float_eq_zero</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0026</code></td>
+<td><a href="#empty_else"><code>empty_else</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0027</code></td>
+<td><a href="#match_bool"><code>match_bool</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0028</code></td>
+<td><a href="#needless_parens"><code>needless_parens</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0029</code></td>
+<td><a href="#manual_not_equal"><code>manual_not_equal</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0030</code></td>
+<td><a href="#nested_ternary_if"><code>nested_ternary_if</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0031</code></td>
+<td><a href="#absurd_range"><code>absurd_range</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0032</code></td>
+<td><a href="#string_literal_concat"><code>string_literal_concat</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0033</code></td>
+<td><a href="#chained_negation_literals"><code>chained_negation_literals</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0034</code></td>
+<td><a href="#if_not_else"><code>if_not_else</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0035</code></td>
+<td><a href="#empty_string_concat"><code>empty_string_concat</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0036</code></td>
+<td><a href="#println_newline_only"><code>println_newline_only</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0037</code></td>
+<td><a href="#match_same_arms"><code>match_same_arms</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0038</code></td>
+<td><a href="#manual_swap"><code>manual_swap</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0039</code></td>
+<td><a href="#consecutive_assignment"><code>consecutive_assignment</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0040</code></td>
+<td><a href="#large_unreadable_literal"><code>large_unreadable_literal</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0041</code></td>
+<td><a href="#redundant_closure"><code>redundant_closure</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0042</code></td>
+<td><a href="#empty_if_body"><code>empty_if_body</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0043</code></td>
+<td><a href="#bool_to_int_match"><code>bool_to_int_match</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0044</code></td>
+<td><a href="#fn_returns_unit_explicit"><code>fn_returns_unit_explicit</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0045</code></td>
+<td><a href="#let_with_unit_type"><code>let_with_unit_type</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0046</code></td>
+<td><a href="#useless_default_only_match"><code>useless_default_only_match</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0047</code></td>
+<td><a href="#unnecessary_parens_in_condition"><code>unnecessary_parens_in_condition</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0048</code></td>
+<td><a href="#pattern_matching_unit"><code>pattern_matching_unit</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0049</code></td>
+<td><a href="#panic_without_message"><code>panic_without_message</code></a></td>
+<td>warn</td>
+</tr>
+<tr>
+<td><code>GL0050</code></td>
+<td><a href="#empty_loop"><code>empty_loop</code></a></td>
+<td>warn</td>
+</tr>
+</tbody>
+</table>
+<h2 id="unused_variable"><code>unused_variable</code><a class="headerlink" href="#unused_variable" title="Permanent link">&para;</a></h2>
+<p>Declares a <code>let</code> binding whose name is never read.
+Prefix the name with <code>_</code> to silence explicitly (e.g. <code>_tmp</code>)
+when the binding is intentional but unused.</p>
+<h2 id="unused_import"><code>unused_import</code><a class="headerlink" href="#unused_import" title="Permanent link">&para;</a></h2>
+<p>A <code>use</code> declaration whose imported name is never referenced.
+Remove the import or reference the name in the file.</p>
+<h2 id="unused_mut_variable"><code>unused_mut_variable</code><a class="headerlink" href="#unused_mut_variable" title="Permanent link">&para;</a></h2>
+<p>A binding marked <code>mut</code> that is never reassigned. Drop the <code>mut</code>
+keyword.</p>
+<h2 id="needless_return"><code>needless_return</code><a class="headerlink" href="#needless_return" title="Permanent link">&para;</a></h2>
+<p><code>return expr</code> at the tail of a block is the same as writing <code>expr</code>
+by itself. Prefer the tail form for symmetry with the rest of
+the expression language.</p>
+<h2 id="needless_bool"><code>needless_bool</code><a class="headerlink" href="#needless_bool" title="Permanent link">&para;</a></h2>
+<p><code>if cond { true } else { false }</code> is the same as <code>cond</code>. The
+inverted form is <code>!cond</code>.</p>
+<h2 id="comparison_to_bool_literal"><code>comparison_to_bool_literal</code><a class="headerlink" href="#comparison_to_bool_literal" title="Permanent link">&para;</a></h2>
+<p><code>x == true</code> reads worse than <code>x</code>, and <code>x == false</code> reads worse
+than <code>!x</code>. Drop the literal.</p>
+<h2 id="single_match"><code>single_match</code><a class="headerlink" href="#single_match" title="Permanent link">&para;</a></h2>
+<p>A <code>match</code> with a single arm reads better as <code>if let PATTERN = ...</code>.
+Single-arm <code>match</code> is almost always a half-written exhaustive match.</p>
+<h2 id="shadowed_binding"><code>shadowed_binding</code><a class="headerlink" href="#shadowed_binding" title="Permanent link">&para;</a></h2>
+<p>A <code>let</code> binding in the same block shadows an earlier one. Rename
+one of them to make the data flow obvious.</p>
+<h2 id="unchecked_result"><code>unchecked_result</code><a class="headerlink" href="#unchecked_result" title="Permanent link">&para;</a></h2>
+<p><code>let _ = expr?</code> silently discards an error. Either handle the
+<code>Err</code> branch explicitly or propagate with <code>?</code> so the caller sees it.</p>
+<h2 id="empty_block"><code>empty_block</code><a class="headerlink" href="#empty_block" title="Permanent link">&para;</a></h2>
+<p>An empty <code>{}</code> block is almost always a mistake. Add an explicit
+<code>()</code> tail if the block is intentional.</p>
+<h2 id="panic_in_main"><code>panic_in_main</code><a class="headerlink" href="#panic_in_main" title="Permanent link">&para;</a></h2>
+<p><code>panic!</code> inside <code>main</code> aborts without a clean exit code. Return a
+<code>Result</code> from <code>main</code> and use <code>?</code> so the error propagates.</p>
+<h2 id="redundant_clone"><code>redundant_clone</code><a class="headerlink" href="#redundant_clone" title="Permanent link">&para;</a></h2>
+<p>Calling <code>.clone()</code> on a literal or already-copied value is
+redundant. Drop the call.</p>
+<h2 id="double_negation"><code>double_negation</code><a class="headerlink" href="#double_negation" title="Permanent link">&para;</a></h2>
+<p><code>!!x</code> collapses to <code>x</code> when <code>x: bool</code>. If the double negation is
+intentional for truthiness coercion, use an explicit cast.</p>
+<h2 id="self_assignment"><code>self_assignment</code><a class="headerlink" href="#self_assignment" title="Permanent link">&para;</a></h2>
+<p>Assigning a variable to itself does nothing. The statement is
+usually the residue of a refactor — remove it.</p>
+<h2 id="todo_macro"><code>todo_macro</code><a class="headerlink" href="#todo_macro" title="Permanent link">&para;</a></h2>
+<p><code>todo!()</code> and <code>unimplemented!()</code> are placeholders, not shippable
+expressions. Implement the branch before merging.</p>
+<h2 id="bool_literal_in_condition"><code>bool_literal_in_condition</code><a class="headerlink" href="#bool_literal_in_condition" title="Permanent link">&para;</a></h2>
+<p><code>if true { ... }</code> / <code>while false { ... }</code> — the branch is
+decided at compile time. Drop the control-flow construct.</p>
+<h2 id="let_and_return"><code>let_and_return</code><a class="headerlink" href="#let_and_return" title="Permanent link">&para;</a></h2>
+<p><code>let x = expr; x</code> at the tail of a block is just <code>expr</code>. Drop
+the needless binding.</p>
+<h2 id="collapsible_if"><code>collapsible_if</code><a class="headerlink" href="#collapsible_if" title="Permanent link">&para;</a></h2>
+<p><code>if a { if b { ... } }</code> can be combined into
+<code>if a &amp;&amp; b { ... }</code>. Easier to scan.</p>
+<h2 id="if_same_then_else"><code>if_same_then_else</code><a class="headerlink" href="#if_same_then_else" title="Permanent link">&para;</a></h2>
+<p>Both branches of the <code>if</code> are identical. Drop the branch and
+keep the body once.</p>
+<h2 id="redundant_field_init"><code>redundant_field_init</code><a class="headerlink" href="#redundant_field_init" title="Permanent link">&para;</a></h2>
+<p><code>Foo { x: x }</code> is the same as the shorthand <code>Foo { x }</code>.</p>
+<h2 id="needless_else_after_return"><code>needless_else_after_return</code><a class="headerlink" href="#needless_else_after_return" title="Permanent link">&para;</a></h2>
+<p><code>if cond { return X } else { Y }</code> — the <code>else</code> is unreachable
+fall-through. Un-nest the <code>else</code> body.</p>
+<h2 id="self_compare"><code>self_compare</code><a class="headerlink" href="#self_compare" title="Permanent link">&para;</a></h2>
+<p>Comparing a value to itself is always <code>true</code> (for <code>==</code>, <code>&lt;=</code>,
+<code>&gt;=</code>) or <code>false</code> (for <code>!=</code>, <code>&lt;</code>, <code>&gt;</code>). Use the constant.</p>
+<h2 id="identity_op"><code>identity_op</code><a class="headerlink" href="#identity_op" title="Permanent link">&para;</a></h2>
+<p><code>x + 0</code>, <code>x - 0</code>, <code>x * 1</code>, <code>x / 1</code> all equal <code>x</code>. The operation
+adds nothing but noise.</p>
+<h2 id="unit_let"><code>unit_let</code><a class="headerlink" href="#unit_let" title="Permanent link">&para;</a></h2>
+<p><code>let x = ()</code> binds the unit value, which is almost never useful.
+Drop the <code>let</code>.</p>
+<h2 id="float_eq_zero"><code>float_eq_zero</code><a class="headerlink" href="#float_eq_zero" title="Permanent link">&para;</a></h2>
+<p>Equality against a float literal is almost never what you want —
+floating-point arithmetic rarely produces the exact bit pattern.
+Compare <code>(x - y).abs() &lt; eps</code> with an explicit tolerance.</p>
+<h2 id="empty_else"><code>empty_else</code><a class="headerlink" href="#empty_else" title="Permanent link">&para;</a></h2>
+<p><code>else {}</code> adds no information. Drop the else and let the <code>if</code>
+stand alone.</p>
+<h2 id="match_bool"><code>match_bool</code><a class="headerlink" href="#match_bool" title="Permanent link">&para;</a></h2>
+<p><code>match b { true =&gt; ... false =&gt; ... }</code> is an <code>if</code> in disguise.
+Rewrite as <code>if b { ... } else { ... }</code>.</p>
+<h2 id="needless_parens"><code>needless_parens</code><a class="headerlink" href="#needless_parens" title="Permanent link">&para;</a></h2>
+<p><code>(x)</code> without a trailing comma is a needless pair of parens —
+<code>x</code> reads the same. <code>(x,)</code> is a one-tuple and means something
+different.</p>
+<h2 id="manual_not_equal"><code>manual_not_equal</code><a class="headerlink" href="#manual_not_equal" title="Permanent link">&para;</a></h2>
+<p><code>!(a == b)</code> is just <code>a != b</code>. Prefer the direct operator.</p>
+<h2 id="nested_ternary_if"><code>nested_ternary_if</code><a class="headerlink" href="#nested_ternary_if" title="Permanent link">&para;</a></h2>
+<p>Three or more nested <code>if / else if</code> layers are hard to skim.
+Rewrite as <code>match</code> on the discriminant.</p>
+<h2 id="absurd_range"><code>absurd_range</code><a class="headerlink" href="#absurd_range" title="Permanent link">&para;</a></h2>
+<p>A literal range whose lower bound exceeds its upper bound is
+empty. Swap the bounds or double-check the intent.</p>
+<h2 id="string_literal_concat"><code>string_literal_concat</code><a class="headerlink" href="#string_literal_concat" title="Permanent link">&para;</a></h2>
+<p><code>"a" + "b"</code> can be written directly as <code>"ab"</code>. Let the
+source reflect the final value.</p>
+<h2 id="chained_negation_literals"><code>chained_negation_literals</code><a class="headerlink" href="#chained_negation_literals" title="Permanent link">&para;</a></h2>
+<p><code>-(-x)</code> is <code>x</code>. The extra unary does nothing.</p>
+<h2 id="if_not_else"><code>if_not_else</code><a class="headerlink" href="#if_not_else" title="Permanent link">&para;</a></h2>
+<p><code>if !cond { A } else { B }</code> scans better as <code>if cond { B }
+else { A }</code>. Flip the branches and drop the <code>!</code>.</p>
+<h2 id="empty_string_concat"><code>empty_string_concat</code><a class="headerlink" href="#empty_string_concat" title="Permanent link">&para;</a></h2>
+<p>Concatenating an empty string literal is a no-op. Drop the
+<code>"" +</code> or <code>+ ""</code>.</p>
+<h2 id="println_newline_only"><code>println_newline_only</code><a class="headerlink" href="#println_newline_only" title="Permanent link">&para;</a></h2>
+<p><code>println("")</code> already writes a newline. Don't pass <code>"\n"</code>
+and don't call it twice to emit a blank line.</p>
+<h2 id="match_same_arms"><code>match_same_arms</code><a class="headerlink" href="#match_same_arms" title="Permanent link">&para;</a></h2>
+<p>Two match arms share the same body. Either collapse them with
+<code>|</code> alternation or extract the shared body into a helper.</p>
+<h2 id="manual_swap"><code>manual_swap</code><a class="headerlink" href="#manual_swap" title="Permanent link">&para;</a></h2>
+<p>Three consecutive statements <code>let tmp = a; a = b; b = tmp</code> swap
+two bindings via a temporary. Prefer a destructuring assignment
+once the language supports it, or at minimum document why the
+swap is needed.</p>
+<h2 id="consecutive_assignment"><code>consecutive_assignment</code><a class="headerlink" href="#consecutive_assignment" title="Permanent link">&para;</a></h2>
+<p>Two back-to-back assignments to the same place — the earlier
+value is dead before it's read. Drop the first or consolidate
+the logic into one statement.</p>
+<h2 id="large_unreadable_literal"><code>large_unreadable_literal</code><a class="headerlink" href="#large_unreadable_literal" title="Permanent link">&para;</a></h2>
+<p>Integer literals of five or more digits are easier to scan with
+<code>_</code> as thousands separators: <code>1_000_000</code> instead of <code>1000000</code>.</p>
+<h2 id="redundant_closure"><code>redundant_closure</code><a class="headerlink" href="#redundant_closure" title="Permanent link">&para;</a></h2>
+<p><code>|x| f(x)</code> is a closure that just forwards to <code>f</code>. Pass <code>f</code>
+directly.</p>
+<h2 id="empty_if_body"><code>empty_if_body</code><a class="headerlink" href="#empty_if_body" title="Permanent link">&para;</a></h2>
+<p>An <code>if cond { } else { body }</code> is the same as <code>if !cond { body }</code>.
+Invert the condition and drop the empty branch.</p>
+<h2 id="bool_to_int_match"><code>bool_to_int_match</code><a class="headerlink" href="#bool_to_int_match" title="Permanent link">&para;</a></h2>
+<p><code>match b { true =&gt; 1, false =&gt; 0 }</code> is an <code>if</code> in disguise that
+happens to return an integer. Prefer <code>if b { 1 } else { 0 }</code>.</p>
+<h2 id="fn_returns_unit_explicit"><code>fn_returns_unit_explicit</code><a class="headerlink" href="#fn_returns_unit_explicit" title="Permanent link">&para;</a></h2>
+<p><code>fn f() -&gt; () { ... }</code> is the same as <code>fn f() { ... }</code>. The
+explicit <code>-&gt; ()</code> is noise.</p>
+<h2 id="let_with_unit_type"><code>let_with_unit_type</code><a class="headerlink" href="#let_with_unit_type" title="Permanent link">&para;</a></h2>
+<p><code>let _: () = expr</code> annotates the binding with the unit type. If
+<code>expr</code> was going to return <code>()</code> anyway, the annotation is noise.
+If it wasn't, the annotation forces a coercion — use a plain
+statement instead.</p>
+<h2 id="useless_default_only_match"><code>useless_default_only_match</code><a class="headerlink" href="#useless_default_only_match" title="Permanent link">&para;</a></h2>
+<p><code>match x { _ =&gt; expr }</code> always runs <code>expr</code> — the <code>match</code> adds
+nothing. Drop the <code>match</code> (and add <code>let _ = x</code> if evaluating
+the scrutinee has side effects).</p>
+<h2 id="unnecessary_parens_in_condition"><code>unnecessary_parens_in_condition</code><a class="headerlink" href="#unnecessary_parens_in_condition" title="Permanent link">&para;</a></h2>
+<p><code>if (cond) { ... }</code> wraps the condition in a single-tuple
+expression. Drop the parens: <code>if cond { ... }</code>.</p>
+<h2 id="pattern_matching_unit"><code>pattern_matching_unit</code><a class="headerlink" href="#pattern_matching_unit" title="Permanent link">&para;</a></h2>
+<p><code>match () { ... }</code> has exactly one reachable arm. Drop the match
+and run the body directly.</p>
+<h2 id="panic_without_message"><code>panic_without_message</code><a class="headerlink" href="#panic_without_message" title="Permanent link">&para;</a></h2>
+<p><code>panic()</code> with no argument leaves the post-mortem with nothing
+to render. Always pass a brief explanation.</p>
+<h2 id="empty_loop"><code>empty_loop</code><a class="headerlink" href="#empty_loop" title="Permanent link">&para;</a></h2>
+<p><code>loop {}</code> with no body busy-waits forever at 100% CPU. Add a
+<code>break</code>, a <code>continue</code>, or replace with a real wait primitive.</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../" class="btn btn-neutral float-left" title="Overview"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../diagnostics/" class="btn btn-neutral float-right" title="Diagnostics">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../diagnostics/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../js/hljs_gossamer.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

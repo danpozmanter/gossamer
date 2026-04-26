@@ -20,6 +20,7 @@ validated by the CLI integration tests.
 | `function_piping.gos` | `|>` forward-pipe operator tour | runs |
 | `grep.gos` | Simple Unix-style CLI tool | parses; runs when stdin is wired |
 | `testing.gos` | `#[test]` harness + `std::testing` | runs via `gos test` |
+| `projects/web_service/` | Full project layout (`project.toml` + `src/`) — multi-endpoint HTTP service with unit tests | `cd` in and run `gos test` |
 
 ## Running
 
@@ -28,6 +29,10 @@ gos run examples/hello_world.gos
 gos run examples/web_server.gos &
 curl 'http://localhost:8080/echo?name=jane'
 gos test examples/testing.gos
+
+cd examples/projects/web_service
+gos test           # no args — walks up to project.toml, scans src/
+gos run src/main.gos
 ```
 
 ## Conventions

@@ -129,6 +129,36 @@ select {
 `go expr` spawns a goroutine. Channels are typed and bounded;
 `select` multiplexes receives.
 
+## Closures and higher-order fns
+
+Lambdas use `|param: T| body`; captures from the enclosing scope
+work transparently (GC-managed, no `move`).
+
+Higher-order parameters distinguish two callable types:
+
+| Type | Accepts | Representation |
+|------|---------|----------------|
+| `fn(args) -> ret` | non-capturing items only | raw code pointer |
+| `Fn(args) -> ret` | bare items **and** capturing closures | env+code fat pointer |
+
+```gossamer
+fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
+
+fn main() {
+    let scale = 10i64
+    let scaled = |y: i64| scale * y    // captures `scale`
+    println!("{}", apply(scaled, 5))   // 50
+
+    fn add_one(y: i64) -> i64 { y + 1 }
+    println!("{}", apply(add_one, 41)) // 42 — bare fn coerces
+}
+```
+
+The conversion at the call boundary is implicit. Single trait
+variant — `FnMut` / `FnOnce` parse but lower to the same
+`Fn(_)` shape (the borrow-style split Rust draws is unnecessary
+in a fully GC'd world).
+
 ## Attributes
 
 ```gossamer

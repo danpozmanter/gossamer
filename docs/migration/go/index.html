@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/migration/go/" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>From Go - Gossamer</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "From Go";
+        var mkdocs_page_input_path = "migration/go.md";
+        var mkdocs_page_url = "/gossamer/migration/go/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">From Go</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#tldr">TL;DR</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#syntax-cheat-sheet">Syntax cheat-sheet</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#semantic-differences">Semantic differences</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#errors">Errors</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#interfaces-vs-traits">Interfaces vs. traits</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#no-implicit-numeric-coercion">No implicit numeric coercion</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#visibility">Visibility</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#iota-and-constants">iota and constants</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#concurrency">Concurrency</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdlib-equivalents">Stdlib equivalents</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#translation-worked-examples">Translation worked examples</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#read-a-file-count-lines">Read a file, count lines</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#spawn-a-worker-wait-for-it">Spawn a worker, wait for it</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#http-server">HTTP server</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#json-encode-decode">JSON encode / decode</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#where-gossamer-is-harder-than-go">Where Gossamer is harder than Go</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#where-gossamer-is-easier-than-go">Where Gossamer is easier than Go</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#cross-references">Cross-references</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Migrating</li>
+      <li class="breadcrumb-item active">From Go</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/migration/go.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="migrating-from-go-to-gossamer">Migrating from Go to Gossamer<a class="headerlink" href="#migrating-from-go-to-gossamer" title="Permanent link">&para;</a></h1>
+<p>Gossamer takes goroutines, channels, defer, and the select
+statement from Go. Most Go idioms map one-to-one. The biggest
+source of friction is <strong>syntax</strong>: Gossamer is Rust-flavoured, so
+<code>fn</code> not <code>func</code>, <code>let</code> not <code>:=</code>, <code>match</code> not <code>switch</code>, and so on.</p>
+<p>This page walks the differences in three layers: syntax,
+semantics, and stdlib equivalents. It is not exhaustive — for
+the spec, see <a href="https://github.com/gossamer-lang/gossamer/blob/main/SPEC.md"><code>SPEC.md</code></a>.</p>
+<h2 id="tldr">TL;DR<a class="headerlink" href="#tldr" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>What stays the same:</strong> goroutines, channels, defer,
+  select, GC, package-per-directory, structural concurrency.</li>
+<li><strong>What changes:</strong> syntax (Rust-shaped), error handling
+  (<code>Result&lt;T, E&gt;</code> + <code>?</code>), interfaces become traits (nominal),
+  no implicit numeric coercion (<code>as</code> is explicit).</li>
+<li><strong>What's missing in v1:</strong> HTTP/2, gRPC, database/sql, async I/O
+  beyond goroutines, M:N scheduling, real package registry.</li>
+</ul>
+<h2 id="syntax-cheat-sheet">Syntax cheat-sheet<a class="headerlink" href="#syntax-cheat-sheet" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Go</th>
+<th>Gossamer</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>func name(x int) int { return x + 1 }</code></td>
+<td><code>fn name(x: i64) -&gt; i64 { x + 1 }</code></td>
+<td>Trailing-expression-as-return; <code>return</code> keyword optional.</td>
+</tr>
+<tr>
+<td><code>var x int = 5</code> / <code>x := 5</code></td>
+<td><code>let x: i64 = 5i64</code> / <code>let x = 5i64</code></td>
+<td><code>let mut</code> for mutables.</td>
+</tr>
+<tr>
+<td><code>if x &gt; 0 { … } else { … }</code></td>
+<td><code>if x &gt; 0i64 { … } else { … }</code></td>
+<td>Same.</td>
+</tr>
+<tr>
+<td><code>for i := 0; i &lt; n; i++ { … }</code></td>
+<td><code>for i in 0i64..n { … }</code></td>
+<td>Range-based for-loops.</td>
+</tr>
+<tr>
+<td><code>for { … }</code></td>
+<td><code>loop { … }</code></td>
+<td>Infinite loop.</td>
+</tr>
+<tr>
+<td><code>for i, v := range xs { … }</code></td>
+<td><code>for (i, v) in xs.iter().enumerate() { … }</code></td>
+<td>Iterator chain.</td>
+</tr>
+<tr>
+<td><code>switch x { case 1: … }</code></td>
+<td><code>match x { 1 =&gt; …, _ =&gt; … }</code></td>
+<td>Pattern-matching is exhaustive — a missing arm is a compile error.</td>
+</tr>
+<tr>
+<td><code>type Point struct { X, Y int }</code></td>
+<td><code>struct Point { x: i64, y: i64 }</code></td>
+<td>Lowercase fields by convention; visibility via <code>pub</code>.</td>
+</tr>
+<tr>
+<td><code>func (p Point) Norm() int { … }</code></td>
+<td><code>impl Point { fn norm(&amp;self) -&gt; i64 { … } }</code></td>
+<td>Methods declared in <code>impl</code> block.</td>
+</tr>
+<tr>
+<td><code>type Reader interface { Read([]byte) int }</code></td>
+<td><code>trait Reader { fn read(&amp;self, buf: &amp;mut [u8]) -&gt; i64 }</code></td>
+<td>Traits are nominal — <code>impl Reader for MyType { … }</code>.</td>
+</tr>
+<tr>
+<td><code>var err error; if err != nil { … }</code></td>
+<td><code>match call() { Ok(v) =&gt; …, Err(e) =&gt; … }</code></td>
+<td><code>?</code> propagates <code>Err</code> automatically.</td>
+</tr>
+<tr>
+<td><code>defer cleanup()</code></td>
+<td><code>defer cleanup()</code></td>
+<td>Same syntax, same semantics.</td>
+</tr>
+<tr>
+<td><code>go work()</code></td>
+<td><code>go work()</code></td>
+<td>Same.</td>
+</tr>
+<tr>
+<td><code>ch &lt;- v</code> / <code>v := &lt;-ch</code></td>
+<td><code>tx.send(v)</code> / <code>let v = rx.recv()</code></td>
+<td>Channels are typed: <code>channel::&lt;i64&gt;()</code>.</td>
+</tr>
+<tr>
+<td><code>select { case x := &lt;-ch: … }</code></td>
+<td><code>select { recv x = ch =&gt; …, default =&gt; … }</code></td>
+<td>Select arms are typed.</td>
+</tr>
+<tr>
+<td><code>make([]int, 0, 16)</code></td>
+<td><code>Vec::&lt;i64&gt;::with_capacity(16)</code></td>
+<td>Vec API.</td>
+</tr>
+<tr>
+<td><code>make(map[string]int)</code></td>
+<td><code>HashMap::&lt;String, i64&gt;::new()</code></td>
+<td>HashMap API.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="semantic-differences">Semantic differences<a class="headerlink" href="#semantic-differences" title="Permanent link">&para;</a></h2>
+<h3 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h3>
+<p>Go's convention is <code>(value, error)</code>. Gossamer uses <code>Result&lt;T, E&gt;</code>
+with <code>?</code> propagation:</p>
+<pre><code class="language-go">// Go
+data, err := os.ReadFile(&quot;config.toml&quot;)
+if err != nil {
+    return nil, fmt.Errorf(&quot;read config: %w&quot;, err)
+}
+</code></pre>
+<pre><code class="language-gos">// Gossamer
+let data = os::read_file(&quot;config.toml&quot;)?
+</code></pre>
+<p><code>?</code> unwraps <code>Ok</code> or returns the <code>Err</code>. The function must declare
+its return type as <code>Result&lt;T, E&gt;</code>.</p>
+<p>For panicking on impossible errors, use <code>unwrap</code> or <code>expect</code>:</p>
+<pre><code class="language-gos">let data = os::read_file(&quot;config.toml&quot;).expect(&quot;config required&quot;)
+</code></pre>
+<p>There is no nil-pointer equivalent. <code>Option&lt;T&gt;</code> is the
+must-be-present-or-not type; matching is exhaustive.</p>
+<h3 id="interfaces-vs-traits">Interfaces vs. traits<a class="headerlink" href="#interfaces-vs-traits" title="Permanent link">&para;</a></h3>
+<p>Go interfaces are <strong>structural</strong>: any type with a matching method
+set satisfies the interface implicitly.</p>
+<p>Gossamer traits are <strong>nominal</strong>: you write <code>impl Trait for Type {
+… }</code> to declare the conformance. The compiler does not infer it.</p>
+<p>This means:</p>
+<ul>
+<li>A type can opt into multiple traits (same as Go).</li>
+<li>Two unrelated traits with identical method sets are <em>different</em>
+  traits. Go has no concept of trait identity.</li>
+<li>Generic bounds use <code>T: Trait</code> syntax: <code>fn handle&lt;T: Reader&gt;(r: T)</code>.</li>
+<li>Trait objects use <code>Box&lt;dyn Trait&gt;</code> or <code>&amp;dyn Trait</code>. They have
+  the same dynamic-dispatch cost as Go's interface values.</li>
+</ul>
+<h3 id="no-implicit-numeric-coercion">No implicit numeric coercion<a class="headerlink" href="#no-implicit-numeric-coercion" title="Permanent link">&para;</a></h3>
+<p>Go silently widens <code>int32</code> to <code>int64</code>, etc. Gossamer requires
+<code>as</code>:</p>
+<pre><code class="language-go">var x int32 = 5
+var y int64 = int64(x)   // explicit in Go too, but...
+var z int64 = x          // ...this also works in Go for untyped literals
+</code></pre>
+<pre><code class="language-gos">let x: i32 = 5i32
+let y: i64 = x as i64    // required
+let z: i64 = x           // type error
+</code></pre>
+<p>This applies to every numeric width, signed↔unsigned, integer↔float.</p>
+<h3 id="visibility">Visibility<a class="headerlink" href="#visibility" title="Permanent link">&para;</a></h3>
+<p>Go uses lowercase-first-letter for unexported identifiers.
+Gossamer uses an explicit <code>pub</code> keyword:</p>
+<pre><code class="language-gos">struct Config {
+    pub name: String,    // exported
+    secret: String,      // private to the module
+}
+
+pub fn parse_config(text: &amp;str) -&gt; Config { … }
+</code></pre>
+<p>The lowercase / case rule does <em>not</em> apply.</p>
+<h3 id="iota-and-constants"><code>iota</code> and constants<a class="headerlink" href="#iota-and-constants" title="Permanent link">&para;</a></h3>
+<p>Gossamer has no <code>iota</code>; use plain enums:</p>
+<pre><code class="language-go">type Severity int
+const (
+    Debug Severity = iota
+    Info
+    Warn
+    Error
+)
+</code></pre>
+<pre><code class="language-gos">enum Severity {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+</code></pre>
+<p>C-style numeric variants are not yet supported in v1; the discriminants
+are opaque to user code. If you need stable wire-format integers,
+write the conversion table out by hand:</p>
+<pre><code class="language-gos">fn severity_to_int(s: Severity) -&gt; i64 {
+    match s {
+        Severity::Debug =&gt; 0i64,
+        Severity::Info =&gt; 1i64,
+        Severity::Warn =&gt; 2i64,
+        Severity::Error =&gt; 3i64,
+    }
+}
+</code></pre>
+<h3 id="concurrency">Concurrency<a class="headerlink" href="#concurrency" title="Permanent link">&para;</a></h3>
+<p>Goroutine and channel syntax is the same. Behavioural notes:</p>
+<ul>
+<li>Each goroutine is a real OS thread in v1. M:N scheduling
+  arrives in v1.x. See <a href="../../perf_characteristics/"><code>perf_characteristics.md</code></a>.</li>
+<li>Channels are unbounded by default (like Go's <code>make(chan T)</code>
+  without a buffer size — wait, actually Go's <em>unbuffered</em>
+  channels block on send until a receiver is ready;
+  Gossamer's <code>channel::&lt;T&gt;()</code> returns a buffered channel today,
+  with <code>try_send</code> / <code>try_recv</code> for non-blocking ops). Bounded
+  channels via <code>channel::with_capacity(n)</code>.</li>
+<li><code>select</code> arms are typed by the channel they reference. Catch
+  the unblocked case with <code>default =&gt;</code>.</li>
+</ul>
+<pre><code class="language-gos">select {
+    recv v = rx =&gt; println(&quot;got:&quot;, v),
+    send tx = 42i64 =&gt; println(&quot;sent&quot;),
+    default =&gt; println(&quot;would block&quot;),
+}
+</code></pre>
+<h2 id="stdlib-equivalents">Stdlib equivalents<a class="headerlink" href="#stdlib-equivalents" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Go</th>
+<th>Gossamer</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fmt.Println</code></td>
+<td><code>println(...)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>fmt.Printf</code></td>
+<td><code>println!("{x}")</code> interpolation</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>fmt.Sprintf</code></td>
+<td><code>format!("{x}")</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>os.Args</code></td>
+<td><code>os::args()</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>os.Getenv</code></td>
+<td><code>os::env(name)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>os.Exit</code></td>
+<td><code>os::exit(code)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>os.ReadFile</code></td>
+<td><code>os::read_file(path)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>os.WriteFile</code></td>
+<td><code>os::write_file(path, data)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>os/exec.Command</code></td>
+<td><code>os::exec::Command::new(prog).arg(a).output()</code></td>
+<td>v1.x</td>
+</tr>
+<tr>
+<td><code>os/signal.Notify</code></td>
+<td><code>os::signal::on(SIGTERM)</code></td>
+<td>v1.x</td>
+</tr>
+<tr>
+<td><code>path/filepath.Walk</code></td>
+<td><code>fs::walk_dir(root)</code></td>
+<td>v1.x</td>
+</tr>
+<tr>
+<td><code>bufio.NewScanner</code></td>
+<td><code>bufio::Scanner::new(reader)</code></td>
+<td>v1.x</td>
+</tr>
+<tr>
+<td><code>compress/gzip</code></td>
+<td><code>compress::gzip::Reader::new(r)</code></td>
+<td>v1.x</td>
+</tr>
+<tr>
+<td><code>encoding/json</code></td>
+<td><code>json::encode(v)</code> / <code>json::decode::&lt;T&gt;(s)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>encoding/base64</code></td>
+<td><code>encoding::base64::{encode,decode}</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>encoding/hex</code></td>
+<td><code>encoding::hex::{encode,decode}</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>crypto/sha256</code></td>
+<td><code>crypto::sha256::digest(input)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>crypto/hmac</code></td>
+<td><code>crypto::hmac::sha256_mac(key, msg)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>crypto/rand</code></td>
+<td><code>crypto::rand::bytes(n)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>crypto/subtle</code></td>
+<td><code>crypto::subtle::constant_time_eq(a, b)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>net/http</code> server</td>
+<td><code>http::Server::bind(addr)</code></td>
+<td>✓ (HTTP/1.1 only)</td>
+</tr>
+<tr>
+<td><code>net/http</code> client</td>
+<td><code>http::Client::new()</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>net.Listen("tcp", …)</code></td>
+<td><code>net::TcpListener::bind(addr)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>net/url.Parse</code></td>
+<td><code>net::url::Url::parse(s)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>regexp.MustCompile</code></td>
+<td><code>regex::compile(pattern).expect("…")</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>sort.Slice</code></td>
+<td><code>sort::sort_by(&amp;mut xs, fn)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>strings.Split</code></td>
+<td><code>strings::split(s, delim)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>strings.Replace</code></td>
+<td><code>strings::replace(s, from, to)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>strings.TrimSpace</code></td>
+<td><code>strings::trim(s)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>strconv.Atoi</code></td>
+<td><code>strconv::parse_i64(s)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>strconv.Itoa</code></td>
+<td><code>strconv::format_i64(n)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>time.Now</code></td>
+<td><code>time::now()</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>time.Sleep</code></td>
+<td><code>time::sleep(d)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>time.Format</code></td>
+<td><code>time::format(t, layout)</code></td>
+<td>v1.x</td>
+</tr>
+<tr>
+<td><code>time.Parse</code></td>
+<td><code>time::parse(layout, s)</code></td>
+<td>v1.x</td>
+</tr>
+<tr>
+<td><code>flag.Parse</code></td>
+<td><code>flag::parse()</code></td>
+<td>partial</td>
+</tr>
+<tr>
+<td><code>log/slog</code></td>
+<td><code>slog::Logger::new(JsonHandler::new(io::stdout()))</code></td>
+<td>partial</td>
+</tr>
+<tr>
+<td><code>context.Background</code></td>
+<td><code>context::background()</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>context.WithCancel</code></td>
+<td><code>context::with_cancel(parent)</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>sync.Mutex</code></td>
+<td><code>sync::Mutex::new()</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>sync.WaitGroup</code></td>
+<td><code>sync::WaitGroup::new()</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>sync.Once</code></td>
+<td><code>sync::Once::new()</code></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>sync/atomic</code></td>
+<td><code>sync::AtomicI64::new(0)</code></td>
+<td>✓</td>
+</tr>
+</tbody>
+</table>
+<p>✓ = shipped in v1. <em>partial</em> = available but coverage is short of
+Go's surface. <em>v1.x</em> = deferred. See
+<a href="../../stdlib_coverage/"><code>stdlib_coverage.md</code></a> for the auto-generated
+authoritative table.</p>
+<h2 id="translation-worked-examples">Translation worked examples<a class="headerlink" href="#translation-worked-examples" title="Permanent link">&para;</a></h2>
+<h3 id="read-a-file-count-lines">Read a file, count lines<a class="headerlink" href="#read-a-file-count-lines" title="Permanent link">&para;</a></h3>
+<pre><code class="language-go">// Go
+data, err := os.ReadFile(&quot;input.txt&quot;)
+if err != nil { return err }
+n := strings.Count(string(data), &quot;\n&quot;)
+fmt.Println(n)
+</code></pre>
+<pre><code class="language-gos">// Gossamer
+let data = os::read_file_to_string(&quot;input.txt&quot;)?
+let n = strings::count(&amp;data, &quot;\n&quot;)
+println(n)
+</code></pre>
+<h3 id="spawn-a-worker-wait-for-it">Spawn a worker, wait for it<a class="headerlink" href="#spawn-a-worker-wait-for-it" title="Permanent link">&para;</a></h3>
+<pre><code class="language-go">// Go
+var wg sync.WaitGroup
+wg.Add(1)
+go func() {
+    defer wg.Done()
+    work()
+}()
+wg.Wait()
+</code></pre>
+<pre><code class="language-gos">// Gossamer
+let wg = sync::WaitGroup::new()
+wg.add(1i64)
+go fn() {
+    defer wg.done()
+    work()
+}()
+wg.wait()
+</code></pre>
+<h3 id="http-server">HTTP server<a class="headerlink" href="#http-server" title="Permanent link">&para;</a></h3>
+<pre><code class="language-go">// Go
+http.HandleFunc(&quot;/&quot;, func(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintln(w, &quot;hello&quot;)
+})
+log.Fatal(http.ListenAndServe(&quot;:8080&quot;, nil))
+</code></pre>
+<pre><code class="language-gos">// Gossamer
+fn handler(req: http::Request) -&gt; http::Response {
+    http::Response::ok(&quot;hello\n&quot;)
+}
+
+fn main() {
+    http::serve(&quot;0.0.0.0:8080&quot;, handler)
+}
+</code></pre>
+<h3 id="json-encode-decode">JSON encode / decode<a class="headerlink" href="#json-encode-decode" title="Permanent link">&para;</a></h3>
+<pre><code class="language-go">// Go
+type User struct {
+    Name string `json:&quot;name&quot;`
+    Age  int    `json:&quot;age&quot;`
+}
+b, _ := json.Marshal(User{&quot;Ada&quot;, 36})
+var u User
+_ = json.Unmarshal(b, &amp;u)
+</code></pre>
+<pre><code class="language-gos">// Gossamer
+struct User {
+    name: String,
+    age: i64,
+}
+
+fn main() {
+    let u = User { name: &quot;Ada&quot;.to_string(), age: 36i64 }
+    let s = json::encode(&amp;u).unwrap()
+    let parsed: User = json::decode(&amp;s).unwrap()
+}
+</code></pre>
+<h2 id="where-gossamer-is-harder-than-go">Where Gossamer is harder than Go<a class="headerlink" href="#where-gossamer-is-harder-than-go" title="Permanent link">&para;</a></h2>
+<p>Honest list:</p>
+<ul>
+<li><strong>Generics with structs <code>T = MyStruct</code> are not yet supported by
+  value.</strong> v1 monomorphisation packs every generic param into a
+  64-bit slot; user structs don't fit. See
+  <a href="../../codegen_abi/"><code>codegen_abi.md</code></a>. Workaround: use <code>&amp;T</code>,
+  or use the runtime's <code>Vec&lt;T&gt;</code> / <code>HashMap&lt;K, V&gt;</code> which handle
+  arbitrarily-sized elements internally.</li>
+<li><strong>Tooling diagnostics are sometimes terser than Go's.</strong> <code>gos
+  explain CODE</code> exists but the corpus is younger.</li>
+<li><strong>No <code>go vet</code>-equivalent.</strong> Lints exist (<code>gos lint</code>) but their
+  surface is smaller.</li>
+<li><strong>No <code>go fmt</code> integration in editors out of the box.</strong> Use the
+  LSP server's format-on-save.</li>
+</ul>
+<h2 id="where-gossamer-is-easier-than-go">Where Gossamer is easier than Go<a class="headerlink" href="#where-gossamer-is-easier-than-go" title="Permanent link">&para;</a></h2>
+<p>Subjective list:</p>
+<ul>
+<li>Pattern matching with exhaustiveness checks catches the same
+  class of bug Go's <code>switch</code>-without-default leaves to runtime.</li>
+<li><code>Result&lt;T, E&gt;</code> + <code>?</code> is denser than <code>if err != nil { return … }</code>.</li>
+<li>Trait bounds let you write generic code without losing type
+  information; Go's interfaces erase the concrete type.</li>
+<li>The <code>|&gt;</code> pipe operator threads data through transformations
+  more readably than <code>f(g(h(x)))</code>.</li>
+</ul>
+<h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../syntax/"><code>../syntax.md</code></a> — the language tour.</li>
+<li><a href="../../codegen_abi/"><code>../codegen_abi.md</code></a> — what generics fail.</li>
+<li><a href="../../non_goals_v1/"><code>../non_goals_v1.md</code></a> — deferred features.</li>
+<li><a href="../../stdlib_coverage/"><code>../stdlib_coverage.md</code></a> — every
+  stdlib item, support state.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../rust/" class="btn btn-neutral float-left" title="From Rust"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../python/" class="btn btn-neutral float-right" title="From Python">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../rust/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../python/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../js/hljs_gossamer.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

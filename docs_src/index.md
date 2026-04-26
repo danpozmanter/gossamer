@@ -1,5 +1,9 @@
 # Gossamer
 
+<p align="center">
+  <img src="img/GossamerLogo.png" alt="Gossamer logo" width="220" />
+</p>
+
 A garbage-collected, goroutine-powered, fast-compiling systems
 language with Rust-flavoured syntax and Go-shaped runtime.
 
@@ -18,12 +22,12 @@ fn main() {
 }
 ```
 
-## A taste of Gossamer
+## Gossamer at a glance
 
-The `|>` forward-pipe operator threads a value through a chain of
-calls so the data flow reads left-to-right. `x |> f(a, b)` is just
-`f(a, b, x)` — the piped value lands in the last positional slot —
-and it composes with plain functions, methods, and closures alike:
+The forward-pipe operator (`|>`) threads a value through successive
+calls left-to-right. `x |> f(a, b)` desugars to `f(a, b, x)`, placing
+the piped value in the trailing positional slot. It composes
+uniformly across functions, methods, and closures:
 
 ```gossamer
 fn double(x: i64) -> i64 { x * 2 }
@@ -33,11 +37,9 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 fn main() {
-    // 3 -> double -> add 10 -> clamp to [0, 100]
     let n = 3i64 |> double |> add(10i64) |> clamp(0i64, 100i64)
     println("arithmetic:", n)
 
-    // Methods pipe the same way.
     let words = "  Hello  World  ".to_string()
         |> str::trim
         |> str::to_lowercase
@@ -48,7 +50,7 @@ fn main() {
 }
 ```
 
-Spawn a goroutine, hand it a channel, and the pipe stays the same:
+Goroutines and channels use the same syntax:
 
 ```gossamer
 fn main() {
@@ -67,7 +69,9 @@ fn main() {
 - **Rust-style type system** — statically-typed, generics with
   trait bounds, pattern-matching, `Option<T>` / `Result<T, E>`.
 - **Garbage-collected** — no lifetimes, no borrow checker surface.
-  `&` and `&mut` still express aliasing intent.
+  `&` and `&mut` still express aliasing intent. Capturing closures
+  flow through `Fn(args) -> ret` parameters without `move` /
+  trait-bound ceremony.
 - **Safe Rust** implementation — no `unsafe` in the compiler or
   runtime. Every crate carries `#![forbid(unsafe_code)]`.
 - **Batteries-included stdlib** — `fmt`, `io`, `os`, `http`,

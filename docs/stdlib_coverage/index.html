@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/stdlib_coverage/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Coverage matrix - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Coverage matrix";
+        var mkdocs_page_input_path = "stdlib_coverage.md";
+        var mkdocs_page_url = "/gossamer/stdlib_coverage/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="..">
+          <img src="../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Coverage matrix</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-regenerate-this-page">How to regenerate this page</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-interpret-the-columns">How to interpret the columns</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#cross-references">Cross-references</a>
+    </li>
+    </ul>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Standard library</li>
+      <li class="breadcrumb-item active">Coverage matrix</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/stdlib_coverage.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <!-- generated by `cargo xtask stdlib-coverage` -->
+<h1 id="stdlib-coverage-matrix">Stdlib coverage matrix<a class="headerlink" href="#stdlib-coverage-matrix" title="Permanent link">&para;</a></h1>
+<p>Auto-generated. Do not hand-edit. Re-run <code>cargo xtask
+stdlib-coverage</code> after changing the support state of a
+module.</p>
+<p>Columns:</p>
+<ul>
+<li><strong>Interp</strong> — <code>gos run</code> (bytecode VM + tree-walker fallback).</li>
+<li><strong>Compiled</strong> — <code>gos build</code> (Cranelift) and <code>gos build --release</code> (LLVM).</li>
+<li><strong>Tests</strong> — at least one integration test exercising the item.</li>
+</ul>
+<p>Glyphs: ✓ supported · ◑ partial · ✗ missing.</p>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th style="text-align: center;">Interp</th>
+<th style="text-align: center;">Compiled</th>
+<th style="text-align: center;">Tests</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>std::fmt</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>println / print / eprintln / eprint / format / write / writeln.</td>
+</tr>
+<tr>
+<td><code>std::io</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string.</td>
+</tr>
+<tr>
+<td><code>std::os</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir.</td>
+</tr>
+<tr>
+<td><code>std::os::exec</code></td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">✓</td>
+<td>Command builder + output / status / spawn / kill / wait. Stdlib + tests; interp/MIR wiring pending.</td>
+</tr>
+<tr>
+<td><code>std::os::signal</code></td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">✓</td>
+<td>on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT). Stdlib + tests; runtime signal-handler bridge pending.</td>
+</tr>
+<tr>
+<td><code>std::strings</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>split, trim, contains, find, replace, to_lowercase, to_uppercase, starts_with, ends_with.</td>
+</tr>
+<tr>
+<td><code>std::strconv</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64.</td>
+</tr>
+<tr>
+<td><code>std::collections</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Vec, HashMap. VecDeque/BTreeMap/HashSet/BTreeSet declared.</td>
+</tr>
+<tr>
+<td><code>std::net</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>TcpListener, TcpStream. UdpSocket partial.</td>
+</tr>
+<tr>
+<td><code>std::http</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>HTTP/1.1 server + client. HTTP/2 deferred to v1.x.</td>
+</tr>
+<tr>
+<td><code>std::encoding::json</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>encode + decode + Value.</td>
+</tr>
+<tr>
+<td><code>std::encoding::base64</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>encode + decode.</td>
+</tr>
+<tr>
+<td><code>std::encoding::hex</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>encode + decode.</td>
+</tr>
+<tr>
+<td><code>std::encoding::binary</code></td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">◑</td>
+<td>put_u16_be, put_u32_be only — get_*, le variants pending.</td>
+</tr>
+<tr>
+<td><code>std::sync</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Mutex, WaitGroup, AtomicI64. RwLock, Once partial.</td>
+</tr>
+<tr>
+<td><code>std::time</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>now, sleep, format_rfc3339, parse_rfc3339.</td>
+</tr>
+<tr>
+<td><code>std::panic</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>panic + catch_unwind.</td>
+</tr>
+<tr>
+<td><code>std::errors</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>new, wrap, is, chain, join.</td>
+</tr>
+<tr>
+<td><code>std::flag</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x.</td>
+</tr>
+<tr>
+<td><code>std::path</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>join, split, base, dir, ext, clean.</td>
+</tr>
+<tr>
+<td><code>std::path::native</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>SEPARATOR, join, clean, to_posix, to_native.</td>
+</tr>
+<tr>
+<td><code>std::fs</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>read_dir, walk_dir, mkdir_all, remove_all, copy, rename.</td>
+</tr>
+<tr>
+<td><code>std::bytes</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Buffer, Builder, index_of, split, replace.</td>
+</tr>
+<tr>
+<td><code>std::bufio</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Reader, Writer, Scanner with split_lines / split_words.</td>
+</tr>
+<tr>
+<td><code>std::net::url</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Url, query_escape, query_unescape.</td>
+</tr>
+<tr>
+<td><code>std::slog</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Logger, Field, TextHandler, JsonHandler with escape coverage.</td>
+</tr>
+<tr>
+<td><code>std::context</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>background, with_cancel, with_deadline, with_timeout.</td>
+</tr>
+<tr>
+<td><code>std::crypto::rand</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>fill, bytes.</td>
+</tr>
+<tr>
+<td><code>std::crypto::sha256</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>digest, hex.</td>
+</tr>
+<tr>
+<td><code>std::crypto::hmac</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>sha256_mac.</td>
+</tr>
+<tr>
+<td><code>std::crypto::subtle</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>constant_time_eq.</td>
+</tr>
+<tr>
+<td><code>std::sort</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>sort, sort_stable, binary_search.</td>
+</tr>
+<tr>
+<td><code>std::utf8</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>is_valid, rune_count.</td>
+</tr>
+<tr>
+<td><code>std::math::rand</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Rng (SplitMix64).</td>
+</tr>
+<tr>
+<td><code>std::testing</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Runner, check, check_eq, check_ok.</td>
+</tr>
+<tr>
+<td><code>std::runtime</code></td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">◑</td>
+<td>max_procs, set_max_procs, num_cpus. mem_stats partial.</td>
+</tr>
+<tr>
+<td><code>std::tls</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>rustls-backed; ServerConfig, ClientConfig.</td>
+</tr>
+<tr>
+<td><code>std::regex</code></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>compile, is_match, find, find_all, captures, replace, split.</td>
+</tr>
+<tr>
+<td><code>std::compress::gzip</code></td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">◑</td>
+<td style="text-align: center;">✓</td>
+<td>encode/decode + Level. Stdlib + tests via flate2; interp/MIR wiring pending.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="how-to-regenerate-this-page">How to regenerate this page<a class="headerlink" href="#how-to-regenerate-this-page" title="Permanent link">&para;</a></h2>
+<pre><code class="language-sh">cargo xtask stdlib-coverage
+</code></pre>
+<h2 id="how-to-interpret-the-columns">How to interpret the columns<a class="headerlink" href="#how-to-interpret-the-columns" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p>A module is marked <code>Interp ✓</code> when at least one of its
+items resolves through <code>gossamer-interp::builtins::install</code>.
+A <code>◑</code> means some items resolve and some do not.
+A <code>✗</code> means none of the items are wired.</p>
+</li>
+<li>
+<p>A module is marked <code>Compiled ✓</code> when at least one of its
+items has a runtime symbol declared in
+<code>gossamer-codegen-llvm/src/emit.rs::RUNTIME_DECLARATIONS</code>
+and a Cranelift import in
+<code>gossamer-codegen-cranelift/src/native.rs</code>, or is
+dispatched as a method via
+<code>gossamer-mir/src/lower.rs::lower_method_call</code>.</p>
+</li>
+<li>
+<p>A module is marked <code>Tests ✓</code> when at least one
+integration / parity / phase test exercises it.</p>
+</li>
+</ul>
+<h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../stdlib/"><code>stdlib.md</code></a> — module index with summaries.</li>
+<li><a href="../method_support/"><code>method_support.md</code></a> — per-method
+reference for shipped types.</li>
+<li><a href="../non_goals_v1/"><code>non_goals_v1.md</code></a> — what's deferred to
+v1.x.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../method_support/" class="btn btn-neutral float-left" title="Method support"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../toolchain/" class="btn btn-neutral float-right" title="Overview">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../method_support/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../toolchain/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

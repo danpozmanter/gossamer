@@ -7,10 +7,11 @@ repo_name: gossamer-lang/gossamer
 edit_uri: edit/main/docs_src/
 
 docs_dir: docs_src
-site_dir: site
+site_dir: docs
 
 theme:
   name: readthedocs
+  logo: img/GossamerLogo.png
   navigation_depth: 3
   highlightjs: true
   hljs_languages:
@@ -57,6 +58,8 @@ nav:
       - Binary-size baseline: design/binary_size_baseline.md
       - Runtime internals: design/runtime.md
       - Self-hosting study: design/selfhosting.md
+      - Incremental compilation: design/incremental.md
+  - Skill card: skill_card.md
   - Security: security.md
   - Contributing: contributing.md
 

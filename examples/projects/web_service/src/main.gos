@@ -1,0 +1,143 @@
+/*
+ * Multi-endpoint HTTP service laid out as a real project.
+ *
+ * Endpoints:
+ *   GET /health        -> 200 "ok"
+ *   GET /users         -> 200 JSON list of users
+ *   GET /echo?msg=...  -> 200 JSON { "echo": "<msg>" }
+ *   *                  -> 404 "not found"
+ *
+ * Each route has a pure `render_*` helper so the unit tests in
+ * `mod tests` can exercise the body shape without a real socket.
+ */
+
+use std::http
+
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&self, request: http::Request) -> Result<http::Response, http::Error> {
+        let path = request.path()
+        if path == "/health" {
+            return Ok(http::Response::text(200, render_health()))
+        }
+        if path == "/users" {
+            return Ok(http::Response::json(200, render_users()))
+        }
+        if path.starts_with("/echo") {
+            return Ok(http::Response::json(200, render_echo(&request.query)))
+        }
+        Ok(http::Response::text(404, "not found".to_string()))
+    }
+}
+
+fn render_health() -> String {
+    "ok".to_string()
+}
+
+fn render_users() -> String {
+    "[{\"id\":1,\"name\":\"ada\"},{\"id\":2,\"name\":\"grace\"}]".to_string()
+}
+
+// Echoes the raw query string back as a JSON object. The test
+// suite exercises this directly to avoid spinning up a socket.
+fn render_echo(query: &String) -> String {
+    format!("{{\"echo\":\"{query}\"}}")
+}
+
+fn classify(path: &str) -> String {
+    if path == "/health" {
+        return "health".to_string()
+    }
+    if path == "/users" {
+        return "users".to_string()
+    }
+    if path.starts_with("/echo") {
+        return "echo".to_string()
+    }
+    "not_found".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn health_returns_ok() {
+        testing::check_eq(
+            &super::render_health(),
+            &"ok".to_string(),
+            "health body is exactly \"ok\"",
+        )
+    }
+
+    #[test]
+    fn users_returns_json_list_with_known_names() {
+        let body = super::render_users()
+        testing::check(body.starts_with("["), "users body is a JSON array")
+        testing::check(body.contains("\"ada\""), "users body lists ada")
+        testing::check(body.contains("\"grace\""), "users body lists grace")
+    }
+
+    #[test]
+    fn echo_wraps_query_in_json() {
+        let body = super::render_echo(&"msg=hello".to_string())
+        testing::check_eq(
+            &body,
+            &"{\"echo\":\"msg=hello\"}".to_string(),
+            "echo body wraps the query string exactly",
+        )
+    }
+
+    #[test]
+    fn echo_handles_empty_query() {
+        let body = super::render_echo(&"".to_string())
+        testing::check_eq(
+            &body,
+            &"{\"echo\":\"\"}".to_string(),
+            "echo body still well-formed for empty input",
+        )
+    }
+
+    #[test]
+    fn classify_routes_known_paths() {
+        testing::check_eq(
+            &super::classify("/health"),
+            &"health".to_string(),
+            "health route classified",
+        )
+        testing::check_eq(
+            &super::classify("/users"),
+            &"users".to_string(),
+            "users route classified",
+        )
+        testing::check_eq(
+            &super::classify("/echo"),
+            &"echo".to_string(),
+            "echo route classified",
+        )
+        testing::check_eq(
+            &super::classify("/echo?msg=hi"),
+            &"echo".to_string(),
+            "echo route still classified with query string",
+        )
+    }
+
+    #[test]
+    fn classify_falls_back_to_not_found() {
+        testing::check_eq(
+            &super::classify("/missing"),
+            &"not_found".to_string(),
+            "unknown path classified as not_found",
+        )
+    }
+}
+
+fn main() -> Result<(), http::Error> {
+    let app = App { }
+    println!("listening on 0.0.0.0:8080")
+    println!("try: curl http://localhost:8080/health")
+    println!("     curl http://localhost:8080/users")
+    println!("     curl 'http://localhost:8080/echo?msg=hi'")
+    http::serve("0.0.0.0:8080".to_string(), app)
+}

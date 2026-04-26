@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/codegen_abi/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Codegen ABI - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Codegen ABI";
+        var mkdocs_page_input_path = "codegen_abi.md";
+        var mkdocs_page_url = "/gossamer/codegen_abi/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="..">
+          <img src="../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Codegen ABI</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#what-works">What works</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#what-fails-to-compile">What fails to compile</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#why-this-constraint-exists">Why this constraint exists</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#how-user-code-lives-within-the-constraint">How user code lives within the constraint</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#what-changes-in-v1x">What changes in v1.x</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#see-also">See also</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Production</li>
+      <li class="breadcrumb-item active">Codegen ABI</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/codegen_abi.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="codegen-abi-the-flat-i64-monomorphisation-contract">Codegen ABI: the flat-i64 monomorphisation contract<a class="headerlink" href="#codegen-abi-the-flat-i64-monomorphisation-contract" title="Permanent link">&para;</a></h1>
+<p>Gossamer's compiled tier (<code>gos build</code> and <code>gos build --release</code>)
+monomorphises every generic instantiation to a concrete function
+in MIR. Today that monomorphisation <strong>packs every value into a
+64-bit slot</strong> at the ABI boundary. The runtime reads / writes
+those slots; codegen ferries them through Cranelift or LLVM.</p>
+<p>This page documents the contract precisely, so you know which
+generics work end-to-end in v1 and which deliberately fail
+compilation with a diagnostic.</p>
+<h2 id="what-works">What works<a class="headerlink" href="#what-works" title="Permanent link">&para;</a></h2>
+<p>A generic instantiation <code>Foo&lt;T&gt;</code> compiles end-to-end when <strong>every
+type parameter <code>T</code> is representable in 64 bits</strong>:</p>
+<ul>
+<li>All integer types (<code>i8</code> … <code>i128</code><em> and <code>u8</code> … <code>u128</code></em>, <code>isize</code>,
+  <code>usize</code>).</li>
+<li><code>f32</code>, <code>f64</code>.</li>
+<li><code>bool</code>, <code>char</code>.</li>
+<li><code>&amp;T</code> and <code>&amp;mut T</code> references — references are pointers, which
+  are 64 bits on the platforms we ship.</li>
+<li>Heap-managed aggregate <strong>handles</strong>: <code>String</code>, <code>Vec&lt;T&gt;</code>,
+  <code>HashMap&lt;K, V&gt;</code>, channel halves, <code>I64Vec</code>, <code>Mutex&lt;T&gt;</code>,
+  <code>WaitGroup</code>, <code>Atomic&lt;i64&gt;</code>. Each is a 64-bit pointer or handle
+  to runtime-managed storage.</li>
+</ul>
+<p>* <code>i128</code> and <code>u128</code> are passed as a pair of i64 slots, not a
+single one. <code>Vec&lt;i128&gt;</code> works; <strong>a generic <code>T = i128</code> does not</strong>
+in v1, because the monomorphic ABI is one slot per <code>T</code>.</p>
+<h2 id="what-fails-to-compile">What fails to compile<a class="headerlink" href="#what-fails-to-compile" title="Permanent link">&para;</a></h2>
+<p>If you instantiate a generic with a <code>T</code> that does not fit in 64
+bits, the compiler refuses with diagnostic <code>GT0042</code>:</p>
+<pre><code>error[GT0042]: this generic instantiation is not yet supported
+   = note: T = MyStruct (24-byte by-value), but v1 codegen passes
+           every type parameter in a single 64-bit slot. See
+           docs/codegen_abi.md for the full constraint.
+   = help: until layout-driven specialisation lands in v1.x, work
+           around this by boxing the value: `&amp;MyStruct` or
+           `Vec&lt;MyStruct&gt;`. Generic functions over `&amp;T` work for
+           any `T` because references fit in 64 bits.
+</code></pre>
+<p>The diagnostic is the contract. If you don't see this diagnostic,
+the program compiles correctly. <strong>There is no codegen path that
+accepts an oversized <code>T</code> and produces a working binary.</strong> You
+will not get garbage output; you will get a hard compile error.</p>
+<h2 id="why-this-constraint-exists">Why this constraint exists<a class="headerlink" href="#why-this-constraint-exists" title="Permanent link">&para;</a></h2>
+<p>A v1 implementation goal was: ship a real native compiler that
+beats Rust's reference fasta program at N=25M. We hit it (0.45 s
+vs 0.82 s on a Ryzen 9 9900X). To get there, the MIR → Cranelift
+/ LLVM lowerer specialised on a <strong>fixed slot kind</strong> so the
+inner-loop ops are typed: an i64 add is a single Cranelift
+instruction, not a polymorphic dispatch.</p>
+<p>A by-value <code>MyStruct</code> argument needs the codegen to know its
+layout (offsets, alignment, padding) at every monomorphic call
+site. We have that information at MIR — but we don't yet
+<strong>propagate</strong> it into the codegen call ABI. That work is parity
+plan §P4 ("layout-driven specialisation"), tracked separately.</p>
+<h2 id="how-user-code-lives-within-the-constraint">How user code lives within the constraint<a class="headerlink" href="#how-user-code-lives-within-the-constraint" title="Permanent link">&para;</a></h2>
+<p>In practice, idiomatic Gossamer code rarely needs <code>T = struct</code>
+because:</p>
+<ul>
+<li><code>Vec&lt;T&gt;</code>, <code>HashMap&lt;K, V&gt;</code>, channels are runtime-provided and
+  are <em>not</em> monomorphised by the user — they are a single
+  generic implementation in the runtime that takes a <code>T</code> slot.
+  The runtime handles arbitrarily-sized elements internally
+  by allocating each <code>T</code> on the GC heap and the slot it stores
+  is a pointer.</li>
+<li>User generics over <code>&amp;T</code> work for any <code>T</code> (since <code>&amp;T</code> is a
+  pointer = 64 bits).</li>
+<li>Code that is generic over numeric type (<code>min&lt;T: Ord&gt;</code>,
+  <code>sum&lt;T: Add&gt;</code>) works for every primitive numeric type up to
+  64 bits.</li>
+</ul>
+<p>The remaining gap is <strong>user-defined generic functions over
+user-defined <code>T</code>-by-value</strong>. For example:</p>
+<pre><code class="language-gos">fn id&lt;T&gt;(x: T) -&gt; T { x }   // T = i64: works
+                             // T = MyStruct: GT0042
+
+fn id_ref&lt;T&gt;(x: &amp;T) -&gt; &amp;T { x }   // works for any T
+</code></pre>
+<p>Generic <em>types</em> with internal layout sensitivity (a hypothetical
+user <code>MyVec&lt;T&gt;</code> storing <code>T</code> inline) hit the same constraint. The
+v1 workaround is "store <code>&amp;T</code>, let the GC own the body."</p>
+<h2 id="what-changes-in-v1x">What changes in v1.x<a class="headerlink" href="#what-changes-in-v1x" title="Permanent link">&para;</a></h2>
+<p>Layout-driven specialisation will:</p>
+<ol>
+<li>Propagate layout (size, align, field offsets) for each <code>T</code>
+   from MIR through to Cranelift / LLVM.</li>
+<li>Switch the codegen call ABI to "by-value where the layout
+   fits in registers; by-reference where it doesn't" — matching
+   what <code>rustc</code> does.</li>
+<li>Drop the <code>GT0042</code> diagnostic; turn the constraint off.</li>
+</ol>
+<p>Until then, the diagnostic is the safety net that prevents
+"compiles, segfaults at runtime" — a class of bug Gossamer is
+deliberately willing to accept compile-time pain to avoid.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../non_goals_v1/"><code>non_goals_v1.md</code></a> — the broader v1
+  deferred-features list.</li>
+<li><code>gos explain GT0042</code> — full long-form diagnostic text.</li>
+<li>Internal notes: <code>parity.md</code> §P4 and
+  <code>compiler_tier_plan.md</code>.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../perf_characteristics/" class="btn btn-neutral float-left" title="Performance"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../non_goals_v1/" class="btn btn-neutral float-right" title="v1 non-goals">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../perf_characteristics/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../non_goals_v1/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

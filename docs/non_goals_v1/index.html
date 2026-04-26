@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/non_goals_v1/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>v1 non-goals - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "v1 non-goals";
+        var mkdocs_page_input_path = "non_goals_v1.md";
+        var mkdocs_page_url = "/gossamer/non_goals_v1/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="..">
+          <img src="../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">v1 non-goals</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#language">Language</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#type-system">Type system</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#runtime">Runtime</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#standard-library">Standard library</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#tooling">Tooling</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#security">Security</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#what-this-list-is-not">What this list is not</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#cross-references">Cross-references</a>
+    </li>
+    </ul>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Production</li>
+      <li class="breadcrumb-item active">v1 non-goals</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/non_goals_v1.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="non-goals-for-v1">Non-goals for v1<a class="headerlink" href="#non-goals-for-v1" title="Permanent link">&para;</a></h1>
+<p>Gossamer's v1 release is deliberately scoped. The list below is
+what is <strong>not</strong> in v1, with the reasoning. Each item lives in a
+tracking issue or doc note — what's omitted is omitted on purpose,
+not by oversight.</p>
+<p>The goal is honesty: a developer evaluating Gossamer should know
+in five minutes whether the gaps will block their use case.</p>
+<h2 id="language">Language<a class="headerlink" href="#language" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No async / <code>await</code>.</strong> Gossamer's concurrency model is
+  Go-shaped goroutines + channels. <code>go expr</code> runs on real OS
+  threads with cooperative scheduling. There is no plan for an
+  <code>async</code> keyword in v1.</li>
+<li><strong>No macro system.</strong> <code>println!("{name}")</code> interpolation is a
+  parser-level special case, not user-extensible. Custom
+  <code>derive</code> is post-v1.</li>
+<li><strong>No <code>unsafe</code> block.</strong> First-party crates set
+  <code>#![forbid(unsafe_code)]</code>. Raw pointers and inline assembly
+  are not exposed to user code. The runtime's FFI boundary is
+  the only <code>unsafe</code> in the workspace and is not user-reachable.</li>
+<li><strong>No const generics over arbitrary types.</strong> Array sizes are
+  literal <code>usize</code>. Generic parameters of type <code>T: const N: T</code>
+  are not supported.</li>
+</ul>
+<h2 id="type-system">Type system<a class="headerlink" href="#type-system" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No higher-kinded types.</strong> Generic type constructors that
+  themselves take type parameters (<code>Functor&lt;F&lt;_&gt;&gt;</code>) are out.</li>
+<li><strong>Generic monomorphization is flat-i64-ABI only in v1.</strong> A
+  generic <code>fn min&lt;T: Ord&gt;(a: T, b: T) -&gt; T</code> works for <code>T</code> up to
+  64 bits. Larger <code>T</code> (e.g. <code>String</code>, user structs) compile to a
+  <strong>diagnostic</strong>, not garbage code, until layout-driven
+  specialisation lands. See <a href="../codegen_abi/"><code>codegen_abi.md</code></a>.</li>
+<li><strong>No specialisation, no negative impls, no GATs.</strong> Plain
+  bounded generics only.</li>
+</ul>
+<h2 id="runtime">Runtime<a class="headerlink" href="#runtime" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>One OS thread per goroutine.</strong> Real M:N scheduling is a
+  v1.x optimisation. The current model is correct but not as
+  cheap as Go's scheduler. Document the constraint, ship.</li>
+<li><strong>No green-thread-aware blocking I/O.</strong> Calls into the host
+  block the OS thread. Spawn another goroutine to make progress.</li>
+<li><strong>GC pauses are stop-the-world.</strong> A concurrent / generational
+  GC is post-v1. The stop-the-world mark-sweep is fine for
+  typical service workloads under tens of thousands of live
+  goroutines, but a real-time game loop is not the target.</li>
+</ul>
+<h2 id="standard-library">Standard library<a class="headerlink" href="#standard-library" title="Permanent link">&para;</a></h2>
+<p>The following Go stdlib equivalents are <strong>deliberately deferred
+to v1.x</strong>:</p>
+<ul>
+<li>HTTP/2 server + client. v1 ships HTTP/1.1 only.</li>
+<li>gRPC. Land via a third-party package once the registry is
+  open for publishing.</li>
+<li><code>database/sql</code>-shaped driver interface plus PostgreSQL /
+  MySQL drivers. Third-party.</li>
+<li>Locale-aware time formatting (<code>time::format_locale</code>).</li>
+<li>Full TLS client cert verification + ALPN beyond <code>h2</code>. The
+  <code>rustls</code> handle is exposed; the high-level convenience API
+  is in v1.x.</li>
+<li><code>encoding/csv</code>, <code>encoding/xml</code>. v1 ships JSON only.</li>
+</ul>
+<h2 id="tooling">Tooling<a class="headerlink" href="#tooling" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No <code>gos publish</code> flow yet.</strong> Authoring a package and sharing
+  it depends on three pieces — a deterministic packer, an
+  ed25519-signing seam, and a registry-topology decision. We've
+  built the packer in <code>gossamer-pkg::tar::pack</code>; the rest waits
+  on real demand and on landing the crypto seam (<code>ring</code>-backed
+  ed25519). Until then, the consumer side (<code>gos add</code> /
+  <code>gos fetch</code> against a <code>url + sha256</code> snippet) works and is
+  enough to depend on a third-party tarball you've hosted by
+  hand.</li>
+<li><strong>No package registry server.</strong> Discovery, namespaces,
+  deprecation flow, and CDN-backed downloads are post-v1.</li>
+<li><strong>No production-grade benchmarking framework.</strong> <code>gos bench</code>
+  exists but does not run statistically rigorous comparisons or
+  emit machine-readable JSON. Treat the numbers as developer
+  feedback, not CI gates.</li>
+<li><strong>No coverage tooling.</strong> <code>gos test</code> runs the test suite; it
+  does not emit lcov / cobertura output.</li>
+<li><strong>No ergonomic editor extensions beyond LSP.</strong> Gossamer
+  ships an LSP 3.16 server. VS Code / Neovim / Emacs / Helix
+  pick it up via the standard generic-LSP plugins.</li>
+</ul>
+<h2 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No sandboxed execution.</strong> <code>gos run</code> and compiled binaries
+  have full host access. Capability-restricted execution is a
+  v1.x feature.</li>
+<li><strong>No <code>#[deprecated]</code> lint over user types.</strong> Available on
+  stdlib items only via doc comments.</li>
+</ul>
+<h2 id="what-this-list-is-not">What this list is <em>not</em><a class="headerlink" href="#what-this-list-is-not" title="Permanent link">&para;</a></h2>
+<p>This is not a list of bugs or unfinished features that <em>should</em>
+be in v1. Items here are <strong>explicit deferrals</strong>: shipping the
+language without them is a feature, not a regret. Each was
+weighed against v1 calendar pressure and the team's bet that
+the items on the list are the right ones to defer.</p>
+<p>If you need one of these, file an issue tagged <code>v1.x-pending</code>
+with a use-case. Tickets with concrete user demand drive the
+v1.x priority order.</p>
+<h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../codegen_abi/"><code>codegen_abi.md</code></a> — flat-i64 monomorphisation.</li>
+<li><a href="../migration/go/"><code>migration/go.md</code></a> — how the Go-stdlib gaps
+  affect migration.</li>
+<li><a href="../stdlib/"><code>stdlib.md</code></a> — what the stdlib <em>does</em> cover.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../codegen_abi/" class="btn btn-neutral float-left" title="Codegen ABI"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../migration/rust/" class="btn btn-neutral float-right" title="From Rust">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../codegen_abi/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../migration/rust/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

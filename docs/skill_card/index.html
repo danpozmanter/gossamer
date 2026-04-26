@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/skill_card/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Skill card - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Skill card";
+        var mkdocs_page_input_path = "skill_card.md";
+        var mkdocs_page_url = "/gossamer/skill_card/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="..">
+          <img src="../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Skill card</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#1-what-gossamer-is">1. What Gossamer is</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#2-idioms-at-a-glance">2. Idioms at a glance</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#3-the-forward-pipe-operator">3. The |&gt; forward-pipe operator</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#4-cheat-sheet">4. Cheat sheet</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#5-grammar-essentials">5. Grammar essentials</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#6-formatted-output-the-only-macros">6. Formatted output (the only macros)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#7-error-handling">7. Error handling</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#8-concurrency">8. Concurrency</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#8a-closures-and-higher-order-fns">8a. Closures and higher-order fns</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#9-data-structures">9. Data structures</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#10-the-gos-toolchain">10. The gos toolchain</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#11-writing-tests">11. Writing tests</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#12-standard-library-surface">12. Standard library surface</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#13-project-layout">13. Project layout</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#14-worked-examples">14. Worked examples</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#cli-flags">CLI flags</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#http-server">HTTP server</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#15-current-gaps-pre-100">15. Current gaps (pre-1.0.0)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#16-style-rules">16. Style rules</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#17-where-to-read-more">17. Where to read more</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#18-when-in-doubt">18. When in doubt</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Skill card</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/skill_card.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="gossamer-skill-card">Gossamer — Skill Card<a class="headerlink" href="#gossamer-skill-card" title="Permanent link">&para;</a></h1>
+<p>Drop this file into a model's context to teach it how to write
+idiomatic Gossamer. Self-contained. Covers: what Gossamer is,
+surface syntax, forward-pipe style, the <code>gos</code> toolchain, error
+handling, concurrency, stdlib surface, and how to test. No prior
+context assumed.</p>
+<hr />
+<h2 id="1-what-gossamer-is">1. What Gossamer is<a class="headerlink" href="#1-what-gossamer-is" title="Permanent link">&para;</a></h2>
+<p>A garbage-collected, goroutine-powered, fast-compiling systems
+language. Syntax is Rust-flavoured without lifetimes or a borrow
+checker. Runtime is Go-shaped: goroutines, channels, GC. Source
+files end in <code>.gos</code>. The toolchain binary is <code>gos</code>. Every project
+ships a <code>project.toml</code> manifest.</p>
+<p>Status: pre-1.0.0. Surface is stable enough to write against;
+runtime and native codegen are partially wired — see "current
+gaps" at the bottom.</p>
+<h2 id="2-idioms-at-a-glance">2. Idioms at a glance<a class="headerlink" href="#2-idioms-at-a-glance" title="Permanent link">&para;</a></h2>
+<p>Prefer these shapes when writing Gossamer:</p>
+<ul>
+<li><strong>Left-to-right dataflow with <code>|&gt;</code>.</strong> Chain calls with the
+  forward-pipe operator instead of nesting.</li>
+<li><strong>Plain functions for free-standing logic.</strong> Reach for
+  <code>impl</code> only when state is genuinely tied to a type.</li>
+<li><strong><code>Result&lt;T, E&gt;</code> + <code>?</code> for fallibility.</strong> Panic only for
+  invariant violations.</li>
+<li><strong>Exhaustive <code>match</code>.</strong> Leave no <code>_ =&gt;</code> arm unless every
+  unmatched case genuinely means the same thing.</li>
+<li><strong>Goroutines + channels for async work.</strong> Share by
+  communicating; reach for <code>sync::Mutex</code> only when
+  shared-memory is the simpler model.</li>
+<li><strong>Explicit numeric widths.</strong> <code>0i64</code> not <code>0</code> when the context
+  doesn't pin the type.</li>
+<li><strong>Macros only for formatted output.</strong> <code>println!</code>,
+  <code>format!</code>, <code>print!</code>, <code>eprintln!</code>, <code>eprint!</code>, <code>panic!</code> are
+  the six macro entries — no others exist.</li>
+</ul>
+<h2 id="3-the-forward-pipe-operator">3. The <code>|&gt;</code> forward-pipe operator<a class="headerlink" href="#3-the-forward-pipe-operator" title="Permanent link">&para;</a></h2>
+<p>Prefer <code>|&gt;</code> over nested calls whenever a value flows through
+two or more transformations.</p>
+<ul>
+<li><code>x |&gt; f</code> desugars to <code>f(x)</code>.</li>
+<li><code>x |&gt; f(a, b)</code> desugars to <code>f(a, b, x)</code> — the piped value
+  lands in the <strong>last positional slot</strong>.</li>
+<li><code>x |&gt; recv.m(a)</code> becomes <code>recv.m(a, x)</code> — methods compose
+  the same way.</li>
+<li><code>|&gt;</code> is left-associative with very low precedence, so
+  <code>a |&gt; f |&gt; g</code> reads as <code>g(f(a))</code> without parentheses.</li>
+</ul>
+<pre><code class="language-gossamer">fn double(x: i64) -&gt; i64 { x * 2 }
+fn add(a: i64, b: i64) -&gt; i64 { a + b }
+fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
+    if x &lt; lo { lo } else if x &gt; hi { hi } else { x }
+}
+
+// Preferred — reads top-down.
+let n = 3i64 |&gt; double |&gt; add(10i64) |&gt; clamp(0i64, 100i64)
+
+// Discouraged — the same meaning, but the eye has to unwind.
+let same = clamp(0i64, 100i64, add(10i64, double(3i64)))
+</code></pre>
+<p>When a step is a closure, write it inline — <code>|&gt;</code> still threads
+the value into the last slot:</p>
+<pre><code class="language-gossamer">let result = input
+    |&gt; parse_header
+    |&gt; validate
+    |&gt; |row| { row.body }
+    |&gt; write_out
+</code></pre>
+<h2 id="4-cheat-sheet">4. Cheat sheet<a class="headerlink" href="#4-cheat-sheet" title="Permanent link">&para;</a></h2>
+<pre><code class="language-gossamer">use std::io
+
+const PI: f64 = 3.14159
+static MAX_RETRIES: u32 = 3
+
+struct Point { x: f64, y: f64 }
+struct Pair(i64, i64)
+enum Shape { Circle(f64), Rect { w: f64, h: f64 } }
+
+trait Area { fn area(&amp;self) -&gt; f64; }
+
+impl Area for Shape {
+    fn area(&amp;self) -&gt; f64 {
+        match self {
+            Shape::Circle(r) =&gt; 3.14159 * r * r,
+            Shape::Rect { w, h } =&gt; w * h,
+        }
+    }
+}
+
+fn main() {
+    let mut total = 0i64
+    for n in [1i64, 2i64, 3i64].iter() {
+        total = total + *n
+    }
+    println!(&quot;total: {}&quot;, total)
+}
+</code></pre>
+<h2 id="5-grammar-essentials">5. Grammar essentials<a class="headerlink" href="#5-grammar-essentials" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Comments</strong>: <code>//</code> single-line and <code>/* ... */</code> block
+  (block comments nest). <code>///</code> on <code>pub</code> items is a doc
+  comment that <code>gos doc</code> renders and <code>gos test</code> runs.</li>
+<li><strong>Semicolons</strong> are optional at statement boundaries; one
+  statement per line.</li>
+<li><strong>Expressions-as-statements.</strong> <code>if</code>, <code>match</code>, <code>loop</code>, and
+  block expressions all yield values.</li>
+<li><strong>Bindings.</strong> <code>let name = expr</code>, <code>let mut name = expr</code>,
+  <code>let Point { x, y } = p</code> (destructure), <code>let (a, b) = pair</code>.</li>
+<li><strong>References.</strong> <code>&amp;x</code> read-shared, <code>&amp;mut x</code> exclusive write.
+  Aliasing intent only; the GC owns memory. <strong>No lifetimes,
+  no borrow checker.</strong></li>
+<li><strong>Types.</strong> <code>bool</code>, <code>char</code>, <code>i8..i128</code>, <code>u8..u128</code>, <code>isize</code>,
+  <code>usize</code>, <code>f32</code>, <code>f64</code>, <code>String</code>, <code>[T]</code>, <code>(A, B)</code>,
+  <code>Option&lt;T&gt;</code>, <code>Result&lt;T, E&gt;</code>, <code>&amp;T</code>, <code>&amp;mut T</code>, user types.</li>
+<li><strong>Integer literals</strong> take a suffix: <code>1i64</code>, <code>255u8</code>, <code>0usize</code>.
+  Unsuffixed literals default to <code>i64</code>; be explicit when the
+  context doesn't already pin the type.</li>
+<li><strong>Casts.</strong> <code>x as i32</code> — whitelist-checked (numeric ↔ numeric,
+  <code>bool</code> / <code>char</code> → integer, <code>u8</code> → <code>char</code>, same-type no-op).
+  Every other <code>as</code> shape is a hard error (GT0005).</li>
+<li><strong>Patterns.</strong> Wildcard <code>_</code>, literals, <code>name</code>, <code>mut name</code>,
+  <code>Variant(…)</code>, <code>Struct { … }</code>, tuples <code>(a, b)</code>, ranges
+  <code>1..=5</code>, or-patterns <code>a | b</code>, <code>@</code>-bindings <code>x @ 1..=3</code>,
+  rest <code>..</code>. Guards: <code>Some(n) if n &gt; 0 =&gt; …</code>.</li>
+</ul>
+<h2 id="6-formatted-output-the-only-macros">6. Formatted output (the only macros)<a class="headerlink" href="#6-formatted-output-the-only-macros" title="Permanent link">&para;</a></h2>
+<p>Gossamer has exactly six macros, all format-shaped. Every other
+<code>name!(…)</code> is a parse error.</p>
+<table>
+<thead>
+<tr>
+<th>Macro</th>
+<th>Returns</th>
+<th>Destination</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>format!("…", a, b)</code></td>
+<td><code>String</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>println!("…", a, b)</code></td>
+<td><code>()</code></td>
+<td>stdout + newline</td>
+</tr>
+<tr>
+<td><code>print!("…", a, b)</code></td>
+<td><code>()</code></td>
+<td>stdout, no newline</td>
+</tr>
+<tr>
+<td><code>eprintln!("…", a, b)</code></td>
+<td><code>()</code></td>
+<td>stderr + newline</td>
+</tr>
+<tr>
+<td><code>eprint!("…", a, b)</code></td>
+<td><code>()</code></td>
+<td>stderr, no newline</td>
+</tr>
+<tr>
+<td><code>panic!("…", a, b)</code></td>
+<td><code>!</code></td>
+<td>unwinds with the rendered message</td>
+</tr>
+</tbody>
+</table>
+<p>Each macro supports Rust-style <code>{}</code> placeholders and
+named-capture via <code>{ident}</code> for bindings in scope:</p>
+<pre><code class="language-gossamer">let name = &quot;jane&quot;
+println!(&quot;hello, {name}!&quot;)
+println!(&quot;value: {} / {}&quot;, answer, total)
+</code></pre>
+<p>The six macros lower to one allocation through the internal
+<code>__concat</code> builtin. For building a single <code>String</code> piece-by-
+piece, <code>+</code> concatenates without a separator:</p>
+<pre><code class="language-gossamer">let greeting = &quot;hello, &quot;.to_string() + &amp;name
+</code></pre>
+<h2 id="7-error-handling">7. Error handling<a class="headerlink" href="#7-error-handling" title="Permanent link">&para;</a></h2>
+<p>Fallible functions return <code>Result&lt;T, E&gt;</code>. Propagate with <code>?</code> and
+build / wrap / inspect errors through <code>std::errors</code>:</p>
+<pre><code class="language-gossamer">use std::errors
+use std::os
+
+fn load_config(path: &amp;String) -&gt; Result&lt;String, errors::Error&gt; {
+    os::read_file_to_string(path)
+        .map_err(|e| errors::wrap(e, format!(&quot;reading {}&quot;, path)))
+}
+</code></pre>
+<ul>
+<li><code>errors::new(msg)</code> — build a free-standing error.</li>
+<li><code>errors::wrap(cause, msg)</code> — add a higher-level message.</li>
+<li><code>errors::is(err, needle)</code> — walk the cause chain.</li>
+<li><code>errors::chain(err)</code> — iterate the cause chain.</li>
+<li><code>errors::join([err, err])</code> — combine several into one.</li>
+</ul>
+<p>Panics abort the current goroutine (and, for now, usually the
+process). Reserve them for invariant violations, not
+recoverable failure.</p>
+<h2 id="8-concurrency">8. Concurrency<a class="headerlink" href="#8-concurrency" title="Permanent link">&para;</a></h2>
+<p>Goroutines via <code>go expr</code>. Typed channels via
+<code>std::sync::channel()</code>. <code>select { }</code> multiplexes receives and
+sends:</p>
+<pre><code class="language-gossamer">use std::sync::channel
+use std::time
+
+fn main() {
+    let pair = channel()
+    let tx = pair.0
+    let rx = pair.1
+
+    go tx.send(10i64)
+    go tx.send(20i64)
+    go tx.send(30i64)
+
+    time::sleep(50u64)
+
+    let mut total = 0i64
+    loop {
+        match rx.recv() {
+            Some(v) =&gt; total = total + v,
+            None =&gt; break,
+        }
+    }
+    println!(&quot;total: {}&quot;, total)
+}
+</code></pre>
+<p><code>select { }</code> multiplexes:</p>
+<pre><code class="language-gossamer">select {
+    x = rx_a.recv() =&gt; handle_a(x),
+    y = rx_b.recv() =&gt; handle_b(y),
+    default =&gt; do_something_else(),
+}
+</code></pre>
+<ul>
+<li>Prefer channels for coordination; reach for <code>sync::Mutex</code>
+  only when shared-memory updates are the simpler shape.</li>
+<li><code>go</code> takes a full expression — usually a function or method
+  call. Closures work (<code>go || { ... }()</code>) but a named helper
+  is easier to read and test.</li>
+<li>The current scheduler is cooperative and early-stage. Don't
+  assume blocking semantics; pair producers and consumers
+  with a short <code>time::sleep</code> or a <code>select { default =&gt; … }</code>
+  arm when you need to drain deterministically.</li>
+</ul>
+<h2 id="8a-closures-and-higher-order-fns">8a. Closures and higher-order fns<a class="headerlink" href="#8a-closures-and-higher-order-fns" title="Permanent link">&para;</a></h2>
+<p>Lambdas use <code>|param: T| body</code>. Captures from the enclosing scope
+work as you'd expect (GC-managed, no <code>move</code> keyword).</p>
+<p>For higher-order parameters, distinguish two callable types:</p>
+<ul>
+<li><code>fn(args) -&gt; ret</code> — raw code pointer, accepts only non-capturing
+  items (bare functions, lifted lambdas with no captures).</li>
+<li><code>Fn(args) -&gt; ret</code> — callable trait, accepts both bare items
+  and capturing closures. Fat pointer (env + code) under the
+  hood; the conversion is implicit at the call site.</li>
+</ul>
+<pre><code class="language-gossamer">fn apply(f: Fn(i64) -&gt; i64, x: i64) -&gt; i64 { f(x) }
+
+fn main() {
+    let scale = 10i64
+    let scaled = |y: i64| scale * y     // captures `scale`
+    println!(&quot;{}&quot;, apply(scaled, 5))    // 50
+
+    fn add_one(y: i64) -&gt; i64 { y + 1 }
+    println!(&quot;{}&quot;, apply(add_one, 41))  // 42 — bare fn coerces
+}
+</code></pre>
+<p>Single trait variant — no <code>FnMut</code> / <code>FnOnce</code> distinction (the
+borrow-style split Rust draws is unnecessary in a fully GC'd
+world). <code>FnMut</code> / <code>FnOnce</code> parse but lower to the same
+<code>Fn(_)</code> shape.</p>
+<h2 id="9-data-structures">9. Data structures<a class="headerlink" href="#9-data-structures" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>[T]</code> — growable array. Literal: <code>[1i64, 2i64, 3i64]</code>.</li>
+<li><code>(A, B, …)</code> — tuple. Field access via <code>.0</code>, <code>.1</code>, ….</li>
+<li><code>struct Foo { x, y }</code> / <code>struct Pair(A, B)</code> — GC-managed
+  value types.</li>
+<li><code>enum E { A, B(Payload) }</code> — sum types, pattern-matched
+  exhaustively.</li>
+<li><code>Option&lt;T&gt;</code> — <code>Some(T)</code> / <code>None</code>.</li>
+<li><code>Result&lt;T, E&gt;</code> — <code>Ok(T)</code> / <code>Err(E)</code>.</li>
+<li><code>std::collections::{Vec, HashMap, HashSet, BTreeMap}</code> —
+  the richer containers; dispatch is wiring-dependent today,
+  so verify with a small test if unsure.</li>
+</ul>
+<h2 id="10-the-gos-toolchain">10. The <code>gos</code> toolchain<a class="headerlink" href="#10-the-gos-toolchain" title="Permanent link">&para;</a></h2>
+<p>Every subcommand takes a <code>.gos</code> file or a project directory.
+Bare <code>gos</code> drops into the REPL.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gos check FILE</code></td>
+<td>Parse + resolve + typecheck + exhaustiveness.</td>
+</tr>
+<tr>
+<td><code>gos run FILE</code></td>
+<td>Register-based VM by default; falls back to the tree-walker when the VM hits something it doesn't yet support.</td>
+</tr>
+<tr>
+<td><code>gos run --vm FILE</code></td>
+<td>Require the VM (no fallback).</td>
+</tr>
+<tr>
+<td><code>gos run --tree-walker FILE</code></td>
+<td>Use the tree-walker directly.</td>
+</tr>
+<tr>
+<td><code>gos build FILE</code></td>
+<td>Native build via Cranelift + system <code>cc</code>.</td>
+</tr>
+<tr>
+<td><code>gos test PATH</code></td>
+<td>Discover and run <code>#[test]</code> functions.</td>
+</tr>
+<tr>
+<td><code>gos bench PATH</code></td>
+<td>Discover and time <code>#[bench]</code> functions.</td>
+</tr>
+<tr>
+<td><code>gos fmt [--check] FILE</code></td>
+<td>Rewrite canonically.</td>
+</tr>
+<tr>
+<td><code>gos doc FILE</code></td>
+<td>Print item listing + doc comments.</td>
+</tr>
+<tr>
+<td><code>gos lint [--deny-warnings] PATH</code></td>
+<td>Run the lint suite.</td>
+</tr>
+<tr>
+<td><code>gos explain CODE</code></td>
+<td>Long-form rationale for a diagnostic code.</td>
+</tr>
+<tr>
+<td><code>gos watch --command CMD PATH</code></td>
+<td>Re-run on file change.</td>
+</tr>
+<tr>
+<td><code>gos new ID --path DIR</code></td>
+<td>Scaffold a project.</td>
+</tr>
+<tr>
+<td><code>gos add SPEC</code> / <code>remove ID</code> / <code>tidy</code> / <code>fetch</code> / <code>vendor</code></td>
+<td>Package manager.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="11-writing-tests">11. Writing tests<a class="headerlink" href="#11-writing-tests" title="Permanent link">&para;</a></h2>
+<p>Unit tests live inside the file they cover, under
+<code>#[cfg(test)] mod tests { … }</code>. Integration tests live under
+<code>tests/</code> in a project.</p>
+<pre><code class="language-gossamer">pub fn add(a: i64, b: i64) -&gt; i64 { a + b }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn add_adds() {
+        let total = super::add(2i64, 3i64)
+        assert(total == 5i64)
+    }
+}
+</code></pre>
+<p>Doc-tests: fenced code inside <code>///</code> doc comments is compiled
+and executed by <code>gos test</code>. Mark non-runnable fences as
+<code>```text</code>.</p>
+<h2 id="12-standard-library-surface">12. Standard library surface<a class="headerlink" href="#12-standard-library-surface" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>std::fmt</code> — <code>Display</code>, <code>Debug</code>.</li>
+<li><code>std::io</code> — <code>Read</code>, <code>Write</code>, buffered wrappers, <code>stdin</code> / <code>stdout</code>.</li>
+<li><code>std::os</code> — process environment, argv, filesystem primitives.</li>
+<li><code>std::strings</code> / <code>std::strconv</code> — string and numeric helpers.</li>
+<li><code>std::collections</code> — <code>Vec</code>, <code>HashMap</code>, <code>HashSet</code>, <code>BTreeMap</code>.</li>
+<li><code>std::net</code> — <code>TcpListener</code>, <code>TcpStream</code>, <code>UdpSocket</code>, DNS.</li>
+<li><code>std::net::url</code> — URL parse + render + escape.</li>
+<li><code>std::http</code> — <code>Method</code>, <code>StatusCode</code>, <code>Headers</code>, <code>Request</code>,
+  <code>Response</code>, <code>Handler</code>, <code>serve</code>.</li>
+<li><code>std::encoding::{json, base64, hex, binary}</code>.</li>
+<li><code>std::sync</code> — <code>Mutex</code>, <code>RwLock</code>, atomics, <code>channel</code>, <code>Once</code>.</li>
+<li><code>std::time</code> — <code>Instant</code>, <code>Duration</code>, <code>sleep</code>, <code>now</code>.</li>
+<li><code>std::context</code> — cancellation, deadlines, <code>Context::background()</code>.</li>
+<li><code>std::bytes</code> / <code>std::bufio</code> — binary buffers and buffered IO.</li>
+<li><code>std::errors</code> — wrap / chain / join.</li>
+<li><code>std::flag</code> — CLI flag parser.</li>
+<li><code>std::sort</code> / <code>std::utf8</code> / <code>std::path</code> / <code>std::fs</code>.</li>
+<li><code>std::math::rand</code> — deterministic RNG.</li>
+<li><code>std::crypto::{rand, sha256, hmac, subtle}</code> — narrow, audited.</li>
+<li><code>std::slog</code> — structured logging.</li>
+<li><code>std::runtime</code> — scheduler + GC knobs.</li>
+<li><code>std::testing</code> — <code>check</code>, <code>check_eq</code>, <code>Runner</code>, <code>check_ok</code>.</li>
+<li><code>std::regex</code> — wraps the Rust <code>regex</code> crate.</li>
+</ul>
+<p>Reality check: many modules exist in the manifest with
+partial implementations. Trust examples in the repo; write
+a small test when unsure.</p>
+<h2 id="13-project-layout">13. Project layout<a class="headerlink" href="#13-project-layout" title="Permanent link">&para;</a></h2>
+<pre><code>project.toml       # manifest: [project], [dependencies], [registries]
+src/
+├── main.gos       # binary entry
+├── lib.gos        # library root (optional)
+└── subdir/
+    └── mod.gos    # module `subdir`
+tests/             # integration tests
+</code></pre>
+<p><code>project.toml</code>:</p>
+<pre><code class="language-toml">[project]
+id      = &quot;example.com/widget&quot;
+version = &quot;0.1.0&quot;
+authors = [&quot;Jane Roe &lt;jane@example.com&gt;&quot;]
+license = &quot;Apache-2.0&quot;
+
+[dependencies]
+&quot;example.org/lib&quot; = &quot;1.2.3&quot;
+</code></pre>
+<h2 id="14-worked-examples">14. Worked examples<a class="headerlink" href="#14-worked-examples" title="Permanent link">&para;</a></h2>
+<h3 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h3>
+<pre><code class="language-gossamer">use std::flag
+use std::os
+
+fn main() -&gt; Result&lt;(), flag::Error&gt; {
+    let mut fs = flag::Set::new(&quot;myapp&quot;)
+    let port = fs.uint(&quot;port&quot;, 8080u64, &quot;listen port&quot;)
+    let verbose = fs.bool(&quot;verbose&quot;, false, &quot;chatty output&quot;)
+    let _ = fs.parse(os::args())?
+
+    if *verbose {
+        println!(&quot;starting on port {}&quot;, *port)
+    }
+    Ok(())
+}
+</code></pre>
+<h3 id="http-server">HTTP server<a class="headerlink" href="#http-server" title="Permanent link">&para;</a></h3>
+<pre><code class="language-gossamer">use std::http
+
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&amp;self, r: http::Request) -&gt; Result&lt;http::Response, http::Error&gt; {
+        Ok(http::Response::text(200, format!(&quot;hi from {}&quot;, r.path)))
+    }
+}
+
+fn main() -&gt; Result&lt;(), http::Error&gt; {
+    let app = App { }
+    println!(&quot;listening on 0.0.0.0:8080&quot;)
+    http::serve(&quot;0.0.0.0:8080&quot;.to_string(), app)
+}
+</code></pre>
+<h2 id="15-current-gaps-pre-100">15. Current gaps (pre-1.0.0)<a class="headerlink" href="#15-current-gaps-pre-100" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Integer inference is shallow. Prefer explicit suffixes.</li>
+<li><code>+</code> on <code>String</code> copies; for heavy assembly use
+  <code>std::bytes::Builder</code> or a <code>mut String</code> with <code>+=</code>.</li>
+<li>Method dispatch is name-global in places. Qualified path
+  calls (<code>Point::origin()</code>) always work; method-style may
+  collide across types until the resolver tightens.</li>
+<li>The scheduler is cooperative and unbuffered today.
+  Channels work under <code>gos run</code>; <code>gos build</code> for programs
+  that create channels is not yet wired — it will bail with
+  a clear message. <code>go</code> spawn by itself builds natively.</li>
+<li><code>os::args()</code> can return empty under some codegen paths —
+  prefer <code>std::flag</code> with explicit defaults.</li>
+</ul>
+<h2 id="16-style-rules">16. Style rules<a class="headerlink" href="#16-style-rules" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No emojis.</strong> Source, comments, commits, docs — all plain.</li>
+<li><strong>No TODO / FIXME</strong> committed; open an issue.</li>
+<li><strong>Doc every <code>pub</code> item</strong> with a single-line <code>///</code>; don't
+  narrate self-evident code.</li>
+<li><strong>Pipe aggressively</strong> — if a value flows through more
+  than one call, use <code>|&gt;</code>.</li>
+<li><strong>One statement per line;</strong> omit semicolons.</li>
+<li><strong>Derive <code>Debug</code>, <code>Clone</code>, <code>PartialEq</code></strong> when cheap and
+  meaningful; derive <code>Default</code> for zero-valued types.</li>
+</ul>
+<h2 id="17-where-to-read-more">17. Where to read more<a class="headerlink" href="#17-where-to-read-more" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Language spec: <code>SPEC.md</code> (repo root).</li>
+<li>Project style guide: <code>GUIDELINES.md</code> (repo root).</li>
+<li>Rendered docs: <code>docs_src/</code> (source) → <code>site/</code> (built).</li>
+<li>Examples: <code>examples/</code> — start with <code>hello_world.gos</code>,
+  <code>function_piping.gos</code>, <code>go_spawn.gos</code>, <code>concurrency.gos</code>.</li>
+</ul>
+<h2 id="18-when-in-doubt">18. When in doubt<a class="headerlink" href="#18-when-in-doubt" title="Permanent link">&para;</a></h2>
+<p>Run it. <code>gos check</code> gives rustc-class diagnostics with source
+excerpts and did-you-mean suggestions. <code>gos explain &lt;CODE&gt;</code>
+expands any diagnostic code. The toolchain is your first
+debugger.</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../design/incremental/" class="btn btn-neutral float-left" title="Incremental compilation"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../security/" class="btn btn-neutral float-right" title="Security">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../design/incremental/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../security/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

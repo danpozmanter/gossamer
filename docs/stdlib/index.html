@@ -1,0 +1,1943 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/stdlib/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Overview - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Overview";
+        var mkdocs_page_input_path = "stdlib.md";
+        var mkdocs_page_url = "/gossamer/stdlib/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="..">
+          <img src="../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul class="current">
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Overview</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#modules">Modules</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdbufio">std::bufio</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdbytes">std::bytes</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdcollections">std::collections</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdcompressgzip">std::compress::gzip</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdcontext">std::context</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdcryptohmac">std::crypto::hmac</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdcryptorand">std::crypto::rand</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdcryptosha256">std::crypto::sha256</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdcryptosubtle">std::crypto::subtle</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdencodingbase64">std::encoding::base64</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdencodingbinary">std::encoding::binary</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdencodinghex">std::encoding::hex</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdencodingjson">std::encoding::json</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stderrors">std::errors</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdflag">std::flag</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdfmt">std::fmt</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdfs">std::fs</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdhttp">std::http</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdio">std::io</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdmathrand">std::math::rand</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdnet">std::net</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdneturl">std::net::url</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdos">std::os</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdosexec">std::os::exec</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdossignal">std::os::signal</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdpanic">std::panic</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdpath">std::path</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdpathnative">std::path::native</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdregex">std::regex</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdruntime">std::runtime</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdslog">std::slog</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdsort">std::sort</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdstrconv">std::strconv</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdstrings">std::strings</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdsync">std::sync</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdtesting">std::testing</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdtime">std::time</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdtls">std::tls</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stdutf8">std::utf8</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Standard library</li>
+      <li class="breadcrumb-item active">Overview</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/stdlib.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <!-- generated by `cargo xtask docs-stdlib` -->
+<h1 id="standard-library">Standard library<a class="headerlink" href="#standard-library" title="Permanent link">&para;</a></h1>
+<p>Gossamer's standard library ships as a Rust-implemented host
+crate (<code>gossamer-std</code>) with a manifest describing every
+module and item. This page is auto-generated from that
+manifest via <code>cargo xtask docs-stdlib</code>; hand edits are
+overwritten on the next regeneration.</p>
+<p>The manifest itself lives at <a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/manifest.rs"><code>crates/gossamer-std/src/manifest.rs</code></a>.</p>
+<h2 id="modules">Modules<a class="headerlink" href="#modules" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th style="text-align: right;">Items</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#stdbufio"><code>std::bufio</code></a></td>
+<td style="text-align: right;">3</td>
+<td>Buffered readers, writers, and line scanners.</td>
+</tr>
+<tr>
+<td><a href="#stdbytes"><code>std::bytes</code></a></td>
+<td style="text-align: right;">5</td>
+<td>Byte buffers, builders, and slice helpers.</td>
+</tr>
+<tr>
+<td><a href="#stdcollections"><code>std::collections</code></a></td>
+<td style="text-align: right;">6</td>
+<td>Built-in container types.</td>
+</tr>
+<tr>
+<td><a href="#stdcompressgzip"><code>std::compress::gzip</code></a></td>
+<td style="text-align: right;">3</td>
+<td>gzip encoder / decoder (RFC 1952; flate2-backed).</td>
+</tr>
+<tr>
+<td><a href="#stdcontext"><code>std::context</code></a></td>
+<td style="text-align: right;">5</td>
+<td>Request-scoped cancellation, deadlines, and timeouts.</td>
+</tr>
+<tr>
+<td><a href="#stdcryptohmac"><code>std::crypto::hmac</code></a></td>
+<td style="text-align: right;">1</td>
+<td>HMAC-SHA-256 keyed MACs.</td>
+</tr>
+<tr>
+<td><a href="#stdcryptorand"><code>std::crypto::rand</code></a></td>
+<td style="text-align: right;">2</td>
+<td>Secure random bytes from the host CSPRNG.</td>
+</tr>
+<tr>
+<td><a href="#stdcryptosha256"><code>std::crypto::sha256</code></a></td>
+<td style="text-align: right;">2</td>
+<td>SHA-256 hashing.</td>
+</tr>
+<tr>
+<td><a href="#stdcryptosubtle"><code>std::crypto::subtle</code></a></td>
+<td style="text-align: right;">1</td>
+<td>Constant-time comparison helpers.</td>
+</tr>
+<tr>
+<td><a href="#stdencodingbase64"><code>std::encoding::base64</code></a></td>
+<td style="text-align: right;">2</td>
+<td>RFC 4648 base64 encode/decode.</td>
+</tr>
+<tr>
+<td><a href="#stdencodingbinary"><code>std::encoding::binary</code></a></td>
+<td style="text-align: right;">2</td>
+<td>Big-endian / little-endian integer packing.</td>
+</tr>
+<tr>
+<td><a href="#stdencodinghex"><code>std::encoding::hex</code></a></td>
+<td style="text-align: right;">2</td>
+<td>Lowercase hex encode/decode.</td>
+</tr>
+<tr>
+<td><a href="#stdencodingjson"><code>std::encoding::json</code></a></td>
+<td style="text-align: right;">6</td>
+<td>JSON parser, emitter, and derive support.</td>
+</tr>
+<tr>
+<td><a href="#stderrors"><code>std::errors</code></a></td>
+<td style="text-align: right;">6</td>
+<td>Error construction, wrapping, and chain traversal.</td>
+</tr>
+<tr>
+<td><a href="#stdflag"><code>std::flag</code></a></td>
+<td style="text-align: right;">2</td>
+<td>Batteries-included CLI argument parsing.</td>
+</tr>
+<tr>
+<td><a href="#stdfmt"><code>std::fmt</code></a></td>
+<td style="text-align: right;">9</td>
+<td>Formatted printing and string interpolation.</td>
+</tr>
+<tr>
+<td><a href="#stdfs"><code>std::fs</code></a></td>
+<td style="text-align: right;">6</td>
+<td>Filesystem walking and mutation helpers.</td>
+</tr>
+<tr>
+<td><a href="#stdhttp"><code>std::http</code></a></td>
+<td style="text-align: right;">8</td>
+<td>HTTP/1.1 client and server.</td>
+</tr>
+<tr>
+<td><a href="#stdio"><code>std::io</code></a></td>
+<td style="text-align: right;">8</td>
+<td>Stream-oriented I/O abstractions.</td>
+</tr>
+<tr>
+<td><a href="#stdmathrand"><code>std::math::rand</code></a></td>
+<td style="text-align: right;">1</td>
+<td>Deterministic pseudo-random number generation.</td>
+</tr>
+<tr>
+<td><a href="#stdnet"><code>std::net</code></a></td>
+<td style="text-align: right;">4</td>
+<td>TCP/UDP networking primitives.</td>
+</tr>
+<tr>
+<td><a href="#stdneturl"><code>std::net::url</code></a></td>
+<td style="text-align: right;">3</td>
+<td>URL parsing, rendering, and query escaping.</td>
+</tr>
+<tr>
+<td><a href="#stdos"><code>std::os</code></a></td>
+<td style="text-align: right;">15</td>
+<td>Operating-system primitives: filesystem, env, process.</td>
+</tr>
+<tr>
+<td><a href="#stdosexec"><code>std::os::exec</code></a></td>
+<td style="text-align: right;">5</td>
+<td>Spawn / wait for child processes (Go's os/exec shape).</td>
+</tr>
+<tr>
+<td><a href="#stdossignal"><code>std::os::signal</code></a></td>
+<td style="text-align: right;">4</td>
+<td>POSIX-style signal subscription (Go's os/signal shape).</td>
+</tr>
+<tr>
+<td><a href="#stdpanic"><code>std::panic</code></a></td>
+<td style="text-align: right;">2</td>
+<td>Panic / <code>catch_unwind</code> integration.</td>
+</tr>
+<tr>
+<td><a href="#stdpath"><code>std::path</code></a></td>
+<td style="text-align: right;">6</td>
+<td>POSIX-style path manipulation.</td>
+</tr>
+<tr>
+<td><a href="#stdpathnative"><code>std::path::native</code></a></td>
+<td style="text-align: right;">5</td>
+<td>Native-separator wrappers over <code>std::path</code> (backslash on Windows).</td>
+</tr>
+<tr>
+<td><a href="#stdregex"><code>std::regex</code></a></td>
+<td style="text-align: right;">10</td>
+<td>Compiled regular expressions (Rust <code>regex</code> crate syntax; no backreferences or look-around).</td>
+</tr>
+<tr>
+<td><a href="#stdruntime"><code>std::runtime</code></a></td>
+<td style="text-align: right;">4</td>
+<td>Goroutine / GC / scheduler introspection and tuning.</td>
+</tr>
+<tr>
+<td><a href="#stdslog"><code>std::slog</code></a></td>
+<td style="text-align: right;">4</td>
+<td>Structured, levelled logging.</td>
+</tr>
+<tr>
+<td><a href="#stdsort"><code>std::sort</code></a></td>
+<td style="text-align: right;">3</td>
+<td>Slice sorting and binary search.</td>
+</tr>
+<tr>
+<td><a href="#stdstrconv"><code>std::strconv</code></a></td>
+<td style="text-align: right;">6</td>
+<td>Conversions between strings and primitive numeric types.</td>
+</tr>
+<tr>
+<td><a href="#stdstrings"><code>std::strings</code></a></td>
+<td style="text-align: right;">10</td>
+<td>Polished <code>String</code> operations.</td>
+</tr>
+<tr>
+<td><a href="#stdsync"><code>std::sync</code></a></td>
+<td style="text-align: right;">8</td>
+<td>Synchronisation primitives beyond channels.</td>
+</tr>
+<tr>
+<td><a href="#stdtesting"><code>std::testing</code></a></td>
+<td style="text-align: right;">3</td>
+<td>Assertions and sub-test harness helpers.</td>
+</tr>
+<tr>
+<td><a href="#stdtime"><code>std::time</code></a></td>
+<td style="text-align: right;">5</td>
+<td>Wall-clock and monotonic time facilities.</td>
+</tr>
+<tr>
+<td><a href="#stdtls"><code>std::tls</code></a></td>
+<td style="text-align: right;">5</td>
+<td>TLS termination and TLS client dialling (rustls-backed; not yet wired).</td>
+</tr>
+<tr>
+<td><a href="#stdutf8"><code>std::utf8</code></a></td>
+<td style="text-align: right;">2</td>
+<td>UTF-8 validation and scalar decoding.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdbufio"><code>std::bufio</code><a class="headerlink" href="#stdbufio" title="Permanent link">&para;</a></h2>
+<p>Buffered readers, writers, and line scanners.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Reader</code></td>
+<td>type</td>
+<td>Buffered reader.</td>
+</tr>
+<tr>
+<td><code>Scanner</code></td>
+<td>type</td>
+<td>Line / token scanner.</td>
+</tr>
+<tr>
+<td><code>Writer</code></td>
+<td>type</td>
+<td>Buffered writer.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdbytes"><code>std::bytes</code><a class="headerlink" href="#stdbytes" title="Permanent link">&para;</a></h2>
+<p>Byte buffers, builders, and slice helpers.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Buffer</code></td>
+<td>type</td>
+<td>Growable byte buffer.</td>
+</tr>
+<tr>
+<td><code>Builder</code></td>
+<td>type</td>
+<td>Incremental string builder.</td>
+</tr>
+<tr>
+<td><code>index_of</code></td>
+<td>fn</td>
+<td>First occurrence of a byte needle.</td>
+</tr>
+<tr>
+<td><code>replace</code></td>
+<td>fn</td>
+<td>Replaces every occurrence of a byte needle.</td>
+</tr>
+<tr>
+<td><code>split</code></td>
+<td>fn</td>
+<td>Splits on every separator occurrence.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdcollections"><code>std::collections</code><a class="headerlink" href="#stdcollections" title="Permanent link">&para;</a></h2>
+<p>Built-in container types.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BTreeMap</code></td>
+<td>type</td>
+<td>Ordered map.</td>
+</tr>
+<tr>
+<td><code>BTreeSet</code></td>
+<td>type</td>
+<td>Ordered set built on top of <code>BTreeMap</code>.</td>
+</tr>
+<tr>
+<td><code>HashMap</code></td>
+<td>type</td>
+<td>Hash map backed by the swiss-table layout.</td>
+</tr>
+<tr>
+<td><code>HashSet</code></td>
+<td>type</td>
+<td>Unordered set built on top of <code>HashMap</code>.</td>
+</tr>
+<tr>
+<td><code>Vec</code></td>
+<td>type</td>
+<td>Growable contiguous sequence.</td>
+</tr>
+<tr>
+<td><code>VecDeque</code></td>
+<td>type</td>
+<td>Double-ended queue backed by a ring buffer.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdcompressgzip"><code>std::compress::gzip</code><a class="headerlink" href="#stdcompressgzip" title="Permanent link">&para;</a></h2>
+<p>gzip encoder / decoder (RFC 1952; flate2-backed).</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Level</code></td>
+<td>type</td>
+<td>Compression level (<code>0</code> store-only … <code>9</code> best); default is gzip(1)'s <code>6</code>.</td>
+</tr>
+<tr>
+<td><code>decode</code></td>
+<td>fn</td>
+<td>Decompresses a gzip-formatted payload.</td>
+</tr>
+<tr>
+<td><code>encode</code></td>
+<td>fn</td>
+<td>Compresses bytes at the supplied Level.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdcontext"><code>std::context</code><a class="headerlink" href="#stdcontext" title="Permanent link">&para;</a></h2>
+<p>Request-scoped cancellation, deadlines, and timeouts.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Context</code></td>
+<td>type</td>
+<td>Cancellation-aware context handle.</td>
+</tr>
+<tr>
+<td><code>background</code></td>
+<td>fn</td>
+<td>Root context — never cancelled.</td>
+</tr>
+<tr>
+<td><code>with_cancel</code></td>
+<td>fn</td>
+<td>Child context plus explicit cancel handle.</td>
+</tr>
+<tr>
+<td><code>with_deadline</code></td>
+<td>fn</td>
+<td>Child context that cancels at the supplied instant.</td>
+</tr>
+<tr>
+<td><code>with_timeout</code></td>
+<td>fn</td>
+<td>Child context that cancels after the supplied duration.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdcryptohmac"><code>std::crypto::hmac</code><a class="headerlink" href="#stdcryptohmac" title="Permanent link">&para;</a></h2>
+<p>HMAC-SHA-256 keyed MACs.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sha256_mac</code></td>
+<td>fn</td>
+<td>HMAC-SHA-256 over a message.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdcryptorand"><code>std::crypto::rand</code><a class="headerlink" href="#stdcryptorand" title="Permanent link">&para;</a></h2>
+<p>Secure random bytes from the host CSPRNG.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bytes</code></td>
+<td>fn</td>
+<td>Returns a fresh random byte vector.</td>
+</tr>
+<tr>
+<td><code>fill</code></td>
+<td>fn</td>
+<td>Fills a buffer with random bytes.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdcryptosha256"><code>std::crypto::sha256</code><a class="headerlink" href="#stdcryptosha256" title="Permanent link">&para;</a></h2>
+<p>SHA-256 hashing.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>digest</code></td>
+<td>fn</td>
+<td>Returns the 32-byte digest of an input.</td>
+</tr>
+<tr>
+<td><code>hex</code></td>
+<td>fn</td>
+<td>Returns the digest as lowercase hex.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdcryptosubtle"><code>std::crypto::subtle</code><a class="headerlink" href="#stdcryptosubtle" title="Permanent link">&para;</a></h2>
+<p>Constant-time comparison helpers.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>constant_time_eq</code></td>
+<td>fn</td>
+<td>Compares two byte slices without data-dependent branches.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdencodingbase64"><code>std::encoding::base64</code><a class="headerlink" href="#stdencodingbase64" title="Permanent link">&para;</a></h2>
+<p>RFC 4648 base64 encode/decode.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>decode</code></td>
+<td>fn</td>
+<td>Decodes a base64 string.</td>
+</tr>
+<tr>
+<td><code>encode</code></td>
+<td>fn</td>
+<td>Encodes bytes to a base64 string.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdencodingbinary"><code>std::encoding::binary</code><a class="headerlink" href="#stdencodingbinary" title="Permanent link">&para;</a></h2>
+<p>Big-endian / little-endian integer packing.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>put_u16_be</code></td>
+<td>fn</td>
+<td>Writes a big-endian u16.</td>
+</tr>
+<tr>
+<td><code>put_u32_be</code></td>
+<td>fn</td>
+<td>Writes a big-endian u32.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdencodinghex"><code>std::encoding::hex</code><a class="headerlink" href="#stdencodinghex" title="Permanent link">&para;</a></h2>
+<p>Lowercase hex encode/decode.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>decode</code></td>
+<td>fn</td>
+<td>Decodes a hex string.</td>
+</tr>
+<tr>
+<td><code>encode</code></td>
+<td>fn</td>
+<td>Encodes bytes to hex.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdencodingjson"><code>std::encoding::json</code><a class="headerlink" href="#stdencodingjson" title="Permanent link">&para;</a></h2>
+<p>JSON parser, emitter, and derive support.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Error</code></td>
+<td>type</td>
+<td>Error raised by encoding/decoding operations.</td>
+</tr>
+<tr>
+<td><code>Value</code></td>
+<td>type</td>
+<td>Dynamically typed JSON value.</td>
+</tr>
+<tr>
+<td><code>Deserialize</code></td>
+<td>trait</td>
+<td>Trait for parsing a value from JSON.</td>
+</tr>
+<tr>
+<td><code>Serialize</code></td>
+<td>trait</td>
+<td>Trait for converting a value to JSON.</td>
+</tr>
+<tr>
+<td><code>decode</code></td>
+<td>fn</td>
+<td>Decodes a JSON <code>String</code> into a <code>Deserialize</code> value.</td>
+</tr>
+<tr>
+<td><code>encode</code></td>
+<td>fn</td>
+<td>Encodes a <code>Serialize</code> value as a JSON <code>String</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stderrors"><code>std::errors</code><a class="headerlink" href="#stderrors" title="Permanent link">&para;</a></h2>
+<p>Error construction, wrapping, and chain traversal.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Error</code></td>
+<td>type</td>
+<td>Reference-counted error value with optional cause chain.</td>
+</tr>
+<tr>
+<td><code>chain</code></td>
+<td>fn</td>
+<td>Iterator over an error and its ancestor causes.</td>
+</tr>
+<tr>
+<td><code>is</code></td>
+<td>fn</td>
+<td>Checks whether an error's chain contains a matching message.</td>
+</tr>
+<tr>
+<td><code>join</code></td>
+<td>fn</td>
+<td>Joins a list of errors into a single piped error.</td>
+</tr>
+<tr>
+<td><code>new</code></td>
+<td>fn</td>
+<td>Constructs a fresh error from a message.</td>
+</tr>
+<tr>
+<td><code>wrap</code></td>
+<td>fn</td>
+<td>Wraps a cause with a higher-level message.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdflag"><code>std::flag</code><a class="headerlink" href="#stdflag" title="Permanent link">&para;</a></h2>
+<p>Batteries-included CLI argument parsing.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Error</code></td>
+<td>type</td>
+<td>Error produced while parsing flags.</td>
+</tr>
+<tr>
+<td><code>Set</code></td>
+<td>type</td>
+<td>Flag definition + parsing set.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdfmt"><code>std::fmt</code><a class="headerlink" href="#stdfmt" title="Permanent link">&para;</a></h2>
+<p>Formatted printing and string interpolation.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Debug</code></td>
+<td>trait</td>
+<td>Trait for debugging-oriented string conversion.</td>
+</tr>
+<tr>
+<td><code>Display</code></td>
+<td>trait</td>
+<td>Trait for human-readable string conversion.</td>
+</tr>
+<tr>
+<td><code>eprint</code></td>
+<td>macro</td>
+<td>Prints to stderr without a trailing newline.</td>
+</tr>
+<tr>
+<td><code>eprintln</code></td>
+<td>macro</td>
+<td>Prints to stderr followed by a newline.</td>
+</tr>
+<tr>
+<td><code>format</code></td>
+<td>macro</td>
+<td>Formats arguments into an owned <code>String</code>.</td>
+</tr>
+<tr>
+<td><code>print</code></td>
+<td>macro</td>
+<td>Prints to stdout without a trailing newline.</td>
+</tr>
+<tr>
+<td><code>println</code></td>
+<td>macro</td>
+<td>Prints to stdout followed by a newline.</td>
+</tr>
+<tr>
+<td><code>write</code></td>
+<td>macro</td>
+<td>Writes formatted output into a <code>Writer</code>.</td>
+</tr>
+<tr>
+<td><code>writeln</code></td>
+<td>macro</td>
+<td>Writes formatted output into a <code>Writer</code> followed by a newline.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdfs"><code>std::fs</code><a class="headerlink" href="#stdfs" title="Permanent link">&para;</a></h2>
+<p>Filesystem walking and mutation helpers.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>copy</code></td>
+<td>fn</td>
+<td>Copies a file, creating parent dirs as needed.</td>
+</tr>
+<tr>
+<td><code>create_dir_all</code></td>
+<td>fn</td>
+<td>Creates a path and any missing ancestors.</td>
+</tr>
+<tr>
+<td><code>read_dir</code></td>
+<td>fn</td>
+<td>Returns the immediate children of a directory.</td>
+</tr>
+<tr>
+<td><code>remove_all</code></td>
+<td>fn</td>
+<td>Deletes a file or a directory tree.</td>
+</tr>
+<tr>
+<td><code>rename</code></td>
+<td>fn</td>
+<td>Renames a file or directory.</td>
+</tr>
+<tr>
+<td><code>walk_dir</code></td>
+<td>fn</td>
+<td>Recursively visits every descendant entry.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdhttp"><code>std::http</code><a class="headerlink" href="#stdhttp" title="Permanent link">&para;</a></h2>
+<p>HTTP/1.1 client and server.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Client</code></td>
+<td>type</td>
+<td>HTTP client capable of GET/POST/PUT/DELETE.</td>
+</tr>
+<tr>
+<td><code>Headers</code></td>
+<td>type</td>
+<td>Case-insensitive header map.</td>
+</tr>
+<tr>
+<td><code>Method</code></td>
+<td>type</td>
+<td>HTTP method enumeration.</td>
+</tr>
+<tr>
+<td><code>Request</code></td>
+<td>type</td>
+<td>HTTP request value passed to a handler.</td>
+</tr>
+<tr>
+<td><code>Response</code></td>
+<td>type</td>
+<td>HTTP response value returned from a handler.</td>
+</tr>
+<tr>
+<td><code>Server</code></td>
+<td>type</td>
+<td>HTTP server bound to a TCP listener.</td>
+</tr>
+<tr>
+<td><code>StatusCode</code></td>
+<td>type</td>
+<td>HTTP status code.</td>
+</tr>
+<tr>
+<td><code>serve</code></td>
+<td>fn</td>
+<td>Convenience: bind and serve an HTTP handler.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdio"><code>std::io</code><a class="headerlink" href="#stdio" title="Permanent link">&para;</a></h2>
+<p>Stream-oriented I/O abstractions.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BufReader</code></td>
+<td>type</td>
+<td>Buffered wrapper around any <code>Reader</code>.</td>
+</tr>
+<tr>
+<td><code>BufWriter</code></td>
+<td>type</td>
+<td>Buffered wrapper around any <code>Writer</code>.</td>
+</tr>
+<tr>
+<td><code>Error</code></td>
+<td>type</td>
+<td>Errors raised by I/O operations.</td>
+</tr>
+<tr>
+<td><code>Reader</code></td>
+<td>trait</td>
+<td>Pull-style byte source.</td>
+</tr>
+<tr>
+<td><code>Writer</code></td>
+<td>trait</td>
+<td>Push-style byte sink.</td>
+</tr>
+<tr>
+<td><code>stderr</code></td>
+<td>fn</td>
+<td>Returns a handle to the process's standard error stream.</td>
+</tr>
+<tr>
+<td><code>stdin</code></td>
+<td>fn</td>
+<td>Returns a handle to the process's standard input stream.</td>
+</tr>
+<tr>
+<td><code>stdout</code></td>
+<td>fn</td>
+<td>Returns a handle to the process's standard output stream.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdmathrand"><code>std::math::rand</code><a class="headerlink" href="#stdmathrand" title="Permanent link">&para;</a></h2>
+<p>Deterministic pseudo-random number generation.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Rng</code></td>
+<td>type</td>
+<td>SplitMix64-based RNG.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdnet"><code>std::net</code><a class="headerlink" href="#stdnet" title="Permanent link">&para;</a></h2>
+<p>TCP/UDP networking primitives.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TcpListener</code></td>
+<td>type</td>
+<td>Accepts incoming TCP connections.</td>
+</tr>
+<tr>
+<td><code>TcpStream</code></td>
+<td>type</td>
+<td>Bidirectional TCP byte stream.</td>
+</tr>
+<tr>
+<td><code>UdpSocket</code></td>
+<td>type</td>
+<td>Bound UDP socket for datagram I/O.</td>
+</tr>
+<tr>
+<td><code>resolve</code></td>
+<td>fn</td>
+<td>Resolves a hostname to a list of IP addresses.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdneturl"><code>std::net::url</code><a class="headerlink" href="#stdneturl" title="Permanent link">&para;</a></h2>
+<p>URL parsing, rendering, and query escaping.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Url</code></td>
+<td>type</td>
+<td>Parsed URL.</td>
+</tr>
+<tr>
+<td><code>query_escape</code></td>
+<td>fn</td>
+<td>Percent-encodes a query parameter.</td>
+</tr>
+<tr>
+<td><code>query_unescape</code></td>
+<td>fn</td>
+<td>Inverse of <code>query_escape</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdos"><code>std::os</code><a class="headerlink" href="#stdos" title="Permanent link">&para;</a></h2>
+<p>Operating-system primitives: filesystem, env, process.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>File</code></td>
+<td>type</td>
+<td>Open file handle supporting read/write/seek/close.</td>
+</tr>
+<tr>
+<td><code>args</code></td>
+<td>fn</td>
+<td>Returns the program's command-line arguments.</td>
+</tr>
+<tr>
+<td><code>create</code></td>
+<td>fn</td>
+<td>Creates or truncates a file for writing.</td>
+</tr>
+<tr>
+<td><code>env</code></td>
+<td>fn</td>
+<td>Returns the value of an environment variable.</td>
+</tr>
+<tr>
+<td><code>exists</code></td>
+<td>fn</td>
+<td>Returns whether a path exists.</td>
+</tr>
+<tr>
+<td><code>exit</code></td>
+<td>fn</td>
+<td>Exits the process with the given status code.</td>
+</tr>
+<tr>
+<td><code>mkdir</code></td>
+<td>fn</td>
+<td>Creates a single directory.</td>
+</tr>
+<tr>
+<td><code>mkdir_all</code></td>
+<td>fn</td>
+<td>Creates a directory and any required parents.</td>
+</tr>
+<tr>
+<td><code>open</code></td>
+<td>fn</td>
+<td>Opens a file for reading.</td>
+</tr>
+<tr>
+<td><code>read_dir</code></td>
+<td>fn</td>
+<td>Iterates the entries of a directory.</td>
+</tr>
+<tr>
+<td><code>read_file</code></td>
+<td>fn</td>
+<td>Reads an entire file into memory.</td>
+</tr>
+<tr>
+<td><code>remove_file</code></td>
+<td>fn</td>
+<td>Removes a file from the filesystem.</td>
+</tr>
+<tr>
+<td><code>rename</code></td>
+<td>fn</td>
+<td>Renames a file or directory.</td>
+</tr>
+<tr>
+<td><code>set_env</code></td>
+<td>fn</td>
+<td>Sets an environment variable in the current process.</td>
+</tr>
+<tr>
+<td><code>write_file</code></td>
+<td>fn</td>
+<td>Writes the given bytes to a file, creating it if needed.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdosexec"><code>std::os::exec</code><a class="headerlink" href="#stdosexec" title="Permanent link">&para;</a></h2>
+<p>Spawn / wait for child processes (Go's os/exec shape).</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Child</code></td>
+<td>type</td>
+<td>Handle to a still-running child supporting wait / kill.</td>
+</tr>
+<tr>
+<td><code>Command</code></td>
+<td>type</td>
+<td>Builder for spawning a child process.</td>
+</tr>
+<tr>
+<td><code>ExitStatus</code></td>
+<td>type</td>
+<td>Numeric exit code (None when killed by signal).</td>
+</tr>
+<tr>
+<td><code>Output</code></td>
+<td>type</td>
+<td>Captured stdout, stderr, and exit status from a finished child.</td>
+</tr>
+<tr>
+<td><code>Stdio</code></td>
+<td>type</td>
+<td>Inherit / Piped / Null wiring for stdin/stdout/stderr.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdossignal"><code>std::os::signal</code><a class="headerlink" href="#stdossignal" title="Permanent link">&para;</a></h2>
+<p>POSIX-style signal subscription (Go's os/signal shape).</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Notifier</code></td>
+<td>type</td>
+<td>Returned by <code>on(sig)</code>; supports wait / try_wait.</td>
+</tr>
+<tr>
+<td><code>Signal</code></td>
+<td>type</td>
+<td>Opaque signal name; constructors live in <code>sigs</code>.</td>
+</tr>
+<tr>
+<td><code>deliver</code></td>
+<td>fn</td>
+<td>Test helper: synthesise a signal delivery without involving the OS.</td>
+</tr>
+<tr>
+<td><code>on</code></td>
+<td>fn</td>
+<td>Subscribes to a signal; returns a Notifier.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdpanic"><code>std::panic</code><a class="headerlink" href="#stdpanic" title="Permanent link">&para;</a></h2>
+<p>Panic / <code>catch_unwind</code> integration.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>catch_unwind</code></td>
+<td>fn</td>
+<td>Runs a closure, catching any panic it raises.</td>
+</tr>
+<tr>
+<td><code>panic</code></td>
+<td>macro</td>
+<td>Aborts the current goroutine with a message.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdpath"><code>std::path</code><a class="headerlink" href="#stdpath" title="Permanent link">&para;</a></h2>
+<p>POSIX-style path manipulation.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>base</code></td>
+<td>fn</td>
+<td>Final path segment.</td>
+</tr>
+<tr>
+<td><code>clean</code></td>
+<td>fn</td>
+<td>Collapses <code>.</code>, <code>..</code>, and duplicate separators.</td>
+</tr>
+<tr>
+<td><code>dir</code></td>
+<td>fn</td>
+<td>Directory portion.</td>
+</tr>
+<tr>
+<td><code>ext</code></td>
+<td>fn</td>
+<td>Dotted extension, if any.</td>
+</tr>
+<tr>
+<td><code>join</code></td>
+<td>fn</td>
+<td>Joins two path fragments.</td>
+</tr>
+<tr>
+<td><code>split</code></td>
+<td>fn</td>
+<td>Returns (dir, file) for the supplied path.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdpathnative"><code>std::path::native</code><a class="headerlink" href="#stdpathnative" title="Permanent link">&para;</a></h2>
+<p>Native-separator wrappers over <code>std::path</code> (backslash on Windows).</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>clean</code></td>
+<td>fn</td>
+<td>Canonicalises a path into native-separator form.</td>
+</tr>
+<tr>
+<td><code>join</code></td>
+<td>fn</td>
+<td>Joins two components using the platform separator.</td>
+</tr>
+<tr>
+<td><code>to_native</code></td>
+<td>fn</td>
+<td>Rewrites a posix path into native-separator form.</td>
+</tr>
+<tr>
+<td><code>to_posix</code></td>
+<td>fn</td>
+<td>Rewrites a native-separator path into posix form.</td>
+</tr>
+<tr>
+<td><code>SEPARATOR</code></td>
+<td>const</td>
+<td>Platform-preferred path separator character.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdregex"><code>std::regex</code><a class="headerlink" href="#stdregex" title="Permanent link">&para;</a></h2>
+<p>Compiled regular expressions (Rust <code>regex</code> crate syntax; no backreferences or look-around).</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Pattern</code></td>
+<td>type</td>
+<td>Compiled pattern handle returned by <code>compile</code>.</td>
+</tr>
+<tr>
+<td><code>captures</code></td>
+<td>fn</td>
+<td>Returns capture groups for the first match; index 0 is the full match.</td>
+</tr>
+<tr>
+<td><code>captures_all</code></td>
+<td>fn</td>
+<td>Returns capture groups for every match in the text.</td>
+</tr>
+<tr>
+<td><code>compile</code></td>
+<td>fn</td>
+<td>Parses a pattern into a reusable <code>Pattern</code> or returns an <code>Err</code>.</td>
+</tr>
+<tr>
+<td><code>find</code></td>
+<td>fn</td>
+<td>Returns the first match as <code>(start, end, text)</code>, or <code>None</code>.</td>
+</tr>
+<tr>
+<td><code>find_all</code></td>
+<td>fn</td>
+<td>Returns every non-overlapping match as <code>(start, end, text)</code>.</td>
+</tr>
+<tr>
+<td><code>is_match</code></td>
+<td>fn</td>
+<td>Returns whether the pattern matches anywhere in the text.</td>
+</tr>
+<tr>
+<td><code>replace</code></td>
+<td>fn</td>
+<td>Replaces the first match with the given replacement (supports <code>$N</code>).</td>
+</tr>
+<tr>
+<td><code>replace_all</code></td>
+<td>fn</td>
+<td>Replaces every non-overlapping match.</td>
+</tr>
+<tr>
+<td><code>split</code></td>
+<td>fn</td>
+<td>Splits the text on every pattern match.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdruntime"><code>std::runtime</code><a class="headerlink" href="#stdruntime" title="Permanent link">&para;</a></h2>
+<p>Goroutine / GC / scheduler introspection and tuning.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_procs</code></td>
+<td>fn</td>
+<td>Returns the current goroutine concurrency cap.</td>
+</tr>
+<tr>
+<td><code>mem_stats</code></td>
+<td>fn</td>
+<td>Read-only snapshot of GC and allocation counters.</td>
+</tr>
+<tr>
+<td><code>num_cpus</code></td>
+<td>fn</td>
+<td>Logical CPU cores visible to the process.</td>
+</tr>
+<tr>
+<td><code>set_max_procs</code></td>
+<td>fn</td>
+<td>Sets the goroutine concurrency cap (GOMAXPROCS-equivalent).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdslog"><code>std::slog</code><a class="headerlink" href="#stdslog" title="Permanent link">&para;</a></h2>
+<p>Structured, levelled logging.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Field</code></td>
+<td>type</td>
+<td>Key/value pair threaded through a logger.</td>
+</tr>
+<tr>
+<td><code>JsonHandler</code></td>
+<td>type</td>
+<td>JSON-lines handler.</td>
+</tr>
+<tr>
+<td><code>Logger</code></td>
+<td>type</td>
+<td>Logger handle.</td>
+</tr>
+<tr>
+<td><code>TextHandler</code></td>
+<td>type</td>
+<td>Line-oriented handler.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdsort"><code>std::sort</code><a class="headerlink" href="#stdsort" title="Permanent link">&para;</a></h2>
+<p>Slice sorting and binary search.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>binary_search</code></td>
+<td>fn</td>
+<td>Binary search on a sorted slice.</td>
+</tr>
+<tr>
+<td><code>sort</code></td>
+<td>fn</td>
+<td>Ascending unstable sort.</td>
+</tr>
+<tr>
+<td><code>sort_stable</code></td>
+<td>fn</td>
+<td>Ascending stable sort.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdstrconv"><code>std::strconv</code><a class="headerlink" href="#stdstrconv" title="Permanent link">&para;</a></h2>
+<p>Conversions between strings and primitive numeric types.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>format_f64</code></td>
+<td>fn</td>
+<td>Renders an <code>f64</code> as a decimal string.</td>
+</tr>
+<tr>
+<td><code>format_i64</code></td>
+<td>fn</td>
+<td>Renders an <code>i64</code> as a decimal string.</td>
+</tr>
+<tr>
+<td><code>parse_bool</code></td>
+<td>fn</td>
+<td>Parses <code>"true"</code> / <code>"false"</code> into a bool.</td>
+</tr>
+<tr>
+<td><code>parse_f64</code></td>
+<td>fn</td>
+<td>Parses a decimal <code>f64</code>.</td>
+</tr>
+<tr>
+<td><code>parse_i64</code></td>
+<td>fn</td>
+<td>Parses a decimal <code>i64</code>.</td>
+</tr>
+<tr>
+<td><code>parse_u64</code></td>
+<td>fn</td>
+<td>Parses a decimal <code>u64</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdstrings"><code>std::strings</code><a class="headerlink" href="#stdstrings" title="Permanent link">&para;</a></h2>
+<p>Polished <code>String</code> operations.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>contains</code></td>
+<td>fn</td>
+<td>Returns whether the string contains a substring.</td>
+</tr>
+<tr>
+<td><code>ends_with</code></td>
+<td>fn</td>
+<td>Returns whether the string ends with the given suffix.</td>
+</tr>
+<tr>
+<td><code>find</code></td>
+<td>fn</td>
+<td>Returns the byte position of the first match.</td>
+</tr>
+<tr>
+<td><code>replace</code></td>
+<td>fn</td>
+<td>Replaces every occurrence of <code>from</code> with <code>to</code>.</td>
+</tr>
+<tr>
+<td><code>split</code></td>
+<td>fn</td>
+<td>Splits a string by a delimiter.</td>
+</tr>
+<tr>
+<td><code>splitn</code></td>
+<td>fn</td>
+<td>Splits a string into at most <code>n</code> parts.</td>
+</tr>
+<tr>
+<td><code>starts_with</code></td>
+<td>fn</td>
+<td>Returns whether the string starts with the given prefix.</td>
+</tr>
+<tr>
+<td><code>to_lowercase</code></td>
+<td>fn</td>
+<td>Lowercases every character.</td>
+</tr>
+<tr>
+<td><code>to_uppercase</code></td>
+<td>fn</td>
+<td>Uppercases every character.</td>
+</tr>
+<tr>
+<td><code>trim</code></td>
+<td>fn</td>
+<td>Removes leading and trailing whitespace.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdsync"><code>std::sync</code><a class="headerlink" href="#stdsync" title="Permanent link">&para;</a></h2>
+<p>Synchronisation primitives beyond channels.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AtomicBool</code></td>
+<td>type</td>
+<td>Atomic boolean.</td>
+</tr>
+<tr>
+<td><code>AtomicI64</code></td>
+<td>type</td>
+<td>Atomic 64-bit signed integer.</td>
+</tr>
+<tr>
+<td><code>AtomicU64</code></td>
+<td>type</td>
+<td>Atomic 64-bit unsigned integer.</td>
+</tr>
+<tr>
+<td><code>Barrier</code></td>
+<td>type</td>
+<td>Synchronisation barrier across goroutines.</td>
+</tr>
+<tr>
+<td><code>Mutex</code></td>
+<td>type</td>
+<td>Mutual-exclusion lock.</td>
+</tr>
+<tr>
+<td><code>Once</code></td>
+<td>type</td>
+<td>One-shot initialisation latch.</td>
+</tr>
+<tr>
+<td><code>RwLock</code></td>
+<td>type</td>
+<td>Reader-writer lock.</td>
+</tr>
+<tr>
+<td><code>WaitGroup</code></td>
+<td>type</td>
+<td>Counts goroutines and waits for them to finish.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdtesting"><code>std::testing</code><a class="headerlink" href="#stdtesting" title="Permanent link">&para;</a></h2>
+<p>Assertions and sub-test harness helpers.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Runner</code></td>
+<td>type</td>
+<td>Sub-test collector.</td>
+</tr>
+<tr>
+<td><code>check</code></td>
+<td>fn</td>
+<td>Asserts a condition.</td>
+</tr>
+<tr>
+<td><code>check_eq</code></td>
+<td>fn</td>
+<td>Asserts equality, rendering a diff on failure.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdtime"><code>std::time</code><a class="headerlink" href="#stdtime" title="Permanent link">&para;</a></h2>
+<p>Wall-clock and monotonic time facilities.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Duration</code></td>
+<td>type</td>
+<td>Difference between two <code>Instant</code>s.</td>
+</tr>
+<tr>
+<td><code>Instant</code></td>
+<td>type</td>
+<td>Monotonic point-in-time.</td>
+</tr>
+<tr>
+<td><code>SystemTime</code></td>
+<td>type</td>
+<td>Wall-clock point-in-time.</td>
+</tr>
+<tr>
+<td><code>now</code></td>
+<td>fn</td>
+<td>Returns the current monotonic <code>Instant</code>.</td>
+</tr>
+<tr>
+<td><code>sleep</code></td>
+<td>fn</td>
+<td>Suspends the current goroutine for <code>Duration</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdtls"><code>std::tls</code><a class="headerlink" href="#stdtls" title="Permanent link">&para;</a></h2>
+<p>TLS termination and TLS client dialling (rustls-backed; not yet wired).</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CertKey</code></td>
+<td>type</td>
+<td>PEM-encoded certificate chain + private key.</td>
+</tr>
+<tr>
+<td><code>ClientConfig</code></td>
+<td>type</td>
+<td>Opaque client-side TLS configuration.</td>
+</tr>
+<tr>
+<td><code>ServerConfig</code></td>
+<td>type</td>
+<td>Opaque server-side TLS configuration.</td>
+</tr>
+<tr>
+<td><code>client_config</code></td>
+<td>fn</td>
+<td>Builds a client config. Returns Err until rustls lands.</td>
+</tr>
+<tr>
+<td><code>server_config</code></td>
+<td>fn</td>
+<td>Builds a server config from a CertKey. Returns Err until rustls lands.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdutf8"><code>std::utf8</code><a class="headerlink" href="#stdutf8" title="Permanent link">&para;</a></h2>
+<p>UTF-8 validation and scalar decoding.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Kind</th>
+<th>Doc</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>is_valid</code></td>
+<td>fn</td>
+<td>Validates a byte slice as UTF-8.</td>
+</tr>
+<tr>
+<td><code>rune_count</code></td>
+<td>fn</td>
+<td>Counts Unicode scalar values.</td>
+</tr>
+</tbody>
+</table>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../libraries/" class="btn btn-neutral float-left" title="Writing libraries"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../method_support/" class="btn btn-neutral float-right" title="Method support">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../libraries/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../method_support/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

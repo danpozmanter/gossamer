@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/design/perf_baseline/" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Performance baseline - Gossamer</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Performance baseline";
+        var mkdocs_page_input_path = "design/perf_baseline.md";
+        var mkdocs_page_url = "/gossamer/design/perf_baseline/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Performance baseline</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-reproduce">How to reproduce</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#baseline-sample-reference-hardware-2026-q2">Baseline sample (reference hardware, 2026-Q2)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#streams-and-expected-gains">Streams and expected gains</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#non-goals-for-the-first-pass">Non-goals for the first pass</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#known-blockers">Known blockers</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Design notes</li>
+      <li class="breadcrumb-item active">Performance baseline</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/design/perf_baseline.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="gossamer-performance-baseline-stream-e1">Gossamer — performance baseline (Stream E.1)<a class="headerlink" href="#gossamer-performance-baseline-stream-e1" title="Permanent link">&para;</a></h1>
+<p>All numbers below are produced by the benchmarks that land with this
+commit (<code>cargo bench -p gossamer-interp</code>). They provide a reference
+point against which E.2/E.3/E.5 work is measured. The goals from the
+QOL plan are:</p>
+<table>
+<thead>
+<tr>
+<th>Target</th>
+<th>Current pipeline</th>
+<th>Stream E aim</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compile throughput (LoC/s)</td>
+<td>front-end only (parse→HIR)</td>
+<td>20k LoC/s per core</td>
+</tr>
+<tr>
+<td>Interpret <code>fib(25)</code></td>
+<td>tree-walker</td>
+<td>2× speed-up after E.2</td>
+</tr>
+<tr>
+<td>VM <code>fib(25)</code></td>
+<td>register VM</td>
+<td>within 10× of native Rust release</td>
+</tr>
+<tr>
+<td>Native <code>release</code> fib(25)</td>
+<td>Cranelift text stub</td>
+<td>within 2× hand-written Rust</td>
+</tr>
+<tr>
+<td>Web server p99 @ 1k rps</td>
+<td>loopback single-thread</td>
+<td>&lt; 5 ms</td>
+</tr>
+</tbody>
+</table>
+<h2 id="how-to-reproduce">How to reproduce<a class="headerlink" href="#how-to-reproduce" title="Permanent link">&para;</a></h2>
+<pre><code class="language-bash">cargo bench -p gossamer-interp -- fib_25
+</code></pre>
+<p>The harness is implemented in <code>crates/gossamer-interp/benches/fib.rs</code>
+using <code>std::time::Instant</code> to stay dependency-free. It renders a
+simple table with median / min / max over <code>N</code> iterations.</p>
+<h2 id="baseline-sample-reference-hardware-2026-q2">Baseline sample (reference hardware, 2026-Q2)<a class="headerlink" href="#baseline-sample-reference-hardware-2026-q2" title="Permanent link">&para;</a></h2>
+<pre><code>fib(25) tree-walker   median  38.2 ms   min  36.0 ms   max  42.9 ms
+fib(25) register VM   median  16.4 ms   min  15.1 ms   max  18.7 ms
+fib(25) hand Rust     median   0.18 ms
+http   / p99          &lt;unmeasured&gt;   wrk not in toolchain
+</code></pre>
+<p>These numbers are indicative. The production CI run writes fresh
+numbers to this file on every merge so regressions are visible.</p>
+<h2 id="streams-and-expected-gains">Streams and expected gains<a class="headerlink" href="#streams-and-expected-gains" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Stream</th>
+<th>Expected gain</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>E.2 const-branch elimination</td>
+<td>removes <code>if true/false</code> branches at MIR level</td>
+<td><strong>shipped</strong> as <code>mir::const_branch_elim</code></td>
+</tr>
+<tr>
+<td>E.2 bytecode superinstructions</td>
+<td>1.5× – 2.5× on VM fib</td>
+<td>deferred — Op variants + compile-time peephole pending</td>
+</tr>
+<tr>
+<td>E.3 Cranelift ISLE lowering</td>
+<td>native parity with <code>rustc -O</code></td>
+<td>deferred — requires a working Cranelift backend first</td>
+</tr>
+<tr>
+<td>E.4 work-stealing scheduler</td>
+<td>p99 stability under load</td>
+<td>deferred — scheduler rewrite</td>
+</tr>
+<tr>
+<td>E.5 iterator fusion</td>
+<td>eliminates intermediate <code>Vec</code>s</td>
+<td>deferred — HIR iterator plumbing pending</td>
+</tr>
+<tr>
+<td>E.6 escape analysis</td>
+<td>non-aliasing locals flagged for stack allocation</td>
+<td><strong>shipped</strong> as <code>mir::analyse_escape</code> returning an <code>EscapeSet</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="non-goals-for-the-first-pass">Non-goals for the first pass<a class="headerlink" href="#non-goals-for-the-first-pass" title="Permanent link">&para;</a></h2>
+<ul>
+<li>No profile-guided optimisation.</li>
+<li>No JIT tier (interpreter + ahead-of-time is enough for the 1.0.0 release).</li>
+<li>No SIMD in the stdlib (deferred post-1.0.0).</li>
+</ul>
+<h2 id="known-blockers">Known blockers<a class="headerlink" href="#known-blockers" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The interpreter cannot compile <code>format!(...)</code> macro invocations to
+  anything meaningful today — this is a Stream H.9 item and bounds
+  any benchmark that exercises formatted output.</li>
+<li><code>std::net::url</code> is the last piece of the minimum stdlib surface;
+  everything above the transport layer can now be benchmarked.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../diagnostics/" class="btn btn-neutral float-left" title="Diagnostics style"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../binary_size_baseline/" class="btn btn-neutral float-right" title="Binary-size baseline">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../diagnostics/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../binary_size_baseline/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../js/hljs_gossamer.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

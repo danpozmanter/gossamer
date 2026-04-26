@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/design/binary_size_baseline/" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Binary-size baseline - Gossamer</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Binary-size baseline";
+        var mkdocs_page_input_path = "design/binary_size_baseline.md";
+        var mkdocs_page_url = "/gossamer/design/binary_size_baseline/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Binary-size baseline</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#current-numbers">Current numbers</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#shipped-in-stream-g">Shipped in Stream G</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#deferred-per-plan">Deferred (per plan)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#targets">Targets</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-verify-locally">How to verify locally</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Design notes</li>
+      <li class="breadcrumb-item active">Binary-size baseline</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/design/binary_size_baseline.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="gossamer-binary-size-baseline-stream-g1">Gossamer — binary-size baseline (Stream G.1)<a class="headerlink" href="#gossamer-binary-size-baseline-stream-g1" title="Permanent link">&para;</a></h1>
+<p>Reference numbers for <code>gos build</code> output size across a handful of
+representative programs, and the set of knobs that control size.</p>
+<h2 id="current-numbers">Current numbers<a class="headerlink" href="#current-numbers" title="Permanent link">&para;</a></h2>
+<p>Measured on Linux x86_64 with <code>cargo build --release -p gossamer-cli</code>
+and the <code>release()</code> link options (DCE + compact mangling) turned on
+by default for every <code>gos build</code>:</p>
+<pre><code>hello_world.gos   346 B
+line_count.gos    &lt;build requires stdlib items still stubbed&gt;
+web_server.gos    1659 B (with DCE)  / 2.1 KB (without DCE)
+</code></pre>
+<p>These are artifact sizes, not the size of the host <code>gos</code> binary.
+The host binary size is governed by the workspace <code>release</code> profile:</p>
+<table>
+<thead>
+<tr>
+<th>Knob</th>
+<th>Setting</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lto</code></td>
+<td><code>fat</code></td>
+<td><strong>tightened in this commit</strong> (was <code>thin</code>)</td>
+</tr>
+<tr>
+<td><code>codegen-units</code></td>
+<td><code>1</code></td>
+<td>already strict</td>
+</tr>
+<tr>
+<td><code>strip</code></td>
+<td><code>symbols</code></td>
+<td>already on</td>
+</tr>
+<tr>
+<td><code>panic</code></td>
+<td><code>abort</code></td>
+<td><strong>tightened in this commit</strong></td>
+</tr>
+<tr>
+<td><code>debug</code></td>
+<td><code>false</code></td>
+<td><strong>tightened in this commit</strong></td>
+</tr>
+<tr>
+<td><code>incremental</code></td>
+<td><code>false</code></td>
+<td><strong>tightened in this commit</strong></td>
+</tr>
+</tbody>
+</table>
+<h2 id="shipped-in-stream-g">Shipped in Stream G<a class="headerlink" href="#shipped-in-stream-g" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>G.2 link-time DCE</strong>: new <code>LinkerOptions::dead_code_elim</code> flag
+  wires a reachability scan from the entry symbol and omits every
+  <code>TranslationUnit</code>/<code>FunctionText</code> that cannot be reached. Regression
+  test: <code>dce_drops_unreachable_functions</code>.</li>
+<li><strong>G.4 release profile</strong>: upgraded to fat LTO + panic=abort +
+  debug-info off + no incremental. Single-line revert available in
+  <code>Cargo.toml</code> if perf regressions surface.</li>
+<li><strong>G.7 compact symbol mangling</strong>: new
+  <code>LinkerOptions::compact_symbols</code> replaces <code>gos_&lt;unit&gt;_&lt;name&gt;</code> with
+  a 12-character FNV-1a hash. Enabled by default via
+  <code>LinkerOptions::release()</code>. Regression test:
+  <code>compact_symbols_are_shorter_than_verbose</code>.</li>
+<li><strong>Release-by-default</strong>: <code>gos build</code> now passes
+  <code>LinkerOptions::default().release()</code> to <code>link()</code>.</li>
+</ul>
+<h2 id="deferred-per-plan">Deferred (per plan)<a class="headerlink" href="#deferred-per-plan" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>G.3 monomorphisation dedupe</strong>: the monomorphiser does not yet
+  emit multiple instantiations that could collide, so there is
+  nothing to dedupe. Revisit after the trait solver lands full
+  monomorphisation (post-Phase 10).</li>
+<li><strong>G.5 stdlib modular split</strong>: the <code>gossamer-std</code> crate is already
+  split across leaf modules. Link-time DCE reaches through them, so
+  no additional restructuring is required today. A richer pass
+  could drop individual functions rather than whole modules when
+  Cranelift codegen lands.</li>
+<li><strong>G.6 embedded runtime compression</strong>: the runtime archive is still
+  a stub (<code>PrebuiltRuntime::stub</code>) that produces a few hundred
+  bytes. Compression is premature until the real archive lands.</li>
+</ul>
+<h2 id="targets">Targets<a class="headerlink" href="#targets" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>1.0.0 target</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>linux-musl <code>hello_world</code> stripped</td>
+<td>&lt; 1.5 MiB</td>
+<td>artifact is already 346 B; the constraint applies once Cranelift emits real code</td>
+</tr>
+<tr>
+<td>linux-gnu <code>hello_world</code> stripped</td>
+<td>&lt; 2 MiB</td>
+<td>same</td>
+</tr>
+<tr>
+<td>darwin-arm64</td>
+<td>&lt; 2 MiB</td>
+<td>same</td>
+</tr>
+<tr>
+<td>windows-msvc</td>
+<td>&lt; 2.5 MiB</td>
+<td>same</td>
+</tr>
+</tbody>
+</table>
+<h2 id="how-to-verify-locally">How to verify locally<a class="headerlink" href="#how-to-verify-locally" title="Permanent link">&para;</a></h2>
+<pre><code class="language-bash">cargo build --release -p gossamer-cli
+./target/release/gos build examples/hello_world.gos
+wc -c examples/hello_world
+</code></pre>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../perf_baseline/" class="btn btn-neutral float-left" title="Performance baseline"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../runtime/" class="btn btn-neutral float-right" title="Runtime internals">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../perf_baseline/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../runtime/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../js/hljs_gossamer.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

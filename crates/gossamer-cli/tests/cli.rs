@@ -1111,6 +1111,108 @@ fn runtime_panic_stderr_carries_gx_code_prefix() {
 }
 
 #[test]
+fn test_subcommand_with_no_args_walks_up_to_project_toml() {
+    // `gos test` with no path argument should locate the nearest
+    // ancestor `project.toml` and discover every `.gos` file under
+    // its `src/` tree — mimicking `cargo test` ergonomics.
+    let dir = pkg_workdir("test-default");
+    let init = Command::new(gos_bin())
+        .args(["init", "example.com/svc"])
+        .current_dir(&dir)
+        .output()
+        .expect("spawn init");
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).expect("mkdir src");
+    std::fs::write(
+        src.join("main.gos"),
+        "use std::testing\n\
+         fn add(a: i64, b: i64) -> i64 { a + b }\n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+         \x20\x20\x20\x20use std::testing\n\
+         \x20\x20\x20\x20#[test]\n\
+         \x20\x20\x20\x20fn add_combines_two_ints() {\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20testing::check_eq(&super::add(2, 3), &5, \"add\")\n\
+         \x20\x20\x20\x20}\n\
+         }\n\
+         fn main() { }\n",
+    )
+    .expect("write src/main.gos");
+    let nested = src.join("inner");
+    std::fs::create_dir_all(&nested).expect("mkdir inner");
+    let cwd = nested;
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .current_dir(&cwd)
+        .output()
+        .expect("spawn test");
+    assert!(
+        out.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("add_combines_two_ints"),
+        "expected discovered test name in output: {stdout}"
+    );
+    assert!(
+        stdout.contains("1 passed"),
+        "expected pass tally in output: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn examples_web_service_project_tests_all_pass() {
+    // The `examples/projects/web_service` project is the canonical
+    // multi-endpoint Gossamer service. Its render-helper unit tests
+    // double as a smoke test that `gos test` (no args) discovers and
+    // runs the project's full `src/` tree.
+    let project = examples_dir().join("projects").join("web_service");
+    assert!(
+        project.join("project.toml").is_file(),
+        "missing project.toml at {}",
+        project.display()
+    );
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .current_dir(&project)
+        .output()
+        .expect("spawn test");
+    assert!(
+        out.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for tname in [
+        "health_returns_ok",
+        "users_returns_json_list_with_known_names",
+        "echo_wraps_query_in_json",
+        "echo_handles_empty_query",
+        "classify_routes_known_paths",
+        "classify_falls_back_to_not_found",
+    ] {
+        assert!(
+            stdout.contains(tname),
+            "missing test {tname} in output:\n{stdout}"
+        );
+    }
+    assert!(
+        stdout.contains("6 passed") && stdout.contains("0 failed"),
+        "expected full pass tally; stdout was:\n{stdout}"
+    );
+}
+
+#[test]
 fn skill_prompt_subcommand_prints_skill_card() {
     let out = Command::new(gos_bin())
         .arg("skill-prompt")

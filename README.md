@@ -5,7 +5,8 @@ language with Rust's surface syntax, Go's runtime, and the forward pipe operator
 
 - Language spec: [`SPEC.md`](SPEC.md)
 - Project style guide: [`GUIDELINES.md`](GUIDELINES.md)
-- Toolchain + stdlib + lint reference: [`docs_src/`](docs_src/) (rendered at `site/`)
+- Toolchain + stdlib + lint reference: [`docs_src/`](docs_src/) (built into `docs/`, served by GitHub Pages at <https://gossamer-lang.github.io/gossamer/>)
+- Editor integrations: [`gossamer-lang/gossamer-editor-support`](https://github.com/gossamer-lang/gossamer-editor-support) (VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed, plus a tree-sitter grammar)
 - Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 Source files use the `.gos` extension. The CLI is `gos`. Manifests
@@ -128,8 +129,8 @@ handful of ergonomic ideas picked off from Python:
   and reuse the parsed AST on re-invocation. Set
   `GOSSAMER_CACHE_TRACE=1` to see cache hits; `gos check
   --timings` prints per-stage wall-clock times. See
-  [`docs/incremental.md`](docs/incremental.md) for the staged
-  rollout to resolve / typecheck skipping.
+  [`docs_src/design/incremental.md`](docs_src/design/incremental.md)
+  for the staged rollout to resolve / typecheck skipping.
 - **LSP.** `gos lsp` speaks LSP 3.16 over stdio with
   `publishDiagnostics`, `hover`, `definition`, `completion`,
   `references`, and `rename` (with `prepareRename`). Editor
@@ -168,9 +169,13 @@ crates/               workspace crates (lex / parse / resolve / types / hir / mi
                       diagnostics / codegen-cranelift / codegen-llvm / cli)
 examples/             end-to-end .gos programs (hello_world, line_count,
                       web_server, kv_cache, json_pipeline, selfhost/*)
-docs/                 design docs (perf / binary-size baselines, diagnostics
-                      style guide, self-hosting study)
-docs_src/             mkdocs source for the public docs site
+docs_src/             mkdocs source for the public docs site (markdown +
+                      assets, including bundled design notes and the
+                      AI skill card)
+docs/                 built site (output of `mkdocs build`, served by
+                      GitHub Pages from /docs on main)
+references/           external reference material (e.g. the Go language
+                      spec used as a comparison baseline)
 ```
 
 ## Build
