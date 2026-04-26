@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'docs_src/**'
+      - 'landing/**'
       - 'mkdocs.yml'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
@@ -28,8 +29,12 @@ jobs:
           python-version: '3.x'
       - name: Install mkdocs
         run: pip install mkdocs
-      - name: Build site
-        run: mkdocs build --strict --site-dir site
+      - name: Assemble landing page at site root
+        run: |
+          mkdir -p site
+          cp -r landing/. site/
+      - name: Build mkdocs into site/docs/
+        run: mkdocs build --strict --site-dir site/docs
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

@@ -1,0 +1,128 @@
+:root {
+    --accent: #4a90d9;
+    --text: #1f2937;
+    --muted: #4b5563;
+    --bg: #ffffff;
+    --code-bg: #f5f7fa;
+    --border: #e5e7eb;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+
+body {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 0 1.25rem 4rem;
+}
+
+.hero {
+    text-align: center;
+    padding: 3.5rem 0 2rem;
+}
+
+.hero .logo {
+    width: 168px;
+    height: auto;
+    display: inline-block;
+}
+
+.hero h1 {
+    margin: 0.5rem 0 0.75rem;
+    font-size: 3rem;
+    letter-spacing: -0.025em;
+    font-weight: 700;
+}
+
+.hero .tagline {
+    color: var(--muted);
+    font-size: 1.15rem;
+    max-width: 640px;
+    margin: 0 auto 1.6rem;
+}
+
+.ctas { margin-top: 1.4rem; }
+
+.cta {
+    display: inline-block;
+    padding: 0.7rem 1.5rem;
+    margin: 0.25rem 0.4rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 1.05rem;
+    text-decoration: none;
+    transition: filter 120ms ease, background 120ms ease;
+    background: var(--accent);
+    color: #fff;
+    border: 1px solid var(--accent);
+}
+.cta:hover { filter: brightness(1.08); }
+
+.cta.secondary {
+    background: transparent;
+    color: var(--accent);
+}
+.cta.secondary:hover {
+    background: #eef4fb;
+}
+
+main section {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+}
+
+h2 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 0 0 0.75rem;
+}
+
+p { margin: 0.6rem 0; color: var(--muted); }
+
+code, pre {
+    font-family: "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+    font-size: 0.92rem;
+}
+
+p code {
+    background: var(--code-bg);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+}
+
+pre {
+    background: var(--code-bg);
+    padding: 1rem 1.1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    line-height: 1.45;
+    color: var(--text);
+}
+
+footer {
+    margin-top: 3rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.92rem;
+    text-align: center;
+}
+
+footer a { color: var(--accent); }
+
+@media (max-width: 600px) {
+    .hero { padding-top: 2rem; }
+    .hero h1 { font-size: 2.25rem; }
+    .hero .tagline { font-size: 1rem; }
+    pre { font-size: 0.82rem; }
+}

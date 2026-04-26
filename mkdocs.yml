@@ -1,5 +1,5 @@
 site_name: Gossamer
-site_url: https://gossamer-lang.github.io/gossamer/
+site_url: https://gossamer-lang.github.io/gossamer/docs/
 site_description: A garbage-collected, goroutine-powered, fast-compiling systems language with Rust-flavoured syntax.
 site_author: Gossamer contributors
 repo_url: https://github.com/gossamer-lang/gossamer

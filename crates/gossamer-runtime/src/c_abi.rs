@@ -426,21 +426,14 @@ pub static mut GOS_RT_STDOUT_BYTES: [u8; STDOUT_BUF_SIZE] = [0; STDOUT_BUF_SIZE]
 #[unsafe(no_mangle)]
 pub static mut GOS_RT_STDOUT_LEN: usize = 0;
 
-unsafe fn raw_write_stdout(bytes: &[u8]) {
+fn raw_write_stdout(bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }
-    unsafe extern "C" {
-        fn write(fd: i32, buf: *const u8, count: usize) -> isize;
-    }
-    let mut off = 0usize;
-    while off < bytes.len() {
-        let n = unsafe { write(1, bytes.as_ptr().add(off), bytes.len() - off) };
-        if n <= 0 {
-            return;
-        }
-        off += n as usize;
-    }
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    let _ = handle.write_all(bytes);
 }
 
 #[allow(static_mut_refs)]
@@ -461,7 +454,7 @@ unsafe fn write_stdout(bytes: &[u8]) {
                 *len_ptr = 0;
             }
         }
-        unsafe { raw_write_stdout(bytes) };
+        raw_write_stdout(bytes);
         return;
     }
     if len + bytes.len() > STDOUT_BUF_SIZE {
@@ -598,24 +591,30 @@ unsafe fn write_fd(fd: i32, bytes: &[u8]) {
         // Unbuffered direct write — fine for stderr and for any
         // user-opened fd once we add `open`. stdout is the only
         // buffered sink today.
-        unsafe { raw_write_fd(fd, bytes) };
+        raw_write_fd(fd, bytes);
     }
 }
 
-unsafe fn raw_write_fd(fd: i32, bytes: &[u8]) {
+fn raw_write_fd(fd: i32, bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }
-    unsafe extern "C" {
-        fn write(fd: i32, buf: *const u8, count: usize) -> isize;
-    }
-    let mut off = 0usize;
-    while off < bytes.len() {
-        let n = unsafe { write(fd, bytes.as_ptr().add(off), bytes.len() - off) };
-        if n <= 0 {
-            return;
+    use std::io::Write;
+    // Today the runtime only routes fds 1 and 2; fd 0 is read-only.
+    // Other fds will land here once `open()` is wired — at that
+    // point this dispatch grows. Going through `std::io` keeps the
+    // call cross-platform (no `extern "C" fn write` symbol on
+    // Windows MSVC).
+    match fd {
+        1 => {
+            let stdout = std::io::stdout();
+            let _ = stdout.lock().write_all(bytes);
         }
-        off += n as usize;
+        2 => {
+            let stderr = std::io::stderr();
+            let _ = stderr.lock().write_all(bytes);
+        }
+        _ => {}
     }
 }
 
@@ -652,7 +651,7 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte(stream: *const GosStream, b: i
         return;
     }
     let byte = [(b & 0xff) as u8];
-    unsafe { raw_write_fd(fd, &byte) };
+    raw_write_fd(fd, &byte);
 }
 
 /// Writes every byte of the passed C-string through `stream`.
@@ -736,14 +735,14 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte_array(
     let mut cur = 0usize;
     for i in 0..len {
         if cur >= buf.len() {
-            unsafe { raw_write_fd(fd, &buf[..cur]) };
+            raw_write_fd(fd, &buf[..cur]);
             cur = 0;
         }
         buf[cur] = unsafe { (*arr.add(i)) as u8 };
         cur += 1;
     }
     if cur > 0 {
-        unsafe { raw_write_fd(fd, &buf[..cur]) };
+        raw_write_fd(fd, &buf[..cur]);
     }
 }
 
