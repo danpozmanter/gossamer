@@ -893,39 +893,145 @@ fn try_native_build(
         .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", tmp_dir.display())))?;
     let (object_paths, object_triple) = emit_native_objects(source, unit_name, &tmp_dir, release)?;
     let runtime_lib = find_runtime_lib()?;
+    let link_result = if cfg!(all(windows, target_env = "msvc")) {
+        link_windows_msvc(&object_paths, &runtime_lib, out_path)
+    } else {
+        link_posix(&object_paths, &runtime_lib, out_path)
+    };
+    let _ = fs::remove_dir_all(&tmp_dir);
+    let _ = input_path;
+    link_result.map(|()| NativeBuildOutcome {
+        size: fs::metadata(out_path).map_or(0, |m| m.len()),
+        note: format!(
+            "target {triple}",
+            triple = object_triple.as_deref().unwrap_or("unknown"),
+        ),
+    })
+}
+
+/// POSIX/macOS link path — drives the host `cc` (or `$CC`).
+fn link_posix(
+    object_paths: &[PathBuf],
+    runtime_lib: &Path,
+    out_path: &Path,
+) -> std::result::Result<(), NativeBuildError> {
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let mut cmd = std::process::Command::new(&cc);
-    for p in &object_paths {
+    for p in object_paths {
         cmd.arg(p);
     }
-    cmd.arg(&runtime_lib).arg("-o").arg(out_path);
-    // POSIX system libs the runtime ABI pulls in. None of these
-    // exist on the MSVC / MinGW link line — the runtime's stdio
-    // path goes through Rust std on Windows, and the equivalents
-    // (kernel32, ws2_32, advapi32) are auto-linked by std.
-    if cfg!(unix) {
-        cmd.arg("-lpthread").arg("-ldl").arg("-lm");
-    }
-    let status = cmd.status();
-    let _ = fs::remove_dir_all(&tmp_dir);
-    match status {
-        Ok(status) if status.success() => {
+    cmd.arg(runtime_lib).arg("-o").arg(out_path);
+    // POSIX system libs that Rust std + the runtime pull in.
+    cmd.arg("-lpthread").arg("-ldl").arg("-lm");
+    match cmd.status() {
+        Ok(s) if s.success() => {
             set_executable(out_path).map_err(NativeBuildError::Io)?;
-            let size = fs::metadata(out_path).map_or(0, |m| m.len());
-            let _ = input_path;
-            Ok(NativeBuildOutcome {
-                size,
-                note: format!(
-                    "target {triple}",
-                    triple = object_triple.as_deref().unwrap_or("unknown"),
-                ),
-            })
+            Ok(())
         }
-        Ok(status) => Err(NativeBuildError::LinkerFailed(format!(
-            "{cc} exited with {status}"
+        Ok(s) => Err(NativeBuildError::LinkerFailed(format!(
+            "{cc} exited with {s}"
         ))),
         Err(err) => Err(NativeBuildError::LinkerMissing(format!("{cc}: {err}"))),
     }
+}
+
+/// Windows MSVC link path — invokes `rust-lld -flavor link` with
+/// MSVC-style flags. `cc` on Windows runners typically resolves to
+/// MinGW gcc, which can't link MSVC-ABI rlibs (the runtime is built
+/// against `windows-msvc`). `rust-lld.exe` ships with every rustup
+/// toolchain and speaks the MSVC link.exe interface, so we don't
+/// need vcvars or a pre-installed Visual Studio link.exe in PATH.
+#[cfg(windows)]
+fn link_windows_msvc(
+    object_paths: &[PathBuf],
+    runtime_lib: &Path,
+    out_path: &Path,
+) -> std::result::Result<(), NativeBuildError> {
+    let linker = locate_rust_lld()?;
+    let mut cmd = std::process::Command::new(&linker);
+    cmd.arg("-flavor").arg("link").arg("/NOLOGO");
+    let mut out_arg = std::ffi::OsString::from("/OUT:");
+    out_arg.push(out_path);
+    cmd.arg(out_arg);
+    for p in object_paths {
+        cmd.arg(p);
+    }
+    cmd.arg(runtime_lib);
+    // System libs Rust's windows-msvc std + panic_unwind require.
+    // Same set rustc passes when linking a normal `staticlib` into
+    // an executable (see compiler/rustc_target/src/spec/base/windows_msvc.rs).
+    for lib in [
+        "advapi32.lib",
+        "bcrypt.lib",
+        "kernel32.lib",
+        "ntdll.lib",
+        "userenv.lib",
+        "ws2_32.lib",
+        "synchronization.lib",
+        "dbghelp.lib",
+        "msvcrt.lib",
+        "ucrt.lib",
+        "vcruntime.lib",
+        "legacy_stdio_definitions.lib",
+    ] {
+        cmd.arg(lib);
+    }
+    match cmd.status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(NativeBuildError::LinkerFailed(format!(
+            "{} exited with {s}",
+            linker.display()
+        ))),
+        Err(err) => Err(NativeBuildError::LinkerMissing(format!(
+            "{}: {err}",
+            linker.display()
+        ))),
+    }
+}
+
+#[cfg(not(windows))]
+fn link_windows_msvc(
+    _object_paths: &[PathBuf],
+    _runtime_lib: &Path,
+    _out_path: &Path,
+) -> std::result::Result<(), NativeBuildError> {
+    Err(NativeBuildError::LinkerMissing(
+        "Windows MSVC link path is only available on a Windows host".to_string(),
+    ))
+}
+
+/// Finds `rust-lld.exe` inside the active rustup toolchain. Asks
+/// `rustc --print sysroot` rather than guessing the toolchain path.
+#[cfg(windows)]
+fn locate_rust_lld() -> std::result::Result<PathBuf, NativeBuildError> {
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let out = std::process::Command::new(&rustc)
+        .args(["--print", "sysroot"])
+        .output()
+        .map_err(|err| {
+            NativeBuildError::LinkerMissing(format!(
+                "could not invoke `{rustc} --print sysroot`: {err}"
+            ))
+        })?;
+    if !out.status.success() {
+        return Err(NativeBuildError::LinkerMissing(format!(
+            "`{rustc} --print sysroot` exited with {}",
+            out.status
+        )));
+    }
+    let sysroot = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let candidate = PathBuf::from(&sysroot)
+        .join("lib")
+        .join("rustlib")
+        .join("x86_64-pc-windows-msvc")
+        .join("bin")
+        .join("rust-lld.exe");
+    if candidate.exists() {
+        return Ok(candidate);
+    }
+    // Fall back to a bare `rust-lld` resolved through PATH so users
+    // who installed LLVM separately still link.
+    Ok(PathBuf::from("rust-lld.exe"))
 }
 
 // Lowers `source` into one or two object files under `tmp_dir`, picking the
@@ -992,7 +1098,7 @@ fn emit_native_objects(
     }
 }
 
-fn set_executable(path: &PathBuf) -> Result<()> {
+fn set_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
