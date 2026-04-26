@@ -127,9 +127,20 @@ fn no_op_rebuild_completes_within_the_phase_29_budget() {
 
 #[test]
 fn fingerprints_partition_cleanly_per_target() {
+    // Pick a cross triple that is guaranteed to differ from the
+    // host. A hard-coded `aarch64-apple-darwin` collides with the
+    // host on Apple Silicon CI runners — pick the opposite arch
+    // for that case.
     let mut graph = simple_graph();
+    let host = TargetTriple::host();
+    let cross = if host.as_str() == "aarch64-apple-darwin" {
+        TargetTriple("x86_64-unknown-linux-gnu".to_string())
+    } else {
+        TargetTriple("aarch64-apple-darwin".to_string())
+    };
+    assert_ne!(host.as_str(), cross.as_str(), "test setup picked the host");
     let host_fps = fingerprint_all(&graph).unwrap();
-    graph.target = TargetTriple("aarch64-apple-darwin".to_string());
+    graph.target = cross;
     let cross_fps = fingerprint_all(&graph).unwrap();
     assert_ne!(host_fps.get("leaf"), cross_fps.get("leaf"));
     assert_ne!(host_fps.get("app"), cross_fps.get("app"));

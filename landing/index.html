@@ -8,8 +8,22 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=20260426-2" />
+  <link rel="stylesheet" href="style.css?v=20260426-3" />
   <link rel="icon" href="img/GossamerLogo.png" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+  <script>
+    // Gossamer's surface syntax is Rust-flavoured: fn, let, match,
+    // struct, impl, &, generics. Aliasing the Rust grammar covers
+    // ~95% of tokens and avoids shipping a custom highlighter.
+    addEventListener("DOMContentLoaded", function () {
+      if (typeof hljs === "undefined") return;
+      var rust = hljs.getLanguage("rust");
+      if (rust) hljs.registerLanguage("gossamer", function () { return rust; });
+      hljs.highlightAll();
+    });
+  </script>
 </head>
 <body>
   <main>
@@ -24,7 +38,7 @@
 
     <section class="example">
       <h2>Natural functional flow with forward pipes</h2>
-<pre><code>fn double(x: i64) -&gt; i64 { x * 2 }
+<pre><code class="language-gossamer">fn double(x: i64) -&gt; i64 { x * 2 }
 fn add(a: i64, b: i64) -&gt; i64 { a + b }
 fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
     if x &lt; lo { lo } else if x &gt; hi { hi } else { x }
@@ -41,7 +55,7 @@ fn main() {
 
     <section class="example">
       <h2>Spin up a web server</h2>
-<pre><code>use std::http
+<pre><code class="language-gossamer">use std::http
 
 struct App { }
 

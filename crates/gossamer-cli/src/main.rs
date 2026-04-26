@@ -898,12 +898,14 @@ fn try_native_build(
     for p in &object_paths {
         cmd.arg(p);
     }
-    cmd.arg(&runtime_lib)
-        .arg("-o")
-        .arg(out_path)
-        .arg("-lpthread")
-        .arg("-ldl")
-        .arg("-lm");
+    cmd.arg(&runtime_lib).arg("-o").arg(out_path);
+    // POSIX system libs the runtime ABI pulls in. None of these
+    // exist on the MSVC / MinGW link line — the runtime's stdio
+    // path goes through Rust std on Windows, and the equivalents
+    // (kernel32, ws2_32, advapi32) are auto-linked by std.
+    if cfg!(unix) {
+        cmd.arg("-lpthread").arg("-ldl").arg("-lm");
+    }
     let status = cmd.status();
     let _ = fs::remove_dir_all(&tmp_dir);
     match status {

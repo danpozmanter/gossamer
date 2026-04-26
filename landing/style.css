@@ -70,11 +70,27 @@ code, pre {
 pre {
     background: var(--code-bg);
     border: 1px solid var(--border);
-    color: var(--text);
-    padding: 1.1rem 1.2rem;
     border-radius: 8px;
     overflow-x: auto;
     line-height: 1.5;
+    margin: 0;
+}
+
+/* Let highlight.js own colour + padding inside the block, but keep
+ * the panel chrome (border, radius, scroll) on the wrapping <pre>. */
+pre code.hljs {
+    background: transparent;
+    padding: 1.1rem 1.2rem;
+    display: block;
+    overflow-x: auto;
+}
+
+/* Pre-highlight (page first paint) fallback so the code is still
+ * readable before highlight.js runs. */
+pre code:not(.hljs) {
+    color: var(--text);
+    padding: 1.1rem 1.2rem;
+    display: block;
 }
 
 .cta-row {
