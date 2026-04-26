@@ -1,0 +1,5 @@
+fn main() {
+    let x = 10.5f64
+    let y = 3.0f64
+    println!("{}", x % y)
+}

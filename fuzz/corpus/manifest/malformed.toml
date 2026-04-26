@@ -1,0 +1,8 @@
+[project]
+id = "example.com/svc
+version = "0.1.0"
+
+[dependencies
+"example.com/foo" =
+
+[[unclosed

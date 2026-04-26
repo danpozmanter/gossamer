@@ -1,0 +1,2 @@
+// ERROR: GP0001
+fn main() { let x = ; }

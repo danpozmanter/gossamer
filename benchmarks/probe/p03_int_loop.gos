@@ -1,0 +1,5 @@
+fn main() {
+    let mut i = 0i64
+    while i < 1000i64 { i = i + 1i64 }
+    println("done")
+}

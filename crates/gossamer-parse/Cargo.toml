@@ -1,0 +1,18 @@
+[package]
+name = "gossamer-parse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Parser from Gossamer tokens to AST."
+
+[lints]
+workspace = true
+
+[dependencies]
+gossamer-ast = { workspace = true }
+gossamer-diagnostics = { workspace = true }
+gossamer-lex = { workspace = true }
+thiserror = { workspace = true }

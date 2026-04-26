@@ -1,0 +1,96 @@
+/*
+ * Control flow — loops, conditionals, pattern matching.
+ *
+ * Every control construct is an expression. `if`, `match`,
+ * `loop`, and `block` all evaluate to a value.
+ */
+
+fn classify(n: i64) -> String {
+    if n < 0 {
+        "negative".to_string()
+    } else if n == 0 {
+        "zero".to_string()
+    } else if n < 10 {
+        "small".to_string()
+    } else {
+        "large".to_string()
+    }
+}
+
+enum Shape {
+    Circle(f64),
+    Rect { w: f64, h: f64 },
+    Line,
+}
+
+fn area(shape: &Shape) -> f64 {
+    match shape {
+        Shape::Circle(r) => 3.14159 * r * r,
+        Shape::Rect { w, h } => w * h,
+        Shape::Line => 0.0,
+    }
+}
+
+fn main() {
+    // while loop
+    let mut n = 0
+    let mut total = 0
+    while n < 5 {
+        total = total + n
+        n = n + 1
+    }
+    println!("while total (0..5): {total}")
+
+    // for loop over a range
+    let mut product = 1
+    for i in 1..6 {
+        product = product * i
+    }
+    println!("5! = {product}")
+
+    // loop { break value }
+    let first_square_over_100 = loop {
+        let mut i = 1
+        let mut sq = 1
+        while sq <= 100 {
+            i = i + 1
+            sq = i * i
+        }
+        break sq
+    }
+    println!("first square > 100: {first_square_over_100}")
+
+    // match with guards
+    for n in [-3, 0, 3, 42].iter() {
+        let label = match *n {
+            x if x < 0 => "negative",
+            0 => "zero",
+            1..=9 => "single-digit",
+            _ => "many",
+        }
+        println!("{} -> {}", *n, label)
+    }
+
+    // if-let style (via match)
+    let maybe: Option<i64> = Some(7)
+    match maybe {
+        Some(n) => println!("got {n}"),
+        None => println!("got nothing"),
+    }
+
+    // trait-dispatched pattern
+    let shapes = [
+        Shape::Circle(1.5),
+        Shape::Rect { w: 2.0, h: 4.0 },
+        Shape::Line,
+    ]
+    for s in shapes.iter() {
+        println!("area={}", area(s))
+    }
+
+    // classification helper
+    println!("classify(-5) = {}", classify(-5))
+    println!("classify(0)  = {}", classify(0))
+    println!("classify(7)  = {}", classify(7))
+    println!("classify(99) = {}", classify(99))
+}

@@ -1,0 +1,5 @@
+fn main() {
+    let t = (1i64, 2i64)
+    let _ = t.0
+    println("done")
+}

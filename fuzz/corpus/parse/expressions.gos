@@ -1,0 +1,27 @@
+fn main() {
+    let _ = 1 + 2 * 3 - 4 / 5
+    let _ = (1 + 2) * (3 - 4)
+    let _ = 1 << 2 | 3 & 4 ^ 5
+    let _ = 1 == 2 && 3 != 4 || 5 < 6
+    let _ = if cond { 1i64 } else { 2i64 }
+    let _ = match v { 0 => "z", _ => "n" }
+    let _ = loop { break 7i64 }
+    let _ = { let x = 1; x + 2 }
+    let _ = a |> b |> c |> d
+    let _ = arr[i + j][k * l]
+    let _ = obj.field.subfield
+    let _ = tuple.0.1
+    let _ = (1i64, 2i64, 3i64)
+    let _ = (1i64,)
+    let _ = ()
+    let _ = [1i64, 2i64, 3i64]
+    let _ = [0i64; 100]
+    let _ = vec![1i64, 2i64, 3i64]
+    let _ = "interp {x} and {y + 1}"
+    let _ = format!("{x:>5}")
+    let _ = -x.abs()
+    let _ = !cond
+    let _ = *p
+    let _ = &v
+    let _ = &mut v
+}

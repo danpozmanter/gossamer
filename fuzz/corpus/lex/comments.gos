@@ -1,0 +1,4 @@
+// line comment
+/* block comment */
+/* nested /* inner */ still one */
+fn body(/* param comment */ x: i64) -> i64 { x /* trailing */ + 1 }

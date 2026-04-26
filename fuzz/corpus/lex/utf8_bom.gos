@@ -1,0 +1,10 @@
+// File starts with UTF-8 BOM (test the lexer handles it)
+fn main() {
+    let s = "ascii"
+    let t = "Latin: éèà"
+    let u = "Cyrillic: Привет"
+    let v = "CJK: 中文"
+    let w = "emoji: 😀🚀✨"
+    let x = "RTL: مرحبا"
+    let y = "combining: e\u{0301}"
+}

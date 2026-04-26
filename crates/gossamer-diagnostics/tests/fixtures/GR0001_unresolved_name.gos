@@ -1,0 +1,2 @@
+// ERROR: GR0001
+fn main() { let x = unknown_name }

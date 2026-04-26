@@ -1,0 +1,15 @@
+fn main() {
+    let add = |a, b| a + b
+    let curry = |a| |b| a + b
+    let capture = || x + 1
+    let typed = |a: i64, b: i64| -> i64 { a * b }
+    let block = |x| {
+        let y = x * 2
+        y + 1
+    }
+    let void = |x: i64| { println(x) }
+    let recursive_self = |s: &Self| s.len()
+    let mv = move |x| stored.push(x)
+    let nested_call = (|x| x + 1)(5i64)
+    println(nested_call)
+}

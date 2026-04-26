@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/examples/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Examples - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Examples";
+        var mkdocs_page_input_path = "examples.md";
+        var mkdocs_page_url = "/gossamer/examples/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Gossamer
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Examples</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#a-friendly-taste">A friendly taste</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#running-today">Running today</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#parse-only-today-run-once-the-stdlib-wiring-lands">Parse-only today (run once the stdlib wiring lands)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#self-host-ports">Self-host ports</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#try-it">Try it</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Examples</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/examples.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h1>
+<p>The <a href="https://github.com/gossamer-lang/gossamer/tree/main/examples"><code>examples/</code></a>
+directory ships a handful of worked programs.</p>
+<h2 id="a-friendly-taste">A friendly taste<a class="headerlink" href="#a-friendly-taste" title="Permanent link">&para;</a></h2>
+<p><code>examples/function_piping.gos</code> walks through the <code>|&gt;</code> forward-pipe
+operator, the feature most likely to surprise readers coming from
+Rust or Go. It straightens out nested calls so the data flow reads
+left-to-right:</p>
+<pre><code class="language-gossamer">fn double(x: i64) -&gt; i64 { x * 2 }
+fn add(a: i64, b: i64) -&gt; i64 { a + b }
+fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
+    if x &lt; lo { lo } else if x &gt; hi { hi } else { x }
+}
+
+fn main() {
+    let n = 3i64 |&gt; double |&gt; add(10i64) |&gt; clamp(0i64, 100i64)
+    println(&quot;arithmetic:&quot;, n)
+}
+</code></pre>
+<h2 id="running-today">Running today<a class="headerlink" href="#running-today" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>hello_world.gos</code></strong> — one-liner that prints via <code>fmt::println</code>.
+  Runs under <code>gos run</code>.</li>
+<li><strong><code>function_piping.gos</code></strong> — tour of the <code>|&gt;</code> forward-pipe
+  operator, both arithmetic chains and method pipelines.</li>
+<li><strong><code>go_spawn.gos</code></strong> — goroutine fan-out with no channels.
+  Every construct lowers through native codegen, so <code>gos build</code>
+  produces a working binary.</li>
+<li><strong><code>concurrency.gos</code></strong> — goroutines plus a <code>(Sender, Receiver)</code>
+  channel, producer / consumer shape. Runs under <code>gos run</code>
+  (tree-walker and VM); native codegen for channel operations
+  is still pending.</li>
+<li><strong><code>line_count.gos</code></strong> — walks a directory via <code>os::read_dir</code>,
+  counts plain-text lines per file, fans out through a channel.
+  Uses goroutines and <code>select</code>.</li>
+<li><strong><code>web_server.gos</code></strong> — HTTP/1.1 echo server mirroring FastAPI's
+  <code>/echo</code> handler. Accepts any method, returns method / path /
+  query / body as JSON. Runs under <code>gos run</code>; <code>curl
+  http://localhost:8080/echo?name=jane</code> exercises it.</li>
+</ul>
+<h2 id="parse-only-today-run-once-the-stdlib-wiring-lands">Parse-only today (run once the stdlib wiring lands)<a class="headerlink" href="#parse-only-today-run-once-the-stdlib-wiring-lands" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>kv_cache.gos</code></strong> — in-memory TTL cache with a background
+  expiry sweeper. Exercises goroutines, <code>Mutex&lt;T&gt;</code>, channels,
+  graceful shutdown via <code>std::context</code>.</li>
+<li><strong><code>json_pipeline.gos</code></strong> — streaming JSONL transformer. Reads
+  line-delimited JSON from stdin, applies a transform, writes
+  JSONL to stdout. Exercises <code>std::io</code>, <code>std::encoding::json</code>,
+  <code>std::errors::wrap</code>.</li>
+</ul>
+<h2 id="self-host-ports">Self-host ports<a class="headerlink" href="#self-host-ports" title="Permanent link">&para;</a></h2>
+<p><code>examples/selfhost/</code> holds parse-only ports of Gossamer's own
+lexer and parser, as described in
+<a href="../design/selfhosting/"><code>docs/selfhosting.md</code></a>. These are a
+feasibility study — they will <em>build</em> once the stdlib covers
+growable collections, hashmaps, and generics through codegen.</p>
+<h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
+<pre><code class="language-sh">gos run examples/hello_world.gos
+gos run examples/function_piping.gos
+gos run examples/web_server.gos &amp;
+curl 'http://localhost:8080/echo?name=jane'
+</code></pre>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../toolchain/diagnostics/" class="btn btn-neutral float-left" title="Diagnostics"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../deployment/" class="btn btn-neutral float-right" title="Deployment">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../toolchain/diagnostics/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../deployment/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

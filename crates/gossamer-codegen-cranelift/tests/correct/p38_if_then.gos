@@ -1,0 +1,1 @@
+fn main() { if 3i64 > 2i64 { println("yes") } else { println("no") } }

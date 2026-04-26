@@ -1,0 +1,6 @@
+fn double(x: i64) -> i64 { x + x }
+fn main() {
+    let y = double(21i64)
+    let _ = y
+    println("done")
+}

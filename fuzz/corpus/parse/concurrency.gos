@@ -1,0 +1,27 @@
+use std::sync::{Mutex, WaitGroup}
+
+fn main() {
+    let (tx, rx) = channel::<i64>()
+    go fn() { tx.send(1i64) }()
+    go fn() { tx.send(2i64) }()
+    let a = rx.recv()
+    let b = rx.recv()
+    println(a + b)
+
+    select {
+        recv v = rx => println(v),
+        send tx = 3i64 => println("sent"),
+        default => println("would block"),
+    }
+
+    let wg = WaitGroup::new()
+    wg.add(2i64)
+    go fn() { defer wg.done(); println("a") }()
+    go fn() { defer wg.done(); println("b") }()
+    wg.wait()
+
+    let m = Mutex::new()
+    m.lock()
+    defer m.unlock()
+    let _ = 42i64
+}

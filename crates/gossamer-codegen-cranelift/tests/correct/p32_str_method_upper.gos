@@ -1,0 +1,1 @@
+fn main() { let s = "hi"; println(s.to_uppercase()) }

@@ -1,0 +1,28 @@
+a + b - c * d / e % f
+a == b != c <= d >= e < f > g
+a && b || !c
+a & b | c ^ d << e >> f
+a += b
+a -= b
+a *= b
+a /= b
+a %= b
+a |> f
+a |> g(b)
+&x
+&mut y
+*z
+a..b
+a..=b
+..b
+a..
+..
+::std::io
+struct.field
+tuple.0
+arr[0usize]
+arr[i + 1]
+fn::call(arg)
+T::method(self)
+match { _ => {} }
+?? x

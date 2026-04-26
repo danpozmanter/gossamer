@@ -1,0 +1,69 @@
+site_name: Gossamer
+site_url: https://gossamer-lang.github.io/gossamer/
+site_description: A garbage-collected, goroutine-powered, fast-compiling systems language with Rust-flavoured syntax.
+site_author: Gossamer contributors
+repo_url: https://github.com/gossamer-lang/gossamer
+repo_name: gossamer-lang/gossamer
+edit_uri: edit/main/docs_src/
+
+docs_dir: docs_src
+site_dir: site
+
+theme:
+  name: readthedocs
+  navigation_depth: 3
+  highlightjs: true
+  hljs_languages:
+    - rust
+    - go
+    - python
+    - bash
+    - toml
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - js/hljs_gossamer.js
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Running: running.md
+  - Syntax: syntax.md
+  - Memory model: memory.md
+  - Writing libraries: libraries.md
+  - Standard library:
+      - Overview: stdlib.md
+      - Method support: method_support.md
+      - Coverage matrix: stdlib_coverage.md
+  - Toolchain:
+      - Overview: toolchain.md
+      - Lints: toolchain/lints.md
+      - Diagnostics: toolchain/diagnostics.md
+  - Examples: examples.md
+  - Production:
+      - Deployment: deployment.md
+      - Performance: perf_characteristics.md
+      - Codegen ABI: codegen_abi.md
+      - v1 non-goals: non_goals_v1.md
+  - Migrating:
+      - From Rust: migration/rust.md
+      - From Go: migration/go.md
+      - From Python: migration/python.md
+  - Design notes:
+      - Diagnostics style: design/diagnostics.md
+      - Performance baseline: design/perf_baseline.md
+      - Binary-size baseline: design/binary_size_baseline.md
+      - Runtime internals: design/runtime.md
+      - Self-hosting study: design/selfhosting.md
+  - Security: security.md
+  - Contributing: contributing.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - fenced_code
+  - footnotes
+  - toc:
+      permalink: true

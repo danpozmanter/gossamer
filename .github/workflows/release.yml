@@ -1,0 +1,277 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-x86_64:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read workspace version
+        shell: bash
+        run: |
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]$/ { in_section = 1; next }
+            /^\[/ { in_section = 0 }
+            in_section && $1 ~ /^version = / { print $2; exit }
+          ' Cargo.toml)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --bin gos
+
+      - name: Install packaging tools
+        run: cargo install --locked cargo-deb cargo-generate-rpm
+
+      - name: Stage tarball payload
+        run: |
+          BASE="gos-${VERSION}-linux-x86_64"
+          mkdir "$BASE"
+          cp target/release/gos "$BASE/"
+          cp README.md LICENSE "$BASE/"
+          cp scripts/install.sh "$BASE/"
+          chmod +x "$BASE/install.sh"
+          tar -czf "${BASE}.tar.gz" "$BASE"
+
+      - name: Build .deb
+        run: |
+          cargo deb --no-build -p gossamer-cli
+          mv target/debian/*.deb .
+
+      - name: Build .rpm
+        run: |
+          cargo generate-rpm -p crates/gossamer-cli
+          mv target/generate-rpm/*.rpm .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: gos-linux-x86_64
+          path: |
+            gos-*-linux-x86_64.tar.gz
+            *.deb
+            *.rpm
+
+  build-linux-aarch64:
+    name: Linux aarch64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read workspace version
+        shell: bash
+        run: |
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]$/ { in_section = 1; next }
+            /^\[/ { in_section = 0 }
+            in_section && $1 ~ /^version = / { print $2; exit }
+          ' Cargo.toml)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64
+
+      - name: Install cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+        run: cargo build --release --target aarch64-unknown-linux-gnu --bin gos
+
+      - name: Install packaging tools
+        run: cargo install --locked cargo-deb cargo-generate-rpm
+
+      - name: Stage tarball payload
+        run: |
+          BASE="gos-${VERSION}-linux-aarch64"
+          mkdir "$BASE"
+          cp target/aarch64-unknown-linux-gnu/release/gos "$BASE/"
+          cp README.md LICENSE "$BASE/"
+          cp scripts/install.sh "$BASE/"
+          chmod +x "$BASE/install.sh"
+          tar -czf "${BASE}.tar.gz" "$BASE"
+
+      - name: Build .deb
+        run: |
+          cargo deb --no-build --target aarch64-unknown-linux-gnu -p gossamer-cli
+          mv target/aarch64-unknown-linux-gnu/debian/*.deb .
+
+      - name: Build .rpm
+        run: |
+          cargo generate-rpm --target aarch64-unknown-linux-gnu -p gossamer-cli
+          mv target/aarch64-unknown-linux-gnu/generate-rpm/*.rpm .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: gos-linux-aarch64
+          path: |
+            gos-*-linux-aarch64.tar.gz
+            *.deb
+            *.rpm
+
+  build-macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-14
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            runner: macos-13
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read workspace version
+        shell: bash
+        run: |
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]$/ { in_section = 1; next }
+            /^\[/ { in_section = 0 }
+            in_section && $1 ~ /^version = / { print $2; exit }
+          ' Cargo.toml)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-${{ matrix.arch }}
+
+      - name: Build
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: cargo build --release --target ${{ matrix.target }} --bin gos
+
+      - name: Package zip
+        run: |
+          BASE="gos-${VERSION}-macos-${{ matrix.arch }}"
+          mkdir "$BASE"
+          cp target/${{ matrix.target }}/release/gos "$BASE/"
+          cp README.md LICENSE "$BASE/"
+          cp scripts/install.sh "$BASE/"
+          chmod +x "$BASE/install.sh"
+          codesign --force --sign - --timestamp=none "$BASE/gos"
+          zip -r "${BASE}.zip" "$BASE"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: gos-macos-${{ matrix.arch }}
+          path: gos-*-macos-${{ matrix.arch }}.zip
+
+  build-windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read workspace version
+        shell: bash
+        run: |
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]$/ { in_section = 1; next }
+            /^\[/ { in_section = 0 }
+            in_section && $1 ~ /^version = / { print $2; exit }
+          ' Cargo.toml)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --bin gos
+
+      - name: Stage zip payload
+        shell: pwsh
+        run: |
+          $base = "gos-$env:VERSION-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $base | Out-Null
+          Copy-Item target\release\gos.exe "$base\"
+          Copy-Item README.md, LICENSE "$base\"
+          Compress-Archive -Path "$base\*" -DestinationPath "$base.zip"
+
+      - name: Render Inno Setup script
+        shell: pwsh
+        run: |
+          $iss = Get-Content resources\windows\gos-setup.iss.in -Raw
+          $iss = $iss -replace '@VERSION@', $env:VERSION
+          $iss = $iss -replace '@SOURCE_DIR@', ($PWD.Path -replace '\\', '/')
+          $iss | Set-Content resources\windows\gos-setup.iss -Encoding utf8
+
+      - name: Build Inno Setup installer
+        shell: pwsh
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            $iscc = 'C:\Program Files\Inno Setup 6\ISCC.exe'
+          }
+          & $iscc /Qp resources\windows\gos-setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit $LASTEXITCODE" }
+          Move-Item resources\windows\gos-*-setup.exe . -Force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: gos-windows-x86_64
+          path: |
+            gos-*-windows-x86_64.zip
+            gos-*-setup.exe
+
+  publish:
+    name: Publish release
+    needs: [build-linux-x86_64, build-linux-aarch64, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: artifacts/
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -mindepth 2 -maxdepth 2 -type f \
+            \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' \
+               -o -name '*.rpm' -o -name '*.exe' \) \
+            -exec mv {} release/ \;
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: true
+          files: |
+            release/*.tar.gz
+            release/*.zip
+            release/*.deb
+            release/*.rpm
+            release/*.exe

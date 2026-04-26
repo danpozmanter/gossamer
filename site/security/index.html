@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/security/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Security - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Security";
+        var mkdocs_page_input_path = "security.md";
+        var mkdocs_page_url = "/gossamer/security/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Gossamer
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Security</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#what-is-done">What is done</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#known-gaps">Known gaps</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#reporting-a-vulnerability">Reporting a vulnerability</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#ci-automation-planned">CI automation (planned)</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Security</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/security.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h1>
+<p>Gossamer's implementation forbids <code>unsafe</code> Rust workspace-wide
+and audits every external dependency against a small approved
+list. This page summarises the posture for users and points at
+the hardening roadmap. Reporting details are in
+<a href="https://github.com/gossamer-lang/gossamer/blob/main/SECURITY.md"><code>SECURITY.md</code></a>.</p>
+<h2 id="what-is-done">What is done<a class="headerlink" href="#what-is-done" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Zero <code>unsafe</code> in first-party code. Every crate carries
+  <code>#![forbid(unsafe_code)]</code>.</li>
+<li>GC is arena-indexed, not pointer-based. Use-after-free
+  through the GC API is representationally impossible.</li>
+<li>Minimal external dependencies: <code>anyhow</code>, <code>clap</code>,
+  <code>codespan-reporting</code>, <code>parking_lot</code>, <code>thiserror</code> — plus
+  <code>insta</code> as a dev-only snapshot tool.</li>
+</ul>
+<h2 id="known-gaps">Known gaps<a class="headerlink" href="#known-gaps" title="Permanent link">&para;</a></h2>
+<p>Before shipping production services on Gossamer, you should
+know:</p>
+<ul>
+<li>The HTTP server does not bound header / body size today. An
+  attacker can send an unbounded stream and OOM the process.
+  <strong>Do not expose the default server past a trust boundary.</strong></li>
+<li><code>std::tls</code> is not yet implemented. Every built-in HTTP
+  listener is cleartext. Use a reverse proxy (nginx, Caddy) for
+  TLS termination in the interim.</li>
+<li><code>crypto::rand::fill</code> only works on Linux today. On other
+  platforms it returns an <code>Err</code>; callers that discard the error
+  will read zeros. Do not ship key generation on non-Linux
+  hosts yet.</li>
+<li><code>os::env</code>, <code>os::args</code>, and the filesystem stubs are no-ops in
+  the current interpreter. Programs that assume they work get
+  silent Unit values.</li>
+</ul>
+<p>Each item is tracked with a remediation PR on the security
+hardening backlog.</p>
+<h2 id="reporting-a-vulnerability">Reporting a vulnerability<a class="headerlink" href="#reporting-a-vulnerability" title="Permanent link">&para;</a></h2>
+<p>Email security@gossamer-lang.org with a PoC and a suggested
+severity. A <code>SECURITY.md</code> lands in the repository root alongside
+0.0.0.</p>
+<h2 id="ci-automation-planned">CI automation (planned)<a class="headerlink" href="#ci-automation-planned" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>cargo deny</code> — license + advisory gate.</li>
+<li><code>cargo audit</code> — weekly vulnerability scan.</li>
+<li><code>cargo geiger</code> — unsafe-transitive usage snapshot.</li>
+<li><code>cargo fuzz</code> — targets for lexer, parser, HTTP parser,
+  manifest parser. Nightly run.</li>
+<li><code>miri</code> — pure-Rust phases (diagnostics, MIR, lint) every PR.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../design/selfhosting/" class="btn btn-neutral float-left" title="Self-hosting study"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../contributing/" class="btn btn-neutral float-right" title="Contributing">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../design/selfhosting/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../contributing/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

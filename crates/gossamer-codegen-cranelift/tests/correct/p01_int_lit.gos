@@ -1,0 +1,1 @@
+fn main() { println(42i64) }

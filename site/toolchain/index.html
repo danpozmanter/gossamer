@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/toolchain/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Overview - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Overview";
+        var mkdocs_page_input_path = "toolchain.md";
+        var mkdocs_page_url = "/gossamer/toolchain/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Gossamer
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul class="current">
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Overview</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#front-end">Front-end</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#formatting-linting-docs">Formatting + linting + docs</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#testing-benchmarking">Testing + benchmarking</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#watch">Watch</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#housekeeping">Housekeeping</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#package-manager">Package manager</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#repl">REPL</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#editor-integration">Editor integration</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#smoke-test">Smoke-test</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Toolchain</li>
+      <li class="breadcrumb-item active">Overview</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/toolchain.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="toolchain-reference">Toolchain reference<a class="headerlink" href="#toolchain-reference" title="Permanent link">&para;</a></h1>
+<p>Every subcommand of <code>gos</code>. Auto-generated output coming with
+Stream H polish — for now this page is hand-written and may lag
+the implementation by a rev.</p>
+<h2 id="front-end">Front-end<a class="headerlink" href="#front-end" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gos parse FILE</code></td>
+<td>Print the AST.</td>
+</tr>
+<tr>
+<td><code>gos check [--timings] FILE</code></td>
+<td>Parse + resolve + typecheck + exhaustiveness. With <code>--timings</code>, prints per-stage wall-clock times. Parse output is cached by source hash — re-invocations on an unchanged file reuse the parsed AST. Set <code>GOSSAMER_CACHE_TRACE=1</code> to log cache hits.</td>
+</tr>
+<tr>
+<td><code>gos run [--vm] FILE</code></td>
+<td>Execute via the tree-walker (or VM).</td>
+</tr>
+<tr>
+<td><code>gos build [--target TRIPLE] FILE</code></td>
+<td>Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + Cranelift and linking the user's <code>.o</code> against <code>libgossamer_runtime.a</code>. Every legal program compiles; a build error means a compiler bug.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="formatting-linting-docs">Formatting + linting + docs<a class="headerlink" href="#formatting-linting-docs" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gos fmt [--check] FILE</code></td>
+<td>Rewrite canonically.</td>
+</tr>
+<tr>
+<td><code>gos doc [--html OUT] FILE</code></td>
+<td>List items (plain-text) or write an HTML page.</td>
+</tr>
+<tr>
+<td><code>gos lint [--deny-warnings] [--explain ID] [--fix] PATH</code></td>
+<td>Run the lint suite (50 lints). <code>--fix</code> writes auto-applicable suggestions back to disk; <code>--explain ID</code> prints long-form rationale.</td>
+</tr>
+<tr>
+<td><code>gos explain CODE</code></td>
+<td>Long-form rationale for a diagnostic code.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="testing-benchmarking">Testing + benchmarking<a class="headerlink" href="#testing-benchmarking" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gos test PATH</code></td>
+<td>Run <code>#[test]</code> functions <strong>and</strong> doc-tests extracted from <code>```</code>-fenced code inside <code>//</code> doc comments. <code>```text</code> and other language tags are skipped. Accepts a file or a directory.</td>
+</tr>
+<tr>
+<td><code>gos bench [--iterations N] FILE</code></td>
+<td>Time <code>#[bench]</code> functions.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="watch">Watch<a class="headerlink" href="#watch" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gos watch [--command CMD] PATH</code></td>
+<td>Re-run the inner command on file change.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="housekeeping">Housekeeping<a class="headerlink" href="#housekeeping" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gos clean [--vendor] [--dry-run]</code></td>
+<td>Remove toolchain-produced artefacts. By default wipes the frontend parse cache. <code>--vendor</code> also deletes <code>./vendor/</code>. <code>--dry-run</code> reports what would be removed without touching anything.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="package-manager">Package manager<a class="headerlink" href="#package-manager" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gos new ID [--path DIR] [--template bin\|lib\|workspace]</code></td>
+<td>Scaffold a project.</td>
+</tr>
+<tr>
+<td><code>gos init ID</code></td>
+<td>Create <code>project.toml</code> in the CWD.</td>
+</tr>
+<tr>
+<td><code>gos add SPEC</code></td>
+<td>Add a dependency (<code>name</code> or <code>name@version</code>).</td>
+</tr>
+<tr>
+<td><code>gos remove ID</code></td>
+<td>Drop a dependency.</td>
+</tr>
+<tr>
+<td><code>gos tidy</code></td>
+<td>Canonicalise the manifest.</td>
+</tr>
+<tr>
+<td><code>gos fetch</code></td>
+<td>Populate the local cache.</td>
+</tr>
+<tr>
+<td><code>gos vendor</code></td>
+<td>Copy fetched deps into <code>./vendor/</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="repl">REPL<a class="headerlink" href="#repl" title="Permanent link">&para;</a></h2>
+<p><code>gos</code> with no arguments — or <code>gos repl</code> — drops into an
+interactive session. The first-slice supports:</p>
+<ul>
+<li>Numbered <code>In [N]:</code> / <code>Out[N]:</code> prompts, coloured green / red
+  when stdout is a TTY (ipython-style).</li>
+<li>Declarations persisting across inputs (<code>fn</code> / <code>struct</code> / <code>enum</code>
+  / <code>use</code> / <code>const</code> / <code>type</code>).</li>
+<li><code>let</code> bindings persisting across inputs; every subsequent
+  expression sees previously-bound locals in scope. <code>%bindings</code>
+  lists the active set.</li>
+<li>Meta-commands <code>%quit</code>, <code>%history</code>, <code>%bindings</code>, <code>%reset</code>,
+  <code>%help</code>.</li>
+<li>Ctrl-D exits cleanly.</li>
+</ul>
+<p>Stream K grows this to IPython parity (syntax highlighting, tab
+completion, persistent history file, <code>%time</code> / <code>%timeit</code> /
+<code>%load</code> / <code>%save</code> / <code>%edit</code> / <code>%debug</code>).</p>
+<h2 id="editor-integration">Editor integration<a class="headerlink" href="#editor-integration" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gos lsp</code></td>
+<td>Start a language-server-protocol adapter on stdio.</td>
+</tr>
+</tbody>
+</table>
+<p><code>gos lsp</code> is intended for editors, not humans. Shipped
+capabilities:</p>
+<ul>
+<li><code>textDocument/publishDiagnostics</code> on <code>didOpen</code> / <code>didChange</code> —
+  every open document runs through parse + resolve + typecheck and
+  diagnostics are published inline.</li>
+<li><code>textDocument/hover</code> — renders a small markdown card with the
+  identifier under the cursor and its interned type when the
+  type checker can resolve it.</li>
+<li><code>textDocument/definition</code> — jumps to the declaring item for
+  identifiers that resolve to a top-level <code>fn</code> / <code>struct</code> / <code>enum</code>
+  / <code>trait</code> / <code>type</code> / <code>const</code> / <code>static</code> / <code>mod</code>.</li>
+<li><code>textDocument/completion</code> — completion provider for top-level
+  items and keywords in scope.</li>
+<li><code>textDocument/references</code> — every whole-word occurrence of the
+  symbol under the cursor, in the same document. Matched
+  syntactically; shadowed locals are reported alongside the real
+  references until the semantic use-to-def map lands.</li>
+<li><code>textDocument/prepareRename</code> + <code>textDocument/rename</code> — returns
+  a <code>WorkspaceEdit</code> that renames every occurrence of the symbol
+  in the file. Rejects non-identifier <code>newName</code> inputs.</li>
+</ul>
+<p>Editors should launch <code>gos lsp</code> over stdio and speak LSP 3.16 with
+<code>textDocumentSync=Full</code> (incremental edits land in a follow-up).</p>
+<h2 id="smoke-test">Smoke-test<a class="headerlink" href="#smoke-test" title="Permanent link">&para;</a></h2>
+<pre><code class="language-sh">python3 - &lt;&lt;'PY'
+import json, subprocess
+p = subprocess.Popen([&quot;gos&quot;, &quot;lsp&quot;], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+body = json.dumps({&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;method&quot;: &quot;initialize&quot;,
+                   &quot;params&quot;: {&quot;processId&quot;: None, &quot;capabilities&quot;: {}}}).encode()
+p.stdin.write(f&quot;Content-Length: {len(body)}\r\n\r\n&quot;.encode() + body); p.stdin.flush()
+print(p.stdout.readline(), p.stdout.readline())
+PY
+</code></pre>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../stdlib_coverage/" class="btn btn-neutral float-left" title="Coverage matrix"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="lints/" class="btn btn-neutral float-right" title="Lints">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../stdlib_coverage/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="lints/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

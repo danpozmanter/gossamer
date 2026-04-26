@@ -1,0 +1,1 @@
+fn main() { let mut i=0i64; loop { if i>=2i64 { break } println(i); i = i+1i64 } }

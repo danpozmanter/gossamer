@@ -1,0 +1,38 @@
+fn id<T>(x: T) -> T { x }
+
+fn pair<A, B>(a: A, b: B) -> (A, B) { (a, b) }
+
+fn map<T, U>(xs: [T], f: fn(T) -> U) -> [U] {
+    let mut out: [U] = []
+    for x in xs.iter() {
+        out.push(f(x))
+    }
+    out
+}
+
+trait Show {
+    fn show(&self) -> String
+}
+
+impl Show for i64 {
+    fn show(&self) -> String { format!("{}", *self) }
+}
+
+fn show_all<T: Show>(xs: [T]) -> String {
+    let mut out = String::new()
+    for x in xs.iter() {
+        out.push_str(&x.show())
+        out.push_str(", ")
+    }
+    out
+}
+
+fn nested<T: Clone, U: Default + Show>(t: T, u: U) -> (T, U) {
+    (t.clone(), u)
+}
+
+fn lifetime_via_ref<T>(x: &T) -> &T { x }
+
+fn returns_impl<T: Iterator<Item = i64>>(xs: T) -> impl Iterator<Item = i64> {
+    xs
+}

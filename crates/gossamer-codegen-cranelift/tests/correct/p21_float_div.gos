@@ -1,0 +1,1 @@
+fn main() { println(7.0f64 / 2.0f64) }

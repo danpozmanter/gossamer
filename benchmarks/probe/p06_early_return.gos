@@ -1,0 +1,2 @@
+fn pick(n: i64) -> i64 { if n < 0i64 { return 0i64 } n + 1i64 }
+fn main() { let _ = pick(5i64); println("done") }

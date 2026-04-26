@@ -1,0 +1,6 @@
+fn main() {
+    let mut a = [0.0f64, 0.0f64, 0.0f64]
+    a[0usize] = 3.14f64
+    let _ = a[0usize]
+    println("done")
+}

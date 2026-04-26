@@ -1,0 +1,71 @@
+; Inno Setup script for the Gossamer toolchain.
+; Tokens `@VERSION@` and `@SOURCE_DIR@` are substituted at CI time
+; before the script is passed to `ISCC.exe`.
+
+#define AppName "Gossamer"
+#define AppVersion "@VERSION@"
+#define AppPublisher "Gossamer contributors"
+#define AppURL "https://github.com/gossamer-lang/gossamer"
+#define AppExeName "gos.exe"
+#define SourceDir "@SOURCE_DIR@"
+
+[Setup]
+AppId={{A27B7B3D-8B8A-4E2C-8E7D-1D4D0F0A0B3A}
+AppName={#AppName}
+AppVersion={#AppVersion}
+AppVerName={#AppName} {#AppVersion}
+AppPublisher={#AppPublisher}
+AppPublisherURL={#AppURL}
+AppSupportURL={#AppURL}
+AppUpdatesURL={#AppURL}
+DefaultDirName={autopf}\{#AppName}
+DefaultGroupName={#AppName}
+AllowNoIcons=yes
+OutputDir=.
+OutputBaseFilename=gos-{#AppVersion}-windows-x86_64-setup
+Compression=lzma
+SolidCompression=yes
+WizardStyle=modern
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+ChangesEnvironment=yes
+UninstallDisplayName={#AppName} {#AppVersion}
+UninstallDisplayIcon={app}\{#AppExeName}
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "modifypath"; Description: "Add the Gossamer toolchain to the system PATH"; GroupDescription: "Shell integration:"; Flags: checkedonce
+
+[Files]
+Source: "{#SourceDir}/target/release/{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}/README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}/LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+
+[Icons]
+Name: "{group}\{#AppName} Prompt"; Filename: "cmd.exe"; Parameters: "/K echo Welcome to Gossamer. Type `gos --help` to get started."
+Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
+
+[Registry]
+; Add the install dir to the *machine* PATH when the user accepts
+; the modifypath task. `{olddata}` prevents duplicates.
+Root: HKLM; Subkey: "System\CurrentControlSet\Control\Session Manager\Environment"; \
+    ValueType: expandsz; ValueName: "Path"; \
+    ValueData: "{olddata};{app}"; \
+    Tasks: modifypath; Check: NeedsAddPath(ExpandConstant('{app}'))
+
+[Code]
+function NeedsAddPath(Param: string): boolean;
+var
+  OrigPath: string;
+begin
+  if not RegQueryStringValue(HKEY_LOCAL_MACHINE,
+    'System\CurrentControlSet\Control\Session Manager\Environment',
+    'Path', OrigPath) then
+  begin
+    Result := True;
+    exit;
+  end;
+  Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
+end;

@@ -1,0 +1,8 @@
+fn main() {
+    let arr: [i64; 4] = [7i64; 4]
+    let mut sum = 0i64
+    for v in arr {
+        sum = sum + v
+    }
+    println!("{}", sum)
+}

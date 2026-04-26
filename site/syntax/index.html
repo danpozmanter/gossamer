@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/syntax/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Syntax - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Syntax";
+        var mkdocs_page_input_path = "syntax.md";
+        var mkdocs_page_url = "/gossamer/syntax/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Gossamer
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Syntax</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#items">Items</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#expressions">Expressions</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#forward-pipe">Forward pipe (|&gt;)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#pattern-matching">Pattern matching</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#loops">Loops</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#error-handling">Error handling</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#concurrency">Concurrency</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#attributes">Attributes</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#modules">Modules</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#numeric-literals">Numeric literals</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#string-literals">String literals</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#formatted-output">Formatted output</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Syntax</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/syntax.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="syntax-tour">Syntax tour<a class="headerlink" href="#syntax-tour" title="Permanent link">&para;</a></h1>
+<p>Gossamer's surface is Rust with two simplifications:</p>
+<ul>
+<li>No lifetime annotations. References express aliasing intent;
+  the GC owns the memory.</li>
+<li>Semicolons are optional at statement boundaries.</li>
+</ul>
+<p>See the full grammar in
+<a href="https://github.com/gossamer-lang/gossamer/tree/main/grammar"><code>grammar/</code></a>
+once it is committed.</p>
+<h2 id="items">Items<a class="headerlink" href="#items" title="Permanent link">&para;</a></h2>
+<pre><code class="language-gossamer">const PI: f64 = 3.14159
+static MAX: u32 = 1024
+
+struct Point { x: f64, y: f64 }
+struct Pair(i64, i64)
+
+enum Shape {
+    Circle(f64),
+    Rect { w: f64, h: f64 },
+}
+
+trait Area {
+    fn area(&amp;self) -&gt; f64;
+}
+
+impl Area for Shape {
+    fn area(&amp;self) -&gt; f64 {
+        match self {
+            Shape::Circle(r) =&gt; 3.14159 * r * r,
+            Shape::Rect { w, h } =&gt; w * h,
+        }
+    }
+}
+</code></pre>
+<h2 id="expressions">Expressions<a class="headerlink" href="#expressions" title="Permanent link">&para;</a></h2>
+<p>Everything is an expression. Blocks evaluate to their tail:</p>
+<pre><code class="language-gossamer">let max = if x &gt; y { x } else { y }
+let label = match status {
+    200 =&gt; &quot;ok&quot;,
+    404 =&gt; &quot;missing&quot;,
+    _ =&gt; &quot;other&quot;,
+}
+</code></pre>
+<h2 id="forward-pipe">Forward pipe (<code>|&gt;</code>)<a class="headerlink" href="#forward-pipe" title="Permanent link">&para;</a></h2>
+<p>The forward-pipe operator threads a value through a chain of
+calls. <code>x |&gt; f</code> desugars to <code>f(x)</code>; <code>x |&gt; f(a, b)</code> to
+<code>f(a, b, x)</code> — the piped value lands in the last positional
+slot. Methods work the same way: <code>x |&gt; recv.m(a)</code> becomes
+<code>recv.m(a, x)</code>. <code>|&gt;</code> is left-associative with very low
+precedence, so <code>a |&gt; f |&gt; g</code> reads as <code>g(f(a))</code> with no
+parentheses needed:</p>
+<pre><code class="language-gossamer">fn double(x: i64) -&gt; i64 { x * 2 }
+fn add(a: i64, b: i64) -&gt; i64 { a + b }
+fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
+    if x &lt; lo { lo } else if x &gt; hi { hi } else { x }
+}
+
+// Reads left-to-right instead of inside-out.
+let n = 3i64 |&gt; double |&gt; add(10i64) |&gt; clamp(0i64, 100i64)
+
+// Equivalent nested form:
+let same = clamp(0i64, 100i64, add(10i64, double(3i64)))
+</code></pre>
+<h2 id="pattern-matching">Pattern matching<a class="headerlink" href="#pattern-matching" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>_</code> — wildcard.</li>
+<li><code>name</code> / <code>mut name</code> — bind.</li>
+<li><code>Some(inner)</code> / <code>None</code> — variant destructure.</li>
+<li><code>Point { x, y }</code> — struct destructure.</li>
+<li><code>(a, b)</code> — tuple destructure.</li>
+<li><code>1..=5</code> — range.</li>
+<li><code>a | b</code> — or-pattern.</li>
+<li><code>x @ 1..=3</code> — <code>@</code>-binding.</li>
+<li><code>..</code> — rest.</li>
+</ul>
+<p>Guards: <code>Some(n) if n &gt; 0 =&gt; ...</code></p>
+<h2 id="loops">Loops<a class="headerlink" href="#loops" title="Permanent link">&para;</a></h2>
+<pre><code class="language-gossamer">loop { ... break value }
+while cond { ... }
+for item in iter { ... }
+</code></pre>
+<p><code>break value</code> returns a value from <code>loop</code>. <code>continue</code> jumps to
+the top.</p>
+<h2 id="error-handling">Error handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h2>
+<pre><code class="language-gossamer">fn load(path: String) -&gt; Result&lt;String, io::Error&gt; {
+    let raw = os::read_file_to_string(&amp;path)?
+    Ok(raw)
+}
+</code></pre>
+<p><code>?</code> propagates the <code>Err</code> variant. Wrap with
+<code>std::errors::wrap(err, "while loading config")</code> for context.</p>
+<h2 id="concurrency">Concurrency<a class="headerlink" href="#concurrency" title="Permanent link">&para;</a></h2>
+<pre><code class="language-gossamer">let (tx, rx) = channel::&lt;i64&gt;()
+go fn() { tx.send(42) }()
+let n = rx.recv()
+
+select {
+    a = rx_a.recv() =&gt; handle_a(a),
+    b = rx_b.recv() =&gt; handle_b(b),
+    _ = time::after(5000) =&gt; timeout(),
+}
+</code></pre>
+<p><code>go expr</code> spawns a goroutine. Channels are typed and bounded;
+<code>select</code> multiplexes receives.</p>
+<h2 id="attributes">Attributes<a class="headerlink" href="#attributes" title="Permanent link">&para;</a></h2>
+<pre><code class="language-gossamer">#[test]
+fn add_adds() { ... }
+
+#[bench]
+fn bench_hot_path() { ... }
+
+#[lint(allow(unused_variable))]
+fn scratch() { let x = 1i64 }
+</code></pre>
+<h2 id="modules">Modules<a class="headerlink" href="#modules" title="Permanent link">&para;</a></h2>
+<pre><code class="language-gossamer">use std::http
+use std::http::{Handler, Request, Response}
+use example.org/other::widget
+</code></pre>
+<p>A project's module tree is file-based: <code>src/foo.gos</code> becomes
+<code>mod foo</code>, <code>src/bar/mod.gos</code> becomes <code>mod bar</code>.</p>
+<h2 id="numeric-literals">Numeric literals<a class="headerlink" href="#numeric-literals" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>42</code> — plain int, inferred type.</li>
+<li><code>42i32</code> / <code>42u64</code> — explicit width.</li>
+<li><code>0xff</code> / <code>0b1010</code> / <code>0o777</code> — bases.</li>
+<li><code>1_000_000</code> — underscore separator.</li>
+<li><code>1.0f32</code> / <code>1.0f64</code> — float.</li>
+</ul>
+<h2 id="string-literals">String literals<a class="headerlink" href="#string-literals" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>"hello"</code> — ordinary double-quoted string. Spans multiple lines
+  without extra syntax; embedded newlines are preserved.</li>
+<li><code>"\n"</code> / <code>"\t"</code> / <code>"\\"</code> / <code>"\""</code> — standard escapes.</li>
+<li><code>r"raw"</code> / <code>r#"with embedded "quotes""#</code> — raw strings.</li>
+<li><code>b"bytes"</code> / <code>b'c'</code> — byte literals for binary protocols.</li>
+</ul>
+<h2 id="formatted-output">Formatted output<a class="headerlink" href="#formatted-output" title="Permanent link">&para;</a></h2>
+<p>Gossamer has no macro system and no <code>!</code> syntax. Formatted output
+goes through plain variadic builtins:</p>
+<pre><code class="language-gossamer">let name = &quot;jane&quot;
+let age = 30
+println(&quot;hello, &quot;, name, &quot;! you are &quot;, age, &quot; years old.&quot;)
+let greeting = format(&quot;welcome, &quot;, name)
+</code></pre>
+<p>Every builtin below stringifies each argument and joins them
+with a single space:</p>
+<table>
+<thead>
+<tr>
+<th>Builtin</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>format(a, b, …)</code></td>
+<td>Returns a <code>String</code>.</td>
+</tr>
+<tr>
+<td><code>println(a, b, …)</code></td>
+<td>Writes to stdout + newline.</td>
+</tr>
+<tr>
+<td><code>print(a, b, …)</code></td>
+<td>Writes to stdout, no newline.</td>
+</tr>
+<tr>
+<td><code>eprintln(a, b, …)</code></td>
+<td>Writes to stderr + newline.</td>
+</tr>
+<tr>
+<td><code>eprint(a, b, …)</code></td>
+<td>Writes to stderr, no newline.</td>
+</tr>
+<tr>
+<td><code>panic(a, b, …)</code></td>
+<td>Unwinds with the rendered message.</td>
+</tr>
+</tbody>
+</table>
+<p>For the single-<code>String</code> output shape, <code>+</code> concatenates without
+adding a separator:</p>
+<pre><code class="language-gossamer">let greeting = &quot;hello, &quot;.to_string() + &amp;name
+</code></pre>
+<p>Writing <code>name!(…)</code> is a hard parse error — the <code>!</code> suffix is
+reserved for no purpose today.</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../running/" class="btn btn-neutral float-left" title="Running"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../memory/" class="btn btn-neutral float-right" title="Memory model">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../running/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../memory/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

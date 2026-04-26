@@ -1,0 +1,1 @@
+fn main() { println(10i64 % 3i64) }

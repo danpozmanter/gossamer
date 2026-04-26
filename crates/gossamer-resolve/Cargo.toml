@@ -1,0 +1,21 @@
+[package]
+name = "gossamer-resolve"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Name resolution pass for the Gossamer compiler."
+
+[lints]
+workspace = true
+
+[dependencies]
+gossamer-ast = { workspace = true }
+gossamer-diagnostics = { workspace = true }
+gossamer-lex = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+gossamer-parse = { workspace = true }

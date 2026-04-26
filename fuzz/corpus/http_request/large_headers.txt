@@ -1,0 +1,21 @@
+GET /api/v1/users?id=42&filter=name HTTP/1.1
+Host: api.example.com:8443
+User-Agent: gossamer-test/0.0.0 (linux x86_64)
+Accept: application/json, application/cbor;q=0.9, */*;q=0.5
+Accept-Encoding: gzip, deflate, br, zstd
+Accept-Language: en-US,en;q=0.9,fr;q=0.5
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NSJ9.signature_part
+Cookie: sid=abc123; csrf=xyz789; theme=dark; locale=en-US; gpc=1
+Cache-Control: no-cache, no-store, must-revalidate
+If-None-Match: "etag-value-here"
+X-Request-Id: 7e57c29c-1f73-4b0d-b8a5-e0d2f2a5a3c8
+X-Forwarded-For: 203.0.113.42, 198.51.100.7
+X-Real-IP: 203.0.113.42
+DNT: 1
+Sec-Fetch-Dest: empty
+Sec-Fetch-Mode: cors
+Sec-Fetch-Site: same-origin
+Origin: https://app.example.com
+Referer: https://app.example.com/dashboard
+Connection: keep-alive
+

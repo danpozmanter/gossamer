@@ -1,0 +1,2 @@
+// ERROR: GT0001
+fn main() { let x: bool = 42i32 }

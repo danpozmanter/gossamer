@@ -1,0 +1,7 @@
+struct P { x: i64, y: i64 }
+fn main() {
+    let mut p = P { x: 1i64, y: 2i64 }
+    p.x = p.x + p.y
+    let _ = p.x
+    println("done")
+}

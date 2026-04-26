@@ -1,0 +1,61 @@
+[package]
+name = "gossamer-interp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Tree-walking interpreter for the Gossamer language."
+
+[lints.rust]
+# Workspace sets `unsafe_code = forbid`, which cannot be
+# relaxed per-module. We downgrade to `deny` here so the VM
+# dispatch loop in `vm.rs` can opt in via `#![allow]` for
+# bounds-check-free register access (every index is bounded
+# by the chunk's compile-time register / const-pool counts).
+# Every other module in this crate keeps unsafe out.
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cognitive_complexity = "deny"
+too_many_lines = "warn"
+# Mirror the workspace-level allows. The per-crate `[lints]` table
+# replaces (rather than extends) the workspace one, so without
+# these the pedantic cast lints fire across hot-path conversions
+# the surrounding logic already bounds (register slot indices,
+# stride * count multiplications, IEEE-754 round-trip helpers).
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+match_same_arms = "allow"
+needless_pass_by_value = "allow"
+unused_self = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+float_cmp = "allow"
+unreadable_literal = "allow"
+
+[dependencies]
+gossamer-ast = { workspace = true }
+gossamer-codegen-cranelift = { workspace = true }
+gossamer-hir = { workspace = true }
+gossamer-lex = { workspace = true }
+gossamer-mir = { workspace = true }
+gossamer-pkg = { workspace = true }
+gossamer-resolve = { workspace = true }
+gossamer-runtime = { workspace = true }
+gossamer-std = { workspace = true }
+gossamer-types = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+gossamer-parse = { workspace = true }

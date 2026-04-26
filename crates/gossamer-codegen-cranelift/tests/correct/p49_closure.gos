@@ -1,0 +1,1 @@
+fn main() { let add5 = |y: i64| 5i64 + y; println(add5(7i64)) }

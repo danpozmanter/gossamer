@@ -1,0 +1,19 @@
+let s = "hello"
+let t = "with \"escaped\" quotes"
+let u = "\n\t\r\\\0"
+let v = "unicode \u{1F600} 😀"
+let w = ""
+let x = "long string with multiple lines\nand more text\tand tabs"
+let y = "trailing newline\n"
+let z = "multi
+line
+literal"
+let raw = r"no \n escapes"
+let raw2 = r#"with "quotes""#
+let raw3 = r##"#with "hashes" inside"##
+let chr = 'a'
+let chr2 = '\n'
+let chr3 = '\u{1F600}'
+let chr4 = '\\'
+let chr5 = '\''
+let chr6 = '"'

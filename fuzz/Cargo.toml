@@ -1,0 +1,45 @@
+[package]
+name = "gossamer-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+gossamer-lex = { path = "../crates/gossamer-lex" }
+gossamer-parse = { path = "../crates/gossamer-parse" }
+gossamer-pkg = { path = "../crates/gossamer-pkg" }
+gossamer-std = { path = "../crates/gossamer-std" }
+
+# Keep `cargo fuzz` targets out of the workspace so plain
+# `cargo build --workspace` does not try to compile them without the
+# cargo-fuzz tooling installed.
+[workspace]
+
+[[bin]]
+name = "lex"
+path = "fuzz_targets/lex.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "http_request"
+path = "fuzz_targets/http_request.rs"
+test = false
+doc = false

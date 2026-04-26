@@ -1,0 +1,15 @@
+while total (0..5): 10
+5! = 120
+first square > 100: 121
+-3 -> negative
+0 -> zero
+3 -> many
+42 -> many
+got 7
+area=7.068577499999999
+area=8
+area=0
+classify(-5) = negative
+classify(0)  = zero
+classify(7)  = small
+classify(99) = large

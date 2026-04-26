@@ -1,0 +1,43 @@
+/*
+ * Forward-pipe operator `|>`.
+ *
+ * F#-style `x |> f` desugars to `f(x)`; `x |> f(a, b)` desugars to
+ * `f(a, b, x)` (the piped value lands in the *last* positional
+ * slot). Method calls work the same: `x |> recv.m(a)` becomes
+ * `recv.m(a, x)`. `|>` is left-associative with very low
+ * precedence, so `a |> f |> g` reads as `g(f(a))` without
+ * parentheses. Use it to straighten out nested calls and keep the
+ * data flow left-to-right.
+ */
+
+fn double(x: i64) -> i64 { x * 2 }
+
+fn add(a: i64, b: i64) -> i64 { a + b }
+
+fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+// Word-count pipeline: trim, lowercase, split, count non-empty.
+fn word_count(line: String) -> i64 {
+    let mut count = 0
+    for word in line.trim().to_lowercase().split(" ") {
+        if word.len() > 0 { count = count + 1 }
+    }
+    count
+}
+
+fn main() {
+    // Arithmetic chain: 3 -> double -> add 10 -> clamp to [0, 100].
+    // Reads left-to-right instead of inside-out.
+    let n = 3 |> double |> add(10) |> clamp(0, 100)
+    println!("arithmetic: {n}")
+
+    // Text pipeline: method pipes compose the same way.
+    let c = "  Hello  World  ".to_string() |> word_count
+    println!("words: {c}")
+
+    // Equivalent nested form (what `|>` desugars to):
+    let same = clamp(0, 100, add(10, double(3)))
+    println!("nested: {same}")
+}

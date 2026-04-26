@@ -1,0 +1,147 @@
+//! Pretty-printer used by diagnostics to render interned types in a
+//! way that matches the SPEC's surface syntax.
+
+#![forbid(unsafe_code)]
+
+use std::fmt::Write;
+
+use crate::context::TyCtxt;
+use crate::subst::{GenericArg, Substs};
+use crate::traits::TraitRef;
+use crate::ty::{FnSig, Ty, TyKind};
+
+/// Renders `ty` as a human-readable string. Handles that are not owned
+/// by `tcx` render as `<ty:?>`.
+#[must_use]
+pub fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
+    let mut out = String::new();
+    write_ty(tcx, ty, &mut out);
+    out
+}
+
+fn write_ty(tcx: &TyCtxt, ty: Ty, out: &mut String) {
+    let Some(kind) = tcx.kind(ty) else {
+        let _ = write!(out, "<ty:{}>", ty.as_u32());
+        return;
+    };
+    write_kind(tcx, kind, out);
+}
+
+fn write_kind(tcx: &TyCtxt, kind: &TyKind, out: &mut String) {
+    match kind {
+        TyKind::Bool => out.push_str("bool"),
+        TyKind::Char => out.push_str("char"),
+        TyKind::String => out.push_str("String"),
+        TyKind::Int(int) => out.push_str(int.as_str()),
+        TyKind::Float(float) => out.push_str(float.as_str()),
+        TyKind::Unit => out.push_str("()"),
+        TyKind::Never => out.push('!'),
+        TyKind::Tuple(parts) => write_tuple(tcx, parts, out),
+        TyKind::Array { elem, len } => write_array(tcx, *elem, *len, out),
+        TyKind::Slice(elem) => write_slice(tcx, *elem, out),
+        TyKind::Vec(elem) => write_named(tcx, "Vec", &[*elem], out),
+        TyKind::HashMap { key, value } => write_named(tcx, "HashMap", &[*key, *value], out),
+        TyKind::Sender(elem) => write_named(tcx, "Sender", &[*elem], out),
+        TyKind::Receiver(elem) => write_named(tcx, "Receiver", &[*elem], out),
+        TyKind::Ref { mutability, inner } => {
+            out.push_str(mutability.prefix());
+            write_ty(tcx, *inner, out);
+        }
+        TyKind::FnPtr(sig) => write_fn_ptr(tcx, sig, out),
+        TyKind::FnDef { def, substs } => write_def("fn", tcx, def.local, substs, out),
+        TyKind::Closure { def, .. } => {
+            let _ = write!(out, "<closure #{}>", def.local);
+        }
+        TyKind::Adt { def, substs } => write_def("adt", tcx, def.local, substs, out),
+        TyKind::Alias { def, substs } => write_def("alias", tcx, def.local, substs, out),
+        TyKind::Dyn(trait_ref) => write_dyn(tcx, trait_ref, out),
+        TyKind::Var(vid) => {
+            let _ = write!(out, "?{}", vid.as_u32());
+        }
+        TyKind::Param { name, .. } => out.push_str(name),
+        TyKind::Error => out.push_str("<error>"),
+    }
+}
+
+fn write_tuple(tcx: &TyCtxt, parts: &[Ty], out: &mut String) {
+    out.push('(');
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        write_ty(tcx, *part, out);
+    }
+    if parts.len() == 1 {
+        out.push(',');
+    }
+    out.push(')');
+}
+
+fn write_array(tcx: &TyCtxt, elem: Ty, len: usize, out: &mut String) {
+    out.push('[');
+    write_ty(tcx, elem, out);
+    let _ = write!(out, "; {len}]");
+}
+
+fn write_slice(tcx: &TyCtxt, elem: Ty, out: &mut String) {
+    out.push('[');
+    write_ty(tcx, elem, out);
+    out.push(']');
+}
+
+fn write_named(tcx: &TyCtxt, name: &str, args: &[Ty], out: &mut String) {
+    out.push_str(name);
+    out.push('<');
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        write_ty(tcx, *arg, out);
+    }
+    out.push('>');
+}
+
+fn write_fn_ptr(tcx: &TyCtxt, sig: &FnSig, out: &mut String) {
+    out.push_str("fn(");
+    for (i, input) in sig.inputs.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        write_ty(tcx, *input, out);
+    }
+    out.push(')');
+    if !matches!(tcx.kind(sig.output), Some(TyKind::Unit)) {
+        out.push_str(" -> ");
+        write_ty(tcx, sig.output, out);
+    }
+}
+
+fn write_def(prefix: &str, tcx: &TyCtxt, local: u32, substs: &Substs, out: &mut String) {
+    let _ = write!(out, "{prefix}#{local}");
+    if !substs.is_empty() {
+        write_substs(tcx, substs, out);
+    }
+}
+
+fn write_substs(tcx: &TyCtxt, substs: &Substs, out: &mut String) {
+    out.push('<');
+    for (i, arg) in substs.as_slice().iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        match arg {
+            GenericArg::Type(ty) => write_ty(tcx, *ty, out),
+            GenericArg::Const(value) => {
+                let _ = write!(out, "{value}");
+            }
+        }
+    }
+    out.push('>');
+}
+
+fn write_dyn(tcx: &TyCtxt, trait_ref: &TraitRef, out: &mut String) {
+    let _ = write!(out, "dyn trait#{}", trait_ref.def.local);
+    if !trait_ref.substs.is_empty() {
+        write_substs(tcx, &trait_ref.substs, out);
+    }
+}

@@ -1,0 +1,1 @@
+fn main() { let arr: [i64; 3] = [10i64, 20i64, 30i64]; println(arr[1usize]) }

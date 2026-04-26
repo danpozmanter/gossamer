@@ -1,0 +1,107 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/gossamer-ast",
+    "crates/gossamer-cli",
+    "crates/gossamer-codegen-cranelift",
+    "crates/gossamer-codegen-llvm",
+    "crates/gossamer-diagnostics",
+    "crates/gossamer-driver",
+    "crates/gossamer-gc",
+    "crates/gossamer-hir",
+    "crates/gossamer-interp",
+    "crates/gossamer-lex",
+    "crates/gossamer-lint",
+    "crates/gossamer-lsp",
+    "crates/gossamer-mir",
+    "crates/gossamer-parse",
+    "crates/gossamer-pkg",
+    "crates/gossamer-resolve",
+    "crates/gossamer-runtime",
+    "crates/gossamer-sched",
+    "crates/gossamer-std",
+    "crates/gossamer-types",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/gossamer-lang/gossamer"
+authors = ["Gossamer contributors"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cognitive_complexity = "deny"
+too_many_lines = "warn"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# The remaining `allow`s trade off rigor for practicality:
+#   - match_same_arms fires on coincidentally-identical arms whose
+#     independence matters for readability (enum variants handled
+#     individually).
+#   - needless_pass_by_value and unused_self are good general advice
+#     but fire on trait-method shapes we can't change.
+#   - cast_possible_truncation / cast_precision_loss / cast_sign_loss
+#     fire constantly in the lexer / parser / codegen where the
+#     surrounding logic already bounds the cast.
+#   - float_cmp fires on tests that compare constants for exact
+#     equality — legitimate for deterministic helpers like SplitMix64.
+match_same_arms = "allow"
+needless_pass_by_value = "allow"
+unused_self = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+float_cmp = "allow"
+unreadable_literal = "allow"
+format_push_string = "allow"
+
+[workspace.dependencies]
+gossamer-ast = { path = "crates/gossamer-ast", version = "0.0.0" }
+gossamer-codegen-cranelift = { path = "crates/gossamer-codegen-cranelift", version = "0.0.0" }
+gossamer-codegen-llvm = { path = "crates/gossamer-codegen-llvm", version = "0.0.0" }
+gossamer-diagnostics = { path = "crates/gossamer-diagnostics", version = "0.0.0" }
+gossamer-driver = { path = "crates/gossamer-driver", version = "0.0.0" }
+gossamer-gc = { path = "crates/gossamer-gc", version = "0.0.0" }
+gossamer-hir = { path = "crates/gossamer-hir", version = "0.0.0" }
+gossamer-interp = { path = "crates/gossamer-interp", version = "0.0.0" }
+gossamer-lex = { path = "crates/gossamer-lex", version = "0.0.0" }
+gossamer-lint = { path = "crates/gossamer-lint", version = "0.0.0" }
+gossamer-lsp = { path = "crates/gossamer-lsp", version = "0.0.0" }
+gossamer-mir = { path = "crates/gossamer-mir", version = "0.0.0" }
+gossamer-parse = { path = "crates/gossamer-parse", version = "0.0.0" }
+gossamer-pkg = { path = "crates/gossamer-pkg", version = "0.0.0" }
+gossamer-resolve = { path = "crates/gossamer-resolve", version = "0.0.0" }
+gossamer-runtime = { path = "crates/gossamer-runtime", version = "0.0.0" }
+gossamer-sched = { path = "crates/gossamer-sched", version = "0.0.0" }
+gossamer-std = { path = "crates/gossamer-std", version = "0.0.0" }
+gossamer-types = { path = "crates/gossamer-types", version = "0.0.0" }
+
+anyhow = "1"
+bincode = { version = "1", default-features = false }
+clap = { version = "4", features = ["derive"] }
+codespan-reporting = "0.12"
+insta = { version = "1", features = ["yaml"] }
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+debug = false
+incremental = false

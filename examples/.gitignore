@@ -1,0 +1,21 @@
+# `gos build` output: a launcher script named after the source
+# stem plus a `.gosart` sidecar carrying the GOSARTv1 bytes. Kept
+# out of version control so rebuilds don't dirty the tree.
+*.gosart
+hello_world
+line_count
+web_server
+kv_cache
+json_pipeline
+go_spawn
+concurrency
+function_piping
+control_flow
+data_structures
+errors
+file_io
+cli_args
+grep
+regex
+testing
+http_client

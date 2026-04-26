@@ -1,0 +1,5 @@
+fn main() {
+    let k = 10i64
+    let add_k = |n: i64| -> i64 { n + k }
+    println!("{}", add_k(5i64))
+}

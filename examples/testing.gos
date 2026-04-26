@@ -1,0 +1,105 @@
+/*
+ * Unit testing / test framework basics.
+ *
+ * Gossamer recognises `#[test]`-annotated functions. `gos test`
+ * discovers them, runs each, and reports pass/fail counts.
+ * Assertions throw panics; a panicking test fails.
+ *
+ * Run:
+ *     gos test examples/testing.gos
+ *
+ * For a batch of files, pass a directory:
+ *     gos test examples/
+ */
+
+use std::errors
+
+// The code under test. A tiny pure function.
+fn fibonacci(n: u64) -> u64 {
+    if n < 2 {
+        return n
+    }
+    let mut a: u64 = 0
+    let mut b: u64 = 1
+    let mut i: u64 = 1
+    while i < n {
+        let next = a + b
+        a = b
+        b = next
+        i = i + 1
+    }
+    b
+}
+
+// A fallible helper used below to show `check_ok` integration.
+fn parse_sequence(text: &String) -> Result<[u64], errors::Error> {
+    let mut out: [u64] = []
+    for piece in text.split(',') {
+        let trimmed = piece.trim()
+        let n: u64 = trimmed.parse()
+            .map_err(|_| errors::new(format!("bad number: {trimmed}")))?
+        out.push(n)
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn fibonacci_matches_first_ten_terms() {
+        /* `testing::check_eq` records the assertion with the test
+         * runner; no `.expect()` is needed for `gos test` to see a
+         * failure. Propagate with `?` only when a later assertion
+         * depends on this one passing. */
+        let expected = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+        let mut i = 0
+        while i < 10 {
+            let got = super::fibonacci(i)
+            let want = expected[i as usize]
+            testing::check_eq(&got, &want, &format!("fib({i})"))
+            i = i + 1
+        }
+    }
+
+    #[test]
+    fn fibonacci_handles_big_input() {
+        testing::check(super::fibonacci(50) > 0, "50th fibonacci term is positive")
+    }
+
+    #[test]
+    fn parse_sequence_happy_path() {
+        /* `check_ok` keeps the unwrapping path because subsequent
+         * assertions inspect `values`. */
+        let values = testing::check_ok(
+            super::parse_sequence(&"1, 2, 3, 5".to_string()),
+            "parse happy path",
+        ).expect("parse failed")
+        testing::check_eq(&values.len(), &4, "parsed length matches input")
+    }
+
+    #[test]
+    fn parse_sequence_reports_bad_input() {
+        let result = super::parse_sequence(&"1, nope, 3".to_string())
+        match result {
+            Ok(_) => panic!("expected failure"),
+            Err(e) => {
+                testing::check(
+                    e.message().contains("bad number"),
+                    "error surfaces the bad input",
+                ).expect("wrong message")
+            }
+        }
+    }
+}
+
+fn main() {
+    // When run directly (not via `gos test`), demonstrate the
+    // function so the example is still useful.
+    let mut i = 0
+    while i < 8 {
+        println!("fib({i}) = {}", fibonacci(i))
+        i = i + 1
+    }
+}

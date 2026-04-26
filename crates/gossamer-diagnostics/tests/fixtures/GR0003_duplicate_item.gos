@@ -1,0 +1,4 @@
+// ERROR: GR0003
+fn duplicate() -> i64 { 1i64 }
+fn duplicate() -> i64 { 2i64 }
+fn main() { }

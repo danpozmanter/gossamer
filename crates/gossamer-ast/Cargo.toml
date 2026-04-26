@@ -1,0 +1,16 @@
+[package]
+name = "gossamer-ast"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Abstract syntax tree types for the Gossamer language."
+
+[lints]
+workspace = true
+
+[dependencies]
+gossamer-lex = { workspace = true }
+serde = { workspace = true }

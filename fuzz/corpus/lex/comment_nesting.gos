@@ -1,0 +1,13 @@
+// single-line
+/* simple block */
+/* multi
+   line
+   block */
+/* outer /* nested */ still outer */
+/* outer /* nested /* deep */ middle */ outer */
+/// doc-comment outer
+//! doc-comment inner
+fn x() { /* mid-stmt */ }
+fn y() { let z = 1 // tail comment
+}
+/* /* /* triple */ */ */

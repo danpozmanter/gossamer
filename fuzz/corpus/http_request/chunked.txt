@@ -1,0 +1,11 @@
+POST /upload HTTP/1.1
+Host: example.com
+Transfer-Encoding: chunked
+Content-Type: application/octet-stream
+
+10
+0123456789ABCDEF
+8
+DEADBEEF
+0
+

@@ -1,0 +1,5 @@
+fn main() {
+    let c = 'A'
+    let _ = c
+    println("done")
+}

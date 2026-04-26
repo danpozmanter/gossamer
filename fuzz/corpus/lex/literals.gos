@@ -1,0 +1,10 @@
+fn values() {
+    let a = 0x2ai64
+    let b = 1_000u64
+    let c = 3.14f64
+    let d = 'x'
+    let e = "hello\n\\\"\t"
+    let f = r#"raw "string" literal"#
+    let g = b"bytes"
+    let h = br#"raw bytes"#
+}

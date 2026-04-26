@@ -1,0 +1,16 @@
+[project]
+id = "example.com/svc"
+version = "0.1.0"
+
+[workspace]
+members = ["sub_a", "sub_b", "tools/migrate"]
+
+[workspace.dependencies]
+"example.com/lib" = "0.5.0"
+"example.com/log" = { url = "https://example.com/log-0.2.0.tar.gz", sha256 = "0".repeat(64) }
+
+[publish.include]
+patterns = ["src/**/*.gos", "tests/**/*.gos", "README.md", "LICENSE"]
+
+[publish.exclude]
+patterns = ["**/*_test_helper.gos", "internal/**"]

@@ -1,0 +1,4 @@
+fn main() {
+    let n = 5i64
+    if n < 10i64 { println("small") } else { println("big") }
+}

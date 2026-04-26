@@ -1,0 +1,4 @@
+fn main() {
+    let b = true
+    if b { println("t") } else { println("f") }
+}

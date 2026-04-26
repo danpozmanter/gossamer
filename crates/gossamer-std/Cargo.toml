@@ -1,0 +1,42 @@
+[package]
+name = "gossamer-std"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Standard library for the Gossamer language."
+
+[lints]
+workspace = true
+
+[features]
+# By default we link everything so existing programs keep working;
+# disabling these trims the host stdlib for deployment scenarios
+# where a program never touches the gated module.
+default = ["regex", "tls", "crypto", "compress"]
+
+# Regular-expression engine behind `std::regex`.
+regex = ["dep:regex"]
+
+# Rustls-backed TLS behind `std::tls`. Pulls in `ring`, `webpki-roots`,
+# `rustls-pemfile`.
+tls = ["dep:rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
+
+# Host CSPRNG behind `std::crypto::rand`. Pulls in `getrandom`.
+crypto = ["dep:getrandom"]
+
+# gzip encoder/decoder behind `std::compress::gzip`. Pulls in
+# `flate2` (which itself uses `miniz_oxide` in pure Rust).
+compress = ["dep:flate2"]
+
+[dependencies]
+gossamer-pkg = { workspace = true }
+getrandom = { version = "0.2", optional = true }
+regex = { version = "1", default-features = false, features = ["std", "unicode"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
+rustls-pemfile = { version = "2", optional = true }
+webpki-roots = { version = "1", optional = true }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
+thiserror = { workspace = true }

@@ -1,0 +1,4 @@
+fn main() {
+    let n = 7i64
+    println!("n = {}", n)
+}

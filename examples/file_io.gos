@@ -1,0 +1,54 @@
+/*
+ * File read/write — text and JSON.
+ *
+ * Uses `std::fs` for filesystem primitives and
+ * `std::encoding::json` for structured payloads. Every call
+ * returns a `Result<T, io::Error>` and is `?`-propagated.
+ *
+ * Run:
+ *     gos run examples/file_io.gos
+ */
+
+use std::encoding::json
+use std::errors
+use std::fs
+use std::io
+use std::path
+
+fn main() -> Result<(), errors::Error> {
+    let dir = "/tmp/gossamer-file-io-demo"
+    let text_path = path::join(&dir.to_string(), &"greeting.txt".to_string())
+    let json_path = path::join(&dir.to_string(), &"settings.json".to_string())
+
+    fs::create_dir_all(&dir).map_err(|e| errors::wrap(e, "mkdir"))?
+
+    // --- text ---
+    fs::write(&text_path, &"hello, gossamer\n".to_string())
+        .map_err(|e| errors::wrap(e, "write text"))?
+    let contents = fs::read_to_string(&text_path)
+        .map_err(|e| errors::wrap(e, "read text"))?
+    println!("read {} bytes: {}", contents.len(), contents.trim())
+
+    // --- JSON ---
+    let features: [json::Value] = [
+        json::Value::String("http".to_string()),
+        json::Value::String("tls".to_string()),
+    ]
+    let payload = json::Value::object([
+        ("port".to_string(), json::Value::Int(8080)),
+        ("addr".to_string(), json::Value::String("0.0.0.0".to_string())),
+        ("features".to_string(), json::Value::Array(features)),
+    ])
+    let rendered = json::render(&payload)
+    fs::write(&json_path, &rendered)
+        .map_err(|e| errors::wrap(e, "write json"))?
+
+    let parsed_text = fs::read_to_string(&json_path)
+        .map_err(|e| errors::wrap(e, "read json"))?
+    let parsed = json::parse(&parsed_text)
+        .map_err(|e| errors::wrap(e, "parse json"))?
+    println!("parsed json: {}", json::render(&parsed))
+
+    fs::remove_all(&dir).map_err(|e| errors::wrap(e, "cleanup"))?
+    Ok(())
+}

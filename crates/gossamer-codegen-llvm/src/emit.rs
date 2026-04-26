@@ -1,0 +1,560 @@
+//! Module-level assembly: runtime symbol declarations +
+//! per-function lowering + `llc -O3` invocation.
+
+use std::fmt::Write;
+use std::io::Write as IoWrite;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result, anyhow};
+use gossamer_mir::Body;
+use gossamer_types::TyCtxt;
+
+use crate::lower::{Lowerer, StringPool};
+
+/// Parallel to `gossamer-codegen-cranelift::NativeObject`.
+#[derive(Debug, Clone)]
+pub struct NativeObject {
+    /// Target triple `llc` was configured for (host by default).
+    pub triple: String,
+    /// Linker-ready object bytes (ELF / Mach-O depending on host).
+    pub bytes: Vec<u8>,
+}
+
+/// Reasons the LLVM backend refuses a build. The driver uses
+/// `Unsupported` as a signal to fall back to the Cranelift
+/// pipeline for programs the MVP doesn't cover.
+#[derive(Debug)]
+pub enum BuildError {
+    /// MIR construct not yet lowered by this backend.
+    Unsupported(&'static str),
+    /// `llc` not reachable or returned non-zero.
+    Tool(String),
+    /// IR rendering or temp-file I/O failed.
+    Io(anyhow::Error),
+}
+
+impl std::fmt::Display for BuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported(what) => write!(f, "llvm backend: unsupported: {what}"),
+            Self::Tool(msg) => write!(f, "llvm backend: tool: {msg}"),
+            Self::Io(err) => write!(f, "llvm backend: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+/// Outcome of a per-function fallback build.
+///
+/// `object` is the LLVM-emitted object containing every body
+/// the lowerer accepted. `fallback_bodies` is the list of body
+/// names the lowerer rejected — the driver feeds those into the
+/// Cranelift backend, then links the two objects together.
+#[derive(Debug, Clone)]
+pub struct CompileOutcome {
+    /// Object file with the LLVM-lowered bodies.
+    pub object: NativeObject,
+    /// Names of bodies the LLVM backend declined to lower.
+    pub fallback_bodies: Vec<String>,
+}
+
+/// Lowers a list of MIR bodies into a native object file via
+/// `llc -O3`. The signature mirrors
+/// `gossamer-codegen-cranelift::compile_to_object` exactly so
+/// the driver can dispatch between the two on the `--release`
+/// flag.
+pub fn compile_to_object(bodies: &[Body], tcx: &TyCtxt) -> Result<NativeObject> {
+    if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
+        for body in bodies {
+            eprintln!("=== MIR {} ===", body.name);
+            for (i, block) in body.blocks.iter().enumerate() {
+                eprintln!("  bb{i}:");
+                for stmt in &block.stmts {
+                    eprintln!("    {:?}", stmt.kind);
+                }
+                eprintln!("    -> {:?}", block.terminator);
+            }
+        }
+    }
+    let ir = render_module(bodies, tcx)?;
+    let triple = host_triple();
+    let bytes = invoke_llc(&ir, &triple)?;
+    Ok(NativeObject { triple, bytes })
+}
+
+/// Per-function fallback build. Each body is attempted
+/// individually; bodies the lowerer rejects are returned in
+/// `fallback_bodies` so the caller can route them through the
+/// Cranelift backend. The LLVM-emitted object includes only the
+/// accepted bodies plus an `extern` declaration for each
+/// fallback symbol so the linker can resolve them against the
+/// Cranelift-built companion object.
+pub fn compile_with_fallback(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+) -> Result<CompileOutcome> {
+    if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
+        for body in bodies {
+            eprintln!("=== MIR {} ===", body.name);
+            for (i, block) in body.blocks.iter().enumerate() {
+                eprintln!("  bb{i}:");
+                for stmt in &block.stmts {
+                    eprintln!("    {:?}", stmt.kind);
+                }
+                eprintln!("    -> {:?}", block.terminator);
+            }
+        }
+    }
+    let (ir, fallback_bodies) = render_module_with_fallback(bodies, tcx)?;
+    let triple = host_triple();
+    let bytes = invoke_llc(&ir, &triple)?;
+    Ok(CompileOutcome {
+        object: NativeObject { triple, bytes },
+        fallback_bodies,
+    })
+}
+
+fn render_module(bodies: &[Body], tcx: &TyCtxt) -> Result<String> {
+    let (ir, fallbacks) = render_module_inner(bodies, tcx, /*allow_fallback=*/ false)?;
+    debug_assert!(fallbacks.is_empty());
+    Ok(ir)
+}
+
+fn render_module_with_fallback(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+) -> Result<(String, Vec<String>)> {
+    render_module_inner(bodies, tcx, /*allow_fallback=*/ true)
+}
+
+/// Single shared rendering pipeline used by both the strict
+/// (`compile_to_object`) and the fallback-tolerant
+/// (`compile_with_fallback`) paths.
+///
+/// When `allow_fallback` is true, bodies the lowerer rejects
+/// are dropped from the LLVM module and replaced by an
+/// `extern` declaration so the linker can resolve them against
+/// the Cranelift-built companion object. The names are returned
+/// in the second tuple slot.
+///
+/// Bodies that emit an LLVM-internal tool error or I/O failure
+/// always abort regardless of `allow_fallback` — those signal
+/// pipeline bugs, not coverage gaps.
+fn render_module_inner(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    allow_fallback: bool,
+) -> Result<(String, Vec<String>)> {
+    let mut out = String::new();
+    writeln!(out, "; ModuleID = \"gossamer\"").unwrap();
+    writeln!(out, "target triple = \"{}\"", host_triple()).unwrap();
+    writeln!(out).unwrap();
+
+    for d in RUNTIME_DECLARATIONS {
+        writeln!(out, "{d}").unwrap();
+    }
+    writeln!(out).unwrap();
+
+    let mut fn_name_by_def: std::collections::HashMap<u32, String> =
+        std::collections::HashMap::new();
+    for body in bodies {
+        if let Some(def) = body.def {
+            fn_name_by_def.insert(def.local, body.name.clone());
+        }
+    }
+
+    let mut body_text = String::new();
+    let mut globals: Vec<String> = Vec::new();
+    let mut fallback_bodies: Vec<String> = Vec::new();
+    let string_pool = std::rc::Rc::new(std::cell::RefCell::new(StringPool::default()));
+    for body in bodies {
+        let mut lowerer = Lowerer::new(body, tcx);
+        lowerer.fn_name_by_def.clone_from(&fn_name_by_def);
+        lowerer.strings = string_pool.clone();
+        match lowerer.lower() {
+            Ok(text) => {
+                body_text.push_str(&text);
+                body_text.push('\n');
+                globals.extend(lowerer.take_module_globals());
+            }
+            Err(BuildError::Unsupported(msg)) => {
+                if allow_fallback {
+                    if std::env::var("GOS_LLVM_TRACE").is_ok() {
+                        eprintln!(
+                            "llvm backend: routing `{name}` to Cranelift fallback ({msg})",
+                            name = body.name,
+                        );
+                    }
+                    fallback_bodies.push(body.name.clone());
+                    body_text.push_str(&extern_declare(body, tcx));
+                    body_text.push('\n');
+                } else {
+                    return Err(anyhow!(
+                        "llvm backend: cannot lower `{fn_name}`: {msg}",
+                        fn_name = body.name,
+                    ));
+                }
+            }
+            Err(BuildError::Tool(msg)) => {
+                return Err(anyhow!("llvm backend: tool: {msg}"));
+            }
+            Err(BuildError::Io(err)) => return Err(err),
+        }
+    }
+    globals.sort();
+    globals.dedup();
+    for g in &globals {
+        writeln!(out, "{g}").unwrap();
+    }
+    if !globals.is_empty() {
+        writeln!(out).unwrap();
+    }
+    let pool_text = string_pool.borrow().render();
+    if !pool_text.is_empty() {
+        out.push_str(&pool_text);
+        writeln!(out).unwrap();
+    }
+    out.push_str(&body_text);
+
+    // The user's `main` function might be in the fallback set.
+    // The C-ABI shim must call `gos_main` regardless — if main
+    // fell back, it gets an `extern declare` above and the call
+    // resolves against the Cranelift object at link time.
+    if let Some(user_main) = bodies.iter().find(|b| b.name == "main") {
+        let ret_is_unit = matches!(
+            tcx.kind(user_main.local_ty(gossamer_mir::Local::RETURN)),
+            Some(gossamer_types::TyKind::Unit)
+        );
+        writeln!(out, "define i32 @main(i32 %argc, ptr %argv) {{").unwrap();
+        writeln!(out, "entry:").unwrap();
+        writeln!(out, "  call void @gos_rt_set_args(i32 %argc, ptr %argv)").unwrap();
+        if ret_is_unit {
+            writeln!(out, "  call void @\"gos_main\"()").unwrap();
+            writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
+            writeln!(out, "  ret i32 0").unwrap();
+        } else {
+            writeln!(out, "  %r = call i64 @\"gos_main\"()").unwrap();
+            writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
+            writeln!(out, "  %t = trunc i64 %r to i32").unwrap();
+            writeln!(out, "  ret i32 %t").unwrap();
+        }
+        writeln!(out, "}}").unwrap();
+    }
+    // Module-level metadata referenced by `!invariant.load
+    // !0` in the inlined hot paths. Empty list (`!{}`) is the
+    // standard form for "no extra info"; LLVM only needs a
+    // metadata node to attach to the load, the contents are
+    // unused for invariance.
+    writeln!(out).unwrap();
+    writeln!(out, "!0 = !{{}}").unwrap();
+    let out = out.replace("@\"main\"", "@\"gos_main\"");
+    Ok((out, fallback_bodies))
+}
+
+/// Renders an `extern declare` for a body LLVM is offloading
+/// to the Cranelift fallback. The signature must match what
+/// the Cranelift backend will emit for the same MIR body so the
+/// linker can hook them up.
+fn extern_declare(body: &Body, tcx: &TyCtxt) -> String {
+    let ret_ty = crate::ty::render_ty(tcx, body.local_ty(gossamer_mir::Local::RETURN));
+    let mut params = String::new();
+    for i in 0..body.arity {
+        if i > 0 {
+            params.push_str(", ");
+        }
+        let local = gossamer_mir::Local(i + 1);
+        let p_ty = crate::ty::render_ty(tcx, body.local_ty(local));
+        let _ = write!(params, "{p_ty}");
+    }
+    format!("declare {ret_ty} @\"{name}\"({params})\n", name = body.name)
+}
+
+fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "gos-llvm-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp_dir)
+        .with_context(|| format!("creating {}", tmp_dir.display()))?;
+    let ll_path = tmp_dir.join("unit.ll");
+    let opt_path = tmp_dir.join("unit.opt.bc");
+    let obj_path = tmp_dir.join("unit.o");
+    {
+        let mut f = std::fs::File::create(&ll_path)
+            .with_context(|| format!("creating {}", ll_path.display()))?;
+        f.write_all(ir.as_bytes())
+            .with_context(|| format!("writing {}", ll_path.display()))?;
+    }
+    let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
+    // Mid-end pipeline: `opt -O3` runs `mem2reg`, GVN, instcombine,
+    // loop unrolling, the loop vectoriser, the SLP vectoriser, …
+    // Critical because `llc` only does codegen / register
+    // allocation; without `opt` first every Lowerer-emitted
+    // `alloca` + `load` + `store` survives into the asm and the
+    // hot loops spill aggressively.
+    let opt_tool = find_opt()?;
+    let opt_output = std::process::Command::new(&opt_tool)
+        .arg("-O3")
+        .arg(format!("-mtriple={triple}"))
+        // Match `rustc -C target-cpu=native`: tell the
+        // mid-level optimiser the target's feature set so the
+        // loop / SLP vectorisers can emit AVX2 / FMA when the
+        // host supports them. Without this, `opt` only knows
+        // the baseline triple's features.
+        .arg("-mcpu=native")
+        .arg(&ll_path)
+        .arg("-o")
+        .arg(&opt_path)
+        .output()
+        .with_context(|| format!("spawn {}", opt_tool.display()))?;
+    if !opt_output.status.success() {
+        if !keep_artifacts {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        } else {
+            eprintln!("llvm backend: failing IR kept at {}", ll_path.display());
+        }
+        return Err(anyhow!(
+            "opt failed ({status}): {stderr}",
+            status = opt_output.status,
+            stderr = String::from_utf8_lossy(&opt_output.stderr)
+        ));
+    }
+    // Backend: `llc -O3` → object file with PIC relocations
+    // (matches the rest of the build pipeline; the linker
+    // refuses non-PIC objects for default PIE binaries).
+    // `-mcpu=native` lets LLVM target the host's full
+    // instruction set (AVX2 / FMA / etc. on modern Ryzen) —
+    // matches what `rustc -C target-cpu=native` does for the
+    // bench-game references.
+    let llc = find_llc()?;
+    let output = std::process::Command::new(&llc)
+        .arg("-O3")
+        .arg("-filetype=obj")
+        .arg(format!("-mtriple={triple}"))
+        .arg("-relocation-model=pic")
+        .arg("-mcpu=native")
+        .arg(&opt_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .output()
+        .with_context(|| format!("spawn {}", llc.display()))?;
+    if !output.status.success() {
+        if !keep_artifacts {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        } else {
+            eprintln!("llvm backend: failing IR kept at {}", ll_path.display());
+        }
+        return Err(anyhow!(
+            "llc failed ({status}): {stderr}",
+            status = output.status,
+            stderr = String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let bytes = std::fs::read(&obj_path)
+        .with_context(|| format!("reading {}", obj_path.display()))?;
+    if keep_artifacts {
+        eprintln!("llvm backend: IR at {}", ll_path.display());
+    } else {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+    Ok(bytes)
+}
+
+fn find_opt() -> Result<PathBuf> {
+    if let Ok(path) = std::env::var("GOS_LLVM_OPT") {
+        return Ok(PathBuf::from(path));
+    }
+    for candidate in [
+        "opt",
+        "opt-18",
+        "opt-19",
+        "opt-20",
+        "opt-17",
+        "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/bin/opt",
+        "/usr/lib/llvm-18/bin/opt",
+        "/usr/lib/llvm-19/bin/opt",
+        "/usr/lib/llvm-20/bin/opt",
+    ] {
+        if is_executable(candidate) {
+            return Ok(PathBuf::from(candidate));
+        }
+    }
+    Err(anyhow!(
+        "opt (LLVM optimiser) not found. Install `llvm-18-dev` or set \
+         GOS_LLVM_OPT to the full path."
+    ))
+}
+
+fn find_llc() -> Result<PathBuf> {
+    if let Ok(path) = std::env::var("GOS_LLC") {
+        return Ok(PathBuf::from(path));
+    }
+    // Well-known system paths and versioned binaries for
+    // apt-installed LLVM on Debian/Ubuntu.
+    for candidate in [
+        "llc",
+        "llc-18",
+        "llc-19",
+        "llc-20",
+        "llc-17",
+        "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/bin/llc",
+        "/usr/lib/llvm-18/bin/llc",
+        "/usr/lib/llvm-19/bin/llc",
+        "/usr/lib/llvm-20/bin/llc",
+    ] {
+        if is_executable(candidate) {
+            return Ok(PathBuf::from(candidate));
+        }
+    }
+    Err(anyhow!(
+        "llc not found. Install `llvm-18-dev` or similar, or set GOS_LLC \
+         to the full path."
+    ))
+}
+
+fn is_executable(path: &str) -> bool {
+    if let Ok(meta) = std::fs::metadata(path) {
+        return meta.is_file();
+    }
+    // Fall back to a `which`-style PATH scan for bare names.
+    if !path.contains('/') {
+        if let Ok(paths) = std::env::var("PATH") {
+            for dir in paths.split(':') {
+                let p = format!("{dir}/{path}");
+                if std::fs::metadata(&p).is_ok_and(|m| m.is_file()) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn host_triple() -> String {
+    // Mirror the target triple the Cranelift backend uses via
+    // `cranelift_native`. Linux hosts are effectively always
+    // `x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`
+    // these days; honour `TARGET` (the env var cargo sets for
+    // build scripts) when present.
+    if let Ok(triple) = std::env::var("TARGET") {
+        return triple;
+    }
+    // Fall back to `uname -m` + linux-gnu.
+    let arch = std::process::Command::new("uname")
+        .arg("-m")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok()).map_or_else(|| "x86_64".to_string(), |s| s.trim().to_string());
+    format!("{arch}-unknown-linux-gnu")
+}
+
+/// Declarations for every runtime symbol the lowerer might
+/// reach by name. LLVM wants a declaration before any use.
+/// Redundant declarations are harmless; missing ones surface
+/// as `llc: error: use of undefined value`. Kept in loose
+/// sync with the exported symbols in `gossamer-runtime::c_abi`.
+const RUNTIME_DECLARATIONS: &[&str] = &[
+    // Program entry / control.
+    "declare void @gos_rt_set_args(i32, ptr)",
+    "declare void @gos_rt_flush_stdout()",
+    "declare void @gos_rt_panic(ptr)",
+    "declare void @gos_rt_exit(i32)",
+    // Prelude printers.
+    "declare void @gos_rt_print_str(ptr)",
+    "declare void @gos_rt_println()",
+    "declare void @gos_rt_print_i64(i64)",
+    "declare void @gos_rt_print_f64(double)",
+    "declare void @gos_rt_print_bool(i32)",
+    "declare void @gos_rt_print_char(i32)",
+    // Argv / stdin helpers.
+    "declare ptr @gos_rt_os_args()",
+    // Time / runtime cooperation.
+    "declare double @gos_rt_time_now()",
+    "declare i64 @gos_rt_time_now_ns()",
+    "declare i64 @gos_rt_time_now_ms()",
+    "declare void @gos_rt_time_sleep(double)",
+    "declare void @gos_rt_yield_now()",
+    // Math (f64 -> f64) — preferred for cross-backend parity;
+    // the LLVM frontend may also emit `llvm.sqrt.f64` etc.
+    // directly through the math-intrinsic short-path.
+    "declare double @gos_rt_math_sqrt(double)",
+    "declare double @gos_rt_math_sin(double)",
+    "declare double @gos_rt_math_cos(double)",
+    "declare double @gos_rt_math_log(double)",
+    "declare double @gos_rt_math_exp(double)",
+    "declare double @gos_rt_math_abs(double)",
+    "declare double @gos_rt_math_floor(double)",
+    "declare double @gos_rt_math_ceil(double)",
+    "declare double @gos_rt_math_pow(double, double)",
+    // Length / indexing.
+    "declare i64 @gos_rt_arr_len(ptr)",
+    "declare i64 @gos_rt_len(ptr)",
+    "declare i64 @gos_rt_str_len(ptr)",
+    "declare i64 @gos_rt_str_byte_at(ptr, i64)",
+    // String constructors / mutation.
+    "declare ptr @gos_rt_str_concat(ptr, ptr)",
+    "declare ptr @gos_rt_str_trim(ptr)",
+    "declare ptr @gos_rt_str_to_upper(ptr)",
+    "declare ptr @gos_rt_str_to_lower(ptr)",
+    "declare i32 @gos_rt_str_contains(ptr, ptr)",
+    "declare i32 @gos_rt_str_starts_with(ptr, ptr)",
+    "declare i32 @gos_rt_str_ends_with(ptr, ptr)",
+    "declare i64 @gos_rt_str_find(ptr, ptr)",
+    "declare ptr @gos_rt_str_replace(ptr, ptr, ptr)",
+    // Parsing / formatting.
+    "declare i64 @gos_rt_parse_i64(ptr, ptr)",
+    "declare double @gos_rt_parse_f64(ptr, ptr)",
+    "declare ptr @gos_rt_i64_to_str(i64)",
+    "declare ptr @gos_rt_f64_to_str(double)",
+    "declare ptr @gos_rt_bool_to_str(i32)",
+    "declare ptr @gos_rt_char_to_str(i32)",
+    // Streams.
+    "declare ptr @gos_rt_io_stdin()",
+    "declare ptr @gos_rt_io_stdout()",
+    "declare ptr @gos_rt_io_stderr()",
+    "declare void @gos_rt_stream_write_byte(ptr, i64)",
+    "declare void @gos_rt_stream_write_byte_array(ptr, ptr, i64)",
+    "declare void @gos_rt_stream_flush(ptr)",
+    "declare void @gos_rt_stream_write_str(ptr, ptr)",
+    "declare ptr @gos_rt_stream_read_line(ptr)",
+    "declare ptr @gos_rt_stream_read_to_string(ptr)",
+    // Memory intrinsic the aggregate path uses.
+    "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)",
+    "declare void @llvm.lifetime.start.p0(i64, ptr)",
+    "declare void @llvm.lifetime.end.p0(i64, ptr)",
+    // Sync primitives (Mutex, WaitGroup, Atomic, heap-Vec).
+    "declare ptr @gos_rt_mutex_new()",
+    "declare void @gos_rt_mutex_lock(ptr)",
+    "declare void @gos_rt_mutex_unlock(ptr)",
+    "declare ptr @gos_rt_wg_new()",
+    "declare void @gos_rt_wg_add(ptr, i64)",
+    "declare void @gos_rt_wg_done(ptr)",
+    "declare void @gos_rt_wg_wait(ptr)",
+    "declare ptr @gos_rt_heap_i64_new(i64)",
+    "declare void @gos_rt_heap_i64_free(ptr)",
+    "declare i64 @gos_rt_heap_i64_get(ptr, i64)",
+    "declare void @gos_rt_heap_i64_set(ptr, i64, i64)",
+    "declare i64 @gos_rt_heap_i64_len(ptr)",
+    "declare void @gos_rt_heap_i64_write_bytes_to_stdout(ptr, i64, i64)",
+    "declare void @gos_rt_heap_i64_write_lines_to_stdout(ptr, i64, i64, i64)",
+    "declare ptr @gos_rt_atomic_i64_new(i64)",
+    "declare i64 @gos_rt_atomic_i64_load(ptr)",
+    "declare void @gos_rt_atomic_i64_store(ptr, i64)",
+    "declare i64 @gos_rt_atomic_i64_fetch_add(ptr, i64)",
+    // Goroutine spawn helpers (the LLVM backend currently
+    // falls back to Cranelift for `go expr` bodies, but
+    // declaring these makes future direct-LLVM lowering a
+    // one-line addition).
+    "declare void @gos_rt_go_spawn_call_3(ptr, i64, i64, i64)",
+    "declare void @gos_rt_go_spawn_call_4(ptr, i64, i64, i64, i64)",
+    "declare void @gos_rt_go_spawn_call_5(ptr, i64, i64, i64, i64, i64)",
+    "declare void @gos_rt_go_spawn_call_6(ptr, i64, i64, i64, i64, i64, i64)",
+    "declare i64 @gos_rt_lcg_jump(i64, i64, i64, i64, i64)",
+    // Inline-able stdout buffer the LLVM lowerer reads
+    // directly from the runtime to bypass per-byte FFI calls
+    // in the fasta hot loop. Sizes match
+    // `gossamer-runtime::c_abi::STDOUT_BUF_SIZE`.
+    "@GOS_RT_STDOUT_BYTES = external global [65536 x i8]",
+    "@GOS_RT_STDOUT_LEN = external global i64",
+];

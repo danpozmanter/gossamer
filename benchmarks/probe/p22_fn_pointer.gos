@@ -1,0 +1,5 @@
+fn square(x: i64) -> i64 { x * x }
+fn main() {
+    let f = square
+    println!("{}", f(6i64))
+}

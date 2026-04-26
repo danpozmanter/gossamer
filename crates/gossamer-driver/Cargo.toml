@@ -1,0 +1,35 @@
+[package]
+name = "gossamer-driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "High-level orchestration of the Gossamer compiler pipeline."
+
+[lints]
+workspace = true
+
+[features]
+# Default off: the host toolchain on most dev machines does not have
+# a musl sysroot installed, so advertising musl targets lands users
+# in a confusing failure when they try to cross-compile. Turn the
+# feature on explicitly once a musl sysroot is available.
+default = []
+musl = []
+
+[dependencies]
+anyhow = { workspace = true }
+gossamer-codegen-cranelift = { workspace = true }
+gossamer-codegen-llvm = { workspace = true }
+gossamer-hir = { workspace = true }
+gossamer-lex = { workspace = true }
+gossamer-mir = { workspace = true }
+gossamer-parse = { workspace = true }
+gossamer-pkg = { workspace = true }
+gossamer-resolve = { workspace = true }
+gossamer-types = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

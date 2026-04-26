@@ -1,0 +1,10 @@
+use std::errors
+
+fn chain(input: &str) -> Result<i64, errors::Error> {
+    let trimmed = input.trim()
+    let parsed: i64 = trimmed.parse()
+        .map_err(|e| errors::wrap(e, "parse int"))?
+    let doubled = parsed.checked_mul(2)
+        .ok_or_else(|| errors::new("overflow"))?
+    Ok(doubled + 1)
+}

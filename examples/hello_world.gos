@@ -1,0 +1,11 @@
+/*
+ * Canonical first program.
+ *
+ * `println` is a plain builtin; no `use` declaration is required.
+ * The `println!` macro form (with captured identifiers) is the
+ * idiom for interpolated output — `println!("hello, {name}")`.
+ */
+
+fn main() {
+    println("hello, world")
+}

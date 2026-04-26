@@ -1,0 +1,2 @@
+fn fact(n: i64) -> i64 { if n <= 1i64 { 1i64 } else { n * fact(n-1i64) } }
+fn main() { println(fact(5i64)) }

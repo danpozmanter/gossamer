@@ -1,0 +1,90 @@
+/*
+ * Minimal grep — a Unix-style CLI tool.
+ *
+ * Reads lines from stdin or from file arguments, prints every
+ * line that contains the pattern. Exits non-zero when no match
+ * is found, matching the POSIX `grep` convention.
+ *
+ * Run:
+ *     gos run examples/grep.gos -- needle < input.txt
+ *     gos run examples/grep.gos -- --count needle haystack.txt
+ */
+
+use std::bufio
+use std::errors
+use std::flag
+use std::fs
+use std::io
+use std::os
+
+struct Opts {
+    pattern: String,
+    files: [String],
+    count_only: bool,
+    line_numbers: bool,
+}
+
+fn parse_opts() -> Result<Opts, errors::Error> {
+    let mut fs = flag::Set::new("grep")
+    let count = fs.bool("count", false, "print only the match count per file")
+    let numbers = fs.bool("line-numbers", false, "prefix matches with line number")
+    let rest = fs.parse(os::args())
+        .map_err(|e| errors::wrap(e, "parse flags"))?
+    if rest.is_empty() {
+        return Err(errors::new("usage: grep [--count] [--line-numbers] PATTERN [FILE...]"))
+    }
+    let pattern = rest[0].clone()
+    let files: [String] = rest[1..].to_vec()
+    Ok(Opts {
+        pattern: pattern,
+        files: files,
+        count_only: *count,
+        line_numbers: *numbers,
+    })
+}
+
+// Scans one reader, printing matching lines (or counting them).
+fn scan<R: io::Read>(
+    source: &String,
+    reader: R,
+    opts: &Opts,
+) -> Result<u64, errors::Error> {
+    let mut scanner = bufio::Scanner::new(reader)
+    let mut line_no: u64 = 0
+    let mut hits: u64 = 0
+    while scanner.scan() {
+        line_no = line_no + 1
+        let text = scanner.text()
+        if text.contains(&opts.pattern) {
+            hits = hits + 1
+            if !opts.count_only {
+                if opts.line_numbers {
+                    println!("{source}:{line_no}:{text}")
+                } else {
+                    println!("{source}:{text}")
+                }
+            }
+        }
+    }
+    if opts.count_only {
+        println!("{source}:{hits}")
+    }
+    Ok(hits)
+}
+
+fn main() -> Result<(), errors::Error> {
+    let opts = parse_opts()?
+    let mut matched: u64 = 0
+    if opts.files.is_empty() {
+        matched = matched + scan(&"<stdin>".to_string(), os::stdin(), &opts)?
+    } else {
+        for path in opts.files.iter() {
+            let file = fs::open(path).map_err(|e| errors::wrap(e, format!("open {path}")))?
+            matched = matched + scan(path, file, &opts)?
+        }
+    }
+    if matched == 0 {
+        os::exit(1)
+    }
+    Ok(())
+}

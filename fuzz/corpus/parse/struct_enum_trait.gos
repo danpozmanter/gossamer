@@ -1,0 +1,21 @@
+struct Point { x: i64, y: i64 }
+
+enum Shape {
+    Circle(f64),
+    Rect { w: f64, h: f64 },
+    Line,
+}
+
+trait Area {
+    fn area(&self) -> f64
+}
+
+impl Area for Shape {
+    fn area(&self) -> f64 {
+        match self {
+            Shape::Circle(r) => 3.14159f64 * r * r,
+            Shape::Rect { w, h } => w * h,
+            Shape::Line => 0.0,
+        }
+    }
+}

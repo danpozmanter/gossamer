@@ -1,0 +1,18 @@
+[package]
+name = "gossamer-pkg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Package manager for Gossamer."
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+rustls-pki-types = "1"
+webpki-roots = "1"

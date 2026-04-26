@@ -1,0 +1,39 @@
+enum E {
+    A,
+    B(i64),
+    C { x: i64, y: i64 },
+}
+
+fn classify(e: E) -> i64 {
+    match e {
+        E::A => 0i64,
+        E::B(n) if n > 0i64 => n,
+        E::B(_) => -1i64,
+        E::C { x: 0i64, y } => y,
+        E::C { x, y: 0i64 } => x,
+        E::C { x, y } => x + y,
+    }
+}
+
+fn or_pat(n: i64) -> i64 {
+    match n {
+        0i64 | 1i64 | 2i64 => 0i64,
+        3i64..=9i64 => 1i64,
+        _ => 2i64,
+    }
+}
+
+fn nested_pat(opt: Option<(i64, i64)>) -> i64 {
+    match opt {
+        Some((0i64, 0i64)) => 0i64,
+        Some((x, 0i64)) | Some((0i64, x)) => x,
+        Some((x, y)) => x + y,
+        None => -1i64,
+    }
+}
+
+fn rest_pat(t: (i64, i64, i64, i64)) -> i64 {
+    match t {
+        (a, .., d) => a + d,
+    }
+}

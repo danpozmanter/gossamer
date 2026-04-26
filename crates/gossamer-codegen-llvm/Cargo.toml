@@ -1,0 +1,18 @@
+[package]
+name = "gossamer-codegen-llvm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "LLVM-backed codegen for the Gossamer compiler."
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+gossamer-mir = { workspace = true }
+gossamer-types = { workspace = true }
+gossamer-runtime = { workspace = true }

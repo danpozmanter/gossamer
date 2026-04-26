@@ -1,0 +1,71 @@
+/*
+ * Error handling via `Result<T, E>` and `?`.
+ *
+ * Gossamer has no exceptions. Every fallible function returns
+ * `Result<T, E>`; `?` propagates the `Err` branch upward. The
+ * `std::errors` module provides the plumbing for constructing,
+ * wrapping, and chaining typed errors.
+ */
+
+use std::errors
+
+// Parses a positive integer from a string. Returns an `Err` with
+// a contextual message on failure.
+fn parse_positive(text: &String) -> Result<i64, errors::Error> {
+    let n: i64 = text.parse().map_err(|_|
+        errors::new(format!("not a number: {text}"))
+    )?
+    if n <= 0 {
+        return Err(errors::new(format!("must be positive: {n}")))
+    }
+    Ok(n)
+}
+
+// Demonstrates error wrapping: lower-level error → higher-level
+// context.
+fn load_setting(key: &String, raw: &String) -> Result<i64, errors::Error> {
+    parse_positive(raw).map_err(|e|
+        errors::wrap(e, format!("loading setting `{key}`"))
+    )
+}
+
+fn main() -> Result<(), errors::Error> {
+    // Happy path.
+    let n = load_setting(&"port".to_string(), &"8080".to_string())?
+    println!("port = {n}")
+
+    // Failure path — propagate with `?` or inspect directly.
+    let attempt = load_setting(&"port".to_string(), &"oops".to_string())
+    match attempt {
+        Ok(v) => println!("parsed {v}"),
+        Err(e) => {
+            println!("top-level: {}", e.message())
+            // Walk the cause chain. `if let` / `while let` are not
+            // part of the grammar yet; a plain `loop` + `match` is
+            // the idiom.
+            let mut cursor = e.cause()
+            loop {
+                match cursor {
+                    Some(inner) => {
+                        println!("  caused by: {}", inner.message())
+                        cursor = inner.cause()
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+
+    // `errors::is` checks whether any link in the chain matches.
+    let broken = load_setting(&"workers".to_string(), &"-3".to_string())
+    match broken {
+        Ok(_) => println!("unexpected success"),
+        Err(e) => {
+            if e.is("must be positive: -3") {
+                println!("caught the specific error we expected")
+            }
+        }
+    }
+
+    Ok(())
+}

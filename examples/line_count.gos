@@ -1,0 +1,28 @@
+/*
+ * line_count — counts newlines in a sample string.
+ *
+ * A minimal, self-contained, terminating example used by the CI
+ * smoke suite. The richer version in earlier drafts walked the
+ * filesystem via `os::read_dir`, fanned work out through a
+ * channel, and aggregated results in a goroutine; that flow is
+ * parked until the scheduler-aware runtime lands.
+ */
+
+fn count_newlines(text: String) -> i64 {
+    let bytes = text.len()
+    let mut count = 0
+    let mut i = 0
+    while i < bytes {
+        if text[i] == 10 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    count
+}
+
+fn main() {
+    let sample = "alpha\nbeta\ngamma\ndelta\n"
+    let n = count_newlines(sample)
+    println("lines:", n)
+}

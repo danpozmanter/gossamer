@@ -1,0 +1,21 @@
+[package]
+name = "gossamer-diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Structured diagnostics for the Gossamer compiler — codes, labels, notes, suggestions, rendering."
+
+[lints]
+workspace = true
+
+[dependencies]
+gossamer-lex = { workspace = true }
+
+[dev-dependencies]
+gossamer-ast = { workspace = true }
+gossamer-parse = { workspace = true }
+gossamer-resolve = { workspace = true }
+gossamer-types = { workspace = true }

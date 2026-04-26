@@ -1,0 +1,12 @@
+[package]
+id = "example.com/server"
+version = "1.2.3"
+authors = ["Gossamer contributors"]
+
+[dependencies]
+"example.com/logging" = "0.5.0"
+"example.com/json" = { version = "2.0.1", path = "../json" }
+"example.com/vendored" = { version = "0.1.0", path = "./vendor/ex" }
+
+[workspace]
+members = ["members/worker", "members/api"]

@@ -1,0 +1,7 @@
+fn main() {
+    let mut sum = 0i64
+    for i in 0..5 {
+        sum = sum + i
+    }
+    println!("{}", sum)
+}

@@ -1,0 +1,22 @@
+GET / HTTP/9.9
+Host: example.com
+
+GET   /  HTTP/1.1
+Host: example.com
+
+GET / HTTP/1.1
+Host:example.com
+Content-Length: not-a-number
+
+INVALID
+
+GET / HTTP/1.1
+
+
+GET / HTTP/1.1
+Host: example.com
+Content-Length: 1000000000
+
+GET / HTTP/1.1
+Host: example.com
+Header-Without-Value:

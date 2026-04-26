@@ -1,0 +1,58 @@
+[package]
+name = "gossamer-codegen-cranelift"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cranelift-backed codegen for the Gossamer compiler."
+
+[lints.rust]
+# Workspace sets `unsafe_code = forbid`, which cannot be relaxed
+# per-module. We downgrade to `deny` here so `jit.rs` can opt in via
+# `#![allow]` for the one `unsafe` call required by
+# `JITModule::free_memory`. The rest of the crate keeps unsafe out.
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cognitive_complexity = "deny"
+too_many_lines = "warn"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+match_same_arms = "allow"
+needless_pass_by_value = "allow"
+unused_self = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+float_cmp = "allow"
+unreadable_literal = "allow"
+format_push_string = "allow"
+
+[dependencies]
+anyhow = { workspace = true }
+cranelift-codegen = "0.123"
+cranelift-frontend = "0.123"
+cranelift-jit = "0.123"
+cranelift-module = "0.123"
+cranelift-object = "0.123"
+cranelift-native = "0.123"
+gossamer-hir = { workspace = true }
+gossamer-mir = { workspace = true }
+gossamer-runtime = { workspace = true }
+gossamer-types = { workspace = true }
+
+[dev-dependencies]
+gossamer-ast = { workspace = true }
+gossamer-hir = { workspace = true }
+gossamer-lex = { workspace = true }
+gossamer-parse = { workspace = true }
+gossamer-resolve = { workspace = true }

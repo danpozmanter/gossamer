@@ -1,0 +1,10 @@
+digit: 1
+digit: 22
+digit: 333
+rewritten: 80:port 443:host
+  addr = localhost
+  port = 8080
+piece: a
+piece: b
+piece: c
+piece: d

@@ -1,0 +1,1 @@
+fn main() { println(16i64 >> 3i64) }

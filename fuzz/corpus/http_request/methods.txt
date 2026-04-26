@@ -1,0 +1,22 @@
+DELETE /resource/42 HTTP/1.1
+Host: example.com
+Authorization: Bearer x
+
+PUT /api/v1/object HTTP/1.1
+Host: example.com
+Content-Length: 0
+
+PATCH /api/v1/object HTTP/1.1
+Host: example.com
+Content-Length: 0
+Content-Type: application/json-patch+json
+
+OPTIONS * HTTP/1.1
+Host: example.com
+
+HEAD /index.html HTTP/1.1
+Host: example.com
+
+CONNECT proxy.example.com:443 HTTP/1.1
+Host: proxy.example.com
+

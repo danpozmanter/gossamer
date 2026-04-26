@@ -1,0 +1,27 @@
+/*
+ * Goroutine spawn without channels.
+ *
+ * `go expr` hands a call to the scheduler. This example keeps
+ * the example compile-friendly: every construct here lowers
+ * through native codegen today, so `gos build` produces a real
+ * binary. The full goroutine + channel shape lives in
+ * `concurrency.gos`.
+ */
+
+fn worker(id: i64, reps: i64) {
+    let mut i = 0
+    while i < reps {
+        println!("worker {} tick {}", id, i)
+        i = i + 1
+    }
+}
+
+fn main() {
+    // Spawn three workers. Scheduler runs them cooperatively;
+    // output order is not guaranteed.
+    go worker(1, 2)
+    go worker(2, 2)
+    go worker(3, 2)
+
+    println!("main is done dispatching")
+}

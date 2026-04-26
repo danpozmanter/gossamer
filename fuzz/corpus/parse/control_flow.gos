@@ -1,0 +1,20 @@
+fn main() {
+    let mut total = 0i64
+    for n in 1i64..=10 {
+        if n % 2 == 0 {
+            total = total + n
+        } else {
+            continue
+        }
+    }
+    loop {
+        if total > 20 { break }
+        total = total + 1
+    }
+    let result = match total {
+        0 => "zero",
+        n if n < 0 => "negative",
+        _ => "positive",
+    }
+    println(result)
+}

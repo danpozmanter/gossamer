@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/memory/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Memory model - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Memory model";
+        var mkdocs_page_input_path = "memory.md";
+        var mkdocs_page_url = "/gossamer/memory/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Gossamer
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Memory model</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#values-vs-references">Values vs references</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#and-mut">&amp; and &amp;mut</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#the-garbage-collector">The garbage collector</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#goroutine-stacks">Goroutine stacks</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#when-to-reach-for-rcrefcellt-like-patterns">When to reach for Rc&lt;RefCell&lt;T&gt;&gt;-like patterns</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stack-vs-heap-the-pragmatic-answer">Stack vs heap — the pragmatic answer</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Memory model</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/memory.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="memory-model">Memory model<a class="headerlink" href="#memory-model" title="Permanent link">&para;</a></h1>
+<p>Gossamer is garbage-collected. There is no borrow checker, no
+lifetime annotations, and no manual ownership transfer. <code>&amp;</code> and
+<code>&amp;mut</code> still exist — but they express <em>aliasing intent</em>, not
+ownership.</p>
+<h2 id="values-vs-references">Values vs references<a class="headerlink" href="#values-vs-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Value-semantic types</strong> are copied on assignment and passed
+  by value: <code>bool</code>, <code>char</code>, <code>i8</code>..<code>i128</code>, <code>u8</code>..<code>u128</code>,
+  <code>isize</code>/<code>usize</code>, <code>f32</code>/<code>f64</code>.</li>
+<li><strong>Reference-semantic types</strong> share their backing storage when
+  cloned. The GC reclaims the backing when no root references it.
+  This includes <code>String</code>, <code>Vec&lt;T&gt;</code>, <code>[T]</code>, <code>struct</code>, <code>enum</code>,
+  closures.</li>
+</ul>
+<h2 id="and-mut"><code>&amp;</code> and <code>&amp;mut</code><a class="headerlink" href="#and-mut" title="Permanent link">&para;</a></h2>
+<p><code>&amp;x</code> means "read <code>x</code> without taking ownership". <code>&amp;mut x</code> means
+"write <code>x</code> without taking ownership". The type checker rejects:</p>
+<ul>
+<li>A <code>&amp;mut</code> overlapping with another <code>&amp;</code> or <code>&amp;mut</code> in a visible
+  scope.</li>
+<li>A <code>&amp;mut</code> taken on a non-<code>mut</code> binding.</li>
+</ul>
+<p>These are <em>correctness</em> rules, not lifetime proofs. You never
+write <code>'a</code>.</p>
+<h2 id="the-garbage-collector">The garbage collector<a class="headerlink" href="#the-garbage-collector" title="Permanent link">&para;</a></h2>
+<p>Phase-14 GC is a stop-the-world mark-sweep. Upcoming phases
+layer on:</p>
+<ul>
+<li><strong>Concurrent marking</strong> — <code>Heap::concurrent_start</code> +
+  <code>concurrent_step</code> lets the mutator run while the grey-set is
+  drained incrementally.</li>
+<li><strong>Pause histogram</strong> — <code>GcStats.{last_pause_nanos,
+  total_pause_nanos, max_pause_nanos}</code> are populated on every
+  <code>Heap::collect</code> call. See
+  <a href="../design/perf_baseline/"><code>docs/perf_baseline.md</code></a> for
+  reference numbers.</li>
+<li><strong>Weak references</strong> — <code>gossamer_gc::weak::WeakTable</code> lets code
+  observe an allocation without rooting it.</li>
+<li><strong>Finalisers</strong> — <code>FinalizerSet::register(handle, callback)</code>
+  runs a cleanup closure when the target is swept. Use for OS
+  handles (files, sockets, listeners).</li>
+</ul>
+<h2 id="goroutine-stacks">Goroutine stacks<a class="headerlink" href="#goroutine-stacks" title="Permanent link">&para;</a></h2>
+<p>Each <code>go expr</code> launches a goroutine with its own stack (fixed-
+size for the moment — growable stacks land with the Stream E.4
+scheduler rewrite). Captures are reference-counted into the GC
+heap exactly as regular struct fields would be.</p>
+<h2 id="when-to-reach-for-rcrefcellt-like-patterns">When to reach for <code>Rc&lt;RefCell&lt;T&gt;&gt;</code>-like patterns<a class="headerlink" href="#when-to-reach-for-rcrefcellt-like-patterns" title="Permanent link">&para;</a></h2>
+<p>You generally don't. The GC rescues most single-threaded
+aliasing. If you need to mutate through a shared handle, hold a
+<code>struct</code> inside a <code>Mutex&lt;T&gt;</code> (from <code>std::sync</code>) and lock around
+every mutation.</p>
+<h2 id="stack-vs-heap-the-pragmatic-answer">Stack vs heap — the pragmatic answer<a class="headerlink" href="#stack-vs-heap-the-pragmatic-answer" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Small value types live on the stack or inline inside their
+  aggregate.</li>
+<li>Aggregates (<code>String</code>, <code>Vec&lt;T&gt;</code>, structs, closures) live on the
+  GC heap. There is no syntactic <code>Box&lt;T&gt;</code>.</li>
+<li>An <a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-mir/src/escape.rs">escape analysis</a> pass (Stream E.6) has landed in
+  MIR and can demote short-lived allocations to the stack once
+  the codegen picks them up.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../syntax/" class="btn btn-neutral float-left" title="Syntax"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../libraries/" class="btn btn-neutral float-right" title="Writing libraries">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../syntax/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../libraries/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,36 @@
+/*
+ * HTTP client / REST call.
+ *
+ * Uses `std::http::Client` to issue an HTTP/1.1 request and
+ * inspect the response. Pairs with `examples/web_server.gos`:
+ * start that server, then run this client against it.
+ *
+ * Run:
+ *     /* terminal 1 */ gos run examples/web_server.gos
+ *     /* terminal 2 */ gos run examples/http_client.gos
+ */
+
+use std::errors
+use std::http
+
+fn main() -> Result<(), errors::Error> {
+    let client = http::Client::new()
+
+    // GET /health — returns plain text "ok".
+    let health = client
+        .get(&"http://127.0.0.1:8080/health".to_string())
+        .send()
+        .map_err(|e| errors::wrap(e, "GET /health"))?
+    println!("/health: {} ({} bytes)", health.status, health.body.len())
+
+    // POST /echo — JSON body round-tripped in the response.
+    let payload = "{\"hello\":\"world\"}".to_string()
+    let echo = client
+        .post(&"http://127.0.0.1:8080/echo".to_string())
+        .header("content-type", "application/json")
+        .body(payload.clone())
+        .send()
+        .map_err(|e| errors::wrap(e, "POST /echo"))?
+    println!("/echo status={} body={}", echo.status, echo.body)
+    Ok(())
+}

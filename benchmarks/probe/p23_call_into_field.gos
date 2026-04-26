@@ -1,0 +1,7 @@
+struct S { x: i64, y: i64 }
+fn mk() -> i64 { 42i64 }
+fn main() {
+    let mut s = S { x: 0i64, y: 0i64 }
+    s.x = mk()
+    println!("{}", s.x)
+}

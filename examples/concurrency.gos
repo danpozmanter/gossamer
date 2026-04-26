@@ -1,0 +1,50 @@
+/*
+ * Goroutines + channels — the canonical producer / consumer shape.
+ *
+ * `go expr` spawns a goroutine. `channel()` returns a
+ * (Sender, Receiver) pair. `tx.send(v)` hands a value to a
+ * receiver; `rx.recv()` yields the next value waiting on the
+ * channel.
+ *
+ * Runs under `gos run` on both the tree-walker and the VM.
+ * Also builds and runs natively under `gos build` — `channel()`,
+ * `send`, and `recv` lower through the `gos_rt_chan_*` runtime
+ * symbols. The example deliberately avoids two pre-1.0.0 native
+ * codegen gaps:
+ *   - Option pattern matching (Some/None) on `recv` results is
+ *     not yet wired natively, so the example uses `_` patterns
+ *     to drain a known number of values rather than looping
+ *     until None.
+ *   - Multi-argument formatted output (`println!("{} {}", a,
+ *     b)`) is not wired natively; the example uses
+ *     single-argument string-literal `println` for status.
+ */
+
+use std::sync::channel
+use std::time
+
+fn main() {
+    let pair = channel()
+    let tx = pair.0
+    let rx = pair.1
+
+    // Three producers push one value each. `tx` is shared via
+    // the channel's internal Arc, so every goroutine talks to
+    // the same endpoint.
+    go tx.send(10)
+    go tx.send(20)
+    go tx.send(30)
+
+    // Give the scheduler a beat so every producer lands a value
+    // before the consumer drains the channel.
+    time::sleep(50)
+
+    // Drain three values. We don't pattern-match the Option
+    // shape so the same code lowers cleanly both interpreted
+    // and natively.
+    let _ = rx.recv()
+    let _ = rx.recv()
+    let _ = rx.recv()
+
+    println("ok: drained three values from the channel")
+}

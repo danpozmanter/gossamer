@@ -1,0 +1,1 @@
+fn main() { println("n=", 5i64) }

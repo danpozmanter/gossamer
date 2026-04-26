@@ -1,0 +1,57 @@
+/*
+ * Echo HTTP server — idiomatic Gossamer.
+ *
+ * Approximately equivalent to the FastAPI pattern
+ *
+ *     @app.api_route("/echo", methods=["GET","POST","PUT","DELETE","PATCH"])
+ *     async def echo(request):
+ *         return {
+ *             "method": request.method,
+ *             "path":   request.path,
+ *             "query":  request.query,
+ *             "body":   request.body,
+ *         }
+ *
+ * Accepts any HTTP method and echoes the request metadata back
+ * as JSON. `/health` is a 200 liveness probe; every other path
+ * is a 404.
+ *
+ * Uses compile-time-expanded `format!` / `println!` macros.
+ * These are the *only* macros Gossamer exposes — six
+ * format-shaped entries (`format!`, `println!`, `print!`,
+ * `eprintln!`, `eprint!`, `panic!`) that expand at parse time
+ * to a single call on the internal `__concat` builtin. No
+ * general macro system; no user-defined macros; no runtime
+ * engine.
+ */
+
+use std::http
+
+struct Echo { }
+
+impl http::Handler for Echo {
+    fn serve(&self, request: http::Request) -> Result<http::Response, http::Error> {
+        match request.path() {
+            "/health" => Ok(http::Response::text(200, "ok".to_string())),
+            "/echo" => Ok(http::Response::json(200, render_echo(&request))),
+            _ => Ok(http::Response::text(404, "not found".to_string())),
+        }
+    }
+}
+
+// One `format!` call = one allocation inside `__concat`. Each
+// placeholder captures the enclosing-scope binding by name.
+fn render_echo(request: &http::Request) -> String {
+    let method = &request.method
+    let path = &request.path
+    let query = &request.query
+    let body = &request.body
+    format!("{{\"method\":\"{method}\",\"path\":\"{path}\",\"query\":\"{query}\",\"body\":\"{body}\"}}")
+}
+
+fn main() -> Result<(), http::Error> {
+    let app = Echo { }
+    println!("listening on 0.0.0.0:8080")
+    println!("try: curl 'http://localhost:8080/echo?name=jane'")
+    http::serve("0.0.0.0:8080".to_string(), app)
+}

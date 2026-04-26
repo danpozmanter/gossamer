@@ -1,0 +1,5 @@
+fn main() {
+    let mut n = 0i64
+    while n < 10 { n = n + 1 }
+    match n { 10 => (), _ => panic("oops") }
+}

@@ -1,0 +1,51 @@
+/*
+ * Data structures: list, map, set.
+ *
+ * Gossamer's built-in aggregates are:
+ *
+ *     [T]              — growable array / vector literal
+ *     (A, B, …)         — tuple
+ *     struct Foo { … } — record
+ *     enum E { … }     — sum type
+ *
+ * Hash / tree maps and sets come from `std::collections`.
+ */
+
+use std::collections::{HashMap, HashSet, BTreeMap}
+
+fn main() {
+    // --- list ---
+    let mut primes: [i64] = [2, 3, 5, 7]
+    primes.push(11)
+    println!("primes: {} entries, first={}, last={}",
+             primes.len(), primes[0], primes[primes.len() - 1])
+
+    // --- map (hash) ---
+    let mut scores: HashMap<String, i64> = HashMap::new()
+    scores.insert("alice".to_string(), 95)
+    scores.insert("bob".to_string(), 87)
+    match scores.get(&"alice".to_string()) {
+        Some(n) => println!("alice -> {n}"),
+        None => println!("alice missing"),
+    }
+
+    // --- map (sorted) — when you need stable iteration order ---
+    let mut ranked: BTreeMap<String, i64> = BTreeMap::new()
+    ranked.insert("c".to_string(), 3)
+    ranked.insert("a".to_string(), 1)
+    ranked.insert("b".to_string(), 2)
+    for pair in ranked.iter() {
+        println!("  {} = {}", pair.0, pair.1)
+    }
+
+    // --- set ---
+    let mut seen: HashSet<String> = HashSet::new()
+    seen.insert("alpha".to_string())
+    seen.insert("beta".to_string())
+    seen.insert("alpha".to_string())
+    println!("unique tags: {}", seen.len())
+
+    // --- tuple + struct ---
+    let origin: (f64, f64) = (0.0, 0.0)
+    println!("origin = ({}, {})", origin.0, origin.1)
+}

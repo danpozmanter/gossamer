@@ -1,0 +1,21 @@
+[package]
+name = "gossamer-lsp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Language-server-protocol adapter for Gossamer."
+
+[lints]
+workspace = true
+
+[dependencies]
+gossamer-ast = { workspace = true }
+gossamer-diagnostics = { workspace = true }
+gossamer-lex = { workspace = true }
+gossamer-parse = { workspace = true }
+gossamer-resolve = { workspace = true }
+gossamer-std = { workspace = true }
+gossamer-types = { workspace = true }

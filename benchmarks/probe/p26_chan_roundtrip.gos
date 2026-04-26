@@ -1,0 +1,7 @@
+use std::sync
+fn main() {
+    let ch = sync::channel::<i64>()
+    ch.send(7i64)
+    let x: i64 = ch.recv()
+    println!("{}", x)
+}

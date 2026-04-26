@@ -1,0 +1,69 @@
+[package]
+name = "gossamer-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Command-line entry point for the Gossamer toolchain."
+
+[[bin]]
+name = "gos"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[package.metadata.deb]
+name = "gossamer"
+maintainer = "Gossamer contributors"
+copyright = "2026, Gossamer contributors"
+license-file = ["../../LICENSE", "4"]
+extended-description = """
+Gossamer is a garbage-collected, goroutine-powered, fast-compiling
+systems language with Rust-flavoured syntax. The `gos` toolchain
+ships the parser, type-checker, interpreter, linter, formatter,
+LSP adapter, doc generator, and test/bench harness as one binary."""
+section = "devel"
+priority = "optional"
+assets = [
+    ["target/release/gos", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/gossamer/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "gossamer"
+license = "Apache-2.0"
+summary = "Gossamer toolchain — parser, checker, interpreter, and tooling"
+assets = [
+    { source = "target/release/gos", dest = "/usr/bin/gos", mode = "755" },
+    { source = "../../README.md", dest = "/usr/share/doc/gossamer/README.md", mode = "644" },
+]
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+gossamer-ast = { workspace = true }
+gossamer-diagnostics = { workspace = true }
+gossamer-driver = { workspace = true }
+gossamer-hir = { workspace = true }
+gossamer-interp = { workspace = true }
+gossamer-lex = { workspace = true }
+gossamer-lint = { workspace = true }
+gossamer-lsp = { workspace = true }
+gossamer-parse = { workspace = true }
+gossamer-pkg = { workspace = true }
+gossamer-resolve = { workspace = true }
+gossamer-types = { workspace = true }
+rustyline = { version = "14", default-features = false, features = ["with-file-history"] }
+
+[dev-dependencies]
+gossamer-std = { workspace = true }
+
+[features]
+# Opt-in flag the integration suites consult to enable their full
+# walks. Default `cargo test` runs minimal smoke variants so the
+# suite stays under a minute; `exhaustive_test.sh` passes
+# `--features exhaustive_tests` to flip every gated test on.
+exhaustive_tests = []

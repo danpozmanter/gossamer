@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/design/diagnostics/" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Diagnostics style - Gossamer</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Diagnostics style";
+        var mkdocs_page_input_path = "design/diagnostics.md";
+        var mkdocs_page_url = "/gossamer/design/diagnostics/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Gossamer
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul class="current">
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Diagnostics style</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#severity">Severity</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#codes">Codes</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#titles">Titles</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#labels">Labels</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#notes-and-helps">Notes and helps</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#suggestions">Suggestions</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#did-you-mean">Did-you-mean</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#anti-patterns">Anti-patterns</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#acceptance-tests">Acceptance tests</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#colours">Colours</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../selfhosting/">Self-hosting study</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Design notes</li>
+      <li class="breadcrumb-item active">Diagnostics style</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/design/diagnostics.md">Edit on gossamer-lang/gossamer</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="gossamer-diagnostics-style-guide">Gossamer diagnostics — style guide<a class="headerlink" href="#gossamer-diagnostics-style-guide" title="Permanent link">&para;</a></h1>
+<p>Every diagnostic the compiler emits goes through
+<code>gossamer-diagnostics</code>. A diagnostic has exactly four things the user
+sees:</p>
+<ol>
+<li>A <strong>severity</strong> — <code>error</code>, <code>warning</code>, <code>note</code>, or <code>help</code>.</li>
+<li>A <strong>code</strong> — a stable four-character prefix plus a four-digit
+   number (<code>GP0001</code>, <code>GR0003</code>, <code>GT0004</code>, …).</li>
+<li>A one-line <strong>title</strong> that fits in ~72 columns.</li>
+<li>A list of <strong>labels</strong>, <strong>notes</strong>, <strong>helps</strong>, and optional
+   <strong>suggestions</strong>.</li>
+</ol>
+<p>The CLI renders them as rustc/elm-style boxes. Tests assert against
+the stable <code>render_plain</code> form or against the code.</p>
+<h2 id="severity">Severity<a class="headerlink" href="#severity" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Severity</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>error</code></td>
+<td>Compilation cannot proceed. Parser, resolver, type checker, exhaustiveness, and lint-as-error.</td>
+</tr>
+<tr>
+<td><code>warning</code></td>
+<td>Code compiles but is suspicious. Default for lints that catch real bugs.</td>
+</tr>
+<tr>
+<td><code>note</code></td>
+<td>Extra context attached to another diagnostic.</td>
+</tr>
+<tr>
+<td><code>help</code></td>
+<td>Actionable advice attached to another diagnostic.</td>
+</tr>
+</tbody>
+</table>
+<p>Never emit a bare <code>error</code> / <code>warning</code>. Always carry a code.</p>
+<h2 id="codes">Codes<a class="headerlink" href="#codes" title="Permanent link">&para;</a></h2>
+<p>Allocate from the phase-scoped namespace. New codes go in the next
+unused slot for that phase.</p>
+<ul>
+<li><code>GP</code> — parser and lexer.</li>
+<li><code>GR</code> — name resolution.</li>
+<li><code>GT</code> — type checker.</li>
+<li><code>GM</code> — match exhaustiveness.</li>
+<li><code>GL</code> — lints.</li>
+<li><code>GK</code> — package manager.</li>
+</ul>
+<p>Once published, <strong>never reuse</strong> a code. If a diagnostic is removed,
+its code is retired — <code>gos explain &lt;CODE&gt;</code> will say "retired in
+version X, see <CODE>".</p>
+<h2 id="titles">Titles<a class="headerlink" href="#titles" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Present tense, declarative. Yes: "unexpected token <code>{</code>". No:
+  "error: a token was unexpected here".</li>
+<li>Lowercase (the severity in front capitalises for you).</li>
+<li>Under 72 characters. If you cannot say it in 72, split into a
+  title + note.</li>
+<li>Do not mention the error code in the title — the renderer prints
+  both.</li>
+<li>Do not mention the file name — the renderer prints the location.</li>
+</ul>
+<h2 id="labels">Labels<a class="headerlink" href="#labels" title="Permanent link">&para;</a></h2>
+<p>Every error has one <strong>primary label</strong> pointing at the smallest span
+that localises the problem. Secondary labels fill in supporting
+context (the prior declaration, the matching brace, the earlier
+binding).</p>
+<ul>
+<li>Primary label messages are one phrase, lowercase: <code>"unexpected</code>fn<code>"</code>, <code>"expected</code>;<code>"</code>, <code>"type declared here"</code>.</li>
+<li>Secondary label messages match the same style; they read
+  naturally when the reader hops from one span to the other.</li>
+</ul>
+<h2 id="notes-and-helps">Notes and helps<a class="headerlink" href="#notes-and-helps" title="Permanent link">&para;</a></h2>
+<p><code>note:</code> lines explain <em>why</em> the error fires. <code>help:</code> lines suggest
+a fix.</p>
+<ul>
+<li>At most one of each per diagnostic. Prefer one complete sentence
+  over two half-sentences.</li>
+<li>Lead with the imperative. Yes: "add <code>mut</code> before <code>x</code>". No: "you
+  could add <code>mut</code>".</li>
+<li>No references to internal compiler phases. The user does not know
+  what "HIR lowering" is.</li>
+</ul>
+<h2 id="suggestions">Suggestions<a class="headerlink" href="#suggestions" title="Permanent link">&para;</a></h2>
+<p>Machine-applicable fix-its carry three fields: a <code>Location</code>, a short
+message, and a replacement string. <code>gos lint --fix</code> (Stream C) and
+editors consume them.</p>
+<ul>
+<li>Apply them through the <code>gos fmt --apply-fixes</code> path. Never apply
+  silently during <code>gos check</code>.</li>
+<li>Suggestion messages start with a verb: <code>"rename to</code>new_name<code>"</code>,
+  <code>"remove this clone"</code>, <code>"wrap in</code>Some(...)<code>"</code>.</li>
+<li>The replacement string replaces exactly <code>Location.span</code> — no more,
+  no less. If more context is needed, widen the location.</li>
+</ul>
+<h2 id="did-you-mean">Did-you-mean<a class="headerlink" href="#did-you-mean" title="Permanent link">&para;</a></h2>
+<p>When a name lookup fails, the resolver attempts a Levenshtein match
+against the names in scope (edit distance ≤ 2). If a match exists,
+it is attached as a <code>help:</code>. <code>gossamer_diagnostics::suggest</code> is the
+shared helper.</p>
+<h2 id="anti-patterns">Anti-patterns<a class="headerlink" href="#anti-patterns" title="Permanent link">&para;</a></h2>
+<ul>
+<li>No stack traces. The compiler is not a runtime.</li>
+<li>No "internal error" shown to the user without an issue-report
+  link. Prefer an <code>assert</code> over a vague panic.</li>
+<li>No diagnostic without a location — even "could not open file"
+  should carry a synthetic zero-length span at offset 0.</li>
+<li>No chained <code>.context(...)</code> via <code>anyhow</code> at the user-facing layer.
+  <code>anyhow</code> is for internal wiring; user-facing errors go through
+  <code>Diagnostic</code>.</li>
+</ul>
+<h2 id="acceptance-tests">Acceptance tests<a class="headerlink" href="#acceptance-tests" title="Permanent link">&para;</a></h2>
+<p>Every error code has a fixture under
+<code>crates/gossamer-diagnostics/tests/fixtures/&lt;code&gt;.gos</code> with a
+<code>// ERROR:</code> marker comment. The test harness parses + checks + lints
+the fixture and asserts the right code fires. New codes without a
+fixture fail CI.</p>
+<h2 id="colours">Colours<a class="headerlink" href="#colours" title="Permanent link">&para;</a></h2>
+<p>The default renderer emits ANSI when <code>RenderOptions::colour</code> is set,
+and plain text otherwise. Tests always use the plain form. The CLI
+enables colour automatically when stderr is a TTY and honours
+<code>NO_COLOR</code> / <code>CLICOLOR_FORCE</code>.</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../../migration/python/" class="btn btn-neutral float-left" title="From Python"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../perf_baseline/" class="btn btn-neutral float-right" title="Performance baseline">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../../migration/python/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../perf_baseline/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../js/hljs_gossamer.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
