@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="A garbage-collected, goroutine-powered, fast-compiling systems language with Rust-flavoured syntax." /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/docs/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="A garbage-collected, goroutine-powered, fast-compiling systems language with Rust-flavoured syntax." /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/" />
       <link rel="shortcut icon" href="img/favicon.ico" />
     <title>Gossamer</title>
     <link rel="stylesheet" href="css/theme.css" />
@@ -165,7 +165,7 @@
     <li><a href="." class="icon icon-home" aria-label="Docs"></a></li>
       <li class="breadcrumb-item active">Home</li>
     <li class="wy-breadcrumbs-aside">
-          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/index.md">Edit on gossamer-lang/gossamer</a>
+          <a href="https://github.com/danpozmanter/gossamer/edit/main/docs_src/index.md">Edit on danpozmanter/gossamer</a>
     </li>
   </ul>
   <hr/>
@@ -177,10 +177,10 @@
 <p>A garbage-collected, goroutine-powered, fast-compiling systems
 language with Rust-flavoured syntax and Go-shaped runtime.</p>
 <ul>
-<li>Source on GitHub: <a href="https://github.com/gossamer-lang/gossamer">gossamer-lang/gossamer</a></li>
-<li>Language spec: <a href="https://github.com/gossamer-lang/gossamer/blob/main/SPEC.md"><code>SPEC.md</code></a></li>
-<li>Project style guide: <a href="https://github.com/gossamer-lang/gossamer/blob/main/GUIDELINES.md"><code>GUIDELINES.md</code></a></li>
-<li>Security policy: <a href="https://github.com/gossamer-lang/gossamer/blob/main/SECURITY.md"><code>SECURITY.md</code></a></li>
+<li>Source on GitHub: <a href="https://github.com/danpozmanter/gossamer">danpozmanter/gossamer</a></li>
+<li>Language spec: <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.md"><code>SPEC.md</code></a></li>
+<li>Project style guide: <a href="https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md"><code>GUIDELINES.md</code></a></li>
+<li>Security policy: <a href="https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md"><code>SECURITY.md</code></a></li>
 </ul>
 <p><strong>Status</strong>: pre-1.0.0. Nothing here is stable.</p>
 <h2 id="hello-gossamer">Hello, Gossamer<a class="headerlink" href="#hello-gossamer" title="Permanent link">&para;</a></h2>
@@ -221,8 +221,24 @@ fn main() {
 </code></pre>
 <h2 id="why-gossamer">Why Gossamer<a class="headerlink" href="#why-gossamer" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Fast front-end compile times.</strong> <code>gos check</code> is built around an
-  incremental cache so iterative editing stays interactive.</li>
+<li><strong>Fast compile times.</strong> <code>gos check</code> and <code>gos build</code> (Cranelift
+  debug) finish in single-digit milliseconds on small-to-medium
+  projects — meaningfully faster than <code>go build</code> and an order of
+  magnitude faster than warm <code>cargo build</code> for an equivalent
+  source tree. <code>gos build --release</code> (LLVM, full optimisation)
+  still beats warm <code>cargo build --release</code> on the same workload.
+  <code>gos check</code> is comparable to <code>cargo check</code> on incremental
+  edits and far ahead from a cold start, because the front-end
+  is built around an incremental cache and the runtime ships as
+  a pre-built static library — no per-build dependency-graph
+  compile.</li>
+<li><strong>Two execution tiers from one binary.</strong> The same source runs
+  unchanged through <code>gos run</code> (interpreter + bytecode VM with
+  optional Cranelift JIT) and <code>gos build</code> (native AOT — Cranelift
+  for debug, LLVM <code>-O3</code> for release with per-function fallback to
+  Cranelift). Iterate with the interpreter for instant feedback,
+  ship the native binary for production performance — no
+  separate toolchains, no dialect drift.</li>
 <li><strong>Go-style goroutines</strong> (<code>go expr</code>) with typed channels and a
   cooperative scheduler.</li>
 <li><strong>Rust-style type system</strong> — statically-typed, generics with
@@ -237,10 +253,6 @@ fn main() {
   <code>encoding::json</code>, <code>sync</code>, <code>time</code>, plus a growing list of
   libraries for context, path/fs, bytes/bufio, URL, logging,
   encoding, crypto, regex, sort, CLI flags.</li>
-<li><strong>One-binary toolchain</strong>: <code>gos parse / check / run / build /
-  fmt / doc / test / bench / lint / explain / watch / new / init
-  / add / remove / tidy / fetch / vendor</code>. Bare <code>gos</code> drops into
-  an interactive REPL.</li>
 </ul>
 <h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
 <ul>
@@ -282,7 +294,7 @@ fn main() {
   <span class="rst-current-version" data-toggle="rst-current-version">
     
         <span>
-          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+          <a href="https://github.com/danpozmanter/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> danpozmanter/gossamer</a>
         </span>
     
     
@@ -308,5 +320,5 @@ fn main() {
 
 <!--
 MkDocs version : 1.6.1
-Build Date UTC : 2026-04-26 21:09:19.674170+00:00
+Build Date UTC : 2026-04-26 22:00:48.311090+00:00
 -->

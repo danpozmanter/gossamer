@@ -7,7 +7,7 @@ module and item. This page is auto-generated from that
 manifest via `cargo xtask docs-stdlib`; hand edits are
 overwritten on the next regeneration.
 
-The manifest itself lives at [`crates/gossamer-std/src/manifest.rs`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/manifest.rs).
+The manifest itself lives at [`crates/gossamer-std/src/manifest.rs`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/manifest.rs).
 
 ## Modules
 

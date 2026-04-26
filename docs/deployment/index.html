@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/docs/deployment/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/deployment/" />
       <link rel="shortcut icon" href="../img/favicon.ico" />
     <title>Deployment - Gossamer</title>
     <link rel="stylesheet" href="../css/theme.css" />
@@ -194,7 +194,7 @@
           <li class="breadcrumb-item">Production</li>
       <li class="breadcrumb-item active">Deployment</li>
     <li class="wy-breadcrumbs-aside">
-          <a href="https://github.com/gossamer-lang/gossamer/edit/main/docs_src/deployment.md">Edit on gossamer-lang/gossamer</a>
+          <a href="https://github.com/danpozmanter/gossamer/edit/main/docs_src/deployment.md">Edit on danpozmanter/gossamer</a>
     </li>
   </ul>
   <hr/>
@@ -245,7 +245,7 @@ x86_64 runner, you can <code>scp</code> it and run it.</p>
 </table>
 <p>Compiled Gossamer programs target whatever triple was passed to
 <code>gos build --target &lt;triple&gt;</code>. The release matrix in
-<a href="https://github.com/gossamer-lang/gossamer/blob/main/.github/workflows/release.yml"><code>.github/workflows/release.yml</code></a>
+<a href="https://github.com/danpozmanter/gossamer/blob/main/.github/workflows/release.yml"><code>.github/workflows/release.yml</code></a>
 is the source of truth for what we test on.</p>
 <h2 id="cross-compiling">Cross-compiling<a class="headerlink" href="#cross-compiling" title="Permanent link">&para;</a></h2>
 <h3 id="from-linux-x86_64-linux-aarch64">From Linux x86_64 → Linux aarch64<a class="headerlink" href="#from-linux-x86_64-linux-aarch64" title="Permanent link">&para;</a></h3>
@@ -281,7 +281,7 @@ image. The compiled musl binary needs nothing else. Sample
 <pre><code class="language-dockerfile"># Build stage
 FROM debian:bookworm-slim AS build
 RUN apt-get update &amp;&amp; apt-get install -y curl ca-certificates build-essential
-RUN curl -fsSL https://github.com/gossamer-lang/gossamer/releases/latest/download/gos-x86_64-unknown-linux-musl -o /usr/local/bin/gos &amp;&amp; chmod +x /usr/local/bin/gos
+RUN curl -fsSL https://github.com/danpozmanter/gossamer/releases/latest/download/gos-x86_64-unknown-linux-musl -o /usr/local/bin/gos &amp;&amp; chmod +x /usr/local/bin/gos
 WORKDIR /src
 COPY . .
 RUN gos build --release --target x86_64-unknown-linux-musl src/main.gos -o /out/server
@@ -471,7 +471,7 @@ make it possible.</p>
   <span class="rst-current-version" data-toggle="rst-current-version">
     
         <span>
-          <a href="https://github.com/gossamer-lang/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> gossamer-lang/gossamer</a>
+          <a href="https://github.com/danpozmanter/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> danpozmanter/gossamer</a>
         </span>
     
     

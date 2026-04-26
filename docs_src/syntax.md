@@ -7,7 +7,7 @@ Gossamer's surface is Rust with two simplifications:
 - Semicolons are optional at statement boundaries.
 
 See the full grammar in
-[`grammar/`](https://github.com/gossamer-lang/gossamer/tree/main/grammar)
+[`grammar/`](https://github.com/danpozmanter/gossamer/tree/main/grammar)
 once it is committed.
 
 ## Items

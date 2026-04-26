@@ -7,7 +7,7 @@ source of friction is **syntax**: Gossamer is Rust-flavoured, so
 
 This page walks the differences in three layers: syntax,
 semantics, and stdlib equivalents. It is not exhaustive — for
-the spec, see [`SPEC.md`](https://github.com/gossamer-lang/gossamer/blob/main/SPEC.md).
+the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md).
 
 ## TL;DR
 

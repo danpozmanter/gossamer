@@ -6,7 +6,7 @@ build.
 ## From source
 
 ```sh
-git clone https://github.com/gossamer-lang/gossamer
+git clone https://github.com/danpozmanter/gossamer
 cd gossamer
 cargo build --workspace --release
 ./target/release/gos --version

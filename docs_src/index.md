@@ -3,10 +3,10 @@
 A garbage-collected, goroutine-powered, fast-compiling systems
 language with Rust-flavoured syntax and Go-shaped runtime.
 
-- Source on GitHub: [gossamer-lang/gossamer](https://github.com/gossamer-lang/gossamer)
-- Language spec: [`SPEC.md`](https://github.com/gossamer-lang/gossamer/blob/main/SPEC.md)
-- Project style guide: [`GUIDELINES.md`](https://github.com/gossamer-lang/gossamer/blob/main/GUIDELINES.md)
-- Security policy: [`SECURITY.md`](https://github.com/gossamer-lang/gossamer/blob/main/SECURITY.md)
+- Source on GitHub: [danpozmanter/gossamer](https://github.com/danpozmanter/gossamer)
+- Language spec: [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md)
+- Project style guide: [`GUIDELINES.md`](https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md)
+- Security policy: [`SECURITY.md`](https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md)
 
 **Status**: pre-1.0.0. Nothing here is stable.
 
@@ -58,8 +58,24 @@ fn main() {
 
 ## Why Gossamer
 
-- **Fast front-end compile times.** `gos check` is built around an
-  incremental cache so iterative editing stays interactive.
+- **Fast compile times.** `gos check` and `gos build` (Cranelift
+  debug) finish in single-digit milliseconds on small-to-medium
+  projects — meaningfully faster than `go build` and an order of
+  magnitude faster than warm `cargo build` for an equivalent
+  source tree. `gos build --release` (LLVM, full optimisation)
+  still beats warm `cargo build --release` on the same workload.
+  `gos check` is comparable to `cargo check` on incremental
+  edits and far ahead from a cold start, because the front-end
+  is built around an incremental cache and the runtime ships as
+  a pre-built static library — no per-build dependency-graph
+  compile.
+- **Two execution tiers from one binary.** The same source runs
+  unchanged through `gos run` (interpreter + bytecode VM with
+  optional Cranelift JIT) and `gos build` (native AOT — Cranelift
+  for debug, LLVM `-O3` for release with per-function fallback to
+  Cranelift). Iterate with the interpreter for instant feedback,
+  ship the native binary for production performance — no
+  separate toolchains, no dialect drift.
 - **Go-style goroutines** (`go expr`) with typed channels and a
   cooperative scheduler.
 - **Rust-style type system** — statically-typed, generics with
@@ -74,10 +90,6 @@ fn main() {
   `encoding::json`, `sync`, `time`, plus a growing list of
   libraries for context, path/fs, bytes/bufio, URL, logging,
   encoding, crypto, regex, sort, CLI flags.
-- **One-binary toolchain**: `gos parse / check / run / build /
-  fmt / doc / test / bench / lint / explain / watch / new / init
-  / add / remove / tidy / fetch / vendor`. Bare `gos` drops into
-  an interactive REPL.
 
 ## Where to go next
 

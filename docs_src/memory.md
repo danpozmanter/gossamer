@@ -70,4 +70,4 @@ every mutation.
   MIR and can demote short-lived allocations to the stack once
   the codegen picks them up.
 
-[escape]: https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-mir/src/escape.rs
+[escape]: https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-mir/src/escape.rs

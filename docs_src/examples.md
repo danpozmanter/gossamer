@@ -1,6 +1,6 @@
 # Examples
 
-The [`examples/`](https://github.com/gossamer-lang/gossamer/tree/main/examples)
+The [`examples/`](https://github.com/danpozmanter/gossamer/tree/main/examples)
 directory ships a handful of worked programs.
 
 ## A friendly taste

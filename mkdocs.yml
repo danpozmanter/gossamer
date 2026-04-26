@@ -1,9 +1,9 @@
 site_name: Gossamer
-site_url: https://gossamer-lang.github.io/gossamer/docs/
+site_url: https://danpozmanter.github.io/gossamer/docs/
 site_description: A garbage-collected, goroutine-powered, fast-compiling systems language with Rust-flavoured syntax.
 site_author: Gossamer contributors
-repo_url: https://github.com/gossamer-lang/gossamer
-repo_name: gossamer-lang/gossamer
+repo_url: https://github.com/danpozmanter/gossamer
+repo_name: danpozmanter/gossamer
 edit_uri: edit/main/docs_src/
 
 docs_dir: docs_src

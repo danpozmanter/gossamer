@@ -4,7 +4,7 @@ Gossamer's implementation forbids `unsafe` Rust workspace-wide
 and audits every external dependency against a small approved
 list. This page summarises the posture for users and points at
 the hardening roadmap. Reporting details are in
-[`SECURITY.md`](https://github.com/gossamer-lang/gossamer/blob/main/SECURITY.md).
+[`SECURITY.md`](https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md).
 
 ## What is done
 

@@ -2,7 +2,7 @@
 
 This page lists every method dispatched by name through the
 compiler's MIR table at
-[`crates/gossamer-mir/src/lower.rs`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-mir/src/lower.rs).
+[`crates/gossamer-mir/src/lower.rs`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-mir/src/lower.rs).
 Methods listed here resolve in `gos run` (interpreter) and in
 `gos build [--release]` (compiled).
 

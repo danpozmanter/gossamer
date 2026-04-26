@@ -9,15 +9,15 @@
 - One focused change per PR. No drive-by refactors.
 
 The full style guide is in
-[`GUIDELINES.md`](https://github.com/gossamer-lang/gossamer/blob/main/GUIDELINES.md).
+[`GUIDELINES.md`](https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md).
 
 ## Getting oriented
 
-- Start with the [language spec](https://github.com/gossamer-lang/gossamer/blob/main/SPEC.md) for grammar and semantics.
+- Start with the [language spec](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md) for grammar and semantics.
 - Each crate under `crates/` has a module-level `//!` doc
   describing the compiler phase it belongs to.
 - Design notes live under
-  [`docs/`](https://github.com/gossamer-lang/gossamer/tree/main/docs)
+  [`docs/`](https://github.com/danpozmanter/gossamer/tree/main/docs)
   (perf baseline, binary-size baseline, diagnostics style guide,
   self-hosting study, incremental-compile rollout).
 

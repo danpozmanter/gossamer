@@ -24,7 +24,7 @@ Pre-built `gos` toolchain binaries ship for:
 
 Compiled Gossamer programs target whatever triple was passed to
 `gos build --target <triple>`. The release matrix in
-[`.github/workflows/release.yml`](https://github.com/gossamer-lang/gossamer/blob/main/.github/workflows/release.yml)
+[`.github/workflows/release.yml`](https://github.com/danpozmanter/gossamer/blob/main/.github/workflows/release.yml)
 is the source of truth for what we test on.
 
 ## Cross-compiling
@@ -75,7 +75,7 @@ image. The compiled musl binary needs nothing else. Sample
 # Build stage
 FROM debian:bookworm-slim AS build
 RUN apt-get update && apt-get install -y curl ca-certificates build-essential
-RUN curl -fsSL https://github.com/gossamer-lang/gossamer/releases/latest/download/gos-x86_64-unknown-linux-musl -o /usr/local/bin/gos && chmod +x /usr/local/bin/gos
+RUN curl -fsSL https://github.com/danpozmanter/gossamer/releases/latest/download/gos-x86_64-unknown-linux-musl -o /usr/local/bin/gos && chmod +x /usr/local/bin/gos
 WORKDIR /src
 COPY . .
 RUN gos build --release --target x86_64-unknown-linux-musl src/main.gos -o /out/server
