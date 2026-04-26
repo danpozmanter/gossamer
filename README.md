@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/danpozmanter/gossamer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/danpozmanter/gossamer/actions/workflows/ci.yml)
 
+[Homepage and Docs](http://gossamer-lang.org/)
+
 A garbage-collected, goroutine-powered, fast-compiling systems
 language with Rust's surface syntax, Go's runtime, and the forward pipe operator.
 
