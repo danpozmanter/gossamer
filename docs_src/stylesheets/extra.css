@@ -20,3 +20,44 @@ blockquote {
     background: #f5f7fa;
 }
 
+/* Top-right "View on GitHub" button injected by js/repo_button.js.
+ * Fixed-position so it stays visible while scrolling; sits above
+ * the readthedocs sidebar / content z-stack. */
+#gos-repo-button {
+    position: fixed;
+    top: 14px;
+    right: 18px;
+    z-index: 2000;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    padding: 0.55em 1em;
+    border-radius: 8px;
+    background: #1f2937;
+    color: #ffffff !important;
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-weight: 600;
+    font-size: 0.95em;
+    text-decoration: none !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+    transition: background 120ms ease, transform 120ms ease;
+}
+#gos-repo-button:hover,
+#gos-repo-button:focus {
+    background: #111827;
+    transform: translateY(-1px);
+    color: #ffffff !important;
+    text-decoration: none !important;
+}
+#gos-repo-button svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+@media (max-width: 640px) {
+    /* Squeeze to icon-only on phones so it doesn't crowd the
+     * readthedocs hamburger menu. */
+    #gos-repo-button { padding: 0.5em 0.6em; }
+    #gos-repo-button .gos-repo-button-label { display: none; }
+}

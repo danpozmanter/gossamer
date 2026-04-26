@@ -4,7 +4,11 @@ site_description: A garbage-collected, goroutine-powered, fast-compiling systems
 site_author: Gossamer contributors
 repo_url: https://github.com/danpozmanter/gossamer
 repo_name: danpozmanter/gossamer
-edit_uri: edit/main/docs_src/
+# `edit_uri` intentionally unset — readthedocs theme suppresses the
+# "Edit on …" link when it is empty. Repo discoverability is handled
+# by the prominent top-right button injected from
+# `js/repo_button.js`.
+edit_uri: ""
 
 docs_dir: docs_src
 site_dir: docs
@@ -26,6 +30,7 @@ extra_css:
 
 extra_javascript:
   - js/hljs_gossamer.js
+  - js/repo_button.js
 
 nav:
   - Home: index.md
