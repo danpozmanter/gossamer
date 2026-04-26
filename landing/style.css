@@ -27,27 +27,17 @@ body {
 
 .hero {
     text-align: center;
-    padding: 3.5rem 0 2rem;
-}
-
-.hero .logo {
-    width: 168px;
-    height: auto;
-    display: inline-block;
-}
-
-.hero h1 {
-    margin: 0.5rem 0 0.75rem;
-    font-size: 3rem;
-    letter-spacing: -0.025em;
-    font-weight: 700;
+    padding: 4.5rem 0 2rem;
 }
 
 .hero .tagline {
-    color: var(--muted);
-    font-size: 1.15rem;
-    max-width: 640px;
+    color: var(--text);
+    font-size: 1.5rem;
+    line-height: 1.4;
+    font-weight: 500;
+    max-width: 720px;
     margin: 0 auto 1.6rem;
+    letter-spacing: -0.005em;
 }
 
 .ctas { margin-top: 1.4rem; }
@@ -121,8 +111,7 @@ footer {
 footer a { color: var(--accent); }
 
 @media (max-width: 600px) {
-    .hero { padding-top: 2rem; }
-    .hero h1 { font-size: 2.25rem; }
-    .hero .tagline { font-size: 1rem; }
+    .hero { padding-top: 2.5rem; }
+    .hero .tagline { font-size: 1.15rem; }
     pre { font-size: 0.82rem; }
 }
