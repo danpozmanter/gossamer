@@ -18,6 +18,7 @@ use gossamer_diagnostics::{Diagnostic as GossamerDiagnostic, Severity};
 use gossamer_lex::Span;
 use gossamer_std::json::Value;
 
+use crate::inlay::{InlayHint, collect_inlays};
 use crate::protocol::{Transport, field, field_str, field_u32, notification, response_ok};
 use crate::session::{DocumentAnalysis, analyse};
 
@@ -87,6 +88,10 @@ fn run<R: Read, W: Write>(reader: R, writer: W) -> std::io::Result<()> {
                 let result = state.rename(&params);
                 transport.write_message(&response_ok(id, result))?;
             }
+            "textDocument/inlayHint" => {
+                let result = state.inlay_hints(&params);
+                transport.write_message(&response_ok(id, result))?;
+            }
             "shutdown" => {
                 transport.write_message(&response_ok(id, Value::Null))?;
             }
@@ -115,6 +120,7 @@ fn initialize_result() -> Value {
     caps.insert("hoverProvider".to_string(), Value::Bool(true));
     caps.insert("definitionProvider".to_string(), Value::Bool(true));
     caps.insert("referencesProvider".to_string(), Value::Bool(true));
+    caps.insert("inlayHintProvider".to_string(), Value::Bool(true));
     let mut rename = BTreeMap::new();
     rename.insert("prepareProvider".to_string(), Value::Bool(true));
     caps.insert("renameProvider".to_string(), Value::Object(rename));
@@ -340,6 +346,58 @@ impl ServerState {
         workspace_edit.insert("changes".to_string(), Value::Object(changes));
         Value::Object(workspace_edit)
     }
+
+    fn inlay_hints(&self, params: &Value) -> Value {
+        let Some(uri) = field_str(field(params, "textDocument"), "uri") else {
+            return Value::Array(Vec::new());
+        };
+        let Some(doc) = self.documents.get(uri) else {
+            return Value::Array(Vec::new());
+        };
+        // Honour the client-supplied range when present; fall back
+        // to the whole document for clients that omit it.
+        let range = field(params, "range");
+        let byte_range = if matches!(range, Value::Object(_)) {
+            let start = field(range, "start");
+            let end = field(range, "end");
+            let start_offset = field_u32(start, "line").and_then(|line| {
+                let column = field_u32(start, "character").unwrap_or(0);
+                doc.position_to_offset(line, column)
+            });
+            let end_offset = field_u32(end, "line").and_then(|line| {
+                let column = field_u32(end, "character").unwrap_or(0);
+                doc.position_to_offset(line, column)
+            });
+            match (start_offset, end_offset) {
+                (Some(a), Some(b)) if a <= b => Some((a, b)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let hints = collect_inlays(doc, byte_range);
+        Value::Array(hints.into_iter().map(inlay_to_lsp).collect())
+    }
+}
+
+/// Encodes one inlay hint into the LSP wire shape.
+fn inlay_to_lsp(hint: InlayHint) -> Value {
+    let mut position = BTreeMap::new();
+    position.insert("line".to_string(), Value::Number(f64::from(hint.line)));
+    position.insert(
+        "character".to_string(),
+        Value::Number(f64::from(hint.character)),
+    );
+    let mut out = BTreeMap::new();
+    out.insert("position".to_string(), Value::Object(position));
+    out.insert("label".to_string(), Value::String(hint.label));
+    // `kind: 1` = `Type` per the LSP spec; renders the hint with
+    // the same styling clients use for Rust-Analyzer's type
+    // annotations.
+    out.insert("kind".to_string(), Value::Number(1.0));
+    out.insert("paddingLeft".to_string(), Value::Bool(false));
+    out.insert("paddingRight".to_string(), Value::Bool(false));
+    Value::Object(out)
 }
 
 fn is_valid_identifier(name: &str) -> bool {
@@ -490,6 +548,64 @@ mod tests {
         assert!(caps.contains_key("definitionProvider"));
         assert!(caps.contains_key("referencesProvider"));
         assert!(caps.contains_key("renameProvider"));
+        assert!(caps.contains_key("inlayHintProvider"));
+    }
+
+    fn inlay_params(uri: &str) -> Value {
+        let mut text_doc = BTreeMap::new();
+        text_doc.insert("uri".to_string(), Value::String(uri.to_string()));
+        let mut params = BTreeMap::new();
+        params.insert("textDocument".to_string(), Value::Object(text_doc));
+        Value::Object(params)
+    }
+
+    #[test]
+    fn inlay_hints_emits_inferred_let_type() {
+        let mut state = ServerState::new();
+        state.update(
+            "file:///inlay.gos",
+            // `n` has no annotation; the checker resolves the
+            // unsuffixed literal default to `i64`.
+            "fn main() {\n    let n = 42\n}\n",
+        );
+        let response = state.inlay_hints(&inlay_params("file:///inlay.gos"));
+        let labels = extract_labels(&response);
+        assert!(
+            labels.iter().any(|l| l == ": i64"),
+            "expected `: i64` hint; got {labels:?}"
+        );
+    }
+
+    #[test]
+    fn inlay_hints_skips_explicit_annotations() {
+        let mut state = ServerState::new();
+        state.update(
+            "file:///inlay-skip.gos",
+            // Both bindings carry explicit `: T`; nothing to add.
+            "fn main() {\n    let a: i64 = 1\n    let b: bool = true\n}\n",
+        );
+        let response = state.inlay_hints(&inlay_params("file:///inlay-skip.gos"));
+        let labels = extract_labels(&response);
+        assert!(
+            labels.is_empty(),
+            "expected no hints when types are explicit; got {labels:?}"
+        );
+    }
+
+    #[test]
+    fn inlay_hints_skips_unit_typed_bindings() {
+        let mut state = ServerState::new();
+        state.update(
+            "file:///inlay-unit.gos",
+            // `_` doesn't bind; the let body returns `()`.
+            "fn side_effect() { }\nfn main() {\n    let _ = side_effect()\n}\n",
+        );
+        let response = state.inlay_hints(&inlay_params("file:///inlay-unit.gos"));
+        let labels = extract_labels(&response);
+        assert!(
+            !labels.iter().any(|l| l.contains("()")),
+            "should not surface a `: ()` hint; got {labels:?}"
+        );
     }
 
     #[test]

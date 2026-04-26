@@ -58,6 +58,14 @@ Musl targets (`*-unknown-linux-musl`) are gated behind the
 cargo build --workspace --release -p gossamer-driver --features musl
 ```
 
+## Editor support
+
+Pre-built plug-ins for VSCode, Vim, Neovim, Helix, Emacs, Sublime,
+and Zed (plus a tree-sitter grammar) live at
+[`danpozmanter/gossamer-editor-support`](https://github.com/danpozmanter/gossamer-editor-support).
+Each one drives `gos lsp` for diagnostics, hover, completion,
+go-to-definition, references, rename, and inlay hints.
+
 ## Next
 
 - [Running](running.md)

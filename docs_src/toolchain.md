@@ -100,9 +100,20 @@ capabilities:
 - `textDocument/prepareRename` + `textDocument/rename` — returns
   a `WorkspaceEdit` that renames every occurrence of the symbol
   in the file. Rejects non-identifier `newName` inputs.
+- `textDocument/inlayHint` — emits a `: <type>` ghost-text hint
+  after every `let` binding and closure parameter whose type the
+  user did not spell out. Same shape rust-analyzer uses for Rust.
 
 Editors should launch `gos lsp` over stdio and speak LSP 3.16 with
 `textDocumentSync=Full` (incremental edits land in a follow-up).
+
+### Pre-built editor integrations
+
+Plug-ins that wire `gos lsp` into common editors live in a separate
+repo:
+[`danpozmanter/gossamer-editor-support`](https://github.com/danpozmanter/gossamer-editor-support)
+— ships VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed clients
+plus a tree-sitter grammar.
 
 ## Smoke-test
 

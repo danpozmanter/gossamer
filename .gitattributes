@@ -1,0 +1,32 @@
+# Force LF line endings for everything text-shaped. Windows
+# checkouts default to CRLF auto-conversion, which made the
+# `examples/*.expected.txt` byte-comparison parity test diverge
+# from the interpreter's LF-only stdout.
+
+* text=auto eol=lf
+
+# Source + fixture data the toolchain reads or writes verbatim.
+*.gos          text eol=lf
+*.expected.txt text eol=lf
+*.toml         text eol=lf
+*.md           text eol=lf
+*.rs           text eol=lf
+*.yml          text eol=lf
+*.yaml         text eol=lf
+*.json         text eol=lf
+*.sh           text eol=lf
+
+# Shell scripts must stay LF on Windows checkouts so they run
+# under MSYS / Git Bash without CR-induced parse errors.
+*.bash         text eol=lf
+
+# Binary assets — never touch.
+*.png   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+*.svg   binary
+*.gz    binary
+*.zip   binary

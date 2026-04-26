@@ -12,6 +12,7 @@
 
 #![forbid(unsafe_code)]
 
+mod inlay;
 mod protocol;
 mod server;
 mod session;

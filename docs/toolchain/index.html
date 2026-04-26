@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/toolchain/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/docs/toolchain/" />
       <link rel="shortcut icon" href="../img/favicon.ico" />
     <title>Overview - Gossamer</title>
     <link rel="stylesheet" href="../css/theme.css" />
@@ -15,7 +15,7 @@
         // Current page data
         var mkdocs_page_name = "Overview";
         var mkdocs_page_input_path = "toolchain.md";
-        var mkdocs_page_url = "/gossamer/toolchain/";
+        var mkdocs_page_url = "/gossamer/docs/toolchain/";
       </script>
     
     <!--[if lt IE 9]>
@@ -98,6 +98,10 @@
     <li class="toctree-l2"><a class="reference internal" href="#repl">REPL</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#editor-integration">Editor integration</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#pre-built-editor-integrations">Pre-built editor integrations</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#smoke-test">Smoke-test</a>
     </li>
@@ -384,9 +388,18 @@ capabilities:</p>
 <li><code>textDocument/prepareRename</code> + <code>textDocument/rename</code> — returns
   a <code>WorkspaceEdit</code> that renames every occurrence of the symbol
   in the file. Rejects non-identifier <code>newName</code> inputs.</li>
+<li><code>textDocument/inlayHint</code> — emits a <code>: &lt;type&gt;</code> ghost-text hint
+  after every <code>let</code> binding and closure parameter whose type the
+  user did not spell out. Same shape rust-analyzer uses for Rust.</li>
 </ul>
 <p>Editors should launch <code>gos lsp</code> over stdio and speak LSP 3.16 with
 <code>textDocumentSync=Full</code> (incremental edits land in a follow-up).</p>
+<h3 id="pre-built-editor-integrations">Pre-built editor integrations<a class="headerlink" href="#pre-built-editor-integrations" title="Permanent link">&para;</a></h3>
+<p>Plug-ins that wire <code>gos lsp</code> into common editors live in a separate
+repo:
+<a href="https://github.com/danpozmanter/gossamer-editor-support"><code>danpozmanter/gossamer-editor-support</code></a>
+— ships VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed clients
+plus a tree-sitter grammar.</p>
 <h2 id="smoke-test">Smoke-test<a class="headerlink" href="#smoke-test" title="Permanent link">&para;</a></h2>
 <pre><code class="language-sh">python3 - &lt;&lt;'PY'
 import json, subprocess

@@ -139,15 +139,18 @@ fn every_example_with_committed_expected_matches_interpreter_stdout() {
     let mut failures = Vec::new();
     for path in gos_examples_with_expected() {
         let expected_path = path.with_extension("expected.txt");
-        let expected = std::fs::read_to_string(&expected_path).expect("read expected.txt");
+        let expected = normalize_newlines(
+            &std::fs::read_to_string(&expected_path).expect("read expected.txt"),
+        );
         let run = run_interpreter(&path);
-        if run.stdout != expected {
+        let actual = normalize_newlines(&run.stdout);
+        if actual != expected {
             failures.push(format!(
                 "{}: stdout diverged from {}\n  expected: {:?}\n  actual:   {:?}",
                 rel_to_workspace(&path),
                 rel_to_workspace(&expected_path),
                 expected,
-                run.stdout,
+                actual,
             ));
         }
     }
@@ -157,6 +160,14 @@ fn every_example_with_committed_expected_matches_interpreter_stdout() {
         failures.len(),
         failures.join("\n\n"),
     );
+}
+
+/// Strips `\r` from `\r\n` sequences so a Windows checkout of the
+/// committed `.expected.txt` (which git auto-converts to CRLF
+/// unless told otherwise) compares equal to the interpreter's
+/// LF-only stdout. Defence in depth alongside `.gitattributes`.
+fn normalize_newlines(s: &str) -> String {
+    s.replace("\r\n", "\n")
 }
 
 /// Returns every `examples/*.gos` whose sibling `<name>.expected.txt`

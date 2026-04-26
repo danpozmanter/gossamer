@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/install/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://gossamer-lang.github.io/gossamer/docs/install/" />
       <link rel="shortcut icon" href="../img/favicon.ico" />
     <title>Install - Gossamer</title>
     <link rel="stylesheet" href="../css/theme.css" />
@@ -15,7 +15,7 @@
         // Current page data
         var mkdocs_page_name = "Install";
         var mkdocs_page_input_path = "install.md";
-        var mkdocs_page_url = "/gossamer/install/";
+        var mkdocs_page_url = "/gossamer/docs/install/";
       </script>
     
     <!--[if lt IE 9]>
@@ -60,6 +60,8 @@
     <li class="toctree-l2"><a class="reference internal" href="#verifying">Verifying</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#target-toolchains">Target toolchains</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#editor-support">Editor support</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#next">Next</a>
     </li>
@@ -219,6 +221,12 @@ default registered set includes:</p>
 <code>musl</code> Cargo feature. Rebuild with:</p>
 <pre><code class="language-sh">cargo build --workspace --release -p gossamer-driver --features musl
 </code></pre>
+<h2 id="editor-support">Editor support<a class="headerlink" href="#editor-support" title="Permanent link">&para;</a></h2>
+<p>Pre-built plug-ins for VSCode, Vim, Neovim, Helix, Emacs, Sublime,
+and Zed (plus a tree-sitter grammar) live at
+<a href="https://github.com/danpozmanter/gossamer-editor-support"><code>danpozmanter/gossamer-editor-support</code></a>.
+Each one drives <code>gos lsp</code> for diagnostics, hover, completion,
+go-to-definition, references, rename, and inlay hints.</p>
 <h2 id="next">Next<a class="headerlink" href="#next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../running/">Running</a></li>

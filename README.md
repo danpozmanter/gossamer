@@ -7,8 +7,8 @@ language with Rust's surface syntax, Go's runtime, and the forward pipe operator
 
 - Language spec: [`SPEC.md`](SPEC.md)
 - Project style guide: [`GUIDELINES.md`](GUIDELINES.md)
-- Toolchain + stdlib + lint reference: [`docs_src/`](docs_src/) (built into `docs/`, served by GitHub Pages at <https://gossamer-lang.github.io/gossamer/>)
-- Editor integrations: [`gossamer-lang/gossamer-editor-support`](https://github.com/gossamer-lang/gossamer-editor-support) (VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed, plus a tree-sitter grammar)
+- Toolchain + stdlib + lint reference: [`docs_src/`](docs_src/) (built into `docs/`, served by GitHub Pages at <https://danpozmanter.github.io/gossamer/>)
+- Editor integrations: [`danpozmanter/gossamer-editor-support`](https://github.com/danpozmanter/gossamer-editor-support) (VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed, plus a tree-sitter grammar)
 - Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 Source files use the `.gos` extension. The CLI is `gos`. Manifests
