@@ -952,13 +952,26 @@ def, kind: gossamer_resolve::DefKind::Struct | gossamer_resolve::DefKind::Enum
                     inner: inner_ty,
                 })
             }
-            AstTypeKind::Fn { params, ret, .. } => {
+            AstTypeKind::Fn { kind, params, ret } => {
                 let inputs: Vec<Ty> = params.iter().map(|p| self.type_from_ast(p)).collect();
                 let output = match ret.as_ref() {
                     Some(ty) => self.type_from_ast(ty),
                     None => self.tcx.unit(),
                 };
-                self.tcx.intern(TyKind::FnPtr(FnSig { inputs, output }))
+                let sig = FnSig { inputs, output };
+                match kind {
+                    gossamer_ast::FnTypeKind::Fn => self.tcx.intern(TyKind::FnPtr(sig)),
+                    // `Fn` / `FnMut` / `FnOnce` all map to the single
+                    // `FnTrait` callable shape. The MIR / codegen
+                    // machinery uses one fat-pointer ABI for all
+                    // three; the borrow-style distinctions Rust
+                    // makes are unnecessary in a fully GC'd world.
+                    gossamer_ast::FnTypeKind::ClosureFn
+                    | gossamer_ast::FnTypeKind::ClosureFnMut
+                    | gossamer_ast::FnTypeKind::ClosureFnOnce => {
+                        self.tcx.intern(TyKind::FnTrait(sig))
+                    }
+                }
             }
         };
         self.record(ast_ty.id, ty)
@@ -1161,7 +1174,7 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         | TyKind::Receiver(elem)
         | TyKind::Ref { inner: elem, .. } => checker.is_concrete(*elem),
         TyKind::HashMap { key, value } => checker.is_concrete(*key) && checker.is_concrete(*value),
-        TyKind::FnPtr(sig) => {
+        TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
             sig.inputs.iter().all(|t| checker.is_concrete(*t)) && checker.is_concrete(sig.output)
         }
         TyKind::FnDef { substs, .. }

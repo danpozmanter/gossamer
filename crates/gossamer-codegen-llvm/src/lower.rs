@@ -1729,6 +1729,7 @@ TyKind::Dyn(_) | TyKind::FnPtr(_) | TyKind::FnDef { .. })
                         | TyKind::Closure { .. }
                         | TyKind::FnDef { .. }
                         | TyKind::FnPtr(_)
+                        | TyKind::FnTrait(_)
                         | TyKind::Dyn(_),
                     ) => ConcatKind::Unsupported,
                     Some(TyKind::Param { .. } | TyKind::Alias { .. } | TyKind::Error)

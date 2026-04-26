@@ -267,6 +267,20 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
         "gos_rt_math_floor"          => rt::gos_rt_math_floor,
         "gos_rt_math_ceil"           => rt::gos_rt_math_ceil,
         "gos_rt_time_now_ms"         => rt::gos_rt_time_now_ms,
+        // Fn-trait coercion trampolines (closure_fn_trait_plan.md).
+        // Emitted by the cranelift codegen when a bare `fn`/`fn item`
+        // value is wrapped into a `Fn(args) -> ret` slot — the env
+        // blob's offset 0 holds one of these, offset 8 holds the
+        // real fn ptr.
+        "gos_rt_fn_tramp_0"          => rt::gos_rt_fn_tramp_0,
+        "gos_rt_fn_tramp_1"          => rt::gos_rt_fn_tramp_1,
+        "gos_rt_fn_tramp_2"          => rt::gos_rt_fn_tramp_2,
+        "gos_rt_fn_tramp_3"          => rt::gos_rt_fn_tramp_3,
+        "gos_rt_fn_tramp_4"          => rt::gos_rt_fn_tramp_4,
+        "gos_rt_fn_tramp_5"          => rt::gos_rt_fn_tramp_5,
+        "gos_rt_fn_tramp_6"          => rt::gos_rt_fn_tramp_6,
+        "gos_rt_fn_tramp_7"          => rt::gos_rt_fn_tramp_7,
+        "gos_rt_fn_tramp_8"          => rt::gos_rt_fn_tramp_8,
         // Stringification helpers for compound `println!` /
         // `format!`. The codegen emits these whenever an arg's
         // print-kind is bool or char.

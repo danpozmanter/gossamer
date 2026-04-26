@@ -1179,7 +1179,7 @@ fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -> PrintKind
                 TyKind::Sender(_) | TyKind::Receiver(_) => PrintKind::Unsupported("channel"),
                 TyKind::Adt { .. } => PrintKind::Unsupported("struct or enum"),
                 TyKind::Closure { .. } => PrintKind::Unsupported("closure"),
-                TyKind::FnDef { .. } | TyKind::FnPtr(_) => PrintKind::Unsupported("function"),
+                TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::FnTrait(_) => PrintKind::Unsupported("function"),
                 TyKind::Dyn(_) => PrintKind::Unsupported("dyn Trait"),
                 TyKind::Param { .. } | TyKind::Alias { .. } | TyKind::Error => {
                     PrintKind::Unsupported("opaque type")
@@ -1563,6 +1563,11 @@ fn lower_terminator(
                 //      leading load. `f(x)` becomes a straight
                 //      `call_indirect(addr, x)`.
                 let callee_ty = body.local_ty(place.local);
+                // `FnTrait` is the closure-trait callable shape. Its
+                // value is an env_ptr (heap blob `[fn_addr, captures…]`),
+                // so it routes through the same env+code dispatch the
+                // MIR `Closure` shape uses. Bare `fn` and `fn item`
+                // values stay on the raw single-pointer call path.
                 let is_plain_fn = matches!(
                     tcx.kind_of(callee_ty),
                     TyKind::FnDef { .. } | TyKind::FnPtr(_)
@@ -2336,10 +2341,32 @@ fn lower_intrinsic_call(
             let Some(Operand::Const(ConstValue::Str(name))) = args.first() else {
                 bail!("native codegen: gos_fn_addr requires a const-string name argument");
             };
-            let func_id = *intrinsics
-                .functions
-                .get(name)
-                .ok_or_else(|| anyhow!("gos_fn_addr: unknown fn `{name}`"))?;
+            // Names starting with `gos_rt_` are runtime extern
+            // symbols (the Fn-trait coercion trampolines plus a
+            // handful of other one-off helpers MIR may stash into
+            // a heap env). Declare them through the module's
+            // intrinsic-fn machinery so the linker resolves them
+            // against `gossamer-runtime`.
+            let func_id = if let Some(id) = intrinsics.functions.get(name).copied() {
+                id
+            } else if let Some(arity_str) = name.strip_prefix("gos_rt_fn_tramp_") {
+                let arity: usize = arity_str.parse().map_err(|_| {
+                    anyhow!("gos_fn_addr: malformed trampoline name `{name}`")
+                })?;
+                let mut params = Vec::with_capacity(arity + 1);
+                params.push(ptr_ty);
+                params.extend(std::iter::repeat_n(types::I64, arity));
+                // Per-arity trampoline names are 1-of-9 fixed
+                // strings; leak each into a `&'static str` so the
+                // intrinsic-extern table (which keys on
+                // `&'static str`) can hold them. Bounded leak —
+                // at most 9 total entries across the program.
+                let static_name: &'static str =
+                    Box::leak(name.clone().into_boxed_str());
+                intrinsics.extern_fn(module, static_name, &params, &[types::I64])?
+            } else {
+                bail!("gos_fn_addr: unknown fn `{name}`")
+            };
             let func_ref = module.declare_func_in_func(func_id, builder.func);
             let addr = builder.ins().func_addr(ptr_ty, func_ref);
             let as_i64 = if ptr_ty == types::I64 {

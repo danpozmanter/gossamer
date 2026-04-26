@@ -525,23 +525,21 @@ fn gos_build_handles_first_class_closure_passed_to_higher_order_function() {
     ));
     std::fs::create_dir_all(&fixture_dir).unwrap();
     let src = fixture_dir.join("fcc.gos");
-    // Higher-order dispatch with a real top-level function as the
-    // first-class value. `apply` calls its `f` parameter via
-    // `call_indirect`, which lowers through the `is_plain_fn`
-    // branch in the cranelift `Terminator::Call` arm.
+    // Capturing closure passed through a `Fn(_)` parameter to a
+    // higher-order function. The closure value is an env pointer
+    // (heap blob `[fn_addr, captures…]`) produced by
+    // `lift_capturing` + the MIR `gos_alloc` / `gos_store`
+    // sequence. `Fn(i64) -> i64` is the closure-trait callable
+    // type — it routes through the env+code dispatch in the
+    // codegen's `Terminator::Call` arm, so `f(x)` inside `apply`
+    // loads `fn_addr` from `env+0` and calls it with `(env, x)`.
     //
-    // Note: passing a closure (capturing or not) through a bare
-    // `fn(_)` type is NOT covered here — the env-ptr / fn-ptr ABI
-    // conflict (the closure value is an env pointer; `fn(_)`
-    // callers expect a raw code address) needs either fat-pointer
-    // fn types or a Rust-style `Fn` trait split, neither of which
-    // is wired today.
-    // `gos_build_handles_capturing_closure_via_heap_allocated_env`
-    // covers the directly-called capturing path; this test pairs
-    // with it on the indirectly-dispatched named-fn path.
+    // Note: the bare `fn(_)` type stays a raw code pointer; only
+    // `Fn(_)` carries the env. See closure_fn_trait_plan.md for
+    // the design.
     std::fs::write(
         &src,
-        "fn add_ten(y: i64) -> i64 { y + 10i64 }\nfn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\nfn main() -> i64 {\n    apply(add_ten, 32i64)\n}\n",
+        "fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }\nfn main() -> i64 {\n    let c = 10i64\n    let add_c = |y: i64| c + y\n    apply(add_c, 32i64)\n}\n",
     )
     .unwrap();
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());

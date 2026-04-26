@@ -47,7 +47,8 @@ fn write_kind(tcx: &TyCtxt, kind: &TyKind, out: &mut String) {
             out.push_str(mutability.prefix());
             write_ty(tcx, *inner, out);
         }
-        TyKind::FnPtr(sig) => write_fn_ptr(tcx, sig, out),
+        TyKind::FnPtr(sig) => write_fn_ptr(tcx, sig, "fn", out),
+        TyKind::FnTrait(sig) => write_fn_ptr(tcx, sig, "Fn", out),
         TyKind::FnDef { def, substs } => write_def("fn", tcx, def.local, substs, out),
         TyKind::Closure { def, .. } => {
             let _ = write!(out, "<closure #{}>", def.local);
@@ -101,8 +102,9 @@ fn write_named(tcx: &TyCtxt, name: &str, args: &[Ty], out: &mut String) {
     out.push('>');
 }
 
-fn write_fn_ptr(tcx: &TyCtxt, sig: &FnSig, out: &mut String) {
-    out.push_str("fn(");
+fn write_fn_ptr(tcx: &TyCtxt, sig: &FnSig, prefix: &str, out: &mut String) {
+    out.push_str(prefix);
+    out.push('(');
     for (i, input) in sig.inputs.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");

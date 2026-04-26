@@ -247,6 +247,37 @@ select {
   with a short `time::sleep` or a `select { default => … }`
   arm when you need to drain deterministically.
 
+## 8a. Closures and higher-order fns
+
+Lambdas use `|param: T| body`. Captures from the enclosing scope
+work as you'd expect (GC-managed, no `move` keyword).
+
+For higher-order parameters, distinguish two callable types:
+
+- `fn(args) -> ret` — raw code pointer, accepts only non-capturing
+  items (bare functions, lifted lambdas with no captures).
+- `Fn(args) -> ret` — callable trait, accepts both bare items
+  and capturing closures. Fat pointer (env + code) under the
+  hood; the conversion is implicit at the call site.
+
+```gossamer
+fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
+
+fn main() {
+    let scale = 10i64
+    let scaled = |y: i64| scale * y     // captures `scale`
+    println!("{}", apply(scaled, 5))    // 50
+
+    fn add_one(y: i64) -> i64 { y + 1 }
+    println!("{}", apply(add_one, 41))  // 42 — bare fn coerces
+}
+```
+
+Single trait variant — no `FnMut` / `FnOnce` distinction (the
+borrow-style split Rust draws is unnecessary in a fully GC'd
+world). `FnMut` / `FnOnce` parse but lower to the same
+`Fn(_)` shape.
+
 ## 9. Data structures
 
 - `[T]` — growable array. Literal: `[1i64, 2i64, 3i64]`.

@@ -240,6 +240,16 @@ pub enum TyKind {
     },
     /// Anonymous function-pointer type `fn(...) -> ...`.
     FnPtr(FnSig),
+    /// Callable trait type `Fn(args) -> ret` — accepts both bare
+    /// `fn` items and capturing closures via implicit coercion.
+    /// Lowered as a `(env_ptr, code_ptr)` fat pointer (two
+    /// consecutive `i64` slots) so the env that a capturing
+    /// closure needs has a place to live, and so a bare item can
+    /// still satisfy the type by setting `env` to null. Mirrors
+    /// Rust's `dyn Fn(args) -> ret` shape; a single trait covers
+    /// the common case (no `FnMut` / `FnOnce` split for v1.0.0
+    /// since every captured value is GC-managed).
+    FnTrait(FnSig),
     /// Anonymous closure type, tied to the expression that introduced it.
     Closure {
         /// `DefId` of the closure (normally the enclosing expression's

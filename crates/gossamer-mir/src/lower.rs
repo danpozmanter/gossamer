@@ -34,11 +34,34 @@ use crate::ir::{
 pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     let (structs, struct_defs) = collect_struct_fields(program);
     let fn_returns = collect_fn_returns(program);
+    let fn_inputs = collect_fn_inputs(program);
     let mut bodies = Vec::new();
     for item in &program.items {
-        collect_item(item, tcx, &structs, &struct_defs, &fn_returns, &mut bodies);
+        collect_item(
+            item, tcx, &structs, &struct_defs, &fn_returns, &fn_inputs, &mut bodies,
+        );
     }
     bodies
+}
+
+/// Builds a `DefId → input Tys` map for every top-level function
+/// (and trait / impl methods). Consumed by MIR lowering so call-
+/// site argument coercion can detect when a `Fn(args) -> ret`
+/// parameter is being supplied with a bare `fn item` that needs
+/// trampoline-wrapping into the env+code shape.
+fn collect_fn_inputs(
+    program: &HirProgram,
+) -> HashMap<gossamer_resolve::DefId, Vec<Ty>> {
+    let mut out = HashMap::new();
+    for item in &program.items {
+        if let HirItemKind::Fn(decl) = &item.kind {
+            if let Some(def) = item.def {
+                let inputs: Vec<Ty> = decl.params.iter().map(|p| p.ty).collect();
+                out.insert(def, inputs);
+            }
+        }
+    }
+    out
 }
 
 /// Builds a `DefId → return Ty` map for every top-level function
@@ -114,21 +137,22 @@ fn collect_item(
     structs: &HashMap<String, Vec<String>>,
     struct_defs: &HashMap<gossamer_resolve::DefId, String>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
+    fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     out: &mut Vec<Body>,
 ) {
     match &item.kind {
         HirItemKind::Fn(decl) => {
-            if let Some(body) =
-                lower_fn(decl, item.def, item.span, tcx, structs, struct_defs, fn_returns)
-            {
+            if let Some(body) = lower_fn(
+                decl, item.def, item.span, tcx, structs, struct_defs, fn_returns, fn_inputs,
+            ) {
                 out.push(body);
             }
         }
         HirItemKind::Impl(decl) => {
             for method in &decl.methods {
-                if let Some(body) =
-                    lower_fn(method, None, item.span, tcx, structs, struct_defs, fn_returns)
-                {
+                if let Some(body) = lower_fn(
+                    method, None, item.span, tcx, structs, struct_defs, fn_returns, fn_inputs,
+                ) {
                     out.push(body);
                 }
             }
@@ -136,9 +160,16 @@ fn collect_item(
         HirItemKind::Trait(decl) => {
             for method in &decl.methods {
                 if method.body.is_some() {
-                    if let Some(body) =
-                        lower_fn(method, None, item.span, tcx, structs, struct_defs, fn_returns)
-                    {
+                    if let Some(body) = lower_fn(
+                        method,
+                        None,
+                        item.span,
+                        tcx,
+                        structs,
+                        struct_defs,
+                        fn_returns,
+                        fn_inputs,
+                    ) {
                         out.push(body);
                     }
                 }
@@ -148,6 +179,7 @@ fn collect_item(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_fn(
     decl: &HirFn,
     def: Option<gossamer_resolve::DefId>,
@@ -156,6 +188,7 @@ fn lower_fn(
     structs: &HashMap<String, Vec<String>>,
     struct_defs: &HashMap<gossamer_resolve::DefId, String>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
+    fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
 ) -> Option<Body> {
     let body = decl.body.as_ref()?;
     let mut builder = Builder::new(
@@ -165,6 +198,7 @@ fn lower_fn(
         structs,
         struct_defs,
         fn_returns,
+        fn_inputs,
     );
     let return_ty = decl.ret.unwrap_or_else(|| builder.tcx.unit());
     builder.push_local(return_ty, None, false);
@@ -224,6 +258,7 @@ struct Builder<'a> {
     structs: &'a HashMap<String, Vec<String>>,
     struct_defs: &'a HashMap<gossamer_resolve::DefId, String>,
     fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
+    fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     local_struct: HashMap<Local, String>,
     /// For locals that hold an array/tuple whose element type is a
     /// known struct, records that struct's name. Used to resolve
@@ -263,6 +298,7 @@ impl<'a> Builder<'a> {
         structs: &'a HashMap<String, Vec<String>>,
         struct_defs: &'a HashMap<gossamer_resolve::DefId, String>,
         fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
+        fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     ) -> Self {
         Self {
             tcx,
@@ -274,6 +310,7 @@ impl<'a> Builder<'a> {
             structs,
             struct_defs,
             fn_returns,
+            fn_inputs,
             local_struct: HashMap::new(),
             local_elem_struct: HashMap::new(),
             local_closure: HashMap::new(),
@@ -1097,6 +1134,7 @@ impl<'a> Builder<'a> {
         }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn lower_call(
         &mut self,
         callee: &HirExpr,
@@ -1256,9 +1294,51 @@ impl<'a> Builder<'a> {
                 Operand::Copy(Place::local(local))
             }
         };
+        // Look up the callee's parameter types so we can apply
+        // Fn-trait coercions per arg position. The call site of
+        // `apply(f: Fn(i64) -> i64, ...)` with `f = bare_fn` needs
+        // to wrap `bare_fn`'s code address into the env+code
+        // shape; the call site of `apply(f, ...)` with `f` already
+        // a closure (env-shaped) is a no-op.
+        let callee_param_tys: Option<Vec<Ty>> = match &callee.kind {
+            HirExprKind::Path { def: Some(def), .. } => self.fn_inputs.get(def).cloned(),
+            _ => None,
+        };
         let mut arg_operands = Vec::with_capacity(args.len());
-        for arg in args {
+        for (idx, arg) in args.iter().enumerate() {
             let local = self.lower_expr(arg)?;
+            // Wrap when the source MIR local holds a raw code
+            // address (named fn item, lifted closure name, or a
+            // `let f = some_fn`). Capturing closures registered
+            // in `local_closure` are env_ptr-shaped already and
+            // skip this path.
+            let in_closure_map = self.local_closure.contains_key(&local);
+            let in_fn_name_map = self.local_fn_name.contains_key(&local);
+            let local_ty = self.locals[local.0 as usize].ty;
+            let local_kind_is_fn = matches!(
+                self.tcx.kind_of(local_ty),
+                gossamer_types::TyKind::FnDef { .. } | gossamer_types::TyKind::FnPtr(_)
+            );
+            let arg_is_fn_item = !in_closure_map
+                && (in_fn_name_map
+                    || local_kind_is_fn
+                    || matches!(
+                        &arg.kind,
+                        HirExprKind::Path { def: Some(_), .. }
+                    ));
+            let local = if arg_is_fn_item {
+                if let Some(params) = callee_param_tys.as_ref() {
+                    if let Some(expected) = params.get(idx).copied() {
+                        self.coerce_to_fn_trait_if_needed(local, expected, span)
+                    } else {
+                        local
+                    }
+                } else {
+                    local
+                }
+            } else {
+                local
+            };
             arg_operands.push(Operand::Copy(Place::local(local)));
         }
         let dest = self.fresh(ty);
@@ -1271,6 +1351,148 @@ impl<'a> Builder<'a> {
         });
         self.set_current(next);
         Some(dest)
+    }
+
+    /// If `expected` is a `Fn(args) -> ret` callable trait and
+    /// `source_local` holds a bare `fn item` / `fn ptr`, wrap the
+    /// fn address in a 16-byte env blob `[trampoline_addr,
+    /// real_fn_addr]` and return a fresh local pointing at the
+    /// blob. Otherwise the original local is returned unchanged.
+    /// Capturing closures already produce env-shaped values via
+    /// `lower_lifted_closure`, so they short-circuit here too.
+    fn coerce_to_fn_trait_if_needed(
+        &mut self,
+        source_local: Local,
+        expected: Ty,
+        span: Span,
+    ) -> Local {
+        use gossamer_types::TyKind;
+        let expected_kind = self.tcx.kind_of(expected).clone();
+        let TyKind::FnTrait(sig) = expected_kind else {
+            return source_local;
+        };
+        let arity = sig.inputs.len();
+        let source_ty = self.locals[source_local.0 as usize].ty;
+        let source_kind = self.tcx.kind_of(source_ty);
+        let needs_wrap = matches!(
+            source_kind,
+            TyKind::FnDef { .. } | TyKind::FnPtr(_)
+        );
+        if !needs_wrap {
+            // Source is already a closure / FnTrait / non-callable
+            // (the typeck would have rejected the latter).
+            // `Closure { .. }` values are env_ptr-shaped, which
+            // matches the FnTrait dispatch shape directly.
+            return source_local;
+        }
+        let env_ty = expected;
+        // Allocate the env blob: 16 bytes (trampoline ptr + real
+        // fn ptr).
+        let size_local = self.fresh(env_ty);
+        self.emit_assign(
+            Place::local(size_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(16))),
+            span,
+        );
+        let env_local = self.fresh(env_ty);
+        self.emit_assign(
+            Place::local(env_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_alloc",
+                args: vec![Operand::Copy(Place::local(size_local))],
+            },
+            span,
+        );
+        // Resolve the per-arity trampoline name.
+        let tramp_name: &'static str = match arity {
+            0 => "gos_rt_fn_tramp_0",
+            1 => "gos_rt_fn_tramp_1",
+            2 => "gos_rt_fn_tramp_2",
+            3 => "gos_rt_fn_tramp_3",
+            4 => "gos_rt_fn_tramp_4",
+            5 => "gos_rt_fn_tramp_5",
+            6 => "gos_rt_fn_tramp_6",
+            7 => "gos_rt_fn_tramp_7",
+            8 => "gos_rt_fn_tramp_8",
+            // Arities > 8 are out of scope for v1.0.0; fall back
+            // to passing the source unchanged so the codegen's
+            // existing "wrong shape → segfault" surface fires
+            // loudly during testing rather than miscompiling
+            // silently.
+            _ => return source_local,
+        };
+        let tramp_addr_local = self.fresh(env_ty);
+        self.emit_assign(
+            Place::local(tramp_addr_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_fn_addr",
+                args: vec![Operand::Const(ConstValue::Str(tramp_name.to_string()))],
+            },
+            span,
+        );
+        let zero_local = self.fresh(env_ty);
+        self.emit_assign(
+            Place::local(zero_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let sink_a = self.fresh(env_ty);
+        self.emit_assign(
+            Place::local(sink_a),
+            Rvalue::CallIntrinsic {
+                name: "gos_store",
+                args: vec![
+                    Operand::Copy(Place::local(env_local)),
+                    Operand::Copy(Place::local(zero_local)),
+                    Operand::Copy(Place::local(tramp_addr_local)),
+                ],
+            },
+            span,
+        );
+        let eight_local = self.fresh(env_ty);
+        self.emit_assign(
+            Place::local(eight_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(8))),
+            span,
+        );
+        // When the source local was bound to a fn name via
+        // `let c = some_fn_name` (e.g. a lifted non-capturing
+        // closure), its slot holds the address of the *string*
+        // (the way the MIR encodes a `def: None` path), not the
+        // function. Resolve to the real fn address via
+        // `gos_fn_addr` so the trampoline forwards to the actual
+        // code. Direct fn references (FnDef/FnPtr-typed locals)
+        // already hold the right value.
+        let real_fn_operand = if let Some(name) =
+            self.local_fn_name.get(&source_local).cloned()
+        {
+            let addr_local = self.fresh(env_ty);
+            self.emit_assign(
+                Place::local(addr_local),
+                Rvalue::CallIntrinsic {
+                    name: "gos_fn_addr",
+                    args: vec![Operand::Const(ConstValue::Str(name))],
+                },
+                span,
+            );
+            Operand::Copy(Place::local(addr_local))
+        } else {
+            Operand::Copy(Place::local(source_local))
+        };
+        let sink_b = self.fresh(env_ty);
+        self.emit_assign(
+            Place::local(sink_b),
+            Rvalue::CallIntrinsic {
+                name: "gos_store",
+                args: vec![
+                    Operand::Copy(Place::local(env_local)),
+                    Operand::Copy(Place::local(eight_local)),
+                    real_fn_operand,
+                ],
+            },
+            span,
+        );
+        env_local
     }
 
     fn lower_if(

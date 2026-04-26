@@ -89,6 +89,11 @@ handful of ergonomic ideas picked off from Python:
 - **Concurrency.** First-class goroutines (`go expr`), typed
   channels (`channel::<T>()`), `select` for multiplexed receives,
   cooperative scheduler.
+- **Closures.** `|x| expr` lambdas with capture by GC reference.
+  Higher-order functions take `Fn(args) -> ret` parameters, which
+  accept both bare `fn` items and capturing closures (env+code
+  fat pointer under the hood). Bare `fn(args) -> ret` stays a
+  raw code pointer for non-capturing items only.
 - **Error handling.** `Result<T, E>` with `?` propagation, plus a
   `panic` primitive for unrecoverable failure.
 - **Memory.** Managed by the stop-the-world mark-sweep GC. `&` and

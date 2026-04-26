@@ -244,7 +244,35 @@ impl InferCtxt {
                     inner: bi,
                 },
             ) if am == bm => self.unify(tcx, *ai, *bi),
-            (TyKind::FnPtr(a), TyKind::FnPtr(b)) => self.unify_fn_sig(tcx, a, b),
+            (TyKind::FnPtr(a), TyKind::FnPtr(b))
+            | (TyKind::FnTrait(a), TyKind::FnTrait(b)) => self.unify_fn_sig(tcx, a, b),
+            // `Fn(args) -> ret` accepts any callable with a
+            // matching signature: bare `fn`, named `fn item`, or a
+            // closure (capturing or not). The MIR coercion site
+            // wraps the source value in the env+code shape the
+            // codegen expects. The reverse direction (`Fn(_)`
+            // assigned to a bare `fn(_)`) is rejected — capturing
+            // closures need an env that bare `fn` can't carry. See
+            // closure_fn_trait_plan.md.
+            (TyKind::FnTrait(t), TyKind::FnPtr(s))
+            | (TyKind::FnPtr(s), TyKind::FnTrait(t)) => self.unify_fn_sig(tcx, t, s),
+            (TyKind::FnTrait(t), TyKind::FnDef { .. })
+            | (TyKind::FnDef { .. }, TyKind::FnTrait(t)) => {
+                // FnDef has no signature on the type itself — the
+                // signature lives at the def. We accept the
+                // conversion structurally; the typeck-level
+                // arity/sig check happens at the call site.
+                let _ = (tcx, t);
+                Ok(())
+            }
+            (TyKind::FnTrait(_), TyKind::Closure { .. })
+            | (TyKind::Closure { .. }, TyKind::FnTrait(_)) => {
+                // Closures are tied to a synthesised def id; their
+                // signature flows through the closure-body item.
+                // Accept the coercion; the MIR `lift_closures`
+                // pass guarantees the arities match.
+                Ok(())
+            }
             (
                 TyKind::Adt {
                     def: ad,
@@ -372,7 +400,7 @@ fn occurs_in_kind(infer: &InferCtxt, tcx: &TyCtxt, vid: TyVid, kind: &TyKind) ->
         TyKind::Sender(pointee)
         | TyKind::Receiver(pointee)
         | TyKind::Ref { inner: pointee, .. } => occurs(infer, tcx, vid, *pointee),
-        TyKind::FnPtr(sig) => {
+        TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
             sig.inputs.iter().any(|t| occurs(infer, tcx, vid, *t))
                 || occurs(infer, tcx, vid, sig.output)
         }
