@@ -830,6 +830,13 @@ fn find_runtime_lib() -> std::result::Result<PathBuf, NativeBuildError> {
         &["libgossamer_runtime.a", "gossamer_runtime.lib"]
     };
     let mut candidates: Vec<PathBuf> = Vec::new();
+    // Compile-time path emitted by `build.rs`; this is the absolute
+    // location into which the runtime staticlib was copied at
+    // build-time. Highest priority because it survives any cwd /
+    // exe-path quirk in CI.
+    if let Some(baked) = option_env!("GOSSAMER_RUNTIME_LIB_PATH") {
+        candidates.push(PathBuf::from(baked));
+    }
     let mut push_with_names = |dir: &Path| {
         for name in lib_names {
             candidates.push(dir.join(name));

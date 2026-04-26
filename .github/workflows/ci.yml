@@ -42,6 +42,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # `crates/gossamer-cli/build.rs` ensures the runtime
+      # staticlib is emitted into `target/<profile>/` for both
+      # debug and release; no explicit pre-build step needed.
       - run: cargo test --workspace
       - run: cargo build --release --workspace
 
