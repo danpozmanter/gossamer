@@ -174,12 +174,24 @@ pub mod native {
         use super::*;
 
         #[test]
+        #[cfg(not(windows))]
         fn to_posix_round_trips_identity_on_non_windows() {
-            // On Unix the conversions are pure identity; on Windows
-            // they swap separators in both directions. Either way
-            // `to_native(to_posix(x)) == x` for the canonical form.
+            // On Unix `to_posix` and `to_native` are both no-ops, so
+            // a posix-form input survives the round-trip unchanged.
+            // On Windows `to_native` replaces `/` with `\`, breaking
+            // identity for an already-posix input — the assertion is
+            // genuinely unix-only, hence the `#[cfg(not(windows))]`.
             let original = "a/b/c";
             assert_eq!(to_native(&to_posix(original)), original);
+        }
+
+        #[test]
+        #[cfg(windows)]
+        fn to_posix_strips_backslashes_on_windows() {
+            // Windows half of the round-trip contract: a native-form
+            // input survives a full conversion through both helpers.
+            let native = "a\\b\\c";
+            assert_eq!(to_native(&to_posix(native)), native);
         }
 
         #[test]

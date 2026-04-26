@@ -1877,7 +1877,9 @@ fn run_tests_in_file(file: &PathBuf) -> Result<TestFileSummary> {
 
 /// Embedded Gossamer skill-card. The canonical source lives in
 /// `docs_src/skill_card.md` (mkdocs input); embedding it directly
-/// avoids depending on the generated `docs/` output.
+/// avoids depending on the generated `docs/` output. `SKILL.md`
+/// at the workspace root is the same content for users who just
+/// want to grab the file.
 const SKILL_CARD: &str = include_str!("../../../docs_src/skill_card.md");
 
 fn cmd_skill_prompt() {
