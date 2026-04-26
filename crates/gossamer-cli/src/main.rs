@@ -1642,12 +1642,79 @@ fn run_selected_fns(
     Ok((passes, failures, total_nanos))
 }
 
+/// ANSI styling shared by the test-runner output. Disabled when
+/// stdout isn't a TTY (CI captures, pipes), or when the user
+/// explicitly opts out via `NO_COLOR=1`. See <https://no-color.org>.
+struct TestStyle {
+    enabled: bool,
+}
+
+impl TestStyle {
+    fn detect() -> Self {
+        let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+        let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+        Self {
+            enabled: tty && !no_color,
+        }
+    }
+    fn pass(&self) -> &'static str {
+        if self.enabled {
+            "\x1b[32mPASS\x1b[0m"
+        } else {
+            "PASS"
+        }
+    }
+    fn fail(&self) -> &'static str {
+        if self.enabled {
+            "\x1b[31mFAIL\x1b[0m"
+        } else {
+            "FAIL"
+        }
+    }
+    fn dim<'a>(&self, s: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.enabled {
+            format!("\x1b[2m{s}\x1b[0m").into()
+        } else {
+            s.into()
+        }
+    }
+    fn bold<'a>(&self, s: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.enabled {
+            format!("\x1b[1m{s}\x1b[0m").into()
+        } else {
+            s.into()
+        }
+    }
+    fn green<'a>(&self, s: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.enabled {
+            format!("\x1b[32m{s}\x1b[0m").into()
+        } else {
+            s.into()
+        }
+    }
+    fn red<'a>(&self, s: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.enabled {
+            format!("\x1b[31m{s}\x1b[0m").into()
+        } else {
+            s.into()
+        }
+    }
+    fn cyan<'a>(&self, s: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.enabled {
+            format!("\x1b[36m{s}\x1b[0m").into()
+        } else {
+            s.into()
+        }
+    }
+}
+
 fn cmd_test(path: Option<&Path>) -> Result<()> {
     gossamer_resolve::set_test_cfg(true);
     let resolved = match path {
         Some(p) => p.to_path_buf(),
         None => default_test_root()?,
     };
+    let style = TestStyle::detect();
     let files = collect_lint_targets(&resolved)?;
     if files.is_empty() {
         return Err(anyhow!(
@@ -1662,10 +1729,11 @@ fn cmd_test(path: Option<&Path>) -> Result<()> {
     let mut empty_files = 0u32;
     for file in &files {
         if files.len() > 1 {
-            println!("=== {} ===", file.display());
+            let header = format!("=== {} ===", file.display());
+            println!("{}", style.cyan(&header));
         }
-        let summary = run_tests_in_file(file)?;
-        let doc_summary = run_doc_tests_in_file(file);
+        let summary = run_tests_in_file(file, &style)?;
+        let doc_summary = run_doc_tests_in_file(file, &style);
         total_doc_tests += doc_summary.passes + doc_summary.failures;
         total_passes += doc_summary.passes;
         total_failures += doc_summary.failures;
@@ -1690,14 +1758,25 @@ fn cmd_test(path: Option<&Path>) -> Result<()> {
         total_failures += summary.failures;
         total_assertions += summary.assertions;
     }
+    let pass_part = format!("{total_passes} passed");
+    let fail_part = format!("{total_failures} failed");
+    let pass_styled = if total_failures == 0 {
+        style.green(&style.bold(&pass_part)).into_owned()
+    } else {
+        style.green(&pass_part).into_owned()
+    };
+    let fail_styled = if total_failures > 0 {
+        style.red(&style.bold(&fail_part)).into_owned()
+    } else {
+        style.dim(&fail_part).into_owned()
+    };
+    let trailing = format!(
+        "{total_assertions} assertion(s), {total_doc_tests} doc-test(s), across {} file(s), {empty_files} with no tests",
+        files.len()
+    );
     println!(
-        "test: {passes} passed, {failures} failed, {assertions} assertion(s), {doc} doc-test(s), across {files} file(s), {empty} with no tests",
-        passes = total_passes,
-        failures = total_failures,
-        assertions = total_assertions,
-        doc = total_doc_tests,
-        files = files.len(),
-        empty = empty_files,
+        "test: {pass_styled}, {fail_styled}, {}",
+        style.dim(&trailing)
     );
     if total_failures > 0 {
         return Err(anyhow!("{total_failures} test failure(s)"));
@@ -1715,7 +1794,7 @@ struct DocTestFileSummary {
 /// as a standalone program. A block that compiles and executes
 /// without panicking passes. Returns a summary; a parse or runtime
 /// error counts as a failure but does not abort sibling files.
-fn run_doc_tests_in_file(file: &std::path::Path) -> DocTestFileSummary {
+fn run_doc_tests_in_file(file: &std::path::Path, style: &TestStyle) -> DocTestFileSummary {
     let Ok(source) = fs::read_to_string(file) else {
         return DocTestFileSummary {
             passes: 0,
@@ -1734,7 +1813,7 @@ fn run_doc_tests_in_file(file: &std::path::Path) -> DocTestFileSummary {
         let mut map = gossamer_lex::SourceMap::new();
         let file_id = map.add_file(doc.name.clone(), body.clone());
         let Ok((program, _tcx)) = load_and_check(&body, file_id, &map) else {
-            println!("  FAIL doc-test {} (compile)", doc.name);
+            println!("  {} doc-test {} (compile)", style.fail(), doc.name);
             failures += 1;
             continue;
         };
@@ -1742,11 +1821,11 @@ fn run_doc_tests_in_file(file: &std::path::Path) -> DocTestFileSummary {
         interp.load(&program);
         match interp.call("main", Vec::new()) {
             Ok(_) => {
-                println!("  PASS doc-test {}", doc.name);
+                println!("  {} doc-test {}", style.pass(), doc.name);
                 passes += 1;
             }
             Err(err) => {
-                println!("  FAIL doc-test {} (runtime): {err}", doc.name);
+                println!("  {} doc-test {} (runtime): {err}", style.fail(), doc.name);
                 failures += 1;
             }
         }
@@ -1810,7 +1889,7 @@ struct TestFileSummary {
 /// per-test PASS/FAIL line that includes assertion counts. A test
 /// is considered failed when either the body panics or any
 /// `testing::check*` call observed a failure during its execution.
-fn run_tests_in_file(file: &PathBuf) -> Result<TestFileSummary> {
+fn run_tests_in_file(file: &PathBuf, style: &TestStyle) -> Result<TestFileSummary> {
     let source = read_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
@@ -1844,11 +1923,12 @@ fn run_tests_in_file(file: &PathBuf) -> Result<TestFileSummary> {
         let assertion_failure = tally.failures > 0;
         if panicked.is_none() && !assertion_failure {
             passes += 1;
-            println!(
-                "  PASS {name} ({} assertions, {}ms)",
+            let stats = format!(
+                "({} assertions, {}ms)",
                 tally.assertions,
                 elapsed.as_millis()
             );
+            println!("  {} {name} {}", style.pass(), style.dim(&stats));
         } else {
             failures += 1;
             let mut reason = String::new();
@@ -1865,7 +1945,13 @@ fn run_tests_in_file(file: &PathBuf) -> Result<TestFileSummary> {
                     reason.push_str(first);
                 }
             }
-            println!("  FAIL {name} ({}ms): {reason}", elapsed.as_millis());
+            let elapsed_str = format!("({}ms)", elapsed.as_millis());
+            println!(
+                "  {} {name} {}: {}",
+                style.fail(),
+                style.dim(&elapsed_str),
+                style.red(&reason)
+            );
         }
     }
     Ok(TestFileSummary {
