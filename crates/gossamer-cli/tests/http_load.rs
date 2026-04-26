@@ -33,11 +33,16 @@ use std::time::{Duration, Instant};
 use gossamer_std::http::server::{Config, run};
 use gossamer_std::http::{Request, Response, StatusCode};
 
-fn pick_port() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
+// Bind once, return both the live listener and its bound address.
+// The previous `pick_port` → `bind(addr)` two-step had a TOCTOU
+// race where the port could be claimed between the two calls and
+// the second `bind` would fail (or, on macOS, succeed against a
+// stale TIME_WAIT slot and then mis-route accepts). One bind, no
+// race.
+fn bind_loopback() -> (TcpListener, SocketAddr) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind 127.0.0.1:0");
+    let addr = listener.local_addr().expect("local_addr");
+    (listener, addr)
 }
 
 fn fire_one(addr: SocketAddr, deadline: Instant) -> Result<u16, String> {
@@ -81,9 +86,7 @@ fn http_server_survives_concurrent_load_without_panicking() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(8);
 
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -151,6 +154,19 @@ fn http_server_survives_concurrent_load_without_panicking() {
     shutdown.store(true, Ordering::Relaxed);
     // Self-connect to wake the accept loop so it observes shutdown.
     let _ = TcpStream::connect(actual_addr);
+    // Bounded join: the server is meant to exit within a beat of
+    // shutdown being set. If it does not, fail loudly instead of
+    // hanging the CI runner. We can't `.join_timeout` directly so
+    // poll `is_finished` for up to 5 s.
+    let join_deadline = Instant::now() + Duration::from_secs(5);
+    while !server_handle.is_finished() && Instant::now() < join_deadline {
+        let _ = TcpStream::connect_timeout(&actual_addr, Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        server_handle.is_finished(),
+        "server thread did not observe shutdown within 5s"
+    );
     let _ = server_handle.join();
 
     assert!(

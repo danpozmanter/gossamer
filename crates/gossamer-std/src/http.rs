@@ -411,9 +411,19 @@ pub mod server {
         config: Config,
         dispatch_tx: std::sync::mpsc::Sender<(Request, std::sync::mpsc::Sender<Response>)>,
     ) {
+        // Nonblocking accept + 50 ms sleep on `WouldBlock` lets the
+        // loop poll `shutdown` regardless of whether the wake-self
+        // self-connect lands. macOS in particular sometimes refuses
+        // the wake connection (TIME_WAIT churn under load), and a
+        // pure blocking `accept()` would never observe shutdown.
+        let _ = listener.set_nonblocking(true);
         loop {
+            if shutdown.load(Ordering::Relaxed) {
+                return;
+            }
             match listener.accept() {
                 Ok((stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
                     if shutdown.load(Ordering::Relaxed) {
                         let _ = stream.shutdown(Shutdown::Both);
                         return;
@@ -429,16 +439,10 @@ pub mod server {
                         // preferable to tearing the server down.
                     }
                 }
-                Err(ref e)
-                    if matches!(
-                        e.kind(),
-                        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
-                    ) =>
-                {
-                    if shutdown.load(Ordering::Relaxed) {
-                        return;
-                    }
+                Err(ref e) if matches!(e.kind(), io::ErrorKind::WouldBlock) => {
+                    std::thread::sleep(Duration::from_millis(50));
                 }
+                Err(ref e) if matches!(e.kind(), io::ErrorKind::Interrupted) => {}
                 Err(err) => {
                     if !shutdown.load(Ordering::Relaxed) {
                         eprintln!("http: accept error: {err}");

@@ -311,9 +311,12 @@ mod tests {
 
     #[test]
     fn all_and_any_compose() {
-        let expr = parse_cfg_expr("all ( unix , not ( windows ) )").expect("all parses");
-        // On unix both clauses are true.
+        // The parser must succeed on every platform; the
+        // truth-table half is unix-only because `evaluate` would
+        // otherwise return false for the `not(windows)` arm.
+        let parsed = parse_cfg_expr("all ( unix , not ( windows ) )");
+        assert!(parsed.is_some(), "all/any composition parses");
         #[cfg(unix)]
-        assert!(evaluate(&expr));
+        assert!(evaluate(&parsed.expect("checked Some above")));
     }
 }

@@ -1,10 +1,11 @@
 :root {
-    --accent: #4a90d9;
-    --text: #1f2937;
-    --muted: #4b5563;
-    --bg: #ffffff;
-    --code-bg: #f5f7fa;
-    --border: #e5e7eb;
+    --bg: #000000;
+    --text: #f3f4f6;
+    --muted: #9ca3af;
+    --accent: #7dd3fc;
+    --accent-strong: #38bdf8;
+    --code-bg: #0f1115;
+    --border: #1f2937;
 }
 
 * { box-sizing: border-box; }
@@ -19,99 +20,89 @@ html, body {
     -webkit-font-smoothing: antialiased;
 }
 
-body {
+main {
     max-width: 880px;
     margin: 0 auto;
-    padding: 0 1.25rem 4rem;
+    padding: 0 1.25rem 5rem;
 }
 
 .hero {
     text-align: center;
-    padding: 4.5rem 0 2rem;
+    padding: 5rem 0 3rem;
 }
 
-.hero .tagline {
-    color: var(--text);
-    font-size: 1.5rem;
-    line-height: 1.4;
-    font-weight: 500;
-    max-width: 720px;
-    margin: 0 auto 1.6rem;
-    letter-spacing: -0.005em;
-}
-
-.ctas { margin-top: 1.4rem; }
-
-.cta {
+.logo {
+    width: 180px;
+    height: auto;
     display: inline-block;
-    padding: 0.7rem 1.5rem;
-    margin: 0.25rem 0.4rem;
-    border-radius: 8px;
+}
+
+.name {
+    margin: 0.75rem 0 0.5rem;
+    font-size: 3.25rem;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+}
+
+.slogan {
+    color: var(--muted);
+    font-size: 1.2rem;
+    max-width: 640px;
+    margin: 0.5rem auto 0;
+}
+
+.example {
+    margin-top: 3rem;
+}
+
+.example h2 {
+    font-size: 1.35rem;
     font-weight: 600;
-    font-size: 1.05rem;
-    text-decoration: none;
-    transition: filter 120ms ease, background 120ms ease;
-    background: var(--accent);
-    color: #fff;
-    border: 1px solid var(--accent);
+    margin: 0 0 0.9rem;
+    color: var(--text);
 }
-.cta:hover { filter: brightness(1.08); }
-
-.cta.secondary {
-    background: transparent;
-    color: var(--accent);
-}
-.cta.secondary:hover {
-    background: #eef4fb;
-}
-
-main section {
-    margin-top: 2.5rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--border);
-}
-
-h2 {
-    font-size: 1.4rem;
-    font-weight: 600;
-    margin: 0 0 0.75rem;
-}
-
-p { margin: 0.6rem 0; color: var(--muted); }
 
 code, pre {
     font-family: "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
     font-size: 0.92rem;
 }
 
-p code {
-    background: var(--code-bg);
-    padding: 0.1rem 0.35rem;
-    border-radius: 4px;
-}
-
 pre {
     background: var(--code-bg);
-    padding: 1rem 1.1rem;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 1.1rem 1.2rem;
     border-radius: 8px;
     overflow-x: auto;
-    line-height: 1.45;
-    color: var(--text);
+    line-height: 1.5;
 }
 
-footer {
+.cta-row {
     margin-top: 3rem;
-    padding-top: 1.25rem;
-    border-top: 1px solid var(--border);
-    color: var(--muted);
-    font-size: 0.92rem;
     text-align: center;
 }
 
-footer a { color: var(--accent); }
+.cta {
+    display: inline-block;
+    padding: 0.85rem 1.85rem;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--bg);
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    transition: background 120ms ease, color 120ms ease;
+}
+.cta:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+}
 
 @media (max-width: 600px) {
-    .hero { padding-top: 2.5rem; }
-    .hero .tagline { font-size: 1.15rem; }
+    .hero { padding: 3rem 0 2rem; }
+    .logo { width: 132px; }
+    .name { font-size: 2.4rem; }
+    .slogan { font-size: 1.05rem; }
     pre { font-size: 0.82rem; }
 }

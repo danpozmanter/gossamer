@@ -5,23 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Gossamer</title>
   <meta name="description" content="A garbage-collected, goroutine-powered, fast-compiling systems language with Rust-flavoured syntax and Go-shaped runtime." />
-  <link rel="stylesheet" href="style.css" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <link rel="stylesheet" href="style.css?v=20260426-2" />
   <link rel="icon" href="img/GossamerLogo.png" />
 </head>
 <body>
-  <header class="hero">
-    <p class="tagline">
-      A garbage-collected, goroutine-powered, fast-compiling
-      systems language with Rust-flavoured syntax and Go-shaped
-      runtime.
-    </p>
-    <p class="ctas">
-      <a class="cta" href="docs/install/">Get started &rarr;</a>
-    </p>
-  </header>
-
   <main>
-    <section>
+    <header class="hero">
+      <img class="logo" src="img/GossamerLogo.png" alt="Gossamer logo" />
+      <h1 class="name">Gossamer</h1>
+      <p class="slogan">
+        Goroutines, garbage collection, and forward pipes &mdash; on
+        a Rust-flavoured surface that compiles fast.
+      </p>
+    </header>
+
+    <section class="example">
       <h2>Natural functional flow with forward pipes</h2>
 <pre><code>fn double(x: i64) -&gt; i64 { x * 2 }
 fn add(a: i64, b: i64) -&gt; i64 { a + b }
@@ -36,14 +37,9 @@ fn main() {
         |&gt; clamp(0i64, 100i64)
     println("answer:", n)
 }</code></pre>
-      <p>
-        <code>x |&gt; f(a, b)</code> desugars to <code>f(a, b, x)</code>
-        — left-associative, low precedence, no parentheses needed
-        in a chain.
-      </p>
     </section>
 
-    <section>
+    <section class="example">
       <h2>Spin up a web server</h2>
 <pre><code>use std::http
 
@@ -58,19 +54,11 @@ impl http::Handler for App {
 fn main() -&gt; Result&lt;(), http::Error&gt; {
     http::serve("0.0.0.0:8080".to_string(), App { })
 }</code></pre>
-      <p>
-        <code>http::serve</code> runs the handler on a
-        cooperative-scheduler goroutine pool;
-        <code>gos run</code> is enough to bring it up.
-      </p>
     </section>
-  </main>
 
-  <footer>
-    <p>
-      <a href="https://github.com/gossamer-lang/gossamer">Source on GitHub</a>
-      &middot; pre-1.0.0 &mdash; nothing here is stable yet.
+    <p class="cta-row">
+      <a class="cta" href="docs/">Get started &rarr;</a>
     </p>
-  </footer>
+  </main>
 </body>
 </html>
