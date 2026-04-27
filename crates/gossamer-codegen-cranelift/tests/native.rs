@@ -287,7 +287,9 @@ fn gos_build_handles_tuple_destructuring_let() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("d")).output().expect("run d");
+    let run = Command::new(fixture_dir.join("target").join("debug").join("d"))
+        .output()
+        .expect("run d");
     assert_eq!(
         run.status.code(),
         Some(33),
@@ -318,7 +320,9 @@ fn gos_build_handles_numeric_cast() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("c")).output().expect("run c");
+    let run = Command::new(fixture_dir.join("target").join("debug").join("c"))
+        .output()
+        .expect("run c");
     assert_eq!(run.status.code(), Some(12), "7 as i64 + 5 == 12");
     let _ = std::fs::remove_dir_all(&fixture_dir);
 }
@@ -355,7 +359,9 @@ fn gos_build_handles_int_literal_match() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("m")).output().expect("run m");
+    let run = Command::new(fixture_dir.join("target").join("debug").join("m"))
+        .output()
+        .expect("run m");
     assert_eq!(run.status.code(), Some(20), "match arm 1 should return 20");
     let _ = std::fs::remove_dir_all(&fixture_dir);
 }
@@ -395,7 +401,7 @@ fn gos_build_handles_tuples_and_arrays() {
         return;
     }
 
-    let exe = fixture_dir.join("tup");
+    let exe = fixture_dir.join("target").join("debug").join("tup");
     let run = Command::new(&exe).output().expect("run tup");
     assert_eq!(
         run.status.code(),
@@ -417,7 +423,7 @@ fn gos_build_handles_tuples_and_arrays() {
         .output()
         .expect("spawn gos build for repeat");
     if build.status.success() && !String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        let run = Command::new(fixture_dir.join("rep"))
+        let run = Command::new(fixture_dir.join("target").join("debug").join("rep"))
             .output()
             .expect("run rep");
         assert_eq!(run.status.code(), Some(18), "[9; 4][2] + [9; 4][3] == 18");
@@ -446,7 +452,7 @@ fn gos_build_handles_tuples_and_arrays() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("arr"))
+    let run = Command::new(fixture_dir.join("target").join("debug").join("arr"))
         .output()
         .expect("run arr");
     assert_eq!(run.status.code(), Some(9));
@@ -479,7 +485,7 @@ fn gos_build_monomorphises_generic_function_calls() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("mono"))
+    let run = Command::new(fixture_dir.join("target").join("debug").join("mono"))
         .output()
         .expect("run mono");
     assert_eq!(
@@ -530,7 +536,7 @@ fn gos_build_handles_first_class_closure_passed_to_higher_order_function() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("fcc"))
+    let run = Command::new(fixture_dir.join("target").join("debug").join("fcc"))
         .output()
         .expect("run fcc");
     assert_eq!(
@@ -572,7 +578,7 @@ fn gos_build_handles_capturing_closure_via_heap_allocated_env() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("cap"))
+    let run = Command::new(fixture_dir.join("target").join("debug").join("cap"))
         .output()
         .expect("run cap");
     assert_eq!(
@@ -608,7 +614,7 @@ fn gos_build_handles_non_capturing_closure_via_direct_call() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("cl"))
+    let run = Command::new(fixture_dir.join("target").join("debug").join("cl"))
         .output()
         .expect("run cl");
     assert_eq!(
@@ -642,7 +648,7 @@ fn gos_build_handles_for_loop_over_range() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("fr"))
+    let run = Command::new(fixture_dir.join("target").join("debug").join("fr"))
         .output()
         .expect("run fr");
     assert_eq!(
@@ -676,7 +682,7 @@ fn gos_build_handles_struct_literal_and_field_access() {
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
-    let run = Command::new(fixture_dir.join("s"))
+    let run = Command::new(fixture_dir.join("target").join("debug").join("s"))
         .output()
         .expect("run struct binary");
     assert_eq!(
@@ -722,7 +728,7 @@ fn gos_build_produces_native_println_binary() {
         return;
     }
 
-    let exe = fixture_dir.join("hi");
+    let exe = fixture_dir.join("target").join("debug").join("hi");
     let run = Command::new(&exe).output().expect("run native binary");
     assert!(
         run.status.success(),

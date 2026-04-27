@@ -92,7 +92,7 @@ fn run_interp(src: &Path) -> TierOutcome {
 }
 
 fn run_compiled(src: &Path, release: bool, scratch: &Path) -> TierOutcome {
-    // `gos build` writes the binary next to the source by default.
+    // `gos build` emits the binary at `<source-dir>/target/<profile>/<stem>`.
     // We give it a scratch directory so concurrent tests don't
     // clobber each other.
     let stem = src.file_stem().unwrap();
@@ -112,7 +112,8 @@ fn run_compiled(src: &Path, release: bool, scratch: &Path) -> TierOutcome {
             exit: build.status.code(),
         };
     }
-    let bin = scratch.join(stem);
+    let profile = if release { "release" } else { "debug" };
+    let bin = scratch.join("target").join(profile).join(stem);
     if !bin.exists() {
         return TierOutcome {
             stdout: String::new(),

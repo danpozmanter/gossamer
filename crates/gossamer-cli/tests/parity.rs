@@ -59,7 +59,6 @@ fn run_interpreter(source: &Path) -> Run {
 /// `None` when the build fails — every legal program is expected to
 /// compile after L4.
 fn run_native(source: &Path) -> Option<Run> {
-    let out_path = source.with_extension("");
     let build = Command::new(gos_bin())
         .arg("build")
         .arg(source)
@@ -68,6 +67,7 @@ fn run_native(source: &Path) -> Option<Run> {
     if !build.status.success() {
         return None;
     }
+    let out_path = native_output_path(source);
     let run_out = Command::new(&out_path)
         .output()
         .expect("run native artifact");
@@ -77,6 +77,19 @@ fn run_native(source: &Path) -> Option<Run> {
         stderr: String::from_utf8_lossy(&run_out.stderr).into_owned(),
         code: run_out.status.code(),
     })
+}
+
+/// Mirrors `gossamer-cli`'s loose-file output rule: `<source-dir>/
+/// target/debug/<source-stem>`. Tests run with the default debug
+/// profile and against examples that have no enclosing manifest, so
+/// only the loose-file branch matters here.
+fn native_output_path(source: &Path) -> PathBuf {
+    let stem = source.file_stem().expect("source has stem");
+    let parent = source
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    parent.join("target").join("debug").join(stem)
 }
 
 fn rel_to_workspace(path: &Path) -> String {
