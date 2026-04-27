@@ -1004,7 +1004,7 @@ impl DefinitionIndex {
                     }
                 }
                 StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
-                    self.collect_expr_locals(expr)
+                    self.collect_expr_locals(expr);
                 }
                 StmtKind::Item(_) => {}
             }
