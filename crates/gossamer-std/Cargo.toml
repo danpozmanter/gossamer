@@ -33,6 +33,7 @@ compress = ["dep:flate2"]
 
 [dependencies]
 gossamer-pkg = { workspace = true }
+gossamer-runtime = { workspace = true }
 getrandom = { version = "0.2", optional = true }
 regex = { version = "1", default-features = false, features = ["std", "unicode"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }

@@ -3560,6 +3560,42 @@ fn lower_intrinsic_call(
             );
             Ok(true)
         }
+        "gos_rt_map_get_or_i64" => {
+            let get_or_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_get_or_i64",
+                &[ptr_ty, types::I64, types::I64],
+                &[types::I64],
+            )?;
+            let m = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let k_val = match args.get(1) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let d_val = match args.get(2) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let k64 = coerce_arg_to(builder, k_val, types::I64)?;
+            let d64 = coerce_arg_to(builder, d_val, types::I64)?;
+            let fref = module.declare_func_in_func(get_or_fn, builder.func);
+            let call = builder.ins().call(fref, &[m, k64, d64]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
         "gos_rt_map_remove" => {
             let rm_fn = intrinsics.extern_fn(
                 module,

@@ -1007,6 +1007,34 @@ pub unsafe extern "C" fn gos_rt_map_get(m: *const GosMap, key: *const u8, val_ou
     }
 }
 
+/// Returns the i64 value associated with `key`, or `default` when absent.
+///
+/// Convenience wrapper around the (key, found) pair returned by
+/// [`gos_rt_map_get`]: lets call sites avoid an `Option<i64>` aggregate
+/// which the native codegen does not yet construct from runtime returns.
+/// `key` and `default` are i64 values; only valid for maps whose key
+/// and value widths are 8 bytes (the only shape the codegen emits).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_or_i64(m: *const GosMap, key: i64, default: i64) -> i64 {
+    if m.is_null() {
+        return default;
+    }
+    let map = unsafe { &*m };
+    if map.key_bytes != 8 || map.val_bytes != 8 {
+        return default;
+    }
+    let key_bytes = key.to_ne_bytes();
+    let inner = map.inner.lock().unwrap();
+    match inner.get(&key_bytes[..]) {
+        Some(v) if v.len() == 8 => {
+            let mut out = [0u8; 8];
+            out.copy_from_slice(v);
+            i64::from_ne_bytes(out)
+        }
+        _ => default,
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_remove(m: *mut GosMap, key: *const u8) -> i32 {
     if m.is_null() || key.is_null() {

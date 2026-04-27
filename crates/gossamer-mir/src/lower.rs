@@ -1867,7 +1867,19 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
-        let receiver_ty = receiver.ty;
+        // Prefer the MIR local's pinned type over the HIR receiver
+        // type when the receiver is a Path bound to a local — the
+        // type checker may have left the HIR type as an inference
+        // variable, but we pin runtime-helper return types
+        // (`gos_rt_stream_read_to_string` → `String`, etc.) on the
+        // MIR side at line ~2026. Without this lookup `s.len()`
+        // for `let s = stdin.read_to_string()` falls through the
+        // `len` dispatch's default arm to `gos_rt_len` — which
+        // misinterprets the C-string pointer as a length-prefixed
+        // buffer and returns the first 8 data bytes.
+        let receiver_ty = self
+            .receiver_local_from_path(receiver)
+            .map_or(receiver.ty, |local| self.locals[local.0 as usize].ty);
         let receiver_kind = self.tcx.kind_of(receiver_ty).clone();
         // Unwrap a leading `&T` so `s.len()` on a `&String`
         // parameter lowers the same as on an owned `String`.
@@ -1933,6 +1945,7 @@ impl<'a> Builder<'a> {
             "read_to_string" => Some("gos_rt_stream_read_to_string"),
             "insert" => Some("gos_rt_map_insert"),
             "get" => Some("gos_rt_map_get"),
+            "get_or" => Some("gos_rt_map_get_or_i64"),
             "remove" => Some("gos_rt_map_remove"),
             // Mutex<T> / WaitGroup / Atomic / heap-Vec
             // primitives. Each method dispatches by name —
@@ -2033,6 +2046,7 @@ impl<'a> Builder<'a> {
                 | "gos_rt_arr_len"
                 | "gos_rt_len"
                 | "gos_rt_map_len"
+                | "gos_rt_map_get_or_i64"
                 | "gos_rt_chan_recv"
                 | "gos_rt_chan_try_recv"
                 | "gos_rt_vec_pop" => self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -2063,6 +2077,18 @@ impl<'a> Builder<'a> {
 
     fn lower_unsupported_placeholder(&mut self, ty: Ty, span: Span) -> Option<Local> {
         self.lower_unsupported_with_kind("unsupported", ty, span)
+    }
+
+    /// Returns the `Local` named by a single-segment Path expression,
+    /// if any. Lets `lower_method_call` look up the MIR-pinned type
+    /// of the receiver instead of trusting the HIR's possibly-still-
+    /// unresolved inference variable.
+    fn receiver_local_from_path(&self, expr: &HirExpr) -> Option<Local> {
+        if let HirExprKind::Path { segments, .. } = &expr.kind {
+            let first = segments.first()?;
+            return self.lookup_local(&first.name);
+        }
+        None
     }
 
     /// Same as [`lower_unsupported_placeholder`] but lets callers
@@ -2202,8 +2228,17 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         use gossamer_types::TyKind;
         // Walk through references so `&String` indexing behaves
-        // the same as indexing a bare `String`.
-        let mut base_kind = base.ty;
+        // the same as indexing a bare `String`. Prefer the MIR
+        // local's pinned type over the HIR type when the base is
+        // a simple Path — the type checker may have left the HIR
+        // type as an unresolved inference variable for receivers
+        // produced by runtime helpers (e.g. `read_to_string`),
+        // and the indexing path needs the concrete `String` to
+        // route to `gos_rt_str_byte_at` instead of falling
+        // through to the array-projection helper.
+        let mut base_kind = self
+            .receiver_local_from_path(base)
+            .map_or(base.ty, |local| self.locals[local.0 as usize].ty);
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(base_kind) {
             base_kind = *inner;
         }
@@ -2211,7 +2246,15 @@ impl<'a> Builder<'a> {
         if base_is_string {
             let base_local = self.lower_expr(base)?;
             let index_local = self.lower_expr(index)?;
-            let dest = self.fresh(ty);
+            // `gos_rt_str_byte_at` returns a zero-extended byte —
+            // pin the MIR destination to `i64` so downstream
+            // print/format dispatch routes to the integer helper
+            // instead of mis-treating the byte as a string ptr.
+            let dest_ty = match self.tcx.kind_of(ty) {
+                TyKind::Int(_) => ty,
+                _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            };
+            let dest = self.fresh(dest_ty);
             let next = self.new_block(span);
             self.terminate(Terminator::Call {
                 callee: Operand::Const(ConstValue::Str("gos_rt_str_byte_at".to_string())),

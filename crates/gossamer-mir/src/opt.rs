@@ -68,28 +68,52 @@ pub fn const_branch_elim(body: &mut Body) {
 }
 
 fn const_int_locals(body: &Body) -> HashMap<u32, i128> {
-    let mut map = HashMap::new();
+    // A local is treated as a known constant only when *every*
+    // store to it (across all blocks) writes the same constant
+    // value — otherwise control-flow-sensitive code such as
+    // `let mut neg = false; if cond { neg = true }; if neg { ... }`
+    // would mistake the second assignment for unconditional and
+    // collapse the second `if` into a direct goto, miscompiling
+    // the conditional branch.
+    let mut candidates: HashMap<u32, Option<i128>> = HashMap::new();
+    let mut tainted: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for block in &body.blocks {
         for stmt in &block.stmts {
-            if let StatementKind::Assign { place, rvalue } = &stmt.kind {
-                if !place.projection.is_empty() {
-                    continue;
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if !place.projection.is_empty() {
+                continue;
+            }
+            let local_id = place.local.0;
+            if tainted.contains(&local_id) {
+                continue;
+            }
+            let value = match rvalue {
+                Rvalue::Use(Operand::Const(ConstValue::Int(n))) => Some(*n),
+                Rvalue::Use(Operand::Const(ConstValue::Bool(b))) => Some(i128::from(*b)),
+                _ => None,
+            };
+            match (value, candidates.get(&local_id).copied()) {
+                (None, _) => {
+                    tainted.insert(local_id);
+                    candidates.remove(&local_id);
                 }
-                if let Rvalue::Use(Operand::Const(cv)) = rvalue {
-                    match cv {
-                        ConstValue::Int(n) => {
-                            map.insert(place.local.0, *n);
-                        }
-                        ConstValue::Bool(b) => {
-                            map.insert(place.local.0, i128::from(*b));
-                        }
-                        _ => {}
-                    }
+                (Some(v), None) => {
+                    candidates.insert(local_id, Some(v));
+                }
+                (Some(v), Some(Some(prev))) if prev == v => {}
+                _ => {
+                    tainted.insert(local_id);
+                    candidates.remove(&local_id);
                 }
             }
         }
     }
-    map
+    candidates
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|n| (k, n)))
+        .collect()
 }
 
 /// Folds `BinaryOp` / `UnaryOp` rvalues whose operands are both

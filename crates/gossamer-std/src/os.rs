@@ -25,18 +25,22 @@ pub fn env(name: &str) -> Option<String> {
 
 /// Sets an environment variable in the current process.
 ///
-/// Stubbed in the safe-Rust crate because `std::env::set_var` is
-/// `unsafe fn` under Rust 2024 and `gossamer-std` carries
-/// `#![forbid(unsafe_code)]`. The production native runtime
-/// (`gossamer-runtime`, which permits `unsafe`) will provide the
-/// real implementation via an FFI shim once that pipe is wired —
-/// see `crates/gossamer-runtime/src/c_abi.rs`. Until then this
-/// returns an error so callers can detect the gap rather than
-/// silently no-op.
-pub fn set_env(name: &str, _value: &str) -> Result<(), IoError> {
-    Err(IoError::Other(format!(
-        "set_env({name}, ...) requires the native runtime — not yet wired in safe-Rust gossamer-std"
-    )))
+/// Routes through `gossamer_runtime::safe_env::set_env`, which
+/// contains the Rust-2024 `unsafe std::env::set_var` call in a
+/// single audited site so this crate stays
+/// `#![forbid(unsafe_code)]`. **Call before spawning any
+/// goroutine / thread**; concurrent env reads from other threads
+/// or external libraries can otherwise observe a torn value
+/// (POSIX `setenv` is not thread-safe by spec).
+pub fn set_env(name: &str, value: &str) -> Result<(), IoError> {
+    gossamer_runtime::safe_env::set_env(name, value);
+    Ok(())
+}
+
+/// Removes an environment variable from the current process.
+/// Same threading contract as [`set_env`].
+pub fn unset_env(name: &str) {
+    gossamer_runtime::safe_env::unset_env(name);
 }
 
 /// Reads the entire contents of a file into memory.

@@ -19,7 +19,7 @@ use gossamer_std::os as os_std;
 use gossamer_std::slog as slog_std;
 use gossamer_std::time as time_std;
 
-use crate::value::{NativeDispatch, RuntimeError, RuntimeResult, SmolStr, Value};
+use crate::value::{MapKey, NativeDispatch, RuntimeError, RuntimeResult, SmolStr, Value};
 
 thread_local! {
     pub(crate) static PROGRAM_ARGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -387,6 +387,42 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     // builtin handles both `os::stdin().read_line()` and the
     // method-call form. Adds `read_line` to the global table.
     globals.push(("read_line", builtin("read_line", builtin_stdin_read_line)));
+    // HashMap surface — exposed both qualified (`HashMap::*`) and
+    // bare (`m.get(k)`, `m.insert(k, v)`) so user code can use the
+    // method form. Mutating methods (insert/remove/clear) ride the
+    // method-dispatch writeback path same as Vec mutators.
+    install_module(
+        "HashMap",
+        &[
+            ("new", builtin_map_new),
+            ("get", builtin_map_get),
+            ("get_or", builtin_map_get_or),
+            ("insert", builtin_map_insert),
+            ("remove", builtin_map_remove),
+            ("contains_key", builtin_map_contains_key),
+            ("len", builtin_map_len),
+            ("keys", builtin_map_keys),
+            ("values", builtin_map_values),
+            ("clear", builtin_map_clear),
+            ("is_empty", builtin_map_is_empty),
+        ],
+        globals,
+    );
+    // Bare-name surface for method-call dispatch on a Map receiver.
+    // The `qualified_method_key(receiver, "get")` lookup misses for
+    // Map values (no struct name to derive a key from), so the
+    // bare-name fallback in `eval_method_call` does the dispatch.
+    globals.push((
+        "contains_key",
+        builtin("contains_key", builtin_map_contains_key),
+    ));
+    globals.push(("keys", builtin("keys", builtin_map_keys)));
+    globals.push(("values", builtin("values", builtin_map_values)));
+    globals.push(("get_or", builtin("get_or", builtin_map_get_or)));
+    // `get` and `insert` and `remove` and `len` and `clear` already
+    // exist as bare names for other types; the builtin already
+    // routes by receiver so we don't double-register.
+
     install_module(
         "json",
         &[
@@ -2279,6 +2315,17 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
         Value::Closure(_) | Value::Builtin(_) | Value::Native(_) | Value::Channel(_) => {
             json_std::Value::Null
         }
+        Value::Map(map) => {
+            let mut out = std::collections::BTreeMap::new();
+            for (k, v) in map.lock().iter() {
+                let key_string = match k.to_value() {
+                    Value::String(s) => s.as_str().to_string(),
+                    other => other.to_string(),
+                };
+                out.insert(key_string, gossamer_to_json_value(v));
+            }
+            json_std::Value::Object(out)
+        }
         Value::FloatArray { .. } => {
             let fallback = value.float_array_to_value_array();
             gossamer_to_json_value(&fallback)
@@ -2298,6 +2345,8 @@ fn builtin_len(args: &[Value]) -> RuntimeResult<Value> {
     let count = match args.first() {
         Some(Value::String(s)) => s.chars().count(),
         Some(Value::Array(parts) | Value::Tuple(parts)) => parts.len(),
+        Some(Value::IntArray(data)) => data.len(),
+        Some(Value::Map(m)) => m.lock().len(),
         _ => return Ok(Value::Int(0)),
     };
     Ok(Value::Int(i64::try_from(count).unwrap_or(i64::MAX)))
@@ -2451,7 +2500,124 @@ fn builtin_pop(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Array(Arc::new(owned)))
 }
 
+fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Map(Arc::new(parking_lot::Mutex::new(
+        std::collections::BTreeMap::new(),
+    ))))
+}
+
+fn builtin_map_get(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Map(map)) = args.first() else {
+        return Ok(none_variant());
+    };
+    let key = match args.get(1) {
+        Some(v) => MapKey::from_value(v),
+        None => return Ok(none_variant()),
+    };
+    match map.lock().get(&key) {
+        Some(v) => Ok(some_variant(v.clone())),
+        None => Ok(none_variant()),
+    }
+}
+
+fn builtin_map_get_or(args: &[Value]) -> RuntimeResult<Value> {
+    let default = args.get(2).cloned().unwrap_or(Value::Unit);
+    let Some(Value::Map(map)) = args.first() else {
+        return Ok(default);
+    };
+    let key = match args.get(1) {
+        Some(v) => MapKey::from_value(v),
+        None => return Ok(default),
+    };
+    match map.lock().get(&key) {
+        Some(v) => Ok(v.clone()),
+        None => Ok(default),
+    }
+}
+
+fn builtin_map_insert(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Map(map)) = args.first() else {
+        return Ok(args.first().cloned().unwrap_or(Value::Unit));
+    };
+    let key = match args.get(1) {
+        Some(v) => MapKey::from_value(v),
+        None => return Ok(Value::Map(Arc::clone(map))),
+    };
+    let value = args.get(2).cloned().unwrap_or(Value::Unit);
+    map.lock().insert(key, value);
+    Ok(Value::Map(Arc::clone(map)))
+}
+
+fn builtin_map_remove(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Map(map)) = args.first() else {
+        return Ok(args.first().cloned().unwrap_or(Value::Unit));
+    };
+    let key = match args.get(1) {
+        Some(v) => MapKey::from_value(v),
+        None => return Ok(Value::Map(Arc::clone(map))),
+    };
+    map.lock().remove(&key);
+    Ok(Value::Map(Arc::clone(map)))
+}
+
+fn builtin_map_contains_key(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Map(map)) = args.first() else {
+        return Ok(Value::Bool(false));
+    };
+    let key = match args.get(1) {
+        Some(v) => MapKey::from_value(v),
+        None => return Ok(Value::Bool(false)),
+    };
+    Ok(Value::Bool(map.lock().contains_key(&key)))
+}
+
+fn builtin_map_len(args: &[Value]) -> RuntimeResult<Value> {
+    let n = match args.first() {
+        Some(Value::Map(m)) => m.lock().len() as i64,
+        _ => 0,
+    };
+    Ok(Value::Int(n))
+}
+
+fn builtin_map_keys(args: &[Value]) -> RuntimeResult<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    if let Some(Value::Map(map)) = args.first() {
+        for k in map.lock().keys() {
+            out.push(k.to_value());
+        }
+    }
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    if let Some(Value::Map(map)) = args.first() {
+        for v in map.lock().values() {
+            out.push(v.clone());
+        }
+    }
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn builtin_map_clear(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Map(map)) = args.first() {
+        map.lock().clear();
+        Ok(Value::Map(Arc::clone(map)))
+    } else {
+        Ok(args.first().cloned().unwrap_or(Value::Unit))
+    }
+}
+
+fn builtin_map_is_empty(args: &[Value]) -> RuntimeResult<Value> {
+    let empty = matches!(args.first(), Some(Value::Map(m)) if m.lock().is_empty());
+    Ok(Value::Bool(empty))
+}
+
 fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
+    // Map dispatch: `m.insert(k, v)` — keyed insert, no index.
+    if matches!(args.first(), Some(Value::Map(_))) {
+        return builtin_map_insert(args);
+    }
     let Some(Value::Array(parts)) = args.first() else {
         return Ok(args.first().cloned().unwrap_or(Value::Unit));
     };
@@ -2467,6 +2633,9 @@ fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_remove(args: &[Value]) -> RuntimeResult<Value> {
+    if matches!(args.first(), Some(Value::Map(_))) {
+        return builtin_map_remove(args);
+    }
     let Some(Value::Array(parts)) = args.first() else {
         return Ok(args.first().cloned().unwrap_or(Value::Unit));
     };
@@ -2482,6 +2651,9 @@ fn builtin_remove(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_clear(args: &[Value]) -> RuntimeResult<Value> {
+    if matches!(args.first(), Some(Value::Map(_))) {
+        return builtin_map_clear(args);
+    }
     if matches!(args.first(), Some(Value::Array(_))) {
         Ok(Value::Array(Arc::new(Vec::new())))
     } else {

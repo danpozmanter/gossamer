@@ -132,9 +132,12 @@ fn os_filesystem_round_trip_against_tmp_dir() {
 }
 
 #[test]
-fn os_set_env_is_stubbed_in_safe_build() {
-    let result = os::set_env("GOSSAMER_PHASE22", "ok");
-    assert!(result.is_err());
+fn os_set_env_round_trips_through_safe_runtime_wrapper() {
+    let key = "GOSSAMER_PHASE22_SET_ENV";
+    os::set_env(key, "ok").expect("set_env should now succeed via safe wrapper");
+    assert_eq!(os::env(key).as_deref(), Some("ok"));
+    os::unset_env(key);
+    assert_eq!(os::env(key), None);
 }
 
 #[test]

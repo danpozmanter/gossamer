@@ -213,6 +213,35 @@ fn const_branch_elim_collapses_if_true_branch() {
 }
 
 #[test]
+fn const_branch_elim_keeps_switch_for_conditionally_assigned_local() {
+    // Regression: `let mut neg = false; if v < 0 { neg = true }; if neg
+    // { ... }` was previously folded by const-branch-elim into an
+    // unconditional jump to the `then` arm because the optimiser
+    // remembered only the *last* constant assigned to `neg` rather than
+    // detecting the multiple-store case. Both the runtime `if v < 0`
+    // and `if neg` checks must survive optimisation.
+    let source = r"fn pick(v: i64) -> i64 {
+    let mut neg = false
+    if v < 0i64 { neg = true }
+    if neg { 1i64 } else { 0i64 }
+}
+";
+    let (mut bodies, _) = build(source);
+    let body = &mut bodies[0];
+    gossamer_mir::optimise(body);
+    let switch_count = body
+        .blocks
+        .iter()
+        .filter(|b| matches!(b.terminator, gossamer_mir::Terminator::SwitchInt { .. }))
+        .count();
+    assert_eq!(
+        switch_count, 2,
+        "both `if v < 0` and `if neg` SwitchInts must survive — \
+         conditionally assigned locals are not constants"
+    );
+}
+
+#[test]
 fn escape_analysis_accepts_simple_leaf_body() {
     let (bodies, _) = build("fn leaf() -> i64 { 99i64 }\n");
     let set = gossamer_mir::analyse_escape(&bodies[0]);

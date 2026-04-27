@@ -245,6 +245,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
         "gos_rt_map_len"             => rt::gos_rt_map_len,
         "gos_rt_map_insert"          => rt::gos_rt_map_insert,
         "gos_rt_map_get"             => rt::gos_rt_map_get,
+        "gos_rt_map_get_or_i64"      => rt::gos_rt_map_get_or_i64,
         "gos_rt_map_remove"          => rt::gos_rt_map_remove,
         "gos_rt_chan_new"            => rt::gos_rt_chan_new,
         "gos_rt_chan_send"           => rt::gos_rt_chan_send,

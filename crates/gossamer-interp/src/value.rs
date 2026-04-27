@@ -84,8 +84,65 @@ pub enum Value {
     Native(Arc<NativeInner>),
     /// Concurrent channel endpoint.
     Channel(Channel),
+    /// Hash-map aggregate. Wrapped in `parking_lot::Mutex` for
+    /// interior mutability so `m.insert(k, v)` is O(log N) instead
+    /// of the O(N) clone the copy-on-write `Arc<BTreeMap>` shape
+    /// would imply — k-nucleotide does ~250K inserts per length
+    /// and would otherwise be quadratic in buffer size. The mutex
+    /// (over a plain `RefCell`) keeps `Value: Send + Sync` so
+    /// goroutines can pass maps through channels.
+    Map(Arc<parking_lot::Mutex<std::collections::BTreeMap<MapKey, Value>>>),
     /// Poisoned / uninitialised sentinel.
     Void,
+}
+
+/// Ordered key type for [`Value::Map`]. Wraps a [`Value`] and
+/// gives it a `(tag, content)` total order so any value the user
+/// can hash (int / bool / char / string) sorts deterministically.
+/// Aggregate values (arrays, structs, closures) collapse to a
+/// single bucket — they're rejected at insert time, not here.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MapKey {
+    /// Sentinel for non-hashable inputs; all equal so their map
+    /// degenerates to a single slot. Lets the runtime stay
+    /// total even if user code passes an aggregate as a key.
+    NonHashable,
+    /// `bool` key.
+    Bool(bool),
+    /// `i64` key (every integer width converges here).
+    Int(i64),
+    /// `char` key.
+    Char(char),
+    /// String key.
+    Str(String),
+}
+
+impl MapKey {
+    /// Builds a `MapKey` from any `Value`. Aggregates collapse
+    /// to `NonHashable`.
+    #[must_use]
+    pub fn from_value(v: &Value) -> Self {
+        match v {
+            Value::Bool(b) => Self::Bool(*b),
+            Value::Int(n) => Self::Int(*n),
+            Value::Char(c) => Self::Char(*c),
+            Value::String(s) => Self::Str(s.as_str().to_string()),
+            _ => Self::NonHashable,
+        }
+    }
+
+    /// Recovers the `Value` shape this key originally held. Used
+    /// by `keys()` so iteration returns the user's original type.
+    #[must_use]
+    pub fn to_value(&self) -> Value {
+        match self {
+            Self::Bool(b) => Value::Bool(*b),
+            Self::Int(n) => Value::Int(*n),
+            Self::Char(c) => Value::Char(*c),
+            Self::Str(s) => Value::String(SmolStr::from(s.clone())),
+            Self::NonHashable => Value::Unit,
+        }
+    }
 }
 
 /// Boxed payload of [`Value::FloatArray`]. Pre-B1 this lived
@@ -666,7 +723,7 @@ impl Value {
                 let id = register_heap(RegistryEntry::Channel(ch.clone()));
                 from_heap_handle(id)
             }
-            Self::Builtin(_) | Self::Native(_) | Self::Void => {
+            Self::Map(_) | Self::Builtin(_) | Self::Native(_) | Self::Void => {
                 // Unencodable in the raw layout — return a sentinel
                 // that `from_raw` maps back to `Void`.
                 from_singleton(SINGLETON_UNIT)
@@ -742,6 +799,16 @@ impl fmt::Display for Value {
             Self::Builtin(inner) => write!(out, "<builtin {}>", inner.name),
             Self::Native(inner) => write!(out, "<native {}>", inner.name),
             Self::Channel(ch) => write!(out, "{ch:?}"),
+            Self::Map(map) => {
+                out.write_str("{")?;
+                for (i, (k, v)) in map.lock().iter().enumerate() {
+                    if i > 0 {
+                        out.write_str(", ")?;
+                    }
+                    write!(out, "{}: {v}", k.to_value())?;
+                }
+                out.write_str("}")
+            }
             Self::Void => out.write_str("<void>"),
         }
     }

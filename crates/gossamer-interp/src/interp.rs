@@ -1303,6 +1303,7 @@ fn qualified_method_key(receiver: &Value, method: &str) -> Option<String> {
     match receiver {
         Value::Struct(inner) => Some(format!("{}::{}", inner.name, method)),
         Value::Channel(_) => Some(format!("Channel::{method}")),
+        Value::Map(_) => Some(format!("HashMap::{method}")),
         _ => None,
     }
 }
@@ -1626,6 +1627,7 @@ fn classify(value: &Value) -> &'static str {
         Value::Builtin { .. } => "builtin",
         Value::Native { .. } => "native",
         Value::Channel(_) => "channel",
+        Value::Map(_) => "map",
         Value::Void => "void",
     }
 }
