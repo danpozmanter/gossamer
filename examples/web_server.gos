@@ -32,9 +32,9 @@ struct Echo { }
 impl http::Handler for Echo {
     fn serve(&self, request: http::Request) -> Result<http::Response, http::Error> {
         match request.path() {
-            "/health" => Ok(http::Response::text(200, "ok".to_string())),
+            "/health" => Ok(http::Response::text(200, "ok")),
             "/echo" => Ok(http::Response::json(200, render_echo(&request))),
-            _ => Ok(http::Response::text(404, "not found".to_string())),
+            _ => Ok(http::Response::text(404, "not found")),
         }
     }
 }
@@ -53,5 +53,5 @@ fn main() -> Result<(), http::Error> {
     let app = Echo { }
     println!("listening on 0.0.0.0:8080")
     println!("try: curl 'http://localhost:8080/echo?name=jane'")
-    http::serve("0.0.0.0:8080".to_string(), app)
+    http::serve("0.0.0.0:8080", app)
 }

@@ -76,7 +76,7 @@ fn main() -> Result<(), errors::Error> {
     let opts = parse_opts()?
     let mut matched: u64 = 0
     if opts.files.is_empty() {
-        matched = matched + scan(&"<stdin>".to_string(), os::stdin(), &opts)?
+        matched = matched + scan(&"<stdin>", os::stdin(), &opts)?
     } else {
         for path in opts.files.iter() {
             let file = fs::open(path).map_err(|e| errors::wrap(e, format!("open {path}")))?

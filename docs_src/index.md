@@ -33,10 +33,10 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 fn main() {
-    let n = 3i64 |> double |> add(10i64) |> clamp(0i64, 100i64)
+    let n = 3 |> double |> add(10) |> clamp(0, 100)
     println("arithmetic:", n)
 
-    let words = "  Hello  World  ".to_string()
+    let words = "  Hello  World  "
         |> str::trim
         |> str::to_lowercase
         |> str::split(" ")
@@ -51,7 +51,7 @@ Goroutines and channels use the same syntax:
 ```gossamer
 fn main() {
     let (tx, rx) = channel::<i64>()
-    go fn() { tx.send(40i64 |> add(2i64)) }()
+    go fn() { tx.send(40 |> add(2)) }()
     println("answer:", rx.recv())
 }
 ```

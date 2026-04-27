@@ -27,16 +27,16 @@ impl http::Handler for App {
         if path.starts_with("/echo") {
             return Ok(http::Response::json(200, render_echo(&request.query)))
         }
-        Ok(http::Response::text(404, "not found".to_string()))
+        Ok(http::Response::text(404, "not found"))
     }
 }
 
 fn render_health() -> String {
-    "ok".to_string()
+    "ok"
 }
 
 fn render_users() -> String {
-    "[{\"id\":1,\"name\":\"ada\"},{\"id\":2,\"name\":\"grace\"}]".to_string()
+    "[{\"id\":1,\"name\":\"ada\"},{\"id\":2,\"name\":\"grace\"}]"
 }
 
 // Echoes the raw query string back as a JSON object. The test
@@ -47,15 +47,15 @@ fn render_echo(query: &String) -> String {
 
 fn classify(path: &str) -> String {
     if path == "/health" {
-        return "health".to_string()
+        return "health"
     }
     if path == "/users" {
-        return "users".to_string()
+        return "users"
     }
     if path.starts_with("/echo") {
-        return "echo".to_string()
+        return "echo"
     }
-    "not_found".to_string()
+    "not_found"
 }
 
 #[cfg(test)]
@@ -66,7 +66,7 @@ mod tests {
     fn health_returns_ok() {
         testing::check_eq(
             &super::render_health(),
-            &"ok".to_string(),
+            &"ok",
             "health body is exactly \"ok\"",
         )
     }
@@ -81,20 +81,20 @@ mod tests {
 
     #[test]
     fn echo_wraps_query_in_json() {
-        let body = super::render_echo(&"msg=hello".to_string())
+        let body = super::render_echo(&"msg=hello")
         testing::check_eq(
             &body,
-            &"{\"echo\":\"msg=hello\"}".to_string(),
+            &"{\"echo\":\"msg=hello\"}",
             "echo body wraps the query string exactly",
         )
     }
 
     #[test]
     fn echo_handles_empty_query() {
-        let body = super::render_echo(&"".to_string())
+        let body = super::render_echo(&"")
         testing::check_eq(
             &body,
-            &"{\"echo\":\"\"}".to_string(),
+            &"{\"echo\":\"\"}",
             "echo body still well-formed for empty input",
         )
     }
@@ -103,22 +103,22 @@ mod tests {
     fn classify_routes_known_paths() {
         testing::check_eq(
             &super::classify("/health"),
-            &"health".to_string(),
+            &"health",
             "health route classified",
         )
         testing::check_eq(
             &super::classify("/users"),
-            &"users".to_string(),
+            &"users",
             "users route classified",
         )
         testing::check_eq(
             &super::classify("/echo"),
-            &"echo".to_string(),
+            &"echo",
             "echo route classified",
         )
         testing::check_eq(
             &super::classify("/echo?msg=hi"),
-            &"echo".to_string(),
+            &"echo",
             "echo route still classified with query string",
         )
     }
@@ -127,7 +127,7 @@ mod tests {
     fn classify_falls_back_to_not_found() {
         testing::check_eq(
             &super::classify("/missing"),
-            &"not_found".to_string(),
+            &"not_found",
             "unknown path classified as not_found",
         )
     }
@@ -139,5 +139,5 @@ fn main() -> Result<(), http::Error> {
     println!("try: curl http://localhost:8080/health")
     println!("     curl http://localhost:8080/users")
     println!("     curl 'http://localhost:8080/echo?msg=hi'")
-    http::serve("0.0.0.0:8080".to_string(), app)
+    http::serve("0.0.0.0:8080", app)
 }

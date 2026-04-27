@@ -225,6 +225,9 @@ ships a <code>project.toml</code> manifest.</p>
 runtime and native codegen are partially wired — see "current
 gaps" at the bottom.</p>
 <h2 id="2-idioms-at-a-glance">2. Idioms at a glance<a class="headerlink" href="#2-idioms-at-a-glance" title="Permanent link">&para;</a></h2>
+<p>Write <strong>clear, low-complexity, concise code.</strong> Names earn their
+length; helpers earn their existence. If a line reads cleanly the
+first time through, leave it alone — don't dress it up.</p>
 <p>Prefer these shapes when writing Gossamer:</p>
 <ul>
 <li><strong>Left-to-right dataflow with <code>|&gt;</code>.</strong> Chain calls with the
@@ -238,8 +241,13 @@ gaps" at the bottom.</p>
 <li><strong>Goroutines + channels for async work.</strong> Share by
   communicating; reach for <code>sync::Mutex</code> only when
   shared-memory is the simpler model.</li>
-<li><strong>Explicit numeric widths.</strong> <code>0i64</code> not <code>0</code> when the context
-  doesn't pin the type.</li>
+<li><strong>Bare numeric literals.</strong> Write <code>0</code>, not <code>0i64</code>. Inference
+  picks the type from the binding, the call site, or the
+  return type. Only suffix when the literal stands alone with
+  no contextual hint.</li>
+<li><strong>String literals are already <code>String</code>.</strong> Don't write
+  <code>"foo".to_string()</code> — the literal is the owned value. <code>&amp;"foo"</code>
+  borrows it where a <code>&amp;String</code> / <code>&amp;str</code> parameter is expected.</li>
 <li><strong>Macros only for formatted output.</strong> <code>println!</code>,
   <code>format!</code>, <code>print!</code>, <code>eprintln!</code>, <code>eprint!</code>, <code>panic!</code> are
   the six macro entries — no others exist.</li>
@@ -263,10 +271,10 @@ fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
 }
 
 // Preferred — reads top-down.
-let n = 3i64 |&gt; double |&gt; add(10i64) |&gt; clamp(0i64, 100i64)
+let n = 3 |&gt; double |&gt; add(10) |&gt; clamp(0, 100)
 
 // Discouraged — the same meaning, but the eye has to unwind.
-let same = clamp(0i64, 100i64, add(10i64, double(3i64)))
+let same = clamp(0, 100, add(10, double(3)))
 </code></pre>
 <p>When a step is a closure, write it inline — <code>|&gt;</code> still threads
 the value into the last slot:</p>
@@ -298,8 +306,8 @@ impl Area for Shape {
 }
 
 fn main() {
-    let mut total = 0i64
-    for n in [1i64, 2i64, 3i64].iter() {
+    let mut total = 0
+    for n in [1, 2, 3].iter() {
         total = total + *n
     }
     println!(&quot;total: {}&quot;, total)
@@ -322,9 +330,11 @@ fn main() {
 <li><strong>Types.</strong> <code>bool</code>, <code>char</code>, <code>i8..i128</code>, <code>u8..u128</code>, <code>isize</code>,
   <code>usize</code>, <code>f32</code>, <code>f64</code>, <code>String</code>, <code>[T]</code>, <code>(A, B)</code>,
   <code>Option&lt;T&gt;</code>, <code>Result&lt;T, E&gt;</code>, <code>&amp;T</code>, <code>&amp;mut T</code>, user types.</li>
-<li><strong>Integer literals</strong> take a suffix: <code>1i64</code>, <code>255u8</code>, <code>0usize</code>.
-  Unsuffixed literals default to <code>i64</code>; be explicit when the
-  context doesn't already pin the type.</li>
+<li><strong>Integer literals</strong> are bare by default: <code>1</code>, <code>255</code>, <code>0</code>.
+  Inference picks the type from the binding, the call site, or
+  the return type. Suffix only when no contextual hint exists
+  (e.g. <code>1i32</code> standing alone in an expression with no other
+  width signal). Unsuffixed literals default to <code>i64</code>.</li>
 <li><strong>Casts.</strong> <code>x as i32</code> — whitelist-checked (numeric ↔ numeric,
   <code>bool</code> / <code>char</code> → integer, <code>u8</code> → <code>char</code>, same-type no-op).
   Every other <code>as</code> shape is a hard error (GT0005).</li>
@@ -386,7 +396,7 @@ println!(&quot;value: {} / {}&quot;, answer, total)
 <p>The six macros lower to one allocation through the internal
 <code>__concat</code> builtin. For building a single <code>String</code> piece-by-
 piece, <code>+</code> concatenates without a separator:</p>
-<pre><code class="language-gossamer">let greeting = &quot;hello, &quot;.to_string() + &amp;name
+<pre><code class="language-gossamer">let greeting = &quot;hello, &quot; + &amp;name
 </code></pre>
 <h2 id="7-error-handling">7. Error handling<a class="headerlink" href="#7-error-handling" title="Permanent link">&para;</a></h2>
 <p>Fallible functions return <code>Result&lt;T, E&gt;</code>. Propagate with <code>?</code> and
@@ -421,13 +431,13 @@ fn main() {
     let tx = pair.0
     let rx = pair.1
 
-    go tx.send(10i64)
-    go tx.send(20i64)
-    go tx.send(30i64)
+    go tx.send(10)
+    go tx.send(20)
+    go tx.send(30)
 
-    time::sleep(50u64)
+    time::sleep(50)
 
-    let mut total = 0i64
+    let mut total = 0
     loop {
         match rx.recv() {
             Some(v) =&gt; total = total + v,
@@ -469,7 +479,7 @@ work as you'd expect (GC-managed, no <code>move</code> keyword).</p>
 <pre><code class="language-gossamer">fn apply(f: Fn(i64) -&gt; i64, x: i64) -&gt; i64 { f(x) }
 
 fn main() {
-    let scale = 10i64
+    let scale = 10
     let scaled = |y: i64| scale * y     // captures `scale`
     println!(&quot;{}&quot;, apply(scaled, 5))    // 50
 
@@ -483,7 +493,7 @@ world). <code>FnMut</code> / <code>FnOnce</code> parse but lower to the same
 <code>Fn(_)</code> shape.</p>
 <h2 id="9-data-structures">9. Data structures<a class="headerlink" href="#9-data-structures" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>[T]</code> — growable array. Literal: <code>[1i64, 2i64, 3i64]</code>.</li>
+<li><code>[T]</code> — growable array. Literal: <code>[1, 2, 3]</code>.</li>
 <li><code>(A, B, …)</code> — tuple. Field access via <code>.0</code>, <code>.1</code>, ….</li>
 <li><code>struct Foo { x, y }</code> / <code>struct Pair(A, B)</code> — GC-managed
   value types.</li>
@@ -574,8 +584,8 @@ Bare <code>gos</code> drops into the REPL.</p>
 mod tests {
     #[test]
     fn add_adds() {
-        let total = super::add(2i64, 3i64)
-        assert(total == 5i64)
+        let total = super::add(2, 3)
+        assert(total == 5)
     }
 }
 </code></pre>
@@ -637,7 +647,7 @@ use std::os
 
 fn main() -&gt; Result&lt;(), flag::Error&gt; {
     let mut fs = flag::Set::new(&quot;myapp&quot;)
-    let port = fs.uint(&quot;port&quot;, 8080u64, &quot;listen port&quot;)
+    let port = fs.uint(&quot;port&quot;, 8080, &quot;listen port&quot;)
     let verbose = fs.bool(&quot;verbose&quot;, false, &quot;chatty output&quot;)
     let _ = fs.parse(os::args())?
 
@@ -661,12 +671,11 @@ impl http::Handler for App {
 fn main() -&gt; Result&lt;(), http::Error&gt; {
     let app = App { }
     println!(&quot;listening on 0.0.0.0:8080&quot;)
-    http::serve(&quot;0.0.0.0:8080&quot;.to_string(), app)
+    http::serve(&quot;0.0.0.0:8080&quot;, app)
 }
 </code></pre>
 <h2 id="15-current-gaps-pre-100">15. Current gaps (pre-1.0.0)<a class="headerlink" href="#15-current-gaps-pre-100" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Integer inference is shallow. Prefer explicit suffixes.</li>
 <li><code>+</code> on <code>String</code> copies; for heavy assembly use
   <code>std::bytes::Builder</code> or a <code>mut String</code> with <code>+=</code>.</li>
 <li>Method dispatch is name-global in places. Qualified path
@@ -681,6 +690,9 @@ fn main() -&gt; Result&lt;(), http::Error&gt; {
 </ul>
 <h2 id="16-style-rules">16. Style rules<a class="headerlink" href="#16-style-rules" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Clear, low-complexity, concise.</strong> Plain reads beat clever
+  ones. If a helper, type, or comment doesn't earn its space,
+  drop it.</li>
 <li><strong>No emojis.</strong> Source, comments, commits, docs — all plain.</li>
 <li><strong>No TODO / FIXME</strong> committed; open an issue.</li>
 <li><strong>Doc every <code>pub</code> item</strong> with a single-line <code>///</code>; don't

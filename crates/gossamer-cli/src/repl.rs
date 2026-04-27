@@ -41,6 +41,9 @@ pub(crate) fn cmd_repl() -> Result<()> {
     }
 
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    if tty {
+        crate::style::force_enable();
+    }
     // Greeting on a TTY only — keeps non-interactive consumers
     // (`echo expr | gos`) clean.
     if tty {
@@ -65,7 +68,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
                 return Ok(());
             }
             Err(err) => {
-                eprintln!("repl: {err}");
+                eprintln!("{}: {err}", crate::style::error("repl"));
                 return Ok(());
             }
         };
@@ -191,7 +194,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
                 }
             }
             Err(msg) => {
-                eprintln!("error: {msg}");
+                eprintln!("{}: {msg}", crate::style::error("error"));
             }
         }
         input_no += 1;

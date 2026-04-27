@@ -121,8 +121,25 @@ pub enum HirAdtKind {
     /// list carries the field names in declaration order — empty for
     /// a unit struct or tuple struct with positional-only fields.
     Struct(Vec<Ident>),
-    /// `enum` with the given variant names.
-    Enum(Vec<Ident>),
+    /// `enum` with the given variants. Each variant carries its
+    /// name plus an optional ordered field list — `None` for unit
+    /// (`Line`) and tuple variants (`Circle(f64)`); `Some(names)`
+    /// for struct-payload variants (`Rect { w, h }`). The MIR
+    /// lowerer reads the field names so `__struct("Rect", ...)`
+    /// calls can reorder operands into declaration order even
+    /// when the matching enum variant rather than a real struct
+    /// is the target.
+    Enum(Vec<HirEnumVariant>),
+}
+
+/// A single enum variant's HIR representation.
+#[derive(Debug, Clone)]
+pub struct HirEnumVariant {
+    /// Variant name (e.g. `Rect` in `enum Shape { Rect { w, h } }`).
+    pub name: Ident,
+    /// Ordered field names for struct-payload variants. `None`
+    /// for unit and tuple-struct variants.
+    pub struct_fields: Option<Vec<Ident>>,
 }
 
 /// Lowered `impl` block.
@@ -581,6 +598,18 @@ pub enum HirPatKind {
     Or(Vec<HirPat>),
     /// `..` rest pattern.
     Rest,
+    /// Range pattern `lo..hi` (exclusive) or `lo..=hi` (inclusive).
+    /// Carries both literal bounds plus the inclusivity flag so
+    /// MIR can lower it into a `(scrut >= lo) && (scrut < hi)` /
+    /// `(scrut >= lo) && (scrut <= hi)` predicate.
+    Range {
+        /// Lower bound literal (always present in source).
+        lo: HirLiteral,
+        /// Upper bound literal (always present in source).
+        hi: HirLiteral,
+        /// `true` for `..=` (inclusive of `hi`); `false` for `..`.
+        inclusive: bool,
+    },
 }
 
 /// A single field pattern inside a struct pattern.

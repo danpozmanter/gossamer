@@ -1308,10 +1308,12 @@ impl<'a> Lowerer<'a> {
             ));
         }
         let callee_ty = self.body.local_ty(place.local);
-        let is_plain_fn = matches!(
-            self.tcx.kind(callee_ty),
-            Some(TyKind::FnDef { .. } | TyKind::FnPtr(_))
-        );
+        // Mirrors the Cranelift narrowing: only `FnDef`-typed
+        // locals (the result of `Operand::FnRef`) hold a raw
+        // function address. `FnPtr` / `FnTrait` locals carry an
+        // env pointer post the MIR's let / return / assign
+        // coercion, so they share the closure dispatch shape.
+        let is_plain_fn = matches!(self.tcx.kind(callee_ty), Some(TyKind::FnDef { .. }));
         // Read the local's value: for a function pointer the
         // load yields the callable address; for a closure env
         // it yields the env pointer.
@@ -1877,8 +1879,242 @@ impl<'a> Lowerer<'a> {
             self.lower_heap_i64_get_inline(args, destination, target)?;
             return Ok(());
         }
+        // Raw heap intrinsics that the cranelift tier handles
+        // inline. Lower them to a direct LLVM `getelementptr +
+        // load/store` here so the LLVM tier doesn't bail and
+        // route the body to cranelift just for these calls.
+        if matches!(name.as_str(), "gos_load" | "gos_store" | "gos_alloc" | "gos_fn_addr") {
+            self.lower_raw_intrinsic(&name, args, destination, target)?;
+            return Ok(());
+        }
+        // Variant constructor stubs: `Ok(v)`, `Some(v)`, `Err(e)`
+        // pass the wrapped value through unchanged (the compiled
+        // tier flattens Option/Result, so `unwrap` is identity).
+        // `None` and other no-payload variants resolve to a zero
+        // value. Mirrors the Cranelift backend's variant-stub
+        // branch so escaped Result/Option values don't end up
+        // calling a non-existent `@"Ok"` symbol at link time.
+        let is_variant_stub = matches!(name.as_str(), "Ok" | "Some" | "Err" | "None")
+            || (name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && !name.contains("::"));
+        if is_variant_stub {
+            self.emit_variant_stub(&name, args, destination, target)?;
+            return Ok(());
+        }
         let symbol = map_prelude_symbol(&name);
         self.emit_named_call(symbol, args, destination, target)
+    }
+
+    /// Lowers the raw-pointer intrinsics (`gos_load`,
+    /// `gos_store`, `gos_alloc`, `gos_fn_addr`) directly to
+    /// LLVM IR so the LLVM tier doesn't have to fall back to
+    /// cranelift for closure envs / vec iteration / fn-pointer
+    /// trampolines. Mirrors the cranelift-side handlers in
+    /// `lower_intrinsic_outcome`.
+    fn lower_raw_intrinsic(
+        &mut self,
+        name: &str,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let dest_ty_mir = self.body.local_ty(destination.local);
+        let dest_ty = render_ty(self.tcx, dest_ty_mir);
+        match name {
+            "gos_load" => {
+                // gos_load(ptr_i64, offset_i64) -> i64
+                if args.len() < 2 {
+                    return Err(BuildError::Unsupported("gos_load arity"));
+                }
+                let ptr_v = self.lower_operand(&args[0])?;
+                let off_v = self.lower_operand(&args[1])?;
+                let ptr_ty = self.operand_llvm_ty(&args[0]);
+                let off_ty = self.operand_llvm_ty(&args[1]);
+                // ptr might be i64 or ptr; coerce to ptr.
+                let p = if ptr_ty == "ptr" {
+                    ptr_v
+                } else {
+                    let tmp = self.fresh();
+                    writeln!(self.out, "  {tmp} = inttoptr {ptr_ty} {ptr_v} to ptr").unwrap();
+                    tmp
+                };
+                // gep i8, p, off → addr
+                let off64 = if off_ty == "i64" {
+                    off_v
+                } else {
+                    let tmp = self.fresh();
+                    writeln!(self.out, "  {tmp} = sext {off_ty} {off_v} to i64").unwrap();
+                    tmp
+                };
+                let addr = self.fresh();
+                writeln!(self.out, "  {addr} = getelementptr i8, ptr {p}, i64 {off64}").unwrap();
+                let loaded = self.fresh();
+                writeln!(self.out, "  {loaded} = load i64, ptr {addr}").unwrap();
+                let coerced = self.coerce_llvm_value(&loaded, "i64", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            "gos_store" => {
+                // gos_store(ptr, offset, value) — writes 8 bytes.
+                if args.len() < 3 {
+                    return Err(BuildError::Unsupported("gos_store arity"));
+                }
+                let ptr_v = self.lower_operand(&args[0])?;
+                let off_v = self.lower_operand(&args[1])?;
+                let val_v = self.lower_operand(&args[2])?;
+                let ptr_ty = self.operand_llvm_ty(&args[0]);
+                let off_ty = self.operand_llvm_ty(&args[1]);
+                let val_ty = self.operand_llvm_ty(&args[2]);
+                let p = if ptr_ty == "ptr" {
+                    ptr_v
+                } else {
+                    let tmp = self.fresh();
+                    writeln!(self.out, "  {tmp} = inttoptr {ptr_ty} {ptr_v} to ptr").unwrap();
+                    tmp
+                };
+                let off64 = if off_ty == "i64" {
+                    off_v
+                } else {
+                    let tmp = self.fresh();
+                    writeln!(self.out, "  {tmp} = sext {off_ty} {off_v} to i64").unwrap();
+                    tmp
+                };
+                let val64 = self.coerce_llvm_value(&val_v, &val_ty, "i64");
+                let addr = self.fresh();
+                writeln!(self.out, "  {addr} = getelementptr i8, ptr {p}, i64 {off64}").unwrap();
+                writeln!(self.out, "  store i64 {val64}, ptr {addr}").unwrap();
+                if dest_ty != "void" && !is_unit(self.tcx, dest_ty_mir) {
+                    let slot = local_slot(destination.local);
+                    writeln!(self.out, "  store {dest_ty} 0, ptr {slot}").unwrap();
+                }
+            }
+            "gos_alloc" => {
+                // gos_alloc(size_i64) -> ptr (via libc malloc).
+                let size_v = if args.is_empty() {
+                    "0".to_string()
+                } else {
+                    let v = self.lower_operand(&args[0])?;
+                    let t = self.operand_llvm_ty(&args[0]);
+                    if t == "i64" {
+                        v
+                    } else {
+                        let tmp = self.fresh();
+                        writeln!(self.out, "  {tmp} = sext {t} {v} to i64").unwrap();
+                        tmp
+                    }
+                };
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = call ptr @malloc(i64 {size_v})").unwrap();
+                let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            "gos_fn_addr" => {
+                // gos_fn_addr("name") -> ptr to that function.
+                let Some(Operand::Const(ConstValue::Str(fname))) = args.first() else {
+                    return Err(BuildError::Unsupported("gos_fn_addr arg"));
+                };
+                // LLVM IR pointer-to-function constants are written
+                // as the function symbol itself; declare-only is OK
+                // because the cranelift companion (or another LLVM
+                // body) provides the definition.
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = bitcast ptr @\"{fname}\" to ptr").unwrap();
+                let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            _ => {
+                return Err(BuildError::Unsupported("unrecognised raw intrinsic"));
+            }
+        }
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Emits the result of a variant constructor call without
+    /// going through a real function symbol. `Ok(v)`, `Some(v)`,
+    /// and `Err(e)` write the inner value to the destination;
+    /// payload-less variants write zero. Coerces the inner
+    /// value's LLVM type to the destination's slot type so the
+    /// emitted store is well-formed even when the wrapper Adt
+    /// renders as `ptr` and the inner value is a plain `i64` /
+    /// `double`.
+    fn emit_variant_stub(
+        &mut self,
+        name: &str,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let dest_ty_mir = self.body.local_ty(destination.local);
+        let dest_ty = render_ty(self.tcx, dest_ty_mir);
+        if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
+            emit_terminator_branch(&mut self.out, target);
+            return Ok(());
+        }
+        let (value, value_ty): (String, String) = if matches!(name, "Ok" | "Some" | "Err")
+            && !args.is_empty()
+        {
+            let v = self.lower_operand(&args[0])?;
+            let vt = self.operand_llvm_ty(&args[0]);
+            (v, vt)
+        } else {
+            let zero = match dest_ty.as_str() {
+                "ptr" => "null".to_string(),
+                "double" | "float" => "0.0".to_string(),
+                _ => "0".to_string(),
+            };
+            (zero, dest_ty.clone())
+        };
+        let coerced = self.coerce_llvm_value(&value, &value_ty, &dest_ty);
+        let slot = local_slot(destination.local);
+        writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Inserts the LLVM cast that brings `value` (of type
+    /// `from_ty`) over to `to_ty`, returning the new SSA name.
+    /// No-op when the types already match. Handles the common
+    /// scalar-to-pointer / pointer-to-scalar / int-width and
+    /// float-width permutations the variant-stub path needs.
+    fn coerce_llvm_value(&mut self, value: &str, from_ty: &str, to_ty: &str) -> String {
+        if from_ty == to_ty {
+            return value.to_string();
+        }
+        let tmp = self.fresh();
+        let op = match (from_ty, to_ty) {
+            ("ptr", _) if to_ty.starts_with('i') => "ptrtoint",
+            (_, "ptr") if from_ty.starts_with('i') => "inttoptr",
+            ("ptr", "double") => {
+                // Through i64 — LLVM has no direct ptr→double.
+                let mid = self.fresh();
+                writeln!(self.out, "  {mid} = ptrtoint ptr {value} to i64").unwrap();
+                writeln!(self.out, "  {tmp} = bitcast i64 {mid} to double").unwrap();
+                return tmp;
+            }
+            ("double", "ptr") => {
+                let mid = self.fresh();
+                writeln!(self.out, "  {mid} = bitcast double {value} to i64").unwrap();
+                writeln!(self.out, "  {tmp} = inttoptr i64 {mid} to ptr").unwrap();
+                return tmp;
+            }
+            _ if from_ty.starts_with('i') && to_ty.starts_with('i') => {
+                let from_w: u32 = from_ty[1..].parse().unwrap_or(64);
+                let to_w: u32 = to_ty[1..].parse().unwrap_or(64);
+                if to_w > from_w {
+                    "zext"
+                } else if to_w < from_w {
+                    "trunc"
+                } else {
+                    return value.to_string();
+                }
+            }
+            _ => "bitcast",
+        };
+        writeln!(self.out, "  {tmp} = {op} {from_ty} {value} to {to_ty}").unwrap();
+        tmp
     }
 
     /// Inline fast path for `gos_rt_stream_write_byte(stream, b)`.

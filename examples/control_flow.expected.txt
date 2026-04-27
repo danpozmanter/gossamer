@@ -3,7 +3,7 @@ while total (0..5): 10
 first square > 100: 121
 -3 -> negative
 0 -> zero
-3 -> many
+3 -> single-digit
 42 -> many
 got 7
 area=7.068577499999999

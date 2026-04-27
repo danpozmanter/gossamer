@@ -199,10 +199,10 @@ fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
 }
 
 fn main() {
-    let n = 3i64 |&gt; double |&gt; add(10i64) |&gt; clamp(0i64, 100i64)
+    let n = 3 |&gt; double |&gt; add(10) |&gt; clamp(0, 100)
     println(&quot;arithmetic:&quot;, n)
 
-    let words = &quot;  Hello  World  &quot;.to_string()
+    let words = &quot;  Hello  World  &quot;
         |&gt; str::trim
         |&gt; str::to_lowercase
         |&gt; str::split(&quot; &quot;)
@@ -214,7 +214,7 @@ fn main() {
 <p>Goroutines and channels use the same syntax:</p>
 <pre><code class="language-gossamer">fn main() {
     let (tx, rx) = channel::&lt;i64&gt;()
-    go fn() { tx.send(40i64 |&gt; add(2i64)) }()
+    go fn() { tx.send(40 |&gt; add(2)) }()
     println(&quot;answer:&quot;, rx.recv())
 }
 </code></pre>
@@ -321,5 +321,5 @@ fn main() {
 
 <!--
 MkDocs version : 1.6.1
-Build Date UTC : 2026-04-27 00:58:11.579101+00:00
+Build Date UTC : 2026-04-27 20:02:13.670219+00:00
 -->

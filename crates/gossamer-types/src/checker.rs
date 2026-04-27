@@ -65,6 +65,10 @@ struct TypeChecker<'a> {
     /// field-access and struct-literal expressions can resolve leaf
     /// types without having to look up the original AST.
     struct_fields: HashMap<gossamer_resolve::DefId, Vec<(String, Ty)>>,
+    /// Cached function signatures keyed by `DefId`. Built during
+    /// `collect_signatures` so a cross-function call site can pull
+    /// the input/return types instead of returning a fresh var.
+    fn_sigs: HashMap<gossamer_resolve::DefId, FnSig>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -78,6 +82,7 @@ impl<'a> TypeChecker<'a> {
             scopes: vec![HashMap::new()],
             binding_types: HashMap::new(),
             struct_fields: HashMap::new(),
+            fn_sigs: HashMap::new(),
         }
     }
 
@@ -281,8 +286,11 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn register_fn_sig(&mut self, _node: NodeId, decl: &FnDecl) {
-        self.fn_sig_of(decl);
+    fn register_fn_sig(&mut self, node: NodeId, decl: &FnDecl) {
+        let sig = self.fn_sig_of(decl);
+        if let Some(def) = self.resolutions.definition_of(node) {
+            self.fn_sigs.insert(def, sig);
+        }
     }
 
     fn register_fn_sig_anonymous(&mut self, decl: &FnDecl) {
@@ -575,10 +583,43 @@ impl<'a> TypeChecker<'a> {
         let callee_ty = self.check_expr(callee);
         let arg_tys: Vec<Ty> = args.iter().map(|a| self.check_expr(a)).collect();
         let resolved = self.infer.resolve(self.tcx, callee_ty);
-        if let Some(TyKind::FnPtr(sig)) = self.tcx.kind(resolved).cloned() {
+        let kind = self.tcx.kind(resolved).cloned();
+        // Recognised callee shapes: `FnPtr` (anonymous or first-class
+        // closure pointer) and `FnDef { def, .. }` (named function
+        // resolved to a definition). Looking the def up in
+        // `fn_sigs` lets cross-function call sites pin both args and
+        // return type to the callee's signature instead of returning
+        // a fresh inference variable that never gets bound.
+        let sig_lookup: Option<FnSig> = match kind {
+            Some(TyKind::FnPtr(sig)) => Some(sig),
+            Some(TyKind::FnDef { def, .. }) => self.fn_sigs.get(&def).cloned(),
+            _ => None,
+        };
+        if let Some(sig) = sig_lookup {
             if sig.inputs.len() == arg_tys.len() {
                 for (param, (arg_ty, arg_expr)) in sig.inputs.iter().zip(arg_tys.iter().zip(args)) {
-                    self.unify(*param, *arg_ty, arg_expr.span);
+                    // Auto-coerce `T` ↔ `&T` at call boundaries: a
+                    // signature param `&Shape` accepts a `Shape`
+                    // argument and vice versa. Native lowering
+                    // already treats every value-vs-reference
+                    // distinction as a no-op (the GC owns
+                    // everything), so enforcing strict match here
+                    // would only produce diagnostics on programs
+                    // the runtime accepts.
+                    let param_inner = match self.tcx.kind(*param) {
+                        Some(TyKind::Ref { inner, .. }) => Some(*inner),
+                        _ => None,
+                    };
+                    let arg_inner = match self.tcx.kind(*arg_ty) {
+                        Some(TyKind::Ref { inner, .. }) => Some(*inner),
+                        _ => None,
+                    };
+                    let (lhs, rhs) = match (param_inner, arg_inner) {
+                        (Some(p), None) => (p, *arg_ty),
+                        (None, Some(a)) => (*param, a),
+                        _ => (*param, *arg_ty),
+                    };
+                    self.unify(lhs, rhs, arg_expr.span);
                 }
                 return sig.output;
             }
@@ -624,7 +665,21 @@ impl<'a> TypeChecker<'a> {
                 mutability: Mutbl::Mut,
                 inner: operand_ty,
             }),
-            UnaryOp::Deref => self.fresh(),
+            UnaryOp::Deref => {
+                // `*x` strips a single `&T` / `&mut T` wrapper.
+                // For any other concrete operand shape the deref is
+                // an identity (matches the interp's behaviour on
+                // for-loop bound elements where the iterator hands
+                // back values rather than references). Without
+                // either pinning, downstream `println!("{}", *x)`
+                // dispatches via `TyKind::Var → StrPtr` and tries
+                // to dereference the value as a pointer — segv.
+                let resolved = self.infer.resolve(self.tcx, operand_ty);
+                match self.tcx.kind(resolved) {
+                    Some(TyKind::Ref { inner, .. }) => *inner,
+                    _ => operand_ty,
+                }
+            }
         }
     }
 
@@ -734,9 +789,26 @@ impl<'a> TypeChecker<'a> {
         self.push_scope();
         // Derive the pattern's type from the iterator: arrays/slices
         // yield their element type, ranges over integers yield the
-        // integer type.
+        // integer type. When the iterator is itself a method call
+        // (`xs.iter()`, `xs.into_iter()`) whose return type is an
+        // unresolved inference variable, fall back to looking at
+        // the method's receiver — `.iter()` and friends always
+        // produce the receiver's element type, regardless of which
+        // wrapper they technically return.
         let derived = {
-            let mut cur = self.infer.resolve(self.tcx, iter_ty);
+            let starting = self.infer.resolve(self.tcx, iter_ty);
+            let is_var = matches!(self.tcx.kind(starting), Some(TyKind::Var(_)));
+            let starting = if is_var {
+                if let ExprKind::MethodCall { receiver, .. } = &iter.kind {
+                    let recv_ty = self.check_expr(receiver);
+                    self.infer.resolve(self.tcx, recv_ty)
+                } else {
+                    starting
+                }
+            } else {
+                starting
+            };
+            let mut cur = starting;
             loop {
                 match self.tcx.kind_of(cur).clone() {
                     TyKind::Ref { inner, .. } => cur = inner,
@@ -763,11 +835,23 @@ impl<'a> TypeChecker<'a> {
 
     fn check_block(&mut self, block: &Block) -> Ty {
         self.push_scope();
+        let mut diverged = false;
         for stmt in &block.stmts {
             self.check_stmt(stmt);
+            if !diverged && stmt_diverges(stmt) {
+                diverged = true;
+            }
         }
         let ty = if let Some(tail) = &block.tail {
             self.check_expr(tail)
+        } else if diverged {
+            // A block whose statements unconditionally diverge
+            // (`return`, `break`, `continue`, `panic!`) and whose
+            // tail is missing has type `!`. Without this, a match
+            // arm body like `{ eprintln!(...); return Err(msg) }`
+            // would be typed as `unit` and force the match's
+            // result type away from the other arms' real type.
+            self.tcx.never()
         } else {
             self.tcx.unit()
         };
@@ -1046,6 +1130,43 @@ impl<'a> TypeChecker<'a> {
                 Resolution::Import { .. } | Resolution::Err | Resolution::Local(_) => {}
             }
         }
+        // Fallback for built-in generic enums the resolver doesn't
+        // hand out a DefId for (`Result<T, E>`, `Option<T>`). Without
+        // this, an annotation like `let r: Result<i64, String> = ...`
+        // falls through to a fresh inference variable, losing the
+        // substs the variant-binding fixup later needs to re-pin
+        // `x` in `Ok(x) => …` to the actual payload type. The
+        // sentinel `DefId`s use `u32::MAX` / `u32::MAX-1` so they
+        // never collide with anything the resolver emits.
+        match head_name {
+            "Result" => {
+                let substs = self.substs_from_ast(path);
+                return self.tcx.intern(TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+            }
+            "Option" => {
+                let substs = self.substs_from_ast(path);
+                return self.tcx.intern(TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                    substs,
+                });
+            }
+            "Vec" => {
+                let substs = self.substs_from_ast(path);
+                let elem = substs.types().first().copied().unwrap_or_else(|| self.fresh());
+                return self.tcx.intern(TyKind::Vec(elem));
+            }
+            "HashMap" => {
+                let substs = self.substs_from_ast(path);
+                let tys = substs.types();
+                let key = tys.first().copied().unwrap_or_else(|| self.fresh());
+                let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
+                return self.tcx.intern(TyKind::HashMap { key, value });
+            }
+            _ => {}
+        }
         self.fresh()
     }
 
@@ -1134,9 +1255,21 @@ impl<'a> TypeChecker<'a> {
                     self.bind_field_pattern(field);
                 }
             }
-            PatternKind::TupleStruct { elems, .. } => {
-                for elem in elems {
-                    let elem_ty = self.fresh();
+            PatternKind::TupleStruct { path, elems } => {
+                // For built-in generic enums (`Option<T>`,
+                // `Result<T, E>`) pull the payload type out of the
+                // scrutinee's substs and bind it to the matching
+                // pattern element. Without this, `Some(x)` would
+                // bind `x` to a fresh inference variable that no
+                // later use forces back to `T`, leaving downstream
+                // code looking at an unresolved `Var`. Falls back
+                // to a fresh var for any other variant constructor.
+                let payload_tys = self.payload_types_for_variant(path, ty);
+                for (i, elem) in elems.iter().enumerate() {
+                    let elem_ty = payload_tys
+                        .as_ref()
+                        .and_then(|tys| tys.get(i).copied())
+                        .unwrap_or_else(|| self.fresh());
                     self.bind_pattern(elem, elem_ty);
                 }
             }
@@ -1163,6 +1296,33 @@ impl<'a> TypeChecker<'a> {
             self.bind_pattern(pattern, ty);
         } else {
             self.bind_local(&field.name.name, ty);
+        }
+    }
+
+    /// Returns the payload tuple element types for a tuple-struct
+    /// pattern when the scrutinee is `Option<T>` or `Result<T, E>`.
+    /// Returns `None` for any other shape (user enums, unknown
+    /// substs); callers fall back to fresh inference variables.
+    fn payload_types_for_variant(
+        &self,
+        path: &gossamer_ast::Path,
+        scrutinee_ty: Ty,
+    ) -> Option<Vec<Ty>> {
+        let resolved = self.infer.resolve(self.tcx, scrutinee_ty);
+        let resolved = match self.tcx.kind(resolved)? {
+            TyKind::Ref { inner, .. } => *inner,
+            _ => resolved,
+        };
+        let TyKind::Adt { substs, .. } = self.tcx.kind(resolved)? else {
+            return None;
+        };
+        let last = path.segments.last()?.name.name.as_str();
+        let args: Vec<Ty> = substs.types();
+        match (last, args.as_slice()) {
+            ("Some", [t]) => Some(vec![*t]),
+            ("Ok", [t, _]) => Some(vec![*t]),
+            ("Err", [_, e]) => Some(vec![*e]),
+            _ => None,
         }
     }
 }
@@ -1325,6 +1485,26 @@ fn prim_to_ty(tcx: &mut TyCtxt, prim: PrimitiveTy) -> Ty {
         PrimitiveTy::Never => tcx.never(),
         PrimitiveTy::Unit => tcx.unit(),
     }
+}
+
+/// Returns `true` when `stmt` is a statement that always
+/// diverges (transfers control out of the enclosing block via
+/// `return`, `break`, `continue`, or a panicking call). Used by
+/// `check_block` to give a tail-less, divergent block the type
+/// `!` instead of `()`.
+fn stmt_diverges(stmt: &Stmt) -> bool {
+    match &stmt.kind {
+        StmtKind::Expr { expr, .. } => expr_diverges(expr),
+        StmtKind::Let { init: Some(init), .. } => expr_diverges(init),
+        _ => false,
+    }
+}
+
+fn expr_diverges(expr: &Expr) -> bool {
+    matches!(
+        expr.kind,
+        ExprKind::Return(_) | ExprKind::Break { .. } | ExprKind::Continue { .. },
+    )
 }
 
 /// Returns `true` when `from as to` is in the permitted cast set.

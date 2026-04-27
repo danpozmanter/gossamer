@@ -73,7 +73,7 @@ mod tests {
         /* `check_ok` keeps the unwrapping path because subsequent
          * assertions inspect `values`. */
         let values = testing::check_ok(
-            super::parse_sequence(&"1, 2, 3, 5".to_string()),
+            super::parse_sequence(&"1, 2, 3, 5"),
             "parse happy path",
         ).expect("parse failed")
         testing::check_eq(&values.len(), &4, "parsed length matches input")
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn parse_sequence_reports_bad_input() {
-        let result = super::parse_sequence(&"1, nope, 3".to_string())
+        let result = super::parse_sequence(&"1, nope, 3")
         match result {
             Ok(_) => panic!("expected failure"),
             Err(e) => {

@@ -7,13 +7,13 @@
 
 fn classify(n: i64) -> String {
     if n < 0 {
-        "negative".to_string()
+        "negative"
     } else if n == 0 {
-        "zero".to_string()
+        "zero"
     } else if n < 10 {
-        "small".to_string()
+        "small"
     } else {
-        "large".to_string()
+        "large"
     }
 }
 

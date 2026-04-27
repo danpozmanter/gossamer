@@ -173,9 +173,15 @@ impl InferCtxt {
         rhs_kind: &TyKind,
     ) -> Result<(), UnifyError> {
         match (lhs_kind, rhs_kind) {
+            // Never / Error short-circuit BEFORE Var-binding so a
+            // match arm that diverges (`return ...`, `panic!`)
+            // doesn't pin its sibling arm's inference variable to
+            // `Never`. Without this, `let x = match r { Ok(v) =>
+            // v, Err(_) => return Err(...) }` infers `x: Never`
+            // and downstream `x.field` fails the struct lookup.
+            (TyKind::Never | TyKind::Error, _) | (_, TyKind::Never | TyKind::Error) => Ok(()),
             (TyKind::Var(vid), _) => self.bind_var(tcx, *vid, rhs),
             (_, TyKind::Var(vid)) => self.bind_var(tcx, *vid, lhs),
-            (TyKind::Error | TyKind::Never, _) | (_, TyKind::Error | TyKind::Never) => Ok(()),
             _ if lhs_kind == rhs_kind => Ok(()),
             _ => self.unify_structural(tcx, lhs_kind, rhs_kind),
         }
@@ -371,14 +377,19 @@ impl Default for InferCtxt {
 
 fn lookup_var(tcx: &TyCtxt, idx: u32) -> Ty {
     let kind = TyKind::Var(TyVid(idx));
-    for (handle_idx, stored) in
-        (0_u32..).zip((0..tcx.len()).filter_map(|i| tcx.kind(Ty(u32::try_from(i).unwrap()))))
-    {
-        if *stored == kind {
-            return Ty(handle_idx);
+    let len = u32::try_from(tcx.len()).unwrap_or(u32::MAX);
+    for handle_idx in 0..len {
+        let handle = Ty(handle_idx);
+        if tcx.kind(handle) == Some(&kind) {
+            return handle;
         }
     }
-    panic!("var {idx} not interned");
+    // Safety net: a var that hasn't been interned should be
+    // impossible because `alloc_var` interns at allocation time.
+    // If we ever see one (e.g. a unification side-effect we
+    // didn't anticipate), fall back to `Error` rather than
+    // crashing the compiler with valid user input.
+    Ty(0)
 }
 
 fn occurs(infer: &InferCtxt, tcx: &TyCtxt, vid: TyVid, ty: Ty) -> bool {

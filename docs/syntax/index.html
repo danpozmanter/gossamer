@@ -249,10 +249,10 @@ fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
 }
 
 // Reads left-to-right instead of inside-out.
-let n = 3i64 |&gt; double |&gt; add(10i64) |&gt; clamp(0i64, 100i64)
+let n = 3 |&gt; double |&gt; add(10) |&gt; clamp(0, 100)
 
 // Equivalent nested form:
-let same = clamp(0i64, 100i64, add(10i64, double(3i64)))
+let same = clamp(0, 100, add(10, double(3)))
 </code></pre>
 <h2 id="pattern-matching">Pattern matching<a class="headerlink" href="#pattern-matching" title="Permanent link">&para;</a></h2>
 <ul>
@@ -323,7 +323,7 @@ work transparently (GC-managed, no <code>move</code>).</p>
 <pre><code class="language-gossamer">fn apply(f: Fn(i64) -&gt; i64, x: i64) -&gt; i64 { f(x) }
 
 fn main() {
-    let scale = 10i64
+    let scale = 10
     let scaled = |y: i64| scale * y    // captures `scale`
     println!(&quot;{}&quot;, apply(scaled, 5))   // 50
 
@@ -343,7 +343,7 @@ fn add_adds() { ... }
 fn bench_hot_path() { ... }
 
 #[lint(allow(unused_variable))]
-fn scratch() { let x = 1i64 }
+fn scratch() { let x = 1 }
 </code></pre>
 <h2 id="modules">Modules<a class="headerlink" href="#modules" title="Permanent link">&para;</a></h2>
 <pre><code class="language-gossamer">use std::http
@@ -353,12 +353,16 @@ use example.org/other::widget
 <p>A project's module tree is file-based: <code>src/foo.gos</code> becomes
 <code>mod foo</code>, <code>src/bar/mod.gos</code> becomes <code>mod bar</code>.</p>
 <h2 id="numeric-literals">Numeric literals<a class="headerlink" href="#numeric-literals" title="Permanent link">&para;</a></h2>
+<p>Write bare literals by default. Inference picks the type from the
+binding, the call site, or the return type; suffixes are reserved
+for the rare standalone case with no contextual hint.</p>
 <ul>
-<li><code>42</code> — plain int, inferred type.</li>
-<li><code>42i32</code> / <code>42u64</code> — explicit width.</li>
+<li><code>42</code> — plain int, inferred type. Defaults to <code>i64</code>.</li>
+<li><code>42i32</code> / <code>42u64</code> — explicit width when context can't pin it.</li>
 <li><code>0xff</code> / <code>0b1010</code> / <code>0o777</code> — bases.</li>
 <li><code>1_000_000</code> — underscore separator.</li>
-<li><code>1.0f32</code> / <code>1.0f64</code> — float.</li>
+<li><code>1.0</code> — plain float, inferred type. Defaults to <code>f64</code>.</li>
+<li><code>1.0f32</code> — explicit float width.</li>
 </ul>
 <h2 id="string-literals">String literals<a class="headerlink" href="#string-literals" title="Permanent link">&para;</a></h2>
 <ul>
@@ -414,7 +418,7 @@ with a single space:</p>
 </table>
 <p>For the single-<code>String</code> output shape, <code>+</code> concatenates without
 adding a separator:</p>
-<pre><code class="language-gossamer">let greeting = &quot;hello, &quot;.to_string() + &amp;name
+<pre><code class="language-gossamer">let greeting = &quot;hello, &quot; + &amp;name
 </code></pre>
 <p>Writing <code>name!(…)</code> is a hard parse error — the <code>!</code> suffix is
 reserved for no purpose today.</p>

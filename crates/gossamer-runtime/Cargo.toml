@@ -29,3 +29,6 @@ too_many_lines = "warn"
 itoa = "1"
 parking_lot = { workspace = true }
 serde_json = { workspace = true }
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+flate2 = "1"
+rustc-hash = "2"

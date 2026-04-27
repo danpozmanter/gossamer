@@ -34,7 +34,7 @@ use crate::bytecode::{FnChunk, Op};
 use crate::compile::compile_fn;
 use crate::interp::Interpreter;
 use crate::jit_call;
-use crate::value::{RuntimeError, RuntimeResult, SmolStr, Value};
+use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
 
 /// Linked program: every global the VM needs to execute a call.
 ///
@@ -1050,6 +1050,51 @@ impl Vm {
                         registers[dst as usize] = result;
                     }
                 }
+                Op::MapInc {
+                    dst,
+                    map_reg,
+                    key_reg,
+                    by_reg,
+                } => {
+                    // Fused `m.insert(k, m.get_or(k, 0) + by)`. The
+                    // compiler only emits this op for receivers
+                    // statically typed `HashMap`, so the fast arm
+                    // is the only one that runs in practice. The
+                    // generic arm handles polymorphic-by-promotion
+                    // value shapes (i.e. a slot already holding
+                    // something other than `Value::Int`) by going
+                    // through the normal `bin_arith` path.
+                    let result = if let Value::Map(map) = &registers[map_reg as usize] {
+                        let key = MapKey::from_value(&registers[key_reg as usize]);
+                        let by_val = &registers[by_reg as usize];
+                        let mut guard = map.lock();
+                        let entry = guard.entry(key).or_insert(Value::Int(0));
+                        match (&*entry, by_val) {
+                            (Value::Int(cur), Value::Int(b)) => {
+                                *entry = Value::Int(*cur + *b);
+                            }
+                            _ => {
+                                let cur = entry.clone();
+                                let sum = bin_arith(
+                                    &cur,
+                                    by_val,
+                                    i64::wrapping_add,
+                                    |a, b| a + b,
+                                    "+",
+                                )?;
+                                *entry = sum;
+                            }
+                        }
+                        let cloned = Arc::clone(map);
+                        drop(guard);
+                        Value::Map(cloned)
+                    } else {
+                        // Receiver isn't a Map (shouldn't happen for
+                        // a HashMap-typed receiver, but stay total).
+                        registers[map_reg as usize].clone()
+                    };
+                    registers[dst as usize] = result;
+                }
                 Op::IndexGet { dst, base, index } => {
                     let b = &registers[base as usize];
                     let i = &registers[index as usize];
@@ -1473,6 +1518,48 @@ impl Vm {
                 Op::NegI64 { dst_i, src_i } => {
                     ints[dst_i as usize] = ints[src_i as usize].wrapping_neg();
                 }
+                Op::BitAndI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    *ints.get_unchecked_mut(dst_i as usize) =
+                        ints.get_unchecked(lhs_i as usize) & ints.get_unchecked(rhs_i as usize);
+                },
+                Op::BitOrI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    *ints.get_unchecked_mut(dst_i as usize) =
+                        ints.get_unchecked(lhs_i as usize) | ints.get_unchecked(rhs_i as usize);
+                },
+                Op::BitXorI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    *ints.get_unchecked_mut(dst_i as usize) =
+                        ints.get_unchecked(lhs_i as usize) ^ ints.get_unchecked(rhs_i as usize);
+                },
+                Op::ShlI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    let shift = (*ints.get_unchecked(rhs_i as usize) & 63) as u32;
+                    *ints.get_unchecked_mut(dst_i as usize) =
+                        ints.get_unchecked(lhs_i as usize).wrapping_shl(shift);
+                },
+                Op::ShrI64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    let shift = (*ints.get_unchecked(rhs_i as usize) & 63) as u32;
+                    *ints.get_unchecked_mut(dst_i as usize) =
+                        ints.get_unchecked(lhs_i as usize).wrapping_shr(shift);
+                },
                 Op::LtI64 {
                     dst_v,
                     lhs_i,

@@ -15,7 +15,7 @@ use crate::resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution};
 
 /// Sentinel [`NodeId`] used for prelude-provided names that have no
 /// corresponding `use` declaration in the source file.
-const PRELUDE_SENTINEL: NodeId = NodeId::DUMMY;
+pub(crate) const PRELUDE_SENTINEL: NodeId = NodeId::DUMMY;
 
 /// A single entry in the value or type namespace.
 #[derive(Debug, Clone, Copy)]

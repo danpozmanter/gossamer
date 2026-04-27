@@ -97,7 +97,24 @@ impl Resolver {
 
     fn define_import(&mut self, name: &str, use_id: NodeId, span: Span) {
         let module = self.scopes.module_mut();
-        if module.lookup_type(name).is_some() || module.lookup_value(name).is_some() {
+        // Allow imports to shadow prelude entries (Gossamer's
+        // `use std::collections::{HashMap, ...}` style imports
+        // re-introduce names already in the prelude). A
+        // collision with a non-prelude binding stays an error.
+        let existing_kind = module
+            .lookup_type(name)
+            .or_else(|| module.lookup_value(name))
+            .map(|b| b.resolution);
+        let is_prelude_only = match existing_kind {
+            Some(crate::resolutions::Resolution::Import { use_id: existing })
+                if existing == crate::scope::PRELUDE_SENTINEL =>
+            {
+                true
+            }
+            None => true,
+            _ => false,
+        };
+        if !is_prelude_only {
             self.emit(
                 ResolveError::DuplicateImport {
                     name: name.to_string(),

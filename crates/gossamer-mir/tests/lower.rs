@@ -269,7 +269,17 @@ impl Handler for App {
 fn main() { }
 ";
     let (bodies, _) = build(source);
-    assert!(bodies.iter().any(|b| b.name == "serve"));
+    // Impl methods are mangled to `Type::method` so that two
+    // impls with the same method name on different types do not
+    // collide in the codegen's by-name dispatch table. Either
+    // form should appear: the trait impl's mangled name keys on
+    // the impl's `self_name` (`App`).
+    assert!(
+        bodies
+            .iter()
+            .any(|b| b.name == "serve" || b.name == "App::serve"),
+        "expected the impl method body to be lowered (mangled or bare)"
+    );
 }
 
 #[test]
@@ -328,7 +338,11 @@ fn optimise_preserves_match_result_local_across_blocks() {
 }
 
 #[test]
-fn match_with_guard_falls_back_to_unsupported_placeholder() {
+fn match_with_guard_lowers_to_chained_branches() {
+    // Guarded arms now compile to a sequential
+    // `if pattern_predicate && guard { body } else next` chain
+    // (see `lower_match_with_guards`), so the body must NOT
+    // contain the unsupported placeholder anymore.
     let source = r"fn pick(n: i64) -> i64 {
     match n {
         x if x > 0i64 => 1i64,
@@ -348,9 +362,15 @@ fn match_with_guard_falls_back_to_unsupported_placeholder() {
         )
     });
     assert!(
-        has_unsupported_call,
-        "guarded arms must route through the unsupported-placeholder so codegen falls back"
+        !has_unsupported_call,
+        "guarded match arms should lower into a real if-chain, not the unsupported placeholder"
     );
+    // Sanity: at least one SwitchInt terminator (the chain
+    // emits one per arm) must be present.
+    let has_switch = body.blocks.iter().any(|b| {
+        matches!(b.terminator, Terminator::SwitchInt { .. })
+    });
+    assert!(has_switch, "guarded chain should produce SwitchInt branches");
 }
 
 #[test]

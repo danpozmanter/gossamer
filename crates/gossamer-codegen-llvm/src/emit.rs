@@ -230,8 +230,8 @@ fn render_module_inner(
         } else {
             writeln!(out, "  %r = call i64 @\"gos_main\"()").unwrap();
             writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
-            writeln!(out, "  %t = trunc i64 %r to i32").unwrap();
-            writeln!(out, "  ret i32 %t").unwrap();
+            writeln!(out, "  %code = call i32 @gos_rt_main_exit_code(i64 %r)").unwrap();
+            writeln!(out, "  ret i32 %code").unwrap();
         }
         writeln!(out, "}}").unwrap();
     }
@@ -493,6 +493,99 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare i32 @gos_rt_str_ends_with(ptr, ptr)",
     "declare i64 @gos_rt_str_find(ptr, ptr)",
     "declare ptr @gos_rt_str_replace(ptr, ptr, ptr)",
+    "declare ptr @malloc(i64)",
+    "declare ptr @gos_rt_vec_new(i32)",
+    "declare ptr @gos_rt_vec_with_capacity(i32, i64)",
+    "declare i64 @gos_rt_vec_len(ptr)",
+    "declare void @gos_rt_vec_push(ptr, ptr)",
+    "declare ptr @gos_rt_vec_get_ptr(ptr, i64)",
+    "declare i32 @gos_rt_vec_pop(ptr, ptr)",
+    "declare ptr @gos_rt_vec_slice(ptr, i64, i64)",
+    // Errors module.
+    "declare ptr @gos_rt_error_new(ptr)",
+    "declare ptr @gos_rt_error_wrap(ptr, ptr)",
+    "declare ptr @gos_rt_error_message(ptr)",
+    "declare ptr @gos_rt_error_cause(ptr)",
+    "declare i8 @gos_rt_error_is(ptr, ptr)",
+    // Regex module.
+    "declare ptr @gos_rt_regex_compile(ptr)",
+    "declare i8 @gos_rt_regex_is_match(ptr, ptr)",
+    "declare ptr @gos_rt_regex_find(ptr, ptr)",
+    "declare ptr @gos_rt_regex_find_all(ptr, ptr)",
+    "declare ptr @gos_rt_regex_replace_all(ptr, ptr, ptr)",
+    "declare ptr @gos_rt_regex_split(ptr, ptr)",
+    // fs / path.
+    "declare ptr @gos_rt_fs_read_to_string(ptr)",
+    "declare i8 @gos_rt_fs_write(ptr, ptr)",
+    "declare i8 @gos_rt_fs_create_dir_all(ptr)",
+    "declare ptr @gos_rt_path_join(ptr, ptr)",
+    // flag::Set.
+    "declare ptr @gos_rt_flag_set_new(ptr)",
+    "declare ptr @gos_rt_flag_set_string(ptr, ptr, ptr, ptr)",
+    "declare ptr @gos_rt_flag_set_uint(ptr, ptr, i64, ptr)",
+    "declare ptr @gos_rt_flag_set_bool(ptr, ptr, i8, ptr)",
+    "declare ptr @gos_rt_flag_set_parse(ptr, ptr)",
+    // bufio::Scanner.
+    "declare ptr @gos_rt_bufio_scanner_new(ptr)",
+    "declare i8 @gos_rt_bufio_scanner_scan(ptr)",
+    "declare ptr @gos_rt_bufio_scanner_text(ptr)",
+    // http client.
+    "declare ptr @gos_rt_http_client_new()",
+    "declare ptr @gos_rt_http_client_get(ptr, ptr)",
+    "declare ptr @gos_rt_http_client_post(ptr, ptr)",
+    "declare ptr @gos_rt_http_request_header(ptr, ptr, ptr)",
+    "declare ptr @gos_rt_http_request_body(ptr, ptr)",
+    "declare ptr @gos_rt_http_request_send(ptr)",
+    "declare i64 @gos_rt_http_response_status(ptr)",
+    "declare ptr @gos_rt_http_response_body(ptr)",
+    "declare i64 @gos_rt_vec_get_i64(ptr, i64)",
+    "declare void @gos_rt_vec_set_i64(ptr, i64, i64)",
+    "declare ptr @gos_rt_vec_format_i64(ptr)",
+    "declare void @gos_rt_concat_init()",
+    "declare void @gos_rt_concat_str(ptr)",
+    "declare void @gos_rt_concat_i64(i64)",
+    "declare void @gos_rt_concat_f64(double)",
+    "declare void @gos_rt_concat_bool(i32)",
+    "declare void @gos_rt_concat_char(i32)",
+    "declare ptr @gos_rt_concat_finish()",
+    "declare i32 @gos_rt_main_exit_code(i64)",
+    "declare ptr @gos_rt_result_new(i64, i64)",
+    "declare i64 @gos_rt_result_disc(ptr)",
+    "declare i64 @gos_rt_result_payload(ptr)",
+    "declare ptr @gos_rt_set_new()",
+    "declare i8 @gos_rt_set_insert(ptr, ptr)",
+    "declare i8 @gos_rt_set_contains(ptr, ptr)",
+    "declare i8 @gos_rt_set_remove(ptr, ptr)",
+    "declare i64 @gos_rt_set_len(ptr)",
+    "declare ptr @gos_rt_btmap_new()",
+    "declare void @gos_rt_btmap_insert(ptr, ptr, i64)",
+    "declare i64 @gos_rt_btmap_get_or(ptr, ptr, i64)",
+    "declare i64 @gos_rt_btmap_len(ptr)",
+    "declare void @gos_rt_http_response_set_header(ptr, ptr, ptr)",
+    "declare ptr @gos_rt_http_response_get_header(ptr, ptr)",
+    "declare void @gos_rt_http_request_set_header(ptr, ptr, ptr)",
+    "declare ptr @gos_rt_http_request_get_header(ptr, ptr)",
+    "declare ptr @gos_rt_http_request_path(ptr)",
+    "declare ptr @gos_rt_http_request_method(ptr)",
+    "declare ptr @gos_rt_http_request_query(ptr)",
+    "declare ptr @gos_rt_http_request_body_str(ptr)",
+    "declare ptr @gos_rt_http_response_text_new(i64, ptr)",
+    "declare ptr @gos_rt_http_response_json_new(i64, ptr)",
+    // gzip / slog / testing.
+    "declare ptr @gos_rt_gzip_encode(ptr)",
+    "declare ptr @gos_rt_gzip_decode(ptr)",
+    "declare void @gos_rt_slog_info(ptr)",
+    "declare void @gos_rt_slog_warn(ptr)",
+    "declare void @gos_rt_slog_error(ptr)",
+    "declare void @gos_rt_slog_debug(ptr)",
+    "declare i8 @gos_rt_testing_check(i8, ptr)",
+    "declare i8 @gos_rt_testing_check_eq_i64(i64, i64, ptr)",
+    "declare ptr @gos_rt_str_split(ptr, ptr)",
+    "declare ptr @gos_rt_str_lines(ptr)",
+    "declare ptr @gos_rt_str_repeat(ptr, i64)",
+    "declare i8 @gos_rt_str_eq(ptr, ptr)",
+    "declare i8 @gos_rt_str_is_empty(ptr)",
+    "declare i8 @gos_rt_len_is_zero(ptr)",
     // Parsing / formatting.
     "declare i64 @gos_rt_parse_i64(ptr, ptr)",
     "declare double @gos_rt_parse_f64(ptr, ptr)",
@@ -542,6 +635,27 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare void @gos_rt_go_spawn_call_5(ptr, i64, i64, i64, i64, i64)",
     "declare void @gos_rt_go_spawn_call_6(ptr, i64, i64, i64, i64, i64, i64)",
     "declare i64 @gos_rt_lcg_jump(i64, i64, i64, i64, i64)",
+    // HashMap runtime — per-shape ABI variants. The MIR's
+    // method-call dispatch picks one of these based on the
+    // map's key + value kinds. The byte-erased ABI
+    // (`gos_rt_map_insert`/`_get`/`_remove`) stays available
+    // for the cranelift tier; the LLVM tier hits the
+    // scalar / string-keyed shapes directly.
+    "declare ptr @gos_rt_map_new(i32, i32)",
+    "declare i64 @gos_rt_map_len(ptr)",
+    "declare void @gos_rt_map_insert_i64_i64(ptr, i64, i64)",
+    "declare i64 @gos_rt_map_get_i64(ptr, i64)",
+    "declare i64 @gos_rt_map_get_or_i64(ptr, i64, i64)",
+    "declare i64 @gos_rt_map_inc_i64(ptr, i64, i64)",
+    "declare i8 @gos_rt_map_remove_i64(ptr, i64)",
+    "declare i8 @gos_rt_map_contains_key_i64(ptr, i64)",
+    "declare void @gos_rt_map_insert_str_i64(ptr, ptr, i64)",
+    "declare i64 @gos_rt_map_get_str_i64(ptr, ptr)",
+    "declare void @gos_rt_map_insert_str_str(ptr, ptr, ptr)",
+    "declare ptr @gos_rt_map_get_str_str(ptr, ptr)",
+    "declare i8 @gos_rt_map_contains_key_str(ptr, ptr)",
+    "declare i8 @gos_rt_map_remove_str(ptr, ptr)",
+    "declare void @gos_rt_map_clear(ptr)",
     // Inline-able stdout buffer the LLVM lowerer reads
     // directly from the runtime to bypass per-byte FFI calls
     // in the fasta hot loop. Sizes match

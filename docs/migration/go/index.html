@@ -240,17 +240,17 @@ the spec, see <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.m
 </tr>
 <tr>
 <td><code>var x int = 5</code> / <code>x := 5</code></td>
-<td><code>let x: i64 = 5i64</code> / <code>let x = 5i64</code></td>
+<td><code>let x: i64 = 5</code> / <code>let x = 5</code></td>
 <td><code>let mut</code> for mutables.</td>
 </tr>
 <tr>
 <td><code>if x &gt; 0 { … } else { … }</code></td>
-<td><code>if x &gt; 0i64 { … } else { … }</code></td>
+<td><code>if x &gt; 0 { … } else { … }</code></td>
 <td>Same.</td>
 </tr>
 <tr>
 <td><code>for i := 0; i &lt; n; i++ { … }</code></td>
-<td><code>for i in 0i64..n { … }</code></td>
+<td><code>for i in 0..n { … }</code></td>
 <td>Range-based for-loops.</td>
 </tr>
 <tr>
@@ -361,7 +361,7 @@ set satisfies the interface implicitly.</p>
 var y int64 = int64(x)   // explicit in Go too, but...
 var z int64 = x          // ...this also works in Go for untyped literals
 </code></pre>
-<pre><code class="language-gos">let x: i32 = 5i32
+<pre><code class="language-gos">let x: i32 = 5
 let y: i64 = x as i64    // required
 let z: i64 = x           // type error
 </code></pre>
@@ -399,10 +399,10 @@ are opaque to user code. If you need stable wire-format integers,
 write the conversion table out by hand:</p>
 <pre><code class="language-gos">fn severity_to_int(s: Severity) -&gt; i64 {
     match s {
-        Severity::Debug =&gt; 0i64,
-        Severity::Info =&gt; 1i64,
-        Severity::Warn =&gt; 2i64,
-        Severity::Error =&gt; 3i64,
+        Severity::Debug =&gt; 0,
+        Severity::Info =&gt; 1,
+        Severity::Warn =&gt; 2,
+        Severity::Error =&gt; 3,
     }
 }
 </code></pre>
@@ -422,7 +422,7 @@ write the conversion table out by hand:</p>
 </ul>
 <pre><code class="language-gos">select {
     recv v = rx =&gt; println(&quot;got:&quot;, v),
-    send tx = 42i64 =&gt; println(&quot;sent&quot;),
+    send tx = 42 =&gt; println(&quot;sent&quot;),
     default =&gt; println(&quot;would block&quot;),
 }
 </code></pre>
@@ -682,7 +682,7 @@ wg.Wait()
 </code></pre>
 <pre><code class="language-gos">// Gossamer
 let wg = sync::WaitGroup::new()
-wg.add(1i64)
+wg.add(1)
 go fn() {
     defer wg.done()
     work()
@@ -722,7 +722,7 @@ struct User {
 }
 
 fn main() {
-    let u = User { name: &quot;Ada&quot;.to_string(), age: 36i64 }
+    let u = User { name: &quot;Ada&quot;, age: 36 }
     let s = json::encode(&amp;u).unwrap()
     let parsed: User = json::decode(&amp;s).unwrap()
 }

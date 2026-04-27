@@ -22,27 +22,28 @@ pub struct RenderOptions {
 #[must_use]
 pub fn render(diag: &Diagnostic, map: &SourceMap, options: RenderOptions) -> String {
     let mut out = String::new();
-    let header = format!("{}[{}]: {}\n", diag.severity, diag.code, diag.title);
-    if options.colour {
-        out.push_str(colour_for(diag.severity));
-        out.push_str(&header);
-        out.push_str(RESET);
-    } else {
-        out.push_str(&header);
-    }
+    let severity_colour = if options.colour { colour_for(diag.severity) } else { "" };
+    let bold_colour = if options.colour { BOLD } else { "" };
+    let dim_colour = if options.colour { DIM } else { "" };
+    let reset = if options.colour { RESET } else { "" };
+    let _ = writeln!(
+        out,
+        "{severity_colour}{}[{}]{reset}{bold_colour}: {}{reset}",
+        diag.severity, diag.code, diag.title,
+    );
     for label in &diag.labels {
-        render_label(&mut out, label, map, &diag.title);
+        render_label(&mut out, label, map, &diag.title, options.colour);
     }
     for note in &diag.notes {
-        let _ = writeln!(out, "  = note: {note}");
+        let _ = writeln!(out, "  {dim_colour}= note:{reset} {note}");
     }
     for help in &diag.helps {
-        let _ = writeln!(out, "  = help: {help}");
+        let _ = writeln!(out, "  {dim_colour}= help:{reset} {note}", note = help);
     }
     for suggestion in &diag.suggestions {
         let _ = writeln!(
             out,
-            "  = suggestion: {} → `{}`",
+            "  {dim_colour}= suggestion:{reset} {} → `{}`",
             suggestion.message, suggestion.replacement
         );
     }
@@ -62,13 +63,23 @@ pub fn render_plain(diag: &Diagnostic) -> String {
     out
 }
 
-fn render_label(out: &mut String, label: &Label, map: &SourceMap, header_title: &str) {
+fn render_label(
+    out: &mut String,
+    label: &Label,
+    map: &SourceMap,
+    header_title: &str,
+    colour: bool,
+) {
     let (path, line, column) = resolve(map, label.location.file, label.location.span);
     let prefix = if label.primary { "-->" } else { "::>" };
-    let _ = writeln!(out, "  {prefix} {path}:{line}:{column}");
+    let cyan = if colour { CYAN } else { "" };
+    let red = if colour { RED } else { "" };
+    let dim = if colour { DIM } else { "" };
+    let reset = if colour { RESET } else { "" };
+    let _ = writeln!(out, "  {cyan}{prefix}{reset} {path}:{line}:{column}");
     if let Some(source_line) = source_line_of(map, label.location.file, line) {
         let gutter = format!("{line:>4}");
-        let _ = writeln!(out, "  {gutter} | {source_line}");
+        let _ = writeln!(out, "  {dim}{gutter} |{reset} {source_line}");
         let padding = " ".repeat(column.saturating_sub(1) as usize);
         let span_len = label
             .location
@@ -77,17 +88,18 @@ fn render_label(out: &mut String, label: &Label, map: &SourceMap, header_title: 
             .saturating_sub(label.location.span.start)
             .max(1);
         let caret = "^".repeat(span_len as usize);
-        let _ = writeln!(out, "       | {padding}{caret}");
+        let caret_colour = if label.primary { red } else { cyan };
+        let _ = writeln!(
+            out,
+            "       {dim}|{reset} {padding}{caret_colour}{caret}{reset}",
+        );
     }
-    // Suppress the in-snippet `error: <msg>` line ONLY when its
-    // text is a verbatim copy of the diagnostic's header title —
-    // that's the noise case the typecheck builder produces today.
-    // Genuinely informative primary messages still render.
     if let Some(msg) = &label.message {
         let is_redundant = label.primary && msg == header_title;
         if !is_redundant {
             let tag = if label.primary { "error" } else { "note" };
-            let _ = writeln!(out, "     {tag}: {msg}");
+            let tag_colour = if label.primary { red } else { cyan };
+            let _ = writeln!(out, "     {tag_colour}{tag}{reset}: {msg}");
         }
     }
 }
@@ -110,6 +122,10 @@ fn resolve(map: &SourceMap, file: FileId, span: gossamer_lex::Span) -> (String, 
 }
 
 const RESET: &str = "\x1b[0m";
+const RED: &str = "\x1b[31m";
+const CYAN: &str = "\x1b[36m";
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
 
 const fn colour_for(severity: crate::Severity) -> &'static str {
     match severity {

@@ -197,7 +197,18 @@ impl Lowerer<'_> {
         let variants = decl
             .variants
             .iter()
-            .map(|variant| variant.name.clone())
+            .map(|variant| {
+                let struct_fields = match &variant.body {
+                    gossamer_ast::StructBody::Named(fields) => {
+                        Some(fields.iter().map(|f| f.name.clone()).collect())
+                    }
+                    gossamer_ast::StructBody::Tuple(_) | gossamer_ast::StructBody::Unit => None,
+                };
+                crate::tree::HirEnumVariant {
+                    name: variant.name.clone(),
+                    struct_fields,
+                }
+            })
             .collect();
         let ty = self.error_ty();
         HirAdt {
@@ -830,7 +841,20 @@ impl Lowerer<'_> {
                     None => self.error_ty(),
                 };
                 let init = init.as_ref().map(|expr| self.lower_expr(expr));
-                let pattern_ty = init.as_ref().map_or(declared_ty, |expr| expr.ty);
+                // Prefer the user-written annotation over the
+                // initialiser's inferred type — the annotation is
+                // already what the typechecker unified the init
+                // expression against, and a concrete `Result<T, E>`
+                // / `Option<T>` annotation is much more useful to
+                // MIR's downstream `Adt` substs lookups than the
+                // raw `Var(_)` an inference variable would carry
+                // through. Falls back to the init's type when no
+                // annotation was written.
+                let pattern_ty = if matches!(self.tcx.kind_of(declared_ty), gossamer_types::TyKind::Error) {
+                    init.as_ref().map_or(declared_ty, |expr| expr.ty)
+                } else {
+                    declared_ty
+                };
                 let pattern = self.lower_pat_with_ty(pattern, pattern_ty);
                 HirStmtKind::Let {
                     pattern,
@@ -930,7 +954,11 @@ impl Lowerer<'_> {
                 inner: Box::new(self.lower_pat(inner)),
                 mutable: matches!(mutability, Mutability::Mutable),
             },
-            AstPatKind::Range { lo, .. } => HirPatKind::Literal(lower_literal(lo)),
+            AstPatKind::Range { lo, hi, kind } => HirPatKind::Range {
+                lo: lower_literal(lo),
+                hi: lower_literal(hi),
+                inclusive: matches!(kind, gossamer_ast::RangeKind::Inclusive),
+            },
         }
         .erase_unused(ty)
     }

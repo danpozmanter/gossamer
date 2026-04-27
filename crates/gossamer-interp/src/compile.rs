@@ -1610,6 +1610,66 @@ impl<'tcx> FnBuilder<'tcx> {
                     kind: RegKind::Value,
                 })
             }
+            HirBinaryOp::BitAnd => {
+                let dst = self.alloc_int();
+                self.emit(Op::BitAndI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::BitOr => {
+                let dst = self.alloc_int();
+                self.emit(Op::BitOrI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::BitXor => {
+                let dst = self.alloc_int();
+                self.emit(Op::BitXorI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::Shl => {
+                let dst = self.alloc_int();
+                self.emit(Op::ShlI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::Shr => {
+                let dst = self.alloc_int();
+                self.emit(Op::ShrI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
             _ => Err(RuntimeError::Unsupported("i64 binary op kind")),
         }
     }
@@ -2296,6 +2356,27 @@ impl<'tcx> FnBuilder<'tcx> {
         name: &Ident,
         args: &[HirExpr],
     ) -> RuntimeResult<Reg> {
+        // Super-instruction fast path for the canonical
+        // `m.insert(k, m.get_or(k, 0) + by)` counter-bump.
+        // Detected here (before compiling args) so the inner
+        // `get_or` call is never lowered.
+        if name.name == "insert" && args.len() == 2 {
+            if let Some((key_expr, by_expr)) = match_map_inc_pattern(receiver, &args[0], &args[1]) {
+                if matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. })) {
+                    let map_reg = self.compile_expr(receiver)?;
+                    let key_reg = self.compile_expr(key_expr)?;
+                    let by_reg = self.compile_expr(by_expr)?;
+                    let dst = self.alloc_reg();
+                    self.emit(Op::MapInc {
+                        dst,
+                        map_reg,
+                        key_reg,
+                        by_reg,
+                    });
+                    return Ok(dst);
+                }
+            }
+        }
         let receiver_reg = self.compile_expr(receiver)?;
         // Super-instruction fast path for `<stream>.write_byte(<b>)`.
         // The runtime handler in `vm.rs::Op::StreamWriteByte`
@@ -2934,4 +3015,81 @@ fn strip_float_suffix(text: &str) -> String {
         }
     }
     text.to_string()
+}
+
+/// Detects `m.insert(k, m.get_or(k, 0) + by)`. Returns `(key, by)`
+/// (borrowed from the original HIR) when the surrounding insert
+/// receiver and key match the inner `get_or`'s receiver and key
+/// structurally and the inner default arg is literal `0`.
+pub(crate) fn match_map_inc_pattern<'a>(
+    receiver: &'a HirExpr,
+    insert_key: &'a HirExpr,
+    insert_value: &'a HirExpr,
+) -> Option<(&'a HirExpr, &'a HirExpr)> {
+    let HirExprKind::Binary { op, lhs, rhs } = &insert_value.kind else {
+        return None;
+    };
+    if !matches!(op, HirBinaryOp::Add) {
+        return None;
+    }
+    if is_get_or_zero(receiver, insert_key, lhs) {
+        return Some((insert_key, rhs));
+    }
+    if is_get_or_zero(receiver, insert_key, rhs) {
+        return Some((insert_key, lhs));
+    }
+    None
+}
+
+fn is_get_or_zero(receiver: &HirExpr, key: &HirExpr, candidate: &HirExpr) -> bool {
+    let HirExprKind::MethodCall {
+        receiver: inner_recv,
+        name: inner_name,
+        args: inner_args,
+    } = &candidate.kind
+    else {
+        return false;
+    };
+    inner_name.name == "get_or"
+        && inner_args.len() == 2
+        && exprs_equiv(receiver, inner_recv)
+        && exprs_equiv(key, &inner_args[0])
+        && is_zero_literal(&inner_args[1])
+}
+
+/// Structural equivalence over the HIR shapes that can safely be
+/// re-evaluated zero times (i.e. compiled once and reused for both
+/// the outer `insert` and the elided inner `get_or`). Limited to
+/// pure single-segment `Path` reads and primitive literals so we
+/// never elide a side-effecting expression.
+fn exprs_equiv(a: &HirExpr, b: &HirExpr) -> bool {
+    match (&a.kind, &b.kind) {
+        (
+            HirExprKind::Path { segments: sa, .. },
+            HirExprKind::Path { segments: sb, .. },
+        ) => sa.len() == sb.len() && sa.iter().zip(sb).all(|(x, y)| x.name == y.name),
+        (HirExprKind::Literal(la), HirExprKind::Literal(lb)) => literals_equal(la, lb),
+        _ => false,
+    }
+}
+
+fn literals_equal(a: &HirLiteral, b: &HirLiteral) -> bool {
+    match (a, b) {
+        (HirLiteral::Int(x), HirLiteral::Int(y)) => x == y,
+        (HirLiteral::Float(x), HirLiteral::Float(y)) => x == y,
+        (HirLiteral::String(x), HirLiteral::String(y)) => x == y,
+        (HirLiteral::Char(x), HirLiteral::Char(y)) => x == y,
+        (HirLiteral::Byte(x), HirLiteral::Byte(y)) => x == y,
+        (HirLiteral::ByteString(x), HirLiteral::ByteString(y)) => x == y,
+        (HirLiteral::Bool(x), HirLiteral::Bool(y)) => x == y,
+        (HirLiteral::Unit, HirLiteral::Unit) => true,
+        _ => false,
+    }
+}
+
+fn is_zero_literal(expr: &HirExpr) -> bool {
+    match &expr.kind {
+        HirExprKind::Literal(HirLiteral::Int(text)) => parse_int(text) == Some(0),
+        _ => false,
+    }
 }

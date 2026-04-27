@@ -24,9 +24,9 @@ the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPE
 | Go | Gossamer | Notes |
 |---|---|---|
 | `func name(x int) int { return x + 1 }` | `fn name(x: i64) -> i64 { x + 1 }` | Trailing-expression-as-return; `return` keyword optional. |
-| `var x int = 5` / `x := 5` | `let x: i64 = 5i64` / `let x = 5i64` | `let mut` for mutables. |
-| `if x > 0 { … } else { … }` | `if x > 0i64 { … } else { … }` | Same. |
-| `for i := 0; i < n; i++ { … }` | `for i in 0i64..n { … }` | Range-based for-loops. |
+| `var x int = 5` / `x := 5` | `let x: i64 = 5` / `let x = 5` | `let mut` for mutables. |
+| `if x > 0 { … } else { … }` | `if x > 0 { … } else { … }` | Same. |
+| `for i := 0; i < n; i++ { … }` | `for i in 0..n { … }` | Range-based for-loops. |
 | `for { … }` | `loop { … }` | Infinite loop. |
 | `for i, v := range xs { … }` | `for (i, v) in xs.iter().enumerate() { … }` | Iterator chain. |
 | `switch x { case 1: … }` | `match x { 1 => …, _ => … }` | Pattern-matching is exhaustive — a missing arm is a compile error. |
@@ -102,7 +102,7 @@ var z int64 = x          // ...this also works in Go for untyped literals
 ```
 
 ```gos
-let x: i32 = 5i32
+let x: i32 = 5
 let y: i64 = x as i64    // required
 let z: i64 = x           // type error
 ```
@@ -155,10 +155,10 @@ write the conversion table out by hand:
 ```gos
 fn severity_to_int(s: Severity) -> i64 {
     match s {
-        Severity::Debug => 0i64,
-        Severity::Info => 1i64,
-        Severity::Warn => 2i64,
-        Severity::Error => 3i64,
+        Severity::Debug => 0,
+        Severity::Info => 1,
+        Severity::Warn => 2,
+        Severity::Error => 3,
     }
 }
 ```
@@ -181,7 +181,7 @@ Goroutine and channel syntax is the same. Behavioural notes:
 ```gos
 select {
     recv v = rx => println("got:", v),
-    send tx = 42i64 => println("sent"),
+    send tx = 42 => println("sent"),
     default => println("would block"),
 }
 ```
@@ -274,7 +274,7 @@ wg.Wait()
 ```gos
 // Gossamer
 let wg = sync::WaitGroup::new()
-wg.add(1i64)
+wg.add(1)
 go fn() {
     defer wg.done()
     work()
@@ -324,7 +324,7 @@ struct User {
 }
 
 fn main() {
-    let u = User { name: "Ada".to_string(), age: 36i64 }
+    let u = User { name: "Ada", age: 36 }
     let s = json::encode(&u).unwrap()
     let parsed: User = json::decode(&s).unwrap()
 }

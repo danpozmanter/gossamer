@@ -34,7 +34,7 @@ fn main() {
     println!("arithmetic: {n}")
 
     // Text pipeline: method pipes compose the same way.
-    let c = "  Hello  World  ".to_string() |> word_count
+    let c = "  Hello  World  " |> word_count
     println!("words: {c}")
 
     // Equivalent nested form (what `|>` desugars to):

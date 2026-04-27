@@ -31,11 +31,11 @@ fn load_setting(key: &String, raw: &String) -> Result<i64, errors::Error> {
 
 fn main() -> Result<(), errors::Error> {
     // Happy path.
-    let n = load_setting(&"port".to_string(), &"8080".to_string())?
+    let n = load_setting(&"port", &"8080")?
     println!("port = {n}")
 
     // Failure path — propagate with `?` or inspect directly.
-    let attempt = load_setting(&"port".to_string(), &"oops".to_string())
+    let attempt = load_setting(&"port", &"oops")
     match attempt {
         Ok(v) => println!("parsed {v}"),
         Err(e) => {
@@ -57,7 +57,7 @@ fn main() -> Result<(), errors::Error> {
     }
 
     // `errors::is` checks whether any link in the chain matches.
-    let broken = load_setting(&"workers".to_string(), &"-3".to_string())
+    let broken = load_setting(&"workers", &"-3")
     match broken {
         Ok(_) => println!("unexpected success"),
         Err(e) => {

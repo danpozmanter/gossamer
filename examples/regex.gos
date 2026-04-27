@@ -36,7 +36,7 @@ fn main() {
         Ok(r) => r,
         Err(e) => { println("bad: " + e); return }
     }
-    for hit in regex::find_all(&digits, &"1 and 22 and 333".to_string()) {
+    for hit in regex::find_all(&digits, &"1 and 22 and 333") {
         println!("digit: {}", hit.2)
     }
 
@@ -45,11 +45,11 @@ fn main() {
         Ok(r) => r,
         Err(e) => { println("bad: " + e); return }
     }
-    let rewritten = regex::replace_all(&kv, &"port=80 host=443".to_string(), &"$2:$1".to_string())
+    let rewritten = regex::replace_all(&kv, &"port=80 host=443", &"$2:$1")
     println!("rewritten: {rewritten}")
 
     // Structured parse: each row is [full, key, value].
-    for row in parse_pairs("addr=localhost port=8080".to_string()) {
+    for row in parse_pairs("addr=localhost port=8080") {
         match row[1] {
             Some(k) => match row[2] {
                 Some(v) => println!("  {k} = {v}"),
@@ -64,7 +64,7 @@ fn main() {
         Ok(r) => r,
         Err(e) => { println("bad: " + e); return }
     }
-    for piece in regex::split(&comma, &"a,  b , c,d".to_string()) {
+    for piece in regex::split(&comma, &"a,  b , c,d") {
         println!("piece: {piece}")
     }
 }

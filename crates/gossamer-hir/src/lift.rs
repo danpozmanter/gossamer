@@ -409,7 +409,10 @@ fn collect_pattern_names(pat: &HirPat, out: &mut HashSet<String>) {
             }
         }
         HirPatKind::Ref { inner, .. } => collect_pattern_names(inner, out),
-        HirPatKind::Literal(_) | HirPatKind::Wildcard | HirPatKind::Rest => {}
+        HirPatKind::Literal(_)
+        | HirPatKind::Wildcard
+        | HirPatKind::Rest
+        | HirPatKind::Range { .. } => {}
     }
 }
 

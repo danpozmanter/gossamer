@@ -150,8 +150,8 @@ fn build_subcommand_produces_runnable_output() {
         "build failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let binary = dir.join("build_magic");
-    assert!(binary.exists(), "build output missing");
+    let binary = dir.join("target").join("debug").join("build_magic");
+    assert!(binary.exists(), "build output missing at {}", binary.display());
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -217,7 +217,7 @@ fn build_defaults_output_to_source_stem_without_extension() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let binary = dir.join("line_count");
+    let binary = dir.join("target").join("debug").join("line_count");
     assert!(
         binary.exists(),
         "expected build output at {}",
@@ -252,6 +252,45 @@ fn build_honours_project_output_field_in_manifest() {
         expected.exists(),
         "expected build output at {}",
         expected.display()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn build_inside_project_names_binary_after_project_id_tail() {
+    // Rust's convention: `cargo build` writes `target/debug/<package>`,
+    // not `target/debug/main`. Gossamer follows the same rule when a
+    // `project.toml` is present — the binary takes the last segment
+    // of `[project] id`, regardless of which source file holds `main`.
+    let dir = env::temp_dir().join(format!("gos-build-id-tail-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"github.com/acme/widget-cli\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source_path = dir.join("src/main.gos");
+    std::fs::write(&source_path, "fn main() { }\n").unwrap();
+    let out = Command::new(gos_bin())
+        .arg("build")
+        .arg(&source_path)
+        .output()
+        .expect("spawn build");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let expected = dir.join("target").join("debug").join("widget-cli");
+    assert!(
+        expected.exists(),
+        "expected build output at {}",
+        expected.display()
+    );
+    let stale = dir.join("target").join("debug").join("main");
+    assert!(
+        !stale.exists(),
+        "binary must not be named after the source file when a manifest exists"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

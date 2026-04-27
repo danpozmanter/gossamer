@@ -18,7 +18,7 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 fn main() {
-    let n = 3i64 |> double |> add(10i64) |> clamp(0i64, 100i64)
+    let n = 3 |> double |> add(10) |> clamp(0, 100)
     println("arithmetic:", n)
 }
 ```

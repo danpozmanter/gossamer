@@ -84,14 +84,12 @@ pub enum Value {
     Native(Arc<NativeInner>),
     /// Concurrent channel endpoint.
     Channel(Channel),
-    /// Hash-map aggregate. Wrapped in `parking_lot::Mutex` for
-    /// interior mutability so `m.insert(k, v)` is O(log N) instead
-    /// of the O(N) clone the copy-on-write `Arc<BTreeMap>` shape
-    /// would imply — k-nucleotide does ~250K inserts per length
-    /// and would otherwise be quadratic in buffer size. The mutex
-    /// (over a plain `RefCell`) keeps `Value: Send + Sync` so
-    /// goroutines can pass maps through channels.
-    Map(Arc<parking_lot::Mutex<std::collections::BTreeMap<MapKey, Value>>>),
+    /// Hash-map aggregate. `FxHashMap` is O(1) per op vs the
+    /// previous BTreeMap's O(log N); on k-nucleotide this is
+    /// the bulk of the interp speedup. The mutex keeps
+    /// `Value: Send + Sync` so goroutines can pass maps through
+    /// channels.
+    Map(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<MapKey, Value>>>),
     /// Poisoned / uninitialised sentinel.
     Void,
 }
@@ -101,7 +99,7 @@ pub enum Value {
 /// can hash (int / bool / char / string) sorts deterministically.
 /// Aggregate values (arrays, structs, closures) collapse to a
 /// single bucket — they're rejected at insert time, not here.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MapKey {
     /// Sentinel for non-hashable inputs; all equal so their map
     /// degenerates to a single slot. Lets the runtime stay

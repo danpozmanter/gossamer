@@ -69,10 +69,10 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 // Reads left-to-right instead of inside-out.
-let n = 3i64 |> double |> add(10i64) |> clamp(0i64, 100i64)
+let n = 3 |> double |> add(10) |> clamp(0, 100)
 
 // Equivalent nested form:
-let same = clamp(0i64, 100i64, add(10i64, double(3i64)))
+let same = clamp(0, 100, add(10, double(3)))
 ```
 
 ## Pattern matching
@@ -145,7 +145,7 @@ Higher-order parameters distinguish two callable types:
 fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
 fn main() {
-    let scale = 10i64
+    let scale = 10
     let scaled = |y: i64| scale * y    // captures `scale`
     println!("{}", apply(scaled, 5))   // 50
 
@@ -169,7 +169,7 @@ fn add_adds() { ... }
 fn bench_hot_path() { ... }
 
 #[lint(allow(unused_variable))]
-fn scratch() { let x = 1i64 }
+fn scratch() { let x = 1 }
 ```
 
 ## Modules
@@ -185,11 +185,16 @@ A project's module tree is file-based: `src/foo.gos` becomes
 
 ## Numeric literals
 
-- `42` — plain int, inferred type.
-- `42i32` / `42u64` — explicit width.
+Write bare literals by default. Inference picks the type from the
+binding, the call site, or the return type; suffixes are reserved
+for the rare standalone case with no contextual hint.
+
+- `42` — plain int, inferred type. Defaults to `i64`.
+- `42i32` / `42u64` — explicit width when context can't pin it.
 - `0xff` / `0b1010` / `0o777` — bases.
 - `1_000_000` — underscore separator.
-- `1.0f32` / `1.0f64` — float.
+- `1.0` — plain float, inferred type. Defaults to `f64`.
+- `1.0f32` — explicit float width.
 
 ## String literals
 
@@ -227,7 +232,7 @@ For the single-`String` output shape, `+` concatenates without
 adding a separator:
 
 ```gossamer
-let greeting = "hello, ".to_string() + &name
+let greeting = "hello, " + &name
 ```
 
 Writing `name!(…)` is a hard parse error — the `!` suffix is

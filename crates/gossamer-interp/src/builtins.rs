@@ -2502,7 +2502,7 @@ fn builtin_pop(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Map(Arc::new(parking_lot::Mutex::new(
-        std::collections::BTreeMap::new(),
+        rustc_hash::FxHashMap::default(),
     ))))
 }
 
@@ -3457,12 +3457,36 @@ fn u8vec_register(arc: Arc<Vec<std::sync::atomic::AtomicU8>>) -> i64 {
     id
 }
 
+thread_local! {
+    /// Single-slot per-thread cache for the most recent U8Vec
+    /// resolution. Hot loops like k-nucleotide's `window_key` issue
+    /// millions of `buf.get_byte(_)` calls against one buffer; a
+    /// trivial cache on `(handle, Arc)` skips the global registry
+    /// mutex entirely after the first lookup.
+    static U8VEC_LAST: std::cell::RefCell<Option<(i64, Arc<Vec<std::sync::atomic::AtomicU8>>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 fn u8vec_lookup(handle: i64) -> Option<Arc<Vec<std::sync::atomic::AtomicU8>>> {
-    let reg = U8VEC_REGISTRY.lock();
     if handle < 0 {
         return None;
     }
-    reg.get(handle as usize).and_then(std::clone::Clone::clone)
+    let cached = U8VEC_LAST.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .filter(|(h, _)| *h == handle)
+            .map(|(_, arc)| Arc::clone(arc))
+    });
+    if cached.is_some() {
+        return cached;
+    }
+    let reg = U8VEC_REGISTRY.lock();
+    let arc = reg.get(handle as usize).and_then(std::clone::Clone::clone);
+    if let Some(ref a) = arc {
+        let cached = Arc::clone(a);
+        U8VEC_LAST.with(|cell| *cell.borrow_mut() = Some((handle, cached)));
+    }
+    arc
 }
 
 fn builtin_u8vec_new(args: &[Value]) -> RuntimeResult<Value> {

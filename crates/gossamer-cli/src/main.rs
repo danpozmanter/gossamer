@@ -21,6 +21,18 @@ use clap::{Parser, Subcommand};
 mod doc;
 mod repl;
 mod repl_helper;
+mod style;
+
+fn stderr_supports_colour() -> bool {
+    use std::io::IsTerminal;
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    if matches!(std::env::var("CLICOLOR").as_deref(), Ok("0")) {
+        return false;
+    }
+    std::io::stderr().is_terminal()
+}
 
 /// Top-level parsed command line for the `gos` binary.
 #[derive(Debug, Parser)]
@@ -368,7 +380,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("error: {err:#}");
+            eprintln!("{}: {err:#}", style::error("error"));
             ExitCode::FAILURE
         }
     }
@@ -515,7 +527,7 @@ fn cmd_check(file: &PathBuf, timings: bool) -> Result<()> {
     let stage_parse = std::time::Instant::now();
     let (sf, parse_diags) = load_or_parse(&source, file_id, &cache_key, trace);
     let parse_elapsed = stage_parse.elapsed();
-    let render_opts = gossamer_diagnostics::RenderOptions::default();
+    let render_opts = gossamer_diagnostics::RenderOptions { colour: stderr_supports_colour() };
     let mut total_errors = parse_diags.len();
     for diag in &parse_diags {
         let structured = diag.to_diagnostic();
@@ -643,7 +655,7 @@ fn load_and_check_with_sf(
     gossamer_ast::SourceFile,
     gossamer_types::TyCtxt,
 )> {
-    let render_opts = gossamer_diagnostics::RenderOptions::default();
+    let render_opts = gossamer_diagnostics::RenderOptions { colour: stderr_supports_colour() };
     let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file_id);
     if !parse_diags.is_empty() {
         for diag in &parse_diags {
@@ -867,8 +879,8 @@ fn cmd_build(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> 
         ),
         None => None,
     };
-    let unit_name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("main");
-    let out_path = resolve_output_path(file, unit_name)?;
+    let unit_name = default_unit_name(file);
+    let out_path = resolve_output_path(file, &unit_name, release)?;
 
     // Native (host) path: Cranelift / LLVM produce an object
     // and `cc` links it against the runtime. When `--target`
@@ -878,7 +890,7 @@ fn cmd_build(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> 
     if let Some(options) = target_options {
         let host = gossamer_driver::TargetTriple::host();
         if options.target.as_str() != host.as_str() {
-            let artifact = gossamer_driver::compile_source(&source, unit_name, &options);
+            let artifact = gossamer_driver::compile_source(&source, &unit_name, &options);
             fs::write(&out_path, &artifact.bytes)
                 .map_err(|err| anyhow!("build: writing {}: {err}", out_path.display()))?;
             set_executable(&out_path)?;
@@ -891,7 +903,7 @@ fn cmd_build(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> 
             return Ok(());
         }
     }
-    let outcome = try_native_build(&source, unit_name, file, &out_path, release)
+    let outcome = try_native_build(&source, &unit_name, file, &out_path, release)
         .map_err(|err| anyhow!("build: {}", err.user_message()))?;
     println!(
         "build: {bytes}B native executable at {path} ({note})",
@@ -1392,6 +1404,25 @@ pub(crate) fn repl_history_path() -> Option<PathBuf> {
     None
 }
 
+/// Picks the default binary name for a build, matching Rust's
+/// `cargo build` rule: derive from the package name, not the
+/// source filename. When the source sits inside a project (a
+/// `project.toml` is found by walking parents), the binary takes
+/// the last `/`-separated segment of `[project] id`. Loose-file
+/// builds with no manifest fall back to the source stem.
+fn default_unit_name(file: &Path) -> String {
+    if let Some(manifest_path) = gossamer_pkg::find_manifest(file)
+        && let Ok(text) = fs::read_to_string(&manifest_path)
+        && let Ok(manifest) = gossamer_pkg::Manifest::parse(&text)
+    {
+        return manifest.project.id.tail().to_string();
+    }
+    file.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main")
+        .to_string()
+}
+
 /// Resolves the build output path.
 ///
 /// Resolution order (first hit wins):
@@ -1399,7 +1430,7 @@ pub(crate) fn repl_history_path() -> Option<PathBuf> {
 ///    (relative paths resolve against the manifest's directory).
 /// 2. `<source-dir>/<source-stem>` — the source stem with no
 ///    extension, next to the input file.
-fn resolve_output_path(file: &PathBuf, unit_name: &str) -> Result<PathBuf> {
+fn resolve_output_path(file: &PathBuf, unit_name: &str, release: bool) -> Result<PathBuf> {
     if let Some(manifest_path) = gossamer_pkg::find_manifest(file) {
         let manifest_text =
             fs::read_to_string(&manifest_path).map_err(|e| friendly_io_error(e, &manifest_path))?;
@@ -1416,12 +1447,24 @@ fn resolve_output_path(file: &PathBuf, unit_name: &str) -> Result<PathBuf> {
             };
             return Ok(resolved);
         }
+        // Default: project-rooted `target/{debug,release}/<unit>`.
+        if let Some(root) = manifest_path.parent() {
+            let profile = if release { "release" } else { "debug" };
+            let target_dir = root.join("target").join(profile);
+            fs::create_dir_all(&target_dir)
+                .map_err(|e| anyhow!("creating {}: {e}", target_dir.display()))?;
+            return Ok(target_dir.join(unit_name));
+        }
     }
+    // Loose-file build (no manifest): place the binary in
+    // `<file's dir>/target/{debug,release}/<unit>`.
     let parent = file.parent().filter(|p| !p.as_os_str().is_empty());
-    Ok(match parent {
-        Some(dir) => dir.join(unit_name),
-        None => PathBuf::from(unit_name),
-    })
+    let base = parent.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let profile = if release { "release" } else { "debug" };
+    let target_dir = base.join("target").join(profile);
+    fs::create_dir_all(&target_dir)
+        .map_err(|e| anyhow!("creating {}: {e}", target_dir.display()))?;
+    Ok(target_dir.join(unit_name))
 }
 
 pub(crate) fn read_source(file: &PathBuf) -> Result<String> {
@@ -2421,7 +2464,7 @@ fn cmd_lint(path: &PathBuf, deny_warnings: bool, explain: Option<&str>, fix: boo
     let mut warnings = 0usize;
     let mut errors = 0usize;
     let mut edits_applied = 0usize;
-    let render_opts = gossamer_diagnostics::RenderOptions::default();
+    let render_opts = gossamer_diagnostics::RenderOptions { colour: stderr_supports_colour() };
     for file in files {
         let source = read_source(&file)?;
         let mut map = gossamer_lex::SourceMap::new();

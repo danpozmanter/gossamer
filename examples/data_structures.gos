@@ -22,27 +22,27 @@ fn main() {
 
     // --- map (hash) ---
     let mut scores: HashMap<String, i64> = HashMap::new()
-    scores.insert("alice".to_string(), 95)
-    scores.insert("bob".to_string(), 87)
-    match scores.get(&"alice".to_string()) {
+    scores.insert("alice", 95)
+    scores.insert("bob", 87)
+    match scores.get(&"alice") {
         Some(n) => println!("alice -> {n}"),
         None => println!("alice missing"),
     }
 
     // --- map (sorted) — when you need stable iteration order ---
     let mut ranked: BTreeMap<String, i64> = BTreeMap::new()
-    ranked.insert("c".to_string(), 3)
-    ranked.insert("a".to_string(), 1)
-    ranked.insert("b".to_string(), 2)
+    ranked.insert("c", 3)
+    ranked.insert("a", 1)
+    ranked.insert("b", 2)
     for pair in ranked.iter() {
         println!("  {} = {}", pair.0, pair.1)
     }
 
     // --- set ---
     let mut seen: HashSet<String> = HashSet::new()
-    seen.insert("alpha".to_string())
-    seen.insert("beta".to_string())
-    seen.insert("alpha".to_string())
+    seen.insert("alpha")
+    seen.insert("beta")
+    seen.insert("alpha")
     println!("unique tags: {}", seen.len())
 
     // --- tuple + struct ---

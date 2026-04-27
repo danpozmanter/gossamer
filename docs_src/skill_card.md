@@ -22,6 +22,10 @@ gaps" at the bottom.
 
 ## 2. Idioms at a glance
 
+Write **clear, low-complexity, concise code.** Names earn their
+length; helpers earn their existence. If a line reads cleanly the
+first time through, leave it alone — don't dress it up.
+
 Prefer these shapes when writing Gossamer:
 
 - **Left-to-right dataflow with `|>`.** Chain calls with the
@@ -35,8 +39,13 @@ Prefer these shapes when writing Gossamer:
 - **Goroutines + channels for async work.** Share by
   communicating; reach for `sync::Mutex` only when
   shared-memory is the simpler model.
-- **Explicit numeric widths.** `0i64` not `0` when the context
-  doesn't pin the type.
+- **Bare numeric literals.** Write `0`, not `0i64`. Inference
+  picks the type from the binding, the call site, or the
+  return type. Only suffix when the literal stands alone with
+  no contextual hint.
+- **String literals are already `String`.** Don't write
+  `"foo".to_string()` — the literal is the owned value. `&"foo"`
+  borrows it where a `&String` / `&str` parameter is expected.
 - **Macros only for formatted output.** `println!`,
   `format!`, `print!`, `eprintln!`, `eprint!`, `panic!` are
   the six macro entries — no others exist.
@@ -62,10 +71,10 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 // Preferred — reads top-down.
-let n = 3i64 |> double |> add(10i64) |> clamp(0i64, 100i64)
+let n = 3 |> double |> add(10) |> clamp(0, 100)
 
 // Discouraged — the same meaning, but the eye has to unwind.
-let same = clamp(0i64, 100i64, add(10i64, double(3i64)))
+let same = clamp(0, 100, add(10, double(3)))
 ```
 
 When a step is a closure, write it inline — `|>` still threads
@@ -103,8 +112,8 @@ impl Area for Shape {
 }
 
 fn main() {
-    let mut total = 0i64
-    for n in [1i64, 2i64, 3i64].iter() {
+    let mut total = 0
+    for n in [1, 2, 3].iter() {
         total = total + *n
     }
     println!("total: {}", total)
@@ -128,9 +137,11 @@ fn main() {
 - **Types.** `bool`, `char`, `i8..i128`, `u8..u128`, `isize`,
   `usize`, `f32`, `f64`, `String`, `[T]`, `(A, B)`,
   `Option<T>`, `Result<T, E>`, `&T`, `&mut T`, user types.
-- **Integer literals** take a suffix: `1i64`, `255u8`, `0usize`.
-  Unsuffixed literals default to `i64`; be explicit when the
-  context doesn't already pin the type.
+- **Integer literals** are bare by default: `1`, `255`, `0`.
+  Inference picks the type from the binding, the call site, or
+  the return type. Suffix only when no contextual hint exists
+  (e.g. `1i32` standing alone in an expression with no other
+  width signal). Unsuffixed literals default to `i64`.
 - **Casts.** `x as i32` — whitelist-checked (numeric ↔ numeric,
   `bool` / `char` → integer, `u8` → `char`, same-type no-op).
   Every other `as` shape is a hard error (GT0005).
@@ -167,7 +178,7 @@ The six macros lower to one allocation through the internal
 piece, `+` concatenates without a separator:
 
 ```gossamer
-let greeting = "hello, ".to_string() + &name
+let greeting = "hello, " + &name
 ```
 
 ## 7. Error handling
@@ -210,13 +221,13 @@ fn main() {
     let tx = pair.0
     let rx = pair.1
 
-    go tx.send(10i64)
-    go tx.send(20i64)
-    go tx.send(30i64)
+    go tx.send(10)
+    go tx.send(20)
+    go tx.send(30)
 
-    time::sleep(50u64)
+    time::sleep(50)
 
-    let mut total = 0i64
+    let mut total = 0
     loop {
         match rx.recv() {
             Some(v) => total = total + v,
@@ -264,7 +275,7 @@ For higher-order parameters, distinguish two callable types:
 fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
 fn main() {
-    let scale = 10i64
+    let scale = 10
     let scaled = |y: i64| scale * y     // captures `scale`
     println!("{}", apply(scaled, 5))    // 50
 
@@ -280,7 +291,7 @@ world). `FnMut` / `FnOnce` parse but lower to the same
 
 ## 9. Data structures
 
-- `[T]` — growable array. Literal: `[1i64, 2i64, 3i64]`.
+- `[T]` — growable array. Literal: `[1, 2, 3]`.
 - `(A, B, …)` — tuple. Field access via `.0`, `.1`, ….
 - `struct Foo { x, y }` / `struct Pair(A, B)` — GC-managed
   value types.
@@ -327,8 +338,8 @@ pub fn add(a: i64, b: i64) -> i64 { a + b }
 mod tests {
     #[test]
     fn add_adds() {
-        let total = super::add(2i64, 3i64)
-        assert(total == 5i64)
+        let total = super::add(2, 3)
+        assert(total == 5)
     }
 }
 ```
@@ -402,7 +413,7 @@ use std::os
 
 fn main() -> Result<(), flag::Error> {
     let mut fs = flag::Set::new("myapp")
-    let port = fs.uint("port", 8080u64, "listen port")
+    let port = fs.uint("port", 8080, "listen port")
     let verbose = fs.bool("verbose", false, "chatty output")
     let _ = fs.parse(os::args())?
 
@@ -429,13 +440,12 @@ impl http::Handler for App {
 fn main() -> Result<(), http::Error> {
     let app = App { }
     println!("listening on 0.0.0.0:8080")
-    http::serve("0.0.0.0:8080".to_string(), app)
+    http::serve("0.0.0.0:8080", app)
 }
 ```
 
 ## 15. Current gaps (pre-1.0.0)
 
-- Integer inference is shallow. Prefer explicit suffixes.
 - `+` on `String` copies; for heavy assembly use
   `std::bytes::Builder` or a `mut String` with `+=`.
 - Method dispatch is name-global in places. Qualified path
@@ -450,6 +460,9 @@ fn main() -> Result<(), http::Error> {
 
 ## 16. Style rules
 
+- **Clear, low-complexity, concise.** Plain reads beat clever
+  ones. If a helper, type, or comment doesn't earn its space,
+  drop it.
 - **No emojis.** Source, comments, commits, docs — all plain.
 - **No TODO / FIXME** committed; open an issue.
 - **Doc every `pub` item** with a single-line `///`; don't

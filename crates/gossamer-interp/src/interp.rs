@@ -194,7 +194,7 @@ impl Interpreter {
         };
         let type_name = decl.name.name.clone();
         for variant in variants {
-            let variant_name = variant.name.clone();
+            let variant_name = variant.name.name.clone();
             let qualified = format!("{type_name}::{variant_name}");
             let sentinel = Value::variant(variant_name.clone(), Arc::new(Vec::new()));
             self.globals.insert(variant_name, sentinel.clone());
@@ -1542,6 +1542,8 @@ fn bind_pattern(env: &mut Env, pattern: &HirPat, value: Value) -> RuntimeResult<
             }
             Ok(())
         }
+        // Range patterns introduce no new bindings.
+        HirPatKind::Range { .. } => Ok(()),
     }
 }
 
@@ -1595,6 +1597,38 @@ fn match_pattern(env: &mut Env, pattern: &HirPat, value: &Value) -> bool {
         },
         HirPatKind::Ref { inner, .. } => match_pattern(env, inner, value),
         HirPatKind::Or(alts) => alts.iter().any(|alt| match_pattern(env, alt, value)),
+        HirPatKind::Range { lo, hi, inclusive } => {
+            // Numeric ranges only — `1..=9 => …` arms etc. The
+            // value side must be `Value::Int`; the bounds parse
+            // as ints, and the comparison is `lo <= v && v <op> hi`.
+            let HirLiteral::Int(lo_text) = lo else {
+                return false;
+            };
+            let HirLiteral::Int(hi_text) = hi else {
+                return false;
+            };
+            let Some(lo_v) = parse_int(lo_text) else {
+                return false;
+            };
+            let Some(hi_v) = parse_int(hi_text) else {
+                return false;
+            };
+            match value {
+                Value::Int(v) => {
+                    // `parse_int` already returns the bounds as
+                    // i64 for the integer-literal range case;
+                    // promote both sides to i128 so the comparison
+                    // doesn't overflow at the i64 extremes.
+                    let v = i128::from(*v);
+                    let lo_v = i128::from(lo_v);
+                    let hi_v = i128::from(hi_v);
+                    let lower_ok = lo_v <= v;
+                    let upper_ok = if *inclusive { v <= hi_v } else { v < hi_v };
+                    lower_ok && upper_ok
+                }
+                _ => false,
+            }
+        }
     }
 }
 

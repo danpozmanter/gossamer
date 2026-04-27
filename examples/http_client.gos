@@ -18,15 +18,15 @@ fn main() -> Result<(), errors::Error> {
 
     // GET /health — returns plain text "ok".
     let health = client
-        .get(&"http://127.0.0.1:8080/health".to_string())
+        .get(&"http://127.0.0.1:8080/health")
         .send()
         .map_err(|e| errors::wrap(e, "GET /health"))?
     println!("/health: {} ({} bytes)", health.status, health.body.len())
 
     // POST /echo — JSON body round-tripped in the response.
-    let payload = "{\"hello\":\"world\"}".to_string()
+    let payload = "{\"hello\":\"world\"}"
     let echo = client
-        .post(&"http://127.0.0.1:8080/echo".to_string())
+        .post(&"http://127.0.0.1:8080/echo")
         .header("content-type", "application/json")
         .body(payload.clone())
         .send()

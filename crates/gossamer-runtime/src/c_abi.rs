@@ -156,6 +156,19 @@ pub unsafe extern "C" fn gos_rt_str_len(s: *const c_char) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_is_empty(s: *const c_char) -> bool {
+    unsafe { gos_rt_str_len(s) == 0 }
+}
+
+/// Generic length-zero check used by `is_empty` for any
+/// receiver whose length is reachable through `gos_rt_len`
+/// (Vec / array / slice / hashmap …).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_len_is_zero(p: *const i64) -> bool {
+    unsafe { gos_rt_len(p) == 0 }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
     if s.is_null() || i < 0 {
         return 0;
@@ -286,6 +299,23 @@ pub unsafe extern "C" fn gos_rt_str_find(s: *const c_char, needle: *const c_char
     -1
 }
 
+/// `s == t` for string operands. Compares byte-for-byte. NULL
+/// pointers compare equal to empty strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_eq(a: *const c_char, b: *const c_char) -> bool {
+    let a = if a.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(a).to_str() }.unwrap_or("")
+    };
+    let b = if b.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(b).to_str() }.unwrap_or("")
+    };
+    a == b
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_replace(
     s: *const c_char,
@@ -308,6 +338,77 @@ pub unsafe extern "C" fn gos_rt_str_replace(
         unsafe { CStr::from_ptr(to).to_str().unwrap_or("") }
     };
     alloc_cstring(s.replace(f, t).as_bytes())
+}
+
+/// Splits `s` on every occurrence of `sep` and returns a fresh
+/// `*mut GosVec` of c-string pointers. Empty `sep` yields a
+/// single-element vec containing the whole string (mirrors Rust's
+/// `split` for the empty separator). Each split slice gets its
+/// own heap-allocated nul-terminated copy so the caller can
+/// hold them past the underlying string's lifetime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_split(
+    s: *const c_char,
+    sep: *const c_char,
+) -> *mut GosVec {
+    let s = if s.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+    };
+    let sep = if sep.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+    };
+    let parts: Vec<*mut c_char> = if sep.is_empty() {
+        vec![alloc_cstring(s.as_bytes())]
+    } else {
+        s.split(sep).map(|p| alloc_cstring(p.as_bytes())).collect()
+    };
+    let vec = unsafe { gos_rt_vec_with_capacity(8, parts.len() as i64) };
+    for p in &parts {
+        let pv = *p as i64;
+        unsafe {
+            gos_rt_vec_push(vec, std::ptr::addr_of!(pv).cast::<u8>());
+        }
+    }
+    vec
+}
+
+/// Splits `s` on `\n` and returns a fresh `*mut GosVec` of
+/// c-string pointers, one per line. Trailing empty lines
+/// (from `"a\nb\n"`) are dropped to mirror Rust's `lines()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_lines(s: *const c_char) -> *mut GosVec {
+    let s = if s.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+    };
+    let parts: Vec<*mut c_char> = s.lines().map(|l| alloc_cstring(l.as_bytes())).collect();
+    let vec = unsafe { gos_rt_vec_with_capacity(8, parts.len() as i64) };
+    for p in &parts {
+        let pv = *p as i64;
+        unsafe {
+            gos_rt_vec_push(vec, std::ptr::addr_of!(pv).cast::<u8>());
+        }
+    }
+    vec
+}
+
+/// Returns `s` repeated `n` times. Rust's `String::repeat`
+/// semantics: `n=0` returns the empty string, `n=1` returns a
+/// fresh copy.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_repeat(s: *const c_char, n: i64) -> *mut c_char {
+    let s = if s.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+    };
+    let n = if n < 0 { 0 } else { n as usize };
+    alloc_cstring(s.repeat(n).as_bytes())
 }
 
 #[unsafe(no_mangle)]
@@ -903,6 +1004,235 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
     vec.len += 1;
 }
 
+// ---------------------------------------------------------------
+// Tagged-union encoding for `Result<T, E>` and `Option<T>`. The
+// previous "happy-path" encoding stored just the payload value
+// in the Result slot — meaning `Err(_)` and `None` had no
+// distinguishing bit at runtime, so `match res { Ok(v) => …,
+// Err(e) => … }` always took the Ok arm. A 2-slot heap struct
+// (`disc`, `payload`) makes the Err / None case representable
+// and lets pattern dispatch read the real discriminant.
+//
+// Convention: `disc == 0` = Ok / Some, `disc == 1` = Err / None.
+// ---------------------------------------------------------------
+
+#[repr(C)]
+pub struct GosResult {
+    pub disc: i64,
+    pub payload: i64,
+}
+
+unsafe impl Send for GosResult {}
+unsafe impl Sync for GosResult {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_new(disc: i64, payload: i64) -> *mut GosResult {
+    Box::into_raw(Box::new(GosResult { disc, payload }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_disc(p: *const GosResult) -> i64 {
+    if p.is_null() {
+        return 1;
+    }
+    unsafe { (*p).disc }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_dbg(p: i64) -> i64 {
+    eprintln!("[rt] dbg called with raw i64 = {p:#x}");
+    p
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_payload(p: *const GosResult) -> i64 {
+    if p.is_null() {
+        return 0;
+    }
+    unsafe { (*p).payload }
+}
+
+/// Maps a `gos_main` return value to a process exit code.
+/// Treats a heap-shaped pointer as a `*mut GosResult` and reads
+/// its `disc`; falls back to the raw value (truncated) for
+/// non-pointer returns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_main_exit_code(raw: i64) -> i32 {
+    if raw == 0 {
+        return 0;
+    }
+    let p = raw as usize;
+    let looks_like_heap = p > 0x10000 && (p & 7) == 0;
+    if !looks_like_heap {
+        return raw as i32;
+    }
+    let disc = unsafe { (*(raw as *const GosResult)).disc };
+    disc as i32
+}
+
+// ---------------------------------------------------------------
+// Sets — `HashSet<String>` (the most common shape) backed by
+// `std::collections::HashSet<String>`. Stored on the heap; the
+// pointer is the value seen by user code. Element type is
+// erased at the FFI: only String keys are wired today, matching
+// the common case in `examples/data_structures.gos`.
+// ---------------------------------------------------------------
+
+pub struct GosSet {
+    inner: std::collections::HashSet<String>,
+}
+
+unsafe impl Send for GosSet {}
+unsafe impl Sync for GosSet {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_new() -> *mut GosSet {
+    Box::into_raw(Box::new(GosSet {
+        inner: std::collections::HashSet::new(),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_insert(s: *mut GosSet, key: *const c_char) -> bool {
+    if s.is_null() || key.is_null() {
+        return false;
+    }
+    let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+    let s = unsafe { &mut *s };
+    s.inner.insert(k)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_contains(s: *const GosSet, key: *const c_char) -> bool {
+    if s.is_null() || key.is_null() {
+        return false;
+    }
+    let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+    let s = unsafe { &*s };
+    s.inner.contains(&k)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_remove(s: *mut GosSet, key: *const c_char) -> bool {
+    if s.is_null() || key.is_null() {
+        return false;
+    }
+    let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+    let s = unsafe { &mut *s };
+    s.inner.remove(&k)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_len(s: *const GosSet) -> i64 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { (*s).inner.len() as i64 }
+}
+
+// ---------------------------------------------------------------
+// BTreeMap — sorted-key map with String keys + i64 values.
+// Mirrors the `gos_rt_map_*` shape but iterates in key order.
+// ---------------------------------------------------------------
+
+pub struct GosBtMap {
+    inner: std::collections::BTreeMap<String, i64>,
+}
+
+unsafe impl Send for GosBtMap {}
+unsafe impl Sync for GosBtMap {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btmap_new() -> *mut GosBtMap {
+    Box::into_raw(Box::new(GosBtMap {
+        inner: std::collections::BTreeMap::new(),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btmap_insert(m: *mut GosBtMap, key: *const c_char, value: i64) {
+    if m.is_null() || key.is_null() {
+        return;
+    }
+    let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+    let m = unsafe { &mut *m };
+    m.inner.insert(k, value);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btmap_get_or(m: *const GosBtMap, key: *const c_char, def: i64) -> i64 {
+    if m.is_null() || key.is_null() {
+        return def;
+    }
+    let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+    let m = unsafe { &*m };
+    m.inner.get(&k).copied().unwrap_or(def)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btmap_len(m: *const GosBtMap) -> i64 {
+    if m.is_null() {
+        return 0;
+    }
+    unsafe { (*m).inner.len() as i64 }
+}
+
+/// Renders an i64-elem `Vec` as `[v0, v1, …]`. Returns a fresh
+/// String pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec) -> *mut c_char {
+    if v.is_null() {
+        return alloc_cstring(b"[]");
+    }
+    let vec = unsafe { &*v };
+    let mut out = String::with_capacity(2 + (vec.len as usize) * 4);
+    out.push('[');
+    for i in 0..vec.len {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+        let n = unsafe { (p as *const i64).read_unaligned() };
+        out.push_str(&format!("{n}"));
+    }
+    out.push(']');
+    alloc_cstring(out.as_bytes())
+}
+
+/// Reads an `i64`-shaped element from a `Vec` (or any
+/// 8-byte-elem `GosVec`) by index. Returns `0` when the receiver
+/// is null or `idx` is out of range. Used by the MIR-side Vec
+/// indexing path so `xs[0]` reads the data buffer instead of the
+/// `GosVec` header's `len` field.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_get_i64(v: *const GosVec, idx: i64) -> i64 {
+    if v.is_null() {
+        return 0;
+    }
+    let vec = unsafe { &*v };
+    if idx < 0 || idx >= vec.len {
+        return 0;
+    }
+    let p = unsafe { vec.ptr.add((idx as usize) * (vec.elem_bytes as usize)) };
+    unsafe { (p as *const i64).read_unaligned() }
+}
+
+/// Writes an `i64`-shaped element to a `Vec` at `idx`. No-op for
+/// null receivers or out-of-range indices (so a stale `xs[i] = v`
+/// after a shrink doesn't trash unrelated memory).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_set_i64(v: *mut GosVec, idx: i64, value: i64) {
+    if v.is_null() {
+        return;
+    }
+    let vec = unsafe { &mut *v };
+    if idx < 0 || idx >= vec.len {
+        return;
+    }
+    let p = unsafe { vec.ptr.add((idx as usize) * (vec.elem_bytes as usize)) };
+    unsafe { (p as *mut i64).write_unaligned(value) };
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_get_ptr(v: *const GosVec, idx: i64) -> *mut u8 {
     if v.is_null() {
@@ -918,6 +1248,40 @@ pub unsafe extern "C" fn gos_rt_vec_get_ptr(v: *const GosVec, idx: i64) -> *mut 
 /// Removes the last element of `v` and writes its bytes to
 /// `out`. Returns 1 on success, 0 if the vec was empty. `out`
 /// must be sized for `v.elem_bytes`.
+/// `vec[lo..hi]` — copies the subrange `[lo, hi)` of `v`'s
+/// elements into a fresh `GosVec` and returns a pointer to it.
+/// Out-of-range bounds are clamped. Element bytes are copied
+/// directly (the i64-erased ABI matches the rest of the Vec
+/// surface).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_slice(
+    v: *const GosVec,
+    lo: i64,
+    hi: i64,
+) -> *mut GosVec {
+    if v.is_null() {
+        return unsafe { gos_rt_vec_new(8) };
+    }
+    let src = unsafe { &*v };
+    let elem_bytes = src.elem_bytes;
+    let len = src.len;
+    let lo = lo.max(0).min(len);
+    let hi = hi.max(lo).min(len);
+    let count = hi - lo;
+    let out = unsafe { gos_rt_vec_with_capacity(elem_bytes, count) };
+    if !out.is_null() && count > 0 {
+        for i in 0..count {
+            unsafe {
+                let src_ptr = src
+                    .ptr
+                    .add(((lo + i) as usize) * (elem_bytes as usize));
+                gos_rt_vec_push(out, src_ptr);
+            }
+        }
+    }
+    out
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_pop(v: *mut GosVec, out: *mut u8) -> i32 {
     if v.is_null() || out.is_null() {
@@ -936,30 +1300,38 @@ pub unsafe extern "C" fn gos_rt_vec_pop(v: *mut GosVec, out: *mut u8) -> i32 {
 }
 
 // ---------------------------------------------------------------
-// HashMap runtime — byte-erased keys + values over std's HashMap
+// HashMap runtime — typed-storage variants over rustc-hash's
+// FxHashMap. Auto-promotes Empty → I64I64 / StrI64 / StrStr /
+// Bytes on first typed call. The i64-keyed/i64-valued shape (the
+// hottest path: k-nucleotide, scoreboards, counters) avoids
+// per-op `Vec<u8>` allocation and uses FxHash directly on the
+// 8-byte key.
 // ---------------------------------------------------------------
 
-use std::collections::HashMap as StdHashMap;
+use rustc_hash::FxHashMap;
 
 /// Layout-sensitive: the first 8 bytes hold the current element
 /// count so the generic `gos_rt_arr_len` returns the right value
-/// without needing a HashMap-specific dispatch. Kept in sync with
-/// `inner.len()` on every insert/remove.
+/// without needing a HashMap-specific dispatch.
 #[repr(C)]
 pub struct GosMap {
     len_cache: i64,
-    key_bytes: u32,
-    val_bytes: u32,
-    inner: StdMutex<StdHashMap<Vec<u8>, Vec<u8>>>,
+    storage: parking_lot::Mutex<MapStorage>,
+}
+
+enum MapStorage {
+    Empty,
+    I64I64(FxHashMap<i64, i64>),
+    StrI64(FxHashMap<Vec<u8>, i64>),
+    StrStr(FxHashMap<Vec<u8>, Vec<u8>>),
+    Bytes(FxHashMap<Vec<u8>, Vec<u8>>),
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_new(key_bytes: u32, val_bytes: u32) -> *mut GosMap {
+pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mut GosMap {
     Box::into_raw(Box::new(GosMap {
         len_cache: 0,
-        key_bytes,
-        val_bytes,
-        inner: StdMutex::new(StdHashMap::new()),
+        storage: parking_lot::Mutex::new(MapStorage::Empty),
     }))
 }
 
@@ -977,12 +1349,16 @@ pub unsafe extern "C" fn gos_rt_map_insert(m: *mut GosMap, key: *const u8, val: 
         return;
     }
     let map = unsafe { &mut *m };
-    let kb = map.key_bytes as usize;
-    let vb = map.val_bytes as usize;
-    let k = unsafe { std::slice::from_raw_parts(key, kb) }.to_vec();
-    let v = unsafe { std::slice::from_raw_parts(val, vb) }.to_vec();
-    let prior = map.inner.lock().unwrap().insert(k, v);
-    if prior.is_none() {
+    let k = unsafe { std::slice::from_raw_parts(key, 8) }.to_vec();
+    let v = unsafe { std::slice::from_raw_parts(val, 8) }.to_vec();
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::Bytes(FxHashMap::default());
+    }
+    let MapStorage::Bytes(inner) = &mut *storage else {
+        return;
+    };
+    if inner.insert(k, v).is_none() {
         map.len_cache += 1;
     }
 }
@@ -993,13 +1369,14 @@ pub unsafe extern "C" fn gos_rt_map_get(m: *const GosMap, key: *const u8, val_ou
         return 0;
     }
     let map = unsafe { &*m };
-    let kb = map.key_bytes as usize;
-    let vb = map.val_bytes as usize;
-    let k = unsafe { std::slice::from_raw_parts(key, kb) };
-    let inner = map.inner.lock().unwrap();
+    let k = unsafe { std::slice::from_raw_parts(key, 8) };
+    let storage = map.storage.lock();
+    let MapStorage::Bytes(inner) = &*storage else {
+        return 0;
+    };
     if let Some(v) = inner.get(k) {
         unsafe {
-            std::ptr::copy_nonoverlapping(v.as_ptr(), val_out, vb);
+            std::ptr::copy_nonoverlapping(v.as_ptr(), val_out, v.len());
         }
         1
     } else {
@@ -1007,32 +1384,243 @@ pub unsafe extern "C" fn gos_rt_map_get(m: *const GosMap, key: *const u8, val_ou
     }
 }
 
-/// Returns the i64 value associated with `key`, or `default` when absent.
-///
-/// Convenience wrapper around the (key, found) pair returned by
-/// [`gos_rt_map_get`]: lets call sites avoid an `Option<i64>` aggregate
-/// which the native codegen does not yet construct from runtime returns.
-/// `key` and `default` are i64 values; only valid for maps whose key
-/// and value widths are 8 bytes (the only shape the codegen emits).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_get_or_i64(m: *const GosMap, key: i64, default: i64) -> i64 {
     if m.is_null() {
         return default;
     }
     let map = unsafe { &*m };
-    if map.key_bytes != 8 || map.val_bytes != 8 {
-        return default;
-    }
-    let key_bytes = key.to_ne_bytes();
-    let inner = map.inner.lock().unwrap();
-    match inner.get(&key_bytes[..]) {
-        Some(v) if v.len() == 8 => {
-            let mut out = [0u8; 8];
-            out.copy_from_slice(v);
-            i64::from_ne_bytes(out)
-        }
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::I64I64(inner) => inner.get(&key).copied().unwrap_or(default),
         _ => default,
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_i64_i64(m: *mut GosMap, key: i64, val: i64) {
+    if m.is_null() {
+        return;
+    }
+    let map = unsafe { &mut *m };
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::I64I64(FxHashMap::default());
+    }
+    let MapStorage::I64I64(inner) = &mut *storage else {
+        return;
+    };
+    if inner.insert(key, val).is_none() {
+        map.len_cache += 1;
+    }
+}
+
+/// Fused increment: `m[k] = m.get_or(k, 0) + by`. Single lock,
+/// single hash, single bucket walk. Replaces the
+/// `m.insert(k, m.get_or(k, 0) + 1)` pattern that costs 2× the
+/// hash work on hot counter loops (k-nucleotide).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_inc_i64(m: *mut GosMap, key: i64, by: i64) -> i64 {
+    if m.is_null() {
+        return 0;
+    }
+    let map = unsafe { &mut *m };
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::I64I64(FxHashMap::default());
+    }
+    let MapStorage::I64I64(inner) = &mut *storage else {
+        return 0;
+    };
+    let entry = inner.entry(key).or_insert_with(|| {
+        map.len_cache += 1;
+        0
+    });
+    *entry += by;
+    *entry
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_i64(m: *const GosMap, key: i64) -> i64 {
+    if m.is_null() {
+        return 0;
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::I64I64(inner) => inner.get(&key).copied().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_contains_key_i64(m: *const GosMap, key: i64) -> bool {
+    if m.is_null() {
+        return false;
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::I64I64(inner) => inner.contains_key(&key),
+        _ => false,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_remove_i64(m: *mut GosMap, key: i64) -> bool {
+    if m.is_null() {
+        return false;
+    }
+    let map = unsafe { &mut *m };
+    let mut storage = map.storage.lock();
+    let MapStorage::I64I64(inner) = &mut *storage else {
+        return false;
+    };
+    if inner.remove(&key).is_some() {
+        map.len_cache -= 1;
+        true
+    } else {
+        false
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_str_i64(
+    m: *mut GosMap,
+    key: *const c_char,
+    val: i64,
+) {
+    if m.is_null() || key.is_null() {
+        return;
+    }
+    let map = unsafe { &mut *m };
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes().to_vec();
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::StrI64(FxHashMap::default());
+    }
+    let MapStorage::StrI64(inner) = &mut *storage else {
+        return;
+    };
+    if inner.insert(key_bytes, val).is_none() {
+        map.len_cache += 1;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_str_i64(m: *const GosMap, key: *const c_char) -> i64 {
+    if m.is_null() || key.is_null() {
+        return 0;
+    }
+    let map = unsafe { &*m };
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_str_str(
+    m: *mut GosMap,
+    key: *const c_char,
+    val: *const c_char,
+) {
+    if m.is_null() || key.is_null() || val.is_null() {
+        return;
+    }
+    let map = unsafe { &mut *m };
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes().to_vec();
+    let val_bytes = unsafe { CStr::from_ptr(val) }.to_bytes().to_vec();
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::StrStr(FxHashMap::default());
+    }
+    let MapStorage::StrStr(inner) = &mut *storage else {
+        return;
+    };
+    if inner.insert(key_bytes, val_bytes).is_none() {
+        map.len_cache += 1;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_str_str(
+    m: *const GosMap,
+    key: *const c_char,
+) -> *mut c_char {
+    if m.is_null() || key.is_null() {
+        return empty_cstring();
+    }
+    let map = unsafe { &*m };
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let storage = map.storage.lock();
+    let MapStorage::StrStr(inner) = &*storage else {
+        return empty_cstring();
+    };
+    match inner.get(key_bytes) {
+        Some(v) => {
+            let mut buf = v.clone();
+            buf.push(0);
+            let boxed = buf.into_boxed_slice();
+            Box::leak(boxed).as_mut_ptr().cast::<c_char>()
+        }
+        None => empty_cstring(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_contains_key_str(
+    m: *const GosMap,
+    key: *const c_char,
+) -> bool {
+    if m.is_null() || key.is_null() {
+        return false;
+    }
+    let map = unsafe { &*m };
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::StrI64(inner) => inner.contains_key(key_bytes),
+        MapStorage::StrStr(inner) => inner.contains_key(key_bytes),
+        _ => false,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_char) -> bool {
+    if m.is_null() || key.is_null() {
+        return false;
+    }
+    let map = unsafe { &mut *m };
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let mut storage = map.storage.lock();
+    let removed = match &mut *storage {
+        MapStorage::StrI64(inner) => inner.remove(key_bytes).is_some(),
+        MapStorage::StrStr(inner) => inner.remove(key_bytes).is_some(),
+        _ => false,
+    };
+    if removed {
+        map.len_cache -= 1;
+    }
+    removed
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
+    if m.is_null() {
+        return;
+    }
+    let map = unsafe { &mut *m };
+    let mut storage = map.storage.lock();
+    *storage = MapStorage::Empty;
+    map.len_cache = 0;
+}
+
+fn empty_cstring() -> *mut c_char {
+    let buf: Box<[u8]> = vec![0u8].into_boxed_slice();
+    Box::leak(buf).as_mut_ptr().cast::<c_char>()
 }
 
 #[unsafe(no_mangle)]
@@ -1041,9 +1629,13 @@ pub unsafe extern "C" fn gos_rt_map_remove(m: *mut GosMap, key: *const u8) -> i3
         return 0;
     }
     let map = unsafe { &mut *m };
-    let kb = map.key_bytes as usize;
-    let k = unsafe { std::slice::from_raw_parts(key, kb) };
-    if map.inner.lock().unwrap().remove(k).is_some() {
+    let k = unsafe { std::slice::from_raw_parts(key, 8) };
+    let mut storage = map.storage.lock();
+    let removed = match &mut *storage {
+        MapStorage::Bytes(inner) => inner.remove(k).is_some(),
+        _ => false,
+    };
+    if removed {
         map.len_cache -= 1;
         1
     } else {
@@ -1411,10 +2003,16 @@ pub unsafe extern "C" fn gos_rt_gc_reset() {
 // keeps the process alive and accepts connections — enough to
 // measure end-to-end request handling.
 //
-// Returns `!` (never returns); the call blocks forever on
-// `listener.incoming()`.
+/// Starts an HTTP listener and dispatches each request to
+/// `handler_fn(handler_env, request)`. Returns 200/payload from
+/// the handler's `Ok(Response)`, 500 from `Err`, and a static
+/// `200 OK\r\n\r\nok` when `handler_fn` is null (legacy stub).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_http_serve(addr: *const c_char) -> ! {
+pub unsafe extern "C" fn gos_rt_http_serve(
+    addr: *const c_char,
+    handler_env: *mut u8,
+    handler_fn: i64,
+) -> ! {
     let addr_s = if addr.is_null() {
         "0.0.0.0:8080".to_string()
     } else {
@@ -1427,31 +2025,131 @@ pub unsafe extern "C" fn gos_rt_http_serve(addr: *const c_char) -> ! {
             std::process::exit(1);
         }
     };
+    let env_addr = handler_env as usize;
+    let fn_addr = handler_fn as usize;
     for stream in listener.incoming().flatten() {
-        std::thread::spawn(move || handle_http_conn(stream));
+        std::thread::spawn(move || handle_http_conn(stream, env_addr, fn_addr));
     }
     std::process::exit(0);
 }
 
-fn handle_http_conn(mut stream: TcpStream) {
-    // Loop to support HTTP keep-alive: most benchmark harnesses
-    // reuse one TCP connection across every request. Break when
-    // the peer closes the socket or we get a malformed request.
+type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> *mut GosResult;
+
+fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
     let mut buf = [0u8; 8192];
     loop {
-        // Read just enough to cover request line + headers. For
-        // this minimal server we discard the body entirely.
         let n = match stream.read(&mut buf) {
             Ok(0) => return,
             Ok(n) => n,
             Err(_) => return,
         };
-        let _ = n;
-        let resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
-        if stream.write_all(resp).is_err() {
+        let raw = &buf[..n];
+        let response_bytes = if fn_addr == 0 {
+            static_ok_response()
+        } else {
+            let request = match parse_request_into(raw) {
+                Some(r) => r,
+                None => {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                    return;
+                }
+            };
+            // SAFETY: `fn_addr` came from `gos_fn_addr("T::serve")`
+            // at the user's `http::serve(addr, app)` call site;
+            // env_addr is the `&app` pointer passed alongside.
+            let handler: HandlerFn = unsafe { std::mem::transmute(fn_addr) };
+            let env_ptr = env_addr as *mut u8;
+            let req_ptr = Box::into_raw(Box::new(request));
+            let result_ptr = unsafe { handler(env_ptr, req_ptr) };
+            extract_response(result_ptr).unwrap_or_else(|| {
+                b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
+                    .to_vec()
+            })
+        };
+        if stream.write_all(&response_bytes).is_err() {
             return;
         }
     }
+}
+
+fn static_ok_response() -> Vec<u8> {
+    b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok"
+        .to_vec()
+}
+
+fn parse_request_into(raw: &[u8]) -> Option<GosHttpRequest> {
+    let text = std::str::from_utf8(raw).ok()?;
+    let mut lines = text.split("\r\n");
+    let request_line = lines.next()?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next()?.to_string();
+    let url = parts.next()?.to_string();
+    let mut headers: Vec<(String, String)> = Vec::new();
+    let mut body: Vec<u8> = Vec::new();
+    let mut in_body = false;
+    for line in lines {
+        if !in_body {
+            if line.is_empty() {
+                in_body = true;
+                continue;
+            }
+            if let Some((k, v)) = line.split_once(':') {
+                headers.push((k.trim().to_string(), v.trim().to_string()));
+            }
+        } else {
+            body.extend_from_slice(line.as_bytes());
+        }
+    }
+    Some(GosHttpRequest {
+        method,
+        url,
+        headers,
+        body,
+    })
+}
+
+fn extract_response(result: *mut GosResult) -> Option<Vec<u8>> {
+    if result.is_null() {
+        return None;
+    }
+    let r = unsafe { &*result };
+    if r.disc != 0 {
+        return None;
+    }
+    let response_ptr = r.payload as *const GosHttpResponse;
+    if response_ptr.is_null() {
+        return None;
+    }
+    let response = unsafe { &*response_ptr };
+    let body_bytes = if response.body.is_null() {
+        Vec::new()
+    } else {
+        unsafe { CStr::from_ptr(response.body).to_bytes().to_vec() }
+    };
+    let mut out = Vec::with_capacity(256 + body_bytes.len());
+    out.extend_from_slice(format!("HTTP/1.1 {} OK\r\n", response.status).as_bytes());
+    let mut has_content_length = false;
+    let mut has_content_type = false;
+    for (k, v) in &response.headers {
+        if k.eq_ignore_ascii_case("content-length") {
+            has_content_length = true;
+        }
+        if k.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        out.extend_from_slice(format!("{k}: {v}\r\n").as_bytes());
+    }
+    if !has_content_type {
+        out.extend_from_slice(b"Content-Type: application/json\r\n");
+    }
+    if !has_content_length {
+        out.extend_from_slice(format!("Content-Length: {}\r\n", body_bytes.len()).as_bytes());
+    }
+    out.extend_from_slice(b"Connection: keep-alive\r\n\r\n");
+    out.extend_from_slice(&body_bytes);
+    Some(out)
 }
 
 // ---------------------------------------------------------------
@@ -2530,4 +3228,1099 @@ pub unsafe extern "C" fn gos_rt_json_parsed_ok(j: *const GosJson) -> i32 {
         Some(serde_json::Value::Null) | None => 0,
         Some(_) => 1,
     }
+}
+
+// ---------------------------------------------------------------
+// errors module — Gossamer's `Result<T, errors::Error>` plumbing.
+// `Error` is an opaque heap struct: a leaked message string plus
+// an optional cause pointer. The compiled tier represents an
+// `errors::Error` value as `*mut GosError`; `Option<&Error>`
+// (`e.cause()` return) is the same pointer with `null` for
+// `None`.
+// ---------------------------------------------------------------
+
+#[repr(C)]
+pub struct GosError {
+    /// Heap-leaked, nul-terminated UTF-8 message.
+    message: *mut c_char,
+    /// Cause pointer. NULL when the error has no cause.
+    cause: *mut GosError,
+}
+
+unsafe impl Send for GosError {}
+unsafe impl Sync for GosError {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_new(msg: *const c_char) -> *mut GosError {
+    let text = if msg.is_null() {
+        Vec::new()
+    } else {
+        unsafe { CStr::from_ptr(msg).to_bytes().to_vec() }
+    };
+    let leaked = alloc_cstring(&text);
+    Box::into_raw(Box::new(GosError {
+        message: leaked,
+        cause: std::ptr::null_mut(),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_wrap(
+    cause: *mut GosError,
+    msg: *const c_char,
+) -> *mut GosError {
+    let text = if msg.is_null() {
+        Vec::new()
+    } else {
+        unsafe { CStr::from_ptr(msg).to_bytes().to_vec() }
+    };
+    let leaked = alloc_cstring(&text);
+    Box::into_raw(Box::new(GosError {
+        message: leaked,
+        cause,
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_message(err: *const GosError) -> *mut c_char {
+    if err.is_null() {
+        return alloc_cstring(b"");
+    }
+    let m = unsafe { (*err).message };
+    if m.is_null() {
+        return alloc_cstring(b"");
+    }
+    // Re-leak a copy so the caller can hold the string past the
+    // GosError's lifetime if it ever gets reclaimed.
+    let bytes = unsafe { CStr::from_ptr(m).to_bytes().to_vec() };
+    alloc_cstring(&bytes)
+}
+
+// ---------------------------------------------------------------
+// Concat buffer — backing store for `__concat` / `format!`.
+// Thread-local so `go { format!(...) }` calls don't trample
+// each other.
+// ---------------------------------------------------------------
+
+thread_local! {
+    static CONCAT_BUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::with_capacity(256));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_init() {
+    CONCAT_BUF.with(|b| b.borrow_mut().clear());
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_str(s: *const c_char) {
+    if s.is_null() {
+        return;
+    }
+    let bytes = unsafe { CStr::from_ptr(s).to_bytes() };
+    CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(bytes));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_i64(n: i64) {
+    let s = format!("{n}");
+    CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_f64(x: f64) {
+    let s = format!("{x}");
+    CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_bool(b: i32) {
+    let s = if b != 0 { "true" } else { "false" };
+    CONCAT_BUF.with(|buf| buf.borrow_mut().extend_from_slice(s.as_bytes()));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_char(c: i32) {
+    let ch = char::from_u32(c as u32).unwrap_or('\u{FFFD}');
+    let s = ch.to_string();
+    CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_finish() -> *mut c_char {
+    CONCAT_BUF.with(|b| {
+        let buf = b.borrow();
+        alloc_cstring(&buf)
+    })
+}
+
+/// Returns the cause of `err` wrapped in an `Option<errors::Error>`
+/// `GosResult` handle (`disc=0/Some` for non-null, `disc=1/None`
+/// for null). Lets the match on `error.cause()` see a real
+/// discriminant and terminate the cause-chain walk.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_cause(err: *const GosError) -> *mut GosResult {
+    let cause = if err.is_null() {
+        std::ptr::null_mut::<GosError>()
+    } else {
+        unsafe { (*err).cause }
+    };
+    let (disc, payload) = if cause.is_null() {
+        (1, 0)
+    } else {
+        (0, cause as i64)
+    };
+    Box::into_raw(Box::new(GosResult { disc, payload }))
+}
+
+/// Walks the cause chain looking for a substring match.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_is(err: *const GosError, needle: *const c_char) -> bool {
+    if err.is_null() || needle.is_null() {
+        return false;
+    }
+    let needle = match unsafe { CStr::from_ptr(needle).to_str() } {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let mut cur = err;
+    while !cur.is_null() {
+        let m = unsafe { (*cur).message };
+        if !m.is_null() {
+            if let Ok(text) = unsafe { CStr::from_ptr(m).to_str() } {
+                if text.contains(needle) {
+                    return true;
+                }
+            }
+        }
+        cur = unsafe { (*cur).cause };
+    }
+    false
+}
+
+// ---------------------------------------------------------------
+// regex module — wraps the host `regex` crate with a c-ABI shim.
+// Patterns compile lazily via `gos_rt_regex_compile`; matches /
+// captures / replacements operate on `*const Regex` handles
+// returned to user code as opaque `*mut GosRegex`.
+// ---------------------------------------------------------------
+
+#[repr(transparent)]
+pub struct GosRegex {
+    inner: regex::Regex,
+}
+
+unsafe impl Send for GosRegex {}
+unsafe impl Sync for GosRegex {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_compile(pat: *const c_char) -> *mut GosRegex {
+    if pat.is_null() {
+        return std::ptr::null_mut();
+    }
+    let s = unsafe { CStr::from_ptr(pat).to_str() }.unwrap_or("");
+    match regex::Regex::new(s) {
+        Ok(re) => Box::into_raw(Box::new(GosRegex { inner: re })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_is_match(
+    re: *const GosRegex,
+    text: *const c_char,
+) -> bool {
+    if re.is_null() || text.is_null() {
+        return false;
+    }
+    let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+    unsafe { (*re).inner.is_match(s) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_find(
+    re: *const GosRegex,
+    text: *const c_char,
+) -> *mut c_char {
+    if re.is_null() || text.is_null() {
+        return alloc_cstring(b"");
+    }
+    let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+    match unsafe { (*re).inner.find(s) } {
+        Some(m) => alloc_cstring(m.as_str().as_bytes()),
+        None => alloc_cstring(b""),
+    }
+}
+
+/// Finds every non-overlapping match of `re` in `text` and returns
+/// a `Vec<String>` of the matched substrings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_find_all(
+    re: *const GosRegex,
+    text: *const c_char,
+) -> *mut GosVec {
+    let vec = unsafe { gos_rt_vec_new(8) };
+    if re.is_null() || text.is_null() {
+        return vec;
+    }
+    let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+    for m in unsafe { (*re).inner.find_iter(s) } {
+        let cstr = alloc_cstring(m.as_str().as_bytes());
+        let ptr_val = cstr as i64;
+        unsafe {
+            gos_rt_vec_push(vec, std::ptr::addr_of!(ptr_val).cast::<u8>());
+        }
+    }
+    vec
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_replace_all(
+    re: *const GosRegex,
+    text: *const c_char,
+    repl: *const c_char,
+) -> *mut c_char {
+    if re.is_null() || text.is_null() {
+        return alloc_cstring(b"");
+    }
+    let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+    let r = if repl.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(repl).to_str() }.unwrap_or("")
+    };
+    alloc_cstring(unsafe { (*re).inner.replace_all(s, r) }.as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_split(
+    re: *const GosRegex,
+    text: *const c_char,
+) -> *mut GosVec {
+    let vec = unsafe { gos_rt_vec_new(8) };
+    if re.is_null() || text.is_null() {
+        return vec;
+    }
+    let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+    for piece in unsafe { (*re).inner.split(s) } {
+        let cstr = alloc_cstring(piece.as_bytes());
+        let ptr_val = cstr as i64;
+        unsafe {
+            gos_rt_vec_push(vec, std::ptr::addr_of!(ptr_val).cast::<u8>());
+        }
+    }
+    vec
+}
+
+// ---------------------------------------------------------------
+// fs / path helpers — read_to_string, write, create_dir_all,
+// path::join. Mirror Rust std::fs minus the typed Error.
+// ---------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_read_to_string(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        return alloc_cstring(b"");
+    }
+    let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
+    match std::fs::read_to_string(p) {
+        Ok(text) => alloc_cstring(text.as_bytes()),
+        Err(_) => alloc_cstring(b""),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_write(path: *const c_char, contents: *const c_char) -> bool {
+    if path.is_null() || contents.is_null() {
+        return false;
+    }
+    let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
+    let c = unsafe { CStr::from_ptr(contents).to_str() }.unwrap_or("");
+    std::fs::write(p, c).is_ok()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_create_dir_all(path: *const c_char) -> bool {
+    if path.is_null() {
+        return false;
+    }
+    let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
+    std::fs::create_dir_all(p).is_ok()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_join(a: *const c_char, b: *const c_char) -> *mut c_char {
+    let a = if a.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(a).to_str() }.unwrap_or("")
+    };
+    let b = if b.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(b).to_str() }.unwrap_or("")
+    };
+    let joined = std::path::Path::new(a).join(b);
+    alloc_cstring(joined.to_string_lossy().as_bytes())
+}
+
+// ---------------------------------------------------------------
+// bufio::Scanner — wraps a reader with a buffered line iterator.
+// `Scanner::new(reader)` returns an opaque handle; `.scan()`
+// advances to the next line and returns `true` when one was
+// available; `.text()` returns the most recently scanned line.
+// ---------------------------------------------------------------
+
+pub struct GosScanner {
+    lines: std::vec::IntoIter<String>,
+    current: Option<String>,
+}
+
+unsafe impl Send for GosScanner {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bufio_scanner_new(stream: *mut std::ffi::c_void) -> *mut GosScanner {
+    // Read the entire stream up front: cheap for the typical
+    // CLI/file usage and avoids weaving a real Read trait
+    // through the runtime.
+    let text = if stream.is_null() {
+        String::new()
+    } else {
+        // Re-use the stream-read-to-string helper: every stream
+        // the runtime exposes is one of the io handles.
+        let cstr = unsafe { gos_rt_stream_read_to_string(stream.cast::<GosStream>()) };
+        if cstr.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(cstr).to_string_lossy().into_owned() }
+        }
+    };
+    let lines: Vec<String> = text.lines().map(str::to_string).collect();
+    Box::into_raw(Box::new(GosScanner {
+        lines: lines.into_iter(),
+        current: None,
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bufio_scanner_scan(s: *mut GosScanner) -> bool {
+    if s.is_null() {
+        return false;
+    }
+    let scanner = unsafe { &mut *s };
+    match scanner.lines.next() {
+        Some(line) => {
+            scanner.current = Some(line);
+            true
+        }
+        None => {
+            scanner.current = None;
+            false
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bufio_scanner_text(s: *const GosScanner) -> *mut c_char {
+    if s.is_null() {
+        return alloc_cstring(b"");
+    }
+    let scanner = unsafe { &*s };
+    match &scanner.current {
+        Some(text) => alloc_cstring(text.as_bytes()),
+        None => alloc_cstring(b""),
+    }
+}
+
+// ---------------------------------------------------------------
+// flag::Set — minimal CLI-flag parser. The compiled tier exposes
+// a single mutable `*mut GosFlagSet` with `.string`, `.uint`,
+// `.bool` registration and `.parse(args)`. Each registration
+// returns a `*mut Cell<T>` so user code does `*name` to read
+// the post-parse value.
+// ---------------------------------------------------------------
+
+pub struct GosFlagSet {
+    #[allow(dead_code)]
+    name: String,
+    specs: Vec<FlagSpec>,
+    /// After `.parse()` runs, these hold the positional args left
+    /// over. The handle returned via `gos_rt_flag_parse` is a
+    /// `*mut GosVec` of c-string pointers.
+    positional: Vec<String>,
+}
+
+struct FlagSpec {
+    long_name: String,
+    kind: FlagKind,
+    cell: *mut std::ffi::c_void,
+}
+
+enum FlagKind {
+    String,
+    Uint,
+    Bool,
+}
+
+unsafe impl Send for GosFlagSet {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_new(name: *const c_char) -> *mut GosFlagSet {
+    let n = if name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+    };
+    Box::into_raw(Box::new(GosFlagSet {
+        name: n,
+        specs: Vec::new(),
+        positional: Vec::new(),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_string(
+    set: *mut GosFlagSet,
+    name: *const c_char,
+    default_v: *const c_char,
+    _help: *const c_char,
+) -> *mut *mut c_char {
+    if set.is_null() {
+        return std::ptr::null_mut();
+    }
+    let n = if name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+    };
+    let dv = if default_v.is_null() {
+        std::ptr::null_mut()
+    } else {
+        let bytes = unsafe { CStr::from_ptr(default_v).to_bytes().to_vec() };
+        alloc_cstring(&bytes)
+    };
+    let cell = Box::into_raw(Box::new(dv));
+    let set = unsafe { &mut *set };
+    set.specs.push(FlagSpec {
+        long_name: n,
+        kind: FlagKind::String,
+        cell: cell.cast::<std::ffi::c_void>(),
+    });
+    cell
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_uint(
+    set: *mut GosFlagSet,
+    name: *const c_char,
+    default_v: u64,
+    _help: *const c_char,
+) -> *mut u64 {
+    if set.is_null() {
+        return std::ptr::null_mut();
+    }
+    let n = if name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+    };
+    let cell = Box::into_raw(Box::new(default_v));
+    let set = unsafe { &mut *set };
+    set.specs.push(FlagSpec {
+        long_name: n,
+        kind: FlagKind::Uint,
+        cell: cell.cast::<std::ffi::c_void>(),
+    });
+    cell
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_bool(
+    set: *mut GosFlagSet,
+    name: *const c_char,
+    default_v: bool,
+    _help: *const c_char,
+) -> *mut bool {
+    if set.is_null() {
+        return std::ptr::null_mut();
+    }
+    let n = if name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+    };
+    let cell = Box::into_raw(Box::new(default_v));
+    let set = unsafe { &mut *set };
+    set.specs.push(FlagSpec {
+        long_name: n,
+        kind: FlagKind::Bool,
+        cell: cell.cast::<std::ffi::c_void>(),
+    });
+    cell
+}
+
+/// Parses GNU-style `--name value` and `--bool` flags out of
+/// `args` (a `*mut GosVec` of c-string pointers from
+/// `os::args()`), filling in each registered cell. Returns a
+/// `*mut GosVec` of the leftover positional arguments.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_parse(
+    set: *mut GosFlagSet,
+    args: *const GosVec,
+) -> *mut GosVec {
+    if set.is_null() {
+        return unsafe { gos_rt_vec_new(8) };
+    }
+    let set = unsafe { &mut *set };
+    set.positional.clear();
+    if args.is_null() {
+        return unsafe { gos_rt_vec_new(8) };
+    }
+    let argc = unsafe { gos_rt_vec_len(args) };
+    let mut i = 1i64; // skip argv[0]
+    while i < argc {
+        let elem_ptr = unsafe { gos_rt_vec_get_ptr(args, i) };
+        if elem_ptr.is_null() {
+            break;
+        }
+        let arg_ptr = unsafe { *elem_ptr.cast::<*const c_char>() };
+        let arg = if arg_ptr.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(arg_ptr).to_string_lossy().into_owned() }
+        };
+        if let Some(name) = arg.strip_prefix("--") {
+            if let Some(spec) = set.specs.iter_mut().find(|s| s.long_name == name) {
+                match spec.kind {
+                    FlagKind::Bool => unsafe {
+                        *(spec.cell.cast::<bool>()) = true;
+                    },
+                    FlagKind::String => {
+                        i += 1;
+                        if i < argc {
+                            let v_ptr = unsafe { gos_rt_vec_get_ptr(args, i) };
+                            if !v_ptr.is_null() {
+                                let v = unsafe { *v_ptr.cast::<*const c_char>() };
+                                if !v.is_null() {
+                                    let bytes = unsafe { CStr::from_ptr(v).to_bytes().to_vec() };
+                                    let leaked = alloc_cstring(&bytes);
+                                    unsafe {
+                                        *(spec.cell.cast::<*mut c_char>()) = leaked;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    FlagKind::Uint => {
+                        i += 1;
+                        if i < argc {
+                            let v_ptr = unsafe { gos_rt_vec_get_ptr(args, i) };
+                            if !v_ptr.is_null() {
+                                let v = unsafe { *v_ptr.cast::<*const c_char>() };
+                                if !v.is_null() {
+                                    let s = unsafe { CStr::from_ptr(v).to_string_lossy() };
+                                    if let Ok(n) = s.parse::<u64>() {
+                                        unsafe {
+                                            *(spec.cell.cast::<u64>()) = n;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            set.positional.push(arg);
+        }
+        i += 1;
+    }
+    let out = unsafe { gos_rt_vec_with_capacity(8, set.positional.len() as i64) };
+    for s in &set.positional {
+        let bytes = s.as_bytes();
+        let cstr = alloc_cstring(bytes);
+        let ptr_val = cstr as i64;
+        unsafe {
+            gos_rt_vec_push(out, std::ptr::addr_of!(ptr_val).cast::<u8>());
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------
+// HTTP client — minimal Builder pattern returning Response with
+// `status` (i64) + `body` (String). Backed by a small synchronous
+// HTTP/1.1 implementation to avoid pulling a TLS stack into the
+// runtime crate.
+// ---------------------------------------------------------------
+
+pub struct GosHttpClient {
+    _placeholder: u8,
+}
+
+pub struct GosHttpRequest {
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+pub struct GosHttpResponse {
+    pub status: i64,
+    pub body: *mut c_char,
+    pub headers: Vec<(String, String)>,
+}
+
+unsafe impl Send for GosHttpClient {}
+unsafe impl Send for GosHttpRequest {}
+unsafe impl Send for GosHttpResponse {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_client_new() -> *mut GosHttpClient {
+    Box::into_raw(Box::new(GosHttpClient { _placeholder: 0 }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_client_get(
+    _client: *mut GosHttpClient,
+    url: *const c_char,
+) -> *mut GosHttpRequest {
+    let url = if url.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+    };
+    Box::into_raw(Box::new(GosHttpRequest {
+        method: "GET".to_string(),
+        url,
+        headers: Vec::new(),
+        body: Vec::new(),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_client_post(
+    _client: *mut GosHttpClient,
+    url: *const c_char,
+) -> *mut GosHttpRequest {
+    let url = if url.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+    };
+    Box::into_raw(Box::new(GosHttpRequest {
+        method: "POST".to_string(),
+        url,
+        headers: Vec::new(),
+        body: Vec::new(),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_header(
+    req: *mut GosHttpRequest,
+    name: *const c_char,
+    value: *const c_char,
+) -> *mut GosHttpRequest {
+    if req.is_null() {
+        return req;
+    }
+    let n = if name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+    };
+    let v = if value.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
+    };
+    unsafe { (*req).headers.push((n, v)) };
+    req
+}
+
+/// Mutating header insert used by the chained `req.headers.insert`
+/// lowering (return-by-receiver kept off so the call has no value).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_set_header(
+    req: *mut GosHttpRequest,
+    name: *const c_char,
+    value: *const c_char,
+) {
+    if req.is_null() {
+        return;
+    }
+    let n = if name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+    };
+    let v = if value.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
+    };
+    let req = unsafe { &mut *req };
+    req.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(&n));
+    req.headers.push((n, v));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_get_header(
+    req: *const GosHttpRequest,
+    name: *const c_char,
+) -> *mut c_char {
+    if req.is_null() || name.is_null() {
+        return alloc_cstring(b"");
+    }
+    let n = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+    let req = unsafe { &*req };
+    let found = req
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(&n))
+        .map_or(String::new(), |(_, v)| v.clone());
+    alloc_cstring(found.as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_body(
+    req: *mut GosHttpRequest,
+    body: *const c_char,
+) -> *mut GosHttpRequest {
+    if req.is_null() {
+        return req;
+    }
+    let b = if body.is_null() {
+        Vec::new()
+    } else {
+        unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+    };
+    unsafe { (*req).body = b };
+    req
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_send(req: *mut GosHttpRequest) -> *mut GosHttpResponse {
+    if req.is_null() {
+        return Box::into_raw(Box::new(GosHttpResponse {
+            status: 0,
+            body: alloc_cstring(b""),
+            headers: Vec::new(),
+        }));
+    }
+    let req = unsafe { Box::from_raw(req) };
+    // Synchronous HTTP/1.1 over plain TCP. Skips TLS entirely; an
+    // `https://` URL is rejected with status 0 so the error path
+    // is reachable. URL parser is intentionally tiny.
+    let url = req.url.clone();
+    let parsed = parse_http_url(&url);
+    let response = match parsed {
+        Some((host, port, path)) => http_request(&req.method, &host, port, &path, &req.headers, &req.body),
+        None => None,
+    };
+    let (status, body_bytes) = response.unwrap_or((0, Vec::new()));
+    let body = alloc_cstring(&body_bytes);
+    Box::into_raw(Box::new(GosHttpResponse { status, body, headers: Vec::new() }))
+}
+
+fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
+    let s = url.strip_prefix("http://")?;
+    let (host_part, path) = match s.find('/') {
+        Some(i) => (&s[..i], &s[i..]),
+        None => (s, "/"),
+    };
+    let (host, port) = match host_part.find(':') {
+        Some(i) => (
+            host_part[..i].to_string(),
+            host_part[i + 1..].parse::<u16>().ok()?,
+        ),
+        None => (host_part.to_string(), 80),
+    };
+    Some((host, port, path.to_string()))
+}
+
+fn http_request(
+    method: &str,
+    host: &str,
+    port: u16,
+    path: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Option<(i64, Vec<u8>)> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
+    let mut have_content_length = false;
+    for (k, v) in headers {
+        if k.eq_ignore_ascii_case("content-length") {
+            have_content_length = true;
+        }
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    if !body.is_empty() && !have_content_length {
+        req.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
+    req.push_str("\r\n");
+    let mut sock = TcpStream::connect((host, port)).ok()?;
+    sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    sock.set_write_timeout(Some(Duration::from_secs(10))).ok();
+    sock.write_all(req.as_bytes()).ok()?;
+    if !body.is_empty() {
+        sock.write_all(body).ok()?;
+    }
+    let mut raw = Vec::new();
+    sock.read_to_end(&mut raw).ok()?;
+    let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let head = &raw[..header_end];
+    let head_str = std::str::from_utf8(head).ok()?;
+    let status_line = head_str.lines().next()?;
+    let status_code = status_line.split_whitespace().nth(1)?.parse::<i64>().ok()?;
+    let resp_body = raw[header_end + 4..].to_vec();
+    Some((status_code, resp_body))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_query(req: *const GosHttpRequest) -> *mut c_char {
+    if req.is_null() {
+        return alloc_cstring(b"");
+    }
+    // Naive query extraction: everything after the first `?`
+    // in the URL (without the leading `?`).
+    let url = &unsafe { &*req }.url;
+    if let Some(pos) = url.find('?') {
+        alloc_cstring(url[pos + 1..].as_bytes())
+    } else {
+        alloc_cstring(b"")
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_body_str(req: *const GosHttpRequest) -> *mut c_char {
+    if req.is_null() {
+        return alloc_cstring(b"");
+    }
+    alloc_cstring(&unsafe { &*req }.body)
+}
+
+/// Returns the request's URL path (the part after the host).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_path(req: *const GosHttpRequest) -> *mut c_char {
+    if req.is_null() {
+        return alloc_cstring(b"");
+    }
+    let r = unsafe { &*req };
+    if let Some((_, _, path)) = parse_http_url(&r.url) {
+        alloc_cstring(path.as_bytes())
+    } else {
+        alloc_cstring(r.url.as_bytes())
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_method(req: *const GosHttpRequest) -> *mut c_char {
+    if req.is_null() {
+        return alloc_cstring(b"");
+    }
+    alloc_cstring(unsafe { &*req }.method.as_bytes())
+}
+
+/// Constructs a 200-style text response.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_response_text_new(
+    status: i64,
+    body: *const c_char,
+) -> *mut GosHttpResponse {
+    let body_text = if body.is_null() {
+        Vec::new()
+    } else {
+        unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+    };
+    Box::into_raw(Box::new(GosHttpResponse {
+        status,
+        body: alloc_cstring(&body_text),
+        headers: Vec::new(),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_response_json_new(
+    status: i64,
+    body: *const c_char,
+) -> *mut GosHttpResponse {
+    unsafe { gos_rt_http_response_text_new(status, body) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_response_status(resp: *const GosHttpResponse) -> i64 {
+    if resp.is_null() {
+        return 0;
+    }
+    unsafe { (*resp).status }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_response_body(resp: *const GosHttpResponse) -> *mut c_char {
+    if resp.is_null() {
+        return alloc_cstring(b"");
+    }
+    unsafe { (*resp).body }
+}
+
+/// Sets `Header: Value` on a response, replacing any prior value
+/// with the same case-insensitive name. Used by the chained
+/// `r.headers.insert(name, value)` lowering.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_response_set_header(
+    resp: *mut GosHttpResponse,
+    name: *const c_char,
+    value: *const c_char,
+) {
+    if resp.is_null() {
+        return;
+    }
+    let n = if name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+    };
+    let v = if value.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
+    };
+    let resp = unsafe { &mut *resp };
+    resp.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(&n));
+    resp.headers.push((n, v));
+}
+
+/// Reads `Header` value from a response, empty string when absent.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_response_get_header(
+    resp: *const GosHttpResponse,
+    name: *const c_char,
+) -> *mut c_char {
+    if resp.is_null() || name.is_null() {
+        return alloc_cstring(b"");
+    }
+    let n = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+    let resp = unsafe { &*resp };
+    let found = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(&n))
+        .map_or(String::new(), |(_, v)| v.clone());
+    alloc_cstring(found.as_bytes())
+}
+
+// ---------------------------------------------------------------
+// testing module — minimal `check`, `check_eq`, `check_ok` that
+// log to stderr. Real test discovery / reporting is done via the
+// interpreter today; these stubs make the example compile.
+// ---------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_testing_check(cond: bool, msg: *const c_char) -> bool {
+    if !cond {
+        let m = if msg.is_null() {
+            "check failed".to_string()
+        } else {
+            unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
+        };
+        eprintln!("test check failed: {m}");
+    }
+    cond
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_testing_check_eq_i64(
+    a: i64,
+    b: i64,
+    msg: *const c_char,
+) -> bool {
+    let ok = a == b;
+    if !ok {
+        let m = if msg.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
+        };
+        eprintln!("test check_eq failed: {a} != {b} ({m})");
+    }
+    ok
+}
+
+// ---------------------------------------------------------------
+// gzip module — encode / decode using `flate2`.
+// ---------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_gzip_encode(data: *const c_char) -> *mut c_char {
+    if data.is_null() {
+        return alloc_cstring(b"");
+    }
+    let bytes = unsafe { CStr::from_ptr(data).to_bytes() };
+    use std::io::Write;
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    if enc.write_all(bytes).is_err() {
+        return alloc_cstring(b"");
+    }
+    let buf = enc.finish().unwrap_or_default();
+    alloc_cstring(&buf)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_gzip_decode(data: *const c_char) -> *mut c_char {
+    if data.is_null() {
+        return alloc_cstring(b"");
+    }
+    let bytes = unsafe { CStr::from_ptr(data).to_bytes() };
+    use std::io::Read;
+    let mut dec = flate2::read::GzDecoder::new(bytes);
+    let mut out = Vec::new();
+    if dec.read_to_end(&mut out).is_err() {
+        return alloc_cstring(b"");
+    }
+    alloc_cstring(&out)
+}
+
+// ---------------------------------------------------------------
+// slog — simple stderr logger.
+// ---------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_slog_info(msg: *const c_char) {
+    if msg.is_null() {
+        return;
+    }
+    let m = unsafe { CStr::from_ptr(msg).to_string_lossy() };
+    eprintln!("INFO: {m}");
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_slog_warn(msg: *const c_char) {
+    if msg.is_null() {
+        return;
+    }
+    let m = unsafe { CStr::from_ptr(msg).to_string_lossy() };
+    eprintln!("WARN: {m}");
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_slog_error(msg: *const c_char) {
+    if msg.is_null() {
+        return;
+    }
+    let m = unsafe { CStr::from_ptr(msg).to_string_lossy() };
+    eprintln!("ERROR: {m}");
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_slog_debug(msg: *const c_char) {
+    if msg.is_null() {
+        return;
+    }
+    let m = unsafe { CStr::from_ptr(msg).to_string_lossy() };
+    eprintln!("DEBUG: {m}");
 }

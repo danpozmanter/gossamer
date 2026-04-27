@@ -200,6 +200,23 @@ pub enum Op {
         /// `[0, 255]` in the steady state).
         byte_reg: Reg,
     },
+    /// Specialised `m.insert(k, m.get_or(k, 0) + by)` — fused
+    /// counter-increment super-instruction. Collapses the two
+    /// `MethodCall`s, two IC probes, two arg-vec materialisations,
+    /// and (crucially) the two `parking_lot::Mutex` acquisitions
+    /// into a single `entry()`-API increment under one lock. The
+    /// k-nucleotide hot loop is dominated by exactly this pattern.
+    MapInc {
+        /// Destination register (the resulting Map handle, mirroring
+        /// the original `insert` return value).
+        dst: Reg,
+        /// Register holding the Map (`Value::Map`).
+        map_reg: Reg,
+        /// Register holding the key (any hashable Value).
+        key_reg: Reg,
+        /// Register holding the increment (`Value::Int`).
+        by_reg: Reg,
+    },
     /// Builds a `Value::IntArray` from `count` consecutive typed
     /// `i64` registers starting at `first_i`. Counterpart of
     /// [`Op::BuildFloatArray`] for primitive integer arrays
@@ -437,6 +454,17 @@ pub enum Op {
     EqI64 { dst_v: Reg, lhs_i: Reg, rhs_i: Reg },
     /// `registers[dst_v] = Bool(ints[lhs_i] != ints[rhs_i])`.
     NeI64 { dst_v: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Bitwise `ints[dst_i] = ints[lhs_i] & ints[rhs_i]`.
+    BitAndI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Bitwise `ints[dst_i] = ints[lhs_i] | ints[rhs_i]`.
+    BitOrI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Bitwise `ints[dst_i] = ints[lhs_i] ^ ints[rhs_i]`.
+    BitXorI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Wrapping `ints[dst_i] = ints[lhs_i] << (ints[rhs_i] & 63)`.
+    ShlI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Arithmetic `ints[dst_i] = ints[lhs_i] >> (ints[rhs_i] & 63)`
+    /// (matches Rust's `i64 >> i64` semantics — sign-preserving).
+    ShrI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
     /// `ints[dst_i] = src_v.as_int()`.
     UnboxI64 { dst_i: Reg, src_v: Reg },
     /// `registers[dst_v] = Value::Int(ints[src_i])`.

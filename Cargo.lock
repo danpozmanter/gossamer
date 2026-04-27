@@ -628,6 +628,7 @@ dependencies = [
  "gossamer-std",
  "gossamer-types",
  "parking_lot",
+ "rustc-hash",
  "thiserror",
 ]
 
@@ -710,8 +711,11 @@ dependencies = [
 name = "gossamer-runtime"
 version = "0.0.0"
 dependencies = [
+ "flate2",
  "itoa",
  "parking_lot",
+ "regex",
+ "rustc-hash",
  "serde_json",
 ]
 
