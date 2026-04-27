@@ -84,13 +84,11 @@ enum Command {
         #[arg(last = true)]
         args: Vec<String>,
     },
-    /// Produce a linked artifact on disk. Default output path is
-    /// either `project.output` (walking up from the source file for
-    /// the nearest `project.toml`) or the source stem beside the
-    /// input when no manifest is present.
+    /// Compile the program to a native executable.
     ///
-    /// With no path: defaults to `<project-root>/src/main.gos`
-    /// when a `project.toml` is reachable.
+    /// Output path: `project.output` from the manifest if set,
+    /// else the source stem beside the input file. With no path,
+    /// builds `<project-root>/src/main.gos`.
     Build {
         /// Path to a `.gos` source file. Optional: defaults to the
         /// project's `src/main.gos`.
@@ -173,9 +171,14 @@ enum Command {
         out: Option<PathBuf>,
     },
     /// Reformat a source file using the AST pretty-printer.
+    ///
+    /// With no path: when a `project.toml` is reachable above the
+    /// current directory, every `.gos` under the project's `src/`
+    /// is formatted in place.
     Fmt {
-        /// Path to a `.gos` source file.
-        file: PathBuf,
+        /// Path to a `.gos` source file or a directory to walk.
+        /// Optional: defaults to the project's `src/` directory.
+        file: Option<PathBuf>,
         /// Check whether the file is already formatted; exit 1 if not.
         #[arg(long)]
         check: bool,
@@ -189,12 +192,11 @@ enum Command {
         #[arg(long)]
         html: Option<PathBuf>,
     },
-    /// Discover and run `#[test]` functions through the tree-walker.
-    /// Accepts either a single `.gos` file or a directory; when
-    /// given a directory, walks every `.gos` under it. When no
-    /// path is supplied, walks `src/` from the nearest enclosing
-    /// `project.toml` (or the current directory when no project
-    /// manifest is found).
+    /// Discover and run `#[test]` functions.
+    ///
+    /// With no path, walks `src/` from the nearest `project.toml`.
+    /// With a directory, walks every `.gos` under it. With a file,
+    /// runs just that file.
     Test {
         /// Path to a `.gos` source file or a directory to walk.
         /// Optional: defaults to the project's `src/` directory.
@@ -263,6 +265,23 @@ enum Command {
     /// Start the language-server-protocol adapter on stdio. Intended
     /// to be invoked by an editor, not a human.
     Lsp,
+    /// Print toolchain environment for diagnosing install issues.
+    ///
+    /// Surfaces the `gos` version, runtime static-lib path, host
+    /// triple, target dir, project root, and host `cc` path. Drop
+    /// in any "is my install OK?" support ticket to halve the
+    /// back-and-forth.
+    Env,
+    /// Generate shell completion script for the chosen shell.
+    ///
+    /// Pipe the output into the shell's completion directory:
+    ///   bash:  `gos completion bash > /etc/bash_completion.d/gos`
+    ///   zsh:   `gos completion zsh > $fpath[1]/_gos`
+    ///   fish:  `gos completion fish > ~/.config/fish/completions/gos.fish`
+    Completion {
+        /// Shell to emit completions for.
+        shell: clap_complete::Shell,
+    },
     /// Remove cached artefacts produced by the toolchain.
     ///
     /// By default clears the frontend parse cache (where `gos check`
@@ -313,7 +332,7 @@ fn main() -> ExitCode {
         Some(Command::Tidy { manifest }) => cmd_tidy(manifest),
         Some(Command::Fetch { manifest, offline }) => cmd_fetch(manifest, offline),
         Some(Command::Vendor { manifest, out }) => cmd_vendor(manifest, out),
-        Some(Command::Fmt { file, check }) => cmd_fmt(&file, check),
+        Some(Command::Fmt { file, check }) => cmd_fmt_dispatch(file, check),
         Some(Command::Doc { file, html }) => doc::cmd_doc(&file, html.as_deref()),
         Some(Command::Test { path }) => cmd_test(path.as_deref()),
         Some(Command::Bench { file, iterations }) => cmd_bench(&file, iterations.unwrap_or(100)),
@@ -335,6 +354,15 @@ fn main() -> ExitCode {
         }) => cmd_watch(&command, &path, &forward),
         Some(Command::Repl) => repl::cmd_repl(),
         Some(Command::Lsp) => cmd_lsp(),
+        Some(Command::Env) => {
+            cmd_env();
+            Ok(())
+        }
+        Some(Command::Completion { shell }) => {
+            use clap::CommandFactory;
+            clap_complete::generate(shell, &mut Cli::command(), "gos", &mut std::io::stdout());
+            Ok(())
+        }
         Some(Command::Clean { vendor, dry_run }) => cmd_clean(vendor, dry_run),
     };
     match result {
@@ -406,14 +434,16 @@ fn cmd_check_dispatch(path: Option<PathBuf>, timings: bool) -> Result<()> {
         Some(p) => p,
         None => default_test_root()?,
     };
-    let meta = fs::metadata(&resolved)
-        .with_context(|| format!("stat {}", resolved.display()))?;
+    let meta = fs::metadata(&resolved).map_err(|e| friendly_io_error(e, &resolved))?;
     if meta.is_file() {
         return cmd_check(&resolved, timings);
     }
     let files = collect_lint_targets(&resolved)?;
     if files.is_empty() {
-        return Err(anyhow!("no `.gos` sources found under {}", resolved.display()));
+        return Err(anyhow!(
+            "no `.gos` sources found under {}",
+            resolved.display()
+        ));
     }
     let mut total_errors = 0u32;
     for file in &files {
@@ -430,10 +460,16 @@ fn cmd_check_dispatch(path: Option<PathBuf>, timings: bool) -> Result<()> {
     }
     if total_errors > 0 {
         return Err(anyhow!(
-            "check: {total_errors} file(s) failed across {} source(s)",
-            files.len()
+            "check: {total_errors} {file_word} failed across {} source(s)",
+            files.len(),
+            file_word = if total_errors == 1 { "file" } else { "files" },
         ));
     }
+    println!(
+        "check: {n} {file_word} ok",
+        n = files.len(),
+        file_word = if files.len() == 1 { "file" } else { "files" },
+    );
     Ok(())
 }
 
@@ -447,11 +483,7 @@ fn cmd_run_dispatch(path: Option<PathBuf>, mode: RunMode, args: &[String]) -> Re
 }
 
 /// `gos build` entry. With no path, builds `<project-root>/src/main.gos`.
-fn cmd_build_dispatch(
-    path: Option<PathBuf>,
-    target: Option<&str>,
-    release: bool,
-) -> Result<()> {
+fn cmd_build_dispatch(path: Option<PathBuf>, target: Option<&str>, release: bool) -> Result<()> {
     let resolved = match path {
         Some(p) => p,
         None => default_main_entry()?,
@@ -488,7 +520,7 @@ fn cmd_check(file: &PathBuf, timings: bool) -> Result<()> {
     for diag in &parse_diags {
         let structured = diag.to_diagnostic();
         eprintln!(
-            "parse: {}",
+            "{}",
             gossamer_diagnostics::render(&structured, &map, render_opts)
         );
     }
@@ -510,7 +542,7 @@ fn cmd_check(file: &PathBuf, timings: bool) -> Result<()> {
     for diag in unresolved {
         let structured = diag.to_diagnostic(&in_scope);
         eprintln!(
-            "resolve: {}",
+            "{}",
             gossamer_diagnostics::render(&structured, &map, render_opts)
         );
     }
@@ -522,7 +554,7 @@ fn cmd_check(file: &PathBuf, timings: bool) -> Result<()> {
     for diag in &type_diags {
         let structured = diag.to_diagnostic();
         eprintln!(
-            "type: {}",
+            "{}",
             gossamer_diagnostics::render(&structured, &map, render_opts)
         );
     }
@@ -540,7 +572,7 @@ fn cmd_check(file: &PathBuf, timings: bool) -> Result<()> {
         .collect();
     total_errors += nonexhaustive.len();
     for diag in nonexhaustive {
-        eprintln!("match: {diag}");
+        eprintln!("{diag}");
     }
     if total_errors > 0 {
         return Err(anyhow!("check failed with {total_errors} diagnostic(s)"));
@@ -617,7 +649,7 @@ fn load_and_check_with_sf(
         for diag in &parse_diags {
             let structured = diag.to_diagnostic();
             eprintln!(
-                "parse: {}",
+                "{}",
                 gossamer_diagnostics::render(&structured, map, render_opts)
             );
         }
@@ -642,7 +674,7 @@ fn load_and_check_with_sf(
         for diag in &unresolved {
             let structured = diag.to_diagnostic(&in_scope);
             eprintln!(
-                "resolve: {}",
+                "{}",
                 gossamer_diagnostics::render(&structured, map, render_opts)
             );
         }
@@ -657,7 +689,7 @@ fn load_and_check_with_sf(
         for diag in &type_diags {
             let structured = diag.to_diagnostic();
             eprintln!(
-                "type: {}",
+                "{}",
                 gossamer_diagnostics::render(&structured, map, render_opts)
             );
         }
@@ -678,7 +710,7 @@ fn load_and_check_with_sf(
         .collect();
     if !nonexhaustive.is_empty() {
         for diag in nonexhaustive {
-            eprintln!("match: {diag}");
+            eprintln!("{diag}");
         }
         return Err(anyhow!("non-exhaustive match; refusing to execute"));
     }
@@ -793,7 +825,7 @@ fn cmd_build(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> 
     let (sf, parse_diags) = gossamer_parse::parse_source_file(&source, file_id);
     if !parse_diags.is_empty() {
         for diag in &parse_diags {
-            eprintln!("parse: {diag}");
+            eprintln!("{diag}");
         }
         return Err(anyhow!(
             "{} parse error(s); refusing to build",
@@ -803,7 +835,7 @@ fn cmd_build(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> 
     let (resolutions, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
     if !resolve_diags.is_empty() {
         for diag in &resolve_diags {
-            eprintln!("resolve: {diag}");
+            eprintln!("{diag}");
         }
         return Err(anyhow!(
             "{} resolve error(s); refusing to build",
@@ -814,7 +846,7 @@ fn cmd_build(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> 
     let (_table, type_diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
     if !type_diags.is_empty() {
         for diag in &type_diags {
-            eprintln!("type: {diag}");
+            eprintln!("{diag}");
         }
         return Err(anyhow!(
             "{} type error(s); refusing to build",
@@ -1197,7 +1229,7 @@ fn set_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let meta = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+        let meta = fs::metadata(path).map_err(|e| friendly_io_error(e, path))?;
         let mut perms = meta.permissions();
         perms.set_mode(perms.mode() | 0o111);
         fs::set_permissions(path, perms).with_context(|| format!("chmod +x {}", path.display()))?;
@@ -1289,6 +1321,53 @@ fn cmd_lsp() -> Result<()> {
     gossamer_lsp::run_stdio().map_err(|e| anyhow!("lsp: {e}"))
 }
 
+/// `gos env` — prints the toolchain environment in `key  value`
+/// format (matches `go env`'s shape). Surfaces every datapoint a
+/// user typically needs when diagnosing an install / build issue.
+fn cmd_env() {
+    let runtime = match find_runtime_lib() {
+        Ok(p) => p.display().to_string(),
+        Err(e) => format!("<not found: {}>", e.user_message()),
+    };
+    let cc = std::env::var("CC").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "rust-lld.exe".to_string()
+        } else {
+            "cc".to_string()
+        }
+    });
+    let host = std::env::var("HOST").unwrap_or_else(|_| {
+        format!(
+            "{arch}-{os}",
+            arch = std::env::consts::ARCH,
+            os = std::env::consts::OS,
+        )
+    });
+    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
+    let project = match find_project_root() {
+        Some(p) => p.join("project.toml").display().to_string(),
+        None => "<no project.toml above cwd>".to_string(),
+    };
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p.display().to_string(),
+        Err(_) => "<unreadable>".to_string(),
+    };
+
+    let pairs: &[(&str, &str)] = &[
+        ("gos_version", env!("CARGO_PKG_VERSION")),
+        ("runtime_lib", &runtime),
+        ("cc", &cc),
+        ("host", &host),
+        ("target_dir", &target_dir),
+        ("project", &project),
+        ("cwd", &cwd),
+    ];
+    let width = pairs.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+    for (k, v) in pairs {
+        println!("{k:<width$}  {v}");
+    }
+}
+
 /// Returns the path the REPL uses to persist line-edit history
 /// across sessions. Prefers `$GOSSAMER_HISTORY` → `$XDG_STATE_HOME/
 /// gossamer/history` → `$HOME/.gossamer_history`. `None` is returned
@@ -1322,8 +1401,8 @@ pub(crate) fn repl_history_path() -> Option<PathBuf> {
 ///    extension, next to the input file.
 fn resolve_output_path(file: &PathBuf, unit_name: &str) -> Result<PathBuf> {
     if let Some(manifest_path) = gossamer_pkg::find_manifest(file) {
-        let manifest_text = fs::read_to_string(&manifest_path)
-            .with_context(|| format!("reading {}", manifest_path.display()))?;
+        let manifest_text =
+            fs::read_to_string(&manifest_path).map_err(|e| friendly_io_error(e, &manifest_path))?;
         let manifest = gossamer_pkg::Manifest::parse(&manifest_text)
             .with_context(|| format!("parsing {}", manifest_path.display()))?;
         if let Some(output) = manifest.project.output {
@@ -1347,7 +1426,30 @@ fn resolve_output_path(file: &PathBuf, unit_name: &str) -> Result<PathBuf> {
 
 pub(crate) fn read_source(file: &PathBuf) -> Result<String> {
     let resolved = resolve_gos_source(file);
-    fs::read_to_string(&resolved).with_context(|| format!("reading {}", resolved.display()))
+    fs::read_to_string(&resolved).map_err(|err| friendly_io_error(err, &resolved))
+}
+
+/// Renders a `std::io::Error` as a clean diagnostic free of
+/// libc artefacts (`(os error N)` tails, `stat`/`reading`
+/// syscall prefixes). Path-aware where a path is available.
+fn friendly_io_error(err: std::io::Error, path: &Path) -> anyhow::Error {
+    use std::io::ErrorKind;
+    let display = path.display();
+    let msg = match err.kind() {
+        ErrorKind::NotFound => format!("file not found: {display}"),
+        ErrorKind::PermissionDenied => format!("permission denied: {display}"),
+        ErrorKind::IsADirectory => format!("expected a file, found a directory: {display}"),
+        ErrorKind::NotADirectory => format!("expected a directory, found a file: {display}"),
+        ErrorKind::AlreadyExists => format!("already exists: {display}"),
+        ErrorKind::InvalidData => format!("invalid file contents: {display}"),
+        ErrorKind::TimedOut => format!("timed out reading {display}"),
+        ErrorKind::WriteZero => format!("could not write to {display}"),
+        // Other (genuinely surprising) errors keep the kind name
+        // so the user has something to grep for, but still drop
+        // the libc `(os error N)` tail that std prepends.
+        kind => format!("{display}: {kind:?}"),
+    };
+    anyhow::anyhow!(msg)
 }
 
 /// When `path` is a shell launcher script (starts with `#!`) or has no
@@ -1383,7 +1485,27 @@ fn cmd_init(id: &str) -> Result<()> {
         gossamer_pkg::render_initial_manifest(&project, gossamer_pkg::Version::new(0, 1, 0));
     fs::write(&manifest_path, &manifest)
         .with_context(|| format!("writing {}", manifest_path.display()))?;
-    println!("init: created project.toml for {project}");
+    // Scaffold src/main.gos so `gos run` works immediately. Skip
+    // when src/main.gos (or src/lib.gos) already exists — the user
+    // is upgrading an existing tree to a project, not bootstrapping
+    // from scratch.
+    let src_dir = PathBuf::from("src");
+    let main_gos = src_dir.join("main.gos");
+    let lib_gos = src_dir.join("lib.gos");
+    let scaffolded = if !main_gos.exists() && !lib_gos.exists() {
+        fs::create_dir_all(&src_dir).with_context(|| format!("creating {}", src_dir.display()))?;
+        let body = gossamer_pkg::render_main_source(&project);
+        fs::write(&main_gos, body).with_context(|| format!("writing {}", main_gos.display()))?;
+        true
+    } else {
+        false
+    };
+    if scaffolded {
+        println!("init: created project.toml + src/main.gos for {project}");
+        println!("hint: try `gos run` or `gos test`");
+    } else {
+        println!("init: created project.toml for {project}");
+    }
     Ok(())
 }
 
@@ -1544,8 +1666,7 @@ fn cmd_add(spec: &str, manifest: Option<PathBuf>) -> Result<()> {
         .with_context(|| format!("invalid id `{id_text}`"))?;
     let version = gossamer_pkg::Version::parse(version_text)
         .with_context(|| format!("invalid version `{version_text}`"))?;
-    let source =
-        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let mut m = gossamer_pkg::Manifest::parse(&source)?;
     let changed = gossamer_pkg::add_registry(&mut m, &id, version);
     fs::write(&path, m.render()).with_context(|| format!("writing {}", path.display()))?;
@@ -1560,8 +1681,7 @@ fn cmd_remove(id_text: &str, manifest: Option<PathBuf>) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
     let id = gossamer_pkg::ProjectId::parse(id_text)
         .with_context(|| format!("invalid id `{id_text}`"))?;
-    let source =
-        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let mut m = gossamer_pkg::Manifest::parse(&source)?;
     let removed = gossamer_pkg::remove(&mut m, &id);
     if !removed {
@@ -1574,8 +1694,7 @@ fn cmd_remove(id_text: &str, manifest: Option<PathBuf>) -> Result<()> {
 
 fn cmd_tidy(manifest: Option<PathBuf>) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
-    let source =
-        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     // Reparse + re-render canonicalises whitespace and entry ordering.
     let m = gossamer_pkg::Manifest::parse(&source)?;
     fs::write(&path, m.render()).with_context(|| format!("writing {}", path.display()))?;
@@ -1585,8 +1704,7 @@ fn cmd_tidy(manifest: Option<PathBuf>) -> Result<()> {
 
 fn cmd_fetch(manifest: Option<PathBuf>, offline: bool) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
-    let source =
-        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let m = gossamer_pkg::Manifest::parse(&source)?;
     let resolver = gossamer_pkg::Resolver::new(gossamer_pkg::VersionCatalogue::new());
     let resolved = resolver
@@ -1606,8 +1724,7 @@ fn cmd_fetch(manifest: Option<PathBuf>, offline: bool) -> Result<()> {
 
 fn cmd_vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
-    let source =
-        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let m = gossamer_pkg::Manifest::parse(&source)?;
     let resolver = gossamer_pkg::Resolver::new(gossamer_pkg::VersionCatalogue::new());
     let resolved = resolver
@@ -1627,6 +1744,44 @@ fn cmd_vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<()> {
         written.len(),
         dest.display()
     );
+    Ok(())
+}
+
+/// `gos fmt` entry. With no path, formats every `.gos` under
+/// the project's `src/`; with a directory, walks every `.gos`
+/// underneath; with a file, formats just that file.
+fn cmd_fmt_dispatch(path: Option<PathBuf>, check_only: bool) -> Result<()> {
+    let resolved = match path {
+        Some(p) => p,
+        None => default_test_root()?,
+    };
+    let meta = fs::metadata(&resolved).map_err(|e| friendly_io_error(e, &resolved))?;
+    if meta.is_file() {
+        return cmd_fmt(&resolved, check_only);
+    }
+    let files = collect_lint_targets(&resolved)?;
+    if files.is_empty() {
+        return Err(anyhow!(
+            "no `.gos` sources found under {}",
+            resolved.display()
+        ));
+    }
+    let mut total_errors = 0u32;
+    for file in &files {
+        match cmd_fmt(file, check_only) {
+            Ok(()) => {}
+            Err(err) => {
+                eprintln!("{err}");
+                total_errors += 1;
+            }
+        }
+    }
+    if total_errors > 0 {
+        return Err(anyhow!(
+            "fmt: {total_errors} file(s) failed across {} source(s)",
+            files.len()
+        ));
+    }
     Ok(())
 }
 
@@ -2019,9 +2174,14 @@ fn run_tests_in_file(file: &PathBuf, style: &TestStyle) -> Result<TestFileSummar
         if panicked.is_none() && !assertion_failure {
             passes += 1;
             let stats = format!(
-                "({} assertions, {}ms)",
+                "({} {asserts}, {}ms)",
                 tally.assertions,
-                elapsed.as_millis()
+                elapsed.as_millis(),
+                asserts = if tally.assertions == 1 {
+                    "assertion"
+                } else {
+                    "assertions"
+                },
             );
             println!("  {} {name} {}", style.pass(), style.dim(&stats));
         } else {
@@ -2269,7 +2429,7 @@ fn cmd_lint(path: &PathBuf, deny_warnings: bool, explain: Option<&str>, fix: boo
         let (sf, parse_diags) = gossamer_parse::parse_source_file(&source, file_id);
         if !parse_diags.is_empty() {
             for diag in &parse_diags {
-                eprintln!("parse: {diag}");
+                eprintln!("{diag}");
             }
             errors += parse_diags.len();
             continue;
@@ -2376,7 +2536,7 @@ fn default_main_entry() -> Result<PathBuf> {
 }
 
 fn collect_lint_targets(root: &PathBuf) -> Result<Vec<PathBuf>> {
-    let meta = fs::metadata(root).with_context(|| format!("stat {}", root.display()))?;
+    let meta = fs::metadata(root).map_err(|e| friendly_io_error(e, root))?;
     if meta.is_file() {
         return Ok(vec![root.clone()]);
     }

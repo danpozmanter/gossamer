@@ -313,12 +313,9 @@ fn match_with_guard_falls_back_to_unsupported_placeholder() {
         matches!(
             &s.kind,
             StatementKind::Assign {
-                rvalue: Rvalue::CallIntrinsic {
-                    name: "unsupported",
-                    ..
-                },
+                rvalue: Rvalue::CallIntrinsic { name, .. },
                 ..
-            }
+            } if name.starts_with("unsupported")
         )
     });
     assert!(
@@ -472,7 +469,17 @@ fn for_loop_over_exclusive_range_lowers_to_counter_loop() {
             &s.kind,
             StatementKind::Assign {
                 rvalue: Rvalue::CallIntrinsic {
-                    name: "unsupported",
+                    name: "unsupported_match_with_guards"
+                        | "unsupported_match_complex_pattern"
+                        | "unsupported_match_multiple_wildcard_arms"
+                        | "unsupported_match_int_literal_unparseable"
+                        | "unsupported_expr_range"
+                        | "unsupported_expr_closure"
+                        | "unsupported_expr_placeholder"
+                        | "unsupported_field_access_unknown_struct"
+                        | "unsupported_field_access_unknown_field"
+                        | "unsupported_array_repeat_dynamic_count"
+                        | "unsupported",
                     ..
                 },
                 ..
@@ -512,7 +519,17 @@ fn for_loop_over_array_literal_lowers_to_indexed_loop() {
             &s.kind,
             StatementKind::Assign {
                 rvalue: Rvalue::CallIntrinsic {
-                    name: "unsupported",
+                    name: "unsupported_match_with_guards"
+                        | "unsupported_match_complex_pattern"
+                        | "unsupported_match_multiple_wildcard_arms"
+                        | "unsupported_match_int_literal_unparseable"
+                        | "unsupported_expr_range"
+                        | "unsupported_expr_closure"
+                        | "unsupported_expr_placeholder"
+                        | "unsupported_field_access_unknown_struct"
+                        | "unsupported_field_access_unknown_field"
+                        | "unsupported_array_repeat_dynamic_count"
+                        | "unsupported",
                     ..
                 },
                 ..

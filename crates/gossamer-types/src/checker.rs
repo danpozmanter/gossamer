@@ -213,22 +213,52 @@ impl<'a> TypeChecker<'a> {
     /// Auto-dereferences through `&T`/`&mut T` wrappers. Returns
     /// `None` when the receiver does not name a known struct or the
     /// field is not declared on it.
-    fn lookup_field_ty(&mut self, receiver_ty: Ty, field_name: &str) -> Option<Ty> {
+    /// Resolves field access to a type, distinguishing failure
+    /// modes worth surfacing to the user:
+    ///
+    /// - `Err(UnknownField { opaque: true })` — the receiver is an
+    ///   `Adt` whose field map isn't registered (typical of opaque
+    ///   stdlib types like `json::Value`).
+    /// - `Err(UnknownField { opaque: false })` — the receiver is a
+    ///   known struct but the field name doesn't match any of its
+    ///   fields.
+    ///
+    /// Non-Adt receivers (primitives, tuples, unresolved inference
+    /// vars, generic params) get `Ok(fresh_var)` so the rest of the
+    /// expression keeps type-checking. Catching those would either
+    /// fight the trait-method machinery or block legitimate
+    /// inference.
+    fn lookup_field_ty_diagnosed(
+        &mut self,
+        receiver_ty: Ty,
+        field_name: &str,
+    ) -> Result<Ty, TypeError> {
         let resolved = self.infer.resolve(self.tcx, receiver_ty);
         let mut cur = resolved;
         loop {
             match self.tcx.kind_of(cur).clone() {
                 TyKind::Ref { inner, .. } => cur = inner,
                 TyKind::Adt { def, .. } => {
-                    let fields = self.struct_fields.get(&def)?;
+                    let ty_name = crate::printer::render_ty(self.tcx, resolved);
+                    let Some(fields) = self.struct_fields.get(&def) else {
+                        return Err(TypeError::UnknownField {
+                            ty: ty_name,
+                            field: field_name.to_string(),
+                            opaque: true,
+                        });
+                    };
                     for (name, ty) in fields {
                         if name == field_name {
-                            return Some(*ty);
+                            return Ok(*ty);
                         }
                     }
-                    return None;
+                    return Err(TypeError::UnknownField {
+                        ty: ty_name,
+                        field: field_name.to_string(),
+                        opaque: false,
+                    });
                 }
-                _ => return None,
+                _ => return Ok(self.fresh()),
             }
         }
     }
@@ -384,9 +414,15 @@ impl<'a> TypeChecker<'a> {
             ExprKind::FieldAccess { receiver, field } => {
                 let receiver_ty = self.check_expr(receiver);
                 match field {
-                    gossamer_ast::FieldSelector::Named(name) => self
-                        .lookup_field_ty(receiver_ty, &name.name)
-                        .unwrap_or_else(|| self.fresh()),
+                    gossamer_ast::FieldSelector::Named(name) => {
+                        match self.lookup_field_ty_diagnosed(receiver_ty, &name.name) {
+                            Ok(ty) => ty,
+                            Err(err) => {
+                                self.emit(err, expr.span);
+                                self.fresh()
+                            }
+                        }
+                    }
                     gossamer_ast::FieldSelector::Index(idx) => {
                         let resolved = self.infer.resolve(self.tcx, receiver_ty);
                         if let TyKind::Tuple(elems) = self.tcx.kind_of(resolved).clone() {

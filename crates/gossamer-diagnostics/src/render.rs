@@ -31,7 +31,7 @@ pub fn render(diag: &Diagnostic, map: &SourceMap, options: RenderOptions) -> Str
         out.push_str(&header);
     }
     for label in &diag.labels {
-        render_label(&mut out, label, map);
+        render_label(&mut out, label, map, &diag.title);
     }
     for note in &diag.notes {
         let _ = writeln!(out, "  = note: {note}");
@@ -62,7 +62,7 @@ pub fn render_plain(diag: &Diagnostic) -> String {
     out
 }
 
-fn render_label(out: &mut String, label: &Label, map: &SourceMap) {
+fn render_label(out: &mut String, label: &Label, map: &SourceMap, header_title: &str) {
     let (path, line, column) = resolve(map, label.location.file, label.location.span);
     let prefix = if label.primary { "-->" } else { "::>" };
     let _ = writeln!(out, "  {prefix} {path}:{line}:{column}");
@@ -79,9 +79,16 @@ fn render_label(out: &mut String, label: &Label, map: &SourceMap) {
         let caret = "^".repeat(span_len as usize);
         let _ = writeln!(out, "       | {padding}{caret}");
     }
+    // Suppress the in-snippet `error: <msg>` line ONLY when its
+    // text is a verbatim copy of the diagnostic's header title —
+    // that's the noise case the typecheck builder produces today.
+    // Genuinely informative primary messages still render.
     if let Some(msg) = &label.message {
-        let tag = if label.primary { "error" } else { "note" };
-        let _ = writeln!(out, "     {tag}: {msg}");
+        let is_redundant = label.primary && msg == header_title;
+        if !is_redundant {
+            let tag = if label.primary { "error" } else { "note" };
+            let _ = writeln!(out, "     {tag}: {msg}");
+        }
     }
 }
 

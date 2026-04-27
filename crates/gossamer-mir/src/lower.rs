@@ -813,13 +813,22 @@ impl<'a> Builder<'a> {
             }
             HirExprKind::Range { .. } | HirExprKind::Closure { .. } | HirExprKind::Placeholder => {
                 // Lowering of these constructs is left to later
-                // milestones; emit an unreachable placeholder so the
-                // block is still well-formed.
+                // milestones; emit a placeholder tagged with the
+                // construct name so the cranelift backend's
+                // unsupported-intrinsic error tells the user
+                // exactly what failed instead of a bare
+                // "unsupported".
+                let kind = match &expr.kind {
+                    HirExprKind::Range { .. } => "unsupported_expr_range",
+                    HirExprKind::Closure { .. } => "unsupported_expr_closure",
+                    HirExprKind::Placeholder => "unsupported_expr_placeholder",
+                    _ => "unsupported",
+                };
                 let local = self.fresh(expr.ty);
                 self.emit_assign(
                     Place::local(local),
                     Rvalue::CallIntrinsic {
-                        name: "unsupported",
+                        name: kind,
                         args: Vec::new(),
                     },
                     expr.span,
@@ -1568,7 +1577,7 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         if arms.iter().any(|arm| arm.guard.is_some()) {
-            return self.lower_unsupported_placeholder(ty, span);
+            return self.lower_unsupported_with_kind("unsupported_match_with_guards", ty, span);
         }
         let mut switch_arms: Vec<(i128, BlockId)> = Vec::new();
         let mut default_block: Option<BlockId> = None;
@@ -1579,7 +1588,11 @@ impl<'a> Builder<'a> {
             match &arm.pattern.kind {
                 HirPatKind::Literal(HirLiteral::Int(text)) => {
                     let Some(v) = parse_int(text) else {
-                        return self.lower_unsupported_placeholder(ty, span);
+                        return self.lower_unsupported_with_kind(
+                            "unsupported_match_int_literal_unparseable",
+                            ty,
+                            span,
+                        );
                     };
                     switch_arms.push((v, arm_block));
                 }
@@ -1588,7 +1601,11 @@ impl<'a> Builder<'a> {
                 }
                 HirPatKind::Wildcard | HirPatKind::Binding { .. } => {
                     if default_block.is_some() {
-                        return self.lower_unsupported_placeholder(ty, span);
+                        return self.lower_unsupported_with_kind(
+                            "unsupported_match_multiple_wildcard_arms",
+                            ty,
+                            span,
+                        );
                     }
                     default_block = Some(arm_block);
                 }
@@ -1617,7 +1634,13 @@ impl<'a> Builder<'a> {
                     // part of the GC/runtime-variants work.
                     let _ = fields;
                 }
-                _ => return self.lower_unsupported_placeholder(ty, span),
+                _ => {
+                    return self.lower_unsupported_with_kind(
+                        "unsupported_match_complex_pattern",
+                        ty,
+                        span,
+                    );
+                }
             }
         }
         let scrutinee_local = self.lower_expr(scrutinee)?;
@@ -1804,14 +1827,22 @@ impl<'a> Builder<'a> {
             .and_then(|n| self.structs.get(n))
             .cloned();
         let Some(order) = field_order else {
-            return self.lower_unsupported_placeholder(ty, span);
+            return self.lower_unsupported_with_kind(
+                "unsupported_field_access_unknown_struct",
+                ty,
+                span,
+            );
         };
         let idx = order
             .iter()
             .position(|f| f == &name.name)
             .map(|i| u32::try_from(i).expect("field index fits u32"));
         let Some(idx) = idx else {
-            return self.lower_unsupported_placeholder(ty, span);
+            return self.lower_unsupported_with_kind(
+                "unsupported_field_access_unknown_field",
+                ty,
+                span,
+            );
         };
         let dest = self.fresh(ty);
         let place = Place {
@@ -2031,11 +2062,25 @@ impl<'a> Builder<'a> {
     }
 
     fn lower_unsupported_placeholder(&mut self, ty: Ty, span: Span) -> Option<Local> {
+        self.lower_unsupported_with_kind("unsupported", ty, span)
+    }
+
+    /// Same as [`lower_unsupported_placeholder`] but lets callers
+    /// label which construct went unhandled. The label flows into
+    /// the cranelift backend's "unsupported intrinsic" error so the
+    /// user sees the actual offender instead of a bare
+    /// "unsupported".
+    fn lower_unsupported_with_kind(
+        &mut self,
+        kind: &'static str,
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
         let local = self.fresh(ty);
         self.emit_assign(
             Place::local(local),
             Rvalue::CallIntrinsic {
-                name: "unsupported",
+                name: kind,
                 args: Vec::new(),
             },
             span,
@@ -2105,16 +2150,11 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         let Some(count_u64) = literal_u64(count) else {
-            let local = self.fresh(ty);
-            self.emit_assign(
-                Place::local(local),
-                Rvalue::CallIntrinsic {
-                    name: "unsupported",
-                    args: Vec::new(),
-                },
+            return self.lower_unsupported_with_kind(
+                "unsupported_array_repeat_dynamic_count",
+                ty,
                 span,
             );
-            return Some(local);
         };
         let value_local = self.lower_expr(value)?;
         let dest = self.fresh(ty);

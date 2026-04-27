@@ -41,6 +41,14 @@ pub(crate) fn cmd_repl() -> Result<()> {
     }
 
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    // Greeting on a TTY only — keeps non-interactive consumers
+    // (`echo expr | gos`) clean.
+    if tty {
+        println!(
+            "\x1b[1mgos {ver}\x1b[0m  type expressions, or \x1b[36m%help\x1b[0m for meta commands",
+            ver = env!("CARGO_PKG_VERSION"),
+        );
+    }
     loop {
         let prompt = if tty {
             format!("\x1b[32mIn [{input_no}]:\x1b[0m ")

@@ -365,6 +365,20 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("render", builtin_json_render),
             ("encode", builtin_json_render),
             ("decode", builtin_json_decode),
+            // Query surface — operates on the dynamic struct shape
+            // produced by `json_value_to_gossamer`, so a JSON object
+            // is a struct keyed by field name and a JSON array is a
+            // `Value::Array`.
+            ("get", builtin_json_get),
+            ("at", builtin_json_at),
+            ("keys", builtin_json_keys),
+            ("len", builtin_json_len),
+            ("is_null", builtin_json_is_null),
+            ("as_str", builtin_json_as_str),
+            ("as_i64", builtin_json_as_i64),
+            ("as_f64", builtin_json_as_f64),
+            ("as_bool", builtin_json_as_bool),
+            ("as_array", builtin_json_as_array),
         ],
         globals,
     );
@@ -983,6 +997,26 @@ pub fn take_test_tally() -> TestTally {
 
 fn observe_assertion(ok: bool, message: String) {
     TEST_TALLY.with(|cell| cell.borrow_mut().observe(ok, message));
+}
+
+thread_local! {
+    /// Most-recent `<file>:<line>:<col>` of an assertion-shaped
+    /// builtin call. Set by the interpreter just before each
+    /// `check*` invocation; read by the assertion builtins to
+    /// stamp the location into the failure message.
+    static ASSERTION_LOCATION: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Records the source location of the assertion currently being
+/// evaluated. The interpreter calls this before dispatching to
+/// `testing::check*`.
+pub fn set_assertion_location(location: Option<String>) {
+    ASSERTION_LOCATION.with(|cell| *cell.borrow_mut() = location);
+}
+
+fn current_assertion_location() -> Option<String> {
+    ASSERTION_LOCATION.with(|cell| cell.borrow().clone())
 }
 
 fn write_stdout(text: &str) {
@@ -1897,6 +1931,129 @@ fn builtin_json_render(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(json_std::encode(&json_value))))
 }
 
+/// `json::get(value, key)` → object lookup. Returns `Value::Unit`
+/// (`null` shape) when the receiver isn't an object or the key is
+/// missing — keeps call chains short by never panicking.
+fn builtin_json_get(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(receiver) = args.first() else {
+        return Ok(Value::Unit);
+    };
+    let Some(key) = args.get(1).and_then(as_str) else {
+        return Ok(Value::Unit);
+    };
+    if let Value::Struct(inner) = receiver {
+        for (field_name, value) in &**inner.fields {
+            if field_name.name.as_str() == key {
+                return Ok(value.clone());
+            }
+        }
+    }
+    Ok(Value::Unit)
+}
+
+/// `json::at(array, idx)` → array index. Returns `Value::Unit`
+/// when the receiver isn't an array or the index is out of bounds.
+fn builtin_json_at(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(receiver) = args.first() else {
+        return Ok(Value::Unit);
+    };
+    let idx = args.get(1).and_then(|v| match v {
+        Value::Int(n) => Some(*n),
+        _ => None,
+    });
+    let Some(idx) = idx else {
+        return Ok(Value::Unit);
+    };
+    if idx < 0 {
+        return Ok(Value::Unit);
+    }
+    if let Value::Array(arr) = receiver {
+        if let Some(v) = arr.get(idx as usize) {
+            return Ok(v.clone());
+        }
+    }
+    Ok(Value::Unit)
+}
+
+/// `json::keys(object)` → `[String]` of every key in sorted order.
+fn builtin_json_keys(args: &[Value]) -> RuntimeResult<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    if let Some(Value::Struct(inner)) = args.first() {
+        for (name, _) in &**inner.fields {
+            out.push(Value::String(SmolStr::from(name.name.as_str())));
+        }
+    }
+    Ok(Value::Array(Arc::new(out)))
+}
+
+/// `json::len(value)` → element / pair / byte count, 0 for scalar.
+fn builtin_json_len(args: &[Value]) -> RuntimeResult<Value> {
+    let n: i64 = match args.first() {
+        Some(Value::Array(a)) => a.len() as i64,
+        Some(Value::Struct(s)) => s.fields.len() as i64,
+        Some(Value::String(s)) => s.len() as i64,
+        _ => 0,
+    };
+    Ok(Value::Int(n))
+}
+
+/// `json::is_null(value)` → `true` when the value is the `null` shape.
+fn builtin_json_is_null(args: &[Value]) -> RuntimeResult<Value> {
+    let is_null = matches!(args.first(), Some(Value::Unit | Value::Void) | None);
+    Ok(Value::Bool(is_null))
+}
+
+/// `json::as_str(value)` → `Option<String>`.
+fn builtin_json_as_str(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::String(s)) = args.first() {
+        return Ok(some_variant(Value::String(s.clone())));
+    }
+    Ok(none_variant())
+}
+
+/// `json::as_i64(value)` → `Option<i64>`.
+fn builtin_json_as_i64(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Int(n)) = args.first() {
+        return Ok(some_variant(Value::Int(*n)));
+    }
+    if let Some(Value::Float(f)) = args.first() {
+        if f.fract() == 0.0 && *f >= i64::MIN as f64 && *f <= i64::MAX as f64 {
+            return Ok(some_variant(Value::Int(*f as i64)));
+        }
+    }
+    Ok(none_variant())
+}
+
+/// `json::as_f64(value)` → `Option<f64>`.
+fn builtin_json_as_f64(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Float(f)) = args.first() {
+        return Ok(some_variant(Value::Float(*f)));
+    }
+    if let Some(Value::Int(n)) = args.first() {
+        return Ok(some_variant(Value::Float(*n as f64)));
+    }
+    Ok(none_variant())
+}
+
+/// `json::as_bool(value)` → `Option<bool>`.
+fn builtin_json_as_bool(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Bool(b)) = args.first() {
+        return Ok(some_variant(Value::Bool(*b)));
+    }
+    Ok(none_variant())
+}
+
+/// `json::as_array(value)` → the underlying `Vec` (or empty when
+/// the receiver isn't an array). Returned bare — wrap in
+/// `Some(_)` semantics by checking with `json::len(_) > 0` if you
+/// care about distinguishing empty vs non-array.
+fn builtin_json_as_array(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Array(a)) = args.first() {
+        return Ok(Value::Array(Arc::clone(a)));
+    }
+    Ok(Value::Array(Arc::new(Vec::new())))
+}
+
 fn builtin_json_decode(args: &[Value]) -> RuntimeResult<Value> {
     let Some(text) = args.first().and_then(as_str) else {
         return Ok(err_variant("json::decode: expected string argument"));
@@ -2270,7 +2427,10 @@ fn native_spawn(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeRes
 fn builtin_testing_check(args: &[Value]) -> RuntimeResult<Value> {
     let cond = matches!(args.first(), Some(Value::Bool(true)));
     let message = args.get(1).and_then(as_str).unwrap_or("check failed");
-    observe_assertion(cond, format!("check: {message}"));
+    let location = current_assertion_location()
+        .map(|s| format!(" at {s}"))
+        .unwrap_or_default();
+    observe_assertion(cond, format!("check: {message}{location}"));
     if cond {
         Ok(ok_variant(Value::Unit))
     } else {
@@ -2283,15 +2443,21 @@ fn builtin_testing_check_eq(args: &[Value]) -> RuntimeResult<Value> {
     let right = args.get(1).cloned().unwrap_or(Value::Unit);
     let message = args.get(2).and_then(as_str).unwrap_or("check_eq failed");
     let ok = values_equal_for_assertion(&left, &right);
+    let location = current_assertion_location()
+        .map(|s| format!(" at {s}"))
+        .unwrap_or_default();
+    // `{:?}` (Debug) wraps strings in quotes so a failing
+    // `"foo "` vs `"foo"` (trailing space) is visible. Bare
+    // `Display` would render them identically.
     observe_assertion(
         ok,
-        format!("check_eq: {message}: left={left}, right={right}"),
+        format!("check_eq: {message}{location}: left={left:?}, right={right:?}"),
     );
     if ok {
         Ok(ok_variant(Value::Unit))
     } else {
         Ok(err_variant(format!(
-            "{message}: left={left}, right={right}"
+            "{message}: left={left:?}, right={right:?}"
         )))
     }
 }
@@ -2367,7 +2533,7 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
         let Value::String(field_name) = key else {
             continue;
         };
-        pairs.push((field_name.as_str().to_string(), value.clone()));
+        pairs.push((field_name.to_string(), value.clone()));
     }
     // Reorder to declaration order when the struct's layout is
     // known. This makes every `Value::Struct { name: "Body" }`
@@ -2562,7 +2728,7 @@ fn extract_flag_decls(values: &[Value]) -> Vec<FlagDeclEntry> {
             .cloned()
             .unwrap_or(Value::Unit);
         out.push(FlagDeclEntry {
-            name: flag_name.as_str().to_string(),
+            name: flag_name.to_string(),
             short,
             default,
         });

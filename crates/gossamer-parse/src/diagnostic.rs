@@ -11,7 +11,10 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ParseError {
     /// An unexpected token appeared where the grammar requires something else.
-    #[error("unexpected token `{found}`, expected {expected}")]
+    /// `{found}` already includes its own backticks for keyword/punct
+    /// tokens (`token_text` formats them), so the outer format string
+    /// does not double-wrap.
+    #[error("unexpected {found}, expected {expected}")]
     Unexpected {
         /// Human-readable description of what was expected.
         expected: String,
@@ -120,7 +123,7 @@ impl ParseDiagnostic {
         let (code, title, help): (&'static str, String, Option<String>) = match &self.error {
             ParseError::Unexpected { expected, found } => (
                 "GP0001",
-                format!("unexpected token `{found}`, expected {expected}"),
+                format!("unexpected {found}, expected {expected}"),
                 None,
             ),
             ParseError::UnexpectedEof { construct } => (

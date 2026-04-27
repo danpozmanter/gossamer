@@ -912,6 +912,82 @@ fn define_var_to_with(
     builder.def_var(var, coerced);
 }
 
+/// Maps the `unsupported_*` placeholder tag emitted by the MIR
+/// lowerer to a human-readable explanation. Keep this table in
+/// sync with the `lower_unsupported_with_kind` call sites in
+/// `crates/gossamer-mir/src/lower.rs`.
+fn explain_unsupported(name: &str) -> String {
+    match name {
+        "unsupported_expr_range" => {
+            "range expressions (e.g. `0..n`) are not yet lowered to native code; \
+             use a `while` loop or pre-compute the iteration count."
+                .to_string()
+        }
+        "unsupported_expr_closure" => "this closure shape is not yet lowered to native code; \
+             try lifting the closure to a top-level `fn` or pass it \
+             through an `Fn(_)` parameter."
+            .to_string(),
+        "unsupported_expr_placeholder" => {
+            "the front-end emitted a placeholder expression — usually \
+             this means a syntactic construct slipped past resolve but \
+             never got lowered. File a bug with a minimal reproducer."
+                .to_string()
+        }
+        "unsupported_match_with_guards" => "`match` arms with `if` guards are not yet lowered to \
+             native code; rewrite the guard as a nested `if` inside \
+             the arm body."
+            .to_string(),
+        "unsupported_match_int_literal_unparseable" => {
+            "an integer pattern in this `match` could not be parsed \
+             at MIR-lowering time; check the literal."
+                .to_string()
+        }
+        "unsupported_match_multiple_wildcard_arms" => {
+            "this `match` has more than one wildcard / binding arm. \
+             Collapse them into a single trailing `_ =>` arm."
+                .to_string()
+        }
+        "unsupported_match_complex_pattern" => {
+            "this `match` uses a pattern shape (struct / tuple / range \
+             / or-pattern) that the native backend does not yet \
+             handle. Rewrite as nested `if let` or as integer / bool \
+             arms."
+                .to_string()
+        }
+        "unsupported_field_access_unknown_struct" => {
+            "field access on a value whose static type is not a known \
+             struct. Common cause: writing `value.foo` on a \
+             `json::Value`, on a generic / inferred `for`-loop \
+             variable, or on any opaque stdlib type. Use the type's \
+             methods (e.g. `json::Value` has no struct fields — \
+             render or query it via the `json` API) instead of \
+             named-field access."
+                .to_string()
+        }
+        "unsupported_field_access_unknown_field" => {
+            "the named field is not declared on the receiver's struct. \
+             Check the spelling and that the struct definition is in \
+             scope."
+                .to_string()
+        }
+        "unsupported_array_repeat_dynamic_count" => {
+            "`[value; count]` requires a constant-integer count; \
+             compute the array with a loop or use `Vec::with_capacity` \
+             instead."
+                .to_string()
+        }
+        "unsupported" => "the front-end could not lower this expression — this is a \
+             Gossamer compiler gap. File a bug with a minimal \
+             reproducer."
+            .to_string(),
+        other => format!(
+            "unrecognised lowering placeholder `{other}` — please file a \
+             bug; the cranelift backend's `explain_unsupported` table is \
+             out of sync with the MIR lowerer."
+        ),
+    }
+}
+
 fn lower_statement(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -933,15 +1009,17 @@ fn lower_statement(
                 )? {
                     return Ok(());
                 }
-                // HIR lowering emits `CallIntrinsic { name: "unsupported" }`
-                // (and similar placeholders) for constructs MIR cannot
-                // lower natively — method calls, closures-on-escaping-
-                // paths, `go expr`, etc. Refuse to build rather than
-                // emit a runtime-abort stub; the driver surfaces the
-                // error to the user. Reaching this arm post-L4 is
-                // a compiler bug — every HIR construct should
-                // lower to a concrete MIR terminator or a stub.
-                bail!("native codegen: unsupported intrinsic `{name}`");
+                // HIR lowering emits `CallIntrinsic { name: "unsupported_*" }`
+                // placeholders for constructs MIR cannot lower
+                // natively. Each placeholder carries a tag identifying
+                // *which* construct stalled — surface that plus a
+                // human hint so the user knows what to rewrite.
+                let hint = explain_unsupported(name);
+                bail!(
+                    "native codegen cannot lower this construct yet:\n  \
+                     {hint}\n  \
+                     (internal placeholder: `{name}`)"
+                );
             }
             // Destination hint: when the place has no projections, it's
             // the root local's type. When it does, we still use the

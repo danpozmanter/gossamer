@@ -44,6 +44,7 @@ assets = [
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+clap_complete = "4"
 gossamer-ast = { workspace = true }
 gossamer-diagnostics = { workspace = true }
 gossamer-driver = { workspace = true }

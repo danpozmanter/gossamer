@@ -98,6 +98,108 @@ pub fn as_i64(value: &Value) -> Option<i64> {
     None
 }
 
+/// Retrieves an `f64` from a [`Value::Number`].
+#[must_use]
+pub fn as_f64(value: &Value) -> Option<f64> {
+    if let Value::Number(n) = value {
+        Some(*n)
+    } else {
+        None
+    }
+}
+
+/// Retrieves a `&str` from a [`Value::String`].
+#[must_use]
+pub fn as_str(value: &Value) -> Option<&str> {
+    if let Value::String(s) = value {
+        Some(s)
+    } else {
+        None
+    }
+}
+
+/// Retrieves a `bool` from a [`Value::Bool`].
+#[must_use]
+pub fn as_bool(value: &Value) -> Option<bool> {
+    if let Value::Bool(b) = value {
+        Some(*b)
+    } else {
+        None
+    }
+}
+
+/// Borrows the inner `Vec` of a [`Value::Array`].
+#[must_use]
+pub fn as_array(value: &Value) -> Option<&Vec<Value>> {
+    if let Value::Array(a) = value {
+        Some(a)
+    } else {
+        None
+    }
+}
+
+/// Borrows the inner `BTreeMap` of a [`Value::Object`].
+#[must_use]
+pub fn as_object(value: &Value) -> Option<&BTreeMap<String, Value>> {
+    if let Value::Object(m) = value {
+        Some(m)
+    } else {
+        None
+    }
+}
+
+/// Returns `true` for `Value::Null`. Mirrors `serde_json::Value::is_null`.
+#[must_use]
+pub fn is_null(value: &Value) -> bool {
+    matches!(value, Value::Null)
+}
+
+/// Number of items in an array, key/value pairs in an object, or
+/// bytes in a string. Returns 0 for any other variant.
+#[must_use]
+pub fn len(value: &Value) -> i64 {
+    match value {
+        Value::Array(a) => a.len() as i64,
+        Value::Object(m) => m.len() as i64,
+        Value::String(s) => s.len() as i64,
+        _ => 0,
+    }
+}
+
+/// Looks up `key` in an object (`{...}`). Returns `None` for any
+/// non-object value or when the key isn't present. Pair with
+/// [`as_str`] / [`as_array`] / [`as_i64`] to drill in.
+#[must_use]
+pub fn get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    if let Value::Object(m) = value {
+        m.get(key)
+    } else {
+        None
+    }
+}
+
+/// Returns the i-th element of a [`Value::Array`], if any.
+#[must_use]
+pub fn at(value: &Value, idx: i64) -> Option<&Value> {
+    if let Value::Array(a) = value {
+        if idx < 0 {
+            return None;
+        }
+        a.get(idx as usize)
+    } else {
+        None
+    }
+}
+
+/// Returns every key of a [`Value::Object`] in sorted order.
+#[must_use]
+pub fn keys(value: &Value) -> Vec<String> {
+    match value {
+        Value::Object(m) => m.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Alias so the surface matches the SPEC's `json::decode`.
 pub fn decode(source: &str) -> Result<Value, Error> {
     parse(source)

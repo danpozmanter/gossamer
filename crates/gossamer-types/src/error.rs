@@ -76,6 +76,20 @@ pub enum TypeError {
         /// Target type.
         to: String,
     },
+    /// Field access (`value.field`) on a type that has no such field.
+    /// Splits two failure modes: `opaque` is true when the receiver's
+    /// type is known but the checker has no field map for it (typical
+    /// of dynamic stdlib types like `json::Value`); `opaque` is false
+    /// when the type does have fields but `field` isn't one of them.
+    #[error("type `{ty}` has no field `{field}`")]
+    UnknownField {
+        /// Receiver type.
+        ty: String,
+        /// Field name attempted.
+        field: String,
+        /// `true` when the receiver is opaque to the checker.
+        opaque: bool,
+    },
 }
 
 impl TypeError {
@@ -88,6 +102,7 @@ impl TypeError {
             Self::UnresolvedOp { .. } => "unresolved-op",
             Self::NonExhaustiveMatch { .. } => "non-exhaustive-match",
             Self::InvalidCast { .. } => "invalid-cast",
+            Self::UnknownField { .. } => "unknown-field",
         }
     }
 
@@ -100,8 +115,62 @@ impl TypeError {
             Self::UnresolvedOp { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
             Self::InvalidCast { .. } => "GT0005",
+            Self::UnknownField { .. } => "GT0006",
         }
     }
+}
+
+/// Maps the most common `expected X, found Y` pairs to a one-line
+/// "did you mean" hint. Pure string compare on the rendered types
+/// — keeps the table small and avoids re-deriving structure here.
+fn mismatch_suggestion(expected: &str, found: &str) -> Option<String> {
+    // String / &str
+    if expected == "String" && found.ends_with("&str") {
+        return Some("did you mean to call `.to_string()` on the value?".to_string());
+    }
+    if expected.ends_with("&str") && found == "String" {
+        return Some("did you mean to call `.as_str()` on the value?".to_string());
+    }
+    // Numeric width — i32 ↔ i64, u32 ↔ u64, etc.
+    let int_suffixes = [
+        "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "isize", "usize",
+    ];
+    if int_suffixes.contains(&expected) && int_suffixes.contains(&found) {
+        return Some(format!("cast explicitly with `<expr> as {expected}`"));
+    }
+    // T → Option<T>
+    if let Some(inner) = expected
+        .strip_prefix("Option<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        if inner == found {
+            return Some(format!(
+                "did you mean to wrap with `Some(<expr>)` to lift `{inner}` into `Option<{inner}>`?"
+            ));
+        }
+    }
+    // Result<T, _> → T (handler returned a Result, caller wanted the inner value)
+    if found.starts_with("Result<") && !expected.starts_with("Result<") {
+        return Some(
+            "did you mean to propagate with `?` (`<expr>?`) to unwrap the `Result`?".to_string(),
+        );
+    }
+    // &T vs T
+    if let Some(rest) = found.strip_prefix('&') {
+        if rest == expected {
+            return Some(format!(
+                "did you mean to dereference with `*<expr>` to get `{expected}`?"
+            ));
+        }
+    }
+    if let Some(rest) = expected.strip_prefix('&') {
+        if rest == found {
+            return Some(format!(
+                "did you mean to take a reference with `&<expr>` to get `&{found}`?"
+            ));
+        }
+    }
+    None
 }
 
 impl TypeDiagnostic {
@@ -117,6 +186,9 @@ impl TypeDiagnostic {
         match &self.error {
             TypeError::TypeMismatch { expected, found } => {
                 out = out.with_note(format!("expected `{expected}`, found `{found}`"));
+                if let Some(suggestion) = mismatch_suggestion(expected, found) {
+                    out = out.with_help(suggestion);
+                }
             }
             TypeError::UnresolvedMethod { ty, name } => {
                 out = out
@@ -139,6 +211,20 @@ impl TypeDiagnostic {
                         "`as` is restricted to numeric ↔ numeric, `bool`/`char` → integer, `u8` → `char`, and no-op same-type casts",
                     )
                     .with_note(format!("cannot cast `{from}` to `{to}`"));
+            }
+            TypeError::UnknownField { ty, field, opaque } => {
+                if *opaque {
+                    out = out.with_help(format!(
+                        "`{ty}` has no named struct fields exposed to the language. \
+                         Use the type's methods (e.g. `value.get(\"{field}\")` for \
+                         `json::Value`) instead of named-field access."
+                    ));
+                } else {
+                    out = out.with_help(format!(
+                        "check the spelling of `.{field}` and that the struct \
+                         definition for `{ty}` is in scope."
+                    ));
+                }
             }
         }
         out
