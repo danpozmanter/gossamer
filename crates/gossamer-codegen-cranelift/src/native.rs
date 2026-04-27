@@ -5061,14 +5061,50 @@ fn lower_rvalue(
             }
         }
         Rvalue::Cast { operand, target } => {
-            // Same-kind casts (i64 → usize, i32 → i64) are no-ops at
-            // this level; cross-kind numeric casts (f64 ↔ i64) are
-            // still future work and fall through to the generic
-            // `unsupported` bail at the statement layer.
-            let _ = target;
-            lower_operand(
+            // Determine source / destination cranelift type and
+            // emit the right conversion. Without this i64 ↔ f64
+            // bit-transmutes (the operand SSA value just gets
+            // reused), which silently miscompiles benchmarks
+            // that do `i as f64`.
+            let src_v = lower_operand(
                 module, builder, locals, body, tcx, operand, dst_hint, intrinsics,
-            )?
+            )?;
+            let src_ty = builder.func.dfg.value_type(src_v);
+            let dst_ty = cl_type_of(tcx, *target, module);
+            match (src_ty, dst_ty) {
+                // No-op when source and destination types coincide.
+                (a, b) if a == b => src_v,
+                // Integer → float (f32 / f64). Use signed
+                // conversion since Gossamer's primary integer is
+                // signed `i64`. Unsigned casts go through a same-
+                // width int rebox before this point.
+                (s, d) if s.is_int() && d.is_float() => builder.ins().fcvt_from_sint(d, src_v),
+                // Float → integer. Saturating conversion matches
+                // Rust's `as` (NaN → 0, ±Inf clamps to bounds).
+                (s, d) if s.is_float() && d.is_int() => builder.ins().fcvt_to_sint_sat(d, src_v),
+                // Integer width adjustments.
+                (s, d) if s.is_int() && d.is_int() => {
+                    if d.bits() > s.bits() {
+                        // Sign-extending widening for signed types.
+                        builder.ins().sextend(d, src_v)
+                    } else if d.bits() < s.bits() {
+                        builder.ins().ireduce(d, src_v)
+                    } else {
+                        src_v
+                    }
+                }
+                // Float width adjustments (f32 ↔ f64).
+                (s, d) if s.is_float() && d.is_float() => {
+                    if d.bits() > s.bits() {
+                        builder.ins().fpromote(d, src_v)
+                    } else if d.bits() < s.bits() {
+                        builder.ins().fdemote(d, src_v)
+                    } else {
+                        src_v
+                    }
+                }
+                _ => src_v,
+            }
         }
         Rvalue::Aggregate { kind, operands } => {
             // Aggregates live in a stack slot N*8 bytes wide. Each
@@ -5331,7 +5367,17 @@ fn lower_place_read(
     }
     let addr = lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?;
     let leaf_ty = resolve_place_cl_type(tcx, body, place, module, hint);
-    Ok(builder.ins().load(leaf_ty, MemFlags::trusted(), addr, 0))
+    // Use plain `MemFlags::new()` instead of `trusted()` — without
+    // it cranelift's alias analysis was load-CSEing reads across
+    // unrelated stores, e.g. in
+    //   let t = arr[lo]
+    //   let u = arr[hi]
+    //   arr[hi] = t
+    //   arr[lo] = u
+    // the second store materialised `u` from a fresh load of
+    // `arr+hi*8` *after* `arr+hi*8` had been overwritten with `t`,
+    // collapsing the swap to a degenerate `arr[lo] = arr[lo]`.
+    Ok(builder.ins().load(leaf_ty, MemFlags::new(), addr, 0))
 }
 
 fn lower_const(

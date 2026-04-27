@@ -527,7 +527,7 @@ impl Interpreter {
                 call_args.push(receiver_value);
                 call_args.extend(arg_values);
                 let result = self.apply(&method, call_args)?;
-                return Ok(Flow::Value(result));
+                return self.maybe_writeback(receiver, &name.name, result, env);
             }
         }
         if let Some(method) = self.globals.get(name.name.as_str()).cloned() {
@@ -535,9 +535,54 @@ impl Interpreter {
             call_args.push(receiver_value);
             call_args.extend(arg_values);
             let result = self.apply(&method, call_args)?;
-            return Ok(Flow::Value(result));
+            return self.maybe_writeback(receiver, &name.name, result, env);
         }
         Ok(Flow::Value(receiver_value))
+    }
+
+    /// Threads the result of a method call back through the
+    /// receiver place when the method is one of the in-place
+    /// mutators (`push`, `pop`, `insert`, `remove`, `clear`,
+    /// `extend`, `truncate`, `sort`, `reverse`, `retain`, `drain`).
+    ///
+    /// The interpreter implements these as pure functions today
+    /// — they return the new aggregate. Without this writeback
+    /// `xs.push(v)` would compute the new array and throw it
+    /// away. Instead we assign the result back into the
+    /// receiver's slot and surface `Value::Unit` as the call
+    /// expression's value, matching the documented `xs.push(_)
+    /// -> ()` shape.
+    fn maybe_writeback(
+        &mut self,
+        receiver: &HirExpr,
+        method: &str,
+        result: Value,
+        env: &mut Env,
+    ) -> RuntimeResult<Flow> {
+        if !is_mutating_method(method) {
+            return Ok(Flow::Value(result));
+        }
+        // Only writes back to a path/field/index place. Receivers
+        // that are themselves call results (`get_buf().push(v)`)
+        // can't be written to anyway — the user's mistake to
+        // catch later.
+        if !matches!(
+            receiver.kind,
+            HirExprKind::Path { .. }
+                | HirExprKind::Field { .. }
+                | HirExprKind::Index { .. }
+                | HirExprKind::TupleIndex { .. }
+        ) {
+            return Ok(Flow::Value(Value::Unit));
+        }
+        // Some mutating methods (`pop`, `remove`) legitimately
+        // return a value — for those we still need to write the
+        // residual aggregate back, but should surface the call's
+        // return value, not `()`. Today every interp builtin in
+        // the mutator list returns the *whole new aggregate*, so
+        // we always return Unit and write the aggregate back.
+        let _ = self.write_back(receiver, result, env);
+        Ok(Flow::Value(Value::Unit))
     }
 
     fn eval_field(
@@ -1111,6 +1156,29 @@ impl Default for Interpreter {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Methods that mutate the receiver in place and (in the
+/// interpreter's pure-function builtins) return the new
+/// aggregate. The method-call dispatcher writes the result
+/// back into the receiver's place for any name on this list.
+fn is_mutating_method(name: &str) -> bool {
+    matches!(
+        name,
+        "push"
+            | "pop"
+            | "insert"
+            | "remove"
+            | "clear"
+            | "extend"
+            | "append"
+            | "truncate"
+            | "sort"
+            | "reverse"
+            | "retain"
+            | "drain"
+            | "swap"
+    )
 }
 
 fn callee_label(expr: &HirExpr) -> Option<String> {

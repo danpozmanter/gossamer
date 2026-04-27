@@ -23,13 +23,19 @@ pub fn env(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }
 
-/// Sets an environment variable in the current process. The runtime
-/// implementation is provided by the production native build; this
-/// safe-Rust stub returns an error so the surface API is still
-/// exercised in tests.
+/// Sets an environment variable in the current process.
+///
+/// Stubbed in the safe-Rust crate because `std::env::set_var` is
+/// `unsafe fn` under Rust 2024 and `gossamer-std` carries
+/// `#![forbid(unsafe_code)]`. The production native runtime
+/// (`gossamer-runtime`, which permits `unsafe`) will provide the
+/// real implementation via an FFI shim once that pipe is wired —
+/// see `crates/gossamer-runtime/src/c_abi.rs`. Until then this
+/// returns an error so callers can detect the gap rather than
+/// silently no-op.
 pub fn set_env(name: &str, _value: &str) -> Result<(), IoError> {
     Err(IoError::Other(format!(
-        "set_env({name}, ...) requires the native runtime"
+        "set_env({name}, ...) requires the native runtime — not yet wired in safe-Rust gossamer-std"
     )))
 }
 
