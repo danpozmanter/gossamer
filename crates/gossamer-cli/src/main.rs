@@ -41,9 +41,14 @@ enum Command {
         file: PathBuf,
     },
     /// Run the full frontend (parse + resolve + typecheck + exhaustiveness).
+    ///
+    /// With no path: when a `project.toml` is reachable above the
+    /// current directory, every `.gos` under the project's `src/`
+    /// is checked.
     Check {
-        /// Path to a `.gos` source file.
-        file: PathBuf,
+        /// Path to a `.gos` source file or a directory to walk.
+        /// Optional: defaults to the project's `src/` directory.
+        file: Option<PathBuf>,
         /// Print per-stage wall-clock timings on success.
         #[arg(long)]
         timings: bool,
@@ -55,9 +60,13 @@ enum Command {
     /// support the runner silently falls back to the tree-walker.
     /// Use `--tree-walker` to force the tree-walker for
     /// development / debugging.
+    ///
+    /// With no path: defaults to `<project-root>/src/main.gos`
+    /// when a `project.toml` is reachable.
     Run {
-        /// Path to a `.gos` source file.
-        file: PathBuf,
+        /// Path to a `.gos` source file. Optional: defaults to the
+        /// project's `src/main.gos`.
+        file: Option<PathBuf>,
         /// Use the tree-walker (the original recursive
         /// interpreter) instead of the VM. Slower but covers
         /// every language construct today; mostly useful when
@@ -79,9 +88,13 @@ enum Command {
     /// either `project.output` (walking up from the source file for
     /// the nearest `project.toml`) or the source stem beside the
     /// input when no manifest is present.
+    ///
+    /// With no path: defaults to `<project-root>/src/main.gos`
+    /// when a `project.toml` is reachable.
     Build {
-        /// Path to a `.gos` source file.
-        file: PathBuf,
+        /// Path to a `.gos` source file. Optional: defaults to the
+        /// project's `src/main.gos`.
+        file: Option<PathBuf>,
         /// Cross-compilation target triple (e.g. `aarch64-apple-darwin`).
         #[arg(long)]
         target: Option<String>,
@@ -197,9 +210,14 @@ enum Command {
     },
     /// Run the built-in lint suite over one file or every `.gos`
     /// source under a directory.
+    ///
+    /// With no path: when a `project.toml` is reachable above the
+    /// current directory, every `.gos` under the project's `src/`
+    /// is linted.
     Lint {
         /// Path to a `.gos` source file or a directory to walk.
-        path: PathBuf,
+        /// Optional: defaults to the project's `src/` directory.
+        path: Option<PathBuf>,
         /// Promote every lint hit to an error.
         #[arg(long)]
         deny_warnings: bool,
@@ -266,7 +284,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         None => repl::cmd_repl(),
         Some(Command::Parse { file }) => cmd_parse(&file),
-        Some(Command::Check { file, timings }) => cmd_check(&file, timings),
+        Some(Command::Check { file, timings }) => cmd_check_dispatch(file, timings),
         Some(Command::Run {
             file,
             tree_walker,
@@ -281,13 +299,13 @@ fn main() -> ExitCode {
             if no_jit {
                 gossamer_interp::set_jit_disabled();
             }
-            cmd_run(&file, mode, &args)
+            cmd_run_dispatch(file, mode, &args)
         }
         Some(Command::Build {
             file,
             target,
             release,
-        }) => cmd_build(&file, target.as_deref(), release),
+        }) => cmd_build_dispatch(file, target.as_deref(), release),
         Some(Command::Init { id }) => cmd_init(&id),
         Some(Command::New { id, path, template }) => cmd_new(&id, path, &template),
         Some(Command::Add { spec, manifest }) => cmd_add(&spec, manifest),
@@ -304,7 +322,7 @@ fn main() -> ExitCode {
             deny_warnings,
             explain,
             fix,
-        }) => cmd_lint(&path, deny_warnings, explain.as_deref(), fix),
+        }) => cmd_lint_dispatch(path, deny_warnings, explain.as_deref(), fix),
         Some(Command::Explain { code }) => cmd_explain(&code),
         Some(Command::SkillPrompt) => {
             cmd_skill_prompt();
@@ -377,6 +395,83 @@ fn print_timings(
         exhaust.as_secs_f64() * 1000.0,
         total.as_secs_f64() * 1000.0,
     );
+}
+
+/// `gos check` entry. With no path, walks every `.gos` under the
+/// project's `src/` (or the project root if no `src/`); with a
+/// directory, walks every `.gos` underneath; with a file, behaves
+/// exactly as before.
+fn cmd_check_dispatch(path: Option<PathBuf>, timings: bool) -> Result<()> {
+    let resolved = match path {
+        Some(p) => p,
+        None => default_test_root()?,
+    };
+    let meta = fs::metadata(&resolved)
+        .with_context(|| format!("stat {}", resolved.display()))?;
+    if meta.is_file() {
+        return cmd_check(&resolved, timings);
+    }
+    let files = collect_lint_targets(&resolved)?;
+    if files.is_empty() {
+        return Err(anyhow!("no `.gos` sources found under {}", resolved.display()));
+    }
+    let mut total_errors = 0u32;
+    for file in &files {
+        if files.len() > 1 {
+            println!("=== {} ===", file.display());
+        }
+        match cmd_check(file, timings) {
+            Ok(()) => {}
+            Err(err) => {
+                eprintln!("{err}");
+                total_errors += 1;
+            }
+        }
+    }
+    if total_errors > 0 {
+        return Err(anyhow!(
+            "check: {total_errors} file(s) failed across {} source(s)",
+            files.len()
+        ));
+    }
+    Ok(())
+}
+
+/// `gos run` entry. With no path, runs `<project-root>/src/main.gos`.
+fn cmd_run_dispatch(path: Option<PathBuf>, mode: RunMode, args: &[String]) -> Result<()> {
+    let resolved = match path {
+        Some(p) => p,
+        None => default_main_entry()?,
+    };
+    cmd_run(&resolved, mode, args)
+}
+
+/// `gos build` entry. With no path, builds `<project-root>/src/main.gos`.
+fn cmd_build_dispatch(
+    path: Option<PathBuf>,
+    target: Option<&str>,
+    release: bool,
+) -> Result<()> {
+    let resolved = match path {
+        Some(p) => p,
+        None => default_main_entry()?,
+    };
+    cmd_build(&resolved, target, release)
+}
+
+/// `gos lint` entry. With no path, lints every `.gos` under the
+/// project's `src/`.
+fn cmd_lint_dispatch(
+    path: Option<PathBuf>,
+    deny_warnings: bool,
+    explain: Option<&str>,
+    fix: bool,
+) -> Result<()> {
+    let resolved = match path {
+        Some(p) => p,
+        None => default_test_root()?,
+    };
+    cmd_lint(&resolved, deny_warnings, explain, fix)
 }
 
 fn cmd_check(file: &PathBuf, timings: bool) -> Result<()> {
@@ -2229,21 +2324,55 @@ fn cmd_lint(path: &PathBuf, deny_warnings: bool, explain: Option<&str>, fix: boo
 /// `project.toml` if there is one, otherwise the current
 /// directory. Mirrors `cargo test`'s "find the workspace and run
 /// everything in it" reflex.
-fn default_test_root() -> Result<PathBuf> {
-    let cwd = std::env::current_dir().context("read current directory")?;
+/// Walks up from the cwd looking for the nearest `project.toml`.
+/// Returns the directory that contains it (the project root).
+fn find_project_root() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
     let mut cursor: &Path = &cwd;
     loop {
         if cursor.join("project.toml").is_file() {
-            let src = cursor.join("src");
-            if src.is_dir() {
-                return Ok(src);
-            }
-            return Ok(cursor.to_path_buf());
+            return Some(cursor.to_path_buf());
         }
-        let Some(parent) = cursor.parent() else { break };
+        let parent = cursor.parent()?;
         cursor = parent;
     }
-    Ok(cwd)
+}
+
+/// Default source root for whole-project commands (`check`, `lint`,
+/// `test`): the project root's `src/` if present, otherwise the
+/// project root itself, otherwise the current directory.
+fn default_test_root() -> Result<PathBuf> {
+    if let Some(root) = find_project_root() {
+        let src = root.join("src");
+        if src.is_dir() {
+            return Ok(src);
+        }
+        return Ok(root);
+    }
+    std::env::current_dir().context("read current directory")
+}
+
+/// Default entry point for whole-project run/build commands. Picks
+/// `<project-root>/src/main.gos` when reachable; returns `Err`
+/// otherwise so the caller can surface a useful diagnostic.
+fn default_main_entry() -> Result<PathBuf> {
+    let root = find_project_root().ok_or_else(|| {
+        anyhow!(
+            "no project.toml found above the current directory; pass a path or run from inside a project"
+        )
+    })?;
+    let candidate = root.join("src").join("main.gos");
+    if candidate.is_file() {
+        return Ok(candidate);
+    }
+    let bare = root.join("main.gos");
+    if bare.is_file() {
+        return Ok(bare);
+    }
+    Err(anyhow!(
+        "project root {} has no src/main.gos (or main.gos); pass a path explicitly",
+        root.display()
+    ))
 }
 
 fn collect_lint_targets(root: &PathBuf) -> Result<Vec<PathBuf>> {

@@ -31,6 +31,7 @@ extra_css:
 extra_javascript:
   - js/hljs_gossamer.js
   - js/repo_button.js
+  - js/scroll_top.js
 
 nav:
   - Home: index.md
