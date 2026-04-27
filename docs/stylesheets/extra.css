@@ -20,26 +20,33 @@ blockquote {
     background: #f5f7fa;
 }
 
-/* Top-right "View on GitHub" button injected by js/repo_button.js.
- * Fixed-position so it stays visible while scrolling; sits above
- * the readthedocs sidebar / content z-stack. */
+/* Anchor for the in-content "View on GitHub" button. Without this,
+ * absolute positioning would resolve against the viewport. */
+.rst-content {
+    position: relative;
+}
+
+/* "View on GitHub" button injected by js/repo_button.js, anchored
+ * to the top-right of the article content area (inside
+ * `.rst-content`). Sits beside the page's H1 instead of floating
+ * over the prose. */
 #gos-repo-button {
-    position: fixed;
-    top: 14px;
-    right: 18px;
-    z-index: 2000;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 5;
     display: inline-flex;
     align-items: center;
     gap: 0.5em;
-    padding: 0.55em 1em;
+    padding: 0.5em 0.95em;
     border-radius: 8px;
     background: #1f2937;
     color: #ffffff !important;
     font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
     font-weight: 600;
-    font-size: 0.95em;
+    font-size: 0.92em;
     text-decoration: none !important;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
     transition: background 120ms ease, transform 120ms ease;
 }
 #gos-repo-button:hover,
@@ -50,14 +57,14 @@ blockquote {
     text-decoration: none !important;
 }
 #gos-repo-button svg {
-    width: 18px;
-    height: 18px;
+    width: 17px;
+    height: 17px;
     fill: currentColor;
 }
 
 @media (max-width: 640px) {
-    /* Squeeze to icon-only on phones so it doesn't crowd the
-     * readthedocs hamburger menu. */
-    #gos-repo-button { padding: 0.5em 0.6em; }
+    /* Collapse to icon-only on phones so the page H1 isn't
+     * visually crowded. */
+    #gos-repo-button { padding: 0.45em 0.55em; }
     #gos-repo-button .gos-repo-button-label { display: none; }
 }

@@ -101,6 +101,7 @@ pre code:not(.hljs) {
 .cta {
     display: inline-block;
     padding: 0.85rem 1.85rem;
+    margin: 0 0.35rem;
     border-radius: 8px;
     text-decoration: none;
     font-weight: 600;
@@ -108,10 +109,23 @@ pre code:not(.hljs) {
     color: var(--bg);
     background: var(--accent);
     border: 1px solid var(--accent);
-    transition: background 120ms ease, color 120ms ease;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .cta:hover {
     background: var(--accent-strong);
+    border-color: var(--accent-strong);
+}
+
+/* Secondary CTA — same shape, outline-only so the eye still
+ * lands on the primary "Get started" first. */
+.cta.cta-secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+}
+.cta.cta-secondary:hover {
+    background: rgba(125, 211, 252, 0.12);
+    color: var(--accent-strong);
     border-color: var(--accent-strong);
 }
 
