@@ -14,11 +14,9 @@ use gossamer_parse::parse_source_file;
 use gossamer_resolve::{Resolutions, resolve_source_file};
 use gossamer_types::{TyCtxt, TypeTable, typecheck_source_file};
 
+use crate::navigation::DefinitionIndex;
+
 /// Analysis result for a single document.
-///
-/// Fields beyond `uri`, `source`, `file`, `diagnostics`, and
-/// `top_level` are retained for future hover/navigation work
-/// (type-aware hover, workspace-symbol) that will query them.
 #[allow(dead_code)]
 pub(crate) struct DocumentAnalysis {
     pub(crate) uri: String,
@@ -31,6 +29,7 @@ pub(crate) struct DocumentAnalysis {
     pub(crate) tcx: TyCtxt,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) top_level: Vec<(Ident, Span)>,
+    pub(crate) index: DefinitionIndex,
 }
 
 /// Runs the full pipeline over `source` and returns the resulting
@@ -57,6 +56,7 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     );
 
     let top_level = collect_top_level(&sf);
+    let index = DefinitionIndex::build(&sf, source, &resolutions);
 
     DocumentAnalysis {
         uri: uri.to_string(),
@@ -69,6 +69,7 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
         tcx,
         diagnostics,
         top_level,
+        index,
     }
 }
 
@@ -166,15 +167,10 @@ impl DocumentAnalysis {
             .map(|(_, span)| *span)
     }
 
-    /// Returns every byte-range occurrence of `name` in the
-    /// document, matched as a whole word. Used by
-    /// `textDocument/references` and `textDocument/rename`.
-    ///
-    /// The match is syntactic, not semantic — a re-bound local
-    /// with the same spelling as a top-level item is reported
-    /// alongside the "real" references. That's a reasonable
-    /// first-slice behaviour; semantic filtering lands when the
-    /// resolver exposes a use-to-def map.
+    /// Returns every byte-range occurrence of `name` in the document,
+    /// matched as a whole word. This is the legacy text-based
+    /// fallback used when no resolution is available; semantic
+    /// callers should prefer `find_semantic_references`.
     #[must_use]
     pub(crate) fn find_references(&self, name: &str) -> Vec<Span> {
         if name.is_empty() {

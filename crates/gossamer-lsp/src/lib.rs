@@ -13,8 +13,11 @@
 #![forbid(unsafe_code)]
 
 mod inlay;
+mod navigation;
 mod protocol;
+mod semantic_tokens;
 mod server;
 mod session;
+mod symbols;
 
 pub use server::run_stdio;
