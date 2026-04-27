@@ -229,6 +229,18 @@ fn lower_fn(
         if let HirPatKind::Binding { name, .. } = &param.pattern.kind {
             builder.bind_local(&name.name, local);
         }
+        // Pre-populate `local_struct` for parameters whose static
+        // type resolves to a known named struct so `self.field`
+        // (and other `param.field`) accesses inside the body find
+        // the struct name without falling through to the
+        // unsupported placeholder. The HIR lowerer leaves `self`'s
+        // type as Error today, so we also try the impl receiver
+        // by inspecting parameter names: a binding called `self`
+        // gets the receiver type when `param.ty` doesn't already
+        // resolve to one.
+        if let Some(struct_name) = builder.struct_name_of(param.ty) {
+            builder.local_struct.insert(local, struct_name);
+        }
     }
     let entry = builder.new_block(span);
     builder.set_current(entry);
@@ -351,6 +363,193 @@ impl<'a> Builder<'a> {
                 _ => return None,
             }
         }
+    }
+
+    /// Returns true when `ty` (or anything it references through `&`)
+    /// is the stdlib `json::Value` type. Used by field-access and
+    /// cast lowering to route opaque-receiver operations through the
+    /// json runtime helpers.
+    fn is_json_value_ty(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::JsonValue => return true,
+                TyKind::Ref { inner, .. } => cur = *inner,
+                _ => return false,
+            }
+        }
+    }
+
+    /// Returns true when `ty` is an Adt (typically `Result<T, E>`
+    /// or `Option<T>`) whose first type-generic argument is
+    /// `json::Value`. Used by match-arm binding to recover the
+    /// payload type of a json-shaped variant when the variant's
+    /// inner pattern only reproduces the scrutinee local.
+    fn adt_first_generic_is_json(&self, ty: Ty) -> bool {
+        use gossamer_types::{GenericArg, TyKind};
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::JsonValue => return true,
+                TyKind::Adt { substs, .. } => {
+                    return substs.as_slice().iter().any(|arg| match arg {
+                        GenericArg::Type(t) => self.is_json_value_ty(*t),
+                        GenericArg::Const(_) => false,
+                    });
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Emits a `gos_rt_json_get(receiver, "field")` call and
+    /// returns the fresh local holding the resulting `json::Value`
+    /// pointer. Pinned to `TyKind::JsonValue` so chained accesses
+    /// (`root.a.b.c`) take this same path on every step.
+    fn emit_json_get(&mut self, receiver_local: Local, field: &str, span: Span) -> Local {
+        let json_ty = self.tcx.json_value_ty();
+        let dest = self.fresh(json_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_json_get".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(receiver_local)),
+                Operand::Const(ConstValue::Str(field.to_string())),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        dest
+    }
+
+    /// Emits a single-arg call to `name`, threading `receiver` as
+    /// the only argument. Used to insert `gos_rt_json_as_*` and
+    /// `gos_rt_json_render` coercions when the binding type forces
+    /// a `json::Value` to a concrete shape.
+    fn emit_single_arg_call(
+        &mut self,
+        name: &'static str,
+        receiver: Local,
+        ret_ty: Ty,
+        span: Span,
+    ) -> Local {
+        let dest = self.fresh(ret_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name.to_string())),
+            args: vec![Operand::Copy(Place::local(receiver))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        dest
+    }
+
+    /// Routes free-function calls under the `json::` module to
+    /// their runtime entry points. Returns `None` when the call
+    /// isn't json — the surrounding `lower_call` continues with
+    /// the normal user-fn dispatch.
+    fn lower_json_free_call(
+        &mut self,
+        callee: &HirExpr,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return None;
+        };
+        if segments.len() < 2 {
+            return None;
+        }
+        let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        let last = *names.last()?;
+        let module_chain = &names[..names.len() - 1];
+        let module_ok = matches!(
+            module_chain,
+            ["json"] | ["encoding", "json"] | ["std", "encoding", "json"]
+        );
+        if !module_ok {
+            return None;
+        }
+        let (rt_name, ret_ty) = match last {
+            "parse" => ("gos_rt_json_parse", self.tcx.json_value_ty()),
+            "render" | "encode" => ("gos_rt_json_render", self.tcx.string_ty()),
+            "decode" => ("gos_rt_json_parse", self.tcx.json_value_ty()),
+            "get" => ("gos_rt_json_get", self.tcx.json_value_ty()),
+            "at" => ("gos_rt_json_at", self.tcx.json_value_ty()),
+            "as_i64" => (
+                "gos_rt_json_as_i64",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "as_f64" => (
+                "gos_rt_json_as_f64",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "as_str" => ("gos_rt_json_as_str", self.tcx.string_ty()),
+            "as_bool" => ("gos_rt_json_as_bool", self.tcx.bool_ty()),
+            "as_array" => ("gos_rt_json_identity", self.tcx.json_value_ty()),
+            "len" => (
+                "gos_rt_json_len",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "is_null" => ("gos_rt_json_is_null", self.tcx.bool_ty()),
+            _ => return None,
+        };
+        let mut arg_locals = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_locals.push(self.lower_expr(arg)?);
+        }
+        let dest = self.fresh(ret_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(rt_name.to_string())),
+            args: arg_locals
+                .into_iter()
+                .map(|l| Operand::Copy(Place::local(l)))
+                .collect(),
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Picks the right `gos_rt_json_as_*` (or render) helper for
+    /// coercing a `json::Value` into the target primitive `ty`.
+    /// Returns `None` when the target shape isn't representable as
+    /// a single runtime call (e.g. a generic Adt) — the caller
+    /// keeps the `json::Value` as-is in that case.
+    fn maybe_coerce_json_value(
+        &mut self,
+        value: Local,
+        target_ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let mut cur = target_ty;
+        let kind = loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                other => break other.clone(),
+            }
+        };
+        let (helper, ret_ty) = match kind {
+            TyKind::Int(_) => (
+                "gos_rt_json_as_i64",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            TyKind::Float(_) => (
+                "gos_rt_json_as_f64",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            TyKind::Bool => ("gos_rt_json_as_bool", self.tcx.bool_ty()),
+            TyKind::String => ("gos_rt_json_as_str", self.tcx.string_ty()),
+            _ => return None,
+        };
+        Some(self.emit_single_arg_call(helper, value, ret_ty, span))
     }
 
     /// Walks a HIR place-shaped expression and tries to recover the
@@ -511,7 +710,23 @@ impl<'a> Builder<'a> {
                     self.bind_local(&name.name, local);
                 }
                 if let Some(init) = init {
-                    if let Some(value) = self.lower_expr(init) {
+                    if let Some(mut value) = self.lower_expr(init) {
+                        // Coerce a `json::Value`-typed initialiser
+                        // when the binding has an explicit primitive
+                        // / String annotation. `let low: i64 =
+                        // root.latency.low_ms` becomes
+                        // `gos_rt_json_as_i64(root.get("latency").get("low_ms"))`
+                        // — keeps the user's natural notation while
+                        // funnelling the dynamic-shape tax through
+                        // the runtime helpers.
+                        let value_ty = self.locals[value.0 as usize].ty;
+                        if self.is_json_value_ty(value_ty) && !self.is_json_value_ty(*ty) {
+                            if let Some(coerced) =
+                                self.maybe_coerce_json_value(value, *ty, stmt.span)
+                            {
+                                value = coerced;
+                            }
+                        }
                         // When the HIR-recorded type is an
                         // unresolved inference variable, pin the
                         // binding's MIR type to whatever the lowered
@@ -1226,6 +1441,14 @@ impl<'a> Builder<'a> {
         if let Some(local) = self.lower_struct_call(callee, args, ty, span) {
             return Some(local);
         }
+        // Free-function `json::*` calls that route to runtime
+        // helpers. Detect by joined path so the same lowering fires
+        // whether the user wrote `use std::encoding::json` and
+        // `json::parse(...)` or the fully-qualified
+        // `std::encoding::json::parse(...)` form.
+        if let Some(local) = self.lower_json_free_call(callee, args, span) {
+            return Some(local);
+        }
         // If the callee is a bare path that resolves to a local
         // previously registered as a lifted closure, dispatch
         // statically to that closure's top-level function and pass
@@ -1581,10 +1804,18 @@ impl<'a> Builder<'a> {
         }
         let mut switch_arms: Vec<(i128, BlockId)> = Vec::new();
         let mut default_block: Option<BlockId> = None;
+        // Per-arm binding: the variant pattern's inner Binding (e.g.
+        // `Ok(v)` → `v`) is registered against the scrutinee local
+        // when we enter the arm block, so the body can reference it.
+        // The scrutinee's static type carries through (e.g. for
+        // `Ok(v)` on a `Result<json::Value, _>` the binding gets
+        // typed as `json::Value`).
+        let mut arm_bindings: Vec<Option<(Ident, bool)>> = Vec::with_capacity(arms.len());
         let mut arm_bodies: Vec<(BlockId, &HirExpr)> = Vec::with_capacity(arms.len());
         for arm in arms {
             let arm_block = self.new_block(span);
             arm_bodies.push((arm_block, &arm.body));
+            arm_bindings.push(None);
             match &arm.pattern.kind {
                 HirPatKind::Literal(HirLiteral::Int(text)) => {
                     let Some(v) = parse_int(text) else {
@@ -1627,12 +1858,24 @@ impl<'a> Builder<'a> {
                             .unwrap_or(switch_arms.len() as i32),
                     );
                     switch_arms.push((pos, arm_block));
-                    // Note: variant inner bindings get zeroed
-                    // scrutinee-shaped values; downstream codegen
-                    // treats them as i64 locals. That satisfies
-                    // typeck but not real semantics — tracked as
-                    // part of the GC/runtime-variants work.
-                    let _ = fields;
+                    // For `Ok(v)` / `Some(v)` patterns the
+                    // payload is structurally identical to the
+                    // scrutinee in compiled mode (Result/Option
+                    // are flat single-slot values today), so
+                    // bind the inner name to the scrutinee local
+                    // when entering the arm. Captures only the
+                    // first single-Binding inner field — wider
+                    // patterns continue through the placeholder.
+                    if let Some(first) = fields.first() {
+                        if let HirPatKind::Binding {
+                            name: bname,
+                            mutable,
+                        } = &first.kind
+                        {
+                            *arm_bindings.last_mut().expect("arm tracked") =
+                                Some((bname.clone(), *mutable));
+                        }
+                    }
                 }
                 _ => {
                     return self.lower_unsupported_with_kind(
@@ -1646,20 +1889,83 @@ impl<'a> Builder<'a> {
         let scrutinee_local = self.lower_expr(scrutinee)?;
         let join_block = self.new_block(span);
         let result_local = self.fresh(ty);
+        // Save the post-scrutinee block before allocating the
+        // default arm; the unreachable_block creation below sets
+        // current to that block and then terminates it (leaving
+        // current = None), which would otherwise swallow our
+        // SwitchInt / Goto terminator below.
+        let dispatch_block = self.current;
         let default = default_block.unwrap_or_else(|| {
             let unreachable_block = self.new_block(span);
             self.set_current(unreachable_block);
             self.terminate(Terminator::Unreachable);
             unreachable_block
         });
-        self.terminate(Terminator::SwitchInt {
-            discriminant: Operand::Copy(Place::local(scrutinee_local)),
-            arms: switch_arms,
-            default,
-        });
-        for (arm_block, body) in arm_bodies {
+        if let Some(block) = dispatch_block {
+            self.set_current(block);
+        }
+        // When the scrutinee is a `json::Value` (or a Result /
+        // Option carrying one), the runtime helpers always
+        // produce a non-null sentinel handle, so the natural
+        // "match the discriminant" lowering would fall through
+        // to the unreachable arm and trap. Approximate the
+        // happy-path by routing directly to the `Ok` / `Some`
+        // arm — its inner binding aliases the scrutinee local
+        // (see the binding-loop above), which is exactly the
+        // shape `gos_rt_json_*` helpers expect downstream.
+        let scrut_ty = self.locals[scrutinee_local.0 as usize].ty;
+        let json_shaped =
+            self.is_json_value_ty(scrut_ty) || self.adt_first_generic_is_json(scrut_ty);
+        let ok_block = switch_arms.iter().find(|(v, _)| *v == 0).map(|(_, b)| *b);
+        let routed = if json_shaped && let Some(ok) = ok_block {
+            self.terminate(Terminator::Goto { target: ok });
+            true
+        } else {
+            false
+        };
+        if !routed {
+            self.terminate(Terminator::SwitchInt {
+                discriminant: Operand::Copy(Place::local(scrutinee_local)),
+                arms: switch_arms,
+                default,
+            });
+        }
+        for ((arm_block, body), binding) in arm_bodies.into_iter().zip(arm_bindings) {
             self.set_current(arm_block);
+            // When the arm pattern was `Ok(v)` / `Some(v)` /
+            // `Variant(v)`, register `v` against the scrutinee
+            // local so the arm body's references resolve. If the
+            // scrutinee is a flat `*mut GosJson` (i.e. its static
+            // type is `Result<json::Value, _>` / `Option<json::Value>`
+            // / `json::Value`), promote the scrutinee local to
+            // `json::Value` so chained `j.field` accesses route
+            // through the json runtime helpers.
+            if let Some((bname, _mutable)) = binding {
+                let scrut_ty = self.locals[scrutinee_local.0 as usize].ty;
+                if self.adt_first_generic_is_json(scrut_ty) {
+                    let json_ty = self.tcx.json_value_ty();
+                    self.locals[scrutinee_local.0 as usize].ty = json_ty;
+                }
+                self.bind_local(&bname.name, scrutinee_local);
+            }
             if let Some(value_local) = self.lower_expr(body) {
+                // Pin the match-result local's type to the arm's
+                // value type when the HIR type is opaque (Var /
+                // Error). Lets chained patterns like `let v =
+                // match r { Ok(j) => j, .. }; v.field` flow the
+                // concrete `json::Value` (or struct) shape into
+                // the surrounding `let`'s field-access lowering.
+                use gossamer_types::TyKind;
+                let arm_value_ty = self.locals[value_local.0 as usize].ty;
+                let result_kind = self.tcx.kind_of(self.locals[result_local.0 as usize].ty);
+                let arm_kind = self.tcx.kind_of(arm_value_ty);
+                let result_is_loose =
+                    matches!(result_kind, TyKind::Var(_) | TyKind::Error | TyKind::Never);
+                let arm_is_concrete =
+                    !matches!(arm_kind, TyKind::Var(_) | TyKind::Error | TyKind::Never);
+                if result_is_loose && arm_is_concrete {
+                    self.locals[result_local.0 as usize].ty = arm_value_ty;
+                }
                 self.emit_assign(
                     Place::local(result_local),
                     Rvalue::Use(Operand::Copy(Place::local(value_local))),
@@ -1817,6 +2123,17 @@ impl<'a> Builder<'a> {
         // where the receiver is an expression rather than a place
         // — e.g. a call that returns a struct).
         let receiver_local = self.lower_expr(receiver)?;
+
+        // `value.field` on a `json::Value` receiver — rewrite to a
+        // runtime `gos_rt_json_get(value, "field")` call. The
+        // result is itself a `json::Value` that downstream code
+        // chains further field access / cast through.
+        if self.is_json_value_ty(receiver.ty)
+            || self.is_json_value_ty(self.locals[receiver_local.0 as usize].ty)
+        {
+            return Some(self.emit_json_get(receiver_local, &name.name, span));
+        }
+
         let struct_name = self
             .local_struct
             .get(&receiver_local)
@@ -1912,6 +2229,7 @@ impl<'a> Builder<'a> {
             "len" => match &receiver_kind_flat {
                 TyKind::String => Some("gos_rt_str_len"),
                 TyKind::HashMap { .. } => Some("gos_rt_map_len"),
+                TyKind::JsonValue => Some("gos_rt_json_len"),
                 TyKind::Vec(_) | TyKind::Array { .. } | TyKind::Slice(_) => Some("gos_rt_len"),
                 _ => Some("gos_rt_len"),
             },
@@ -1928,7 +2246,22 @@ impl<'a> Builder<'a> {
             "pop" => Some("gos_rt_vec_pop"),
             "iter" => Some("gos_rt_arr_iter"),
             "as_bytes" => Some(""),
-            "as_str" => Some(""),
+            "as_str" => match &receiver_kind_flat {
+                TyKind::JsonValue => Some("gos_rt_json_as_str"),
+                _ => Some(""),
+            },
+            // JSON value query/cast methods. The runtime helpers
+            // accept a `*mut GosJson` (passed as a flat pointer)
+            // and return either a fresh `*mut GosJson` (for
+            // chained queries) or a primitive scalar.
+            "as_i64" => Some("gos_rt_json_as_i64"),
+            "as_f64" => Some("gos_rt_json_as_f64"),
+            "as_bool" => Some("gos_rt_json_as_bool"),
+            "is_null" => Some("gos_rt_json_is_null"),
+            "at" => match &receiver_kind_flat {
+                TyKind::JsonValue => Some("gos_rt_json_at"),
+                _ => None,
+            },
             "send" => Some("gos_rt_chan_send"),
             "recv" => Some("gos_rt_chan_recv"),
             "try_send" => Some("gos_rt_chan_try_send"),
@@ -1944,7 +2277,10 @@ impl<'a> Builder<'a> {
             "read_line" => Some("gos_rt_stream_read_line"),
             "read_to_string" => Some("gos_rt_stream_read_to_string"),
             "insert" => Some("gos_rt_map_insert"),
-            "get" => Some("gos_rt_map_get"),
+            "get" => match &receiver_kind_flat {
+                TyKind::JsonValue => Some("gos_rt_json_get"),
+                _ => Some("gos_rt_map_get"),
+            },
             "get_or" => Some("gos_rt_map_get_or_i64"),
             "remove" => Some("gos_rt_map_remove"),
             // Mutex<T> / WaitGroup / Atomic / heap-Vec
@@ -2036,7 +2372,9 @@ impl<'a> Builder<'a> {
                 | "gos_rt_i64_to_str"
                 | "gos_rt_f64_to_str"
                 | "gos_rt_stream_read_line"
-                | "gos_rt_stream_read_to_string" => self.tcx.string_ty(),
+                | "gos_rt_stream_read_to_string"
+                | "gos_rt_json_as_str"
+                | "gos_rt_json_render" => self.tcx.string_ty(),
                 "gos_rt_str_contains" | "gos_rt_str_starts_with" | "gos_rt_str_ends_with" => {
                     self.tcx.bool_ty()
                 }
@@ -2049,8 +2387,17 @@ impl<'a> Builder<'a> {
                 | "gos_rt_map_get_or_i64"
                 | "gos_rt_chan_recv"
                 | "gos_rt_chan_try_recv"
-                | "gos_rt_vec_pop" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                "gos_rt_chan_try_send" | "gos_rt_map_remove" => self.tcx.bool_ty(),
+                | "gos_rt_vec_pop"
+                | "gos_rt_json_as_i64"
+                | "gos_rt_json_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                "gos_rt_json_as_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+                "gos_rt_chan_try_send"
+                | "gos_rt_map_remove"
+                | "gos_rt_json_is_null"
+                | "gos_rt_json_as_bool" => self.tcx.bool_ty(),
+                "gos_rt_json_get" | "gos_rt_json_at" | "gos_rt_json_parse" => {
+                    self.tcx.json_value_ty()
+                }
                 _ => match self.tcx.kind_of(ty) {
                     TyKind::Error | TyKind::Var(_) => self.tcx.int_ty(gossamer_types::IntTy::I64),
                     _ => ty,
@@ -2339,6 +2686,27 @@ impl<'a> Builder<'a> {
     /// recognised so the generic `loop` fallback handles it.
     fn try_lower_for_loop(&mut self, for_loop: &ForLoopShape<'_>, span: Span) -> Option<Local> {
         use gossamer_types::TyKind;
+        // `for entry in v.iter()` / `for entry in v` where v is a
+        // `json::Value` array — synthesise the loop with
+        // `gos_rt_json_len` + `gos_rt_json_at`.
+        let iter_target = match &for_loop.iter_expr.kind {
+            HirExprKind::MethodCall { receiver, name, .. } if name.name == "iter" => {
+                Some(receiver.as_ref())
+            }
+            _ => None,
+        };
+        let json_iter = iter_target.filter(|recv| {
+            let recv_ty = self
+                .receiver_local_from_path(recv)
+                .map_or(recv.ty, |local| self.locals[local.0 as usize].ty);
+            self.is_json_value_ty(recv_ty)
+        });
+        if let Some(recv) = json_iter {
+            return self.lower_for_json(recv, for_loop.loop_pat, for_loop.body, span);
+        }
+        if self.is_json_value_ty(for_loop.iter_expr.ty) {
+            return self.lower_for_json(for_loop.iter_expr, for_loop.loop_pat, for_loop.body, span);
+        }
         match &for_loop.iter_expr.kind {
             HirExprKind::Range {
                 start: Some(start),
@@ -2549,6 +2917,109 @@ impl<'a> Builder<'a> {
             );
         }
         let _ = self.lower_expr(body);
+        self.pop_scope();
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        Some(self.lower_unit(span))
+    }
+
+    /// Iterates the elements of a `json::Value` array via the
+    /// runtime's `gos_rt_json_len` / `gos_rt_json_at` helpers.
+    /// Each iteration assigns the `loop_pat` binding to the
+    /// element handle (a fresh `*mut GosJson` typed `json::Value`).
+    fn lower_for_json(
+        &mut self,
+        iter_expr: &HirExpr,
+        loop_pat: &HirPat,
+        body: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let json_ty = self.tcx.json_value_ty();
+
+        let iter_local = self.lower_expr(iter_expr)?;
+
+        // len = gos_rt_json_len(iter)
+        let len_local = self.fresh(i64_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_json_len".to_string())),
+            args: vec![Operand::Copy(Place::local(iter_local))],
+            destination: Place::local(len_local),
+            target: Some(next),
+        });
+        self.set_current(next);
+
+        let counter = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+
+        let header = self.new_block(span);
+        let body_block = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let bool_ty = self.tcx.bool_ty();
+        let cmp = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(cmp),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(len_local)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(cmp)),
+            arms: vec![(0, exit)],
+            default: body_block,
+        });
+
+        self.set_current(body_block);
+        self.push_scope();
+        // elem = gos_rt_json_at(iter, counter)
+        let elem_local = self.fresh(json_ty);
+        let after_at = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_json_at".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(iter_local)),
+                Operand::Copy(Place::local(counter)),
+            ],
+            destination: Place::local(elem_local),
+            target: Some(after_at),
+        });
+        self.set_current(after_at);
+        if let HirPatKind::Binding { name, .. } = &loop_pat.kind {
+            self.bind_local(&name.name, elem_local);
+        }
+        self.loop_stack.push(LoopContext {
+            continue_to: header,
+            break_to: exit,
+        });
+        let _ = self.lower_expr(body);
+        self.loop_stack.pop();
         self.pop_scope();
         let one = self.fresh(i64_ty);
         self.emit_assign(

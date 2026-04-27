@@ -2315,3 +2315,219 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_8(
         unsafe { core::mem::transmute(real_fn_addr) };
     real_fn(a0, a1, a2, a3, a4, a5, a6, a7)
 }
+
+// ---------------------------------------------------------------
+// JSON runtime — wraps `serde_json::Value` behind a heap pointer
+// so user code can do `json::parse(s)`, `value.field`, and
+// `value.as_i64()` from compiled Gossamer. The MIR lowerer
+// rewrites field access on a `json::Value` receiver into a
+// `gos_rt_json_get(value, "field")` call before the cranelift
+// backend sees it.
+// ---------------------------------------------------------------
+
+/// Heap-allocated JSON node. The compiled tier shuttles raw
+/// `*mut GosJson` pointers through normal i64 slots; the runtime
+/// owns every node exclusively (each helper that "returns" a value
+/// boxes a fresh node). Lifetime tied to the next
+/// `gos_rt_gc_reset` only for the cstring helpers — JSON nodes are
+/// `Box`-leaked on purpose so they survive arena resets.
+#[derive(Debug, Clone)]
+pub struct GosJson {
+    inner: serde_json::Value,
+}
+
+impl GosJson {
+    fn into_raw(value: serde_json::Value) -> *mut GosJson {
+        Box::into_raw(Box::new(GosJson { inner: value }))
+    }
+
+    fn null_ptr() -> *mut GosJson {
+        Self::into_raw(serde_json::Value::Null)
+    }
+}
+
+unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
+    if p.is_null() {
+        None
+    } else {
+        Some(unsafe { &(*p).inner })
+    }
+}
+
+/// `json::parse(text) -> Result<json::Value, _>` runtime entry
+/// point. Returns a fresh `GosJson*`; on parse failure the
+/// returned node is JSON `null` so callers can still treat it as a
+/// valid handle (the typed `Result` shape is reconstructed at
+/// MIR-lowering time).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> *mut GosJson {
+    let bytes: &[u8] = if text.is_null() {
+        b""
+    } else {
+        unsafe { CStr::from_ptr(text).to_bytes() }
+    };
+    match std::str::from_utf8(bytes).map(serde_json::from_str::<serde_json::Value>) {
+        Ok(Ok(v)) => GosJson::into_raw(v),
+        _ => GosJson::null_ptr(),
+    }
+}
+
+/// `json::render(value) -> String`. Always returns a non-null
+/// C-string (empty on null input) into the GC arena.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_render(j: *const GosJson) -> *mut c_char {
+    let Some(v) = (unsafe { json_borrow(j) }) else {
+        return alloc_cstring(b"");
+    };
+    let s = serde_json::to_string(v).unwrap_or_default();
+    alloc_cstring(s.as_bytes())
+}
+
+/// `value.get(key) -> json::Value`. Returns a fresh `GosJson*`
+/// holding the field's value, or a JSON-null node when the
+/// receiver is not an object or the field is missing. Nested
+/// chains (`root.latency.low_ms`) work because each call returns
+/// a real handle the next call can dereference.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_get(j: *const GosJson, key: *const c_char) -> *mut GosJson {
+    let Some(v) = (unsafe { json_borrow(j) }) else {
+        return GosJson::null_ptr();
+    };
+    let key_bytes: &[u8] = if key.is_null() {
+        b""
+    } else {
+        unsafe { CStr::from_ptr(key).to_bytes() }
+    };
+    let Ok(key_str) = std::str::from_utf8(key_bytes) else {
+        return GosJson::null_ptr();
+    };
+    match v.get(key_str) {
+        Some(child) => GosJson::into_raw(child.clone()),
+        None => GosJson::null_ptr(),
+    }
+}
+
+/// `value.at(idx) -> json::Value`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_at(j: *const GosJson, idx: i64) -> *mut GosJson {
+    let Some(v) = (unsafe { json_borrow(j) }) else {
+        return GosJson::null_ptr();
+    };
+    if idx < 0 {
+        return GosJson::null_ptr();
+    }
+    match v.get(idx as usize) {
+        Some(child) => GosJson::into_raw(child.clone()),
+        None => GosJson::null_ptr(),
+    }
+}
+
+/// `value.len() -> i64` for arrays and objects; 0 elsewhere.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_len(j: *const GosJson) -> i64 {
+    let Some(v) = (unsafe { json_borrow(j) }) else {
+        return 0;
+    };
+    match v {
+        serde_json::Value::Array(a) => a.len() as i64,
+        serde_json::Value::Object(o) => o.len() as i64,
+        serde_json::Value::String(s) => s.len() as i64,
+        _ => 0,
+    }
+}
+
+/// `value.is_null() -> bool` (returns 1/0 i32, the codegen ABI).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_is_null(j: *const GosJson) -> i32 {
+    match unsafe { json_borrow(j) } {
+        Some(serde_json::Value::Null) | None => 1,
+        Some(_) => 0,
+    }
+}
+
+/// `value.as_i64() -> i64`. JSON numbers convert; everything else
+/// returns 0 (matches the interpreter's `unwrap_or(0)` shape).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_i64(j: *const GosJson) -> i64 {
+    let Some(v) = (unsafe { json_borrow(j) }) else {
+        return 0;
+    };
+    match v {
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .unwrap_or_else(|| n.as_f64().unwrap_or(0.0) as i64),
+        serde_json::Value::Bool(b) => i64::from(*b),
+        serde_json::Value::String(s) => s.parse::<i64>().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// `value.as_f64() -> f64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_f64(j: *const GosJson) -> f64 {
+    let Some(v) = (unsafe { json_borrow(j) }) else {
+        return 0.0;
+    };
+    match v {
+        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        serde_json::Value::Bool(true) => 1.0,
+        serde_json::Value::Bool(false) => 0.0,
+        serde_json::Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+/// `value.as_str() -> String`. Strings round-trip; non-string
+/// values render through serde_json::to_string so users can still
+/// log them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_str(j: *const GosJson) -> *mut c_char {
+    let Some(v) = (unsafe { json_borrow(j) }) else {
+        return alloc_cstring(b"");
+    };
+    match v {
+        serde_json::Value::String(s) => alloc_cstring(s.as_bytes()),
+        other => {
+            let rendered = serde_json::to_string(other).unwrap_or_default();
+            alloc_cstring(rendered.as_bytes())
+        }
+    }
+}
+
+/// `value.as_bool() -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_bool(j: *const GosJson) -> i32 {
+    match unsafe { json_borrow(j) } {
+        Some(serde_json::Value::Bool(true)) => 1,
+        Some(serde_json::Value::Number(n)) if n.as_f64().unwrap_or(0.0) != 0.0 => 1,
+        Some(serde_json::Value::String(s)) if !s.is_empty() => 1,
+        _ => 0,
+    }
+}
+
+/// Identity helper for `json::as_array` / similar type
+/// assertions — the runtime doesn't keep separate array vs
+/// object handles, so the as_* coercions just thread the
+/// receiver through unchanged. Lets MIR lowering route these
+/// names without special-casing them at the call site.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_identity(j: *mut GosJson) -> *mut GosJson {
+    j
+}
+
+/// Returns true when `gos_rt_json_parse` succeeded — the MIR
+/// lowerer pairs this with the parse result so user code shaped
+/// like `match json::parse(s) { Ok(v) => …, Err(_) => … }` can
+/// decide based on a flat boolean.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_parsed_ok(j: *const GosJson) -> i32 {
+    // A real parse always produces a node — even a `null` doc — so
+    // the only "not parsed" case is when the helper returned the
+    // null sentinel from a malformed input. `serde_json::Value::Null`
+    // is therefore treated as parse failure here. Callers that need
+    // to distinguish a literal `null` use `is_null` directly.
+    match unsafe { json_borrow(j) } {
+        Some(serde_json::Value::Null) | None => 0,
+        Some(_) => 1,
+    }
+}

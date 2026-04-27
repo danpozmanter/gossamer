@@ -206,7 +206,7 @@ fn rebuild_interpreter(
     let file = map.add_file("irepl".to_string(), source.clone());
     let (sf, parse_diags) = gossamer_parse::parse_source_file(&source, file);
     if !parse_diags.is_empty() {
-        return Err(format!("{} parse error(s)", parse_diags.len()));
+        return Err(format_parse_diags(&parse_diags, &map, file));
     }
     let (res, _) = gossamer_resolve::resolve_source_file(&sf);
     let mut tcx = gossamer_types::TyCtxt::new();
@@ -225,7 +225,7 @@ fn build_and_call(
     let file = map.add_file("irepl".to_string(), source.to_string());
     let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file);
     if !parse_diags.is_empty() {
-        return Err(format!("{} parse error(s)", parse_diags.len()));
+        return Err(format_parse_diags(&parse_diags, &map, file));
     }
     let (res, _) = gossamer_resolve::resolve_source_file(&sf);
     let mut tcx = gossamer_types::TyCtxt::new();
@@ -234,4 +234,30 @@ fn build_and_call(
     let mut interp = gossamer_interp::Interpreter::new();
     interp.load(&program);
     interp.call(entry, Vec::new()).map_err(|e| format!("{e}"))
+}
+
+/// Renders a parse-diagnostic batch as one human-readable line per
+/// error, prefixed by the count, so REPL users see *what* went wrong
+/// instead of just "N parse error(s)". Each entry is annotated with
+/// the one-based line / column derived from the source map.
+fn format_parse_diags(
+    diags: &[gossamer_parse::ParseDiagnostic],
+    map: &gossamer_lex::SourceMap,
+    file: gossamer_lex::FileId,
+) -> String {
+    let mut out = if diags.len() == 1 {
+        String::from("1 parse error:\n")
+    } else {
+        format!("{} parse errors:\n", diags.len())
+    };
+    for diag in diags {
+        let pos = map.line_col(file, diag.span.start);
+        out.push_str(&format!("  {}:{}: {}\n", pos.line, pos.column, diag.error));
+    }
+    // Trim trailing newline so the surrounding `eprintln!` doesn't
+    // double-space.
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }

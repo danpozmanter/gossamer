@@ -313,6 +313,12 @@ impl<'a> TypeChecker<'a> {
         match &item.kind {
             ItemKind::Fn(decl) => self.check_fn(decl),
             ItemKind::Impl(decl) => {
+                // Type the impl's `Self` so HIR lowering can pin
+                // each method's `self` parameter to it. Without
+                // this, `self.field` reads later fall through MIR
+                // lowering's struct-name lookup and abort with
+                // the unsupported placeholder.
+                let _ = self.type_from_ast(&decl.self_ty);
                 for impl_item in &decl.items {
                     if let ImplItem::Fn(fn_decl) = impl_item {
                         self.check_fn(fn_decl);
@@ -1020,6 +1026,16 @@ impl<'a> TypeChecker<'a> {
         if let Some(prim) = primitive_from_name(head_name) {
             return prim_to_ty(self.tcx, prim);
         }
+        // Recognise the stdlib's opaque dynamic JSON value by
+        // surface name. The resolver doesn't allocate a `DefId`
+        // for it (it comes in via `use std::encoding::json` as a
+        // bare import), so we'd otherwise fall through to a fresh
+        // inference variable and lose the receiver-shape signal
+        // that downstream MIR needs to route field access through
+        // the json runtime helpers.
+        if path_matches_json_value(path) {
+            return self.tcx.json_value_ty();
+        }
         if let Some(resolution) = self.resolutions.get(node) {
             match resolution {
                 Resolution::Primitive(prim) => return self.type_from_primitive(prim),
@@ -1200,6 +1216,7 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         | TyKind::Float(_)
         | TyKind::Unit
         | TyKind::Never
+        | TyKind::JsonValue
         | TyKind::Param { .. } => true,
         TyKind::Tuple(parts) => parts.iter().all(|t| checker.is_concrete(*t)),
         TyKind::Array { elem, .. }
@@ -1258,6 +1275,19 @@ fn int_ty_from_width(width: IntWidth, signed: bool) -> IntTy {
         (false, IntWidth::W128) => IntTy::U128,
         (false, IntWidth::Size) => IntTy::Usize,
     }
+}
+
+/// Returns true when `path` names the stdlib `json::Value` type, in
+/// any of the accepted spellings (`json::Value`,
+/// `encoding::json::Value`, `std::encoding::json::Value`). The
+/// resolver treats every prefix as a bare import binding so the
+/// type checker has to recognise the surface syntax directly.
+fn path_matches_json_value(path: &TypePath) -> bool {
+    let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+    matches!(
+        names.as_slice(),
+        ["json", "Value"] | ["encoding", "json", "Value"] | ["std", "encoding", "json", "Value"]
+    )
 }
 
 fn primitive_from_name(name: &str) -> Option<PrimitiveTy> {

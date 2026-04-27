@@ -712,6 +712,7 @@ version = "0.0.0"
 dependencies = [
  "itoa",
  "parking_lot",
+ "serde_json",
 ]
 
 [[package]]

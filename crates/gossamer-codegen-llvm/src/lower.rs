@@ -1635,6 +1635,7 @@ impl<'a> Lowerer<'a> {
                         | TyKind::HashMap { .. }
                         | TyKind::Sender(_)
                         | TyKind::Receiver(_)
+                        | TyKind::JsonValue
                         | TyKind::Adt { .. }
                         | TyKind::Closure { .. }
                         | TyKind::FnDef { .. }

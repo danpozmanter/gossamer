@@ -1254,6 +1254,12 @@ fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -> PrintKind
                 TyKind::Vec(_) => PrintKind::Unsupported("Vec"),
                 TyKind::HashMap { .. } => PrintKind::Unsupported("HashMap"),
                 TyKind::Sender(_) | TyKind::Receiver(_) => PrintKind::Unsupported("channel"),
+                // `json::Value` doesn't have a Display impl in
+                // compiled mode; users wrap with `json::render`
+                // before printing.
+                TyKind::JsonValue => {
+                    PrintKind::Unsupported("json::Value (call json::render first)")
+                }
                 TyKind::Adt { .. } => PrintKind::Unsupported("struct or enum"),
                 TyKind::Closure { .. } => PrintKind::Unsupported("closure"),
                 TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::FnTrait(_) => {
@@ -1492,6 +1498,37 @@ fn store_call_result(
         leaf_ty,
         intrinsics,
     )
+}
+
+/// Lowers `args[0]` as a pointer-typed call argument, defaulting to
+/// the null pointer when the operand is missing. Used by the
+/// single-arg JSON intrinsics so the per-call boilerplate stays
+/// readable.
+#[allow(clippy::too_many_arguments)]
+fn lower_first_ptr_arg(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    body: &Body,
+    tcx: &TyCtxt,
+    args: &[Operand],
+    intrinsics: &mut IntrinsicContext,
+) -> Result<ir::Value> {
+    let ptr_ty = module.target_config().pointer_type();
+    let value = match args.first() {
+        Some(a) => lower_operand(
+            module,
+            builder,
+            locals,
+            body,
+            tcx,
+            a,
+            Some(ptr_ty),
+            intrinsics,
+        )?,
+        None => builder.ins().iconst(ptr_ty, 0),
+    };
+    coerce_arg_to(builder, value, ptr_ty)
 }
 
 /// Coerce a value to the cranelift type expected by a call-site or
@@ -3632,6 +3669,143 @@ fn lower_intrinsic_call(
             let call = builder.ins().call(fref, &[m, k_addr]);
             let ok = builder.inst_results(call)[0];
             define_var_to(builder, locals, body, tcx, module, destination.local, ok);
+            Ok(true)
+        }
+        // JSON runtime — every helper accepts an opaque
+        // `*mut GosJson` pointer so the codegen treats them as
+        // pointer-sized values. The MIR rewriter routes
+        // `value.field` on a `json::Value` receiver into a
+        // `gos_rt_json_get(value, "field")` call before this
+        // backend sees it.
+        "gos_rt_json_parse" => {
+            let rt_fn = intrinsics.extern_fn(module, "gos_rt_json_parse", &[ptr_ty], &[ptr_ty])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_render" => {
+            let rt_fn = intrinsics.extern_fn(module, "gos_rt_json_render", &[ptr_ty], &[ptr_ty])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_as_str" => {
+            let rt_fn = intrinsics.extern_fn(module, "gos_rt_json_as_str", &[ptr_ty], &[ptr_ty])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_get" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_get", &[ptr_ty, ptr_ty], &[ptr_ty])?;
+            let recv = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let key = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let key_ptr = coerce_arg_to(builder, key, ptr_ty)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[recv, key_ptr]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_at" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_at", &[ptr_ty, types::I64], &[ptr_ty])?;
+            let recv = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let idx = match args.get(1) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let idx64 = coerce_arg_to(builder, idx, types::I64)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[recv, idx64]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_len" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_len", &[ptr_ty], &[types::I64])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_as_i64" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_as_i64", &[ptr_ty], &[types::I64])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_as_f64" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_as_f64", &[ptr_ty], &[types::F64])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_is_null" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_is_null", &[ptr_ty], &[types::I32])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_as_bool" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_as_bool", &[ptr_ty], &[types::I32])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_parsed_ok" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_parsed_ok", &[ptr_ty], &[types::I32])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_identity" => {
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            define_var_to(builder, locals, body, tcx, module, destination.local, arg);
             Ok(true)
         }
         // Channels delegate to the gossamer-runtime staticlib.

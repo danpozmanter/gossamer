@@ -30,6 +30,7 @@ struct Primitives {
     char_: Option<Ty>,
     string_: Option<Ty>,
     error: Option<Ty>,
+    json_value: Option<Ty>,
 }
 
 impl TyCtxt {
@@ -139,6 +140,18 @@ impl TyCtxt {
         }
         let ty = self.intern(TyKind::Error);
         self.primitives.error = Some(ty);
+        ty
+    }
+
+    /// Interns the opaque dynamic JSON value type. Cached because
+    /// MIR lowering and type checking both reach for it on every
+    /// `json::Value`-typed expression.
+    pub fn json_value_ty(&mut self) -> Ty {
+        if let Some(ty) = self.primitives.json_value {
+            return ty;
+        }
+        let ty = self.intern(TyKind::JsonValue);
+        self.primitives.json_value = Some(ty);
         ty
     }
 

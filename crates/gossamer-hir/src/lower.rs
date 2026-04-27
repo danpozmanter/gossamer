@@ -120,6 +120,19 @@ impl Lowerer<'_> {
     }
 
     fn lower_fn(&mut self, decl: &AstFnDecl, span: Span) -> HirFn {
+        self.lower_fn_with_self(decl, span, None)
+    }
+
+    /// Lowers an impl-method body with the impl's `Self` type
+    /// applied to the `self` receiver. Lets MIR field-access
+    /// lowering find the struct name on `self.field` reads
+    /// without falling through to the unsupported placeholder.
+    fn lower_fn_with_self(
+        &mut self,
+        decl: &AstFnDecl,
+        span: Span,
+        self_ty: Option<gossamer_types::Ty>,
+    ) -> HirFn {
         let mut params = Vec::new();
         let mut has_self = false;
         for param in &decl.params {
@@ -127,7 +140,7 @@ impl Lowerer<'_> {
                 AstFnParam::Receiver(_) => {
                     has_self = true;
                     let id = self.fresh();
-                    let ty = self.error_ty();
+                    let ty = self_ty.unwrap_or_else(|| self.error_ty());
                     params.push(HirParam {
                         pattern: HirPat {
                             id,
@@ -209,7 +222,9 @@ impl Lowerer<'_> {
             .items
             .iter()
             .filter_map(|item| match item {
-                ImplItem::Fn(fn_decl) => Some(self.lower_fn(fn_decl, span)),
+                ImplItem::Fn(fn_decl) => {
+                    Some(self.lower_fn_with_self(fn_decl, span, Some(self_ty)))
+                }
                 ImplItem::Const { .. } | ImplItem::Type { .. } => None,
             })
             .collect();

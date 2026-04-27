@@ -224,6 +224,12 @@ pub enum TyKind {
     Sender(Ty),
     /// `Receiver<T>` — channel receive endpoint.
     Receiver(Ty),
+    /// `json::Value` — opaque dynamic JSON node. Carries no
+    /// generic parameters; the runtime backs every node with a
+    /// boxed `serde_json::Value`. Field access on a `JsonValue`
+    /// receiver is rewritten by MIR lowering into a runtime
+    /// `gos_rt_json_get(receiver, "field")` call.
+    JsonValue,
     /// GC reference type `&T` or `&mut T`.
     Ref {
         /// Mutability of the reference.
