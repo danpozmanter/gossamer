@@ -78,27 +78,6 @@ fn collect_impl_methods(program: &HirProgram) -> HashMap<String, Option<Ty>> {
     out
 }
 
-/// Records type names with `impl http::Handler for T` so the
-/// `http::serve` lowering can dispatch to `T::serve` at runtime.
-fn collect_handler_impls(program: &HirProgram) -> Vec<String> {
-    let mut out = Vec::new();
-    for item in &program.items {
-        if let HirItemKind::Impl(decl) = &item.kind {
-            let is_handler = decl
-                .trait_name
-                .as_ref()
-                .map(|t| t.name.as_str() == "Handler")
-                .unwrap_or(false);
-            if is_handler {
-                if let Some(prefix) = decl.self_name.as_ref() {
-                    out.push(prefix.name.clone());
-                }
-            }
-        }
-    }
-    out
-}
-
 /// Builds a `DefId → input Tys` map for every top-level function
 /// (and trait / impl methods). Consumed by MIR lowering so call-
 /// site argument coercion can detect when a `Fn(args) -> ret`
@@ -289,6 +268,7 @@ impl EnumIndex {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_item(
     item: &HirItem,
     tcx: &mut TyCtxt,
@@ -473,8 +453,7 @@ fn lower_fn(
                 builder.tcx.kind_of(ret_ty),
                 TyKind::FnPtr(_) | TyKind::FnTrait(_)
             );
-            let src_is_fn_def =
-                matches!(builder.tcx.kind_of(value_ty), TyKind::FnDef { .. });
+            let src_is_fn_def = matches!(builder.tcx.kind_of(value_ty), TyKind::FnDef { .. });
             let src_names_fn = builder.local_fn_name.contains_key(&result);
             if dest_callable && (src_is_fn_def || src_names_fn) {
                 result = builder.coerce_to_fn_trait_if_needed(result, ret_ty, span);
@@ -559,6 +538,7 @@ struct LoopContext {
 }
 
 impl<'a> Builder<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         _name: String,
         span: Span,
@@ -745,7 +725,12 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
-        let HirExprKind::Binary { op: HirBinaryOp::Add, lhs, rhs } = &value_expr.kind else {
+        let HirExprKind::Binary {
+            op: HirBinaryOp::Add,
+            lhs,
+            rhs,
+        } = &value_expr.kind
+        else {
             return None;
         };
         let (get_call, by_expr) = if let HirExprKind::MethodCall { name, .. } = &lhs.kind {
@@ -767,7 +752,8 @@ impl<'a> Builder<'a> {
             receiver: inner_recv,
             args: get_args,
             ..
-        } = &get_call.kind else {
+        } = &get_call.kind
+        else {
             return None;
         };
         if get_args.len() != 2 {
@@ -931,8 +917,14 @@ impl<'a> Builder<'a> {
         };
         let joined = strip_std.join("::");
         let (rt_name, ret_ty) = match joined.as_str() {
-            "errors::new" => ("gos_rt_error_new", self.tcx.int_ty(gossamer_types::IntTy::I64)),
-            "errors::wrap" => ("gos_rt_error_wrap", self.tcx.int_ty(gossamer_types::IntTy::I64)),
+            "errors::new" => (
+                "gos_rt_error_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "errors::wrap" => (
+                "gos_rt_error_wrap",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             "errors::is" => ("gos_rt_error_is", self.tcx.bool_ty()),
             "regex::compile" => (
                 "gos_rt_regex_compile",
@@ -1010,12 +1002,14 @@ impl<'a> Builder<'a> {
             // call through these symbol names so the destination
             // local can be tagged with a runtime kind for method
             // dispatch.
-            "HashSet::new" | "collections::HashSet::new" => {
-                ("gos_rt_set_new", self.tcx.int_ty(gossamer_types::IntTy::I64))
-            }
-            "BTreeMap::new" | "collections::BTreeMap::new" => {
-                ("gos_rt_btmap_new", self.tcx.int_ty(gossamer_types::IntTy::I64))
-            }
+            "HashSet::new" | "collections::HashSet::new" => (
+                "gos_rt_set_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "BTreeMap::new" | "collections::BTreeMap::new" => (
+                "gos_rt_btmap_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             _ => return None,
         };
         if rt_name.is_empty() {
@@ -1319,6 +1313,7 @@ impl<'a> Builder<'a> {
         if self.current.is_none() { None } else { result }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn lower_stmt(&mut self, stmt: &HirStmt) {
         match &stmt.kind {
             HirStmtKind::Let { pattern, ty, init } => {
@@ -1335,10 +1330,8 @@ impl<'a> Builder<'a> {
                 // wears an explicit Slice/Vec annotation.
                 {
                     use gossamer_types::TyKind;
-                    let binding_wants_vec = matches!(
-                        self.tcx.kind_of(*ty),
-                        TyKind::Vec(_) | TyKind::Slice(_),
-                    );
+                    let binding_wants_vec =
+                        matches!(self.tcx.kind_of(*ty), TyKind::Vec(_) | TyKind::Slice(_),);
                     if binding_wants_vec {
                         if let Some(init_expr) = init.as_ref() {
                             if let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) =
@@ -1600,8 +1593,7 @@ impl<'a> Builder<'a> {
                             matches!(self.tcx.kind_of(value_ty), TyKind::FnDef { .. });
                         let src_names_fn = self.local_fn_name.contains_key(&local);
                         if dest_callable && (src_is_fn_def || src_names_fn) {
-                            local =
-                                self.coerce_to_fn_trait_if_needed(local, ret_ty, expr.span);
+                            local = self.coerce_to_fn_trait_if_needed(local, ret_ty, expr.span);
                         }
                         self.emit_assign(
                             Place::local(Local::RETURN),
@@ -1757,29 +1749,27 @@ impl<'a> Builder<'a> {
                 // surrounding Index lowering picks the bounds
                 // out of.
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let lo_local = match start {
-                    Some(s) => self.lower_expr(s)?,
-                    None => {
-                        let l = self.fresh(i64_ty);
-                        self.emit_assign(
-                            Place::local(l),
-                            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-                            expr.span,
-                        );
-                        l
-                    }
+                let lo_local = if let Some(s) = start {
+                    self.lower_expr(s)?
+                } else {
+                    let l = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(l),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                        expr.span,
+                    );
+                    l
                 };
-                let hi_local = match end {
-                    Some(e) => self.lower_expr(e)?,
-                    None => {
-                        let l = self.fresh(i64_ty);
-                        self.emit_assign(
-                            Place::local(l),
-                            Rvalue::Use(Operand::Const(ConstValue::Int(i64::MAX as i128))),
-                            expr.span,
-                        );
-                        l
-                    }
+                let hi_local = if let Some(e) = end {
+                    self.lower_expr(e)?
+                } else {
+                    let l = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(l),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(i64::MAX)))),
+                        expr.span,
+                    );
+                    l
                 };
                 // Bump `hi` for inclusive ranges so the half-
                 // open `[lo, hi)` interpretation downstream
@@ -2137,8 +2127,7 @@ impl<'a> Builder<'a> {
                 TyKind::FnPtr(_) | TyKind::FnTrait(_)
             );
             let value_ty = self.locals[value_local.0 as usize].ty;
-            let src_is_fn_def =
-                matches!(self.tcx.kind_of(value_ty), TyKind::FnDef { .. });
+            let src_is_fn_def = matches!(self.tcx.kind_of(value_ty), TyKind::FnDef { .. });
             let src_names_fn = self.local_fn_name.contains_key(&value_local);
             if dest_callable && (src_is_fn_def || src_names_fn) {
                 value_local = self.coerce_to_fn_trait_if_needed(value_local, place.ty, span);
@@ -2226,7 +2215,7 @@ impl<'a> Builder<'a> {
         if let HirExprKind::Path { segments, .. } = &callee.kind {
             let last = segments.last().map(|s| s.name.as_str());
             let disc = match last {
-                Some("Ok") | Some("Some") => Some(0),
+                Some("Ok" | "Some") => Some(0),
                 Some("Err") => Some(1),
                 _ => None,
             };
@@ -2554,7 +2543,7 @@ impl<'a> Builder<'a> {
     /// short-circuit here too.
     ///
     /// The unified env-pointer shape lets the codegen treat
-    /// FnPtr / FnTrait callees identically: a single `load
+    /// `FnPtr` / `FnTrait` callees identically: a single `load
     /// fn_addr from env[0]; call_indirect(fn_addr, env, args…)`
     /// path, with no special case for "raw fn ptr" that would
     /// segfault on an escaping closure.
@@ -2777,9 +2766,9 @@ impl<'a> Builder<'a> {
                         | HirPatKind::Struct { .. }
                         | HirPatKind::Range { .. }
                         | HirPatKind::Ref { .. }
-                        | HirPatKind::Literal(HirLiteral::String(_))
-                        | HirPatKind::Literal(HirLiteral::Char(_))
-                        | HirPatKind::Literal(HirLiteral::Float(_))
+                        | HirPatKind::Literal(
+                            HirLiteral::String(_) | HirLiteral::Char(_) | HirLiteral::Float(_)
+                        )
                 )
                 || matches!(
                     &arm.pattern.kind,
@@ -2851,18 +2840,17 @@ impl<'a> Builder<'a> {
                     // happy-path encoding (`Ok` / `Some` = 0,
                     // `Err` / `None` = 1) for the stdlib variants
                     // that don't have a Gossamer enum behind them.
-                    let pos: i128 = if let Some((_, idx)) =
-                        self.enums.lookup(std::slice::from_ref(name))
-                    {
-                        idx as i128
-                    } else if matches!(name.name.as_str(), "Err" | "None" | "Some" | "Ok") {
-                        match name.name.as_str() {
-                            "Some" | "Ok" => 0,
-                            _ => 1,
-                        }
-                    } else {
-                        switch_arms.len() as i128
-                    };
+                    let pos: i128 =
+                        if let Some((_, idx)) = self.enums.lookup(std::slice::from_ref(name)) {
+                            idx as i128
+                        } else if matches!(name.name.as_str(), "Err" | "None" | "Some" | "Ok") {
+                            match name.name.as_str() {
+                                "Some" | "Ok" => 0,
+                                _ => 1,
+                            }
+                        } else {
+                            switch_arms.len() as i128
+                        };
                     switch_arms.push((pos, arm_block));
                     // For `Ok(v)` / `Some(v)` patterns the
                     // payload is structurally identical to the
@@ -3074,14 +3062,10 @@ impl<'a> Builder<'a> {
                 let arm_value_ty = self.locals[value_local.0 as usize].ty;
                 let result_kind = self.tcx.kind_of(self.locals[result_local.0 as usize].ty);
                 let arm_kind = self.tcx.kind_of(arm_value_ty);
-                let result_is_loose = matches!(
-                    result_kind,
-                    TyKind::Var(_) | TyKind::Error | TyKind::Never
-                );
-                let arm_is_concrete = !matches!(
-                    arm_kind,
-                    TyKind::Var(_) | TyKind::Error | TyKind::Never
-                );
+                let result_is_loose =
+                    matches!(result_kind, TyKind::Var(_) | TyKind::Error | TyKind::Never);
+                let arm_is_concrete =
+                    !matches!(arm_kind, TyKind::Var(_) | TyKind::Error | TyKind::Never);
                 if result_is_loose && arm_is_concrete {
                     self.locals[result_local.0 as usize].ty = arm_value_ty;
                 }
@@ -3125,12 +3109,14 @@ impl<'a> Builder<'a> {
     /// the arm body can read them. Returns `None` when a
     /// sub-pattern shape is not yet handled (caller surfaces a
     /// clean unsupported-placeholder diagnostic).
+    #[allow(clippy::cognitive_complexity)]
     fn lower_pattern_predicate(
         &mut self,
         scrutinee: Local,
         pattern: &HirPat,
         span: Span,
     ) -> Option<Local> {
+        use gossamer_types::TyKind;
         let bool_ty = self.tcx.bool_ty();
         match &pattern.kind {
             HirPatKind::Wildcard => {
@@ -3339,11 +3325,7 @@ impl<'a> Builder<'a> {
                 }
                 Some(acc)
             }
-            HirPatKind::Range {
-                lo,
-                hi,
-                inclusive,
-            } => {
+            HirPatKind::Range { lo, hi, inclusive } => {
                 // `lo..hi` and `lo..=hi` arms reduce to
                 // `(scrut >= lo) && (scrut <op> hi)` where the
                 // upper comparison is `<` for exclusive and `<=`
@@ -3415,9 +3397,11 @@ impl<'a> Builder<'a> {
                 // verified by the type-checker). Each named-field
                 // sub-pattern reads through a
                 // `Projection::Field(idx)` of the scrutinee.
-                let order = self.structs.get(&name.name).cloned().or_else(|| {
-                    self.enums.variant_fields.get(&name.name).cloned()
-                });
+                let order = self
+                    .structs
+                    .get(&name.name)
+                    .cloned()
+                    .or_else(|| self.enums.variant_fields.get(&name.name).cloned());
                 let variant_idx = self
                     .enums
                     .lookup(std::slice::from_ref(name))
@@ -3495,8 +3479,7 @@ impl<'a> Builder<'a> {
                             );
                         }
                         if let Some(sub) = &f.pattern {
-                            let sub_pred =
-                                self.lower_pattern_predicate(elem, sub, span)?;
+                            let sub_pred = self.lower_pattern_predicate(elem, sub, span)?;
                             // AND into the accumulator. Today we
                             // can't easily re-write `acc`, so we
                             // emit a fresh combined local each
@@ -3593,7 +3576,6 @@ impl<'a> Builder<'a> {
                     "Ok" | "Some" => 0,
                     _ => 1,
                 };
-                use gossamer_types::TyKind;
                 let scrut_ty = self.locals[scrutinee.0 as usize].ty;
                 let scrut_kind = self.tcx.kind_of(scrut_ty);
                 let real_disc = matches!(
@@ -3615,7 +3597,7 @@ impl<'a> Builder<'a> {
                     let lit_local = self.fresh(i64_ty);
                     self.emit_assign(
                         Place::local(lit_local),
-                        Rvalue::Use(Operand::Const(ConstValue::Int(expected_disc as i128))),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(expected_disc)))),
                         span,
                     );
                     self.emit_assign(
@@ -3729,7 +3711,7 @@ impl<'a> Builder<'a> {
                 }
                 Some(const_pred)
             }
-            _ => None,
+            HirPatKind::Literal(_) => None,
         }
     }
 
@@ -3908,9 +3890,10 @@ impl<'a> Builder<'a> {
             .or_else(|| self.local_runtime_kind.get(&receiver_local).copied());
         if let Some(rk) = runtime_kind {
             let helper: Option<(&'static str, Ty)> = match (rk, name.name.as_str()) {
-                ("http::Response", "status") => {
-                    Some(("gos_rt_http_response_status", self.tcx.int_ty(gossamer_types::IntTy::I64)))
-                }
+                ("http::Response", "status") => Some((
+                    "gos_rt_http_response_status",
+                    self.tcx.int_ty(gossamer_types::IntTy::I64),
+                )),
                 ("http::Response", "body") => {
                     Some(("gos_rt_http_response_body", self.tcx.string_ty()))
                 }
@@ -3994,7 +3977,10 @@ impl<'a> Builder<'a> {
             use gossamer_types::TyKind;
             let receiver_local_ty = self.locals[receiver_local.0 as usize].ty;
             let receiver_kind = self.tcx.kind_of(receiver_local_ty);
-            if matches!(receiver_kind, TyKind::Var(_) | TyKind::Never | TyKind::Error) {
+            if matches!(
+                receiver_kind,
+                TyKind::Var(_) | TyKind::Never | TyKind::Error
+            ) {
                 return Some(self.emit_json_get(receiver_local, &name.name, span));
             }
             return self.lower_unsupported_with_kind(
@@ -4033,6 +4019,7 @@ impl<'a> Builder<'a> {
     /// semantics the native runtime implements as a C-ABI helper);
     /// falls back to the `unsupported` placeholder if the receiver
     /// shape isn't recognised.
+    #[allow(clippy::cognitive_complexity)]
     fn lower_method_call(
         &mut self,
         receiver: &HirExpr,
@@ -4078,14 +4065,18 @@ impl<'a> Builder<'a> {
         // chain into a single `gos_rt_http_*_set_header` /
         // `_get_header` call so the intermediate headers handle
         // never has to be represented.
-        if let HirExprKind::Field { receiver: inner, name: field_name } = &receiver.kind {
+        if let HirExprKind::Field {
+            receiver: inner,
+            name: field_name,
+        } = &receiver.kind
+        {
             if field_name.name.as_str() == "headers" {
                 let inner_local_for_kind = self.receiver_local_from_path(inner);
                 let inner_kind = inner_local_for_kind
                     .and_then(|l| self.local_runtime_kind.get(&l).copied())
                     .or_else(|| {
-                        let inner_ty = inner_local_for_kind
-                            .map_or(inner.ty, |l| self.locals[l.0 as usize].ty);
+                        let inner_ty =
+                            inner_local_for_kind.map_or(inner.ty, |l| self.locals[l.0 as usize].ty);
                         match self.tcx.kind_of(inner_ty) {
                             TyKind::Ref { inner: i, .. } => self.struct_name_of(*i),
                             _ => self.struct_name_of(inner_ty),
@@ -4096,23 +4087,19 @@ impl<'a> Builder<'a> {
                             _ => None,
                         })
                     });
-                if matches!(inner_kind, Some("http::Response") | Some("http::Request")) {
+                if matches!(inner_kind, Some("http::Response" | "http::Request")) {
                     let helper = match (inner_kind, method.name.as_str()) {
-                        (Some("http::Response"), "insert") => Some((
-                            "gos_rt_http_response_set_header",
-                            self.tcx.unit(),
-                            2usize,
-                        )),
+                        (Some("http::Response"), "insert") => {
+                            Some(("gos_rt_http_response_set_header", self.tcx.unit(), 2usize))
+                        }
                         (Some("http::Response"), "get") => Some((
                             "gos_rt_http_response_get_header",
                             self.tcx.string_ty(),
                             1usize,
                         )),
-                        (Some("http::Request"), "insert") => Some((
-                            "gos_rt_http_request_set_header",
-                            self.tcx.unit(),
-                            2usize,
-                        )),
+                        (Some("http::Request"), "insert") => {
+                            Some(("gos_rt_http_request_set_header", self.tcx.unit(), 2usize))
+                        }
                         (Some("http::Request"), "get") => Some((
                             "gos_rt_http_request_get_header",
                             self.tcx.string_ty(),
@@ -4358,39 +4345,40 @@ impl<'a> Builder<'a> {
             .receiver_local_from_path(receiver)
             .and_then(|l| self.local_runtime_kind.get(&l).copied())
             .or_else(|| self.expr_runtime_kind(receiver));
-        let kind_dispatch: Option<&'static str> = match (receiver_runtime_kind, method.name.as_str()) {
-            (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
-            (Some("flag::Set"), "uint") => Some("gos_rt_flag_set_uint"),
-            (Some("flag::Set"), "bool") => Some("gos_rt_flag_set_bool"),
-            (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
-            (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
-            (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
-            (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
-            (Some("http::Request"), "body") => Some("gos_rt_http_request_body"),
-            (Some("http::Request"), "send") => Some("gos_rt_http_request_send"),
-            (Some("http::Request"), "path") => Some("gos_rt_http_request_path"),
-            (Some("http::Request"), "method") => Some("gos_rt_http_request_method"),
-            (Some("http::Response"), "status") => Some("gos_rt_http_response_status"),
-            (Some("http::Response"), "body") => Some("gos_rt_http_response_body"),
-            (Some("bufio::Scanner"), "scan") => Some("gos_rt_bufio_scanner_scan"),
-            (Some("bufio::Scanner"), "text") => Some("gos_rt_bufio_scanner_text"),
-            (Some("errors::Error"), "message") => Some("gos_rt_error_message"),
-            (Some("errors::Error"), "cause") => Some("gos_rt_error_cause"),
-            (Some("errors::Error"), "is") => Some("gos_rt_error_is"),
-            (Some("regex::Pattern"), "is_match") => Some("gos_rt_regex_is_match"),
-            (Some("regex::Pattern"), "find") => Some("gos_rt_regex_find"),
-            (Some("regex::Pattern"), "find_all") => Some("gos_rt_regex_find_all"),
-            (Some("regex::Pattern"), "replace_all") => Some("gos_rt_regex_replace_all"),
-            (Some("regex::Pattern"), "split") => Some("gos_rt_regex_split"),
-            (Some("collections::HashSet"), "insert") => Some("gos_rt_set_insert"),
-            (Some("collections::HashSet"), "contains") => Some("gos_rt_set_contains"),
-            (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
-            (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
-            (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
-            (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
-            (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
-            _ => None,
-        };
+        let kind_dispatch: Option<&'static str> =
+            match (receiver_runtime_kind, method.name.as_str()) {
+                (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
+                (Some("flag::Set"), "uint") => Some("gos_rt_flag_set_uint"),
+                (Some("flag::Set"), "bool") => Some("gos_rt_flag_set_bool"),
+                (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
+                (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
+                (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
+                (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
+                (Some("http::Request"), "body") => Some("gos_rt_http_request_body"),
+                (Some("http::Request"), "send") => Some("gos_rt_http_request_send"),
+                (Some("http::Request"), "path") => Some("gos_rt_http_request_path"),
+                (Some("http::Request"), "method") => Some("gos_rt_http_request_method"),
+                (Some("http::Response"), "status") => Some("gos_rt_http_response_status"),
+                (Some("http::Response"), "body") => Some("gos_rt_http_response_body"),
+                (Some("bufio::Scanner"), "scan") => Some("gos_rt_bufio_scanner_scan"),
+                (Some("bufio::Scanner"), "text") => Some("gos_rt_bufio_scanner_text"),
+                (Some("errors::Error"), "message") => Some("gos_rt_error_message"),
+                (Some("errors::Error"), "cause") => Some("gos_rt_error_cause"),
+                (Some("errors::Error"), "is") => Some("gos_rt_error_is"),
+                (Some("regex::Pattern"), "is_match") => Some("gos_rt_regex_is_match"),
+                (Some("regex::Pattern"), "find") => Some("gos_rt_regex_find"),
+                (Some("regex::Pattern"), "find_all") => Some("gos_rt_regex_find_all"),
+                (Some("regex::Pattern"), "replace_all") => Some("gos_rt_regex_replace_all"),
+                (Some("regex::Pattern"), "split") => Some("gos_rt_regex_split"),
+                (Some("collections::HashSet"), "insert") => Some("gos_rt_set_insert"),
+                (Some("collections::HashSet"), "contains") => Some("gos_rt_set_contains"),
+                (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
+                (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
+                (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
+                (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
+                (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
+                _ => None,
+            };
         if let Some(rt) = kind_dispatch {
             // Lower the receiver + args, emit a Call to the
             // runtime helper, return the dest local. Pin a
@@ -4419,9 +4407,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_http_response_status"
                 | "gos_rt_set_len"
                 | "gos_rt_btmap_len"
-                | "gos_rt_btmap_get_or" => {
-                    self.tcx.int_ty(gossamer_types::IntTy::I64)
-                }
+                | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                 "gos_rt_btmap_insert" => self.tcx.unit(),
                 "gos_rt_regex_find_all" | "gos_rt_regex_split" => {
                     let s = self.tcx.string_ty();
@@ -4436,9 +4422,7 @@ impl<'a> Builder<'a> {
             // returns Response, header/body return Request again.
             let dest_kind: Option<&'static str> = match rt {
                 "gos_rt_http_client_get" | "gos_rt_http_client_post" => Some("http::Request"),
-                "gos_rt_http_request_header" | "gos_rt_http_request_body" => {
-                    Some("http::Request")
-                }
+                "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
                 "gos_rt_http_request_send" => Some("http::Response"),
                 _ => None,
             };
@@ -4650,12 +4634,8 @@ impl<'a> Builder<'a> {
             // correctly on the result of the runtime helper.
             let dest_kind: Option<&'static str> = match sym {
                 "gos_rt_http_request_send" => Some("http::Response"),
-                "gos_rt_http_request_header" | "gos_rt_http_request_body" => {
-                    Some("http::Request")
-                }
-                "gos_rt_http_client_get" | "gos_rt_http_client_post" => {
-                    Some("http::Request")
-                }
+                "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
+                "gos_rt_http_client_get" | "gos_rt_http_client_post" => Some("http::Request"),
                 _ => None,
             };
             if let Some(rk) = dest_kind {
@@ -4834,7 +4814,7 @@ impl<'a> Builder<'a> {
         let disc_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(disc_local),
-            Rvalue::Use(Operand::Const(ConstValue::Int(disc as i128))),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(disc)))),
             span,
         );
         let zero_local = self.fresh(i64_ty);
@@ -4879,7 +4859,7 @@ impl<'a> Builder<'a> {
         let disc_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(disc_local),
-            Rvalue::Use(Operand::Const(ConstValue::Int(disc as i128))),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(disc)))),
             span,
         );
         let payload_local = self.lower_expr(payload_expr)?;
@@ -4903,12 +4883,7 @@ impl<'a> Builder<'a> {
     /// destination local has already been allocated by the caller;
     /// we write the resulting Vec pointer to it directly. Returns
     /// `true` on success — caller skips its normal init lowering.
-    fn lower_let_array_as_vec(
-        &mut self,
-        local: Local,
-        elems: &[HirExpr],
-        span: Span,
-    ) -> bool {
+    fn lower_let_array_as_vec(&mut self, local: Local, elems: &[HirExpr], span: Span) -> bool {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let unit_ty = self.tcx.unit();
         let elem_bytes = self.fresh(i64_ty);
@@ -5052,36 +5027,34 @@ impl<'a> Builder<'a> {
         {
             let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
             let base_local = self.lower_expr(base)?;
-            let lo_local = match start {
-                Some(s) => self.lower_expr(s)?,
-                None => {
-                    let l = self.fresh(i64_ty);
-                    self.emit_assign(
-                        Place::local(l),
-                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-                        span,
-                    );
-                    l
-                }
+            let lo_local = if let Some(s) = start {
+                self.lower_expr(s)?
+            } else {
+                let l = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(l),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    span,
+                );
+                l
             };
-            let hi_local = match end {
-                Some(e) => self.lower_expr(e)?,
-                None => {
-                    // `arr[lo..]` — substitute `arr.len()` as the
-                    // upper bound by calling `gos_rt_len` on the
-                    // base. Works for both arrays and Vecs since
-                    // `gos_rt_len` reads the leading length word.
-                    let l = self.fresh(i64_ty);
-                    let next = self.new_block(span);
-                    self.terminate(Terminator::Call {
-                        callee: Operand::Const(ConstValue::Str("gos_rt_len".to_string())),
-                        args: vec![Operand::Copy(Place::local(base_local))],
-                        destination: Place::local(l),
-                        target: Some(next),
-                    });
-                    self.set_current(next);
-                    l
-                }
+            let hi_local = if let Some(e) = end {
+                self.lower_expr(e)?
+            } else {
+                // `arr[lo..]` — substitute `arr.len()` as the
+                // upper bound by calling `gos_rt_len` on the
+                // base. Works for both arrays and Vecs since
+                // `gos_rt_len` reads the leading length word.
+                let l = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_len".to_string())),
+                    args: vec![Operand::Copy(Place::local(base_local))],
+                    destination: Place::local(l),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                l
             };
             let hi_local = if *inclusive {
                 let one = self.fresh(i64_ty);
@@ -5169,7 +5142,10 @@ impl<'a> Builder<'a> {
         // `Projection::Index` would treat the local's first 8
         // bytes as element 0 — which is the GosVec `len` field,
         // not the data buffer.
-        let actual_base_kind = self.tcx.kind_of(self.locals[base_local.0 as usize].ty).clone();
+        let actual_base_kind = self
+            .tcx
+            .kind_of(self.locals[base_local.0 as usize].ty)
+            .clone();
         let actual_base_kind = match actual_base_kind {
             TyKind::Ref { inner, .. } => self.tcx.kind_of(inner).clone(),
             other => other,
@@ -5260,6 +5236,7 @@ impl<'a> Builder<'a> {
     /// a counter-driven CFG when `iter` is a range or an array-shaped
     /// expression. Returns `None` when the iterator's shape is not
     /// recognised so the generic `loop` fallback handles it.
+    #[allow(clippy::cognitive_complexity)]
     fn try_lower_for_loop(&mut self, for_loop: &ForLoopShape<'_>, span: Span) -> Option<Local> {
         use gossamer_types::TyKind;
         // `for entry in v.iter()` / `for entry in v` where v is a
@@ -5362,7 +5339,7 @@ impl<'a> Builder<'a> {
                                 break;
                             }
                             TyKind::Array { len, elem } => {
-                                if let Some(l) = i64::try_from(*len).ok() {
+                                if let Ok(l) = i64::try_from(*len) {
                                     found_len = Some(l);
                                     found_elem = Some(*elem);
                                 }
@@ -5390,8 +5367,8 @@ impl<'a> Builder<'a> {
                     // (identity for slices/vecs); the loop reads
                     // each element via `gos_rt_vec_get_ptr` +
                     // `gos_load`. Element type defaults to i64.
-                    let elem_ty = found_elem
-                        .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                    let elem_ty =
+                        found_elem.unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
                     return self.lower_for_vec(
                         recv,
                         elem_ty,
@@ -5497,9 +5474,7 @@ impl<'a> Builder<'a> {
                 // pointer width — every slot in a GosVec is
                 // 8 bytes regardless of element shape, so
                 // method calls on the binding still dispatch.
-                let elem_ty = self
-                    .tcx
-                    .int_ty(gossamer_types::IntTy::I64);
+                let elem_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 self.lower_for_vec(
                     for_loop.iter_expr,
                     elem_ty,
@@ -6126,10 +6101,9 @@ fn lower_binop(op: HirBinaryOp) -> BinOp {
 /// else returns `false` so the peephole stays conservative.
 fn exprs_match(a: &HirExpr, b: &HirExpr) -> bool {
     match (&a.kind, &b.kind) {
-        (
-            HirExprKind::Path { segments: sa, .. },
-            HirExprKind::Path { segments: sb, .. },
-        ) => sa.len() == sb.len() && sa.iter().zip(sb).all(|(x, y)| x.name == y.name),
+        (HirExprKind::Path { segments: sa, .. }, HirExprKind::Path { segments: sb, .. }) => {
+            sa.len() == sb.len() && sa.iter().zip(sb).all(|(x, y)| x.name == y.name)
+        }
         (HirExprKind::Literal(la), HirExprKind::Literal(lb)) => match (la, lb) {
             (HirLiteral::Int(x), HirLiteral::Int(y)) => x == y,
             (HirLiteral::Bool(x), HirLiteral::Bool(y)) => x == y,
@@ -6138,12 +6112,24 @@ fn exprs_match(a: &HirExpr, b: &HirExpr) -> bool {
             _ => false,
         },
         (
-            HirExprKind::Field { receiver: ra, name: na },
-            HirExprKind::Field { receiver: rb, name: nb },
+            HirExprKind::Field {
+                receiver: ra,
+                name: na,
+            },
+            HirExprKind::Field {
+                receiver: rb,
+                name: nb,
+            },
         ) => na.name == nb.name && exprs_match(ra, rb),
         (
-            HirExprKind::TupleIndex { receiver: ra, index: ia },
-            HirExprKind::TupleIndex { receiver: rb, index: ib },
+            HirExprKind::TupleIndex {
+                receiver: ra,
+                index: ia,
+            },
+            HirExprKind::TupleIndex {
+                receiver: rb,
+                index: ib,
+            },
         ) => ia == ib && exprs_match(ra, rb),
         _ => false,
     }

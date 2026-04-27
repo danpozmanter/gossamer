@@ -1883,7 +1883,10 @@ impl<'a> Lowerer<'a> {
         // inline. Lower them to a direct LLVM `getelementptr +
         // load/store` here so the LLVM tier doesn't bail and
         // route the body to cranelift just for these calls.
-        if matches!(name.as_str(), "gos_load" | "gos_store" | "gos_alloc" | "gos_fn_addr") {
+        if matches!(
+            name.as_str(),
+            "gos_load" | "gos_store" | "gos_alloc" | "gos_fn_addr"
+        ) {
             self.lower_raw_intrinsic(&name, args, destination, target)?;
             return Ok(());
         }
@@ -1947,7 +1950,11 @@ impl<'a> Lowerer<'a> {
                     tmp
                 };
                 let addr = self.fresh();
-                writeln!(self.out, "  {addr} = getelementptr i8, ptr {p}, i64 {off64}").unwrap();
+                writeln!(
+                    self.out,
+                    "  {addr} = getelementptr i8, ptr {p}, i64 {off64}"
+                )
+                .unwrap();
                 let loaded = self.fresh();
                 writeln!(self.out, "  {loaded} = load i64, ptr {addr}").unwrap();
                 let coerced = self.coerce_llvm_value(&loaded, "i64", &dest_ty);
@@ -1981,7 +1988,11 @@ impl<'a> Lowerer<'a> {
                 };
                 let val64 = self.coerce_llvm_value(&val_v, &val_ty, "i64");
                 let addr = self.fresh();
-                writeln!(self.out, "  {addr} = getelementptr i8, ptr {p}, i64 {off64}").unwrap();
+                writeln!(
+                    self.out,
+                    "  {addr} = getelementptr i8, ptr {p}, i64 {off64}"
+                )
+                .unwrap();
                 writeln!(self.out, "  store i64 {val64}, ptr {addr}").unwrap();
                 if dest_ty != "void" && !is_unit(self.tcx, dest_ty_mir) {
                     let slot = local_slot(destination.local);
@@ -2053,20 +2064,19 @@ impl<'a> Lowerer<'a> {
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
-        let (value, value_ty): (String, String) = if matches!(name, "Ok" | "Some" | "Err")
-            && !args.is_empty()
-        {
-            let v = self.lower_operand(&args[0])?;
-            let vt = self.operand_llvm_ty(&args[0]);
-            (v, vt)
-        } else {
-            let zero = match dest_ty.as_str() {
-                "ptr" => "null".to_string(),
-                "double" | "float" => "0.0".to_string(),
-                _ => "0".to_string(),
+        let (value, value_ty): (String, String) =
+            if matches!(name, "Ok" | "Some" | "Err") && !args.is_empty() {
+                let v = self.lower_operand(&args[0])?;
+                let vt = self.operand_llvm_ty(&args[0]);
+                (v, vt)
+            } else {
+                let zero = match dest_ty.as_str() {
+                    "ptr" => "null".to_string(),
+                    "double" | "float" => "0.0".to_string(),
+                    _ => "0".to_string(),
+                };
+                (zero, dest_ty.clone())
             };
-            (zero, dest_ty.clone())
-        };
         let coerced = self.coerce_llvm_value(&value, &value_ty, &dest_ty);
         let slot = local_slot(destination.local);
         writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();

@@ -85,7 +85,7 @@ pub enum Value {
     /// Concurrent channel endpoint.
     Channel(Channel),
     /// Hash-map aggregate. `FxHashMap` is O(1) per op vs the
-    /// previous BTreeMap's O(log N); on k-nucleotide this is
+    /// previous `BTreeMap`'s O(log N); on k-nucleotide this is
     /// the bulk of the interp speedup. The mutex keeps
     /// `Value: Send + Sync` so goroutines can pass maps through
     /// channels.

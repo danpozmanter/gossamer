@@ -1155,7 +1155,11 @@ impl<'a> TypeChecker<'a> {
             }
             "Vec" => {
                 let substs = self.substs_from_ast(path);
-                let elem = substs.types().first().copied().unwrap_or_else(|| self.fresh());
+                let elem = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.fresh());
                 return self.tcx.intern(TyKind::Vec(elem));
             }
             "HashMap" => {
@@ -1495,7 +1499,9 @@ fn prim_to_ty(tcx: &mut TyCtxt, prim: PrimitiveTy) -> Ty {
 fn stmt_diverges(stmt: &Stmt) -> bool {
     match &stmt.kind {
         StmtKind::Expr { expr, .. } => expr_diverges(expr),
-        StmtKind::Let { init: Some(init), .. } => expr_diverges(init),
+        StmtKind::Let {
+            init: Some(init), ..
+        } => expr_diverges(init),
         _ => false,
     }
 }

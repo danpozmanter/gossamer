@@ -22,7 +22,11 @@ pub struct RenderOptions {
 #[must_use]
 pub fn render(diag: &Diagnostic, map: &SourceMap, options: RenderOptions) -> String {
     let mut out = String::new();
-    let severity_colour = if options.colour { colour_for(diag.severity) } else { "" };
+    let severity_colour = if options.colour {
+        colour_for(diag.severity)
+    } else {
+        ""
+    };
     let bold_colour = if options.colour { BOLD } else { "" };
     let dim_colour = if options.colour { DIM } else { "" };
     let reset = if options.colour { RESET } else { "" };
@@ -38,7 +42,7 @@ pub fn render(diag: &Diagnostic, map: &SourceMap, options: RenderOptions) -> Str
         let _ = writeln!(out, "  {dim_colour}= note:{reset} {note}");
     }
     for help in &diag.helps {
-        let _ = writeln!(out, "  {dim_colour}= help:{reset} {note}", note = help);
+        let _ = writeln!(out, "  {dim_colour}= help:{reset} {help}");
     }
     for suggestion in &diag.suggestions {
         let _ = writeln!(

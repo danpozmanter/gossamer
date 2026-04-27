@@ -882,21 +882,18 @@ fn define_var_to_with(
 ) {
     let value_ty = value_type(value, builder);
     let new_decl_ty = preferred_ty.unwrap_or(value_ty);
-    let (var, decl_ty) = match locals.get(&local).copied() {
-        Some(v) => {
-            // Variable was declared earlier — its type is locked
-            // for the rest of the function. Read the type back
-            // from the builder rather than trusting the caller's
-            // hint; mismatches here are the leading cause of
-            // verifier panics.
-            let actual = builder.try_use_var(v).map(|val| value_type(val, builder));
-            (v, actual.unwrap_or(new_decl_ty))
-        }
-        None => {
-            let v = builder.declare_var(new_decl_ty);
-            locals.insert(local, v);
-            (v, new_decl_ty)
-        }
+    let (var, decl_ty) = if let Some(v) = locals.get(&local).copied() {
+        // Variable was declared earlier — its type is locked
+        // for the rest of the function. Read the type back
+        // from the builder rather than trusting the caller's
+        // hint; mismatches here are the leading cause of
+        // verifier panics.
+        let actual = builder.try_use_var(v).map(|val| value_type(val, builder));
+        (v, actual.unwrap_or(new_decl_ty))
+    } else {
+        let v = builder.declare_var(new_decl_ty);
+        locals.insert(local, v);
+        (v, new_decl_ty)
     };
     // Coerce the value to the declared variable width when they
     // disagree (e.g. we declared the local as F64 from inference,
@@ -914,7 +911,9 @@ fn define_var_to_with(
             .bitcast(types::I64, ir::MemFlags::new(), value)
     } else if decl_ty == types::F32 && value_ty == types::I64 {
         let truncated = builder.ins().ireduce(types::I32, value);
-        builder.ins().bitcast(types::F32, ir::MemFlags::new(), truncated)
+        builder
+            .ins()
+            .bitcast(types::F32, ir::MemFlags::new(), truncated)
     } else if decl_ty == types::F32 && value_ty == types::F64 {
         builder.ins().fdemote(types::F32, value)
     } else if decl_ty == types::F64 && value_ty == types::F32 {
@@ -931,9 +930,13 @@ fn define_var_to_with(
         // float-shaped value to an int-shaped local (rare —
         // typically a fallback path miscalculated the kind).
         let int_form = if value_ty == types::F64 {
-            builder.ins().bitcast(types::I64, ir::MemFlags::new(), value)
+            builder
+                .ins()
+                .bitcast(types::I64, ir::MemFlags::new(), value)
         } else {
-            builder.ins().bitcast(types::I32, ir::MemFlags::new(), value)
+            builder
+                .ins()
+                .bitcast(types::I32, ir::MemFlags::new(), value)
         };
         let int_ty = value_type(int_form, builder);
         if decl_ty.bits() > int_ty.bits() {
@@ -947,12 +950,20 @@ fn define_var_to_with(
         // Int→float: resize to match width, then bitcast.
         let resized = if value_ty.bits() > decl_ty.bits() {
             builder.ins().ireduce(
-                if decl_ty == types::F64 { types::I64 } else { types::I32 },
+                if decl_ty == types::F64 {
+                    types::I64
+                } else {
+                    types::I32
+                },
                 value,
             )
         } else if value_ty.bits() < decl_ty.bits() {
             builder.ins().sextend(
-                if decl_ty == types::F64 { types::I64 } else { types::I32 },
+                if decl_ty == types::F64 {
+                    types::I64
+                } else {
+                    types::I32
+                },
                 value,
             )
         } else {
@@ -1648,9 +1659,13 @@ fn coerce_arg_to(
     }
     if have.is_float() && want.is_int() {
         let int_form = if have == types::F64 {
-            builder.ins().bitcast(types::I64, ir::MemFlags::new(), value)
+            builder
+                .ins()
+                .bitcast(types::I64, ir::MemFlags::new(), value)
         } else {
-            builder.ins().bitcast(types::I32, ir::MemFlags::new(), value)
+            builder
+                .ins()
+                .bitcast(types::I32, ir::MemFlags::new(), value)
         };
         let int_ty = value_type(int_form, builder);
         if want.bits() > int_ty.bits() {
@@ -1662,7 +1677,11 @@ fn coerce_arg_to(
         return Ok(int_form);
     }
     if have.is_int() && want.is_float() {
-        let int_ty = if want == types::F64 { types::I64 } else { types::I32 };
+        let int_ty = if want == types::F64 {
+            types::I64
+        } else {
+            types::I32
+        };
         let resized = if have.bits() > int_ty.bits() {
             builder.ins().ireduce(int_ty, value)
         } else if have.bits() < int_ty.bits() {
@@ -1755,8 +1774,7 @@ fn lower_terminator(
                 .signature
                 .returns
                 .first()
-                .map(|p| p.value_type)
-                .unwrap_or(types::I64);
+                .map_or(types::I64, |p| p.value_type);
             let coerced = coerce_arg_to(builder, retval, want)
                 .unwrap_or_else(|_| builder.ins().iconst(want, 0));
             builder.ins().return_(&[coerced]);
@@ -1940,8 +1958,7 @@ fn lower_terminator(
                                     &[types::I32],
                                     &[ptr_ty_local],
                                 )?;
-                                let cts_ref =
-                                    module.declare_func_in_func(cts, builder.func);
+                                let cts_ref = module.declare_func_in_func(cts, builder.func);
                                 let call = builder.ins().call(cts_ref, &[v]);
                                 v = builder.inst_results(call)[0];
                             } else {
@@ -1994,15 +2011,14 @@ fn lower_terminator(
                     // recovers it. Variants without a payload
                     // (`None`, no-payload user-enum constructors)
                     // continue to default to zero.
-                    let result_value = if matches!(name.as_str(), "Ok" | "Some" | "Err")
-                        && !args.is_empty()
-                    {
-                        lower_operand(
-                            module, builder, locals, body, tcx, &args[0], None, intrinsics,
-                        )?
-                    } else {
-                        builder.ins().iconst(types::I64, 0)
-                    };
+                    let result_value =
+                        if matches!(name.as_str(), "Ok" | "Some" | "Err") && !args.is_empty() {
+                            lower_operand(
+                                module, builder, locals, body, tcx, &args[0], None, intrinsics,
+                            )?
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
+                        };
                     store_call_result(
                         module,
                         builder,
@@ -2054,31 +2070,28 @@ fn lower_terminator(
             // destination and continue. Common producer is enum
             // variant constructors whose DefId the resolver
             // allocates without ever emitting a body.
-            let func_ref = match resolve_callee(callee, callees_by_def, callees_by_name) {
-                Ok(r) => r,
-                Err(_) => {
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    store_call_result(
-                        module,
-                        builder,
-                        locals,
-                        body,
-                        tcx,
-                        destination,
-                        zero,
-                        intrinsics,
-                    )?;
-                    match target {
-                        Some(block_id) => {
-                            let block = blocks[&block_id.as_u32()];
-                            builder.ins().jump(block, &[]);
-                        }
-                        None => {
-                            builder.ins().trap(ir::TrapCode::user(1).unwrap());
-                        }
+            let Ok(func_ref) = resolve_callee(callee, callees_by_def, callees_by_name) else {
+                let zero = builder.ins().iconst(types::I64, 0);
+                store_call_result(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    destination,
+                    zero,
+                    intrinsics,
+                )?;
+                match target {
+                    Some(block_id) => {
+                        let block = blocks[&block_id.as_u32()];
+                        builder.ins().jump(block, &[]);
                     }
-                    return Ok(());
+                    None => {
+                        builder.ins().trap(ir::TrapCode::user(1).unwrap());
+                    }
                 }
+                return Ok(());
             };
             let expected = builder
                 .func
@@ -2312,8 +2325,8 @@ fn emit_per_arg_print(
                 builder.ins().call(fref, &[c]);
             }
             PrintKind::VecI64 => {
-                let f = intrinsics
-                    .extern_fn(module, "gos_rt_vec_format_i64", &[ptr_ty], &[ptr_ty])?;
+                let f =
+                    intrinsics.extern_fn(module, "gos_rt_vec_format_i64", &[ptr_ty], &[ptr_ty])?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 let call = builder.ins().call(fref, &[value]);
                 let s = builder.inst_results(call)[0];
@@ -2767,13 +2780,13 @@ fn lower_intrinsic_call(
             builder.ins().call(init_ref, &[]);
             for arg in args {
                 let kind = operand_print_kind(body, tcx, arg);
-                let value = lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
+                let value =
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
                 let ty = value_type(value, builder);
                 match kind {
                     PrintKind::StrPtr => {
-                        let f = intrinsics.extern_fn(
-                            module, "gos_rt_concat_str", &[ptr_ty], &[],
-                        )?;
+                        let f =
+                            intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[value]);
                     }
@@ -2784,7 +2797,10 @@ fn lower_intrinsic_call(
                             value
                         };
                         let f = intrinsics.extern_fn(
-                            module, "gos_rt_concat_i64", &[types::I64], &[],
+                            module,
+                            "gos_rt_concat_i64",
+                            &[types::I64],
+                            &[],
                         )?;
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[n]);
@@ -2796,7 +2812,10 @@ fn lower_intrinsic_call(
                             value
                         };
                         let f = intrinsics.extern_fn(
-                            module, "gos_rt_concat_f64", &[types::F64], &[],
+                            module,
+                            "gos_rt_concat_f64",
+                            &[types::F64],
+                            &[],
                         )?;
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[d]);
@@ -2810,7 +2829,10 @@ fn lower_intrinsic_call(
                             value
                         };
                         let f = intrinsics.extern_fn(
-                            module, "gos_rt_concat_bool", &[types::I32], &[],
+                            module,
+                            "gos_rt_concat_bool",
+                            &[types::I32],
+                            &[],
                         )?;
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[b]);
@@ -2824,21 +2846,26 @@ fn lower_intrinsic_call(
                             value
                         };
                         let f = intrinsics.extern_fn(
-                            module, "gos_rt_concat_char", &[types::I32], &[],
+                            module,
+                            "gos_rt_concat_char",
+                            &[types::I32],
+                            &[],
                         )?;
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[c]);
                     }
                     PrintKind::VecI64 => {
                         let format_fn = intrinsics.extern_fn(
-                            module, "gos_rt_vec_format_i64", &[ptr_ty], &[ptr_ty],
+                            module,
+                            "gos_rt_vec_format_i64",
+                            &[ptr_ty],
+                            &[ptr_ty],
                         )?;
                         let format_ref = module.declare_func_in_func(format_fn, builder.func);
                         let call = builder.ins().call(format_ref, &[value]);
                         let s = builder.inst_results(call)[0];
-                        let f = intrinsics.extern_fn(
-                            module, "gos_rt_concat_str", &[ptr_ty], &[],
-                        )?;
+                        let f =
+                            intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[s]);
                     }
@@ -2846,22 +2873,25 @@ fn lower_intrinsic_call(
                         let placeholder = intrinsics.intern_string(module, "<value>")?;
                         let data_ref = module.declare_data_in_func(placeholder, builder.func);
                         let p = builder.ins().global_value(ptr_ty, data_ref);
-                        let f = intrinsics.extern_fn(
-                            module, "gos_rt_concat_str", &[ptr_ty], &[],
-                        )?;
+                        let f =
+                            intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[p]);
                     }
                 }
             }
-            let finish = intrinsics.extern_fn(
-                module, "gos_rt_concat_finish", &[], &[ptr_ty],
-            )?;
+            let finish = intrinsics.extern_fn(module, "gos_rt_concat_finish", &[], &[ptr_ty])?;
             let finish_ref = module.declare_func_in_func(finish, builder.func);
             let call = builder.ins().call(finish_ref, &[]);
             let result = builder.inst_results(call)[0];
             define_var_to(
-                builder, locals, body, tcx, module, destination.local, result,
+                builder,
+                locals,
+                body,
+                tcx,
+                module,
+                destination.local,
+                result,
             );
             Ok(true)
         }
@@ -3913,20 +3943,41 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let addr = match args.first() {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
             let env = match args.get(1) {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
             let env_ptr = coerce_arg_to(builder, env, ptr_ty)?;
             let fn_ptr = match args.get(2) {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(types::I64), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(types::I64, 0),
             };
@@ -4258,7 +4309,14 @@ fn lower_intrinsic_call(
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -4283,7 +4341,14 @@ fn lower_intrinsic_call(
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -4303,13 +4368,27 @@ fn lower_intrinsic_call(
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
             let v_val = match args.get(2) {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -4329,7 +4408,14 @@ fn lower_intrinsic_call(
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -4349,7 +4435,14 @@ fn lower_intrinsic_call(
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -4369,7 +4462,14 @@ fn lower_intrinsic_call(
             let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let k_val = match args.get(1) {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -4397,7 +4497,14 @@ fn lower_intrinsic_call(
             )?;
             let m = match args.first() {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -5696,7 +5803,14 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(len_fn, builder.func);
             let m = match args.first() {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -5709,16 +5823,18 @@ fn lower_intrinsic_call(
         // the first i64 slot of the passed pointer (GosArgs and
         // other len-prefixed buffers share that layout).
         "gos_rt_str_is_empty" => {
-            let f = intrinsics.extern_fn(
-                module,
-                "gos_rt_str_is_empty",
-                &[ptr_ty],
-                &[types::I8],
-            )?;
+            let f = intrinsics.extern_fn(module, "gos_rt_str_is_empty", &[ptr_ty], &[types::I8])?;
             let fref = module.declare_func_in_func(f, builder.func);
             let p = match args.first() {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -5728,16 +5844,18 @@ fn lower_intrinsic_call(
             Ok(true)
         }
         "gos_rt_len_is_zero" => {
-            let f = intrinsics.extern_fn(
-                module,
-                "gos_rt_len_is_zero",
-                &[ptr_ty],
-                &[types::I8],
-            )?;
+            let f = intrinsics.extern_fn(module, "gos_rt_len_is_zero", &[ptr_ty], &[types::I8])?;
             let fref = module.declare_func_in_func(f, builder.func);
             let p = match args.first() {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -5896,22 +6014,32 @@ fn lower_intrinsic_call(
         // `s.split(sep)`, `s.lines()`, `s.repeat(n)`. Each
         // returns a fresh GC-managed pointer (Vec or String).
         "gos_rt_str_eq" => {
-            let f = intrinsics.extern_fn(
-                module,
-                "gos_rt_str_eq",
-                &[ptr_ty, ptr_ty],
-                &[types::I8],
-            )?;
+            let f =
+                intrinsics.extern_fn(module, "gos_rt_str_eq", &[ptr_ty, ptr_ty], &[types::I8])?;
             let fref = module.declare_func_in_func(f, builder.func);
             let a = match args.first() {
                 Some(arg) => lower_operand(
-                    module, builder, locals, body, tcx, arg, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
             let b = match args.get(1) {
                 Some(arg) => lower_operand(
-                    module, builder, locals, body, tcx, arg, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -5939,7 +6067,14 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let s = match args.first() {
                 Some(arg) => lower_operand(
-                    module, builder, locals, body, tcx, arg, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -5947,7 +6082,14 @@ fn lower_intrinsic_call(
                 let sep = match args.get(1) {
                     Some(arg) => {
                         let raw = lower_operand(
-                            module, builder, locals, body, tcx, arg, Some(ptr_ty), intrinsics,
+                            module,
+                            builder,
+                            locals,
+                            body,
+                            tcx,
+                            arg,
+                            Some(ptr_ty),
+                            intrinsics,
                         )?;
                         if operand_is_char(body, tcx, arg) {
                             // Char separator: convert to a one-
@@ -5959,8 +6101,7 @@ fn lower_intrinsic_call(
                                 &[types::I32],
                                 &[ptr_ty],
                             )?;
-                            let cts_ref =
-                                module.declare_func_in_func(cts, builder.func);
+                            let cts_ref = module.declare_func_in_func(cts, builder.func);
                             let call = builder.ins().call(cts_ref, &[raw]);
                             builder.inst_results(call)[0]
                         } else {
@@ -5987,12 +6128,21 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let s = match args.first() {
                 Some(arg) => lower_operand(
-                    module, builder, locals, body, tcx, arg, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
             let n_val = match args.get(1) {
-                Some(arg) => lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?,
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
                 None => builder.ins().iconst(types::I64, 0),
             };
             let n = coerce_arg_to(builder, n_val, types::I64)?;
@@ -6102,7 +6252,14 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let v = match args.first() {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -6135,7 +6292,14 @@ fn lower_intrinsic_call(
             )?;
             let vec_p = match args.first() {
                 Some(a) => lower_operand(
-                    module, builder, locals, body, tcx, a, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
@@ -6198,11 +6362,18 @@ fn lower_intrinsic_call(
         // shape: the MIR side picked a single runtime symbol
         // and supplies the args; we declare the extern with the
         // right signature based on the symbol name and call it.
-        s if generic_rt_static_name(s).is_some() =>
-        {
+        s if generic_rt_static_name(s).is_some() => {
             let static_name = generic_rt_static_name(s).expect("checked above");
             lower_generic_rt_call(
-                module, builder, locals, body, tcx, args, intrinsics, destination, static_name,
+                module,
+                builder,
+                locals,
+                body,
+                tcx,
+                args,
+                intrinsics,
+                destination,
+                static_name,
             )?;
             Ok(true)
         }
@@ -6215,7 +6386,14 @@ fn lower_intrinsic_call(
         "gos_rt_arr_iter" => {
             let recv = match args.first() {
                 Some(arg) => lower_operand(
-                    module, builder, locals, body, tcx, arg, Some(ptr_ty), intrinsics,
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    arg,
+                    Some(ptr_ty),
+                    intrinsics,
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };

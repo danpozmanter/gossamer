@@ -3064,10 +3064,9 @@ fn is_get_or_zero(receiver: &HirExpr, key: &HirExpr, candidate: &HirExpr) -> boo
 /// never elide a side-effecting expression.
 fn exprs_equiv(a: &HirExpr, b: &HirExpr) -> bool {
     match (&a.kind, &b.kind) {
-        (
-            HirExprKind::Path { segments: sa, .. },
-            HirExprKind::Path { segments: sb, .. },
-        ) => sa.len() == sb.len() && sa.iter().zip(sb).all(|(x, y)| x.name == y.name),
+        (HirExprKind::Path { segments: sa, .. }, HirExprKind::Path { segments: sb, .. }) => {
+            sa.len() == sb.len() && sa.iter().zip(sb).all(|(x, y)| x.name == y.name)
+        }
         (HirExprKind::Literal(la), HirExprKind::Literal(lb)) => literals_equal(la, lb),
         _ => false,
     }

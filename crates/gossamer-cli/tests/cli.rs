@@ -151,7 +151,11 @@ fn build_subcommand_produces_runnable_output() {
         String::from_utf8_lossy(&out.stderr)
     );
     let binary = dir.join("target").join("debug").join("build_magic");
-    assert!(binary.exists(), "build output missing at {}", binary.display());
+    assert!(
+        binary.exists(),
+        "build output missing at {}",
+        binary.display()
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

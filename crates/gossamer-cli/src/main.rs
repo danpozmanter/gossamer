@@ -527,7 +527,9 @@ fn cmd_check(file: &PathBuf, timings: bool) -> Result<()> {
     let stage_parse = std::time::Instant::now();
     let (sf, parse_diags) = load_or_parse(&source, file_id, &cache_key, trace);
     let parse_elapsed = stage_parse.elapsed();
-    let render_opts = gossamer_diagnostics::RenderOptions { colour: stderr_supports_colour() };
+    let render_opts = gossamer_diagnostics::RenderOptions {
+        colour: stderr_supports_colour(),
+    };
     let mut total_errors = parse_diags.len();
     for diag in &parse_diags {
         let structured = diag.to_diagnostic();
@@ -655,7 +657,9 @@ fn load_and_check_with_sf(
     gossamer_ast::SourceFile,
     gossamer_types::TyCtxt,
 )> {
-    let render_opts = gossamer_diagnostics::RenderOptions { colour: stderr_supports_colour() };
+    let render_opts = gossamer_diagnostics::RenderOptions {
+        colour: stderr_supports_colour(),
+    };
     let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file_id);
     if !parse_diags.is_empty() {
         for diag in &parse_diags {
@@ -2464,7 +2468,9 @@ fn cmd_lint(path: &PathBuf, deny_warnings: bool, explain: Option<&str>, fix: boo
     let mut warnings = 0usize;
     let mut errors = 0usize;
     let mut edits_applied = 0usize;
-    let render_opts = gossamer_diagnostics::RenderOptions { colour: stderr_supports_colour() };
+    let render_opts = gossamer_diagnostics::RenderOptions {
+        colour: stderr_supports_colour(),
+    };
     for file in files {
         let source = read_source(&file)?;
         let mut map = gossamer_lex::SourceMap::new();

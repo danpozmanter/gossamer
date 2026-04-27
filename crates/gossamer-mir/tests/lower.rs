@@ -367,10 +367,14 @@ fn match_with_guard_lowers_to_chained_branches() {
     );
     // Sanity: at least one SwitchInt terminator (the chain
     // emits one per arm) must be present.
-    let has_switch = body.blocks.iter().any(|b| {
-        matches!(b.terminator, Terminator::SwitchInt { .. })
-    });
-    assert!(has_switch, "guarded chain should produce SwitchInt branches");
+    let has_switch = body
+        .blocks
+        .iter()
+        .any(|b| matches!(b.terminator, Terminator::SwitchInt { .. }));
+    assert!(
+        has_switch,
+        "guarded chain should produce SwitchInt branches"
+    );
 }
 
 #[test]

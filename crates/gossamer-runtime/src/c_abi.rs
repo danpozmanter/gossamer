@@ -33,6 +33,12 @@
 #![allow(clippy::cast_lossless)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::match_same_arms)]
+// `out.push_str(&format!(…))` reads more naturally in the few
+// hot-path string builders below than threading `std::fmt::Write`
+// through a file that already imports `std::io::Write` for socket
+// I/O. The allocation cost is irrelevant relative to the syscalls
+// these helpers are formatting headers for.
+#![allow(clippy::format_push_string)]
 
 use std::ffi::CStr;
 use std::io::{BufRead, Read, Write};
@@ -347,10 +353,7 @@ pub unsafe extern "C" fn gos_rt_str_replace(
 /// own heap-allocated nul-terminated copy so the caller can
 /// hold them past the underlying string's lifetime.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_split(
-    s: *const c_char,
-    sep: *const c_char,
-) -> *mut GosVec {
+pub unsafe extern "C" fn gos_rt_str_split(s: *const c_char, sep: *const c_char) -> *mut GosVec {
     let s = if s.is_null() {
         ""
     } else {
@@ -1062,7 +1065,7 @@ pub unsafe extern "C" fn gos_rt_main_exit_code(raw: i64) -> i32 {
         return 0;
     }
     let p = raw as usize;
-    let looks_like_heap = p > 0x10000 && (p & 7) == 0;
+    let looks_like_heap = p > 0x10000 && p.trailing_zeros() >= 3;
     if !looks_like_heap {
         return raw as i32;
     }
@@ -1160,7 +1163,11 @@ pub unsafe extern "C" fn gos_rt_btmap_insert(m: *mut GosBtMap, key: *const c_cha
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_btmap_get_or(m: *const GosBtMap, key: *const c_char, def: i64) -> i64 {
+pub unsafe extern "C" fn gos_rt_btmap_get_or(
+    m: *const GosBtMap,
+    key: *const c_char,
+    def: i64,
+) -> i64 {
     if m.is_null() || key.is_null() {
         return def;
     }
@@ -1230,7 +1237,7 @@ pub unsafe extern "C" fn gos_rt_vec_set_i64(v: *mut GosVec, idx: i64, value: i64
         return;
     }
     let p = unsafe { vec.ptr.add((idx as usize) * (vec.elem_bytes as usize)) };
-    unsafe { (p as *mut i64).write_unaligned(value) };
+    unsafe { p.cast::<i64>().write_unaligned(value) };
 }
 
 #[unsafe(no_mangle)]
@@ -1254,11 +1261,7 @@ pub unsafe extern "C" fn gos_rt_vec_get_ptr(v: *const GosVec, idx: i64) -> *mut 
 /// directly (the i64-erased ABI matches the rest of the Vec
 /// surface).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_slice(
-    v: *const GosVec,
-    lo: i64,
-    hi: i64,
-) -> *mut GosVec {
+pub unsafe extern "C" fn gos_rt_vec_slice(v: *const GosVec, lo: i64, hi: i64) -> *mut GosVec {
     if v.is_null() {
         return unsafe { gos_rt_vec_new(8) };
     }
@@ -1272,9 +1275,7 @@ pub unsafe extern "C" fn gos_rt_vec_slice(
     if !out.is_null() && count > 0 {
         for i in 0..count {
             unsafe {
-                let src_ptr = src
-                    .ptr
-                    .add(((lo + i) as usize) * (elem_bytes as usize));
+                let src_ptr = src.ptr.add(((lo + i) as usize) * (elem_bytes as usize));
                 gos_rt_vec_push(out, src_ptr);
             }
         }
@@ -1485,11 +1486,7 @@ pub unsafe extern "C" fn gos_rt_map_remove_i64(m: *mut GosMap, key: i64) -> bool
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_insert_str_i64(
-    m: *mut GosMap,
-    key: *const c_char,
-    val: i64,
-) {
+pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c_char, val: i64) {
     if m.is_null() || key.is_null() {
         return;
     }
@@ -1571,10 +1568,7 @@ pub unsafe extern "C" fn gos_rt_map_get_str_str(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_contains_key_str(
-    m: *const GosMap,
-    key: *const c_char,
-) -> bool {
+pub unsafe extern "C" fn gos_rt_map_contains_key_str(m: *const GosMap, key: *const c_char) -> bool {
     if m.is_null() || key.is_null() {
         return false;
     }
@@ -2047,14 +2041,11 @@ fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
         let response_bytes = if fn_addr == 0 {
             static_ok_response()
         } else {
-            let request = match parse_request_into(raw) {
-                Some(r) => r,
-                None => {
-                    let _ = stream.write_all(
-                        b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    );
-                    return;
-                }
+            let Some(request) = parse_request_into(raw) else {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+                return;
             };
             // SAFETY: `fn_addr` came from `gos_fn_addr("T::serve")`
             // at the user's `http::serve(addr, app)` call site;
@@ -2090,16 +2081,12 @@ fn parse_request_into(raw: &[u8]) -> Option<GosHttpRequest> {
     let mut body: Vec<u8> = Vec::new();
     let mut in_body = false;
     for line in lines {
-        if !in_body {
-            if line.is_empty() {
-                in_body = true;
-                continue;
-            }
-            if let Some((k, v)) = line.split_once(':') {
-                headers.push((k.trim().to_string(), v.trim().to_string()));
-            }
-        } else {
+        if in_body {
             body.extend_from_slice(line.as_bytes());
+        } else if line.is_empty() {
+            in_body = true;
+        } else if let Some((k, v)) = line.split_once(':') {
+            headers.push((k.trim().to_string(), v.trim().to_string()));
         }
     }
     Some(GosHttpRequest {
@@ -3378,9 +3365,8 @@ pub unsafe extern "C" fn gos_rt_error_is(err: *const GosError, needle: *const c_
     if err.is_null() || needle.is_null() {
         return false;
     }
-    let needle = match unsafe { CStr::from_ptr(needle).to_str() } {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Ok(needle) = (unsafe { CStr::from_ptr(needle).to_str() }) else {
+        return false;
     };
     let mut cur = err;
     while !cur.is_null() {
@@ -3425,10 +3411,7 @@ pub unsafe extern "C" fn gos_rt_regex_compile(pat: *const c_char) -> *mut GosReg
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_regex_is_match(
-    re: *const GosRegex,
-    text: *const c_char,
-) -> bool {
+pub unsafe extern "C" fn gos_rt_regex_is_match(re: *const GosRegex, text: *const c_char) -> bool {
     if re.is_null() || text.is_null() {
         return false;
     }
@@ -3578,7 +3561,9 @@ pub struct GosScanner {
 unsafe impl Send for GosScanner {}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_bufio_scanner_new(stream: *mut std::ffi::c_void) -> *mut GosScanner {
+pub unsafe extern "C" fn gos_rt_bufio_scanner_new(
+    stream: *mut std::ffi::c_void,
+) -> *mut GosScanner {
     // Read the entire stream up front: cheap for the typical
     // CLI/file usage and avoids weaving a real Read trait
     // through the runtime.
@@ -3607,15 +3592,12 @@ pub unsafe extern "C" fn gos_rt_bufio_scanner_scan(s: *mut GosScanner) -> bool {
         return false;
     }
     let scanner = unsafe { &mut *s };
-    match scanner.lines.next() {
-        Some(line) => {
-            scanner.current = Some(line);
-            true
-        }
-        None => {
-            scanner.current = None;
-            false
-        }
+    if let Some(line) = scanner.lines.next() {
+        scanner.current = Some(line);
+        true
+    } else {
+        scanner.current = None;
+        false
     }
 }
 
@@ -3782,7 +3764,7 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
         if elem_ptr.is_null() {
             break;
         }
-        let arg_ptr = unsafe { *elem_ptr.cast::<*const c_char>() };
+        let arg_ptr = unsafe { elem_ptr.cast::<*const c_char>().read_unaligned() };
         let arg = if arg_ptr.is_null() {
             String::new()
         } else {
@@ -3799,7 +3781,7 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
                         if i < argc {
                             let v_ptr = unsafe { gos_rt_vec_get_ptr(args, i) };
                             if !v_ptr.is_null() {
-                                let v = unsafe { *v_ptr.cast::<*const c_char>() };
+                                let v = unsafe { v_ptr.cast::<*const c_char>().read_unaligned() };
                                 if !v.is_null() {
                                     let bytes = unsafe { CStr::from_ptr(v).to_bytes().to_vec() };
                                     let leaked = alloc_cstring(&bytes);
@@ -3815,7 +3797,7 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
                         if i < argc {
                             let v_ptr = unsafe { gos_rt_vec_get_ptr(args, i) };
                             if !v_ptr.is_null() {
-                                let v = unsafe { *v_ptr.cast::<*const c_char>() };
+                                let v = unsafe { v_ptr.cast::<*const c_char>().read_unaligned() };
                                 if !v.is_null() {
                                     let s = unsafe { CStr::from_ptr(v).to_string_lossy() };
                                     if let Ok(n) = s.parse::<u64>() {
@@ -4000,7 +3982,9 @@ pub unsafe extern "C" fn gos_rt_http_request_body(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_http_request_send(req: *mut GosHttpRequest) -> *mut GosHttpResponse {
+pub unsafe extern "C" fn gos_rt_http_request_send(
+    req: *mut GosHttpRequest,
+) -> *mut GosHttpResponse {
     if req.is_null() {
         return Box::into_raw(Box::new(GosHttpResponse {
             status: 0,
@@ -4015,12 +3999,18 @@ pub unsafe extern "C" fn gos_rt_http_request_send(req: *mut GosHttpRequest) -> *
     let url = req.url.clone();
     let parsed = parse_http_url(&url);
     let response = match parsed {
-        Some((host, port, path)) => http_request(&req.method, &host, port, &path, &req.headers, &req.body),
+        Some((host, port, path)) => {
+            http_request(&req.method, &host, port, &path, &req.headers, &req.body)
+        }
         None => None,
     };
     let (status, body_bytes) = response.unwrap_or((0, Vec::new()));
     let body = alloc_cstring(&body_bytes);
-    Box::into_raw(Box::new(GosHttpResponse { status, body, headers: Vec::new() }))
+    Box::into_raw(Box::new(GosHttpResponse {
+        status,
+        body,
+        headers: Vec::new(),
+    }))
 }
 
 fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
@@ -4090,7 +4080,7 @@ pub unsafe extern "C" fn gos_rt_http_request_query(req: *const GosHttpRequest) -
     // in the URL (without the leading `?`).
     let url = &unsafe { &*req }.url;
     if let Some(pos) = url.find('?') {
-        alloc_cstring(url[pos + 1..].as_bytes())
+        alloc_cstring(&url.as_bytes()[pos + 1..])
     } else {
         alloc_cstring(b"")
     }
@@ -4234,11 +4224,7 @@ pub unsafe extern "C" fn gos_rt_testing_check(cond: bool, msg: *const c_char) ->
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_testing_check_eq_i64(
-    a: i64,
-    b: i64,
-    msg: *const c_char,
-) -> bool {
+pub unsafe extern "C" fn gos_rt_testing_check_eq_i64(a: i64, b: i64, msg: *const c_char) -> bool {
     let ok = a == b;
     if !ok {
         let m = if msg.is_null() {

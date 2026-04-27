@@ -1069,21 +1069,13 @@ impl Vm {
                         let by_val = &registers[by_reg as usize];
                         let mut guard = map.lock();
                         let entry = guard.entry(key).or_insert(Value::Int(0));
-                        match (&*entry, by_val) {
-                            (Value::Int(cur), Value::Int(b)) => {
-                                *entry = Value::Int(*cur + *b);
-                            }
-                            _ => {
-                                let cur = entry.clone();
-                                let sum = bin_arith(
-                                    &cur,
-                                    by_val,
-                                    i64::wrapping_add,
-                                    |a, b| a + b,
-                                    "+",
-                                )?;
-                                *entry = sum;
-                            }
+                        if let (Value::Int(cur), Value::Int(b)) = (&*entry, by_val) {
+                            *entry = Value::Int(*cur + *b);
+                        } else {
+                            let cur = entry.clone();
+                            let sum =
+                                bin_arith(&cur, by_val, i64::wrapping_add, |a, b| a + b, "+")?;
+                            *entry = sum;
                         }
                         let cloned = Arc::clone(map);
                         drop(guard);

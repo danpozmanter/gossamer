@@ -850,11 +850,12 @@ impl Lowerer<'_> {
                 // raw `Var(_)` an inference variable would carry
                 // through. Falls back to the init's type when no
                 // annotation was written.
-                let pattern_ty = if matches!(self.tcx.kind_of(declared_ty), gossamer_types::TyKind::Error) {
-                    init.as_ref().map_or(declared_ty, |expr| expr.ty)
-                } else {
-                    declared_ty
-                };
+                let pattern_ty =
+                    if matches!(self.tcx.kind_of(declared_ty), gossamer_types::TyKind::Error) {
+                        init.as_ref().map_or(declared_ty, |expr| expr.ty)
+                    } else {
+                        declared_ty
+                    };
                 let pattern = self.lower_pat_with_ty(pattern, pattern_ty);
                 HirStmtKind::Let {
                     pattern,
