@@ -54,8 +54,8 @@ fn cycles_are_reclaimed_when_unrooted() {
     let mut heap = Heap::new();
     let a = heap.alloc(ObjKind::Aggregate, Vec::new(), 1, 16);
     let b = heap.alloc(ObjKind::Aggregate, Vec::new(), 2, 16);
-    heap.get_mut(a).children.push(b);
-    heap.get_mut(b).children.push(a);
+    heap.get_mut(a).add_child(b);
+    heap.get_mut(b).add_child(a);
     heap.collect();
     assert!(!heap.is_live(a));
     assert!(!heap.is_live(b));

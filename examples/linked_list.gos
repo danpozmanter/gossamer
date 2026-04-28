@@ -1,0 +1,87 @@
+/*
+ * Singly-linked list — stored as parallel arrays to side-step
+ * recursive `Box` ergonomics on the current branch.
+ *
+ * Each node is an index into two parallel `[i64]` arrays:
+ * `values[i]` holds the payload, `next[i]` the index of the
+ * successor (or -1 for the end-of-list sentinel). The head
+ * pointer is the index of the first live node.
+ *
+ * Demonstrates: nullable handles via -1, cons-style growth that
+ * returns a fresh struct (no in-place mutation by the caller),
+ * and read-only traversal helpers.
+ */
+
+struct LinkedList {
+    values: [i64],
+    next: [i64],
+    head: i64,
+}
+
+fn empty() -> LinkedList {
+    LinkedList { values: [], next: [], head: -1 }
+}
+
+// Returns a *new* list with `value` prepended; the input is
+// consumed (Gossamer's GC keeps any sharing safe). This is the
+// idiomatic immutable-style: callers shadow `xs = push_head(xs, …)`.
+fn push_head(list: LinkedList, value: i64) -> LinkedList {
+    let mut values = list.values
+    let mut nxt = list.next
+    let new_idx = values.len() as i64
+    values.push(value)
+    nxt.push(list.head)
+    LinkedList { values: values, next: nxt, head: new_idx }
+}
+
+fn print_list(list: &LinkedList) {
+    print("[")
+    let mut cursor = list.head
+    let mut first = true
+    while cursor >= 0 {
+        if !first { print(", ") }
+        print!("{}", list.values[cursor as usize])
+        first = false
+        cursor = list.next[cursor as usize]
+    }
+    println("]")
+}
+
+fn length(list: &LinkedList) -> i64 {
+    let mut cursor = list.head
+    let mut n: i64 = 0
+    while cursor >= 0 {
+        n = n + 1
+        cursor = list.next[cursor as usize]
+    }
+    n
+}
+
+fn sum(list: &LinkedList) -> i64 {
+    let mut cursor = list.head
+    let mut total: i64 = 0
+    while cursor >= 0 {
+        total = total + list.values[cursor as usize]
+        cursor = list.next[cursor as usize]
+    }
+    total
+}
+
+fn main() {
+    // Build the list functionally: each `push_head` returns a
+    // fresh `LinkedList`; the caller-side binding stays `let`.
+    let xs = push_head(
+        push_head(
+            push_head(
+                push_head(
+                    push_head(empty(), 1),
+                    2),
+                3),
+            4),
+        5)
+
+    println!("length = {}", length(&xs))
+    println!("sum    = {}", sum(&xs))
+    print("xs     = ")
+    print_list(&xs)
+}

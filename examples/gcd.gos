@@ -1,0 +1,56 @@
+/*
+ * Greatest common divisor — Euclidean algorithm.
+ *
+ * `gcd_recursive` is the canonical functional definition;
+ * `gcd_iterative` keeps the same shape with a tiny rolling
+ * state. Both return a fresh value and never mutate caller
+ * bindings.
+ *
+ * `lcm` is built from `gcd` via the identity
+ *   lcm(a, b) * gcd(a, b) = a * b.
+ */
+
+fn gcd_recursive(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        a
+    } else {
+        gcd_recursive(b, a % b)
+    }
+}
+
+fn gcd_iterative(a: i64, b: i64) -> i64 {
+    let mut x = a
+    let mut y = b
+    while y != 0 {
+        let r = x % y
+        x = y
+        y = r
+    }
+    x
+}
+
+fn lcm(a: i64, b: i64) -> i64 {
+    if a == 0 || b == 0 {
+        0
+    } else {
+        (a / gcd_recursive(a, b)) * b
+    }
+}
+
+fn main() {
+    let pairs = [(12, 18), (100, 75), (17, 13), (0, 7), (1071, 462)]
+    for pair in pairs.iter() {
+        let g = gcd_recursive(pair.0, pair.1)
+        let l = lcm(pair.0, pair.1)
+        println!("gcd({}, {}) = {}, lcm = {}", pair.0, pair.1, g, l)
+    }
+
+    // Sanity: iterative and recursive should agree everywhere.
+    let a = 462
+    let b = 1071
+    let g_rec = gcd_recursive(a, b)
+    let g_it = gcd_iterative(a, b)
+    if g_rec == g_it {
+        println("recursive and iterative agree: ok")
+    }
+}

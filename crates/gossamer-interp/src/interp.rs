@@ -172,7 +172,9 @@ use gossamer_hir::{
 
 use crate::builtins;
 use crate::env::Env;
-use crate::value::{Closure, Flow, NativeDispatch, RuntimeError, RuntimeResult, SmolStr, Value};
+use crate::value::{
+    Channel, Closure, Flow, NativeDispatch, RuntimeError, RuntimeResult, SmolStr, Value,
+};
 
 /// Interpreter state. Owns the set of installed top-level functions
 /// and a name table used by top-level path resolution.
@@ -207,6 +209,14 @@ impl Interpreter {
         self.call_stack.clone()
     }
 
+    /// Trims the per-task tracebacks so a worker tree-walker
+    /// re-used across many goroutines does not accumulate stack
+    /// frames from prior tasks. Pairs with `Vm::reset_after_task`.
+    pub(crate) fn reset_after_task(&mut self) {
+        self.call_stack.clear();
+        self.call_stack.shrink_to_fit();
+    }
+
     /// Installs the top-level functions from an HIR program. Structs,
     /// enums, impls, and traits are ignored by the interpreter for
     /// now — only free functions and constants are callable.
@@ -236,7 +246,7 @@ impl Interpreter {
             Value::Closure(closure) => self.apply_closure(&closure, args),
             Value::String(name) => self.call(&name, args),
             Value::Variant(inner) if inner.fields.is_empty() => {
-                Ok(Value::variant(inner.name.clone(), Arc::new(args)))
+                Ok(Value::variant(inner.name, Arc::new(args)))
             }
             other => Err(RuntimeError::Type(format!(
                 "value of kind `{other}` is not callable"
@@ -324,7 +334,7 @@ impl Interpreter {
         for variant in variants {
             let variant_name = variant.name.name.clone();
             let qualified = format!("{type_name}::{variant_name}");
-            let sentinel = Value::variant(variant_name.clone(), Arc::new(Vec::new()));
+            let sentinel = Value::variant(variant_name.clone(), crate::value::empty_value_arc());
             self.globals.insert(variant_name, sentinel.clone());
             self.globals.insert(qualified, sentinel);
         }
@@ -374,7 +384,7 @@ impl Interpreter {
             // and `None()` round-trips to `None` because its args
             // vector is empty.
             Value::Variant(inner) if inner.fields.is_empty() => {
-                Ok(Value::variant(inner.name.clone(), Arc::new(args)))
+                Ok(Value::variant(inner.name, Arc::new(args)))
             }
             // Calling through any other stub-shaped value — treat as
             // a no-op so programs that thread partially-unresolved
@@ -513,8 +523,8 @@ impl Interpreter {
                 // code that immediately field-accesses it can read
                 // back stub fields without crashing.
                 Ok(Flow::Value(Value::struct_(
-                    "<stub>".to_string(),
-                    Arc::new(Vec::new()),
+                    "<stub>",
+                    crate::value::empty_struct_fields(),
                 )))
             }
         }
@@ -1059,20 +1069,44 @@ impl Interpreter {
             };
             resolved.push(r);
         }
-        // Poll with a bounded spin so a truly starved select doesn't
-        // lock the process. In practice the interpreter runs
-        // goroutines on OS threads so waiting briefly lets sibling
-        // producers make progress.
-        for _ in 0..1000 {
+        // First non-blocking pass: handles the common case where an
+        // arm is already ready (or a `default` arm is reachable) in
+        // a single check.
+        if let Some(result) = self.try_select_once(&resolved, arms, env) {
+            return result;
+        }
+        // No arm ready and no default. Park on the receive arms'
+        // channels via Condvar — `Channel::send` notifies on every
+        // push, so the first push wakes us. Send arms today are
+        // best-effort (the channel is unbounded) so a send arm can
+        // proceed any time; we re-check both kinds on every wake.
+        let recv_channels: Vec<Channel> = resolved
+            .iter()
+            .filter_map(|r| match r {
+                ResolvedSelectArm::Recv {
+                    channel: Value::Channel(ch),
+                    ..
+                } => Some(ch.clone()),
+                _ => None,
+            })
+            .collect();
+        loop {
             if let Some(result) = self.try_select_once(&resolved, arms, env) {
                 return result;
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            if recv_channels.is_empty() {
+                // No receivers to park on: the spec disallows a
+                // `select` with only send arms and no default, but
+                // tolerate it by yielding briefly.
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                continue;
+            }
+            // Park on the first receive arm's channel (any wake-up
+            // re-runs `try_select_once`, which scans every arm —
+            // ordering of the wait isn't meaningful). Bounded so a
+            // missed notify doesn't strand the goroutine.
+            let _ = recv_channels[0].wait_for(std::time::Duration::from_millis(50));
         }
-        // After the spin cap, run the first arm's body unconditionally
-        // — matches the previous fallback so existing tests that never
-        // arrange a ready channel don't hang forever.
-        self.eval_expr(&arms[0].body, env)
     }
 
     /// One poll pass over every resolved arm: returns a flow when a
@@ -1825,7 +1859,7 @@ fn update_struct_field(
     if !replaced {
         owned.push((Ident::new(field_name), new_value));
     }
-    Ok(Value::struct_(inner.name.clone(), Arc::new(owned)))
+    Ok(Value::struct_(inner.name, Arc::new(owned)))
 }
 
 /// Returns a fresh `Value::Array` with `index`-th element replaced by

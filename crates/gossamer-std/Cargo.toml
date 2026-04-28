@@ -89,6 +89,7 @@ thiserror = { workspace = true }
 parking_lot = { workspace = true }
 mio = { workspace = true }
 signal-hook = { workspace = true }
+crossbeam-channel = { workspace = true }
 aes-gcm = { version = "0.10", optional = true }
 chacha20poly1305 = { version = "0.10", optional = true }
 rsa = { version = "0.9", default-features = false, features = ["std", "sha2", "pem"], optional = true }

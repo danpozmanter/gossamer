@@ -1,0 +1,45 @@
+/*
+ * Fibonacci — recursive vs. iterative, both immutable at the
+ * call site.
+ *
+ * `fib_recursive` is the textbook definition; `fib_iterative`
+ * keeps a tiny rolling state that the function owns and returns
+ * the final value. Either way the caller binds the result with
+ * a plain `let`.
+ */
+
+fn fib_recursive(n: i64) -> i64 {
+    if n < 2 {
+        n
+    } else {
+        fib_recursive(n - 1) + fib_recursive(n - 2)
+    }
+}
+
+fn fib_iterative(n: i64) -> i64 {
+    if n < 2 {
+        return n
+    }
+    let mut a: i64 = 0
+    let mut b: i64 = 1
+    let mut i: i64 = 2
+    while i <= n {
+        let next = a + b
+        a = b
+        b = next
+        i = i + 1
+    }
+    b
+}
+
+fn main() {
+    for n in [0, 1, 5, 10, 20].iter() {
+        let r = fib_recursive(*n)
+        let it = fib_iterative(*n)
+        println!("fib({}) = recursive {}, iterative {}", *n, r, it)
+    }
+
+    // Iterative fits comfortably in i64 up to fib(92).
+    println!("fib(40) = {}", fib_iterative(40))
+    println!("fib(60) = {}", fib_iterative(60))
+}

@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gossamer_sched::{Gid, MultiScheduler, OsPoller, Poller, Readiness};
+use gossamer_sched::{Gid, MultiScheduler, OsPoller, Poller, Readiness, Step};
 use parking_lot::Mutex;
 
 use crate::runtime;
@@ -56,8 +56,24 @@ fn globals() -> &'static Globals {
         };
         // Reserve all G ids ≥ 1_000_000 for the runtime's
         // bookkeeping. Application gids come from MultiScheduler.
+        gossamer_runtime::c_abi::set_spawn_handler(spawn_via_scheduler);
         g
     })
+}
+
+/// Installed into `gossamer_runtime` so the C-ABI spawn helpers
+/// route compiled `go fn(args)` calls onto the work-stealing
+/// pool instead of fanning out to bare `std::thread::spawn`. The
+/// `FnOnce` is wrapped in a one-shot closure that runs once and
+/// reports `Step::Done` back to the scheduler.
+fn spawn_via_scheduler(task: Box<dyn FnOnce() + Send + 'static>) {
+    let mut once = Some(task);
+    globals().scheduler.spawn(move || {
+        if let Some(f) = once.take() {
+            f();
+        }
+        Step::Done
+    });
 }
 
 /// Returns a handle to the process-wide scheduler. The first caller

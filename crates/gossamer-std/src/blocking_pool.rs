@@ -11,12 +11,20 @@
 //! Sizing follows Go's default `GOMAXPROCS` heuristic: at least
 //! `4` threads; up to `2 * num_cpus` for I/O-heavy workloads. Pool
 //! size is fixed for the program's lifetime.
+//!
+//! Defense #3: the submit side is a `crossbeam_channel::bounded`
+//! channel sized at `4 * pool_size`. If the queue saturates,
+//! `run` blocks on `submit` instead of growing an unbounded backlog
+//! that would silently turn into RAM. This puts a hard cap on the
+//! amount of in-flight blocking work — runaway producers see
+//! backpressure.
 
 #![forbid(unsafe_code)]
 
 use std::sync::OnceLock;
-use std::sync::mpsc::{Sender, channel};
 use std::thread;
+
+use crossbeam_channel::{Receiver, Sender, bounded};
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
@@ -31,10 +39,12 @@ fn pool() -> &'static Pool {
     POOL.get_or_init(|| {
         let cpus = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
         let size = (cpus * 2).max(4);
-        let (tx, rx) = channel::<Job>();
-        let rx = std::sync::Arc::new(parking_lot::Mutex::new(rx));
+        // Backpressure capacity: enough headroom that a brief burst
+        // does not stall callers, but small enough that a runaway
+        // producer cannot accumulate megabytes of pending closures.
+        let (tx, rx) = bounded::<Job>(size * 4);
         for index in 0..size {
-            let rx = std::sync::Arc::clone(&rx);
+            let rx: Receiver<Job> = rx.clone();
             thread::Builder::new()
                 .name(format!("gos-blocking-{index}"))
                 .spawn(move || worker_loop(rx))
@@ -44,13 +54,8 @@ fn pool() -> &'static Pool {
     })
 }
 
-fn worker_loop(rx: std::sync::Arc<parking_lot::Mutex<std::sync::mpsc::Receiver<Job>>>) {
-    loop {
-        let job = {
-            let guard = rx.lock();
-            guard.recv()
-        };
-        let Ok(job) = job else { return };
+fn worker_loop(rx: Receiver<Job>) {
+    while let Ok(job) = rx.recv() {
         // Run the job; panics inside the job propagate inside this
         // worker thread but do not poison the pool — we simply
         // recover and accept the next job.
@@ -105,5 +110,22 @@ mod tests {
         });
         let r = run(|| 7);
         assert_eq!(r, 7);
+    }
+
+    #[test]
+    fn many_jobs_complete_under_backpressure() {
+        // Submit more jobs than the channel capacity to exercise
+        // the bounded-channel backpressure path.
+        let n = pool_size() * 16;
+        let mut handles = Vec::with_capacity(n);
+        for i in 0..n {
+            handles.push(std::thread::spawn(move || run(move || i * 2)));
+        }
+        let mut total = 0i64;
+        for h in handles {
+            total += h.join().unwrap() as i64;
+        }
+        let expected: i64 = (0..n as i64).map(|i| i * 2).sum();
+        assert_eq!(total, expected);
     }
 }

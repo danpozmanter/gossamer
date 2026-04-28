@@ -1,0 +1,45 @@
+/*
+ * Digit sum and digital root.
+ *
+ * `digit_sum(n)` is the sum of `n`'s base-10 digits. The
+ * digital root iterates `digit_sum` until a single digit
+ * remains; for any `n > 0` it equals `1 + (n - 1) % 9` (the
+ * casting-out-nines identity), which the program also checks.
+ *
+ * Each helper is pure: it returns a fresh `i64` and never
+ * mutates caller state.
+ */
+
+fn digit_sum(n: i64) -> i64 {
+    let mut x = if n < 0 { -n } else { n }
+    let mut acc: i64 = 0
+    while x > 0 {
+        acc = acc + x % 10
+        x = x / 10
+    }
+    acc
+}
+
+fn digital_root(n: i64) -> i64 {
+    let mut x = n
+    while x >= 10 {
+        x = digit_sum(x)
+    }
+    x
+}
+
+fn cast_out_nines(n: i64) -> i64 {
+    if n == 0 { 0 } else { 1 + (n - 1) % 9 }
+}
+
+fn main() {
+    let cases = [38, 99, 1234, 9999, 100, 0, 65536]
+    for n in cases.iter() {
+        let s = digit_sum(*n)
+        let r = digital_root(*n)
+        let expected = cast_out_nines(*n)
+        let ok = if r == expected { "ok" } else { "MISMATCH" }
+        println!("n={}, digit_sum={}, digital_root={} (cast-out-nines: {}, {})",
+            *n, s, r, expected, ok)
+    }
+}

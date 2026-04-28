@@ -4069,6 +4069,37 @@ fn lower_intrinsic_call(
             define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
             Ok(true)
         }
+        "HashMap::with_capacity"
+        | "collections::HashMap::with_capacity"
+        | "gos_rt_map_new_with_capacity" => {
+            let new_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_new_with_capacity",
+                &[types::I32, types::I32, types::I64],
+                &[ptr_ty],
+            )?;
+            let fref = module.declare_func_in_func(new_fn, builder.func);
+            let k = builder.ins().iconst(types::I32, 8);
+            let v = builder.ins().iconst(types::I32, 8);
+            let cap = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let cap64 = coerce_arg_to(builder, cap, types::I64)?;
+            let call = builder.ins().call(fref, &[k, v, cap64]);
+            let ptr = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            Ok(true)
+        }
         "HashSet::new" | "collections::HashSet::new" => {
             let new_fn = intrinsics.extern_fn(module, "gos_rt_set_new", &[], &[ptr_ty])?;
             let fref = module.declare_func_in_func(new_fn, builder.func);

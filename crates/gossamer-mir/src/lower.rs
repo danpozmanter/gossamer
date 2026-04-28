@@ -158,7 +158,44 @@ fn collect_struct_fields(
             }
         }
     }
+    for (name, fields) in stdlib_struct_shapes() {
+        by_name
+            .entry((*name).to_string())
+            .or_insert_with(|| fields.iter().map(|f| (*f).to_string()).collect());
+    }
     (by_name, by_def)
+}
+
+/// Field orders for stdlib struct types user source can name.
+/// Mirrors the Rust struct definitions in
+/// `crates/gossamer-std/src/*.rs`. New stdlib struct → one entry.
+fn stdlib_struct_shapes() -> &'static [(&'static str, &'static [&'static str])] {
+    &[
+        ("Output", &["stdout", "stderr", "code"]),
+        ("ExitStatus", &["code"]),
+        (
+            "DirEntry",
+            &["path", "name", "is_dir", "is_file", "is_symlink"],
+        ),
+        (
+            "Civil",
+            &[
+                "year",
+                "month",
+                "day",
+                "hour",
+                "minute",
+                "second",
+                "offset_seconds",
+                "weekday",
+            ],
+        ),
+        ("TestResult", &["name", "passed", "failure_message"]),
+        ("Headers", &["pairs"]),
+        ("StatusCode", &["code"]),
+        ("FetchOptions", &["offline"]),
+        ("IoError", &["kind", "message", "context"]),
+    ]
 }
 
 /// Builds `enum_name -> [variant_name]` and `variant_name -> (enum_name, idx)`

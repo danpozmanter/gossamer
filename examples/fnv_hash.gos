@@ -1,0 +1,54 @@
+/*
+ * FNV-1a hashing — a fast, non-cryptographic hash function.
+ *
+ * Demonstrates byte-level hashing with bitwise operators. The
+ * hashing function is pure: each call returns the digest of
+ * its input, the caller binds the result with `let`. Two
+ * identical inputs always produce the same digest; small
+ * changes produce wildly different ones.
+ *
+ * For real cryptographic hashing reach for `std::crypto::sha256`.
+ */
+
+const FNV_OFFSET: i64 = -3750763034362895579   // 0xcbf29ce484222325
+const FNV_PRIME:  i64 = 1099511628211           // 0x100000001b3
+
+fn fnv1a(bytes: &[u8]) -> i64 {
+    let mut h: i64 = FNV_OFFSET
+    let mut i = 0
+    while i < bytes.len() {
+        h = h ^ (bytes[i] as i64)
+        // Multiply mod 2^64 — wrapping is the spec; we let Gossamer's
+        // i64 arithmetic wrap and take the low bits.
+        h = h * FNV_PRIME
+        i = i + 1
+    }
+    h
+}
+
+fn main() {
+    let inputs = ["", "a", "abc", "the quick brown fox", "the quick brown box"]
+
+    for s in inputs.iter() {
+        let bytes = s.as_bytes()
+        let h = fnv1a(&bytes)
+        println!("fnv1a({}) = {}", *s, h)
+    }
+
+    // Determinism: same input twice yields the same hash.
+    let h1 = fnv1a(&"hello".as_bytes())
+    let h2 = fnv1a(&"hello".as_bytes())
+    if h1 == h2 {
+        println("\ndeterministic across calls: ok")
+    } else {
+        println("\nnon-deterministic: implementation bug")
+    }
+
+    // Sensitivity: a one-bit input change produces a completely
+    // different hash.
+    let h_a = fnv1a(&"hello".as_bytes())
+    let h_b = fnv1a(&"hellp".as_bytes())
+    if h_a != h_b {
+        println("avalanche on single-byte change: ok")
+    }
+}

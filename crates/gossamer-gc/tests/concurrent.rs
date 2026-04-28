@@ -26,7 +26,7 @@ fn write_barrier_re_greys_target_during_marking() {
     let aggregate = heap.alloc(ObjKind::Aggregate, Vec::new(), 0, 32);
     let leaf_a = heap.alloc(ObjKind::Leaf, Vec::new(), 1, 16);
     let leaf_b = heap.alloc(ObjKind::Leaf, Vec::new(), 2, 16);
-    heap.get_mut(aggregate).children.push(leaf_a);
+    heap.get_mut(aggregate).add_child(leaf_a);
     heap.add_root(aggregate);
     heap.concurrent_start();
     // Drain enough work to mark the aggregate and leaf_a.
@@ -34,7 +34,7 @@ fn write_barrier_re_greys_target_during_marking() {
     // Mutator installs leaf_b into the aggregate after its slot
     // was already marked. Without a barrier the sweep would drop
     // leaf_b. With the barrier it survives.
-    heap.get_mut(aggregate).children.push(leaf_b);
+    heap.get_mut(aggregate).add_child(leaf_b);
     heap.write_barrier(leaf_b);
     heap.concurrent_finish();
     assert!(heap.is_live(aggregate));

@@ -175,31 +175,14 @@ pub fn render_to(out: &mut impl Write) -> std::io::Result<usize> {
 }
 
 /// Installs the SIGQUIT handler. Idempotent.
+///
+/// SIGQUIT delivery itself is owned by `gossamer_std::signal`'s
+/// single blocking dispatcher thread — when it sees SIGQUIT, it
+/// calls [`render_to`] directly. This entry point stays as a
+/// no-op to preserve the `install_handler()` call sites that the
+/// scheduler boot path uses.
 #[cfg(unix)]
-pub fn install_handler() {
-    use std::sync::Once;
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let flag_for_handler = std::sync::Arc::clone(&flag);
-        let _ = signal_hook::flag::register(
-            signal_hook::consts::SIGQUIT,
-            std::sync::Arc::clone(&flag_for_handler),
-        );
-        std::thread::Builder::new()
-            .name("gos-sigquit".to_string())
-            .spawn(move || {
-                loop {
-                    if flag.swap(false, std::sync::atomic::Ordering::AcqRel) {
-                        let mut stderr = std::io::stderr().lock();
-                        let _ = render_to(&mut stderr);
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-            })
-            .ok();
-    });
-}
+pub fn install_handler() {}
 
 #[cfg(not(unix))]
 pub fn install_handler() {

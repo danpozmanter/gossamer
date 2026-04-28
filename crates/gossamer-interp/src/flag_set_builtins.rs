@@ -38,7 +38,7 @@ pub(crate) fn builtin_flag_set_new(args: &[Value]) -> RuntimeResult<Value> {
         );
     });
     Ok(Value::struct_(
-        "Set".to_string(),
+        "Set",
         Arc::new(vec![(Ident::new("__id"), Value::Int(id as i64))]),
     ))
 }
@@ -208,10 +208,10 @@ pub(crate) fn builtin_flag_set_short(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_flag_set_parse(args: &[Value]) -> RuntimeResult<Value> {
     let Some(set) = args.first() else {
-        return Ok(Value::Array(Arc::new(Vec::new())));
+        return Ok(Value::empty_array());
     };
     let Some(id) = set_id_from_value(set) else {
-        return Ok(Value::Array(Arc::new(Vec::new())));
+        return Ok(Value::empty_array());
     };
     let program_args: Vec<String> = match args.get(1) {
         Some(Value::Array(arr)) => arr
@@ -225,7 +225,7 @@ pub(crate) fn builtin_flag_set_parse(args: &[Value]) -> RuntimeResult<Value> {
     };
     let state = SET_REGISTRY.with(|reg| reg.borrow().get(&id).cloned());
     let Some(state) = state else {
-        return Ok(Value::Array(Arc::new(Vec::new())));
+        return Ok(Value::empty_array());
     };
 
     // Auto-generated `--help` / `-h`. Prints a usage line, the

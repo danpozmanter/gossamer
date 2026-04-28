@@ -42,7 +42,12 @@ pub struct Obj {
     /// the adjacent [`Payload`].
     pub kind: ObjKind,
     /// Child references the tracing pass should follow.
-    pub children: Vec<GcRef>,
+    ///
+    /// Stored as `Option<Box<[GcRef]>>` rather than `Vec` because
+    /// `ObjKind::Leaf` and `ObjKind::String` never carry children;
+    /// boxed-slice + `None` cuts the per-object header from 24 B to
+    /// 16 B and skips the empty-Vec allocation entirely for leaves.
+    pub children: Option<Box<[GcRef]>>,
     /// Inline integer payload — the interpreter uses this for sizes,
     /// discriminants, etc. Kept alongside `kind` so small objects do
     /// not need a separate payload allocation.
@@ -56,6 +61,24 @@ pub struct Obj {
     /// `true` while the slot holds a live object; `false` when the
     /// sweep phase reclaimed it.
     alive: bool,
+}
+
+impl Obj {
+    /// Returns the list of child references (empty when this object
+    /// is a leaf).
+    #[must_use]
+    pub fn children(&self) -> &[GcRef] {
+        self.children.as_deref().unwrap_or(&[])
+    }
+
+    /// Appends `child` to this object's GC-traced child list. Allocates
+    /// a fresh boxed slice each call — intended for test setup and
+    /// occasional mutation, not the hot path.
+    pub fn add_child(&mut self, child: GcRef) {
+        let mut buf: Vec<GcRef> = self.children.take().map_or_else(Vec::new, Vec::from);
+        buf.push(child);
+        self.children = Some(buf.into_boxed_slice());
+    }
 }
 
 /// Classification attached to every GC object.
@@ -86,7 +109,7 @@ pub struct GcConfig {
 impl Default for GcConfig {
     fn default() -> Self {
         Self {
-            threshold_bytes: 64 * 1024,
+            threshold_bytes: 4 * 1024 * 1024,
         }
     }
 }
@@ -172,6 +195,11 @@ impl Heap {
     ) -> GcRef {
         self.stats.bytes_allocated = self.stats.bytes_allocated.saturating_add(size);
         self.bytes_since_collect = self.bytes_since_collect.saturating_add(size);
+        let children = if children.is_empty() {
+            None
+        } else {
+            Some(children.into_boxed_slice())
+        };
         if let Some(slot) = self.free_list.pop() {
             self.objects[slot as usize] = Obj {
                 kind,
@@ -289,7 +317,9 @@ impl Heap {
                 continue;
             }
             obj.marked = true;
-            stack.extend(obj.children.iter().copied());
+            if let Some(children) = obj.children.as_deref() {
+                stack.extend(children.iter().copied());
+            }
         }
     }
 
@@ -301,7 +331,7 @@ impl Heap {
             }
             if !obj.marked {
                 obj.alive = false;
-                obj.children.clear();
+                obj.children = None;
                 self.free_list
                     .push(u32::try_from(index).expect("heap index overflow"));
                 freed += 1;
@@ -353,8 +383,9 @@ impl Heap {
             }
             obj.marked = true;
             marked += 1;
-            let children = obj.children.clone();
-            self.grey.extend(children);
+            if let Some(children) = obj.children.as_deref() {
+                self.grey.extend(children.iter().copied());
+            }
         }
         if self.grey.is_empty() {
             self.phase = ConcurrentPhase::ReadyToSweep;

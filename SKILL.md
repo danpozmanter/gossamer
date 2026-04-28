@@ -28,6 +28,12 @@ first time through, leave it alone — don't dress it up.
 
 Prefer these shapes when writing Gossamer:
 
+- **Default to immutable.** `let x = …` is the first reach;
+  `let mut x = …` is a deliberate exception only when the
+  binding genuinely changes after construction. Build new
+  values with expressions (`if`, `match`, `loop … break v`,
+  iterator-style folds) before reaching for an accumulator
+  pattern. Functions return the new value; callers shadow.
 - **Left-to-right dataflow with `|>`.** Chain calls with the
   forward-pipe operator instead of nesting.
 - **Plain functions for free-standing logic.** Reach for
@@ -49,6 +55,37 @@ Prefer these shapes when writing Gossamer:
 - **Macros only for formatted output.** `println!`,
   `format!`, `print!`, `eprintln!`, `eprint!`, `panic!` are
   the six macro entries — no others exist.
+
+### Immutability default — concrete examples
+
+Reach for `let mut` only when none of these shapes work.
+
+```gossamer
+// `if` / `match` are expressions — bind their result instead
+// of mutating after the fact:
+let label = if n < 0 { "negative" } else { "non-negative" }
+let label = match shape {
+    Shape::Circle(_) => "round",
+    Shape::Rect { .. } => "boxy",
+}
+
+// For accumulator work, push the mutation into a small helper
+// that returns the final value. The caller's binding stays
+// `let`, not `let mut`:
+fn sum(xs: &[i64]) -> i64 {
+    let mut acc = 0
+    for n in xs.iter() { acc = acc + *n }
+    acc
+}
+
+let total = sum(&xs)               // immutable at the call site
+```
+
+Heuristics: a `let mut` lives near a single update site (a
+loop, a builder pattern, an in-place sort), inside a small
+function whose return value is the new state. If the binding
+is written from many places, the function probably wants to
+be broken into smaller pieces that each return a fresh value.
 
 ## 3. The `|>` forward-pipe operator
 
@@ -111,11 +148,16 @@ impl Area for Shape {
     }
 }
 
+// Idiomatic: small helper that owns the accumulator and
+// hands back a fresh value. The caller binds it immutably.
+fn sum(xs: &[i64]) -> i64 {
+    let mut acc = 0
+    for n in xs.iter() { acc = acc + *n }
+    acc
+}
+
 fn main() {
-    let mut total = 0
-    for n in [1, 2, 3].iter() {
-        total = total + *n
-    }
+    let total = sum(&[1, 2, 3])
     println!("total: {}", total)
 }
 ```
@@ -460,6 +502,11 @@ fn main() -> Result<(), http::Error> {
 
 ## 16. Style rules
 
+- **Default to immutable bindings.** `let` first, `let mut`
+  only when a single named accumulator is the clearest shape.
+  Express transformations with `if` / `match` / `fold` /
+  `map` / `collect`; mutate locally and return the final
+  value rather than threading mutation through callers.
 - **Clear, low-complexity, concise.** Plain reads beat clever
   ones. If a helper, type, or comment doesn't earn its space,
   drop it.

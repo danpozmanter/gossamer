@@ -841,6 +841,14 @@ pub(crate) type BuiltinFnPtr =
 /// with all slots zero-initialised, and the dispatch path treats
 /// "non-cacheable receiver" (primitives, etc.) the same way by
 /// returning a zero token.
+///
+/// Layout target: 24 B (3 × 8 B) so 16-aligned `Vec<CacheSlot>`
+/// fits two slots per cache line. Pre-D8 the `resolved`
+/// field stored a full `Option<Global>` (~24 B by itself) for
+/// 40 B total per slot; we now cache only the resolved
+/// `Arc<FnChunk>` (the dominant hit shape) and let closures /
+/// `Value::Native` / `Value::Variant` callees take the slow
+/// path on every call.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CacheSlot {
     /// Stable identity for the receiver / callee the slot last
@@ -855,10 +863,12 @@ pub(crate) struct CacheSlot {
     /// Mirrors `CPython` 3.11's `LOAD_METHOD_NO_DICT` specialised
     /// opcode storing the resolved `__call__` directly.
     pub builtin_fn: Option<BuiltinFnPtr>,
-    /// General path: any other resolved dispatch target (closures,
-    /// JIT-promoted bodies, `Value::Native`, …). Used when
-    /// `builtin_fn` is `None` at hit time.
-    pub resolved: Option<crate::vm::Global>,
+    /// General path: when the resolved target is a Gossamer
+    /// function (`Global::Fn(Arc<FnChunk>)`) — i.e. user code
+    /// or stdlib body, not a builtin — its chunk is cached
+    /// here. `None` covers both the empty-slot state and any
+    /// resolved-but-uncached shape (closures / native / value).
+    pub fn_chunk: Option<std::sync::Arc<FnChunk>>,
 }
 
 /// Compiled function — the unit of bytecode the VM can call.

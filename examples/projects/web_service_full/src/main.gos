@@ -65,11 +65,25 @@ fn escape_json(text: &String) -> String {
 // uses a string scan for the one field it cares about.
 fn extract_body(body: &String) -> String {
     let needle = "\"body\":\""
-    let Some(start) = body.find(needle) else { return String::new() }
+    let start = match body.find(needle) {
+        Some(s) => s,
+        None => return String::new(),
+    }
     let after = start + needle.len()
-    let rest = &body[after..]
-    let Some(end) = rest.find('"') else { return String::new() }
-    rest[..end].to_string()
+    // Pre-`let-else` and slice-syntax workaround: walk byte-by-byte
+    // until we hit the closing `"`.
+    let bytes = body.as_bytes()
+    let mut out: String = "".to_string()
+    let mut i = after
+    while i < bytes.len() {
+        let b = bytes[i]
+        if b == 34 {
+            return out
+        }
+        out = out + (b as char).to_string().as_str()
+        i = i + 1
+    }
+    out
 }
 
 fn classify(method: &http::Method, path: &str) -> String {

@@ -1,0 +1,36 @@
+/*
+ * Binary search over a sorted `[i64]`.
+ *
+ * Returns `Ok(index)` when the needle is present, `Err(insert_at)`
+ * when it is not — same convention as Rust's `slice::binary_search`,
+ * so the caller can both look up and insert with one call.
+ */
+
+fn binary_search(xs: &[i64], needle: i64) -> Result<i64, i64> {
+    let mut lo: i64 = 0
+    let mut hi: i64 = xs.len() as i64
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2
+        let mid_val = xs[mid as usize]
+        if mid_val == needle {
+            return Ok(mid)
+        } else if mid_val < needle {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    Err(lo)
+}
+
+fn main() {
+    let sorted: [i64] = [1, 4, 9, 16, 25, 36, 49, 64, 81, 100]
+
+    for needle in [16, 17, 0, 100, 101].iter() {
+        let label = match binary_search(&sorted, *needle) {
+            Ok(idx) => format!("hit at index {}", idx),
+            Err(at) => format!("insert at index {}", at),
+        }
+        println!("{} -> {}", *needle, label)
+    }
+}

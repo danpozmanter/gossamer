@@ -52,7 +52,11 @@ use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
 /// mutex's per-call atomic swap showed up as the #1 hot spot in
 /// tight-loop programs that go through `Op::EvalDeferred`.
 pub struct Vm {
-    globals: HashMap<String, Global>,
+    /// Top-level name → callable map. Behind `Arc` so worker `Vm`s
+    /// spawned for goroutines share one immutable copy instead of
+    /// each cloning the whole `HashMap` (~700 KB × N workers on fasta
+    /// before this change, several MB at scale).
+    globals: Arc<HashMap<String, Global>>,
     walker: RefCell<Interpreter>,
     /// Frame pool: reused register-file storage handed out at
     /// `run()` entry and returned on exit. Eliminates the per-
@@ -309,6 +313,32 @@ impl FramePool {
         v.clear();
         self.args.push(v);
     }
+
+    /// Drains pool buffers above `keep_per_kind`, dropping the
+    /// excess to release backing capacity. Called after each
+    /// goroutine task completes so a worker `Vm` does not ratchet
+    /// to high-water and stay there for the rest of the program.
+    fn shrink_to(&mut self, keep_per_kind: usize) {
+        if self.values.len() > keep_per_kind {
+            self.values.truncate(keep_per_kind);
+        }
+        if self.floats.len() > keep_per_kind {
+            self.floats.truncate(keep_per_kind);
+        }
+        if self.ints.len() > keep_per_kind {
+            self.ints.truncate(keep_per_kind);
+        }
+        if self.args.len() > keep_per_kind {
+            self.args.truncate(keep_per_kind);
+        }
+        // Free the trailing capacity that pop()/push() rounds up
+        // over time so `Vec` headers do not pin allocations
+        // larger than the steady-state high-water mark.
+        self.values.shrink_to_fit();
+        self.floats.shrink_to_fit();
+        self.ints.shrink_to_fit();
+        self.args.shrink_to_fit();
+    }
 }
 
 /// RAII guard that lends three register-file `Vec`s out of the
@@ -383,7 +413,7 @@ impl Vm {
     #[must_use]
     pub fn new() -> Self {
         let mut vm = Self {
-            globals: HashMap::new(),
+            globals: Arc::new(HashMap::new()),
             walker: RefCell::new(Interpreter::new()),
             pool: RefCell::new(FramePool::default()),
             mir_bodies: None,
@@ -396,8 +426,9 @@ impl Vm {
         };
         let mut list = Vec::new();
         builtins::install(&mut list);
+        let globals = Arc::get_mut(&mut vm.globals).expect("fresh Vm globals are uniquely owned");
         for (name, value) in list {
-            vm.globals.insert(name.to_string(), Global::Value(value));
+            globals.insert(name.to_string(), Global::Value(value));
         }
         vm
     }
@@ -410,7 +441,7 @@ impl Vm {
     /// for why JIT state can't cross threads.
     #[must_use]
     pub(crate) fn with_globals(
-        globals: HashMap<String, Global>,
+        globals: Arc<HashMap<String, Global>>,
         mir_bodies: Option<Arc<Vec<Body>>>,
         tcx_snapshot: Option<Arc<TyCtxt>>,
     ) -> Self {
@@ -426,6 +457,19 @@ impl Vm {
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
         }
+    }
+
+    /// Trims per-`Vm` mutable buffers back toward a steady-state
+    /// floor after a goroutine task completes. Without this, a
+    /// worker `Vm` that handled one large goroutine carries that
+    /// goroutine's high-water mark for the rest of the program;
+    /// fasta's 16 short-lived goroutines would otherwise leave
+    /// every worker holding the union of every register file
+    /// they ever saw. Cheap to call between tasks: a few `Vec`
+    /// truncations and `shrink_to_fit` calls.
+    pub(crate) fn reset_after_task(&mut self) {
+        self.pool.borrow_mut().shrink_to(4);
+        self.walker.borrow_mut().reset_after_task();
     }
 
     /// Compiles and registers every `fn`/`const`/`static`/impl item in
@@ -614,11 +658,11 @@ impl Vm {
         layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
         wrappers: &HashMap<String, Vec<String>>,
     ) -> RuntimeResult<()> {
+        let globals = Arc::make_mut(&mut self.globals);
         match &item.kind {
             HirItemKind::Fn(decl) => {
                 let chunk = compile_fn(decl, tcx, layouts, wrappers)?;
-                self.globals
-                    .insert(decl.name.name.clone(), Global::Fn(chunk.into_shared()));
+                globals.insert(decl.name.name.clone(), Global::Fn(chunk.into_shared()));
             }
             HirItemKind::Impl(decl) => {
                 for method in &decl.methods {
@@ -631,18 +675,16 @@ impl Vm {
                     // sees under its short name.
                     if let Some(type_name) = &decl.self_name {
                         let qualified = format!("{}::{}", type_name.name, method.name.name);
-                        self.globals.insert(qualified, Global::Fn(shared.clone()));
+                        globals.insert(qualified, Global::Fn(shared.clone()));
                     }
-                    self.globals
-                        .insert(method.name.name.clone(), Global::Fn(shared));
+                    globals.insert(method.name.name.clone(), Global::Fn(shared));
                 }
             }
             HirItemKind::Trait(decl) => {
                 for method in &decl.methods {
                     if method.body.is_some() {
                         let chunk = compile_fn(method, tcx, layouts, wrappers)?;
-                        self.globals
-                            .insert(method.name.name.clone(), Global::Fn(chunk.into_shared()));
+                        globals.insert(method.name.name.clone(), Global::Fn(chunk.into_shared()));
                     }
                 }
             }
@@ -1029,7 +1071,13 @@ impl Vm {
                         let cache = state.call_caches.borrow_mut();
                         let slot = &cache[cache_idx as usize];
                         if slot.type_token == token {
-                            slot.resolved.clone()
+                            // Same two-tier shape as MethodCall: fast
+                            // builtin-fn-ptr first, then resolved chunk.
+                            if let Some(call_fn) = slot.builtin_fn {
+                                Some(Global::Value(Value::builtin("<cached>", call_fn)))
+                            } else {
+                                slot.fn_chunk.as_ref().map(|c| Global::Fn(Arc::clone(c)))
+                            }
                         } else {
                             None
                         }
@@ -1094,7 +1142,9 @@ impl Vm {
                             let cache = state.call_caches.borrow_mut();
                             let slot = &cache[cache_idx as usize];
                             if slot.type_token == recv_token {
-                                (slot.builtin_fn, slot.resolved.clone())
+                                let general =
+                                    slot.fn_chunk.as_ref().map(|c| Global::Fn(Arc::clone(c)));
+                                (slot.builtin_fn, general)
                             } else {
                                 (None, None)
                             }
@@ -1528,7 +1578,7 @@ impl Vm {
                     // skipping the linear name-scan in `field_get`.
                     let recv = &registers[receiver as usize];
                     if let Value::Struct(inner) = recv {
-                        let token = intern_type_name(&inner.name).as_ptr() as u64;
+                        let token = intern_type_name(inner.name).as_ptr() as u64;
                         let slot = &state.field_caches[cache_idx as usize];
                         if slot.type_token.get() == token {
                             let off = slot.offset.get() as usize;
@@ -2638,7 +2688,10 @@ impl Vm {
                 },
                 Op::BuildIntMap { dst_v } => {
                     registers[dst_v as usize] = Value::IntMap(Arc::new(parking_lot::Mutex::new(
-                        rustc_hash::FxHashMap::default(),
+                        rustc_hash::FxHashMap::with_capacity_and_hasher(
+                            16,
+                            rustc_hash::FxBuildHasher,
+                        ),
                     )));
                 }
                 Op::IntMapInc {
@@ -2742,7 +2795,7 @@ impl Vm {
     /// state per goroutine. Tasks queue if every worker is
     /// busy; the spawning thread does not block.
     fn spawn_goroutine_native(&self, callee: Value, args: Vec<Value>) {
-        let globals = self.globals.clone();
+        let globals = Arc::clone(&self.globals);
         let mir_bodies = self.mir_bodies.clone();
         let tcx_snapshot = self.tcx_snapshot.clone();
         crate::interp::pool().spawn(Box::new(move || {
@@ -2767,6 +2820,11 @@ impl Vm {
                 if let Err(err) = vm.dispatch_call(&callee, args) {
                     eprintln!("goroutine panic (isolated): {err}");
                 }
+                // Trim per-task buffers back toward steady-state so a
+                // bursty workload (e.g. fasta's 16 short-lived
+                // goroutines) does not leave every worker holding the
+                // union of every task's high-water mark.
+                vm.reset_after_task();
             });
         }));
     }
@@ -2892,7 +2950,7 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
                     Value::Float(fa_inner.data[base_idx + j]),
                 ));
             }
-            Ok(Value::struct_(fa_inner.name.clone(), Arc::new(fields)))
+            Ok(Value::struct_(fa_inner.name, Arc::new(fields)))
         }
         Value::String(s) => s
             .as_bytes()
@@ -2921,7 +2979,7 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
 /// method-name lookup misses.
 fn qualified_key(receiver: &Value, method: &str) -> Option<&'static str> {
     match receiver {
-        Value::Struct(inner) => Some(intern_qualified(&inner.name, method)),
+        Value::Struct(inner) => Some(intern_qualified(inner.name, method)),
         Value::Channel(_) => Some(intern_qualified("Channel", method)),
         _ => None,
     }
@@ -2947,7 +3005,7 @@ pub(crate) fn type_token(v: &Value) -> u64 {
     const TAG_VARIANT: u64 = 6 << 56;
     match v {
         Value::Struct(inner) => {
-            let interned = intern_type_name(&inner.name);
+            let interned = intern_type_name(inner.name);
             TAG_STRUCT | (interned.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
         }
         Value::Channel(_) => TAG_CHANNEL,
@@ -2957,7 +3015,7 @@ pub(crate) fn type_token(v: &Value) -> u64 {
         }
         Value::Tuple(_) => TAG_TUPLE,
         Value::Variant(inner) => {
-            let interned = intern_type_name(&inner.name);
+            let interned = intern_type_name(inner.name);
             TAG_VARIANT | (interned.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
         }
         // Primitives + non-cacheable receivers fall through to the
@@ -2979,10 +3037,14 @@ fn fill_cache_slot(token: u64, g: &Global) -> crate::bytecode::CacheSlot {
         Global::Value(Value::Builtin(inner)) => Some(inner.call),
         _ => None,
     };
+    let fn_chunk = match g {
+        Global::Fn(chunk) => Some(Arc::clone(chunk)),
+        Global::Value(_) => None,
+    };
     crate::bytecode::CacheSlot {
         type_token: token,
         builtin_fn,
-        resolved: Some(g.clone()),
+        fn_chunk,
     }
 }
 

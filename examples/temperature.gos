@@ -1,0 +1,50 @@
+/*
+ * Temperature conversions — small structs + impl methods.
+ *
+ * Each conversion is a pure method: it returns a new typed
+ * value, the caller binds the result. The `Celsius` /
+ * `Fahrenheit` / `Kelvin` newtypes keep the units in the type
+ * system so a stray addition between scales is a compile-time
+ * error.
+ */
+
+struct Celsius { value: f64 }
+struct Fahrenheit { value: f64 }
+struct Kelvin { value: f64 }
+
+impl Celsius {
+    fn to_fahrenheit(self) -> Fahrenheit {
+        Fahrenheit { value: self.value * 9.0 / 5.0 + 32.0 }
+    }
+    fn to_kelvin(self) -> Kelvin {
+        Kelvin { value: self.value + 273.15 }
+    }
+}
+
+impl Fahrenheit {
+    fn to_celsius(self) -> Celsius {
+        Celsius { value: (self.value - 32.0) * 5.0 / 9.0 }
+    }
+}
+
+impl Kelvin {
+    fn to_celsius(self) -> Celsius {
+        Celsius { value: self.value - 273.15 }
+    }
+}
+
+fn main() {
+    let body = Celsius { value: 37.0 }
+    let body_f = body.to_fahrenheit()
+    let body_k = body.to_kelvin()
+    println!("body: {} C = {} F = {} K",
+        body.value, body_f.value, body_k.value)
+
+    let summer = Fahrenheit { value: 86.0 }
+    let summer_c = summer.to_celsius()
+    println!("summer day: {} F = {} C", summer.value, summer_c.value)
+
+    let helium = Kelvin { value: 4.0 }
+    let helium_c = helium.to_celsius()
+    println!("liquid helium: {} K = {} C", helium.value, helium_c.value)
+}

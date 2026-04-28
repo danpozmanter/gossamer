@@ -126,14 +126,14 @@ fn array_roundtrips() {
 
 #[test]
 fn variant_roundtrips() {
-    let v = Value::variant("Some".to_string(), Arc::new(vec![Value::Int(42)]));
+    let v = Value::variant("Some", Arc::new(vec![Value::Int(42)]));
     assert!(values_equal(&Value::from_raw(v.to_raw()), &v));
 }
 
 #[test]
 fn struct_roundtrips() {
     let v = Value::struct_(
-        "Point".to_string(),
+        "Point",
         Arc::new(vec![
             (Ident::new("x"), Value::Int(1)),
             (Ident::new("y"), Value::Int(2)),
@@ -181,7 +181,7 @@ fn closure_roundtrips() {
 fn nested_aggregate_roundtrips() {
     let v = Value::Tuple(Arc::new(vec![
         Value::Array(Arc::new(vec![Value::struct_(
-            "Pair".to_string(),
+            "Pair",
             Arc::new(vec![
                 (Ident::new("a"), Value::Int(1)),
                 (Ident::new("b"), Value::Int(2)),

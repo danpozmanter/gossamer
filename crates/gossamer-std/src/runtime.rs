@@ -31,8 +31,18 @@ pub fn max_procs() -> usize {
 
 /// Sets the goroutine concurrency cap. Returns the previous value.
 /// A value of `0` restores the automatic-from-host behaviour.
+///
+/// The cap is applied to two layers: the worker (P) count grows /
+/// shrinks to match, and the live-goroutine cap surfaces refusal
+/// for `try_spawn` instead of silently overcommitting kernel
+/// resources.
 pub fn set_max_procs(n: usize) -> usize {
-    MAX_PROCS.swap(n, Ordering::Relaxed)
+    let prev = MAX_PROCS.swap(n, Ordering::Relaxed);
+    let scheduler = crate::sched_global::scheduler();
+    let workers = if n == 0 { num_cpus() } else { n };
+    scheduler.set_worker_count(workers);
+    let _ = scheduler.set_max_goroutines(if n == 0 { 1_000_000 } else { n });
+    prev
 }
 
 /// Number of logical CPU cores visible to the process, per
@@ -112,8 +122,15 @@ mod tests {
         assert!(num_cpus() >= 1);
     }
 
+    // `set_max_procs` mutates a process-global, so the two tests
+    // that exercise it must not interleave. A `Mutex` shared
+    // across both serialises them under `cargo test` (which runs
+    // tests in parallel by default).
+    static MAX_PROCS_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     #[test]
     fn set_max_procs_round_trips() {
+        let _guard = MAX_PROCS_LOCK.lock();
         let prev = set_max_procs(42);
         assert_eq!(max_procs(), 42);
         let restored = set_max_procs(prev);
@@ -122,6 +139,7 @@ mod tests {
 
     #[test]
     fn max_procs_defaults_to_num_cpus_when_unset() {
+        let _guard = MAX_PROCS_LOCK.lock();
         let _ = set_max_procs(0);
         assert_eq!(max_procs(), num_cpus());
     }

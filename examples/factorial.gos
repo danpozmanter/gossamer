@@ -1,0 +1,33 @@
+/*
+ * Factorial — recursive vs. iterative.
+ *
+ * Both implementations are pure: each call returns a fresh
+ * value, the caller binds the result with a plain `let`.
+ * `i64` overflows past 20! — pick `i128` if you need more.
+ */
+
+fn factorial_recursive(n: i64) -> i64 {
+    if n <= 1 {
+        1
+    } else {
+        n * factorial_recursive(n - 1)
+    }
+}
+
+fn factorial_iterative(n: i64) -> i64 {
+    let mut acc: i64 = 1
+    let mut i: i64 = 2
+    while i <= n {
+        acc = acc * i
+        i = i + 1
+    }
+    acc
+}
+
+fn main() {
+    for n in [0, 1, 5, 10, 12, 20].iter() {
+        let r = factorial_recursive(*n)
+        let i = factorial_iterative(*n)
+        println!("{}! = recursive {}, iterative {}", *n, r, i)
+    }
+}

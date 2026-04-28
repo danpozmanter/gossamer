@@ -56,6 +56,18 @@ jobs:
       - run: cargo test --workspace
       - run: cargo build --release --workspace
 
+  idle-cpu:
+    name: Idle CPU regression guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-idle-stdio
+      - run: cargo build --release -p gossamer-cli
+      - run: ./benchmarks/idle/check.sh
+
   musl-build:
     name: Musl build check
     runs-on: ubuntu-latest

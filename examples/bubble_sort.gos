@@ -1,0 +1,49 @@
+/*
+ * Bubble sort — sort a `[i64]` ascending.
+ *
+ * The sorting helper owns a local `mut` copy and returns the
+ * sorted vector; the caller binds the result with a plain
+ * `let`. Bubble sort is O(n²) but a clear teaching example.
+ */
+
+fn sorted_ascending(xs: &[i64]) -> [i64] {
+    // Build a working copy by index assignment so we don't
+    // depend on `Vec::push` from an empty literal (still rough
+    // on this branch).
+    let mut out: [i64] = xs.to_vec()
+    let n = out.len()
+    let mut i = 0
+    while i < n {
+        let mut j = 0
+        while j + 1 < n - i {
+            if out[j] > out[j + 1] {
+                let tmp = out[j]
+                out[j] = out[j + 1]
+                out[j + 1] = tmp
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    out
+}
+
+fn print_array(xs: &[i64]) {
+    print("[")
+    let mut i = 0
+    while i < xs.len() {
+        if i > 0 { print(", ") }
+        print!("{}", xs[i])
+        i = i + 1
+    }
+    println("]")
+}
+
+fn main() {
+    let inputs: [i64] = [7, 2, 9, 1, 5, 3, 8, 4, 6]
+    let sorted = sorted_ascending(&inputs)
+    print("input:  ")
+    print_array(&inputs)
+    print("sorted: ")
+    print_array(&sorted)
+}

@@ -159,9 +159,20 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
     };
 
     let mut discovered: Vec<(PathBuf, String)> = Vec::new();
+    let mut load_errors: Vec<String> = Vec::new();
     for file in &files {
-        let Ok(names) = collect_test_names(file) else {
-            continue;
+        let names = match collect_test_names(file) {
+            Ok(names) => names,
+            Err(err) => {
+                // The diagnostic itself was already streamed to
+                // stderr by `load_and_check_with_sf`; surface the
+                // accompanying anyhow trailer ("N … error(s);
+                // refusing to execute") so the user sees the
+                // refusal explicitly.
+                eprintln!("error: {err}");
+                load_errors.push(format!("{}: {err}", file.display()));
+                continue;
+            }
         };
         for name in names {
             if let Some(re) = filter.as_ref() {
@@ -231,6 +242,20 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
             print!("{xml}");
         }
     } else {
+        if total_passes == 0
+            && total_failures == 0
+            && total_doc_tests == 0
+            && load_errors.is_empty()
+        {
+            // Help users distinguish "all tests passed" (which
+            // can also be 0/0 when nothing matched a `--run`
+            // filter) from "the file genuinely has nothing
+            // marked `#[test]`".
+            println!(
+                "test: no #[test] functions found under {}",
+                resolved.display()
+            );
+        }
         let pass_part = format!("{total_passes} passed");
         let fail_part = format!("{total_failures} failed");
         let pass_styled = if total_failures == 0 {
@@ -254,6 +279,18 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
     }
     if total_failures > 0 {
         return Err(anyhow!("{total_failures} test failure(s)"));
+    }
+    if !load_errors.is_empty() {
+        // A file the user pointed at refused to parse / resolve /
+        // typecheck. Bubble up so the harness exits non-zero —
+        // running tests against statically-broken source is worse
+        // than reporting nothing.
+        let summary = if load_errors.len() == 1 {
+            "1 file failed to load".to_string()
+        } else {
+            format!("{} files failed to load", load_errors.len())
+        };
+        return Err(anyhow!("{summary}"));
     }
     if opts.race {
         let races = gossamer_runtime::race::drain_races();

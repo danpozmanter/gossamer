@@ -1,0 +1,55 @@
+/*
+ * Count vowels and consonants in an ASCII string.
+ *
+ * Walks the input by byte and dispatches each letter through a
+ * `match` to one of three buckets. A pair-returning function +
+ * destructuring lets the caller pull both counts out without a
+ * mutable accumulator at the call site.
+ */
+
+fn is_vowel(b: i64) -> bool {
+    match b {
+        65 | 69 | 73 | 79 | 85 | 97 | 101 | 105 | 111 | 117 => true,
+        _ => false,
+    }
+}
+
+fn is_letter(b: i64) -> bool {
+    (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+}
+
+struct LetterCounts {
+    vowels: i64,
+    consonants: i64,
+}
+
+fn count_vowels(text: &String) -> LetterCounts {
+    let bytes = text.as_bytes()
+    let mut vowels: i64 = 0
+    let mut consonants: i64 = 0
+    let mut i = 0
+    while i < bytes.len() {
+        let b = bytes[i] as i64
+        if is_vowel(b) {
+            vowels = vowels + 1
+        } else if is_letter(b) {
+            consonants = consonants + 1
+        }
+        i = i + 1
+    }
+    LetterCounts { vowels: vowels, consonants: consonants }
+}
+
+fn main() {
+    let lines = [
+        "Hello, World!",
+        "the quick brown fox",
+        "rhythm",
+        "AEIOU",
+    ]
+    for s in lines.iter() {
+        let counts = count_vowels(&s.to_string())
+        println!("{}: vowels={}, consonants={}",
+            *s, counts.vowels, counts.consonants)
+    }
+}

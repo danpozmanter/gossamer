@@ -116,7 +116,7 @@ pub(crate) fn make_cell(set_id: u64, flag_name: &str, default: Value) -> Value {
         reg.borrow_mut().insert(key, cell);
     });
     Value::struct_(
-        "__Cell".to_string(),
+        "__Cell",
         Arc::new(vec![
             (Ident::new("__set_id"), Value::Int(set_id as i64)),
             (
@@ -289,7 +289,7 @@ fn install_variant_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Some", builtin("Some", builtin_variant_one::<'S'>)));
     globals.push((
         "None",
-        Value::variant("None".to_string(), Arc::new(Vec::new())),
+        Value::variant("None", crate::value::empty_value_arc()),
     ));
 }
 
@@ -395,6 +395,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "HashMap",
         &[
             ("new", builtin_map_new),
+            ("with_capacity", builtin_map_with_capacity),
             ("get", builtin_map_get),
             ("get_or", builtin_map_get_or),
             ("insert", builtin_map_insert),
@@ -461,15 +462,15 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
 fn install_flag_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push((
         "flag::Value::Int",
-        Value::variant("Int".to_string(), Arc::new(Vec::new())),
+        Value::variant("Int", crate::value::empty_value_arc()),
     ));
     globals.push((
         "flag::Value::Str",
-        Value::variant("Str".to_string(), Arc::new(Vec::new())),
+        Value::variant("Str", crate::value::empty_value_arc()),
     ));
     globals.push((
         "flag::Value::Bool",
-        Value::variant("Bool".to_string(), Arc::new(Vec::new())),
+        Value::variant("Bool", crate::value::empty_value_arc()),
     ));
     globals.push(("flag::parse", builtin("flag::parse", builtin_flag_parse)));
     globals.push((
@@ -533,7 +534,7 @@ fn install_flag_builtins(globals: &mut Vec<(&'static str, Value)>) {
 /// (`"int"` / `"string"` / `"bool"`), long, default, help, short.
 fn flag_spec(kind: &str, long: &str, default: Value, help: &str, short: Option<char>) -> Value {
     Value::struct_(
-        "FlagSpec".to_string(),
+        "FlagSpec",
         Arc::new(vec![
             (
                 Ident::new("kind"),
@@ -603,7 +604,7 @@ fn register_flag_spec(set_id: u64, spec: &Value) -> Option<(Ident, Value)> {
     let Value::Struct(spec_inner) = spec else {
         return None;
     };
-    let spec_name = &spec_inner.name;
+    let spec_name = spec_inner.name;
     let spec_fields = &spec_inner.fields;
     if spec_name != "FlagSpec" {
         return None;
@@ -707,14 +708,14 @@ fn builtin_flag_define(args: &[Value]) -> RuntimeResult<Value> {
             .collect(),
     ));
     let set_value = Value::struct_(
-        "Set".to_string(),
+        "Set",
         Arc::new(vec![(
             Ident::new("__id"),
             Value::Int(i64::try_from(set_id).unwrap_or(0)),
         )]),
     );
     let _ = crate::flag_set_builtins::builtin_flag_set_parse(&[set_value, args_array]);
-    Ok(Value::struct_("Flags".to_string(), Arc::new(fields)))
+    Ok(Value::struct_("Flags", Arc::new(fields)))
 }
 
 fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
@@ -968,7 +969,7 @@ fn builtin_variant_one<const TAG: char>(args: &[Value]) -> RuntimeResult<Value> 
         _ => "Variant",
     };
     let payload = args.first().cloned().unwrap_or(Value::Unit);
-    Ok(Value::variant(name.to_string(), Arc::new(vec![payload])))
+    Ok(Value::variant(name, Arc::new(vec![payload])))
 }
 
 fn builtin_field<const TAG: char>(args: &[Value]) -> RuntimeResult<Value> {
@@ -1171,7 +1172,7 @@ fn builtin_print(args: &[Value]) -> RuntimeResult<Value> {
 
 fn stream_of(fd: i64) -> Value {
     Value::struct_(
-        "Stream".to_string(),
+        "Stream",
         Arc::new(vec![(gossamer_ast::Ident::new("fd"), Value::Int(fd))]),
     )
 }
@@ -1387,7 +1388,7 @@ fn response_struct(status: i64, body: String, content_type: &str) -> Value {
             Value::String(SmolStr::from(content_type.to_string())),
         ),
     ];
-    Value::struct_("Response".to_string(), Arc::new(fields))
+    Value::struct_("Response", Arc::new(fields))
 }
 
 pub(crate) fn value_to_int(value: &Value) -> Option<i64> {
@@ -1493,10 +1494,7 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
     });
 
     match result {
-        Ok(()) => Ok(Value::variant(
-            "Ok".to_string(),
-            Arc::new(vec![Value::Unit]),
-        )),
+        Ok(()) => Ok(Value::variant("Ok", Arc::new(vec![Value::Unit]))),
         Err(err) => Err(RuntimeError::Panic(format!("http::serve: {err}"))),
     }
 }
@@ -1545,7 +1543,7 @@ fn request_to_value(request: &http_std::Request) -> Value {
         (Ident::new("headers"), Value::Array(Arc::new(headers))),
         (Ident::new("body"), Value::String(body_text.into())),
     ];
-    Value::struct_("Request".to_string(), Arc::new(fields))
+    Value::struct_("Request", Arc::new(fields))
 }
 
 fn value_to_response(value: &Value) -> Option<http_std::Response> {
@@ -1637,25 +1635,25 @@ pub(crate) fn as_str(value: &Value) -> Option<&str> {
 
 /// Builds a `Result::Ok(value)` Gossamer variant.
 pub(crate) fn ok_variant(value: Value) -> Value {
-    Value::variant("Ok".to_string(), Arc::new(vec![value]))
+    Value::variant("Ok", Arc::new(vec![value]))
 }
 
 /// Builds a `Result::Err(message)` Gossamer variant carrying a string.
 pub(crate) fn err_variant(message: impl Into<String>) -> Value {
     Value::variant(
-        "Err".to_string(),
+        "Err",
         Arc::new(vec![Value::String(SmolStr::from(message.into()))]),
     )
 }
 
 /// Builds a `Option::Some(value)` Gossamer variant.
 pub(crate) fn some_variant(value: Value) -> Value {
-    Value::variant("Some".to_string(), Arc::new(vec![value]))
+    Value::variant("Some", Arc::new(vec![value]))
 }
 
 /// Builds a `Option::None` Gossamer variant.
 pub(crate) fn none_variant() -> Value {
-    Value::variant("None".to_string(), Arc::new(Vec::new()))
+    Value::variant("None", crate::value::empty_value_arc())
 }
 
 fn builtin_os_args(_args: &[Value]) -> RuntimeResult<Value> {
@@ -1870,10 +1868,7 @@ fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
                 (Ident::new("stderr"), Value::String(SmolStr::from(stderr))),
                 (Ident::new("code"), Value::Int(code)),
             ];
-            Ok(ok_variant(Value::struct_(
-                "ExecOutput".to_string(),
-                Arc::new(fields),
-            )))
+            Ok(ok_variant(Value::struct_("ExecOutput", Arc::new(fields))))
         }
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
@@ -2018,8 +2013,8 @@ fn json_escape_str(value: &str) -> String {
 /// type name only.
 fn builtin_os_stdin(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_(
-        "StdinStream".to_string(),
-        Arc::new(Vec::new()),
+        "StdinStream",
+        crate::value::empty_struct_fields(),
     ))
 }
 
@@ -2073,7 +2068,7 @@ fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
         (Ident::new("lines"), Value::Array(Arc::new(lines))),
         (Ident::new("cursor"), Value::Int(0)),
     ];
-    Ok(Value::struct_("Scanner".to_string(), Arc::new(fields)))
+    Ok(Value::struct_("Scanner", Arc::new(fields)))
 }
 
 /// `<scanner>.next() -> Option<String>`. Advances the cursor and
@@ -2087,7 +2082,7 @@ fn builtin_bufio_scanner_next(args: &[Value]) -> RuntimeResult<Value> {
     if inner.name != "Scanner" {
         return Ok(none_variant());
     }
-    let mut lines: Arc<Vec<Value>> = Arc::new(Vec::new());
+    let mut lines: Arc<Vec<Value>> = crate::value::empty_value_arc();
     let mut cursor: i64 = 0;
     for (k, v) in &**inner.fields {
         match (k.name.as_str(), v) {
@@ -2109,7 +2104,7 @@ fn builtin_bufio_scanner_next(args: &[Value]) -> RuntimeResult<Value> {
     // in the interpreter writes this back into the receiver
     // place. The caller observes a Some(line); the cursor
     // advances automatically.
-    let new_scanner = Value::struct_("Scanner".to_string(), Arc::new(new_fields));
+    let new_scanner = Value::struct_("Scanner", Arc::new(new_fields));
     Ok(some_variant_pair(line, new_scanner))
 }
 
@@ -2293,7 +2288,7 @@ fn builtin_json_as_array(args: &[Value]) -> RuntimeResult<Value> {
     if let Some(Value::Array(a)) = args.first() {
         return Ok(Value::Array(Arc::clone(a)));
     }
-    Ok(Value::Array(Arc::new(Vec::new())))
+    Ok(Value::empty_array())
 }
 
 fn builtin_json_decode(args: &[Value]) -> RuntimeResult<Value> {
@@ -2326,7 +2321,7 @@ fn json_value_to_gossamer(value: &json_std::Value) -> Value {
                 .iter()
                 .map(|(k, v)| (Ident::new(k), json_value_to_gossamer(v)))
                 .collect();
-            Value::struct_("Object".to_string(), Arc::new(fields))
+            Value::struct_("Object", Arc::new(fields))
         }
     }
 }
@@ -2350,10 +2345,10 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
             json_std::Value::Object(map)
         }
         Value::Variant(inner) => {
-            let name = &inner.name;
+            let name = inner.name;
             let fields = &inner.fields;
             if fields.is_empty() {
-                json_std::Value::String(name.clone())
+                json_std::Value::String(name.to_string())
             } else if fields.len() == 1 {
                 gossamer_to_json_value(&fields[0])
             } else {
@@ -2429,7 +2424,7 @@ fn builtin_to_string(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_split(args: &[Value]) -> RuntimeResult<Value> {
     let receiver: String = match args.first() {
         Some(Value::String(s)) => s.as_str().to_string(),
-        _ => return Ok(Value::Array(Arc::new(Vec::new()))),
+        _ => return Ok(Value::empty_array()),
     };
     let delim: String = match args.get(1) {
         Some(Value::String(s)) => s.as_str().to_string(),
@@ -2561,7 +2556,7 @@ fn builtin_push(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_pop(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Array(parts)) = args.first() else {
-        return Ok(Value::Array(Arc::new(Vec::new())));
+        return Ok(Value::empty_array());
     };
     let mut owned = parts.as_ref().clone();
     owned.pop();
@@ -2570,7 +2565,18 @@ fn builtin_pop(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Map(Arc::new(parking_lot::Mutex::new(
-        rustc_hash::FxHashMap::default(),
+        rustc_hash::FxHashMap::with_capacity_and_hasher(16, rustc_hash::FxBuildHasher),
+    ))))
+}
+
+/// `HashMap::with_capacity(cap)`: pre-sizes the underlying typed
+/// storage so the doubling chain doesn't fire on a hot insert
+/// loop. k-nucleotide's per-k builds ride this for a 20-40 MB
+/// peak-RSS reduction on the k=18 step.
+fn builtin_map_with_capacity(args: &[Value]) -> RuntimeResult<Value> {
+    let cap = arg_int(args, 0).unwrap_or(0).max(0) as usize;
+    Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(
+        rustc_hash::FxHashMap::with_capacity_and_hasher(cap, rustc_hash::FxBuildHasher),
     ))))
 }
 
@@ -2799,7 +2805,7 @@ fn builtin_clear(args: &[Value]) -> RuntimeResult<Value> {
         return builtin_map_clear(args);
     }
     if matches!(args.first(), Some(Value::Array(_))) {
-        Ok(Value::Array(Arc::new(Vec::new())))
+        Ok(Value::empty_array())
     } else {
         Ok(args.first().cloned().unwrap_or(Value::Unit))
     }
@@ -2981,7 +2987,7 @@ fn native_variant_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
             if (inner.name == "Some" || inner.name == "Ok") && !inner.fields.is_empty() =>
         {
             let mapped = invoke_callable(dispatch, &transform, vec![inner.fields[0].clone()])?;
-            Ok(Value::variant(inner.name.clone(), Arc::new(vec![mapped])))
+            Ok(Value::variant(inner.name, Arc::new(vec![mapped])))
         }
         other => Ok(other.clone()),
     }
@@ -3295,7 +3301,7 @@ fn builtin_flag_parse(args: &[Value]) -> RuntimeResult<Value> {
         Ident::new("__positional"),
         Value::Array(Arc::new(positional)),
     ));
-    Ok(Value::struct_("FlagMap".to_string(), Arc::new(map_fields)))
+    Ok(Value::struct_("FlagMap", Arc::new(map_fields)))
 }
 
 fn extract_flag_decls(values: &[Value]) -> Vec<FlagDeclEntry> {
@@ -3337,15 +3343,15 @@ fn flag_parse_value(default: &Value, raw: &str) -> Value {
     match default {
         Value::Variant(inner) if inner.name == "Int" => {
             let n = raw.parse::<i64>().unwrap_or(0);
-            Value::variant("Int".to_string(), Arc::new(vec![Value::Int(n)]))
+            Value::variant("Int", Arc::new(vec![Value::Int(n)]))
         }
         Value::Variant(inner) if inner.name == "Str" => Value::variant(
-            "Str".to_string(),
+            "Str",
             Arc::new(vec![Value::String(SmolStr::from(raw.to_string()))]),
         ),
         Value::Variant(inner) if inner.name == "Bool" => {
             let b = matches!(raw, "true" | "1" | "yes" | "on");
-            Value::variant("Bool".to_string(), Arc::new(vec![Value::Bool(b)]))
+            Value::variant("Bool", Arc::new(vec![Value::Bool(b)]))
         }
         _ => Value::String(SmolStr::from(raw.to_string())),
     }
@@ -3460,7 +3466,7 @@ fn struct_handle(v: &Value, expected: &str) -> Option<i64> {
 
 fn make_handle_struct(name: &str, handle: i64) -> Value {
     Value::struct_(
-        name.to_string(),
+        name,
         Arc::new(vec![(Ident::new("__handle"), Value::Int(handle))]),
     )
 }
@@ -3780,12 +3786,28 @@ fn builtin_u8vec_count_kmers(args: &[Value]) -> RuntimeResult<Value> {
 /// window into a 2-bit-per-byte `i64` key and accumulating the
 /// frequency. Tight C-side loop replacing the `while`-loop +
 /// `Op::IntMapInc` chain user code would emit. Pre-allocates
-/// the map with a sane capacity so the first ~64 inserts don't
-/// pay for a rehash.
+/// the map with a sane capacity (capped well below the worst-
+/// case buffer length so a k=18 call does not reserve tens of
+/// megabytes of hashbrown slots upfront — hashbrown still grows
+/// by doubling beyond the cap, but the cap keeps steady-state
+/// RSS predictable for the small-k calls).
+// Soft cap on the pre-allocated map capacity: 64 K slots
+// (~1 MB at 16 B/slot). Hashbrown still grows by doubling
+// beyond this — the cap just keeps steady-state RSS
+// predictable for the small-k calls without paying
+// catastrophic up-front cost on k=18.
+const KMER_CAP_SOFT: usize = 64 * 1024;
+
 #[inline]
 fn kmer_count(buf: &[std::sync::atomic::AtomicU8], k: usize) -> rustc_hash::FxHashMap<i64, i64> {
+    let upper_by_alphabet = if k == 0 || k >= 32 {
+        usize::MAX
+    } else {
+        1usize.checked_shl((k as u32) * 2).unwrap_or(usize::MAX)
+    };
+    let cap = upper_by_alphabet.clamp(64, KMER_CAP_SOFT);
     let mut counts: rustc_hash::FxHashMap<i64, i64> =
-        rustc_hash::FxHashMap::with_capacity_and_hasher(1024, rustc_hash::FxBuildHasher);
+        rustc_hash::FxHashMap::with_capacity_and_hasher(cap, rustc_hash::FxBuildHasher);
     if k == 0 || k > buf.len() {
         return counts;
     }

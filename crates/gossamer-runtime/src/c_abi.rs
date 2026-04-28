@@ -1336,6 +1336,33 @@ pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mu
     }))
 }
 
+/// Pre-sized constructor: avoids the doubling chain (~22 reallocs
+/// for ~5M inserts) when the caller has an upper bound. Picks the
+/// initial typed shape from the byte sizes — both 8 → I64I64,
+/// otherwise the byte-erased generic shape that promotes lazily.
+/// k-nucleotide's per-k HashMap rides this for a 20-40 MB peak-RSS
+/// reduction on the k=18 step.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
+    key_bytes: u32,
+    val_bytes: u32,
+    cap: i64,
+) -> *mut GosMap {
+    let cap = if cap < 0 { 0 } else { cap as usize };
+    let storage = if key_bytes == 8 && val_bytes == 8 {
+        MapStorage::I64I64(FxHashMap::with_capacity_and_hasher(
+            cap,
+            rustc_hash::FxBuildHasher,
+        ))
+    } else {
+        MapStorage::Empty
+    };
+    Box::into_raw(Box::new(GosMap {
+        len_cache: 0,
+        storage: parking_lot::Mutex::new(storage),
+    }))
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_len(m: *const GosMap) -> i64 {
     if m.is_null() {
@@ -1786,68 +1813,91 @@ pub unsafe extern "C" fn gos_rt_go_spawn(
 /// The function pointer is stored as a usize to keep the runtime
 /// helper signature stable across different target function
 /// signatures.
+/// Cross-crate spawn hook. The runtime's `gos_rt_go_spawn_*`
+/// helpers default to bare `std::thread::spawn`, which has no
+/// pool, no cap, and no integration with the work-stealing
+/// scheduler. `gossamer-sched` boots and installs a real
+/// `MultiScheduler::try_spawn` backed handler via
+/// [`set_spawn_handler`]; once that runs, every compiled `go
+/// fn(args)` lands on a pooled worker instead of fanning out to
+/// kernel threads.
+type SpawnHandler = fn(Box<dyn FnOnce() + Send + 'static>);
+
+static SPAWN_HANDLER: std::sync::OnceLock<SpawnHandler> = std::sync::OnceLock::new();
+
+/// Installs the process-wide spawn handler. Called once during
+/// scheduler boot from `gossamer-std::sched_global`. Idempotent;
+/// later calls are ignored so the first installer wins.
+pub fn set_spawn_handler(handler: SpawnHandler) {
+    let _ = SPAWN_HANDLER.set(handler);
+}
+
+fn spawn_task(task: Box<dyn FnOnce() + Send + 'static>) {
+    if let Some(handler) = SPAWN_HANDLER.get() {
+        handler(task);
+    } else {
+        std::thread::spawn(task);
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_go_spawn_call_0(fn_addr: usize) {
     if fn_addr == 0 {
         return;
     }
-    std::thread::spawn(move || {
+    spawn_task(Box::new(move || {
         // SAFETY: the caller promises `fn_addr` is the address of
         // an `extern "C" fn() -> i64` — the SysV-ABI convention
         // native codegen emits for every Gossamer function.
         type Fn0 = unsafe extern "C" fn() -> i64;
         let f: Fn0 = unsafe { std::mem::transmute(fn_addr) };
         let _ = unsafe { f() };
-    });
+    }));
 }
 
-/// Spawns a thread that calls a one-argument function with a
-/// single i64 payload. All Gossamer scalar types fit in an i64
-/// slot; floats are passed by bitcast in the caller.
+/// Spawns a goroutine on the work-stealing scheduler (or, if no
+/// scheduler is installed, an OS thread) that calls a one-argument
+/// function with a single i64 payload. All Gossamer scalar types
+/// fit in an i64 slot; floats are passed by bitcast.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_go_spawn_call_1(fn_addr: usize, arg0: i64) {
     if fn_addr == 0 {
         return;
     }
-    std::thread::spawn(move || {
+    spawn_task(Box::new(move || {
         type Fn1 = unsafe extern "C" fn(i64) -> i64;
         let f: Fn1 = unsafe { std::mem::transmute(fn_addr) };
         let _ = unsafe { f(arg0) };
-    });
+    }));
 }
 
-/// Two-arg version. Enough for `go task(a, b)` where both args
-/// fit in an i64 register.
+/// Two-arg version.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_go_spawn_call_2(fn_addr: usize, arg0: i64, arg1: i64) {
     if fn_addr == 0 {
         return;
     }
-    std::thread::spawn(move || {
+    spawn_task(Box::new(move || {
         type Fn2 = unsafe extern "C" fn(i64, i64) -> i64;
         let f: Fn2 = unsafe { std::mem::transmute(fn_addr) };
         let _ = unsafe { f(arg0, arg1) };
-    });
+    }));
 }
 
-/// Three-arg version. Required for fan-out patterns where a
-/// worker takes a shared buffer pointer, an index / chunk
-/// argument, and a `WaitGroup` to signal completion.
+/// Three-arg version. Required for fan-out patterns (buf, idx, wg).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_go_spawn_call_3(fn_addr: usize, arg0: i64, arg1: i64, arg2: i64) {
     if fn_addr == 0 {
         return;
     }
-    std::thread::spawn(move || {
+    spawn_task(Box::new(move || {
         type Fn3 = unsafe extern "C" fn(i64, i64, i64) -> i64;
         let f: Fn3 = unsafe { std::mem::transmute(fn_addr) };
         let _ = unsafe { f(arg0, arg1, arg2) };
-    });
+    }));
 }
 
-/// Four-arg version. Same intent as the 3-arg form;
-/// covers the common fasta worker shape (buf, start, count,
-/// wg).
+/// Four-arg version. Common fasta worker shape (buf, start, count, wg).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_go_spawn_call_4(
     fn_addr: usize,
@@ -1859,15 +1909,14 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_4(
     if fn_addr == 0 {
         return;
     }
-    std::thread::spawn(move || {
+    spawn_task(Box::new(move || {
         type Fn4 = unsafe extern "C" fn(i64, i64, i64, i64) -> i64;
         let f: Fn4 = unsafe { std::mem::transmute(fn_addr) };
         let _ = unsafe { f(arg0, arg1, arg2, arg3) };
-    });
+    }));
 }
 
-/// Five-arg version. Used by fasta_mt's IUB worker
-/// (buf, off, count, start_state, wg).
+/// Five-arg version. Used by fasta_mt's IUB worker.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_go_spawn_call_5(
     fn_addr: usize,
@@ -1880,11 +1929,11 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_5(
     if fn_addr == 0 {
         return;
     }
-    std::thread::spawn(move || {
+    spawn_task(Box::new(move || {
         type Fn5 = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
         let f: Fn5 = unsafe { std::mem::transmute(fn_addr) };
         let _ = unsafe { f(arg0, arg1, arg2, arg3, arg4) };
-    });
+    }));
 }
 
 /// Six-arg version, headroom for future fan-out shapes.
@@ -1901,11 +1950,11 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_6(
     if fn_addr == 0 {
         return;
     }
-    std::thread::spawn(move || {
+    spawn_task(Box::new(move || {
         type Fn6 = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
         let f: Fn6 = unsafe { std::mem::transmute(fn_addr) };
         let _ = unsafe { f(arg0, arg1, arg2, arg3, arg4, arg5) };
-    });
+    }));
 }
 
 #[unsafe(no_mangle)]

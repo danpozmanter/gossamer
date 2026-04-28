@@ -1,0 +1,27 @@
+/*
+ * FizzBuzz — the classic interview warm-up.
+ *
+ * Multiples of 3 print "Fizz", multiples of 5 print "Buzz",
+ * multiples of both print "FizzBuzz". Everything else prints
+ * the number.
+ *
+ * Each iteration's result is computed by a `match` expression
+ * — no mutable accumulator at the call site.
+ */
+
+fn label(n: i64) -> String {
+    match (n % 3, n % 5) {
+        (0, 0) => "FizzBuzz".to_string(),
+        (0, _) => "Fizz".to_string(),
+        (_, 0) => "Buzz".to_string(),
+        (_, _) => format!("{}", n),
+    }
+}
+
+fn main() {
+    let mut n: i64 = 1
+    while n <= 20 {
+        println!("{}: {}", n, label(n))
+        n = n + 1
+    }
+}

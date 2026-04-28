@@ -1,0 +1,49 @@
+/*
+ * Primality test — trial division up to sqrt(n).
+ *
+ * `is_prime` is a pure function: it inspects `n` and returns a
+ * `bool` without changing any caller state. Demonstrates `for
+ * _ in lo..=hi` ranges, early `return`, and idiomatic guard
+ * conditions.
+ */
+
+fn is_prime(n: i64) -> bool {
+    if n < 2 {
+        return false
+    }
+    if n < 4 {
+        return true              // 2 and 3
+    }
+    if n % 2 == 0 {
+        return false
+    }
+    // Trial-divide by odd factors only; stop at sqrt(n).
+    let mut d: i64 = 3
+    while d * d <= n {
+        if n % d == 0 {
+            return false
+        }
+        d = d + 2
+    }
+    true
+}
+
+fn main() {
+    print("primes ≤ 50:")
+    for n in 0..=50 {
+        if is_prime(n) {
+            print!(" {}", n)
+        }
+    }
+    println("")
+
+    // A few targeted spot-checks.
+    let cases = [(2, true), (3, true), (4, false), (97, true),
+                 (100, false), (7919, true), (7920, false)]
+    for case in cases.iter() {
+        let actual = is_prime(case.0)
+        let label = if actual == case.1 { "ok" } else { "WRONG" }
+        println!("is_prime({}) = {} (expected {}): {}",
+            case.0, actual, case.1, label)
+    }
+}

@@ -134,18 +134,30 @@ fn registry() -> &'static Registry {
 #[cfg(unix)]
 fn install_native_handlers() {
     use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2};
+    use signal_hook::iterator::Signals;
     if std::env::var("GOSSAMER_SIGNAL_DISABLE_HANDLERS").is_ok() {
         return;
     }
-    let signals: [i32; 6] = [SIGINT, SIGTERM, SIGHUP, SIGUSR1, SIGUSR2, SIGQUIT];
-    for raw in signals {
-        let flag = Arc::new(AtomicBool::new(false));
-        let _ = signal_hook::flag::register(raw, Arc::clone(&flag));
-        std::thread::Builder::new()
-            .name(format!("gos-sig-{raw}"))
-            .spawn(move || relay_loop(raw, flag))
-            .ok();
-    }
+    // One dispatcher thread that blocks in the kernel until any
+    // tracked signal arrives, then fans out to the per-signal
+    // notifier flags + the SIGQUIT goroutine-stack renderer. Goes
+    // from seven 1 kHz polling relays to one always-blocked wait.
+    let Ok(mut signals) = Signals::new([SIGINT, SIGTERM, SIGHUP, SIGUSR1, SIGUSR2, SIGQUIT]) else {
+        return;
+    };
+    std::thread::Builder::new()
+        .name("gos-signal-dispatch".to_string())
+        .spawn(move || {
+            for raw in signals.forever() {
+                let sig = Signal(signal_name(raw));
+                deliver(sig);
+                if raw == SIGQUIT {
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = gossamer_runtime::sigquit::render_to(&mut stderr);
+                }
+            }
+        })
+        .ok();
 }
 
 #[cfg(windows)]
@@ -156,25 +168,6 @@ fn install_native_handlers() {
 
 #[cfg(not(any(unix, windows)))]
 fn install_native_handlers() {}
-
-#[cfg(unix)]
-fn relay_loop(raw: i32, flag: Arc<AtomicBool>) {
-    let name = signal_name(raw);
-    let sig = Signal(name);
-    loop {
-        if flag.swap(false, Ordering::AcqRel) {
-            deliver(sig);
-        }
-        // Sleep briefly between checks. The wake latency floor is
-        // ~1 ms, dominated by `std::thread::sleep` granularity. This
-        // is not the bottleneck — the previous implementation slept
-        // 50 ms per check for the same reason. A `pipe`-based
-        // wake-up would drop the floor to <1 ms; left as a future
-        // optimisation since shutdown is the dominant use case and
-        // 1 ms is well under any human-perceptible delay.
-        std::thread::sleep(Duration::from_millis(1));
-    }
-}
 
 #[cfg(unix)]
 fn signal_name(raw: i32) -> &'static str {

@@ -786,6 +786,7 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     // for the cranelift tier; the LLVM tier hits the
     // scalar / string-keyed shapes directly.
     "declare ptr @gos_rt_map_new(i32, i32)",
+    "declare ptr @gos_rt_map_new_with_capacity(i32, i32, i64)",
     "declare i64 @gos_rt_map_len(ptr)",
     "declare void @gos_rt_map_insert_i64_i64(ptr, i64, i64)",
     "declare i64 @gos_rt_map_get_i64(ptr, i64)",

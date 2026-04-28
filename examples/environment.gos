@@ -1,0 +1,36 @@
+/*
+ * Process environment — env vars, args, working directory.
+ *
+ * Demonstrates the `std::os` surface for inspecting the
+ * process state. Falls back gracefully when an env var is
+ * missing.
+ */
+
+use std::os
+
+fn report_env(name: &String) {
+    match os::env(name) {
+        Some(v) => println!("  {name} = {v}"),
+        None => println!("  {name} (unset)"),
+    }
+}
+
+fn main() {
+    println!("argv:")
+    let args = os::args()
+    let mut i = 0
+    while i < args.len() {
+        println!("  argv[{i}] = {}", args[i])
+        i = i + 1
+    }
+
+    println!("\nenvironment (selected):")
+    for name in ["PATH", "HOME", "USER", "GOSSAMER_DEBUG"].iter() {
+        report_env(&name.to_string())
+    }
+
+    match os::cwd() {
+        Ok(dir) => println!("\ncwd: {dir}"),
+        Err(e) => println!("\ncwd error: {e}"),
+    }
+}

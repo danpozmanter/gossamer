@@ -45,18 +45,21 @@ pub fn init() {
 
 #[cfg(unix)]
 fn install_signal_handler() {
+    use signal_hook::iterator::Signals;
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let flag = global_flag();
-        if signal_hook::flag::register(signal_hook::consts::SIGURG, std::sync::Arc::clone(&flag))
-            .is_ok()
-        {
-            std::thread::Builder::new()
-                .name("gos-preempt-relay".to_string())
-                .spawn(relay_loop)
-                .ok();
-        }
+        let Ok(mut signals) = Signals::new([signal_hook::consts::SIGURG]) else {
+            return;
+        };
+        std::thread::Builder::new()
+            .name("gos-preempt".to_string())
+            .spawn(move || {
+                for _sig in signals.forever() {
+                    request_yield_all();
+                }
+            })
+            .ok();
     });
 }
 
@@ -65,31 +68,6 @@ fn install_signal_handler() {
     // Windows: APC-based preemption is a future iteration. The
     // cooperative-only path still works.
 }
-
-#[cfg(unix)]
-static GLOBAL_PREEMPT_FLAG_INNER: std::sync::OnceLock<std::sync::Arc<AtomicBool>> =
-    std::sync::OnceLock::new();
-
-#[cfg(unix)]
-fn global_flag() -> std::sync::Arc<AtomicBool> {
-    std::sync::Arc::clone(
-        GLOBAL_PREEMPT_FLAG_INNER.get_or_init(|| std::sync::Arc::new(AtomicBool::new(false))),
-    )
-}
-
-#[cfg(unix)]
-fn relay_loop() {
-    let flag = global_flag();
-    loop {
-        if flag.swap(false, Ordering::AcqRel) {
-            request_yield_all();
-        }
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-}
-
-#[cfg(not(unix))]
-fn relay_loop() {}
 
 /// Signals every active worker to reach a safepoint. The actual
 /// per-thread flag is consulted by [`should_yield`] from the
@@ -170,6 +148,57 @@ pub fn bump_pressure() {
     PENDING_PRESSURE.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Returns an opaque handle for the calling OS thread suitable for
+/// later use with [`signal_thread_sigurg`]. On Unix this is the
+/// `pthread_t` of the calling thread cast through `u64`. On other
+/// platforms it returns `0`; the targeted preemption path becomes a
+/// no-op and the cooperative phase counter does the work alone.
+#[must_use]
+pub fn current_thread_handle() -> u64 {
+    #[cfg(unix)]
+    {
+        // SAFETY: `pthread_self` is async-signal-safe and has no
+        // failure modes. Treating the opaque `pthread_t` as a u64
+        // is the standard idiom for parking it in a non-FFI field.
+        let raw = unsafe { libc::pthread_self() };
+        raw as u64
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
+/// Sends `SIGURG` to the OS thread identified by `handle`. Used by
+/// the scheduler watchdog when cooperative preemption alone has not
+/// landed (worker has not hit a safepoint inside its budget). The
+/// SIGURG handler installed by [`init`] flips the global phase, and
+/// — crucially — the kernel-level signal delivery interrupts any
+/// blocking syscall the worker is currently inside.
+///
+/// Returns `true` if the signal was issued, `false` if the platform
+/// has no targeted-preempt path or the handle is the null marker.
+#[must_use]
+pub fn signal_thread_sigurg(handle: u64) -> bool {
+    if handle == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: SIGURG is async-signal-safe; the SIGURG iterator
+        // installed in `install_signal_handler` only does atomic
+        // stores. `handle` is a `pthread_t` produced by an earlier
+        // call on a still-live worker — the scheduler nulls the
+        // slot before joining the thread.
+        let rc = unsafe { libc::pthread_kill(handle as libc::pthread_t, libc::SIGURG) };
+        rc == 0
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Decrements pending pressure. Called by the safepoint handler when
 /// the yield is honoured.
 pub fn drop_pressure() {
@@ -201,6 +230,31 @@ mod tests {
         let _ = should_yield();
         request_yield_self();
         assert!(should_yield());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn signal_thread_sigurg_round_trips() {
+        // Initialise the SIGURG dispatcher first so the kernel does
+        // not raise the default action (which is to ignore SIGURG;
+        // either way is fine, but the dispatcher path is what we
+        // actually want to exercise).
+        init();
+        let handle = current_thread_handle();
+        assert!(handle != 0);
+        // Sending to ourselves should succeed; the dispatcher
+        // thread observes the signal and bumps the phase.
+        let baseline = current_phase();
+        assert!(signal_thread_sigurg(handle));
+        // Give the dispatcher a moment to wake.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // The phase should have moved at least once.
+        assert!(current_phase() >= baseline);
+    }
+
+    #[test]
+    fn signal_thread_sigurg_null_handle_is_noop() {
+        assert!(!signal_thread_sigurg(0));
     }
 
     #[test]

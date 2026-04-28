@@ -149,17 +149,14 @@ fn describe(x: Option<i64>) -> String {
         source,
         "describe",
         vec![Value::variant(
-            "Some".to_string(),
+            "Some",
             std::sync::Arc::new(vec![Value::Int(5)]),
         )],
     );
     let none = call_and_return(
         source,
         "describe",
-        vec![Value::variant(
-            "None".to_string(),
-            std::sync::Arc::new(Vec::new()),
-        )],
+        vec![Value::variant("None", std::sync::Arc::new(Vec::new()))],
     );
     assert!(matches!(some, Value::String(ref s) if s.contains('5')));
     assert!(matches!(none, Value::String(ref s) if s.as_str() == "missing"));
@@ -429,7 +426,7 @@ fn describe(s: Shape) -> String {
         source,
         "describe",
         vec![Value::variant(
-            "Circle".to_string(),
+            "Circle",
             std::sync::Arc::new(vec![Value::Float(1.5)]),
         )],
     );
@@ -597,7 +594,7 @@ fn manhattan(p: Point) -> i64 {
 }
 "#;
     let p = Value::struct_(
-        "Point".to_string(),
+        "Point",
         std::sync::Arc::new(vec![
             (gossamer_ast::Ident::new("x"), Value::Int(3)),
             (gossamer_ast::Ident::new("y"), Value::Int(4)),
@@ -619,7 +616,7 @@ fn width_only(r: Rect) -> i64 {
 }
 "#;
     let r = Value::struct_(
-        "Rect".to_string(),
+        "Rect",
         std::sync::Arc::new(vec![
             (gossamer_ast::Ident::new("x"), Value::Int(0)),
             (gossamer_ast::Ident::new("y"), Value::Int(0)),

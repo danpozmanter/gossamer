@@ -130,6 +130,12 @@ struct WorkerSlot {
     /// `set_max_procs` shrank the worker count). Workers consult this
     /// before parking and exit.
     retired: AtomicBool,
+    /// Opaque OS-thread handle (Unix: `pthread_t` cast to `u64`,
+    /// other platforms: 0). Captured by `worker_loop` on entry; the
+    /// watchdog uses it to send a targeted SIGURG via
+    /// [`gossamer_runtime::preempt::signal_thread_sigurg`] when this
+    /// worker's task overstays its budget.
+    thread_handle: AtomicU64,
 }
 
 impl WorkerSlot {
@@ -149,6 +155,13 @@ struct Shared {
     workers: Mutex<Vec<Arc<WorkerSlot>>>,
     parked: Mutex<HashMap<Gid, ParkedEntry>>,
     next_gid: AtomicU64,
+    /// Live (spawned but not yet finished) goroutine count. The
+    /// scheduler refuses new spawns above `max_live`.
+    live_goroutines: AtomicUsize,
+    /// Maximum live goroutines this scheduler will admit. Honours
+    /// `runtime::set_max_procs` and `GOSSAMER_MAX_PROCS`. Default is
+    /// `1_000_000`.
+    max_live: AtomicUsize,
     stats: AtomicStats,
     /// Set to `true` when [`MultiScheduler::shutdown`] is called.
     /// Workers exit once their local deque is drained.
@@ -167,6 +180,13 @@ struct Shared {
     /// Per-worker timestamps of the last yield observed; used by the
     /// watchdog to decide which workers to preempt.
     last_yield: Mutex<Vec<Instant>>,
+    /// Idle signal — workers notify when they reach a quiescent
+    /// state (deque empty + no peer work + no parked tasks). The
+    /// orchestrator's `wait_until_idle` parks on this Condvar
+    /// instead of polling, so an empty `gos run` does not consume
+    /// CPU on the main thread while the workers are idle.
+    idle_mu: Mutex<()>,
+    idle_cv: Condvar,
 }
 
 struct ParkedEntry {
@@ -219,6 +239,8 @@ impl MultiScheduler {
             workers: Mutex::new(Vec::new()),
             parked: Mutex::new(HashMap::new()),
             next_gid: AtomicU64::new(0),
+            live_goroutines: AtomicUsize::new(0),
+            max_live: AtomicUsize::new(default_max_live()),
             stats: AtomicStats::default(),
             stopping: AtomicBool::new(false),
             live_workers: AtomicUsize::new(0),
@@ -226,22 +248,55 @@ impl MultiScheduler {
             watchdog_started: AtomicBool::new(false),
             request_safepoint: AtomicBool::new(false),
             last_yield: Mutex::new(Vec::new()),
+            idle_mu: Mutex::new(()),
+            idle_cv: Condvar::new(),
         });
         Self { inner: shared }
     }
 
     /// Pushes a task onto the global injector. Workers that have an
     /// empty local deque will pick it up.
-    pub fn spawn<T: SchedTask + 'static>(&self, task: T) -> Gid {
+    ///
+    /// Returns `None` when the live-goroutine cap (set via
+    /// `runtime::set_max_procs` or `GOSSAMER_MAX_PROCS`) would be
+    /// exceeded — surface the refusal to user code instead of
+    /// silently overcommitting kernel resources.
+    pub fn try_spawn<T: SchedTask + 'static>(&self, task: T) -> Option<Gid> {
+        let max = self.inner.max_live.load(Ordering::Relaxed);
+        let prev = self.inner.live_goroutines.fetch_add(1, Ordering::AcqRel);
+        if prev >= max {
+            self.inner.live_goroutines.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
         let raw = self.inner.next_gid.fetch_add(1, Ordering::Relaxed);
         let gid = Gid(u32::try_from(raw & 0xFFFF_FFFF).unwrap_or(u32::MAX));
-        // Publish into the SIGQUIT introspection table.
         gossamer_runtime::sigquit::register(gid.as_u32(), std::any::type_name::<T>());
         self.inner.injector.push(Box::new(task));
         self.inner.stats.spawned.fetch_add(1, Ordering::Relaxed);
-        // Wake one parked worker so the new task is picked up promptly.
         self.wake_any();
-        gid
+        Some(gid)
+    }
+
+    /// Backwards-compatible wrapper: refusal panics. Callers that
+    /// need graceful refusal should use `try_spawn`.
+    pub fn spawn<T: SchedTask + 'static>(&self, task: T) -> Gid {
+        self.try_spawn(task)
+            .expect("MultiScheduler::spawn refused: live-goroutine cap reached")
+    }
+
+    /// Sets the maximum live-goroutine count. Returns the previous
+    /// value. A value of zero disables the cap (interpreted as
+    /// `usize::MAX`).
+    #[must_use]
+    pub fn set_max_goroutines(&self, n: usize) -> usize {
+        let new = if n == 0 { usize::MAX } else { n };
+        self.inner.max_live.swap(new, Ordering::AcqRel)
+    }
+
+    /// Current live-goroutine count.
+    #[must_use]
+    pub fn live_goroutines(&self) -> usize {
+        self.inner.live_goroutines.load(Ordering::Relaxed)
     }
 
     /// Resizes the worker pool to `n`. Honoured asynchronously: extra
@@ -395,6 +450,7 @@ impl MultiScheduler {
             cv: Condvar::new(),
             cv_mu: Mutex::new(()),
             retired: AtomicBool::new(false),
+            thread_handle: AtomicU64::new(0),
         });
         {
             let mut workers = self.inner.workers.lock();
@@ -412,6 +468,7 @@ impl MultiScheduler {
                         cv: Condvar::new(),
                         cv_mu: Mutex::new(()),
                         retired: AtomicBool::new(true),
+                        thread_handle: AtomicU64::new(0),
                     });
                     workers.push(placeholder);
                 }
@@ -437,21 +494,33 @@ impl MultiScheduler {
     }
 
     fn wait_until_idle(&self) {
+        let mut g = self.inner.idle_mu.lock();
         loop {
-            let injector_empty = self.inner.injector.is_empty();
-            let parked_empty = self.inner.parked.lock().is_empty();
-            let workers = self.inner.workers.lock();
-            let all_parked = !workers.is_empty()
-                && workers
-                    .iter()
-                    .all(|s| s.parked.load(Ordering::Acquire) || s.retired.load(Ordering::Acquire));
-            let no_local_work = workers.iter().all(|s| s.stealer.is_empty());
-            drop(workers);
-            if injector_empty && parked_empty && all_parked && no_local_work {
+            if self.is_idle_snapshot() {
                 return;
             }
-            thread::sleep(Duration::from_micros(200));
+            // Bounded wait so a missed wake-up never strands the
+            // orchestrator. The bound is loose (200 ms) because
+            // workers actively notify on every transition that
+            // could make us idle — the timeout is only a safety
+            // net for races during scheduler resize / shutdown.
+            self.inner
+                .idle_cv
+                .wait_for(&mut g, Duration::from_millis(200));
         }
+    }
+
+    fn is_idle_snapshot(&self) -> bool {
+        let injector_empty = self.inner.injector.is_empty();
+        let parked_empty = self.inner.parked.lock().is_empty();
+        let workers = self.inner.workers.lock();
+        let all_parked = !workers.is_empty()
+            && workers
+                .iter()
+                .all(|s| s.parked.load(Ordering::Acquire) || s.retired.load(Ordering::Acquire));
+        let no_local_work = workers.iter().all(|s| s.stealer.is_empty());
+        drop(workers);
+        injector_empty && parked_empty && all_parked && no_local_work
     }
 }
 
@@ -459,6 +528,13 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
     // Round-robin steal cursor — biases away from always poking the
     // same peer first, which would imbalance work.
     let mut steal_cursor = index.wrapping_add(1);
+    // Publish this thread's pthread_t so the watchdog can pthread_kill
+    // a stuck worker (Defense #2). Released so the watchdog observes
+    // the value before it tries to use it.
+    slot.thread_handle.store(
+        gossamer_runtime::preempt::current_thread_handle(),
+        Ordering::Release,
+    );
     {
         let mut last = shared.last_yield.lock();
         while last.len() <= index {
@@ -474,9 +550,18 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
         let Some(mut task) = task else {
             if shared.stopping.load(Ordering::Acquire) {
                 shared.live_workers.fetch_sub(1, Ordering::AcqRel);
+                // The exiting worker may have been the last one
+                // holding wait_until_idle awake. Notify in case
+                // shutdown is in progress.
+                let _g = shared.idle_mu.lock();
+                shared.idle_cv.notify_all();
                 return;
             }
-            park_worker(&slot);
+            // About to park: tell wait_until_idle to re-snapshot.
+            // The Condvar is signalled inside park_worker after the
+            // parked flag is set so the snapshot sees a consistent
+            // view.
+            park_worker(&slot, &shared);
             continue;
         };
         let step = task.step();
@@ -491,6 +576,7 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
             }
             Step::Done => {
                 shared.stats.finished.fetch_add(1, Ordering::Relaxed);
+                shared.live_goroutines.fetch_sub(1, Ordering::AcqRel);
                 if let Some(slot) = shared.last_yield.lock().get_mut(index) {
                     *slot = Instant::now();
                 }
@@ -499,14 +585,35 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
     }
 }
 
+/// Default `MultiScheduler::max_live` — 1M live goroutines, or
+/// `GOSSAMER_MAX_PROCS` if set. Surfaces a `for _ in 0.. { go work() }`
+/// runaway as a refused spawn rather than a kernel-thread OOM.
+fn default_max_live() -> usize {
+    if let Ok(s) = std::env::var("GOSSAMER_MAX_PROCS") {
+        if let Ok(n) = s.parse::<usize>() {
+            if n > 0 {
+                return n;
+            }
+        }
+    }
+    1_000_000
+}
+
 /// Watchdog loop: every ~5 ms, checks per-worker `last_yield`
 /// timestamps and bumps the global preempt phase for any worker
 /// that has been running without yielding for more than 10 ms.
 /// Compiled / interpreter code is expected to call into
 /// [`gossamer_runtime::preempt::should_yield`] at safepoints and
 /// honour the request.
+///
+/// Defense #2: when a worker has been running for more than
+/// `kill_threshold`, the watchdog also sends SIGURG to that worker's
+/// OS thread. The cooperative bump alone is silent if the worker is
+/// inside a tight C-side loop or a blocking syscall; the kernel
+/// signal interrupts both.
 fn watchdog_loop(shared: Arc<Shared>) {
     let preempt_threshold = Duration::from_millis(10);
+    let kill_threshold = Duration::from_millis(100);
     loop {
         if shared.stopping.load(Ordering::Acquire) {
             // One last bump so any spinning thread observes the
@@ -518,15 +625,28 @@ fn watchdog_loop(shared: Arc<Shared>) {
         let now = Instant::now();
         let timestamps = shared.last_yield.lock().clone();
         let mut needs_preempt = false;
-        for ts in timestamps {
-            if now.saturating_duration_since(ts) > preempt_threshold {
+        let mut kill_indices: Vec<usize> = Vec::new();
+        for (i, ts) in timestamps.iter().enumerate() {
+            let elapsed = now.saturating_duration_since(*ts);
+            if elapsed > preempt_threshold {
                 needs_preempt = true;
-                break;
+            }
+            if elapsed > kill_threshold {
+                kill_indices.push(i);
             }
         }
         if needs_preempt || shared.request_safepoint.load(Ordering::Acquire) {
             gossamer_runtime::preempt::request_yield_all();
             gossamer_runtime::preempt::bump_pressure();
+        }
+        if !kill_indices.is_empty() {
+            let workers = shared.workers.lock();
+            for i in kill_indices {
+                if let Some(slot) = workers.get(i) {
+                    let handle = slot.thread_handle.load(Ordering::Acquire);
+                    let _ = gossamer_runtime::preempt::signal_thread_sigurg(handle);
+                }
+            }
         }
     }
 }
@@ -577,8 +697,14 @@ fn next_task(
     None
 }
 
-fn park_worker(slot: &Arc<WorkerSlot>) {
+fn park_worker(slot: &Arc<WorkerSlot>, shared: &Arc<Shared>) {
     slot.parked.store(true, Ordering::Release);
+    // Wake any orchestrator waiting in `wait_until_idle`: now that
+    // this worker is parked, the snapshot may show all-idle.
+    {
+        let _g = shared.idle_mu.lock();
+        shared.idle_cv.notify_all();
+    }
     let mut g = slot.cv_mu.lock();
     // Brief timeout so a missed wake doesn't strand the worker forever.
     let _ = slot.cv.wait_for(&mut g, Duration::from_millis(50));

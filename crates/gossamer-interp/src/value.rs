@@ -17,7 +17,7 @@
 
 use std::collections::VecDeque;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 
@@ -160,8 +160,10 @@ impl MapKey {
 /// the variant.
 #[derive(Debug, Clone)]
 pub struct FloatArrayInner {
-    /// Element-struct name (e.g. `"Body"`).
-    pub name: String,
+    /// Element-struct name (e.g. `"Body"`). Interned via
+    /// [`intern_type_name`] so identical names share a single
+    /// `&'static` allocation (~24 B + heap save per aggregate).
+    pub name: &'static str,
     /// Number of `f64` fields per element.
     pub stride: u16,
     /// Field names in declaration order.
@@ -173,8 +175,8 @@ pub struct FloatArrayInner {
 /// Boxed payload of [`Value::Variant`].
 #[derive(Debug, Clone)]
 pub struct VariantInner {
-    /// Variant name.
-    pub name: String,
+    /// Variant name (interned, see [`intern_type_name`]).
+    pub name: &'static str,
     /// Positional fields.
     pub fields: Arc<Vec<Value>>,
 }
@@ -182,8 +184,8 @@ pub struct VariantInner {
 /// Boxed payload of [`Value::Struct`].
 #[derive(Debug, Clone)]
 pub struct StructInner {
-    /// Struct name.
-    pub name: String,
+    /// Struct name (interned, see [`intern_type_name`]).
+    pub name: &'static str,
     /// Field name/value pairs in declaration order.
     pub fields: Arc<Vec<(Ident, Value)>>,
 }
@@ -487,29 +489,89 @@ impl From<Arc<String>> for SmolStr {
 unsafe impl Send for SmolStr {}
 unsafe impl Sync for SmolStr {}
 
+/// Returns a `&'static str` identity for `name`, allocating once
+/// per distinct byte sequence. Used by [`Value::variant`],
+/// [`Value::struct_`], and [`Value::float_array`] to deduplicate
+/// type names across all values that share them — programs
+/// typically have a fixed, small set of named types.
+///
+/// The leak is bounded by that set, not by call count.
+#[must_use]
+pub(crate) fn intern_type_name(name: &str) -> &'static str {
+    static INTERNED: OnceLock<parking_lot::Mutex<rustc_hash::FxHashMap<String, &'static str>>> =
+        OnceLock::new();
+    let map = INTERNED.get_or_init(|| parking_lot::Mutex::new(rustc_hash::FxHashMap::default()));
+    let mut guard = map.lock();
+    if let Some(s) = guard.get(name) {
+        return s;
+    }
+    let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+    guard.insert(name.to_string(), leaked);
+    leaked
+}
+
+/// Shared empty `Arc<Vec<Value>>` sentinel returned by every
+/// constructor that would otherwise allocate a fresh empty `Vec`
+/// plus Arc header (~32 B per call). All empty-payload variants
+/// and arrays share this single allocation.
+#[must_use]
+pub(crate) fn empty_value_arc() -> Arc<Vec<Value>> {
+    static EMPTY: OnceLock<Arc<Vec<Value>>> = OnceLock::new();
+    Arc::clone(EMPTY.get_or_init(|| Arc::new(Vec::new())))
+}
+
+/// Shared empty `Arc<Vec<(Ident, Value)>>` sentinel for
+/// field-less struct constructors.
+#[must_use]
+pub(crate) fn empty_struct_fields() -> Arc<Vec<(Ident, Value)>> {
+    static EMPTY: OnceLock<Arc<Vec<(Ident, Value)>>> = OnceLock::new();
+    Arc::clone(EMPTY.get_or_init(|| Arc::new(Vec::new())))
+}
+
 impl Value {
+    /// Empty `Value::Array(Arc::new(Vec::new()))` shared across
+    /// callers. Avoids the per-call 32 B allocation for empty
+    /// results.
+    #[must_use]
+    pub fn empty_array() -> Self {
+        Self::Array(empty_value_arc())
+    }
+
+    /// Empty `Value::Tuple(Arc::new(Vec::new()))` shared across
+    /// callers.
+    #[must_use]
+    pub fn empty_tuple() -> Self {
+        Self::Tuple(empty_value_arc())
+    }
+
     /// Constructs a [`Value::Variant`] from owned name + shared
     /// field list. Hides the `Arc::new(VariantInner { … })`
     /// boilerplate at every constructor site.
     #[must_use]
-    pub fn variant(name: String, fields: Arc<Vec<Value>>) -> Self {
-        Self::Variant(Arc::new(VariantInner { name, fields }))
+    pub fn variant(name: impl AsRef<str>, fields: Arc<Vec<Value>>) -> Self {
+        Self::Variant(Arc::new(VariantInner {
+            name: intern_type_name(name.as_ref()),
+            fields,
+        }))
     }
     /// Constructs a [`Value::Struct`].
     #[must_use]
-    pub fn struct_(name: String, fields: Arc<Vec<(Ident, Value)>>) -> Self {
-        Self::Struct(Arc::new(StructInner { name, fields }))
+    pub fn struct_(name: impl AsRef<str>, fields: Arc<Vec<(Ident, Value)>>) -> Self {
+        Self::Struct(Arc::new(StructInner {
+            name: intern_type_name(name.as_ref()),
+            fields,
+        }))
     }
     /// Constructs a [`Value::FloatArray`].
     #[must_use]
     pub fn float_array(
-        name: String,
+        name: impl AsRef<str>,
         stride: u16,
         field_names: Arc<Vec<String>>,
         data: Arc<Vec<f64>>,
     ) -> Self {
         Self::FloatArray(Arc::new(FloatArrayInner {
-            name,
+            name: intern_type_name(name.as_ref()),
             stride,
             field_names,
             data,
@@ -534,9 +596,18 @@ impl Value {
 /// buffer is empty. `Value::Channel` is `Send + Sync` so it can
 /// travel across goroutine boundaries once the scheduler backing
 /// `go expr` ships.
+///
+/// A Condvar lets receivers (and `select`) park instead of polling
+/// when the channel is empty — a `send` notifies all waiters so they
+/// can re-check.
 #[derive(Clone)]
 pub struct Channel {
-    inner: Arc<Mutex<VecDeque<Value>>>,
+    inner: Arc<ChannelInner>,
+}
+
+struct ChannelInner {
+    buf: Mutex<VecDeque<Value>>,
+    cv: parking_lot::Condvar,
 }
 
 impl Channel {
@@ -544,28 +615,46 @@ impl Channel {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(VecDeque::new())),
+            inner: Arc::new(ChannelInner {
+                buf: Mutex::new(VecDeque::new()),
+                cv: parking_lot::Condvar::new(),
+            }),
         }
     }
 
-    /// Pushes `value` onto the channel.
+    /// Pushes `value` onto the channel and notifies any parked
+    /// receiver so it can re-check.
     pub fn send(&self, value: Value) {
-        self.inner.lock().push_back(value);
+        let mut guard = self.inner.buf.lock();
+        guard.push_back(value);
+        self.inner.cv.notify_all();
     }
 
     /// Non-blocking receive. Returns `None` when the channel is
-    /// empty; once a blocking runtime exists it will park the caller
-    /// instead.
+    /// empty.
     #[must_use]
     pub fn try_recv(&self) -> Option<Value> {
-        self.inner.lock().pop_front()
+        self.inner.buf.lock().pop_front()
     }
 
     /// Returns `true` when the channel currently has at least one
     /// pending value. Used by `select` to pick a ready arm.
     #[must_use]
     pub fn is_ready(&self) -> bool {
-        !self.inner.lock().is_empty()
+        !self.inner.buf.lock().is_empty()
+    }
+
+    /// Parks the caller on the channel's Condvar until either a
+    /// value arrives or `timeout` elapses. Returns `true` if the
+    /// channel became non-empty during the wait.
+    #[must_use]
+    pub fn wait_for(&self, timeout: std::time::Duration) -> bool {
+        let mut guard = self.inner.buf.lock();
+        if !guard.is_empty() {
+            return true;
+        }
+        let _ = self.inner.cv.wait_for(&mut guard, timeout);
+        !guard.is_empty()
     }
 }
 
@@ -577,7 +666,7 @@ impl Default for Channel {
 
 impl fmt::Debug for Channel {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(out, "<channel len={}>", self.inner.lock().len())
+        write!(out, "<channel len={}>", self.inner.buf.lock().len())
     }
 }
 
@@ -638,7 +727,7 @@ impl Value {
                     Value::Float(inner.data[base + j]),
                 ));
             }
-            out.push(Value::struct_(inner.name.clone(), Arc::new(fields)));
+            out.push(Value::struct_(inner.name, Arc::new(fields)));
         }
         Value::Array(Arc::new(out))
     }
@@ -720,14 +809,14 @@ impl Value {
             }
             Self::Variant(inner) => {
                 let id = register_heap(RegistryEntry::Variant {
-                    name: inner.name.clone(),
+                    name: inner.name,
                     fields: Arc::clone(&inner.fields),
                 });
                 from_heap_handle(id)
             }
             Self::Struct(inner) => {
                 let id = register_heap(RegistryEntry::Struct {
-                    name: inner.name.clone(),
+                    name: inner.name,
                     fields: Arc::clone(&inner.fields),
                 });
                 from_heap_handle(id)
@@ -814,8 +903,8 @@ impl fmt::Display for Value {
                 let elems: Vec<Value> = data.iter().copied().map(Value::Float).collect();
                 write_array(out, &elems)
             }
-            Self::Variant(inner) => write_variant(out, &inner.name, &inner.fields),
-            Self::Struct(inner) => write_struct(out, &inner.name, &inner.fields),
+            Self::Variant(inner) => write_variant(out, inner.name, &inner.fields),
+            Self::Struct(inner) => write_struct(out, inner.name, &inner.fields),
             Self::Closure(_) => out.write_str("<closure>"),
             Self::Builtin(inner) => write!(out, "<builtin {}>", inner.name),
             Self::Native(inner) => write!(out, "<native {}>", inner.name),
@@ -1005,15 +1094,15 @@ enum RegistryEntry {
     Array(Arc<Vec<Value>>),
     /// Enum variant or tuple-struct constructor payload.
     Variant {
-        /// Variant name.
-        name: String,
+        /// Variant name (interned).
+        name: &'static str,
         /// Positional fields.
         fields: Arc<Vec<Value>>,
     },
     /// Struct-shaped aggregate.
     Struct {
-        /// Struct name.
-        name: String,
+        /// Struct name (interned).
+        name: &'static str,
         /// Field name/value pairs in declaration order.
         fields: Arc<Vec<(Ident, Value)>>,
     },
@@ -1055,16 +1144,21 @@ mod size_assertions {
     use super::Value;
 
     #[test]
-    fn value_size_under_24_bytes() {
+    fn value_size_at_most_16_bytes() {
         // Assertion lock-down for the `Value` enum size. Each
-        // non-trivial variant should keep its body behind an
-        // `Arc<...>` (1 word). Adding a wider payload (e.g.
-        // raw `Vec<...>`, raw `String`) will fail this test.
-        // Today's expected size: 16 on 64-bit (8 disc + 8
-        // payload), but we accept up to 24 to allow for
-        // alignment quirks.
+        // non-trivial variant must keep its body behind a
+        // single pointer / 8-byte payload (e.g. `Arc<...>`,
+        // `SmolStr`). Adding a wider payload (raw `Vec<...>`,
+        // raw `String`) will fail this test.
+        //
+        // The natural fit on 64-bit is 16 bytes (8 disc + 8
+        // payload). A future D9 NaN-box pass can collapse this
+        // further to 8 by encoding the tag inside the payload —
+        // see `gossamer_runtime::GossamerValue` for the layout
+        // the LLVM lowerer already speaks. Until then this
+        // assertion is the regression guard.
         let n = std::mem::size_of::<Value>();
-        assert!(n <= 24, "Value grew to {n} bytes (target ≤24)");
+        assert!(n <= 16, "Value grew to {n} bytes (target ≤16)");
     }
 
     #[test]

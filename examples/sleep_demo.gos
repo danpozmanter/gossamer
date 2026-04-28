@@ -1,0 +1,34 @@
+/*
+ * Time and sleep — `std::time` essentials.
+ *
+ * `time::sleep(duration)` parks the current goroutine for at
+ * least the requested span. `time::Duration::from_millis(n)`
+ * builds the duration value at the call site.
+ *
+ * The example sleeps in three phases and prints a marker each
+ * time so a reader can see the cooperative scheduler honouring
+ * the request.
+ */
+
+use std::time
+
+fn main() {
+    println("phase 1 — work")
+    let mut total: i64 = 0
+    let mut i: i64 = 0
+    while i < 100_000 {
+        total = total + i
+        i = i + 1
+    }
+    println!("  ran tight loop, sum = {}", total)
+
+    println("phase 2 — short sleep (10 ms)")
+    time::sleep(time::Duration::from_millis(10))
+    println("  back from sleep")
+
+    println("phase 3 — longer sleep (50 ms)")
+    time::sleep(time::Duration::from_millis(50))
+    println("  back from sleep")
+
+    println("done")
+}

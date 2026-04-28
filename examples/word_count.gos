@@ -1,0 +1,52 @@
+/*
+ * Word counting — split a sentence on ASCII whitespace and
+ * tally tokens.
+ *
+ * Walks the input by byte index and emits each non-whitespace
+ * run as one token. Returns the token count plus the total
+ * character count. Each helper is pure; the caller binds with
+ * `let`.
+ */
+
+fn is_space(b: i64) -> bool {
+    b == 32 || b == 9 || b == 10 || b == 13
+}
+
+struct Stats {
+    chars: i64,
+    words: i64,
+}
+
+fn analyse(text: &String) -> Stats {
+    let bytes = text.as_bytes()
+    let mut chars: i64 = 0
+    let mut words: i64 = 0
+    let mut in_token = false
+    let mut i = 0
+    while i < bytes.len() {
+        let b = bytes[i] as i64
+        chars = chars + 1
+        if is_space(b) {
+            in_token = false
+        } else if !in_token {
+            words = words + 1
+            in_token = true
+        }
+        i = i + 1
+    }
+    Stats { chars: chars, words: words }
+}
+
+fn main() {
+    let inputs = [
+        "hello world",
+        "the quick brown fox jumps over the lazy dog",
+        "   leading and trailing   ",
+        "one\ttwo\nthree four",
+        "",
+    ]
+    for s in inputs.iter() {
+        let stats = analyse(&s.to_string())
+        println!("chars={}, words={}: {}", stats.chars, stats.words, *s)
+    }
+}

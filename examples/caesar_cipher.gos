@@ -1,0 +1,66 @@
+/*
+ * Caesar cipher — over an integer code-point array.
+ *
+ * The shift function is pure: each call returns a fresh `[i64]`,
+ * the caller binds with `let`. The example also verifies that
+ * encrypting then decrypting with the inverse key reproduces
+ * the input — the program prints `ok` when the round-trip
+ * holds and `mismatch` otherwise.
+ *
+ * Teaching cipher only — for production confidentiality reach
+ * for `std::crypto::aead`.
+ */
+
+fn shift_byte(b: i64, key: i64) -> i64 {
+    if b >= 65 && b <= 90 {
+        65 + (b - 65 + key + 26 * 26) % 26
+    } else if b >= 97 && b <= 122 {
+        97 + (b - 97 + key + 26 * 26) % 26
+    } else {
+        b
+    }
+}
+
+fn shift_codes(codes: &[i64], key: i64) -> [i64] {
+    let mut out: [i64] = []
+    let mut i = 0
+    while i < codes.len() {
+        out.push(shift_byte(codes[i], key))
+        i = i + 1
+    }
+    out
+}
+
+fn equal(a: &[i64], b: &[i64]) -> bool {
+    if a.len() != b.len() {
+        return false
+    }
+    let mut i = 0
+    while i < a.len() {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    true
+}
+
+fn main() {
+    // "Hello, world!" as ASCII codes.
+    let plain: [i64] = [72, 101, 108, 108, 111, 44, 32,
+                        119, 111, 114, 108, 100, 33]
+    let key: i64 = 7
+
+    let encrypted = shift_codes(&plain, key)
+    let decrypted = shift_codes(&encrypted, -key)
+
+    println!("plain     length = {}", plain.len())
+    println!("plain[0..5] codes = {} {} {} {} {}",
+        plain[0], plain[1], plain[2], plain[3], plain[4])
+    println!("encrypted[0..5]   = {} {} {} {} {}",
+        encrypted[0], encrypted[1], encrypted[2], encrypted[3], encrypted[4])
+
+    if equal(&plain, &decrypted) {
+        println("round-trip: ok")
+    } else {
+        println("round-trip: mismatch")
+    }
+}

@@ -28,13 +28,16 @@ fn as_str(value: &Value) -> Option<&str> {
 // `get_xkcd.gos` already handles gracefully.
 
 pub(crate) fn builtin_http_client_new(_args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::struct_("Client".to_string(), Arc::new(Vec::new())))
+    Ok(Value::struct_(
+        "Client",
+        crate::value::empty_struct_fields(),
+    ))
 }
 
 pub(crate) fn builtin_http_client_get(args: &[Value]) -> RuntimeResult<Value> {
     let url = args.get(1).and_then(as_str).unwrap_or("");
     Ok(Value::struct_(
-        "Request".to_string(),
+        "Request",
         Arc::new(vec![(
             Ident::new("url"),
             Value::String(SmolStr::from(url.to_string())),
@@ -162,7 +165,7 @@ fn http_get_tls(url: &str) -> Result<Value, String> {
             Value::String(SmolStr::from(String::new())),
         ),
     ];
-    Ok(Value::struct_("Response".to_string(), Arc::new(fields)))
+    Ok(Value::struct_("Response", Arc::new(fields)))
 }
 
 fn http_get_plain(url: &str) -> Result<Value, String> {
@@ -220,7 +223,7 @@ fn http_get_plain(url: &str) -> Result<Value, String> {
         ),
         (Ident::new("location"), Value::String(location.into())),
     ];
-    Ok(Value::struct_("Response".to_string(), Arc::new(fields)))
+    Ok(Value::struct_("Response", Arc::new(fields)))
 }
 
 pub(crate) fn parse_http_url(url: &str) -> Option<(String, String)> {
