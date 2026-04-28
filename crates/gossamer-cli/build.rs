@@ -47,9 +47,12 @@ fn main() {
     // Force-build the runtime crate so the staticlib gets emitted.
     // Use a separate target dir to avoid a deadlock against the
     // outer cargo invocation that owns `target/`'s build lock.
-    if !lib_path.exists() {
-        build_runtime_into(&workspace_root, &target_dir, &profile);
-    }
+    // The `rerun-if-changed` directives above only fire build.rs
+    // when the runtime sources change; we always re-invoke the
+    // inner cargo so it picks up source edits and refreshes the
+    // staticlib in-place. Cargo's own incremental layer keeps the
+    // re-run cheap when nothing has changed.
+    build_runtime_into(&workspace_root, &target_dir, &profile);
 
     println!(
         "cargo:rustc-env=GOSSAMER_RUNTIME_LIB_PATH={}",

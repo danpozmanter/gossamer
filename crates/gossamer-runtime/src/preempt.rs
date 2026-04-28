@@ -213,9 +213,23 @@ pub fn drop_pressure() {
 mod tests {
     use super::*;
 
+    // The phase + pressure counters this module exposes are
+    // process-global. `cargo test` runs the unit tests in parallel
+    // by default, so two preempt tests racing on `GLOBAL_PHASE` /
+    // `PENDING_PRESSURE` would flake the second-`should_yield`
+    // assertion below (a concurrent `request_yield_all` lifts the
+    // global past the local phase again). Serialise every test
+    // that touches the shared counters through this mutex.
+    static TEST_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     #[test]
     fn yield_request_sticks_until_polled() {
-        // Reset baseline.
+        let _guard = TEST_LOCK.lock();
+        // Drain any phase bumps left over from a prior test run in
+        // this process so the local phase starts in sync with the
+        // global. After the drain, `should_yield` is guaranteed
+        // false until we ask it not to be.
+        while should_yield() {}
         let baseline = current_phase();
         request_yield_all();
         assert!(current_phase() > baseline);
@@ -227,6 +241,7 @@ mod tests {
 
     #[test]
     fn yield_self_flips_local_flag() {
+        let _guard = TEST_LOCK.lock();
         let _ = should_yield();
         request_yield_self();
         assert!(should_yield());
@@ -235,6 +250,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn signal_thread_sigurg_round_trips() {
+        let _guard = TEST_LOCK.lock();
         // Initialise the SIGURG dispatcher first so the kernel does
         // not raise the default action (which is to ignore SIGURG;
         // either way is fine, but the dispatcher path is what we
@@ -254,11 +270,14 @@ mod tests {
 
     #[test]
     fn signal_thread_sigurg_null_handle_is_noop() {
+        // No global state mutated; runs in parallel with the
+        // serialised tests safely.
         assert!(!signal_thread_sigurg(0));
     }
 
     #[test]
     fn pressure_counter_round_trips() {
+        let _guard = TEST_LOCK.lock();
         let baseline = pending_yield_pressure();
         bump_pressure();
         bump_pressure();

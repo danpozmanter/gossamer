@@ -75,13 +75,18 @@ runs them through the tree-walker.
 ## Documentation
 
 ```gossamer
-/// Pixel width of `text` at this font's current size,
-/// including kerning.
+// Pixel width of `text` at this font's current size,
+// including kerning.
 pub fn measure_text(&self, text: &str) -> u32 { ... }
 ```
 
-`gos doc src/lib.gos` prints every item + its `///`
-summary. HTML output lands with Stream H polish.
+Gossamer uses one comment form: `//` for line comments and
+`/* ... */` for block comments. There is no separate `///` /
+`//!` doc-comment syntax — a run of `//` lines directly above
+an item (no blank line between) is its documentation, and a
+run at the top of a file is the module's. `gos doc
+src/lib.gos` prints every item plus that summary block. HTML
+output lands with Stream H polish.
 
 ## Publishing
 

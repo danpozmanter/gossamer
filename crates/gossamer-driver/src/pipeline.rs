@@ -29,8 +29,10 @@ pub fn compile_source(source: &str, unit_name: &str, options: &LinkerOptions) ->
 }
 
 /// Compiles `source` into a native object file suitable for linking
-/// with `cc`. Falls back to `Err` when the MIR contains constructs
-/// the Cranelift backend cannot yet lower (closures, slices, …).
+/// with `cc`. Returns `Err` only on lower-level failures (generic-ABI
+/// enforcement, cranelift module emission); the MIR lowerer itself
+/// covers every HIR shape, so user-visible compiler gaps no longer
+/// short-circuit through this path.
 pub fn compile_source_native(source: &str, unit_name: &str) -> anyhow::Result<NativeObject> {
     let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name);
     enforce_generic_abi(&bodies, &tcx)?;

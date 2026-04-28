@@ -10,6 +10,18 @@ See the full grammar in
 [`grammar/`](https://github.com/danpozmanter/gossamer/tree/main/grammar)
 once it is committed.
 
+## Comments
+
+Two forms, no others:
+
+- `// ...` — line comment to end of line.
+- `/* ... */` — block comment. Does **not** nest.
+
+There is no separate `///` or `//!` doc-comment syntax. A run
+of `//` lines immediately above an item (no blank line
+between) is its documentation; a run at the top of a file is
+the module's. Tooling reads these by position.
+
 ## Items
 
 ```gossamer

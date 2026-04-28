@@ -164,9 +164,12 @@ fn main() {
 
 ## 5. Grammar essentials
 
-- **Comments**: `//` single-line and `/* ... */` block
-  (block comments nest). `///` on `pub` items is a doc
-  comment that `gos doc` renders and `gos test` runs.
+- **Comments**: `//` single-line and `/* ... */` block are
+  the only two forms — block comments do **not** nest, and
+  there is no separate `///` / `//!` doc-comment syntax. A
+  run of `//` lines immediately above an item (no blank line
+  between) is its documentation; `gos doc` renders these and
+  `gos test` runs fenced code inside them.
 - **Semicolons** are optional at statement boundaries; one
   statement per line.
 - **Expressions-as-statements.** `if`, `match`, `loop`, and
@@ -386,8 +389,9 @@ mod tests {
 }
 ```
 
-Doc-tests: fenced code inside `///` doc comments is compiled
-and executed by `gos test`. Mark non-runnable fences as
+Doc-tests: fenced code inside a `//` doc-comment block (a
+run of `//` lines directly above an item) is compiled and
+executed by `gos test`. Mark non-runnable fences as
 ` ```text `.
 
 ## 12. Standard library surface
@@ -512,8 +516,9 @@ fn main() -> Result<(), http::Error> {
   drop it.
 - **No emojis.** Source, comments, commits, docs — all plain.
 - **No TODO / FIXME** committed; open an issue.
-- **Doc every `pub` item** with a single-line `///`; don't
-  narrate self-evident code.
+- **Doc every `pub` item** with a single-line `//` directly
+  above it (no blank line between); don't narrate
+  self-evident code. Gossamer has no `///` / `//!` form.
 - **Pipe aggressively** — if a value flows through more
   than one call, use `|>`.
 - **One statement per line;** omit semicolons.

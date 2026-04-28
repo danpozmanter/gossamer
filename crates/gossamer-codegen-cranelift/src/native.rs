@@ -989,82 +989,6 @@ fn define_var_to_with(
     builder.def_var(var, coerced);
 }
 
-/// Maps the `unsupported_*` placeholder tag emitted by the MIR
-/// lowerer to a human-readable explanation. Keep this table in
-/// sync with the `lower_unsupported_with_kind` call sites in
-/// `crates/gossamer-mir/src/lower.rs`.
-fn explain_unsupported(name: &str) -> String {
-    match name {
-        "unsupported_expr_range" => {
-            "range expressions (e.g. `0..n`) are not yet lowered to native code; \
-             use a `while` loop or pre-compute the iteration count."
-                .to_string()
-        }
-        "unsupported_expr_closure" => "this closure shape is not yet lowered to native code; \
-             try lifting the closure to a top-level `fn` or pass it \
-             through an `Fn(_)` parameter."
-            .to_string(),
-        "unsupported_expr_placeholder" => {
-            "the front-end emitted a placeholder expression — usually \
-             this means a syntactic construct slipped past resolve but \
-             never got lowered. File a bug with a minimal reproducer."
-                .to_string()
-        }
-        "unsupported_match_with_guards" => "`match` arms with `if` guards are not yet lowered to \
-             native code; rewrite the guard as a nested `if` inside \
-             the arm body."
-            .to_string(),
-        "unsupported_match_int_literal_unparseable" => {
-            "an integer pattern in this `match` could not be parsed \
-             at MIR-lowering time; check the literal."
-                .to_string()
-        }
-        "unsupported_match_multiple_wildcard_arms" => {
-            "this `match` has more than one wildcard / binding arm. \
-             Collapse them into a single trailing `_ =>` arm."
-                .to_string()
-        }
-        "unsupported_match_complex_pattern" => {
-            "this `match` uses a pattern shape (struct / tuple / range \
-             / or-pattern) that the native backend does not yet \
-             handle. Rewrite as nested `if let` or as integer / bool \
-             arms."
-                .to_string()
-        }
-        "unsupported_field_access_unknown_struct" => {
-            "field access on a value whose static type is not a known \
-             struct. Common cause: writing `value.foo` on a \
-             `json::Value`, on a generic / inferred `for`-loop \
-             variable, or on any opaque stdlib type. Use the type's \
-             methods (e.g. `json::Value` has no struct fields — \
-             render or query it via the `json` API) instead of \
-             named-field access."
-                .to_string()
-        }
-        "unsupported_field_access_unknown_field" => {
-            "the named field is not declared on the receiver's struct. \
-             Check the spelling and that the struct definition is in \
-             scope."
-                .to_string()
-        }
-        "unsupported_array_repeat_dynamic_count" => {
-            "`[value; count]` requires a constant-integer count; \
-             compute the array with a loop or use `Vec::with_capacity` \
-             instead."
-                .to_string()
-        }
-        "unsupported" => "the front-end could not lower this expression — this is a \
-             Gossamer compiler gap. File a bug with a minimal \
-             reproducer."
-            .to_string(),
-        other => format!(
-            "unrecognised lowering placeholder `{other}` — please file a \
-             bug; the cranelift backend's `explain_unsupported` table is \
-             out of sync with the MIR lowerer."
-        ),
-    }
-}
-
 fn lower_statement(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -1086,14 +1010,17 @@ fn lower_statement(
                 )? {
                     return Ok(());
                 }
-                // Unrecognised intrinsic. Surface a hard error
-                // with the placeholder tag so the gap in
-                // cranelift's intrinsic table is obvious. Soft
-                // fallbacks here would mask miscompiles.
-                let hint = explain_unsupported(name);
+                // Unrecognised intrinsic name in rvalue position.
+                // The MIR lowerer has been audited to never emit
+                // names without a matching cranelift dispatch, so
+                // hitting this path is a real gap in the runtime
+                // table — surface it loudly rather than silently
+                // miscompiling.
                 let fn_name = &body.name;
                 bail!(
-                    "native codegen: unrecognised intrinsic `{name}` in fn `{fn_name}`\n  {hint}"
+                    "native codegen: unrecognised intrinsic `{name}` in fn `{fn_name}`\n  \
+                     add a dispatch arm in `lower_intrinsic_call` (and a runtime \
+                     symbol in `gossamer-runtime/src/c_abi.rs`) for `{name}`"
                 );
             }
             // Destination hint: when the place has no projections, it's
@@ -4519,6 +4446,28 @@ fn lower_intrinsic_call(
             define_var_to(builder, locals, body, tcx, module, destination.local, unit);
             Ok(true)
         }
+        // HashMap iteration helpers — each returns a *mut GosVec
+        // snapshot of the requested column so the for-loop lowerer
+        // can iterate it through the regular gos_rt_vec_* helpers.
+        "gos_rt_map_keys_i64"
+        | "gos_rt_map_values_i64"
+        | "gos_rt_map_keys_str"
+        | "gos_rt_map_values_str" => {
+            let static_name: &'static str = match name {
+                "gos_rt_map_keys_i64" => "gos_rt_map_keys_i64",
+                "gos_rt_map_values_i64" => "gos_rt_map_values_i64",
+                "gos_rt_map_keys_str" => "gos_rt_map_keys_str",
+                "gos_rt_map_values_str" => "gos_rt_map_values_str",
+                _ => unreachable!(),
+            };
+            let rt_fn = intrinsics.extern_fn(module, static_name, &[ptr_ty], &[ptr_ty])?;
+            let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[m]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
         "gos_rt_map_inc_i64" => {
             let inc_fn = intrinsics.extern_fn(
                 module,
@@ -4587,6 +4536,169 @@ fn lower_intrinsic_call(
             let d64 = coerce_arg_to(builder, d_val, types::I64)?;
             let fref = module.declare_func_in_func(get_or_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k64, d64]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        // String-keyed `get_or` for `HashMap<String, i64>`. The key
+        // travels as a `*const c_char`, the default and the result
+        // are both i64.
+        "gos_rt_map_get_or_str_i64" => {
+            let get_or_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_get_or_str_i64",
+                &[ptr_ty, ptr_ty, types::I64],
+                &[types::I64],
+            )?;
+            let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let k_val = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let d_val = match args.get(2) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let d64 = coerce_arg_to(builder, d_val, types::I64)?;
+            let fref = module.declare_func_in_func(get_or_fn, builder.func);
+            let call = builder.ins().call(fref, &[m, k_val, d64]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        // String-keyed, string-valued `get_or`. Default and result
+        // travel as `*const c_char`.
+        "gos_rt_map_get_or_str_str" => {
+            let get_or_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_get_or_str_str",
+                &[ptr_ty, ptr_ty, ptr_ty],
+                &[ptr_ty],
+            )?;
+            let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let k_val = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let d_val = match args.get(2) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let fref = module.declare_func_in_func(get_or_fn, builder.func);
+            let call = builder.ins().call(fref, &[m, k_val, d_val]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        // i64-keyed, string-valued `get_or` for `HashMap<i64, String>`.
+        "gos_rt_map_get_or_i64_str" => {
+            let get_or_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_get_or_i64_str",
+                &[ptr_ty, types::I64, ptr_ty],
+                &[ptr_ty],
+            )?;
+            let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let k_val = match args.get(1) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let d_val = match args.get(2) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let k64 = coerce_arg_to(builder, k_val, types::I64)?;
+            let fref = module.declare_func_in_func(get_or_fn, builder.func);
+            let call = builder.ins().call(fref, &[m, k64, d_val]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        // `m.insert(k: i64, v: String)` for `HashMap<i64, String>`.
+        "gos_rt_map_insert_i64_str" => {
+            let ins_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_insert_i64_str",
+                &[ptr_ty, types::I64, ptr_ty],
+                &[],
+            )?;
+            let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let k_val = match args.get(1) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let v_val = match args.get(2) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let k64 = coerce_arg_to(builder, k_val, types::I64)?;
+            let fref = module.declare_func_in_func(ins_fn, builder.func);
+            let _ = builder.ins().call(fref, &[m, k64, v_val]);
+            let unit = builder.ins().iconst(types::I64, 0);
+            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            Ok(true)
+        }
+        // `m.get(k: i64) -> String` for `HashMap<i64, String>`.
+        "gos_rt_map_get_i64_str" => {
+            let get_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_get_i64_str",
+                &[ptr_ty, types::I64],
+                &[ptr_ty],
+            )?;
+            let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let k_val = match args.get(1) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let k64 = coerce_arg_to(builder, k_val, types::I64)?;
+            let fref = module.declare_func_in_func(get_fn, builder.func);
+            let call = builder.ins().call(fref, &[m, k64]);
             let v = builder.inst_results(call)[0];
             define_var_to(builder, locals, body, tcx, module, destination.local, v);
             Ok(true)
@@ -6268,6 +6380,36 @@ fn lower_intrinsic_call(
             builder.ins().store(MemFlags::trusted(), v64, slot_addr, 0);
             let fref = module.declare_func_in_func(push_fn, builder.func);
             let _ = builder.ins().call(fref, &[vec_p, slot_addr]);
+            let unit = builder.ins().iconst(types::I64, 0);
+            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            Ok(true)
+        }
+        // Typed-i64 push used by the dynamic-count `[value; n]`
+        // lowering. The wrapper handles the stack-slot dance
+        // inside the runtime so the codegen doesn't have to.
+        "gos_rt_vec_push_i64" => {
+            let push_fn =
+                intrinsics.extern_fn(module, "gos_rt_vec_push_i64", &[ptr_ty, types::I64], &[])?;
+            let vec_p = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let value = match args.get(1) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let v64 = coerce_arg_to(builder, value, types::I64)?;
+            let fref = module.declare_func_in_func(push_fn, builder.func);
+            let _ = builder.ins().call(fref, &[vec_p, v64]);
             let unit = builder.ins().iconst(types::I64, 0);
             define_var_to(builder, locals, body, tcx, module, destination.local, unit);
             Ok(true)

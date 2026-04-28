@@ -642,6 +642,7 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare ptr @gos_rt_vec_with_capacity(i32, i64)",
     "declare i64 @gos_rt_vec_len(ptr)",
     "declare void @gos_rt_vec_push(ptr, ptr)",
+    "declare void @gos_rt_vec_push_i64(ptr, i64)",
     "declare ptr @gos_rt_vec_get_ptr(ptr, i64)",
     "declare i32 @gos_rt_vec_pop(ptr, ptr)",
     "declare ptr @gos_rt_vec_slice(ptr, i64, i64)",
@@ -801,6 +802,15 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare i8 @gos_rt_map_contains_key_str(ptr, ptr)",
     "declare i8 @gos_rt_map_remove_str(ptr, ptr)",
     "declare void @gos_rt_map_clear(ptr)",
+    "declare ptr @gos_rt_map_keys_i64(ptr)",
+    "declare ptr @gos_rt_map_values_i64(ptr)",
+    "declare ptr @gos_rt_map_keys_str(ptr)",
+    "declare ptr @gos_rt_map_values_str(ptr)",
+    "declare i64 @gos_rt_map_get_or_str_i64(ptr, ptr, i64)",
+    "declare ptr @gos_rt_map_get_or_str_str(ptr, ptr, ptr)",
+    "declare ptr @gos_rt_map_get_or_i64_str(ptr, i64, ptr)",
+    "declare void @gos_rt_map_insert_i64_str(ptr, i64, ptr)",
+    "declare ptr @gos_rt_map_get_i64_str(ptr, i64)",
     // Inline-able stdout buffer the LLVM lowerer reads
     // directly from the runtime to bypass per-byte FFI calls
     // in the fasta hot loop. Sizes match

@@ -29,7 +29,6 @@ fn word_count(line: String) -> i64 {
 
 fn main() {
     // Arithmetic chain: 3 -> double -> add 10 -> clamp to [0, 100].
-    // Reads left-to-right instead of inside-out.
     let n = 3 |> double |> add(10) |> clamp(0, 100)
     println!("arithmetic: {n}")
 

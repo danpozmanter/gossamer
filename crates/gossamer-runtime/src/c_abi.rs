@@ -976,6 +976,18 @@ pub unsafe extern "C" fn gos_rt_vec_len(v: *const GosVec) -> i64 {
     unsafe { (*v).len }
 }
 
+/// Typed-i64 wrapper around [`gos_rt_vec_push`]. Spills the value
+/// to a stack slot and forwards its address so the byte-erased
+/// push helper can `memcpy` it into the vec's storage. Used by the
+/// dynamic-count `[value; n]` lowering — passing an i64 directly
+/// to the byte-erased helper would otherwise need a per-call-site
+/// stack slot in cranelift.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_push_i64(v: *mut GosVec, value: i64) {
+    let bytes = value.to_ne_bytes();
+    unsafe { gos_rt_vec_push(v, bytes.as_ptr()) };
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
     if v.is_null() || elem.is_null() {
@@ -1325,6 +1337,7 @@ enum MapStorage {
     I64I64(FxHashMap<i64, i64>),
     StrI64(FxHashMap<Vec<u8>, i64>),
     StrStr(FxHashMap<Vec<u8>, Vec<u8>>),
+    I64Str(FxHashMap<i64, Vec<u8>>),
     Bytes(FxHashMap<Vec<u8>, Vec<u8>>),
 }
 
@@ -1425,6 +1438,83 @@ pub unsafe extern "C" fn gos_rt_map_get_or_i64(m: *const GosMap, key: i64, defau
     }
 }
 
+/// `get_or` for string-keyed, i64-valued maps. Mirrors
+/// `gos_rt_map_get_or_i64` but hashes the key via the same UTF-8
+/// byte slice the `_str_i64` insert path uses, so an `insert(k, v)`
+/// followed by `get_or(k, d)` round-trips.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_or_str_i64(
+    m: *const GosMap,
+    key: *const c_char,
+    default: i64,
+) -> i64 {
+    if m.is_null() || key.is_null() {
+        return default;
+    }
+    let map = unsafe { &*m };
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(default),
+        _ => default,
+    }
+}
+
+/// `get_or` for string-keyed, string-valued maps. Returns a fresh
+/// GC-allocated `*mut c_char` for the stored value, or a copy of
+/// `default`'s bytes when the key is absent.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_or_str_str(
+    m: *const GosMap,
+    key: *const c_char,
+    default: *const c_char,
+) -> *mut c_char {
+    let default_bytes: &[u8] = if default.is_null() {
+        b""
+    } else {
+        unsafe { CStr::from_ptr(default) }.to_bytes()
+    };
+    if m.is_null() || key.is_null() {
+        return alloc_cstring(default_bytes);
+    }
+    let map = unsafe { &*m };
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let storage = map.storage.lock();
+    let MapStorage::StrStr(inner) = &*storage else {
+        return alloc_cstring(default_bytes);
+    };
+    match inner.get(key_bytes) {
+        Some(v) => alloc_cstring(v),
+        None => alloc_cstring(default_bytes),
+    }
+}
+
+/// `get_or` for i64-keyed, string-valued maps.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_or_i64_str(
+    m: *const GosMap,
+    key: i64,
+    default: *const c_char,
+) -> *mut c_char {
+    let default_bytes: &[u8] = if default.is_null() {
+        b""
+    } else {
+        unsafe { CStr::from_ptr(default) }.to_bytes()
+    };
+    if m.is_null() {
+        return alloc_cstring(default_bytes);
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    let MapStorage::I64Str(inner) = &*storage else {
+        return alloc_cstring(default_bytes);
+    };
+    match inner.get(&key) {
+        Some(v) => alloc_cstring(v),
+        None => alloc_cstring(default_bytes),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_insert_i64_i64(m: *mut GosMap, key: i64, val: i64) {
     if m.is_null() {
@@ -1490,6 +1580,7 @@ pub unsafe extern "C" fn gos_rt_map_contains_key_i64(m: *const GosMap, key: i64)
     let storage = map.storage.lock();
     match &*storage {
         MapStorage::I64I64(inner) => inner.contains_key(&key),
+        MapStorage::I64Str(inner) => inner.contains_key(&key),
         _ => false,
     }
 }
@@ -1501,15 +1592,15 @@ pub unsafe extern "C" fn gos_rt_map_remove_i64(m: *mut GosMap, key: i64) -> bool
     }
     let map = unsafe { &mut *m };
     let mut storage = map.storage.lock();
-    let MapStorage::I64I64(inner) = &mut *storage else {
-        return false;
+    let removed = match &mut *storage {
+        MapStorage::I64I64(inner) => inner.remove(&key).is_some(),
+        MapStorage::I64Str(inner) => inner.remove(&key).is_some(),
+        _ => false,
     };
-    if inner.remove(&key).is_some() {
+    if removed {
         map.len_cache -= 1;
-        true
-    } else {
-        false
     }
+    removed
 }
 
 #[unsafe(no_mangle)]
@@ -1628,6 +1719,43 @@ pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_cha
     removed
 }
 
+/// `m.insert(k: i64, v: String)` — `HashMap<i64, String>` insert.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val: *const c_char) {
+    if m.is_null() || val.is_null() {
+        return;
+    }
+    let map = unsafe { &mut *m };
+    let val_bytes = unsafe { CStr::from_ptr(val) }.to_bytes().to_vec();
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::I64Str(FxHashMap::default());
+    }
+    let MapStorage::I64Str(inner) = &mut *storage else {
+        return;
+    };
+    if inner.insert(key, val_bytes).is_none() {
+        map.len_cache += 1;
+    }
+}
+
+/// `m.get(k: i64) -> String` — returns an empty string when absent.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_i64_str(m: *const GosMap, key: i64) -> *mut c_char {
+    if m.is_null() {
+        return empty_cstring();
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    let MapStorage::I64Str(inner) = &*storage else {
+        return empty_cstring();
+    };
+    match inner.get(&key) {
+        Some(v) => alloc_cstring(v),
+        None => empty_cstring(),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
     if m.is_null() {
@@ -1637,6 +1765,117 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
     let mut storage = map.storage.lock();
     *storage = MapStorage::Empty;
     map.len_cache = 0;
+}
+
+/// Snapshots the i64 keys of an i64-keyed `HashMap` into a fresh
+/// `GosVec<i64>` for the for-loop lowerer to drive with the
+/// regular `gos_rt_vec_*` helpers. Iteration order matches the
+/// underlying `FxHashMap`'s order — undefined-but-stable per
+/// process. Returns an empty vec for any other storage shape.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_keys_i64(m: *const GosMap) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if m.is_null() {
+        return out;
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    let push_key = |k: &i64| {
+        let bytes = k.to_ne_bytes();
+        unsafe { gos_rt_vec_push(out, bytes.as_ptr()) };
+    };
+    match &*storage {
+        MapStorage::I64I64(inner) => inner.keys().for_each(push_key),
+        MapStorage::I64Str(inner) => inner.keys().for_each(push_key),
+        _ => {}
+    }
+    out
+}
+
+/// Snapshots the i64 values of an i64-valued `HashMap` into a
+/// fresh `GosVec<i64>`. Pairs with `gos_rt_map_keys_i64` for
+/// `for v in m.values()` lowering. Empty vec for non-i64-valued
+/// storage shapes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_values_i64(m: *const GosMap) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if m.is_null() {
+        return out;
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::I64I64(inner) => {
+            for v in inner.values() {
+                let bytes = v.to_ne_bytes();
+                unsafe { gos_rt_vec_push(out, bytes.as_ptr()) };
+            }
+        }
+        MapStorage::StrI64(inner) => {
+            for v in inner.values() {
+                let bytes = v.to_ne_bytes();
+                unsafe { gos_rt_vec_push(out, bytes.as_ptr()) };
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Snapshots the string keys of a string-keyed `HashMap` into a
+/// fresh `GosVec<*mut c_char>`. Each key is freshly allocated in
+/// the GC arena so the slot value is the same `*mut c_char`
+/// representation Gossamer's `String` type uses elsewhere.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_keys_str(m: *const GosMap) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if m.is_null() {
+        return out;
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    let push_key = |k: &[u8]| {
+        let cstr = alloc_cstring(k);
+        let slot = (cstr as usize as i64).to_ne_bytes();
+        unsafe { gos_rt_vec_push(out, slot.as_ptr()) };
+    };
+    match &*storage {
+        MapStorage::StrI64(inner) => {
+            for k in inner.keys() {
+                push_key(k);
+            }
+        }
+        MapStorage::StrStr(inner) => {
+            for k in inner.keys() {
+                push_key(k);
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Snapshots the string values of a string-valued `HashMap` into
+/// a fresh `GosVec<*mut c_char>`. Mirrors `gos_rt_map_keys_str`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_values_str(m: *const GosMap) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if m.is_null() {
+        return out;
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    let push_val = |v: &Vec<u8>| {
+        let cstr = alloc_cstring(v);
+        let slot = (cstr as usize as i64).to_ne_bytes();
+        unsafe { gos_rt_vec_push(out, slot.as_ptr()) };
+    };
+    match &*storage {
+        MapStorage::StrStr(inner) => inner.values().for_each(push_val),
+        MapStorage::I64Str(inner) => inner.values().for_each(push_val),
+        _ => {}
+    }
+    out
 }
 
 fn empty_cstring() -> *mut c_char {
@@ -4358,4 +4597,30 @@ pub unsafe extern "C" fn gos_rt_slog_debug(msg: *const c_char) {
     }
     let m = unsafe { CStr::from_ptr(msg).to_string_lossy() };
     eprintln!("DEBUG: {m}");
+}
+
+#[cfg(test)]
+mod map_iter_tests {
+    use super::*;
+
+    #[test]
+    fn map_keys_i64_snapshots_inserted_keys() {
+        unsafe {
+            let m = gos_rt_map_new(8, 8);
+            gos_rt_map_insert_i64_i64(m, 1, 100);
+            gos_rt_map_insert_i64_i64(m, 2, 200);
+            gos_rt_map_insert_i64_i64(m, 3, 50);
+            assert_eq!(gos_rt_map_len(m), 3);
+            let v = gos_rt_map_keys_i64(m);
+            assert_eq!(gos_rt_vec_len(v), 3);
+            let mut keys: Vec<i64> = (0..gos_rt_vec_len(v))
+                .map(|i| {
+                    let p = gos_rt_vec_get_ptr(v, i);
+                    (p as *const i64).read_unaligned()
+                })
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(keys, vec![1, 2, 3]);
+        }
+    }
 }

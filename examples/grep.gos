@@ -33,7 +33,7 @@ fn parse_opts() -> Result<Opts, errors::Error> {
     if rest.is_empty() {
         return Err(errors::new("usage: grep [--count] [--line-numbers] PATTERN [FILE...]"))
     }
-    let pattern = rest[0].clone()
+    let pattern = rest[0]
     let files: [String] = rest[1..].to_vec()
     Ok(Opts {
         pattern: pattern,

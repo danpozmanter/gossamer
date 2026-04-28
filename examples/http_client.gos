@@ -28,7 +28,7 @@ fn main() -> Result<(), errors::Error> {
     let echo = client
         .post(&"http://127.0.0.1:8080/echo")
         .header("content-type", "application/json")
-        .body(payload.clone())
+        .body(payload)
         .send()
         .map_err(|e| errors::wrap(e, "POST /echo"))?
     println!("/echo status={} body={}", echo.status, echo.body)

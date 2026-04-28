@@ -205,8 +205,8 @@ fn build_subcommand_accepts_known_target_triple_and_rejects_unknown() {
 #[test]
 fn build_defaults_output_to_source_stem_without_extension() {
     // `gos build line_count.gos` should write a file called
-    // `line_count` (the executable, or a fallback launcher if
-    // native codegen cannot yet lower the MIR).
+    // `line_count` (the executable produced by the native codegen
+    // pipeline).
     let dir = env::temp_dir().join(format!("gos-build-default-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let source_path = dir.join("line_count.gos");
