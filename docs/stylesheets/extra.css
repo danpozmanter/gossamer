@@ -2,6 +2,35 @@
 .wy-nav-content {
     max-width: 960px;
 }
+
+/* Pin the logo + search box to the top of the sidebar so only the
+ * navigation menu scrolls. Default theme lets the whole sidebar
+ * scroll, hiding the search box. */
+.wy-nav-side {
+    overflow: hidden;
+}
+.wy-side-scroll {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+.wy-side-nav-search {
+    flex: 0 0 auto;
+    background: #000 !important;
+    position: sticky;
+    top: 0;
+    z-index: 200;
+}
+.wy-side-nav-search input[type="text"] {
+    border-color: #000;
+}
+.wy-menu.wy-menu-vertical {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
 h1, h2, h3 {
     font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
     font-weight: 600;

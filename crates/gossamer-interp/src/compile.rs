@@ -81,6 +81,7 @@ pub fn compile_fn(
             deferred_env_regs: Vec::new(),
             call_cache_count: 0,
             arith_cache_count: 0,
+            field_cache_count: 0,
         });
     };
     let mut builder = FnBuilder::new(decl.name.name.clone(), tcx, layouts, wrappers);
@@ -152,6 +153,8 @@ struct FnBuilder<'tcx> {
     /// unique inline-cache slot index. The `FnChunk` allocates a
     /// `Vec<CacheSlot>` of this size at finish time.
     next_cache_idx: u16,
+    /// Counter for `Op::FieldGet` IC slots (T2.5).
+    next_field_cache_idx: u16,
     /// Counter incremented every time we emit a generic-`Value`
     /// arith op (`Op::AddInt` / `Op::SubInt` / `Op::MulInt` /
     /// `Op::DivInt` / `Op::RemInt`) so each site gets its own
@@ -219,6 +222,7 @@ impl<'tcx> FnBuilder<'tcx> {
             deferred_env_regs: Vec::new(),
             next_cache_idx: 0,
             next_arith_cache_idx: 0,
+            next_field_cache_idx: 0,
         }
     }
 
@@ -228,6 +232,15 @@ impl<'tcx> FnBuilder<'tcx> {
     fn alloc_cache_idx(&mut self) -> u16 {
         let idx = self.next_cache_idx;
         self.next_cache_idx = self.next_cache_idx.saturating_add(1);
+        idx
+    }
+
+    /// Allocates a fresh `field_caches` slot for an
+    /// `Op::FieldGet` site. Mirrors [`Self::alloc_cache_idx`]
+    /// but for the PEP 659-style field-shape cache.
+    fn alloc_field_cache_idx(&mut self) -> u16 {
+        let idx = self.next_field_cache_idx;
+        self.next_field_cache_idx = self.next_field_cache_idx.saturating_add(1);
         idx
     }
 
@@ -572,6 +585,7 @@ impl<'tcx> FnBuilder<'tcx> {
             // `vm::Vm::chunk_state_for`.
             call_cache_count: self.next_cache_idx,
             arith_cache_count: self.next_arith_cache_idx,
+            field_cache_count: self.next_field_cache_idx,
         }
     }
 
@@ -1006,10 +1020,12 @@ impl<'tcx> FnBuilder<'tcx> {
                     Value::String(SmolStr::from(name.name.clone())),
                 );
                 let dst = self.alloc_reg();
+                let cache_idx = self.alloc_field_cache_idx();
                 self.emit(Op::FieldGet {
                     dst,
                     receiver: recv_reg,
                     name_idx,
+                    cache_idx,
                 });
                 Ok(dst)
             }
@@ -2362,10 +2378,12 @@ impl<'tcx> FnBuilder<'tcx> {
             });
         }
         let dst = self.alloc_reg();
+        let cache_idx = self.alloc_field_cache_idx();
         self.emit(Op::FieldGet {
             dst,
             receiver: recv_reg,
             name_idx,
+            cache_idx,
         });
         Ok(TypedReg {
             reg: dst,

@@ -453,6 +453,12 @@ pub enum Op {
         receiver: Reg,
         /// Const-pool index of the field-name string.
         name_idx: ConstIdx,
+        /// Per-`Vm` field-cache slot. On hit, the dispatcher
+        /// jumps straight to `inner.fields[offset].1.clone()`,
+        /// skipping the linear name scan that the generic
+        /// fallback does. On miss (observed struct shape
+        /// changed), refill the slot. PEP 659-style.
+        cache_idx: u16,
     },
     /// `receiver.field_name = value` — native struct-field
     /// write. Mutates the fields vector in place (`Arc::make_mut`
@@ -903,6 +909,10 @@ pub struct FnChunk {
     /// (`Op::AddInt` / `Op::SubInt` / etc. sites). Same per-`Vm`
     /// ownership story as [`Self::call_cache_count`].
     pub arith_cache_count: u16,
+    /// Number of field-access cache slots this chunk needs
+    /// (`Op::FieldGet` sites). PEP 659-style per-instruction
+    /// inline caching for struct field reads.
+    pub field_cache_count: u16,
 }
 
 /// One adaptive-arith inline-cache slot. Tier C2 of the interp
@@ -913,6 +923,21 @@ pub(crate) struct ArithCacheSlot {
     /// constants. `Cell<u8>` because the slot lives in per-`Vm`
     /// state; only the owning thread mutates it.
     pub(crate) shape: std::cell::Cell<u8>,
+}
+
+/// PEP 659-style inline cache for `Op::FieldGet`. Records the
+/// last observed struct-name pointer + the offset its fields
+/// list resolved to. On hit, the dispatcher reads the field by
+/// offset directly; on miss, it refills the slot.
+#[derive(Debug, Default)]
+pub(crate) struct FieldCacheSlot {
+    /// Stable interned-name pointer of the receiver struct
+    /// (`intern_type_name(name).as_ptr() as u64`). `0` means
+    /// empty / non-cacheable receiver.
+    pub(crate) type_token: std::cell::Cell<u64>,
+    /// Offset of the named field within the struct's fields
+    /// vector, valid only when `type_token != 0`.
+    pub(crate) offset: std::cell::Cell<u16>,
 }
 
 /// Sentinel for an arith cache slot that has not yet observed an

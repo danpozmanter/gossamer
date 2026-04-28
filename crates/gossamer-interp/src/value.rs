@@ -1049,3 +1049,27 @@ fn lookup_heap(handle: u32) -> Option<RegistryEntry> {
     let reg = REGISTRY.lock();
     reg.get(handle as usize).and_then(std::clone::Clone::clone)
 }
+
+#[cfg(test)]
+mod size_assertions {
+    use super::Value;
+
+    #[test]
+    fn value_size_under_24_bytes() {
+        // Assertion lock-down for the `Value` enum size. Each
+        // non-trivial variant should keep its body behind an
+        // `Arc<...>` (1 word). Adding a wider payload (e.g.
+        // raw `Vec<...>`, raw `String`) will fail this test.
+        // Today's expected size: 16 on 64-bit (8 disc + 8
+        // payload), but we accept up to 24 to allow for
+        // alignment quirks.
+        let n = std::mem::size_of::<Value>();
+        assert!(n <= 24, "Value grew to {n} bytes (target ≤24)");
+    }
+
+    #[test]
+    fn report_value_size_for_visibility() {
+        let n = std::mem::size_of::<Value>();
+        eprintln!("Value size: {n} bytes");
+    }
+}

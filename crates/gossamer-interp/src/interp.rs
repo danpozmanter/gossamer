@@ -14,34 +14,154 @@
 )]
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
 thread_local! {
-    /// Goroutines spawned by the current (spawning) thread. `main`
-    /// joins every outstanding handle before exiting so the process
-    /// does not abort sibling goroutines in flight.
+    /// Goroutines spawned via the legacy tree-walker `go expr`
+    /// path that still spins up a fresh OS thread (rare — the
+    /// VM's `Op::Spawn` instead enqueues onto [`pool()`]).
     static GOROUTINE_HANDLES: RefCell<Vec<JoinHandle<()>>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Joins every goroutine spawned from the current thread and
-/// returns after all of them finish. Called by the CLI entrypoint
-/// after `main` returns so asynchronous work has a chance to land.
+/// returns after all of them finish. Called by the CLI
+/// entrypoint after `main` returns so asynchronous work has a
+/// chance to land. Drains both the tree-walker handle list and
+/// the bytecode VM's pool counter.
 pub fn join_outstanding_goroutines() {
     let handles: Vec<JoinHandle<()>> =
         GOROUTINE_HANDLES.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
     for handle in handles {
         let _ = handle.join();
     }
+    pool().drain();
 }
 
-/// Records an outstanding goroutine handle so the CLI's
-/// post-`main` join sweep waits on it. The bytecode VM's native
-/// `Op::Spawn` calls this directly; the tree-walker's `Go`
-/// branch keeps using the same thread-local list.
-pub(crate) fn push_goroutine_handle(handle: JoinHandle<()>) {
-    GOROUTINE_HANDLES.with(|cell| cell.borrow_mut().push(handle));
+/// Goroutine task: a closure to run on a pool worker.
+type GoroutineTask = Box<dyn FnOnce() + Send + 'static>;
+
+/// Fixed-size worker pool that runs goroutines spawned via
+/// [`Op::Spawn`]. Replaces the prior one-OS-thread-per-`go`
+/// shape — which leaked `JoinHandle`s into a thread-local list
+/// (~15 KB each) and cold-started a fresh `Vm` per goroutine.
+///
+/// Pool size: `num_cpus()`. Tasks queue when all workers are
+/// busy; workers park on a `Condvar` when the queue is empty.
+/// `outstanding` tracks queued + in-flight tasks so
+/// [`join_outstanding_goroutines`] can wait for completion.
+pub(crate) struct GoroutinePool {
+    inner: parking_lot::Mutex<PoolInner>,
+    cv: parking_lot::Condvar,
+    /// Wake-up condition for `drain()` to learn that the
+    /// counter has reached zero.
+    drain_cv: parking_lot::Condvar,
+    /// Total tasks that have not yet completed (queued +
+    /// running). Used by `drain()` for completion wait.
+    outstanding: AtomicU64,
+    /// Total number of worker threads spawned. Capped at
+    /// initialisation; never grows.
+    workers: AtomicUsize,
+}
+
+struct PoolInner {
+    queue: VecDeque<GoroutineTask>,
+    /// `true` once the runtime is shutting down; workers exit
+    /// once `queue` drains. Currently never set in practice
+    /// (the process exits right after `drain()` returns), but
+    /// kept for cleanliness.
+    shutting_down: bool,
+}
+
+impl GoroutinePool {
+    fn new(num_workers: usize) -> Arc<Self> {
+        let pool = Arc::new(Self {
+            inner: parking_lot::Mutex::new(PoolInner {
+                queue: VecDeque::new(),
+                shutting_down: false,
+            }),
+            cv: parking_lot::Condvar::new(),
+            drain_cv: parking_lot::Condvar::new(),
+            outstanding: AtomicU64::new(0),
+            workers: AtomicUsize::new(0),
+        });
+        for _ in 0..num_workers {
+            let p = Arc::clone(&pool);
+            let _ = std::thread::Builder::new()
+                .name("gossamer-worker".to_string())
+                .spawn(move || {
+                    p.workers.fetch_add(1, Ordering::Relaxed);
+                    loop {
+                        let task = {
+                            let mut inner = p.inner.lock();
+                            loop {
+                                if let Some(task) = inner.queue.pop_front() {
+                                    break Some(task);
+                                }
+                                if inner.shutting_down {
+                                    break None;
+                                }
+                                p.cv.wait(&mut inner);
+                            }
+                        };
+                        match task {
+                            Some(task) => {
+                                task();
+                                let prev = p.outstanding.fetch_sub(1, Ordering::AcqRel);
+                                if prev == 1 {
+                                    // Last in-flight task settled —
+                                    // wake any drain() waiter.
+                                    p.drain_cv.notify_all();
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                });
+        }
+        pool
+    }
+
+    /// Enqueues a task. Wakes one parked worker.
+    pub(crate) fn spawn(&self, task: GoroutineTask) {
+        self.outstanding.fetch_add(1, Ordering::AcqRel);
+        let mut inner = self.inner.lock();
+        inner.queue.push_back(task);
+        self.cv.notify_one();
+    }
+
+    /// Blocks until every queued / in-flight task has finished.
+    /// Called by [`join_outstanding_goroutines`] at program exit.
+    pub(crate) fn drain(&self) {
+        let mut inner = self.inner.lock();
+        while self.outstanding.load(Ordering::Acquire) > 0 {
+            self.drain_cv.wait(&mut inner);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn worker_count(&self) -> usize {
+        self.workers.load(Ordering::Relaxed)
+    }
+}
+
+static POOL: OnceLock<Arc<GoroutinePool>> = OnceLock::new();
+
+/// Lazily-initialised process-wide goroutine pool. First call
+/// builds the pool with `num_cpus()` workers.
+pub(crate) fn pool() -> &'static Arc<GoroutinePool> {
+    POOL.get_or_init(|| {
+        // Conservative default: physical cores via `available_parallelism`.
+        // Fall back to 4 when the platform refuses to report.
+        let n = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(4)
+            .min(64);
+        GoroutinePool::new(n)
+    })
 }
 
 use gossamer_ast::Ident;

@@ -855,6 +855,51 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
             builtin_u8vec_write_byte_lines_to_stdout,
         ),
     ));
+    // Sliding-window pack: read `k` bytes from `i` and pack
+    // them into a single i64 by `(key << 2) | byte`. Single
+    // C-side loop replaces what was a k-iter bytecode loop in
+    // user code; k-nucleotide's k-mer scan rides this op
+    // directly. Also exposed via the bare-name dispatch path
+    // (`buf.window_key(i, k)`) and as a method receiver.
+    globals.push((
+        "U8Vec::window_key",
+        builtin("U8Vec::window_key", builtin_u8vec_window_key),
+    ));
+    globals.push(("window_key", builtin("window_key", builtin_u8vec_window_key)));
+    // Whole-program k-mer count: scan the entire buffer and
+    // emit a `Value::IntMap` of (packed_kmer_key -> count).
+    // Replaces the user-side `while i < stop { … insert … }`
+    // loop with a single C-side call. k-nucleotide rides this
+    // for k=3,4,6,12,18.
+    globals.push((
+        "U8Vec::count_kmers",
+        builtin("U8Vec::count_kmers", builtin_u8vec_count_kmers),
+    ));
+    globals.push((
+        "count_kmers",
+        builtin("count_kmers", builtin_u8vec_count_kmers),
+    ));
+    // Whole-program 4-bucket / 16-bucket frequency scans for
+    // k-nucleotide's k=1 / k=2 sections. Returns a flat
+    // `Value::IntArray` so the caller can index it directly
+    // (the existing print-freq helpers already accept a
+    // `[i64; N]`-shaped receiver).
+    globals.push((
+        "U8Vec::count_singles",
+        builtin("U8Vec::count_singles", builtin_u8vec_count_singles),
+    ));
+    globals.push((
+        "count_singles",
+        builtin("count_singles", builtin_u8vec_count_singles),
+    ));
+    globals.push((
+        "U8Vec::count_pairs",
+        builtin("U8Vec::count_pairs", builtin_u8vec_count_pairs),
+    ));
+    globals.push((
+        "count_pairs",
+        builtin("count_pairs", builtin_u8vec_count_pairs),
+    ));
 
     // `sync::WaitGroup` mirroring Go's API.
     globals.push((
@@ -2527,73 +2572,126 @@ fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_map_get(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Map(map)) = args.first() else {
-        return Ok(none_variant());
-    };
-    let key = match args.get(1) {
-        Some(v) => MapKey::from_value(v),
-        None => return Ok(none_variant()),
-    };
-    match map.lock().get(&key) {
-        Some(v) => Ok(some_variant(v.clone())),
-        None => Ok(none_variant()),
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let Some(v) = args.get(1) else {
+                return Ok(none_variant());
+            };
+            let key = MapKey::from_value(v);
+            match map.lock().get(&key) {
+                Some(v) => Ok(some_variant(v.clone())),
+                None => Ok(none_variant()),
+            }
+        }
+        Some(Value::IntMap(map)) => {
+            let Some(Value::Int(k)) = args.get(1) else {
+                return Ok(none_variant());
+            };
+            match map.lock().get(k).copied() {
+                Some(v) => Ok(some_variant(Value::Int(v))),
+                None => Ok(none_variant()),
+            }
+        }
+        _ => Ok(none_variant()),
     }
 }
 
 fn builtin_map_get_or(args: &[Value]) -> RuntimeResult<Value> {
     let default = args.get(2).cloned().unwrap_or(Value::Unit);
-    let Some(Value::Map(map)) = args.first() else {
-        return Ok(default);
-    };
-    let key = match args.get(1) {
-        Some(v) => MapKey::from_value(v),
-        None => return Ok(default),
-    };
-    match map.lock().get(&key) {
-        Some(v) => Ok(v.clone()),
-        None => Ok(default),
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let Some(v) = args.get(1) else {
+                return Ok(default);
+            };
+            let key = MapKey::from_value(v);
+            match map.lock().get(&key).cloned() {
+                Some(v) => Ok(v),
+                None => Ok(default),
+            }
+        }
+        Some(Value::IntMap(map)) => {
+            let Some(Value::Int(k)) = args.get(1) else {
+                return Ok(default);
+            };
+            let fallback = if let Value::Int(d) = &default { *d } else { 0 };
+            Ok(Value::Int(
+                map.lock().get(k).copied().unwrap_or(fallback),
+            ))
+        }
+        _ => Ok(default),
     }
 }
 
 fn builtin_map_insert(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Map(map)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
-    let key = match args.get(1) {
-        Some(v) => MapKey::from_value(v),
-        None => return Ok(Value::Map(Arc::clone(map))),
-    };
-    let value = args.get(2).cloned().unwrap_or(Value::Unit);
-    map.lock().insert(key, value);
-    Ok(Value::Map(Arc::clone(map)))
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let Some(v) = args.get(1) else {
+                return Ok(Value::Map(Arc::clone(map)));
+            };
+            let key = MapKey::from_value(v);
+            let value = args.get(2).cloned().unwrap_or(Value::Unit);
+            map.lock().insert(key, value);
+            Ok(Value::Map(Arc::clone(map)))
+        }
+        Some(Value::IntMap(map)) => {
+            let Some(Value::Int(k)) = args.get(1) else {
+                return Ok(Value::IntMap(Arc::clone(map)));
+            };
+            let v = match args.get(2) {
+                Some(Value::Int(n)) => *n,
+                _ => 0,
+            };
+            map.lock().insert(*k, v);
+            Ok(Value::IntMap(Arc::clone(map)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    }
 }
 
 fn builtin_map_remove(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Map(map)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
-    let key = match args.get(1) {
-        Some(v) => MapKey::from_value(v),
-        None => return Ok(Value::Map(Arc::clone(map))),
-    };
-    map.lock().remove(&key);
-    Ok(Value::Map(Arc::clone(map)))
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let Some(v) = args.get(1) else {
+                return Ok(Value::Map(Arc::clone(map)));
+            };
+            let key = MapKey::from_value(v);
+            map.lock().remove(&key);
+            Ok(Value::Map(Arc::clone(map)))
+        }
+        Some(Value::IntMap(map)) => {
+            let Some(Value::Int(k)) = args.get(1) else {
+                return Ok(Value::IntMap(Arc::clone(map)));
+            };
+            map.lock().remove(k);
+            Ok(Value::IntMap(Arc::clone(map)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    }
 }
 
 fn builtin_map_contains_key(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Map(map)) = args.first() else {
-        return Ok(Value::Bool(false));
-    };
-    let key = match args.get(1) {
-        Some(v) => MapKey::from_value(v),
-        None => return Ok(Value::Bool(false)),
-    };
-    Ok(Value::Bool(map.lock().contains_key(&key)))
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let Some(v) = args.get(1) else {
+                return Ok(Value::Bool(false));
+            };
+            let key = MapKey::from_value(v);
+            Ok(Value::Bool(map.lock().contains_key(&key)))
+        }
+        Some(Value::IntMap(map)) => {
+            let Some(Value::Int(k)) = args.get(1) else {
+                return Ok(Value::Bool(false));
+            };
+            Ok(Value::Bool(map.lock().contains_key(k)))
+        }
+        _ => Ok(Value::Bool(false)),
+    }
 }
 
 fn builtin_map_len(args: &[Value]) -> RuntimeResult<Value> {
     let n = match args.first() {
         Some(Value::Map(m)) => m.lock().len() as i64,
+        Some(Value::IntMap(m)) => m.lock().len() as i64,
         _ => 0,
     };
     Ok(Value::Int(n))
@@ -2601,35 +2699,60 @@ fn builtin_map_len(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_map_keys(args: &[Value]) -> RuntimeResult<Value> {
     let mut out: Vec<Value> = Vec::new();
-    if let Some(Value::Map(map)) = args.first() {
-        for k in map.lock().keys() {
-            out.push(k.to_value());
+    match args.first() {
+        Some(Value::Map(map)) => {
+            for k in map.lock().keys() {
+                out.push(k.to_value());
+            }
         }
+        Some(Value::IntMap(map)) => {
+            for k in map.lock().keys() {
+                out.push(Value::Int(*k));
+            }
+        }
+        _ => {}
     }
     Ok(Value::Array(Arc::new(out)))
 }
 
 fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
     let mut out: Vec<Value> = Vec::new();
-    if let Some(Value::Map(map)) = args.first() {
-        for v in map.lock().values() {
-            out.push(v.clone());
+    match args.first() {
+        Some(Value::Map(map)) => {
+            for v in map.lock().values() {
+                out.push(v.clone());
+            }
         }
+        Some(Value::IntMap(map)) => {
+            for v in map.lock().values() {
+                out.push(Value::Int(*v));
+            }
+        }
+        _ => {}
     }
     Ok(Value::Array(Arc::new(out)))
 }
 
 fn builtin_map_clear(args: &[Value]) -> RuntimeResult<Value> {
-    if let Some(Value::Map(map)) = args.first() {
-        map.lock().clear();
-        Ok(Value::Map(Arc::clone(map)))
-    } else {
-        Ok(args.first().cloned().unwrap_or(Value::Unit))
+    match args.first() {
+        Some(Value::Map(map)) => {
+            map.lock().clear();
+            Ok(Value::Map(Arc::clone(map)))
+        }
+        Some(Value::IntMap(map)) => {
+            map.lock().clear();
+            Ok(Value::IntMap(Arc::clone(map)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
 }
 
 fn builtin_map_is_empty(args: &[Value]) -> RuntimeResult<Value> {
-    let empty = matches!(args.first(), Some(Value::Map(m)) if m.lock().is_empty());
+    let empty = match args.first() {
+        Some(Value::Map(m)) => m.lock().is_empty(),
+        Some(Value::IntMap(m)) => m.lock().is_empty(),
+        _ => false,
+    };
     Ok(Value::Bool(empty))
 }
 
@@ -3592,6 +3715,127 @@ fn builtin_u8vec_get_byte(args: &[Value]) -> RuntimeResult<Value> {
         0
     };
     Ok(Value::Int(v))
+}
+
+fn builtin_u8vec_count_singles(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args
+        .first()
+        .and_then(|v| struct_handle(v, "U8Vec"))
+        .ok_or_else(|| RuntimeError::Type("count_singles: receiver must be U8Vec".to_string()))?;
+    let vec_arc = u8vec_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("count_singles: stale U8Vec handle".to_string()))?;
+    let buf_len = arg_int(args, 1).unwrap_or(0).max(0) as usize;
+    let len = vec_arc.len().min(buf_len);
+    let mut counts = [0i64; 4];
+    for slot in &vec_arc[..len] {
+        let b = slot.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        if b < 4 {
+            counts[b] += 1;
+        }
+    }
+    Ok(Value::IntArray(Arc::new(counts.to_vec())))
+}
+
+fn builtin_u8vec_count_pairs(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args
+        .first()
+        .and_then(|v| struct_handle(v, "U8Vec"))
+        .ok_or_else(|| RuntimeError::Type("count_pairs: receiver must be U8Vec".to_string()))?;
+    let vec_arc = u8vec_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("count_pairs: stale U8Vec handle".to_string()))?;
+    let buf_len = arg_int(args, 1).unwrap_or(0).max(0) as usize;
+    let len = vec_arc.len().min(buf_len);
+    let mut counts = [0i64; 16];
+    if len < 2 {
+        return Ok(Value::IntArray(Arc::new(counts.to_vec())));
+    }
+    let stop = len - 1;
+    for j in 0..stop {
+        let a = vec_arc[j].load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let b = vec_arc[j + 1].load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let idx = (a << 2) | b;
+        if idx < 16 {
+            counts[idx] += 1;
+        }
+    }
+    Ok(Value::IntArray(Arc::new(counts.to_vec())))
+}
+
+fn builtin_u8vec_count_kmers(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args
+        .first()
+        .and_then(|v| struct_handle(v, "U8Vec"))
+        .ok_or_else(|| RuntimeError::Type("count_kmers: receiver must be U8Vec".to_string()))?;
+    let vec_arc = u8vec_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("count_kmers: stale U8Vec handle".to_string()))?;
+    let buf_len = arg_int(args, 1).unwrap_or(0).max(0) as usize;
+    let k = arg_int(args, 2).unwrap_or(0).max(0) as usize;
+    let len = vec_arc.len().min(buf_len);
+    let counts: rustc_hash::FxHashMap<i64, i64> =
+        kmer_count(&vec_arc[..len], k);
+    Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(counts))))
+}
+
+/// Scans `buf` with a sliding window of size `k`, packing each
+/// window into a 2-bit-per-byte `i64` key and accumulating the
+/// frequency. Tight C-side loop replacing the `while`-loop +
+/// `Op::IntMapInc` chain user code would emit. Pre-allocates
+/// the map with a sane capacity so the first ~64 inserts don't
+/// pay for a rehash.
+#[inline]
+fn kmer_count(buf: &[std::sync::atomic::AtomicU8], k: usize) -> rustc_hash::FxHashMap<i64, i64> {
+    let mut counts: rustc_hash::FxHashMap<i64, i64> =
+        rustc_hash::FxHashMap::with_capacity_and_hasher(1024, rustc_hash::FxBuildHasher);
+    if k == 0 || k > buf.len() {
+        return counts;
+    }
+    let stop = buf.len() - k + 1;
+    // Rolling key: drop the high 2 bits, shift, OR in the new
+    // byte. Keeps the inner loop O(1) per iter regardless of k.
+    let mask: i64 = if k >= 32 {
+        -1
+    } else {
+        (1i64 << (k * 2)) - 1
+    };
+    let mut key: i64 = 0;
+    for slot in buf.iter().take(k) {
+        let b = slot.load(std::sync::atomic::Ordering::Relaxed);
+        key = (key << 2) | i64::from(b);
+    }
+    *counts.entry(key).or_insert(0) += 1;
+    let mut i = 1usize;
+    while i < stop {
+        let b = buf[i + k - 1].load(std::sync::atomic::Ordering::Relaxed);
+        key = ((key << 2) | i64::from(b)) & mask;
+        *counts.entry(key).or_insert(0) += 1;
+        i += 1;
+    }
+    counts
+}
+
+fn builtin_u8vec_window_key(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args
+        .first()
+        .and_then(|v| struct_handle(v, "U8Vec"))
+        .ok_or_else(|| RuntimeError::Type("window_key: receiver must be U8Vec".to_string()))?;
+    let vec_arc = u8vec_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("window_key: stale U8Vec handle".to_string()))?;
+    let i = arg_int(args, 1).unwrap_or(0).max(0) as usize;
+    let k = arg_int(args, 2).unwrap_or(0).max(0) as usize;
+    let len = vec_arc.len();
+    let mut key: i64 = 0;
+    let stop = i.saturating_add(k).min(len);
+    for j in i..stop {
+        let b = vec_arc[j].load(std::sync::atomic::Ordering::Relaxed);
+        key = (key << 2) | i64::from(b);
+    }
+    // Out-of-range tail: zero-extend remaining slots (matches
+    // the by-byte loop's behaviour when `i + k` overshoots).
+    let tail = (i + k).saturating_sub(stop);
+    for _ in 0..tail {
+        key <<= 2;
+    }
+    Ok(Value::Int(key))
 }
 
 fn builtin_u8vec_byte_len(args: &[Value]) -> RuntimeResult<Value> {

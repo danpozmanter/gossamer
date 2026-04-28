@@ -21,6 +21,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gossamer_ast::Ident;
 use gossamer_codegen_cranelift::{JitArtifact, JitFn};
@@ -81,6 +82,14 @@ pub struct Vm {
     /// counter trips — which only happens for genuinely long-lived
     /// child VMs, where the per-thread compile cost amortises.
     jit: parking_lot::RwLock<JitState>,
+    /// Hot-path fast flag: number of installed JIT overrides. When
+    /// zero, `apply()` skips the `jit.read()` `RwLock` probe entirely
+    /// — every call is a bytecode dispatch, and probing the `RwLock`
+    /// per call costs ~6-8 ns of atomic CAS that adds up across
+    /// tight recursive workloads (fib, nbody pair-loop). Updated by
+    /// `try_compile_jit_lazy` once the deferred compile installs
+    /// entries; only ever monotonically increases.
+    jit_override_count: AtomicUsize,
     /// Per-`Vm` cache state pinned in a never-shrinking arena. The
     /// hot dispatch loop reaches into `chunk_state_for(chunk)` once
     /// per call entry and threads `&ChunkState` through the
@@ -124,6 +133,12 @@ pub(crate) struct ChunkState {
     /// chunk-construction time so no outer cell is needed; each
     /// slot's `Cell<u8>` handles the per-shape transition.
     pub(crate) arith_caches: Vec<crate::bytecode::ArithCacheSlot>,
+    /// PEP 659-style field-access cache. Indexed by the
+    /// `cache_idx` field on `Op::FieldGet`. Each slot remembers
+    /// the receiver's interned-type-name pointer + the offset
+    /// the named field resolved to, so hot-path field reads
+    /// skip the linear name scan.
+    pub(crate) field_caches: Vec<crate::bytecode::FieldCacheSlot>,
     /// Tier-D2 hot counter — decremented on every call into the
     /// chunk; trips a deferred whole-program JIT compile at zero.
     /// `Cell<i32>` (single-thread mutation only — each `Vm` owns
@@ -132,7 +147,12 @@ pub(crate) struct ChunkState {
 }
 
 impl ChunkState {
-    fn new(call_cache_count: u16, arith_cache_count: u16, jit_disabled: bool) -> Self {
+    fn new(
+        call_cache_count: u16,
+        arith_cache_count: u16,
+        field_cache_count: u16,
+        jit_disabled: bool,
+    ) -> Self {
         let initial = if jit_disabled {
             crate::bytecode::HOT_DISABLED
         } else {
@@ -145,6 +165,9 @@ impl ChunkState {
             ]),
             arith_caches: (0..arith_cache_count)
                 .map(|_| crate::bytecode::ArithCacheSlot::default())
+                .collect(),
+            field_caches: (0..field_cache_count)
+                .map(|_| crate::bytecode::FieldCacheSlot::default())
                 .collect(),
             hot_counter: Cell::new(initial),
         }
@@ -366,6 +389,7 @@ impl Vm {
             mir_bodies: None,
             tcx_snapshot: None,
             jit: parking_lot::RwLock::new(JitState::default()),
+            jit_override_count: AtomicUsize::new(0),
             chunk_state_arena: RefCell::new(Vec::new()),
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
@@ -397,6 +421,7 @@ impl Vm {
             mir_bodies,
             tcx_snapshot,
             jit: parking_lot::RwLock::new(JitState::default()),
+            jit_override_count: AtomicUsize::new(0),
             chunk_state_arena: RefCell::new(Vec::new()),
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
@@ -577,6 +602,8 @@ impl Vm {
             let jit_arc = Arc::new(jit_fn.clone());
             state.overrides.insert(name.clone(), jit_arc);
         }
+        self.jit_override_count
+            .store(state.overrides.len(), Ordering::Release);
         state.artifact = Some(artifact);
     }
 
@@ -662,7 +689,18 @@ impl Vm {
                 // across goroutines via `Arc<RwLock<JitState>>`, so
                 // a child goroutine that tripped the hot counter
                 // installs entries every other thread sees.
-                let jit_opt = self.jit.read().overrides.get(chunk.name.as_str()).cloned();
+                //
+                // Fast path: skip the RwLock probe entirely when no
+                // overrides are installed. The atomic load is a
+                // single ~1 ns instruction; the RwLock read costs
+                // ~6-8 ns of CAS that compounds across recursive
+                // call chains (fib, nbody) where every leaf fires
+                // through `apply`.
+                let jit_opt = if self.jit_override_count.load(Ordering::Acquire) == 0 {
+                    None
+                } else {
+                    self.jit.read().overrides.get(chunk.name.as_str()).cloned()
+                };
                 if let Some(jit) = jit_opt {
                     match jit_call::invoke(&jit, &args) {
                         jit_call::Dispatch::Ok(value) => return Ok(value),
@@ -753,6 +791,7 @@ impl Vm {
         let state_box = Box::new(ChunkState::new(
             chunk.call_cache_count,
             chunk.arith_cache_count,
+            chunk.field_cache_count,
             jit_disabled,
         ));
         let mut arena = self.chunk_state_arena.borrow_mut();
@@ -1480,18 +1519,60 @@ impl Vm {
                     dst,
                     receiver,
                     name_idx,
+                    cache_idx,
                 } => {
-                    let field_name = match &chunk.consts[name_idx as usize] {
-                        Value::String(s) => s.clone(),
-                        _ => {
-                            return Err(RuntimeError::Panic(
-                                "FieldGet: name must be string const".to_string(),
-                            ));
-                        }
-                    };
+                    // PEP 659-style inline cache. Fast path: when the
+                    // observed receiver shape (struct-name interned
+                    // pointer) matches the slot's `type_token`, jump
+                    // straight to `inner.fields[offset].1.clone()` —
+                    // skipping the linear name-scan in `field_get`.
                     let recv = &registers[receiver as usize];
-                    let v = field_get(recv, field_name.as_str())?;
-                    registers[dst as usize] = v;
+                    if let Value::Struct(inner) = recv {
+                        let token = intern_type_name(&inner.name).as_ptr() as u64;
+                        let slot = &state.field_caches[cache_idx as usize];
+                        if slot.type_token.get() == token {
+                            let off = slot.offset.get() as usize;
+                            if off < inner.fields.len() {
+                                registers[dst as usize] = inner.fields[off].1.clone();
+                                continue;
+                            }
+                        }
+                        // Miss: linear-scan, then refill the slot
+                        // for next time. `intern_type_name` returns
+                        // the same `&'static str` for any struct
+                        // sharing this name, so the token compare
+                        // above is `O(1)` after fill.
+                        let field_name = match &chunk.consts[name_idx as usize] {
+                            Value::String(s) => s.as_str(),
+                            _ => {
+                                return Err(RuntimeError::Panic(
+                                    "FieldGet: name must be string const".to_string(),
+                                ));
+                            }
+                        };
+                        if let Some(pos) = inner
+                            .fields
+                            .iter()
+                            .position(|(ident, _)| ident.name == field_name)
+                        {
+                            slot.type_token.set(token);
+                            slot.offset.set(pos as u16);
+                            registers[dst as usize] = inner.fields[pos].1.clone();
+                        } else {
+                            registers[dst as usize] = Value::Unit;
+                        }
+                    } else {
+                        let field_name = match &chunk.consts[name_idx as usize] {
+                            Value::String(s) => s.clone(),
+                            _ => {
+                                return Err(RuntimeError::Panic(
+                                    "FieldGet: name must be string const".to_string(),
+                                ));
+                            }
+                        };
+                        let v = field_get(recv, field_name.as_str())?;
+                        registers[dst as usize] = v;
+                    }
                 }
                 Op::FieldSet {
                     receiver,
@@ -2646,41 +2727,48 @@ impl Vm {
                     let arg_values: Vec<Value> = (0..argc as usize)
                         .map(|i| registers[args as usize + i].clone())
                         .collect();
-                    self.spawn_goroutine_native(callee_val, arg_values)?;
+                    self.spawn_goroutine_native(callee_val, arg_values);
                 }
             }
         }
     }
 
-    /// Spawns a goroutine that runs `callee(args)` entirely through
-    /// the bytecode VM. The new thread builds a fresh `Vm` with the
-    /// same globals graph as `self` (an `Arc<FnChunk>` per fn entry,
-    /// so chunks are shared) and dispatches the call there. Errors
-    /// inside the goroutine are isolated and printed to stderr —
-    /// they do not propagate to the spawning thread, mirroring the
-    /// tree-walker's previous goroutine semantics.
-    fn spawn_goroutine_native(&self, callee: Value, args: Vec<Value>) -> RuntimeResult<()> {
+    /// Spawns a goroutine that runs `callee(args)` through the
+    /// bytecode VM via the process-wide [`crate::interp::pool`].
+    /// The pool keeps `num_cpus()` worker threads, each owning
+    /// a thread-local `Vm` reused across many goroutines. This
+    /// replaces the prior one-OS-thread-per-`go` shape, which
+    /// burned ~140 µs of CPU and ~15 KB of leaked `JoinHandle`
+    /// state per goroutine. Tasks queue if every worker is
+    /// busy; the spawning thread does not block.
+    fn spawn_goroutine_native(&self, callee: Value, args: Vec<Value>) {
         let globals = self.globals.clone();
-        // Share MIR + tcx via `Arc` so the child's deferred JIT
-        // compile (if it ever trips its own hot counter) reuses
-        // the parent's lowering work. JIT state itself is per-`Vm`:
-        // Cranelift's `JITModule` carries non-`Send` raw pointers
-        // and `dyn Fn` resolvers, so we can't share the override
-        // map across threads. In practice goroutine bodies are
-        // short enough that the bytecode tier is the right home.
         let mir_bodies = self.mir_bodies.clone();
         let tcx_snapshot = self.tcx_snapshot.clone();
-        let handle = std::thread::Builder::new()
-            .name("gossamer-goroutine".to_string())
-            .spawn(move || {
-                let vm = Vm::with_globals(globals, mir_bodies, tcx_snapshot);
+        crate::interp::pool().spawn(Box::new(move || {
+            // Per-worker `Vm`, lazily built on first task. Reused
+            // across every subsequent goroutine landing on this
+            // worker — chunk caches stay warm, frame pool stays
+            // populated, no per-spawn `HashMap::clone` of globals.
+            // Programs that mix `gos run` invocations within one
+            // process would see stale state here; the bench-game
+            // shape (one program per process) doesn't.
+            thread_local! {
+                static THREAD_VM: std::cell::OnceCell<std::cell::RefCell<Option<Vm>>> =
+                    const { std::cell::OnceCell::new() };
+            }
+            THREAD_VM.with(|cell| {
+                let vm_cell = cell.get_or_init(|| std::cell::RefCell::new(None));
+                let mut slot = vm_cell.borrow_mut();
+                if slot.is_none() {
+                    *slot = Some(Vm::with_globals(globals, mir_bodies, tcx_snapshot));
+                }
+                let vm = slot.as_mut().expect("THREAD_VM init");
                 if let Err(err) = vm.dispatch_call(&callee, args) {
                     eprintln!("goroutine panic (isolated): {err}");
                 }
-            })
-            .map_err(|e| RuntimeError::Panic(format!("spawn goroutine: {e}")))?;
-        crate::interp::push_goroutine_handle(handle);
-        Ok(())
+            });
+        }));
     }
 
     fn dispatch_call(&self, callee: &Value, args: Vec<Value>) -> RuntimeResult<Value> {
