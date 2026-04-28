@@ -690,9 +690,11 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare void @gos_rt_concat_str(ptr)",
     "declare void @gos_rt_concat_i64(i64)",
     "declare void @gos_rt_concat_f64(double)",
+    "declare void @gos_rt_concat_f64_prec(double, i64)",
     "declare void @gos_rt_concat_bool(i32)",
     "declare void @gos_rt_concat_char(i32)",
     "declare ptr @gos_rt_concat_finish()",
+    "declare ptr @gos_rt_f64_prec_to_str(double, i64)",
     "declare i32 @gos_rt_main_exit_code(i64)",
     "declare ptr @gos_rt_result_new(i64, i64)",
     "declare i64 @gos_rt_result_disc(ptr)",
@@ -752,6 +754,11 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)",
     "declare void @llvm.lifetime.start.p0(i64, ptr)",
     "declare void @llvm.lifetime.end.p0(i64, ptr)",
+    // Heap allocator backing aggregate-by-value returns. The
+    // callee's stack slot dies when the function frame is
+    // popped, so an aggregate return value has to be copied
+    // into a heap arena that survives the return.
+    "declare ptr @gos_rt_gc_alloc(i64)",
     // Sync primitives (Mutex, WaitGroup, Atomic, heap-Vec).
     "declare ptr @gos_rt_mutex_new()",
     "declare void @gos_rt_mutex_lock(ptr)",
@@ -767,6 +774,7 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare i64 @gos_rt_heap_i64_len(ptr)",
     "declare void @gos_rt_heap_i64_write_bytes_to_stdout(ptr, i64, i64)",
     "declare void @gos_rt_heap_i64_write_lines_to_stdout(ptr, i64, i64, i64)",
+    "declare ptr @gos_rt_heap_u8_to_string(ptr, i64)",
     "declare ptr @gos_rt_atomic_i64_new(i64)",
     "declare i64 @gos_rt_atomic_i64_load(ptr)",
     "declare void @gos_rt_atomic_i64_store(ptr, i64)",
@@ -802,6 +810,11 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare i8 @gos_rt_map_contains_key_str(ptr, ptr)",
     "declare i8 @gos_rt_map_remove_str(ptr, ptr)",
     "declare void @gos_rt_map_clear(ptr)",
+    "declare i64 @gos_rt_map_inc_at_str_i64(ptr, ptr, i64, i64, i64)",
+    "declare void @gos_rt_map_free(ptr)",
+    "declare void @gos_rt_vec_free(ptr)",
+    "declare void @gos_rt_set_free(ptr)",
+    "declare void @gos_rt_btmap_free(ptr)",
     "declare ptr @gos_rt_map_keys_i64(ptr)",
     "declare ptr @gos_rt_map_values_i64(ptr)",
     "declare ptr @gos_rt_map_keys_str(ptr)",

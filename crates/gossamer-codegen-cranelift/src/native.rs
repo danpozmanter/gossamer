@@ -377,6 +377,9 @@ pub(crate) fn lower_program_full(
             &function_ids_by_name,
             &mut intrinsics,
         )?;
+        if std::env::var("GOS_DUMP_CLIF").is_ok() {
+            eprintln!("=== CLIF {} ===\n{}", body.name, func.display());
+        }
         let mut ctx = Context::for_function(func);
         module.define_function(id, &mut ctx).map_err(|e| {
             let detail = match &e {
@@ -1690,21 +1693,68 @@ fn lower_terminator(
                 Some(var) => builder.use_var(var),
                 None => builder.ins().iconst(types::I64, 0),
             };
-            // Coerce the return value to the function's declared
-            // return type. The MIR may have stored a narrow
-            // type (i8 for bool) into the RETURN local even when
-            // the function signature is `i64`; cranelift's
-            // verifier rejects width mismatches between the
-            // returned value and the function signature.
-            let want = builder
-                .func
-                .signature
-                .returns
-                .first()
-                .map_or(types::I64, |p| p.value_type);
-            let coerced = coerce_arg_to(builder, retval, want)
-                .unwrap_or_else(|_| builder.ins().iconst(want, 0));
-            builder.ins().return_(&[coerced]);
+            // Aggregate returns: the local-0 variable holds a pointer
+            // into a stack slot owned by the current frame. Returning
+            // it directly hands the caller a dangling pointer the
+            // moment the frame pops. Heap-allocate via
+            // `gos_rt_gc_alloc`, copy the inline data over, and return
+            // the heap pointer instead. Mirrors the LLVM tier so both
+            // backends agree on the by-value-aggregate ABI.
+            let ret_ty_mir = body.local_ty(Local(0));
+            let ret_is_aggregate = matches!(
+                tcx.kind_of(ret_ty_mir),
+                TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
+            );
+            if ret_is_aggregate {
+                let bytes = u64::from(type_slot_count(tcx, ret_ty_mir).max(1)) * 8;
+                let ptr_ty = module.target_config().pointer_type();
+                let alloc_sig = {
+                    let mut s = module.make_signature();
+                    s.params.push(AbiParam::new(types::I64));
+                    s.returns.push(AbiParam::new(ptr_ty));
+                    s
+                };
+                let alloc_id = module
+                    .declare_function("gos_rt_gc_alloc", Linkage::Import, &alloc_sig)
+                    .map_err(|e| anyhow!("declare gos_rt_gc_alloc: {e}"))?;
+                let alloc_ref = module.declare_func_in_func(alloc_id, builder.func);
+                let bytes_v = builder.ins().iconst(types::I64, bytes as i64);
+                let call = builder.ins().call(alloc_ref, &[bytes_v]);
+                let heap = builder.inst_results(call)[0];
+                let slots = type_slot_count(tcx, ret_ty_mir).max(1);
+                for slot_idx in 0..slots {
+                    let off = (slot_idx as i32) * 8;
+                    let word = builder.ins().load(
+                        types::I64,
+                        MemFlags::trusted(),
+                        retval,
+                        ir::immediates::Offset32::new(off),
+                    );
+                    builder.ins().store(
+                        MemFlags::trusted(),
+                        word,
+                        heap,
+                        ir::immediates::Offset32::new(off),
+                    );
+                }
+                builder.ins().return_(&[heap]);
+            } else {
+                // Coerce the return value to the function's declared
+                // return type. The MIR may have stored a narrow
+                // type (i8 for bool) into the RETURN local even when
+                // the function signature is `i64`; cranelift's
+                // verifier rejects width mismatches between the
+                // returned value and the function signature.
+                let want = builder
+                    .func
+                    .signature
+                    .returns
+                    .first()
+                    .map_or(types::I64, |p| p.value_type);
+                let coerced = coerce_arg_to(builder, retval, want)
+                    .unwrap_or_else(|_| builder.ins().iconst(want, 0));
+                builder.ins().return_(&[coerced]);
+            }
         }
         Terminator::Call {
             callee,
@@ -2810,6 +2860,55 @@ fn lower_intrinsic_call(
             let finish = intrinsics.extern_fn(module, "gos_rt_concat_finish", &[], &[ptr_ty])?;
             let finish_ref = module.declare_func_in_func(finish, builder.func);
             let call = builder.ins().call(finish_ref, &[]);
+            let result = builder.inst_results(call)[0];
+            define_var_to(
+                builder,
+                locals,
+                body,
+                tcx,
+                module,
+                destination.local,
+                result,
+            );
+            Ok(true)
+        }
+        // `__fmt_prec(value, prec)` — emitted by macro expansion for
+        // `{:.N}` specs. Routes through `gos_rt_f64_prec_to_str` so
+        // the result is a String the surrounding `__concat` consumes.
+        "__fmt_prec" => {
+            if args.len() != 2 {
+                bail!("native codegen: __fmt_prec expects exactly two arguments");
+            }
+            let value_raw = lower_operand(
+                module, builder, locals, body, tcx, &args[0], None, intrinsics,
+            )?;
+            let value_ty = value_type(value_raw, builder);
+            let value = if value_ty == types::F64 {
+                value_raw
+            } else if value_ty == types::F32 {
+                builder.ins().fpromote(types::F64, value_raw)
+            } else {
+                builder.ins().fcvt_from_sint(types::F64, value_raw)
+            };
+            let prec_raw = lower_operand(
+                module, builder, locals, body, tcx, &args[1], None, intrinsics,
+            )?;
+            let prec_ty = value_type(prec_raw, builder);
+            let prec = if prec_ty.bits() < 64 {
+                builder.ins().sextend(types::I64, prec_raw)
+            } else if prec_ty.bits() > 64 {
+                builder.ins().ireduce(types::I64, prec_raw)
+            } else {
+                prec_raw
+            };
+            let f = intrinsics.extern_fn(
+                module,
+                "gos_rt_f64_prec_to_str",
+                &[types::F64, types::I64],
+                &[ptr_ty],
+            )?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &[value, prec]);
             let result = builder.inst_results(call)[0];
             define_var_to(
                 builder,
@@ -4446,6 +4545,70 @@ fn lower_intrinsic_call(
             define_var_to(builder, locals, body, tcx, module, destination.local, unit);
             Ok(true)
         }
+        // `m.inc_at(seq, start, len, by)` — zero-copy slice hash
+        // for `HashMap<String, i64>`, matching Rust's
+        // `*m.entry(&seq[i..i+k]).or_insert(0) += by`.
+        "gos_rt_map_inc_at_str_i64" => {
+            let f = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_inc_at_str_i64",
+                &[ptr_ty, ptr_ty, types::I64, types::I64, types::I64],
+                &[types::I64],
+            )?;
+            let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let seq = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let start_v = match args.get(2) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let len_v = match args.get(3) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let by_v = match args.get(4) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 1),
+            };
+            let start64 = coerce_arg_to(builder, start_v, types::I64)?;
+            let len64 = coerce_arg_to(builder, len_v, types::I64)?;
+            let by64 = coerce_arg_to(builder, by_v, types::I64)?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &[m, seq, start64, len64, by64]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        // Drop helpers emitted by the MIR's drop-insertion pass.
+        // Each frees a heap-owned runtime container so the
+        // process doesn't leak its contents across calls.
+        "gos_rt_map_free" | "gos_rt_vec_free" | "gos_rt_set_free" | "gos_rt_btmap_free" => {
+            let static_name: &'static str = match name {
+                "gos_rt_map_free" => "gos_rt_map_free",
+                "gos_rt_vec_free" => "gos_rt_vec_free",
+                "gos_rt_set_free" => "gos_rt_set_free",
+                "gos_rt_btmap_free" => "gos_rt_btmap_free",
+                _ => unreachable!(),
+            };
+            let f = intrinsics.extern_fn(module, static_name, &[ptr_ty], &[])?;
+            let m = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let _ = builder.ins().call(fref, &[m]);
+            let unit = builder.ins().iconst(types::I64, 0);
+            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            Ok(true)
+        }
         // HashMap iteration helpers — each returns a *mut GosVec
         // snapshot of the requested column so the for-loop lowerer
         // can iterate it through the regular gos_rt_vec_* helpers.
@@ -5646,6 +5809,39 @@ fn lower_intrinsic_call(
             let f = intrinsics.extern_fn(module, "gos_rt_heap_u8_len", &[ptr_ty], &[types::I64])?;
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[v]);
+            let val = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, val);
+            Ok(true)
+        }
+        // `buf.to_string(len)` — freezes the first `len` bytes of
+        // a `U8Vec` build buffer into an immutable `String`.
+        "gos_rt_heap_u8_to_string" => {
+            let v = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => bail!("heap_u8_to_string: missing receiver"),
+            };
+            let len_v = match args.get(1) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let len64 = coerce_arg_to(builder, len_v, types::I64)?;
+            let f = intrinsics.extern_fn(
+                module,
+                "gos_rt_heap_u8_to_string",
+                &[ptr_ty, types::I64],
+                &[ptr_ty],
+            )?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &[v, len64]);
             let val = builder.inst_results(call)[0];
             define_var_to(builder, locals, body, tcx, module, destination.local, val);
             Ok(true)

@@ -22,12 +22,10 @@ fn fib_iterative(n: i64) -> i64 {
     }
     let mut a: i64 = 0
     let mut b: i64 = 1
-    let mut i: i64 = 2
-    while i <= n {
+    for _ in 2..=n {
         let next = a + b
         a = b
         b = next
-        i = i + 1
     }
     b
 }

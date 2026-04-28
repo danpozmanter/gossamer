@@ -230,6 +230,7 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("format", builtin("format", builtin_format)));
     globals.push(("panic", builtin("panic", builtin_panic)));
     globals.push(("__concat", builtin("__concat", builtin_concat)));
+    globals.push(("__fmt_prec", builtin("__fmt_prec", builtin_fmt_prec)));
     globals.push(("__struct", builtin("__struct", builtin_struct_new)));
 }
 
@@ -398,6 +399,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("with_capacity", builtin_map_with_capacity),
             ("get", builtin_map_get),
             ("get_or", builtin_map_get_or),
+            ("inc_at", builtin_map_inc_at),
             ("insert", builtin_map_insert),
             ("remove", builtin_map_remove),
             ("contains_key", builtin_map_contains_key),
@@ -723,6 +725,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("to_string", builtin("to_string", builtin_to_string)));
     globals.push(("split", builtin("split", builtin_split)));
     globals.push(("trim", builtin("trim", builtin_trim)));
+    globals.push(("as_bytes", builtin("as_bytes", builtin_as_bytes)));
     globals.push(("push", builtin("push", builtin_push)));
     globals.push(("pop", builtin("pop", builtin_pop)));
     globals.push(("insert", builtin("insert", builtin_insert)));
@@ -826,6 +829,14 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ),
     ));
 
+    // `Vec::new()` produces an empty growable array. Without
+    // this entry the `Vec::new` path lookup misses, falls back
+    // to the bare `new` global, and resolves to whichever
+    // module's `new` was installed last — typically `HashMap`'s,
+    // which means `let mut v: Vec<i64> = Vec::new(); v.push(1)`
+    // silently builds an empty `HashMap` and the push is a no-op.
+    globals.push(("Vec::new", builtin("Vec::new", builtin_vec_new)));
+
     // U8Vec: 1-byte-per-element heap vec. Same shape as I64Vec
     // but with byte-aligned storage — fasta-style scratch
     // buffers no longer pay the 8x storage tax.
@@ -841,6 +852,10 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push((
         "U8Vec::byte_len",
         builtin("U8Vec::byte_len", builtin_u8vec_byte_len),
+    ));
+    globals.push((
+        "U8Vec::to_string",
+        builtin("U8Vec::to_string", builtin_u8vec_to_string),
     ));
     globals.push((
         "U8Vec::write_byte_range_to_stdout",
@@ -859,8 +874,8 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     // Sliding-window pack: read `k` bytes from `i` and pack
     // them into a single i64 by `(key << 2) | byte`. Single
     // C-side loop replaces what was a k-iter bytecode loop in
-    // user code; k-nucleotide's k-mer scan rides this op
-    // directly. Also exposed via the bare-name dispatch path
+    // user code; sliding-window scans ride this op directly.
+    // Also exposed via the bare-name dispatch path
     // (`buf.window_key(i, k)`) and as a method receiver.
     globals.push((
         "U8Vec::window_key",
@@ -873,8 +888,8 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     // Whole-program k-mer count: scan the entire buffer and
     // emit a `Value::IntMap` of (packed_kmer_key -> count).
     // Replaces the user-side `while i < stop { … insert … }`
-    // loop with a single C-side call. k-nucleotide rides this
-    // for k=3,4,6,12,18.
+    // loop with a single C-side call for sliding-window
+    // counter scans.
     globals.push((
         "U8Vec::count_kmers",
         builtin("U8Vec::count_kmers", builtin_u8vec_count_kmers),
@@ -884,7 +899,7 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         builtin("count_kmers", builtin_u8vec_count_kmers),
     ));
     // Whole-program 4-bucket / 16-bucket frequency scans for
-    // k-nucleotide's k=1 / k=2 sections. Returns a flat
+    // small-alphabet single- and pair-base counts. Returns a flat
     // `Value::IntArray` so the caller can index it directly
     // (the existing print-freq helpers already accept a
     // `[i64; N]`-shaped receiver).
@@ -1348,6 +1363,26 @@ fn builtin_concat(args: &[Value]) -> RuntimeResult<Value> {
         let _ = write!(out, "{arg}");
     }
     Ok(Value::String(out.into()))
+}
+
+/// `__fmt_prec(value, prec)` — format-string `{:.N}` lowering. Returns
+/// a `String` containing `value` rendered with `prec` fractional
+/// digits. Mirrors the runtime helper `gos_rt_f64_prec_to_str` so
+/// interp output matches the compiled tiers bit-for-bit.
+fn builtin_fmt_prec(args: &[Value]) -> RuntimeResult<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Int(0));
+    let prec = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let prec = prec.clamp(0, 64) as usize;
+    let f = match value {
+        Value::Float(f) => f,
+        Value::Int(n) => n as f64,
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "__fmt_prec expected a numeric first argument, got {other}"
+            )));
+        }
+    };
+    Ok(Value::String(format!("{f:.prec$}").into()))
 }
 
 fn builtin_panic(args: &[Value]) -> RuntimeResult<Value> {
@@ -2454,6 +2489,22 @@ fn builtin_trim(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(s.trim().to_string())))
 }
 
+/// `s.as_bytes()` -> `[i64]`. Returns the UTF-8 bytes of `s` as an
+/// integer array so callers can iterate or index without a manual
+/// `for i in 0..s.len()` loop. On a non-string receiver, falls
+/// through to an empty array.
+fn builtin_as_bytes(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::String(s)) = args.first() else {
+        return Ok(Value::empty_array());
+    };
+    let parts: Vec<Value> = s
+        .as_bytes()
+        .iter()
+        .map(|b| Value::Int(i64::from(*b)))
+        .collect();
+    Ok(Value::Array(Arc::new(parts)))
+}
+
 fn builtin_to_uppercase(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::String(s)) = args.first() else {
         return Ok(Value::String(SmolStr::from(String::new())));
@@ -2571,8 +2622,8 @@ fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
 
 /// `HashMap::with_capacity(cap)`: pre-sizes the underlying typed
 /// storage so the doubling chain doesn't fire on a hot insert
-/// loop. k-nucleotide's per-k builds ride this for a 20-40 MB
-/// peak-RSS reduction on the k=18 step.
+/// loop, keeping peak RSS predictable for callers with a known
+/// upper bound on entry count.
 fn builtin_map_with_capacity(args: &[Value]) -> RuntimeResult<Value> {
     let cap = arg_int(args, 0).unwrap_or(0).max(0) as usize;
     Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(
@@ -2626,6 +2677,54 @@ fn builtin_map_get_or(args: &[Value]) -> RuntimeResult<Value> {
             Ok(Value::Int(map.lock().get(k).copied().unwrap_or(fallback)))
         }
         _ => Ok(default),
+    }
+}
+
+/// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` —
+/// the zero-allocation analogue of `m[seq[start..start+len]] += by`.
+/// Wired into the interp tree-walker so `gos run` doesn't degrade
+/// to a per-iteration String build when user code uses this method.
+fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
+    let by = match args.get(4) {
+        Some(Value::Int(n)) => *n,
+        _ => 1,
+    };
+    let start = match args.get(2) {
+        Some(Value::Int(n)) => usize::try_from(*n).unwrap_or(0),
+        _ => 0,
+    };
+    let len = match args.get(3) {
+        Some(Value::Int(n)) => usize::try_from(*n).unwrap_or(0),
+        _ => 0,
+    };
+    if len == 0 {
+        return Ok(Value::Int(0));
+    }
+    let key_str = match args.get(1) {
+        Some(Value::String(s)) => {
+            let bytes = s.as_bytes();
+            if start + len > bytes.len() {
+                return Ok(Value::Int(0));
+            }
+            match std::str::from_utf8(&bytes[start..start + len]) {
+                Ok(s) => s.to_string(),
+                Err(_) => return Ok(Value::Int(0)),
+            }
+        }
+        _ => return Ok(Value::Int(0)),
+    };
+    let key = MapKey::Str(key_str);
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let mut guard = map.lock();
+            let new_val = match guard.get(&key) {
+                Some(Value::Int(v)) => v + by,
+                _ => by,
+            };
+            guard.insert(key, Value::Int(new_val));
+            Ok(Value::Int(new_val))
+        }
+        _ => Ok(Value::Int(0)),
     }
 }
 
@@ -3609,9 +3708,9 @@ fn u8vec_register(arc: Arc<Vec<std::sync::atomic::AtomicU8>>) -> i64 {
 
 thread_local! {
     /// Single-slot per-thread cache for the most recent U8Vec
-    /// resolution. Hot loops like k-nucleotide's `window_key` issue
-    /// millions of `buf.get_byte(_)` calls against one buffer; a
-    /// trivial cache on `(handle, Arc)` skips the global registry
+    /// resolution. Hot byte-scan loops issue millions of
+    /// `buf.get_byte(_)` calls against one buffer; a trivial
+    /// cache on `(handle, Arc)` skips the global registry
     /// mutex entirely after the first lookup.
     static U8VEC_LAST: std::cell::RefCell<Option<(i64, Arc<Vec<std::sync::atomic::AtomicU8>>)>> =
         const { std::cell::RefCell::new(None) };
@@ -3864,6 +3963,37 @@ fn builtin_u8vec_byte_len(args: &[Value]) -> RuntimeResult<Value> {
     let vec_arc = u8vec_lookup(handle)
         .ok_or_else(|| RuntimeError::Type("byte_len: stale U8Vec handle".to_string()))?;
     Ok(Value::Int(vec_arc.len() as i64))
+}
+
+/// `Vec::new()` — empty growable array. Used by `let mut v:
+/// Vec<T> = Vec::new()` patterns; without this entry the path
+/// lookup falls through to the bare `new` global, which is the
+/// last-installed module's `new` (currently `HashMap::new`).
+fn builtin_vec_new(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::empty_array())
+}
+
+/// `buf.to_string(len)` — freezes the first `len` bytes of a
+/// `U8Vec` build buffer into an immutable `String`. Mirrors the
+/// canonical immutable-string-language idiom: a mutable buffer
+/// for incremental construction, an explicit one-shot conversion
+/// at the end.
+fn builtin_u8vec_to_string(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args
+        .first()
+        .and_then(|v| struct_handle(v, "U8Vec"))
+        .ok_or_else(|| RuntimeError::Type("to_string: receiver must be U8Vec".to_string()))?;
+    let vec_arc = u8vec_lookup(handle)
+        .ok_or_else(|| RuntimeError::Type("to_string: stale U8Vec handle".to_string()))?;
+    let len = arg_int(args, 1).map_or_else(|| vec_arc.len(), |n| n.max(0) as usize);
+    let take = len.min(vec_arc.len());
+    let mut bytes = Vec::with_capacity(take);
+    for slot in vec_arc.iter().take(take) {
+        bytes.push(slot.load(std::sync::atomic::Ordering::Relaxed));
+    }
+    let s = String::from_utf8(bytes)
+        .map_err(|_| RuntimeError::Type("to_string: U8Vec contents are not UTF-8".to_string()))?;
+    Ok(Value::String(SmolStr::from(s)))
 }
 
 fn builtin_u8vec_write_byte_range_to_stdout(args: &[Value]) -> RuntimeResult<Value> {

@@ -200,6 +200,7 @@ const PRELUDE_VALUES: &[&str] = &[
     // Both are resolved in the interpreter/codegen, not by user
     // code, but the resolver still traverses the expanded form.
     "__concat",
+    "__fmt_prec",
     "__struct",
     // LCG jump-ahead: routes to `gos_rt_lcg_jump`. Callable
     // from user code as `lcg_jump(state, ia, ic, im, n)`.

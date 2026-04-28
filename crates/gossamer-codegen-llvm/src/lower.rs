@@ -207,12 +207,27 @@ impl<'a> Lowerer<'a> {
     fn emit_param_stores(&mut self) {
         for i in 0..self.body.arity {
             let local = Local(i + 1);
-            if is_unit(self.tcx, self.body.local_ty(local)) {
+            let local_ty = self.body.local_ty(local);
+            if is_unit(self.tcx, local_ty) {
                 continue;
             }
             let slot = local_slot(local);
-            let ty = render_ty(self.tcx, self.body.local_ty(local));
-            writeln!(self.out, "  store {ty} %p{i}, ptr {slot}").unwrap();
+            if is_aggregate(self.tcx, local_ty) {
+                // Aggregates are passed by pointer (the caller hands us
+                // the address of its flat-slot storage). Copy that data
+                // into our own slot so subsequent reads land on the
+                // aggregate's inline data — matching how locally-built
+                // aggregates are populated by `emit_aggregate_store`.
+                let bytes = u64::from(slot_count(self.tcx, local_ty).unwrap_or(1).max(1)) * 8;
+                writeln!(
+                    self.out,
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr %p{i}, i64 {bytes}, i1 false)"
+                )
+                .unwrap();
+            } else {
+                let ty = render_ty(self.tcx, local_ty);
+                writeln!(self.out, "  store {ty} %p{i}, ptr {slot}").unwrap();
+            }
         }
     }
 
@@ -1184,6 +1199,27 @@ impl<'a> Lowerer<'a> {
                 let ret_llvm = render_ty(self.tcx, ret_ty);
                 if is_unit(self.tcx, ret_ty) {
                     writeln!(self.out, "  ret void").unwrap();
+                } else if is_aggregate(self.tcx, ret_ty) {
+                    // Aggregate return: the callee's `%l0` is a stack
+                    // alloca whose storage dies when the frame pops.
+                    // Heap-allocate so the returned pointer outlives
+                    // the call, copy the inline data over, and return
+                    // the heap pointer. Both LLVM and Cranelift
+                    // callers can dereference the result safely.
+                    let bytes = u64::from(slot_count(self.tcx, ret_ty).unwrap_or(1).max(1)) * 8;
+                    let heap = self.fresh();
+                    writeln!(
+                        self.out,
+                        "  {heap} = call ptr @gos_rt_gc_alloc(i64 {bytes})"
+                    )
+                    .unwrap();
+                    writeln!(
+                        self.out,
+                        "  call void @llvm.memcpy.p0.p0.i64(ptr {heap}, ptr {slot}, i64 {bytes}, i1 false)",
+                        slot = local_slot(Local::RETURN)
+                    )
+                    .unwrap();
+                    writeln!(self.out, "  ret ptr {heap}").unwrap();
                 } else {
                     let tmp = self.fresh();
                     writeln!(
@@ -1595,10 +1631,13 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Lowers a `__concat(...)` call: emits one runtime print
-    /// per argument (dispatched by operand kind) and stores an
-    /// empty-string pointer in the destination so the
-    /// surrounding `println` consumes it without printing twice.
+    /// Lowers a `__concat(...)` call by appending each arg to
+    /// the runtime's thread-local concat buffer, then storing
+    /// the finished string pointer in `destination`. Mirrors the
+    /// Cranelift backend so `format!(...)` produces a real value
+    /// the caller can store / return; the previous inline-print
+    /// shortcut printed pieces eagerly and reordered output
+    /// whenever a `format!` result outlived its emission point.
     fn lower_concat_call(
         &mut self,
         args: &[Operand],
@@ -1610,18 +1649,90 @@ impl<'a> Lowerer<'a> {
                 "__concat destination cannot have projections",
             ));
         }
-        // Empty separator: `__concat` joins pieces directly
-        // (`println!("a={n}")` becomes `__concat("a=", n)`).
-        self.emit_per_arg_print(args, "")?;
-        // Destination receives an empty-string pointer so the
-        // surrounding `println` (which calls `gos_rt_print_str`
-        // on its argument and then a newline) prints just the
-        // newline.
-        let (empty_name, _) = self.strings.borrow_mut().intern("");
-        let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+        writeln!(self.out, "  call void @gos_rt_concat_init()").unwrap();
+        for arg in args {
+            let kind = self.concat_print_kind(arg);
+            if matches!(kind, ConcatKind::Unsupported) {
+                return Err(BuildError::Unsupported(
+                    "println/format of aggregate or variant types",
+                ));
+            }
+            let value = self.lower_operand(arg)?;
+            match kind {
+                ConcatKind::StrPtr => {
+                    writeln!(self.out, "  call void @gos_rt_concat_str(ptr {value})").unwrap();
+                }
+                ConcatKind::Int => {
+                    let widened = self.widen_to_i64(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_concat_i64(i64 {widened})").unwrap();
+                }
+                ConcatKind::Float => {
+                    let widened = self.widen_to_f64(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_concat_f64(double {widened})").unwrap();
+                }
+                ConcatKind::Bool => {
+                    let widened = self.widen_bool_to_i32(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_concat_bool(i32 {widened})").unwrap();
+                }
+                ConcatKind::Char => {
+                    let widened = self.widen_char_to_i32(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_concat_char(i32 {widened})").unwrap();
+                }
+                ConcatKind::Unsupported => unreachable!("checked above"),
+            }
+        }
+        let result = self.fresh();
+        writeln!(self.out, "  {result} = call ptr @gos_rt_concat_finish()").unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+            let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
             let slot = local_slot(destination.local);
-            writeln!(self.out, "  store {dest_ty} {empty_name}, ptr {slot}").unwrap();
+            writeln!(self.out, "  store {dest_ty} {result}, ptr {slot}").unwrap();
+        }
+        match target {
+            Some(t) => {
+                writeln!(self.out, "  br label %bb{}", t.as_u32()).unwrap();
+            }
+            None => {
+                writeln!(self.out, "  unreachable").unwrap();
+            }
+        }
+        Ok(())
+    }
+
+    /// Lowers `__fmt_prec(value, prec)` as a call into
+    /// `gos_rt_f64_prec_to_str`. The value is widened to `f64` and
+    /// the precision to `i64` to match the runtime ABI; the returned
+    /// pointer becomes the destination's String value.
+    fn lower_fmt_prec_call(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        if !destination.projection.is_empty() {
+            return Err(BuildError::Unsupported(
+                "__fmt_prec destination cannot have projections",
+            ));
+        }
+        if args.len() != 2 {
+            return Err(BuildError::Unsupported(
+                "__fmt_prec expects exactly two arguments",
+            ));
+        }
+        let value_raw = self.lower_operand(&args[0])?;
+        let value = self.coerce_to_f64(&args[0], &value_raw);
+        let prec_raw = self.lower_operand(&args[1])?;
+        let prec = self.widen_to_i64(&args[1], &prec_raw);
+        let result = self.fresh();
+        writeln!(
+            self.out,
+            "  {result} = call ptr @gos_rt_f64_prec_to_str(double {value}, i64 {prec})"
+        )
+        .unwrap();
+        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+            let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+            let slot = local_slot(destination.local);
+            writeln!(self.out, "  store {dest_ty} {result}, ptr {slot}").unwrap();
         }
         match target {
             Some(t) => {
@@ -1721,6 +1832,27 @@ impl<'a> Lowerer<'a> {
         v.to_string()
     }
 
+    /// Like [`widen_to_f64`] but also converts integer operands via
+    /// `sitofp`. Used by `__fmt_prec`, which accepts a numeric value
+    /// regardless of MIR type and renders it as a float.
+    fn coerce_to_f64(&mut self, op: &Operand, v: &str) -> String {
+        let src_llvm = self.operand_llvm_ty(op);
+        match src_llvm.as_str() {
+            "double" => v.to_string(),
+            "float" => {
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = fpext float {v} to double").unwrap();
+                tmp
+            }
+            "i1" | "i8" | "i16" | "i32" | "i64" => {
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = sitofp {src_llvm} {v} to double").unwrap();
+                tmp
+            }
+            _ => v.to_string(),
+        }
+    }
+
     fn widen_bool_to_i32(&mut self, op: &Operand, v: &str) -> String {
         let src_llvm = self.operand_llvm_ty(op);
         if src_llvm == "i32" {
@@ -1808,6 +1940,14 @@ impl<'a> Lowerer<'a> {
         // the operand's MIR kind).
         if name == "__concat" {
             self.lower_concat_call(args, destination, target)?;
+            return Ok(());
+        }
+        // `__fmt_prec(value, prec)` — emitted by macro expansion for
+        // `{:.N}` specs. Routes through `gos_rt_f64_prec_to_str` so
+        // the result is a heap String that the surrounding `__concat`
+        // pipeline consumes like any other string operand.
+        if name == "__fmt_prec" {
+            self.lower_fmt_prec_call(args, destination, target)?;
             return Ok(());
         }
         // `println` / `print` / `eprintln` / `eprint` route to
@@ -2603,8 +2743,9 @@ impl<'a> Lowerer<'a> {
             let a_v = self.lower_operand(arg)?;
             let _ = write!(arg_text, "{a_ty} {a_v}");
         }
-        let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
-        if dest_ty == "void" || is_unit(self.tcx, self.body.local_ty(destination.local)) {
+        let dest_ty_mir = self.body.local_ty(destination.local);
+        let dest_ty = render_ty(self.tcx, dest_ty_mir);
+        if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
             writeln!(self.out, "  call void @\"{symbol}\"({arg_text})").unwrap();
         } else {
             let tmp = self.fresh();
@@ -2614,7 +2755,21 @@ impl<'a> Lowerer<'a> {
             )
             .unwrap();
             let slot = local_slot(destination.local);
-            writeln!(self.out, "  store {dest_ty} {tmp}, ptr {slot}").unwrap();
+            if is_aggregate(self.tcx, dest_ty_mir) {
+                // Aggregate return: the callee handed us a heap
+                // pointer to fresh storage. Copy it into our
+                // destination's inline alloca so subsequent field
+                // reads use the same flat-slot shape that locally
+                // built aggregates use.
+                let bytes = u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8;
+                writeln!(
+                    self.out,
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr {tmp}, i64 {bytes}, i1 false)"
+                )
+                .unwrap();
+            } else {
+                writeln!(self.out, "  store {dest_ty} {tmp}, ptr {slot}").unwrap();
+            }
         }
         emit_terminator_branch(&mut self.out, target);
         Ok(())

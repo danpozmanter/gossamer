@@ -320,27 +320,58 @@ impl Poller for OsPoller {
     }
 
     fn poll(&mut self, timeout: Option<Duration>) -> io::Result<Vec<Readiness>> {
-        let combined = self.next_timeout(timeout);
-        self.poll.poll(&mut self.events, combined)?;
-        for event in &self.events {
-            let token = event.token();
-            if let Some(&(source, interest, gid)) = self.by_token.get(&token) {
-                let fired = match interest {
-                    Interest::Readable => event.is_readable(),
-                    Interest::Writable => event.is_writable(),
-                    Interest::Timer => false,
-                };
-                if fired {
-                    self.pending.push(Readiness {
-                        source,
-                        interest,
-                        gid,
-                    });
+        // mio's `poll` can return early without events on every
+        // platform — spurious wakeups, signal interruption, or
+        // simply rounding the remaining timeout down to zero.
+        // Loop until we have at least one event ready or the
+        // caller-supplied deadline passes; recompute `combined`
+        // each iteration so the remaining wait shrinks toward
+        // both the user's timeout and the next timer's deadline.
+        let user_deadline = timeout.map(|t| Instant::now() + t);
+        loop {
+            self.drain_expired_timers();
+            if !self.pending.is_empty() {
+                return Ok(self.drain());
+            }
+            let user_remaining = user_deadline.map(|d| d.saturating_duration_since(Instant::now()));
+            if matches!(user_remaining, Some(d) if d.is_zero()) && self.timers.peek().is_none() {
+                return Ok(self.drain());
+            }
+            let combined = self.next_timeout(user_remaining);
+            self.poll.poll(&mut self.events, combined)?;
+            for event in &self.events {
+                let token = event.token();
+                if let Some(&(source, interest, gid)) = self.by_token.get(&token) {
+                    let fired = match interest {
+                        Interest::Readable => event.is_readable(),
+                        Interest::Writable => event.is_writable(),
+                        Interest::Timer => false,
+                    };
+                    if fired {
+                        self.pending.push(Readiness {
+                            source,
+                            interest,
+                            gid,
+                        });
+                    }
                 }
             }
+            self.drain_expired_timers();
+            if !self.pending.is_empty() {
+                return Ok(self.drain());
+            }
+            // No events. If the user gave a timeout and it has
+            // elapsed, return empty. Otherwise loop and re-poll.
+            if let Some(d) = user_deadline {
+                if Instant::now() >= d {
+                    return Ok(self.drain());
+                }
+            } else if self.timers.peek().is_none() {
+                // No deadline and no timer pending — re-polling
+                // would block forever. Return empty.
+                return Ok(self.drain());
+            }
         }
-        self.drain_expired_timers();
-        Ok(self.drain())
     }
 }
 

@@ -194,12 +194,34 @@ pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
-    let a_bytes: &[u8] = if a.is_null() {
+    // Cheap empty-checks that only touch the first byte. The full
+    // `CStr::from_ptr(a).to_bytes()` form calls `strlen`, which on
+    // a growing `s = s + c` accumulator is O(strlen(s)) per
+    // iteration — turning the seq-build loop into a multi-second
+    // strlen-dominated walk even after the arena O(N²) fix. The
+    // fast path (extend-in-place) doesn't need `a`'s length at
+    // all; `try_extend_last_cstring` reads it from
+    // `arena.last_len`.
+    let a_empty = a.is_null() || unsafe { *a.cast::<u8>() } == 0;
+    let b_empty = b.is_null() || unsafe { *b.cast::<u8>() } == 0;
+    // Fast path: if `a` is the most recent arena allocation,
+    // extend it in place. Only `b` needs an actual length (it's
+    // typically tiny — a literal, a single-char fragment, or a
+    // numeric digit).
+    if !a_empty && !b_empty {
+        let b_bytes = unsafe { CStr::from_ptr(b).to_bytes() };
+        let extended = try_extend_last_cstring(a, b_bytes);
+        if !extended.is_null() {
+            return extended;
+        }
+    }
+    // Slow path: pay the strlen on both strings.
+    let a_bytes: &[u8] = if a_empty {
         &[]
     } else {
         unsafe { CStr::from_ptr(a).to_bytes() }
     };
-    let b_bytes: &[u8] = if b.is_null() {
+    let b_bytes: &[u8] = if b_empty {
         &[]
     } else {
         unsafe { CStr::from_ptr(b).to_bytes() }
@@ -466,6 +488,18 @@ pub unsafe extern "C" fn gos_rt_i64_to_str(n: i64) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_f64_to_str(x: f64) -> *mut c_char {
     alloc_cstring(format!("{x}").as_bytes())
+}
+
+/// Stringifies an `f64` with `prec` fractional digits — the runtime
+/// side of `format!("{:.N}", x)`. Routes through the Rust standard
+/// library's float formatter so rounding matches the interpreter's
+/// `{:.N}` Display output bit-for-bit. Negative `prec` is clamped to
+/// zero; very large `prec` is clamped to a sane upper bound to keep
+/// the allocation bounded.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_f64_prec_to_str(x: f64, prec: i64) -> *mut c_char {
+    let prec = prec.clamp(0, 64) as usize;
+    alloc_cstring(format!("{x:.prec$}").as_bytes())
 }
 
 /// Stringifies a bool (passed as i32: nonzero = true). Used by
@@ -1315,9 +1349,9 @@ pub unsafe extern "C" fn gos_rt_vec_pop(v: *mut GosVec, out: *mut u8) -> i32 {
 // ---------------------------------------------------------------
 // HashMap runtime — typed-storage variants over rustc-hash's
 // FxHashMap. Auto-promotes Empty → I64I64 / StrI64 / StrStr /
-// Bytes on first typed call. The i64-keyed/i64-valued shape (the
-// hottest path: k-nucleotide, scoreboards, counters) avoids
-// per-op `Vec<u8>` allocation and uses FxHash directly on the
+// Bytes on first typed call. The i64-keyed/i64-valued shape
+// (counter / scoreboard hot paths) avoids per-op `Vec<u8>`
+// allocation and uses FxHash directly on the
 // 8-byte key.
 // ---------------------------------------------------------------
 
@@ -1353,8 +1387,8 @@ pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mu
 /// for ~5M inserts) when the caller has an upper bound. Picks the
 /// initial typed shape from the byte sizes — both 8 → I64I64,
 /// otherwise the byte-erased generic shape that promotes lazily.
-/// k-nucleotide's per-k HashMap rides this for a 20-40 MB peak-RSS
-/// reduction on the k=18 step.
+/// Pre-sizing avoids the doubling chain on counter-style hot
+/// loops where the caller knows the total entry count.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
     key_bytes: u32,
@@ -1536,7 +1570,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_i64(m: *mut GosMap, key: i64, val
 /// Fused increment: `m[k] = m.get_or(k, 0) + by`. Single lock,
 /// single hash, single bucket walk. Replaces the
 /// `m.insert(k, m.get_or(k, 0) + 1)` pattern that costs 2× the
-/// hash work on hot counter loops (k-nucleotide).
+/// hash work on hot counter loops.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_inc_i64(m: *mut GosMap, key: i64, by: i64) -> i64 {
     if m.is_null() {
@@ -1719,6 +1753,53 @@ pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_cha
     removed
 }
 
+/// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` —
+/// the zero-allocation analogue of
+/// `m.insert(k, m.get_or(k, 0) + by)` where `k = seq[start..start+len]`.
+///
+/// Mirrors `*m.entry(&seq[i..i+k]).or_insert(0) += by`: the
+/// slice is borrowed (zero-copy), the hash table is consulted
+/// exactly once, and a `Vec<u8>` is allocated only on the first
+/// occurrence of each unique key. Halves the hash work per
+/// iteration vs the get_or + insert pair, and avoids any
+/// per-iteration scratch allocation for the key.
+///
+/// Returns the new value at `seq[start..start+len]` (or `by` if
+/// the entry is fresh).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
+    m: *mut GosMap,
+    seq: *const c_char,
+    start: i64,
+    len: i64,
+    by: i64,
+) -> i64 {
+    if m.is_null() || seq.is_null() || len <= 0 || start < 0 {
+        return 0;
+    }
+    let map = unsafe { &mut *m };
+    let key_slice: &[u8] =
+        unsafe { std::slice::from_raw_parts(seq.cast::<u8>().add(start as usize), len as usize) };
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::StrI64(FxHashMap::default());
+    }
+    let MapStorage::StrI64(inner) = &mut *storage else {
+        return 0;
+    };
+    // Lookup is by `&[u8]` — `Vec<u8>: Borrow<[u8]>` lets the
+    // hashbrown table hash the slice without first allocating an
+    // owned key. Only the first occurrence of each unique k-mer
+    // pays the `to_vec()` cost.
+    if let Some(v) = inner.get_mut(key_slice) {
+        *v += by;
+        return *v;
+    }
+    inner.insert(key_slice.to_vec(), by);
+    map.len_cache += 1;
+    by
+}
+
 /// `m.insert(k: i64, v: String)` — `HashMap<i64, String>` insert.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val: *const c_char) {
@@ -1765,6 +1846,55 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
     let mut storage = map.storage.lock();
     *storage = MapStorage::Empty;
     map.len_cache = 0;
+}
+
+/// Drops a `HashMap` allocated by [`gos_rt_map_new`] /
+/// [`gos_rt_map_new_with_capacity`]. The MIR's drop-insertion pass
+/// emits a call to this at every function return for any local
+/// that owns a freshly-constructed map and isn't moved into the
+/// return slot. Idempotent on null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
+    if m.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(m) });
+}
+
+/// Drops a `Vec` allocated by [`gos_rt_vec_new`] /
+/// [`gos_rt_vec_with_capacity`]. Frees both the `GosVec` header
+/// and its backing element buffer. Idempotent on null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
+    if v.is_null() {
+        return;
+    }
+    let boxed = unsafe { Box::from_raw(v) };
+    if !boxed.ptr.is_null() && boxed.cap > 0 {
+        let bytes = (boxed.cap as usize) * (boxed.elem_bytes as usize);
+        unsafe {
+            let _ = Vec::from_raw_parts(boxed.ptr, bytes, bytes);
+        }
+    }
+    drop(boxed);
+}
+
+/// Drops a `HashSet` allocated by [`gos_rt_set_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_free(s: *mut GosSet) {
+    if s.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(s) });
+}
+
+/// Drops a `BTreeMap` allocated by [`gos_rt_btmap_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btmap_free(m: *mut GosBtMap) {
+    if m.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(m) });
 }
 
 /// Snapshots the i64 keys of an i64-keyed `HashMap` into a fresh
@@ -2233,6 +2363,13 @@ const ARENA_BYTES: usize = 4 * 1024 * 1024;
 struct Arena {
     buf: Vec<u8>,
     used: usize,
+    /// Start offset (within `buf`) of the most recent allocation
+    /// returned by `gos_rt_gc_alloc`. Used by
+    /// [`try_extend_last_cstring`] to grow `s = s + c`-style
+    /// concatenation chains in place instead of leaking the
+    /// previous slot.
+    last_start: usize,
+    last_len: usize,
 }
 
 thread_local! {
@@ -2249,16 +2386,34 @@ pub unsafe extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
     ARENAS.with(|cell| {
         let mut arenas = cell.borrow_mut();
         if arenas.last().is_none_or(|a| a.used + size > a.buf.len()) {
-            let cap = size.max(ARENA_BYTES);
+            // Grow geometrically: each new arena is at least 2x the
+            // requested size (and at least ARENA_BYTES). Without
+            // the 2x headroom, an exact-fit arena causes the
+            // *next* extension attempt to overflow and allocate
+            // yet another exact-fit arena, reintroducing the
+            // O(N²) blowup the in-place extension was supposed
+            // to fix. Doubling keeps amortised allocation O(N).
+            let prev_cap = arenas.last().map_or(0, |a| a.buf.len());
+            let cap = size
+                .saturating_mul(2)
+                .max(ARENA_BYTES)
+                .max(prev_cap.saturating_mul(2));
             // Zero-initialised arena. Allocations are bumped out
             // of `buf` and the caller writes before reading, but
             // zeroing avoids reading-before-write UB if anyone
             // peeks at the raw arena memory.
             let buf = vec![0u8; cap];
-            arenas.push(Arena { buf, used: 0 });
+            arenas.push(Arena {
+                buf,
+                used: 0,
+                last_start: 0,
+                last_len: 0,
+            });
         }
         let arena = arenas.last_mut().unwrap();
         let ptr = unsafe { arena.buf.as_mut_ptr().add(arena.used) };
+        arena.last_start = arena.used;
+        arena.last_len = size;
         arena.used += size;
         ptr
     })
@@ -2269,6 +2424,54 @@ pub unsafe extern "C" fn gos_rt_gc_reset() {
     ARENAS.with(|cell| {
         cell.borrow_mut().clear();
     });
+}
+
+/// If `a_ptr` points to the most recent NUL-terminated arena
+/// allocation in the current thread's active arena and the arena
+/// has room for `extra` additional bytes plus the relocated NUL,
+/// extends that allocation in place by appending `extra` bytes
+/// and returns `a_ptr`. Otherwise returns `null` so the caller
+/// falls back to a fresh allocation.
+///
+/// The returned C-string still has a single trailing NUL; the
+/// previous NUL is overwritten by the first byte of `extra` and a
+/// new NUL is written one past the last appended byte.
+fn try_extend_last_cstring(a_ptr: *const c_char, extra: &[u8]) -> *mut c_char {
+    if a_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    ARENAS.with(|cell| {
+        let mut arenas = cell.borrow_mut();
+        let Some(arena) = arenas.last_mut() else {
+            return std::ptr::null_mut();
+        };
+        // Allocations always include a trailing NUL inside their
+        // recorded length. The most recent allocation occupies
+        // `[last_start, last_start + last_len) == [last_start, used)`.
+        let last_ptr = unsafe { arena.buf.as_mut_ptr().add(arena.last_start) };
+        if last_ptr.cast::<c_char>() != a_ptr.cast_mut() {
+            return std::ptr::null_mut();
+        }
+        if arena.last_len == 0 {
+            return std::ptr::null_mut();
+        }
+        let payload_len = arena.last_len - 1; // bytes excluding the trailing NUL
+        let need = arena.used + extra.len();
+        if need > arena.buf.len() {
+            return std::ptr::null_mut();
+        }
+        // Overwrite the existing NUL with the first byte of
+        // `extra`, append the rest, then write a fresh NUL.
+        unsafe {
+            let nul_offset = arena.last_start + payload_len;
+            let dst = arena.buf.as_mut_ptr().add(nul_offset);
+            std::ptr::copy_nonoverlapping(extra.as_ptr(), dst, extra.len());
+            *dst.add(extra.len()) = 0;
+        }
+        arena.used += extra.len();
+        arena.last_len += extra.len();
+        last_ptr.cast::<c_char>()
+    })
 }
 
 // ---------------------------------------------------------------
@@ -2918,6 +3121,33 @@ pub unsafe extern "C" fn gos_rt_heap_u8_len(v: *const GosU8Vec) -> i64 {
         return 0;
     }
     unsafe { (*v).len }
+}
+
+/// Materialises the first `len` bytes of a `U8Vec` into a fresh
+/// immutable `String` (NUL-terminated arena allocation). The
+/// canonical "freeze the build buffer" step at the end of an
+/// incremental construction loop — equivalent to F#'s
+/// `StringBuilder.ToString()` or Rust's
+/// `String::from_utf8(vec).unwrap()`.
+///
+/// `len` is a separate argument because callers typically
+/// pre-allocate a capacity-sized `U8Vec` and write fewer bytes
+/// than the buffer's nominal length. Returns the empty string
+/// when `v` is null, `len` is non-positive, or `len` exceeds the
+/// buffer's nominal length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_heap_u8_to_string(v: *const GosU8Vec, len: i64) -> *mut c_char {
+    if v.is_null() || len <= 0 {
+        return alloc_cstring(b"");
+    }
+    let v_ref = unsafe { &*v };
+    if v_ref.data.is_null() {
+        return alloc_cstring(b"");
+    }
+    let cap = v_ref.len.max(0) as usize;
+    let take = (len as usize).min(cap);
+    let bytes: &[u8] = unsafe { std::slice::from_raw_parts(v_ref.data, take) };
+    alloc_cstring(bytes)
 }
 
 /// Bulk write `v[start..start+count]` to stdout, emitting a
@@ -3604,6 +3834,17 @@ pub unsafe extern "C" fn gos_rt_concat_i64(n: i64) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_concat_f64(x: f64) {
     let s = format!("{x}");
+    CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
+}
+
+/// Appends `x` to the concat buffer with `prec` fractional digits.
+/// Used by the `{:.N}` lowering when the surrounding `__concat`
+/// pipeline can route the value directly without an intermediate
+/// allocation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_f64_prec(x: f64, prec: i64) {
+    let prec = prec.clamp(0, 64) as usize;
+    let s = format!("{x:.prec$}");
     CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
 }
 

@@ -8,6 +8,8 @@
 
 use std::collections::HashMap;
 
+use gossamer_types::{TyCtxt, TyKind};
+
 use crate::ir::{
     BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement, StatementKind,
     Terminator,
@@ -18,10 +20,10 @@ use crate::ir::{
 /// lowerer (`tmp = Const(1); out = BinaryOp(Copy(tmp), ...)`) collapse
 /// into the two-constant form folding recognises. A second copy-prop
 /// pass after folding propagates the newly-created constants.
-pub fn optimise(body: &mut Body) {
-    copy_propagate(body);
+pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
+    copy_propagate(body, tcx);
     const_fold(body);
-    copy_propagate(body);
+    copy_propagate(body, tcx);
     const_branch_elim(body);
     dead_store_elim(body);
 }
@@ -190,14 +192,46 @@ fn fold_unary(op: crate::ir::UnOp, operand: &ConstValue) -> Option<ConstValue> {
 /// Replaces `Copy(place)` operands with the rvalue that flowed into
 /// the place, when that rvalue is itself a `Use(Const|Copy)`. Operates
 /// block-local only.
-pub fn copy_propagate(body: &mut Body) {
+///
+/// Aggregate locals (`Array`/`Tuple`/`Adt`) are excluded from
+/// propagation: an assignment `_X = Use(Copy(_Y))` for an aggregate
+/// is a memcpy between distinct storage slots, not an alias. Forwarding
+/// `Copy(_X)` to `Copy(_Y)` would route a later `&mut _X` borrow at
+/// the wrong slot, so writes through the borrow would land on `_Y`'s
+/// (now stale) storage instead of the user's named binding.
+///
+/// Bindings whose RHS reads through a projection (`Copy(a[i])`,
+/// `Copy(s.f)`) are also unsafe to forward across an intervening
+/// write: in `let t = a[lo]; a[lo] = a[hi]; a[hi] = t`, propagating
+/// `t -> Copy(a[lo])` into the third statement reads the freshly-
+/// stored `a[hi]` value instead of the original `a[lo]`. We only
+/// retain bindings whose RHS is a `Const` or `Copy(simple-local)`.
+pub fn copy_propagate(body: &mut Body, tcx: &TyCtxt) {
+    let aggregate_locals: Vec<bool> = body
+        .locals
+        .iter()
+        .map(|decl| {
+            matches!(
+                tcx.kind(decl.ty),
+                Some(TyKind::Array { .. } | TyKind::Tuple(_) | TyKind::Adt { .. })
+            )
+        })
+        .collect();
     for block in &mut body.blocks {
         let mut bindings: HashMap<Local, Operand> = HashMap::new();
         for stmt in &mut block.stmts {
             if let StatementKind::Assign { place, rvalue } = &mut stmt.kind {
                 if let Rvalue::Use(operand) = rvalue {
                     substitute_operand(operand, &bindings);
-                    if place.is_simple() {
+                    let dest_aggregate = aggregate_locals
+                        .get(place.local.0 as usize)
+                        .copied()
+                        .unwrap_or(false);
+                    let operand_is_simple = match operand {
+                        Operand::Const(_) | Operand::FnRef { .. } => true,
+                        Operand::Copy(p) => p.is_simple(),
+                    };
+                    if place.is_simple() && !dest_aggregate && operand_is_simple {
                         bindings.insert(place.local, operand.clone());
                     }
                 } else {

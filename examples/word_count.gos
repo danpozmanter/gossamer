@@ -18,13 +18,11 @@ struct Stats {
 }
 
 fn analyse(text: &String) -> Stats {
-    let bytes = text.as_bytes()
     let mut chars: i64 = 0
     let mut words: i64 = 0
     let mut in_token = false
-    let mut i = 0
-    while i < bytes.len() {
-        let b = bytes[i] as i64
+    for byte in text.as_bytes().iter() {
+        let b = *byte as i64
         chars = chars + 1
         if is_space(b) {
             in_token = false
@@ -32,7 +30,6 @@ fn analyse(text: &String) -> Stats {
             words = words + 1
             in_token = true
         }
-        i = i + 1
     }
     Stats { chars: chars, words: words }
 }
@@ -46,7 +43,7 @@ fn main() {
         "",
     ]
     for s in inputs.iter() {
-        let stats = analyse(&s.to_string())
+        let stats = analyse(s)
         println!("chars={}, words={}: {}", stats.chars, stats.words, *s)
     }
 }

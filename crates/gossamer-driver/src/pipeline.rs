@@ -153,7 +153,7 @@ fn lower_to_mir_with_tcx(source: &str, unit_name: &str) -> (Vec<Body>, TyCtxt) {
     let mut bodies = lower_program(&hir, &mut tcx);
     gossamer_mir::monomorphise(&mut bodies, &mut tcx);
     for body in &mut bodies {
-        optimise(body);
+        optimise(body, &tcx);
     }
     (bodies, tcx)
 }

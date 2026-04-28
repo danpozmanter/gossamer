@@ -22,10 +22,8 @@ fn main() -> Result<(), flag::Error> {
     println!("hello, {}!", *name)
     if *verbose {
         println!("config: port={}, {} positional arg(s)", *port, positional.len())
-        let mut i = 0
-        while i < positional.len() {
+        for i in 0..positional.len() {
             println!("  [{i}] = {}", positional[i])
-            i = i + 1
         }
     } else {
         println!("running on port {}", *port)

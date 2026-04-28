@@ -109,9 +109,9 @@ fn while_loop_produces_cfg_with_back_edge() {
 fn constant_folding_eliminates_const_arithmetic() {
     let source = r"fn compute() -> i64 { 1i64 + 2i64 }
 ";
-    let (mut bodies, _) = build(source);
+    let (mut bodies, tcx) = build(source);
     let body = &mut bodies[0];
-    optimise(body);
+    optimise(body, &tcx);
     // After const-fold, no BinaryOp should remain with two constants.
     let has_binary = body.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(
@@ -139,9 +139,9 @@ fn constant_folding_eliminates_const_arithmetic() {
 fn const_value_of_finds_literal_assignments() {
     let source = r"fn compute() -> i64 { 42i64 }
 ";
-    let (mut bodies, _) = build(source);
+    let (mut bodies, tcx) = build(source);
     let body = &mut bodies[0];
-    optimise(body);
+    optimise(body, &tcx);
     // Find a local that holds Int(42). At minimum, the return slot
     // should eventually be assigned a const int after copy prop.
     let found = body.locals.iter().enumerate().any(|(i, _)| {
@@ -155,10 +155,10 @@ fn const_value_of_finds_literal_assignments() {
 fn dead_store_eliminates_unused_const_assignment() {
     let source = r"fn main() { let x = 99i64 }
 ";
-    let (mut bodies, _) = build(source);
+    let (mut bodies, tcx) = build(source);
     let body = &mut bodies[0];
     let before = gossamer_mir::statement_count(body);
-    optimise(body);
+    optimise(body, &tcx);
     let after = gossamer_mir::statement_count(body);
     assert!(after <= before, "dead-store should not add statements");
 }
@@ -199,9 +199,9 @@ fn go_stmt_does_not_confuse_following_statements() {
 #[test]
 fn const_branch_elim_collapses_if_true_branch() {
     let source = "fn answer() -> i64 { if true { 1i64 } else { 2i64 } }\n";
-    let (mut bodies, _) = build(source);
+    let (mut bodies, tcx) = build(source);
     let body = &mut bodies[0];
-    gossamer_mir::optimise(body);
+    gossamer_mir::optimise(body, &tcx);
     let has_switch = body
         .blocks
         .iter()
@@ -226,9 +226,9 @@ fn const_branch_elim_keeps_switch_for_conditionally_assigned_local() {
     if neg { 1i64 } else { 0i64 }
 }
 ";
-    let (mut bodies, _) = build(source);
+    let (mut bodies, tcx) = build(source);
     let body = &mut bodies[0];
-    gossamer_mir::optimise(body);
+    gossamer_mir::optimise(body, &tcx);
     let switch_count = body
         .blocks
         .iter()
@@ -319,9 +319,9 @@ fn optimise_preserves_match_result_local_across_blocks() {
     }
 }
 ";
-    let (mut bodies, _) = build(source);
+    let (mut bodies, tcx) = build(source);
     let body = &mut bodies[0];
-    optimise(body);
+    optimise(body, &tcx);
     let const_20_retained = body.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(
             &s.kind,
@@ -704,9 +704,9 @@ fn optimise_preserves_index_const_behind_projection_read() {
     xs[2i64]
 }
 ";
-    let (mut bodies, _) = build(source);
+    let (mut bodies, tcx) = build(source);
     let body = &mut bodies[0];
-    optimise(body);
+    optimise(body, &tcx);
     let has_aggregate = body.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(
             &s.kind,

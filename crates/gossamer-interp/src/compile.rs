@@ -2722,9 +2722,34 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
             }
         }
+        // `m.inc_at(seq, start, len, by)` super-instruction for a
+        // string-keyed integer-valued `HashMap`. Inlines the
+        // slice-hash + entry-increment so a sliding-window
+        // counter update doesn't pay the generic builtin-call
+        // dispatch on each iteration.
+        if name.name == "inc_at"
+            && args.len() == 4
+            && matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. }))
+        {
+            let map_reg = self.compile_expr(receiver)?;
+            let seq_reg = self.compile_expr(&args[0])?;
+            let start_reg = self.compile_expr(&args[1])?;
+            let len_reg = self.compile_expr(&args[2])?;
+            let by_reg = self.compile_expr(&args[3])?;
+            let dst = self.alloc_reg();
+            self.emit(Op::MapIncAt {
+                dst,
+                map_reg,
+                seq_reg,
+                start_reg,
+                len_reg,
+                by_reg,
+            });
+            return Ok(dst);
+        }
         // Typed-IntMap method dispatch fast paths. Skip the
         // generic builtin-IC route for the handful of HashMap
-        // methods that knucleotide-style hot loops drive.
+        // methods that hot counter loops drive.
         if self.is_int_map_ty(receiver.ty) {
             if let Some(reg) = self.try_compile_int_map_method(receiver, &name.name, args)? {
                 return Ok(reg);
@@ -2823,7 +2848,51 @@ impl<'tcx> FnBuilder<'tcx> {
             argc,
             cache_idx,
         });
+        // Mutating-method writeback. The interp builtins for
+        // `push` / `insert` / etc. return the *new* aggregate
+        // rather than mutating in place, so the VM has to thread
+        // the result back into the receiver's storage. The tree-
+        // walker handles this via `maybe_writeback`; the VM has
+        // no equivalent dispatcher, so we splice the move here
+        // when the receiver is a bindable local. Field / Index
+        // receivers fall through with no writeback today.
+        if Self::is_mutating_method_name(name.name.as_str()) {
+            if let HirExprKind::Path { segments, .. } = &receiver.kind {
+                if segments.len() == 1 {
+                    if let Some(target) = self.lookup_local(&segments[0].name) {
+                        if target.kind == RegKind::Value && target.reg == receiver_reg {
+                            self.emit(Op::Move {
+                                dst: target.reg,
+                                src: dst,
+                            });
+                        }
+                    }
+                }
+            }
+        }
         Ok(dst)
+    }
+
+    /// Mirrors the tree-walker's `is_mutating_method` list. Methods
+    /// here have a "returns the new aggregate" interp builtin that
+    /// the VM has to thread back into the receiver's slot.
+    fn is_mutating_method_name(name: &str) -> bool {
+        matches!(
+            name,
+            "push"
+                | "pop"
+                | "insert"
+                | "remove"
+                | "clear"
+                | "extend"
+                | "append"
+                | "truncate"
+                | "sort"
+                | "reverse"
+                | "retain"
+                | "drain"
+                | "swap"
+        )
     }
 
     /// Routes the typed-`HashMap<i64, i64>` method-call surface

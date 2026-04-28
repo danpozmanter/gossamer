@@ -234,8 +234,8 @@ pub enum Op {
     /// counter-increment super-instruction. Collapses the two
     /// `MethodCall`s, two IC probes, two arg-vec materialisations,
     /// and (crucially) the two `parking_lot::Mutex` acquisitions
-    /// into a single `entry()`-API increment under one lock. The
-    /// k-nucleotide hot loop is dominated by exactly this pattern.
+    /// into a single `entry()`-API increment under one lock.
+    /// Counter-style hot loops are dominated by this pattern.
     MapInc {
         /// Destination register (the resulting Map handle, mirroring
         /// the original `insert` return value).
@@ -244,6 +244,27 @@ pub enum Op {
         map_reg: Reg,
         /// Register holding the key (any hashable Value).
         key_reg: Reg,
+        /// Register holding the increment (`Value::Int`).
+        by_reg: Reg,
+    },
+    /// Specialised `m.inc_at(seq, start, len, by)` — zero-copy
+    /// slice-hash counter that hashes `seq[start..start+len]`
+    /// directly, matching `*m.entry(&seq[i..i+k]).or_insert(0)
+    /// += by`. Skips the generic builtin-call overhead by
+    /// inlining the slice-hash + entry increment under one Mutex
+    /// acquisition. Result register holds the post-increment
+    /// value as a `Value::Int`.
+    MapIncAt {
+        /// Destination register (post-increment value, `Value::Int`).
+        dst: Reg,
+        /// Register holding the Map (`Value::Map`).
+        map_reg: Reg,
+        /// Register holding the seq String (`Value::String`).
+        seq_reg: Reg,
+        /// Register holding the slice start offset (`Value::Int`).
+        start_reg: Reg,
+        /// Register holding the slice length (`Value::Int`).
+        len_reg: Reg,
         /// Register holding the increment (`Value::Int`).
         by_reg: Reg,
     },
@@ -343,7 +364,7 @@ pub enum Op {
     /// Constructs an empty `Value::IntMap` (typed `HashMap<i64, i64>`).
     /// Emitted in place of a `HashMap::new()` call when the type
     /// checker can prove the map's key + value types are both
-    /// `i64` — k-nucleotide rides this op for its k-mer counters.
+    /// `i64`. Hot integer counter loops route through this op.
     BuildIntMap {
         /// Destination `Value` register.
         dst_v: Reg,

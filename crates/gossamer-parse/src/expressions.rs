@@ -1066,6 +1066,20 @@ impl Parser<'_> {
                         concat_args.push(expr);
                     }
                 }
+                FormatSegment::PositionalPrec(prec) => {
+                    if let Some(expr) = positional_iter.next() {
+                        let prec_lit = self.alloc_literal_expr(Literal::Int(prec.to_string()));
+                        concat_args.push(
+                            self.alloc_function_call_expr("__fmt_prec", vec![expr, prec_lit]),
+                        );
+                    }
+                }
+                FormatSegment::NamedPrec(name, prec) => {
+                    let arg = self.alloc_path_expr(&name);
+                    let prec_lit = self.alloc_literal_expr(Literal::Int(prec.to_string()));
+                    concat_args
+                        .push(self.alloc_function_call_expr("__fmt_prec", vec![arg, prec_lit]));
+                }
             }
         }
         for extra in positional_iter {
@@ -1359,6 +1373,12 @@ enum FormatSegment {
     Named(String),
     /// `{}` — consumed in order from the macro's trailing args.
     Positional,
+    /// `{:.N}` — consumed in order, formatted with N fractional
+    /// digits (replaces the hand-rolled `fmt9` helper used by
+    /// the benchmark ports).
+    PositionalPrec(usize),
+    /// `{ident:.N}` — same as `Positional` but with precision.
+    NamedPrec(String, usize),
 }
 
 /// Splits a template into `FormatSegment`s. `{{` / `}}` escape
@@ -1396,6 +1416,8 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                     segments.push(FormatSegment::Positional);
                 } else if is_identifier(inner) {
                     segments.push(FormatSegment::Named(inner.to_string()));
+                } else if let Some(seg) = parse_precision_spec(inner) {
+                    segments.push(seg);
                 } else {
                     segments.push(FormatSegment::Literal(format!("{{{inner}}}")));
                 }
@@ -1433,6 +1455,23 @@ fn strip_recv_call(expr: Expr) -> Expr {
         }
     }
     expr
+}
+
+/// Parses `:.N` or `name:.N` precision specs out of a `{...}` body.
+/// Returns `None` for anything that doesn't match — the caller falls
+/// back to emitting the brace block as a literal so unknown specs
+/// don't break compilation.
+fn parse_precision_spec(inner: &str) -> Option<FormatSegment> {
+    let (head, prec_str) = inner.split_once(":.")?;
+    let prec: usize = prec_str.parse().ok()?;
+    let head = head.trim();
+    if head.is_empty() {
+        Some(FormatSegment::PositionalPrec(prec))
+    } else if is_identifier(head) {
+        Some(FormatSegment::NamedPrec(head.to_string(), prec))
+    } else {
+        None
+    }
 }
 
 fn is_identifier(text: &str) -> bool {

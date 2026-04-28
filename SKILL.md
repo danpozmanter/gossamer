@@ -45,10 +45,14 @@ Prefer these shapes when writing Gossamer:
 - **Goroutines + channels for async work.** Share by
   communicating; reach for `sync::Mutex` only when
   shared-memory is the simpler model.
-- **Bare numeric literals.** Write `0`, not `0i64`. Inference
-  picks the type from the binding, the call site, or the
-  return type. Only suffix when the literal stands alone with
-  no contextual hint.
+- **Bare numeric literals — always.** Write `0`, `200`, `1.5`,
+  not `0i64`, `200i64`, `1.5f64`. Inference picks the type from
+  the binding, the call site, or the return type, so the suffix
+  is redundant in every well-typed program. Suffix only when the
+  literal stands alone with *no* contextual hint at all
+  (rare: top-level constants whose type cannot be inferred from
+  the right-hand side). The same rule applies to `usize` —
+  `arr[0]`, not `arr[0usize]`.
 - **String literals are already `String`.** Don't write
   `"foo".to_string()` — the literal is the owned value. `&"foo"`
   borrows it where a `&String` / `&str` parameter is expected.

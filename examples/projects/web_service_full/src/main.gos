@@ -73,31 +73,29 @@ fn extract_body(body: &String) -> String {
     // Pre-`let-else` and slice-syntax workaround: walk byte-by-byte
     // until we hit the closing `"`.
     let bytes = body.as_bytes()
-    let mut out: String = "".to_string()
-    let mut i = after
-    while i < bytes.len() {
+    let mut out = String::new()
+    for i in after..bytes.len() {
         let b = bytes[i]
         if b == 34 {
             return out
         }
-        out = out + (b as char).to_string().as_str()
-        i = i + 1
+        out.push(b as char)
     }
     out
 }
 
 fn classify(method: &http::Method, path: &str) -> String {
     match (method, path) {
-        (http::Method::Get, "/health") => "health".to_string(),
-        (http::Method::Get, "/notes") => "list".to_string(),
-        (http::Method::Post, "/notes") => "create".to_string(),
-        (http::Method::Get, "/notes.html") => "list_html".to_string(),
+        (http::Method::Get, "/health") => "health",
+        (http::Method::Get, "/notes") => "list",
+        (http::Method::Post, "/notes") => "create",
+        (http::Method::Get, "/notes.html") => "list_html",
         (m, p) if p.starts_with("/notes/") => match m {
-            http::Method::Get => "show".to_string(),
-            http::Method::Delete => "delete".to_string(),
-            _ => "method_not_allowed".to_string(),
+            http::Method::Get => "show",
+            http::Method::Delete => "delete",
+            _ => "method_not_allowed",
         },
-        _ => "not_found".to_string(),
+        _ => "not_found",
     }
 }
 
@@ -113,8 +111,8 @@ mod tests {
     #[test]
     fn notes_json_renders_array() {
         let notes = [
-            super::Note { id: 1, body: "first".to_string() },
-            super::Note { id: 2, body: "second".to_string() },
+            super::Note { id: 1, body: "first" },
+            super::Note { id: 2, body: "second" },
         ]
         let out = super::render_notes_json(&notes)
         testing::check(out.starts_with("[{"), "json array opener")
@@ -124,7 +122,7 @@ mod tests {
 
     #[test]
     fn extract_body_pulls_field() {
-        let body = "{\"body\":\"hello\"}".to_string()
+        let body = "{\"body\":\"hello\"}"
         testing::check_eq(&super::extract_body(&body), &"hello", "extracted body")
     }
 

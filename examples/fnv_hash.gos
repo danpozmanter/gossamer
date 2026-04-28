@@ -15,13 +15,11 @@ const FNV_PRIME:  i64 = 1099511628211           // 0x100000001b3
 
 fn fnv1a(bytes: &[u8]) -> i64 {
     let mut h: i64 = FNV_OFFSET
-    let mut i = 0
-    while i < bytes.len() {
-        h = h ^ (bytes[i] as i64)
+    for byte in bytes.iter() {
+        h = h ^ (*byte as i64)
         // Multiply mod 2^64 — wrapping is the spec; we let Gossamer's
         // i64 arithmetic wrap and take the low bits.
         h = h * FNV_PRIME
-        i = i + 1
     }
     h
 }

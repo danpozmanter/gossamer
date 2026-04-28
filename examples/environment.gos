@@ -18,15 +18,13 @@ fn report_env(name: &String) {
 fn main() {
     println!("argv:")
     let args = os::args()
-    let mut i = 0
-    while i < args.len() {
+    for i in 0..args.len() {
         println!("  argv[{i}] = {}", args[i])
-        i = i + 1
     }
 
     println!("\nenvironment (selected):")
     for name in ["PATH", "HOME", "USER", "GOSSAMER_DEBUG"].iter() {
-        report_env(&name.to_string())
+        report_env(name)
     }
 
     match os::cwd() {

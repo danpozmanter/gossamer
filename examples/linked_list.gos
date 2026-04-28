@@ -69,16 +69,14 @@ fn sum(list: &LinkedList) -> i64 {
 
 fn main() {
     // Build the list functionally: each `push_head` returns a
-    // fresh `LinkedList`; the caller-side binding stays `let`.
-    let xs = push_head(
-        push_head(
-            push_head(
-                push_head(
-                    push_head(empty(), 1),
-                    2),
-                3),
-            4),
-        5)
+    // fresh `LinkedList`; the caller shadows `xs` rather than
+    // mutating in place.
+    let xs = empty()
+    let xs = push_head(xs, 1)
+    let xs = push_head(xs, 2)
+    let xs = push_head(xs, 3)
+    let xs = push_head(xs, 4)
+    let xs = push_head(xs, 5)
 
     println!("length = {}", length(&xs))
     println!("sum    = {}", sum(&xs))

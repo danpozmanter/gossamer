@@ -37,6 +37,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     let impl_methods = collect_impl_methods(program);
     let fn_returns = collect_fn_returns(program);
     let fn_inputs = collect_fn_inputs(program);
+    let consts = collect_const_values(program);
     let mut bodies = Vec::new();
     for item in &program.items {
         collect_item(
@@ -48,10 +49,315 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             &impl_methods,
             &fn_returns,
             &fn_inputs,
+            &consts,
             &mut bodies,
         );
     }
+    for body in &mut bodies {
+        insert_drops_at_returns(body, tcx);
+    }
     bodies
+}
+
+/// Builds a `DefId → ConstValue` map for top-level `const NAME: T = LIT`
+/// items whose initializer is a literal (or a unary-negated literal).
+/// Path expressions that resolve to one of these defs lower to a direct
+/// `Operand::Const`, side-stepping the `FnRef` fallback that would
+/// otherwise emit zero/garbage in compiled mode.
+fn collect_const_values(program: &HirProgram) -> HashMap<gossamer_resolve::DefId, ConstValue> {
+    let mut out = HashMap::new();
+    for item in &program.items {
+        let HirItemKind::Const(decl) = &item.kind else {
+            continue;
+        };
+        let Some(def) = item.def else { continue };
+        if let Some(value) = const_value_of_expr(&decl.value) {
+            out.insert(def, value);
+        }
+    }
+    out
+}
+
+fn const_value_of_expr(expr: &HirExpr) -> Option<ConstValue> {
+    match &expr.kind {
+        HirExprKind::Literal(lit) => Some(literal_to_const(lit)),
+        HirExprKind::Unary {
+            op: HirUnaryOp::Neg,
+            operand,
+        } => match const_value_of_expr(operand)? {
+            ConstValue::Int(n) => Some(ConstValue::Int(-n)),
+            ConstValue::Float(bits) => {
+                let f = f64::from_bits(bits);
+                Some(ConstValue::Float((-f).to_bits()))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Drop-insertion pass.
+///
+/// Emits a `Call(gos_rt_*_free, [local])` before each `Return`
+/// terminator for every local that owns a heap-allocated runtime
+/// container (`HashMap` / `Vec` / `HashSet` / `BTreeMap`) and
+/// whose pointer is *not* moved into the return slot. Catches the
+/// "build a `HashMap` inside a function, throw it away on exit"
+/// pattern that otherwise leaks the container's entire backing
+/// storage every call.
+///
+/// Conservative ownership rules:
+/// - The local must be assigned exactly once, by a Call to a
+///   recognised constructor (e.g. `gos_rt_map_new`).
+/// - The local must not be later assigned (or projected-into)
+///   anything else.
+/// - The local must not appear as the source of an `Assign` to
+///   `Local::RETURN`, the destination of a returning Call, or any
+///   `Operand::Copy` whose destination is `Local::RETURN`.
+/// - Locals at indices `1..=arity` are function parameters and
+///   are never dropped here (caller owns them).
+#[allow(
+    clippy::cognitive_complexity,
+    reason = "linear flow analysis over MIR; splitting hides the per-pass intent"
+)]
+fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    use gossamer_types::TyKind;
+
+    if body.locals.is_empty() {
+        return;
+    }
+    // Per-local: the constructor symbol that allocated it (if
+    // any). `None` means the local was either never assigned, was
+    // assigned by something other than a recognised constructor,
+    // or has been disqualified by a subsequent re-assignment.
+    let mut owner_ctor: Vec<Option<&'static str>> = vec![None; body.locals.len()];
+    let mut moved_into_return: Vec<bool> = vec![false; body.locals.len()];
+
+    let ctor_to_free = |name: &str| -> Option<&'static str> {
+        match name {
+            // Runtime-symbol form (used by some peephole sites).
+            "gos_rt_map_new" | "gos_rt_map_new_with_capacity" => Some("gos_rt_map_free"),
+            "gos_rt_vec_new" | "gos_rt_vec_with_capacity" => Some("gos_rt_vec_free"),
+            "gos_rt_set_new" => Some("gos_rt_set_free"),
+            "gos_rt_btmap_new" => Some("gos_rt_btmap_free"),
+            // Path-form constructors emitted by the call lowerer.
+            // The cranelift backend's `lower_intrinsic_call` table
+            // routes these straight to the runtime helper, so the
+            // drop pass needs to recognise both forms.
+            "HashMap::new"
+            | "collections::HashMap::new"
+            | "HashMap::with_capacity"
+            | "collections::HashMap::with_capacity" => Some("gos_rt_map_free"),
+            "Vec::new" | "Vec::with_capacity" => Some("gos_rt_vec_free"),
+            "HashSet::new" | "collections::HashSet::new" => Some("gos_rt_set_free"),
+            "BTreeMap::new" | "collections::BTreeMap::new" => Some("gos_rt_btmap_free"),
+            _ => None,
+        }
+    };
+
+    let arity = body.arity as usize;
+    let last_block = body.blocks.len();
+
+    // Pass 1: discover constructor-allocated locals. Track every
+    // assignment that *might* invalidate ownership (re-assignment,
+    // projection writes) so we can disqualify aliasing patterns.
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, rvalue } = &stmt.kind {
+                let idx = place.local.0 as usize;
+                if !place.projection.is_empty() {
+                    // Writing through a projection on this local
+                    // doesn't move ownership, so it stays valid.
+                    continue;
+                }
+                if idx == 0 || idx <= arity || idx >= owner_ctor.len() {
+                    continue;
+                }
+                // Re-assignment of an owning local — disqualify.
+                if owner_ctor[idx].is_some() && !matches!(rvalue, Rvalue::CallIntrinsic { .. }) {
+                    owner_ctor[idx] = None;
+                }
+            }
+        }
+        if let Terminator::Call {
+            callee,
+            destination,
+            ..
+        } = &block.terminator
+        {
+            let idx = destination.local.0 as usize;
+            if idx == 0 || idx <= arity || idx >= owner_ctor.len() {
+                continue;
+            }
+            if !destination.projection.is_empty() {
+                continue;
+            }
+            // Any local of a heap-container type that's the
+            // destination of a Call also owns the result — the
+            // callee returned a freshly-allocated container that
+            // this frame must drop unless it's then moved into
+            // the return slot. Match by static type, since the
+            // callee name ("count_kmers", arbitrary user fn)
+            // doesn't telegraph ownership.
+            let dest_ty = body.locals[idx].ty;
+            let inferred_free: Option<&'static str> = match tcx.kind_of(dest_ty) {
+                TyKind::HashMap { .. } => Some("gos_rt_map_free"),
+                TyKind::Vec(_) => Some("gos_rt_vec_free"),
+                _ => None,
+            };
+            if let Operand::Const(ConstValue::Str(name)) = callee {
+                if let Some(free) = ctor_to_free(name.as_str()) {
+                    if owner_ctor[idx].is_none() {
+                        owner_ctor[idx] = Some(free);
+                        continue;
+                    }
+                }
+            }
+            if let Some(free) = inferred_free {
+                if owner_ctor[idx].is_none() {
+                    owner_ctor[idx] = Some(free);
+                    continue;
+                }
+            }
+            // Any other Call destination invalidates ownership
+            // (the local now holds something else).
+            owner_ctor[idx] = None;
+        }
+    }
+
+    // Pass 2: detect locals that *transitively* flow into the
+    // return slot. The constructor result may be copied through a
+    // chain of intermediate locals before landing in `Local::RETURN`
+    // (e.g. `Local(0) = Local(4); Local(4) = Local(5);
+    // Local(5) = HashMap::new()`). Any local in that chain
+    // shares the same heap pointer and must not be dropped, since
+    // `Local::RETURN` will be moved out to the caller.
+    //
+    // Build a "Copy edge" graph (`from` → `to` whenever
+    // `Assign(to, Use(Copy(from)))` appears with bare projections),
+    // then walk it backwards from `Local::RETURN` to its closure.
+    let mut copy_edges_to: Vec<Vec<Local>> = vec![Vec::new(); body.locals.len()];
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, rvalue } = &stmt.kind {
+                if !place.projection.is_empty() {
+                    continue;
+                }
+                if let Rvalue::Use(Operand::Copy(p)) = rvalue {
+                    if !p.projection.is_empty() {
+                        continue;
+                    }
+                    let to_idx = place.local.0 as usize;
+                    if to_idx < copy_edges_to.len() {
+                        copy_edges_to[to_idx].push(p.local);
+                    }
+                }
+            }
+        }
+    }
+    let mut stack = vec![Local::RETURN];
+    moved_into_return[Local::RETURN.0 as usize] = true;
+    while let Some(cur) = stack.pop() {
+        let cur_idx = cur.0 as usize;
+        if cur_idx >= copy_edges_to.len() {
+            continue;
+        }
+        for src in copy_edges_to[cur_idx].clone() {
+            let src_idx = src.0 as usize;
+            if src_idx >= moved_into_return.len() {
+                continue;
+            }
+            if !moved_into_return[src_idx] {
+                moved_into_return[src_idx] = true;
+                stack.push(src);
+            }
+        }
+    }
+    // Calls that write directly into `Local::RETURN` move every
+    // pointer-shaped Copy argument into the return value too —
+    // model the same closure on those edges.
+    for block in &body.blocks {
+        if let Terminator::Call {
+            destination, args, ..
+        } = &block.terminator
+        {
+            if destination.local == Local::RETURN && destination.projection.is_empty() {
+                for arg in args {
+                    if let Operand::Copy(p) = arg {
+                        if p.projection.is_empty() {
+                            let idx = p.local.0 as usize;
+                            if idx < moved_into_return.len() {
+                                moved_into_return[idx] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Pass 3: collect drop targets in stable local-index order.
+    // The constructor-name → free-name table already restricts
+    // candidates to runtime container shapes; we trust the MIR's
+    // type assignment and skip a redundant TyKind check here.
+    let _ = TyKind::Bool; // silence unused-import lint outside the closure
+    let drop_targets: Vec<(Local, &'static str)> = (0..owner_ctor.len())
+        .filter_map(|i| {
+            let free = owner_ctor[i]?;
+            if moved_into_return[i] {
+                return None;
+            }
+            Some((Local(i as u32), free))
+        })
+        .collect();
+
+    if drop_targets.is_empty() {
+        return;
+    }
+
+    for block_idx in 0..last_block {
+        if !matches!(body.blocks[block_idx].terminator, Terminator::Return) {
+            continue;
+        }
+        let span = body.blocks[block_idx].span;
+        for (local, free_name) in &drop_targets {
+            let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+            let unit_ty = body.locals[0].ty;
+            body.locals.push(LocalDecl {
+                ty: unit_ty,
+                debug_name: None,
+                mutable: false,
+            });
+            // New trampoline block: Call(free, [local]) -> Goto(original_return_block)
+            // To keep block ordering stable (and avoid moving the
+            // Return terminator), we instead splice a statement
+            // by appending into the current block's stmts. Drop
+            // calls expect Terminator::Call shape, so we route
+            // through a fresh trampoline block.
+            let new_block_id = BlockId(u32::try_from(body.blocks.len()).expect("block overflow"));
+            let _ = new_block_id;
+            // Append a `Call` to the original block by replacing
+            // its terminator: the existing Return moves to a new
+            // block, and we splice a chain of Call terminators
+            // before it.
+            //
+            // Simpler implementation: emit a noop assignment that
+            // *invokes* the free helper as an Rvalue::CallIntrinsic.
+            // This is supported by the cranelift lowerer's
+            // statement path (via lower_intrinsic_call), so we
+            // avoid the block-rewiring complexity.
+            body.blocks[block_idx].stmts.push(Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(dest),
+                    rvalue: Rvalue::CallIntrinsic {
+                        name: free_name,
+                        args: vec![Operand::Copy(Place::local(*local))],
+                    },
+                },
+                span,
+            });
+        }
+    }
 }
 
 /// Builds a `mangled-name -> return-Ty` map for impl methods. The
@@ -315,6 +621,7 @@ fn collect_item(
     impl_methods: &HashMap<String, Option<Ty>>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+    consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
     out: &mut Vec<Body>,
 ) {
     match &item.kind {
@@ -330,6 +637,7 @@ fn collect_item(
                 impl_methods,
                 fn_returns,
                 fn_inputs,
+                consts,
             ) {
                 out.push(body);
             }
@@ -359,6 +667,7 @@ fn collect_item(
                     impl_methods,
                     fn_returns,
                     fn_inputs,
+                    consts,
                 ) {
                     out.push(body);
                 }
@@ -378,6 +687,7 @@ fn collect_item(
                         impl_methods,
                         fn_returns,
                         fn_inputs,
+                        consts,
                     ) {
                         out.push(body);
                     }
@@ -400,6 +710,7 @@ fn lower_fn(
     impl_methods: &HashMap<String, Option<Ty>>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+    consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
 ) -> Option<Body> {
     let body = decl.body.as_ref()?;
     let mut builder = Builder::new(
@@ -412,6 +723,7 @@ fn lower_fn(
         impl_methods,
         fn_returns,
         fn_inputs,
+        consts,
     );
     let return_ty = decl.ret.unwrap_or_else(|| builder.tcx.unit());
     builder.push_local(return_ty, None, false);
@@ -537,6 +849,7 @@ struct Builder<'a> {
     impl_methods: &'a HashMap<String, Option<Ty>>,
     fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+    consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
     local_struct: HashMap<Local, String>,
     /// For locals that hold an array/tuple whose element type is a
     /// known struct, records that struct's name. Used to resolve
@@ -586,6 +899,7 @@ impl<'a> Builder<'a> {
         impl_methods: &'a HashMap<String, Option<Ty>>,
         fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
         fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+        consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
     ) -> Self {
         Self {
             tcx,
@@ -600,6 +914,7 @@ impl<'a> Builder<'a> {
             impl_methods,
             fn_returns,
             fn_inputs,
+            consts,
             local_struct: HashMap::new(),
             local_elem_struct: HashMap::new(),
             local_closure: HashMap::new(),
@@ -2047,9 +2362,18 @@ impl<'a> Builder<'a> {
             .collect::<Vec<_>>()
             .join("::");
         let operand = if let Some(def) = def {
-            Operand::FnRef {
-                def,
-                substs: self.substs_of(ty),
+            // A path that resolves to a top-level `const` item
+            // inlines the literal value here. Without this, the
+            // FnRef fallback below would treat the const like a
+            // function pointer and the codegen would emit zero
+            // (or a string-tag pointer) at every use site.
+            if let Some(value) = self.consts.get(&def) {
+                Operand::Const(value.clone())
+            } else {
+                Operand::FnRef {
+                    def,
+                    substs: self.substs_of(ty),
+                }
             }
         } else {
             // Record that `local` holds a function-name constant
@@ -3923,8 +4247,45 @@ impl<'a> Builder<'a> {
                 if let Some(order) = self.structs.get(&sname).cloned() {
                     if let Some(pos) = order.iter().position(|f| f == &name.name) {
                         let idx = u32::try_from(pos).ok()?;
+                        // The HIR-recorded `ty` for a field projection
+                        // can be an unresolved inference variable when
+                        // the receiver's type only crystallised at MIR
+                        // pinning time (e.g. `body_f.value` after
+                        // `let body_f = body.to_fahrenheit()`). Fall
+                        // through to the struct's declared field type
+                        // — looked up via the receiver local's MIR
+                        // `Adt` def — so downstream printing and
+                        // temp-local typing see the real `f64` /
+                        // `String` / etc. Without this, the lower
+                        // tier alloca's the temp as `ptr` and stores
+                        // an `f64` through it, producing invalid IR.
+                        let pinned_ty = if matches!(
+                            self.tcx.kind_of(ty),
+                            gossamer_types::TyKind::Error | gossamer_types::TyKind::Var(_)
+                        ) {
+                            let recv_local_ty = self.locals[place.local.0 as usize].ty;
+                            let mut walk = recv_local_ty;
+                            while let gossamer_types::TyKind::Ref { inner, .. } =
+                                self.tcx.kind_of(walk)
+                            {
+                                walk = *inner;
+                            }
+                            match self.tcx.kind_of(walk) {
+                                gossamer_types::TyKind::Adt { def, .. } => self
+                                    .tcx
+                                    .struct_field_tys(*def)
+                                    .and_then(|tys| tys.get(pos).copied())
+                                    .unwrap_or(ty),
+                                gossamer_types::TyKind::Tuple(elems) => {
+                                    elems.get(pos).copied().unwrap_or(ty)
+                                }
+                                _ => ty,
+                            }
+                        } else {
+                            ty
+                        };
                         place.projection.push(crate::ir::Projection::Field(idx));
-                        let dest = self.fresh(ty);
+                        let dest = self.fresh(pinned_ty);
                         self.emit_assign(
                             Place::local(dest),
                             Rvalue::Use(Operand::Copy(place)),
@@ -4096,8 +4457,7 @@ impl<'a> Builder<'a> {
         // Fused-increment peephole: `m.insert(k, m.get_or(k, 0)
         // + by)` (or `… + 1`) on an i64-keyed map collapses into
         // a single `gos_rt_map_inc_i64(m, k, by)` call. Halves
-        // the lock + hash work on the k-nucleotide hot path and
-        // every counter-style loop.
+        // the lock + hash work on every counter-style loop.
         if method.name.as_str() == "insert" && args.len() == 2 {
             if let Some(local) = self.try_lower_map_inc(receiver, &args[0], &args[1], ty, span) {
                 return Some(local);
@@ -4211,11 +4571,28 @@ impl<'a> Builder<'a> {
             // `.to_string()` routes to the runtime numeric
             // formatter for integer / float receivers. String
             // receivers fall through to the identity copy.
-            "to_string" => match &receiver_kind_flat {
-                TyKind::Int(_) => Some("gos_rt_i64_to_str"),
-                TyKind::Float(_) => Some("gos_rt_f64_to_str"),
-                _ => Some(""),
-            },
+            // `to_string()` (no args) — scalar-to-string for
+            // integer / float receivers; identity copy for the
+            // others.
+            //
+            // `to_string(len)` (1 arg) — the canonical "freeze the
+            // build buffer" step at the end of a `U8Vec`-backed
+            // incremental construction loop. Mirrors F#'s
+            // `StringBuilder.ToString()` and Rust's
+            // `String::from_utf8(vec).unwrap()`. Routes to a
+            // runtime helper that copies the first `len` bytes
+            // into a fresh immutable `String`.
+            "to_string" => {
+                if args.len() == 1 {
+                    Some("gos_rt_heap_u8_to_string")
+                } else {
+                    match &receiver_kind_flat {
+                        TyKind::Int(_) => Some("gos_rt_i64_to_str"),
+                        TyKind::Float(_) => Some("gos_rt_f64_to_str"),
+                        _ => Some(""),
+                    }
+                }
+            }
             "clone" => Some(""),
             // Option / Result methods. Today the compiled tier
             // represents `Option<T>` and `Result<T, E>` as the
@@ -4320,20 +4697,31 @@ impl<'a> Builder<'a> {
             "flush" => Some("gos_rt_stream_flush"),
             "read_line" => Some("gos_rt_stream_read_line"),
             "read_to_string" => Some("gos_rt_stream_read_to_string"),
-            "insert" => match self.hash_map_value_kind(receiver_ty) {
-                Some(MapValueKind::I64) => match self.hash_map_key_kind(receiver_ty) {
-                    Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64"),
+            // HashMap method dispatch — gated on the receiver
+            // actually being a `HashMap`, not just on having a
+            // matching method name. Without the gate, a user
+            // struct with an `impl Foo { fn get(...) }` would
+            // route through the map helper at codegen time and
+            // either segfault on the wrong ABI or read garbage.
+            // `get` extends the gate to `JsonValue` because the
+            // json runtime also exposes a single-arg `get(key)`.
+            "insert" => match &receiver_kind_flat {
+                TyKind::HashMap { .. } => match self.hash_map_value_kind(receiver_ty) {
+                    Some(MapValueKind::I64) => match self.hash_map_key_kind(receiver_ty) {
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64"),
+                        _ => Some("gos_rt_map_insert_i64_i64"),
+                    },
+                    Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_str"),
+                        _ => Some("gos_rt_map_insert_i64_str"),
+                    },
                     _ => Some("gos_rt_map_insert_i64_i64"),
                 },
-                Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
-                    Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_str"),
-                    _ => Some("gos_rt_map_insert_i64_str"),
-                },
-                _ => Some("gos_rt_map_insert_i64_i64"),
+                _ => None,
             },
             "get" => match &receiver_kind_flat {
                 TyKind::JsonValue => Some("gos_rt_json_get"),
-                _ => match self.hash_map_value_kind(receiver_ty) {
+                TyKind::HashMap { .. } => match self.hash_map_value_kind(receiver_ty) {
                     Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
                         Some(MapKeyKind::String) => Some("gos_rt_map_get_str_str"),
                         _ => Some("gos_rt_map_get_i64_str"),
@@ -4343,27 +4731,48 @@ impl<'a> Builder<'a> {
                         _ => Some("gos_rt_map_get_i64"),
                     },
                 },
+                _ => None,
             },
-            "get_or" => match self.hash_map_value_kind(receiver_ty) {
-                Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
-                    Some(MapKeyKind::String) => Some("gos_rt_map_get_or_str_str"),
-                    _ => Some("gos_rt_map_get_or_i64_str"),
+            "get_or" => match &receiver_kind_flat {
+                TyKind::HashMap { .. } => match self.hash_map_value_kind(receiver_ty) {
+                    Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
+                        Some(MapKeyKind::String) => Some("gos_rt_map_get_or_str_str"),
+                        _ => Some("gos_rt_map_get_or_i64_str"),
+                    },
+                    _ => match self.hash_map_key_kind(receiver_ty) {
+                        Some(MapKeyKind::String) => Some("gos_rt_map_get_or_str_i64"),
+                        _ => Some("gos_rt_map_get_or_i64"),
+                    },
                 },
-                _ => match self.hash_map_key_kind(receiver_ty) {
-                    Some(MapKeyKind::String) => Some("gos_rt_map_get_or_str_i64"),
-                    _ => Some("gos_rt_map_get_or_i64"),
+                _ => None,
+            },
+            "remove" => match &receiver_kind_flat {
+                TyKind::HashMap { .. } => match self.hash_map_key_kind(receiver_ty) {
+                    Some(MapKeyKind::String) => Some("gos_rt_map_remove_str"),
+                    _ => Some("gos_rt_map_remove_i64"),
                 },
+                _ => None,
             },
-            "remove" => match self.hash_map_key_kind(receiver_ty) {
-                Some(MapKeyKind::String) => Some("gos_rt_map_remove_str"),
-                _ => Some("gos_rt_map_remove_i64"),
-            },
-            "contains_key" => match self.hash_map_key_kind(receiver_ty) {
-                Some(MapKeyKind::String) => Some("gos_rt_map_contains_key_str"),
-                _ => Some("gos_rt_map_contains_key_i64"),
+            "contains_key" => match &receiver_kind_flat {
+                TyKind::HashMap { .. } => match self.hash_map_key_kind(receiver_ty) {
+                    Some(MapKeyKind::String) => Some("gos_rt_map_contains_key_str"),
+                    _ => Some("gos_rt_map_contains_key_i64"),
+                },
+                _ => None,
             },
             "clear" => match &receiver_kind_flat {
                 TyKind::HashMap { .. } => Some("gos_rt_map_clear"),
+                _ => None,
+            },
+            // `m.inc_at(seq, start, len, by)` — zero-copy slice
+            // hash for `HashMap<String, i64>`. Single hash lookup
+            // per call, no per-iteration scratch allocation —
+            // mirrors `*m.entry(&seq[i..i+k]).or_insert(0) += by`.
+            "inc_at" => match self.hash_map_value_kind(receiver_ty) {
+                Some(MapValueKind::I64) => match self.hash_map_key_kind(receiver_ty) {
+                    Some(MapKeyKind::String) => Some("gos_rt_map_inc_at_str_i64"),
+                    _ => None,
+                },
                 _ => None,
             },
             // HashMap iteration. Each helper snapshots the
@@ -4660,6 +5069,7 @@ impl<'a> Builder<'a> {
                 | "gos_rt_str_to_upper"
                 | "gos_rt_str_replace"
                 | "gos_rt_str_repeat"
+                | "gos_rt_heap_u8_to_string"
                 | "gos_rt_i64_to_str"
                 | "gos_rt_f64_to_str"
                 | "gos_rt_stream_read_line"
@@ -4773,11 +5183,20 @@ impl<'a> Builder<'a> {
         if let Some(sname) = struct_name {
             let mangled = format!("{}::{}", sname, method.name);
             // Pin a sensible destination type if HIR left it
-            // unresolved.
+            // unresolved. Trait-dispatched method calls
+            // (`circle.name()` where `name` is declared on the
+            // `Shape` trait) often arrive with the destination ty
+            // still an inference variable; use the impl's known
+            // return type when available so the codegen sees the
+            // real `String` / `f64` / etc. instead of falling
+            // back to `i64` and printing the pointer bits.
             let dest_ty = match self.tcx.kind_of(ty) {
-                gossamer_types::TyKind::Error | gossamer_types::TyKind::Var(_) => {
-                    self.tcx.int_ty(gossamer_types::IntTy::I64)
-                }
+                gossamer_types::TyKind::Error | gossamer_types::TyKind::Var(_) => self
+                    .impl_methods
+                    .get(&mangled)
+                    .copied()
+                    .flatten()
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64)),
                 _ => ty,
             };
             let dest = self.fresh(dest_ty);

@@ -9,10 +9,8 @@
  */
 
 fn worker(id: i64, reps: i64) {
-    let mut i = 0
-    while i < reps {
+    for i in 0..reps {
         println!("worker {} tick {}", id, i)
-        i = i + 1
     }
 }
 

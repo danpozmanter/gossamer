@@ -23,10 +23,8 @@ fn shift_byte(b: i64, key: i64) -> i64 {
 
 fn shift_codes(codes: &[i64], key: i64) -> [i64] {
     let mut out: [i64] = []
-    let mut i = 0
-    while i < codes.len() {
-        out.push(shift_byte(codes[i], key))
-        i = i + 1
+    for c in codes.iter() {
+        out.push(shift_byte(*c, key))
     }
     out
 }
@@ -35,10 +33,8 @@ fn equal(a: &[i64], b: &[i64]) -> bool {
     if a.len() != b.len() {
         return false
     }
-    let mut i = 0
-    while i < a.len() {
+    for i in 0..a.len() {
         if a[i] != b[i] { return false }
-        i = i + 1
     }
     true
 }

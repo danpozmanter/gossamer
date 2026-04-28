@@ -7,34 +7,25 @@
  */
 
 fn sorted_ascending(xs: &[i64]) -> [i64] {
-    // Build a working copy by index assignment so we don't
-    // depend on `Vec::push` from an empty literal (still rough
-    // on this branch).
     let mut out: [i64] = xs.to_vec()
     let n = out.len()
-    let mut i = 0
-    while i < n {
-        let mut j = 0
-        while j + 1 < n - i {
+    for i in 0..n {
+        for j in 0..n - i - 1 {
             if out[j] > out[j + 1] {
                 let tmp = out[j]
                 out[j] = out[j + 1]
                 out[j + 1] = tmp
             }
-            j = j + 1
         }
-        i = i + 1
     }
     out
 }
 
 fn print_array(xs: &[i64]) {
     print("[")
-    let mut i = 0
-    while i < xs.len() {
+    for i in 0..xs.len() {
         if i > 0 { print(", ") }
         print!("{}", xs[i])
-        i = i + 1
     }
     println("]")
 }

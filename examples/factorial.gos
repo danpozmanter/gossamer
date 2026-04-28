@@ -16,10 +16,8 @@ fn factorial_recursive(n: i64) -> i64 {
 
 fn factorial_iterative(n: i64) -> i64 {
     let mut acc: i64 = 1
-    let mut i: i64 = 2
-    while i <= n {
+    for i in 2..=n {
         acc = acc * i
-        i = i + 1
     }
     acc
 }

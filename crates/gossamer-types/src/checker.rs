@@ -69,6 +69,12 @@ struct TypeChecker<'a> {
     /// `collect_signatures` so a cross-function call site can pull
     /// the input/return types instead of returning a fresh var.
     fn_sigs: HashMap<gossamer_resolve::DefId, FnSig>,
+    /// Declared types for `const NAME: T = ...` items, keyed by
+    /// `DefId`. Without this, a path expression that resolves to a
+    /// const falls back to a fresh inference variable, leaving the
+    /// use site unconstrained and the codegen reading the slot at
+    /// the wrong layout.
+    const_tys: HashMap<gossamer_resolve::DefId, Ty>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -83,6 +89,7 @@ impl<'a> TypeChecker<'a> {
             binding_types: HashMap::new(),
             struct_fields: HashMap::new(),
             fn_sigs: HashMap::new(),
+            const_tys: HashMap::new(),
         }
     }
 
@@ -194,9 +201,18 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Impl(decl) => self.collect_impl_signatures(decl),
                 ItemKind::Trait(decl) => self.collect_trait_signatures(decl),
                 ItemKind::Struct(decl) => self.register_struct(item.id, &decl.body),
+                ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
                 _ => {}
             }
         }
+    }
+
+    fn register_const(&mut self, item_id: NodeId, ty: &gossamer_ast::Type) {
+        let Some(def) = self.resolutions.definition_of(item_id) else {
+            return;
+        };
+        let resolved = self.type_from_ast(ty);
+        self.const_tys.insert(def, resolved);
     }
 
     fn register_struct(&mut self, item_id: NodeId, body: &StructBody) {
@@ -965,6 +981,11 @@ impl<'a> TypeChecker<'a> {
                     let substs = self.substs_from_path(path);
                     self.tcx.intern(TyKind::FnDef { def, substs })
                 }
+                gossamer_resolve::DefKind::Const => self
+                    .const_tys
+                    .get(&def)
+                    .copied()
+                    .unwrap_or_else(|| self.fresh()),
                 _ => self.fresh(),
             },
             Resolution::Import { .. } | Resolution::Err => self.fresh(),

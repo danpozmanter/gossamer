@@ -11,6 +11,10 @@ use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
 
 fn build_mir(source: &str) -> Vec<gossamer_mir::Body> {
+    build_mir_with_tcx(source).0
+}
+
+fn build_mir_with_tcx(source: &str) -> (Vec<gossamer_mir::Body>, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
     let (sf, parse_diags) = parse_source_file(source, file);
@@ -19,7 +23,8 @@ fn build_mir(source: &str) -> Vec<gossamer_mir::Body> {
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    lower_program(&hir, &mut tcx)
+    let bodies = lower_program(&hir, &mut tcx);
+    (bodies, tcx)
 }
 
 #[test]
@@ -35,8 +40,8 @@ fn identity_function_renders_signature_and_return() {
 
 #[test]
 fn binary_operator_emits_iadd_mnemonic() {
-    let mut bodies = build_mir("fn add(a: i64, b: i64) -> i64 { a + b }\n");
-    optimise(&mut bodies[0]);
+    let (mut bodies, tcx) = build_mir_with_tcx("fn add(a: i64, b: i64) -> i64 { a + b }\n");
+    optimise(&mut bodies[0], &tcx);
     let clif = emit_function(&bodies[0]);
     // After copy-prop + const-fold over non-constant operands, the
     // `iadd` mnemonic is still present on the one surviving `Add`.
@@ -75,8 +80,8 @@ fn module_emits_one_function_per_body() {
 
 #[test]
 fn constant_folding_collapses_binary_to_use() {
-    let mut bodies = build_mir("fn compute() -> i64 { 1i64 + 2i64 }\n");
-    optimise(&mut bodies[0]);
+    let (mut bodies, tcx) = build_mir_with_tcx("fn compute() -> i64 { 1i64 + 2i64 }\n");
+    optimise(&mut bodies[0], &tcx);
     let clif = emit_function(&bodies[0]);
     assert!(
         !clif.text.contains("iadd"),

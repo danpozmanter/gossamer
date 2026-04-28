@@ -226,6 +226,15 @@ impl Interpreter {
         }
     }
 
+    /// Returns the value bound to a top-level `const`/`static` name,
+    /// if one is registered. The bytecode VM consults this so a
+    /// `LoadGlobal` opcode whose operand resolves to a const item
+    /// can read the same evaluated value the tree-walker uses.
+    #[must_use]
+    pub fn lookup_global(&self, name: &str) -> Option<Value> {
+        self.globals.get(name).cloned()
+    }
+
     /// Evaluates a single standalone HIR expression in a fresh
     /// local environment seeded with `bindings`. Used by the VM's
     /// `Op::EvalDeferred` to delegate expression kinds the VM
@@ -483,9 +492,11 @@ impl Interpreter {
             HirExprKind::Cast { value, .. } => {
                 Ok(Flow::Value(self.eval_expr_to_value(value, env)?))
             }
-            HirExprKind::Range { start, end, .. } => {
-                self.eval_range(start.as_deref(), end.as_deref(), env)
-            }
+            HirExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.eval_range(start.as_deref(), end.as_deref(), *inclusive, env),
             HirExprKind::Go(inner) => {
                 // `go expr` spawns a real OS thread. We capture the
                 // current env into a clone-owned vector and clone
@@ -534,6 +545,7 @@ impl Interpreter {
         &mut self,
         start: Option<&HirExpr>,
         end: Option<&HirExpr>,
+        inclusive: bool,
         env: &mut Env,
     ) -> RuntimeResult<Flow> {
         let start_val = match start {
@@ -550,7 +562,13 @@ impl Interpreter {
             },
             None => start_val,
         };
-        let elems: Vec<Value> = if end_val > start_val {
+        let elems: Vec<Value> = if inclusive {
+            if end_val >= start_val {
+                (start_val..=end_val).map(Value::Int).collect()
+            } else {
+                Vec::new()
+            }
+        } else if end_val > start_val {
             (start_val..end_val).map(Value::Int).collect()
         } else {
             Vec::new()

@@ -15,10 +15,8 @@ use std::time
 fn main() {
     println("phase 1 — work")
     let mut total: i64 = 0
-    let mut i: i64 = 0
-    while i < 100_000 {
+    for i in 0..100_000 {
         total = total + i
-        i = i + 1
     }
     println!("  ran tight loop, sum = {}", total)
 
