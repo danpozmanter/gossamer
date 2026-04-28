@@ -18,11 +18,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 
-use crate::paths::{
-    default_main_entry, default_unit_name, friendly_io_error, read_source, resolve_output_path,
-};
+use crate::paths::{default_main_entry, default_unit_name, read_source, resolve_output_path};
 
 /// `gos build` dispatcher: walks the project root for a default
 /// entry point when no path is supplied.
@@ -417,6 +415,11 @@ fn set_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+
+        use anyhow::Context;
+
+        use crate::paths::friendly_io_error;
+
         let meta = fs::metadata(path).map_err(|e| friendly_io_error(e, path))?;
         let mut perms = meta.permissions();
         perms.set_mode(perms.mode() | 0o111);
