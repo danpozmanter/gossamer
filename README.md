@@ -17,7 +17,11 @@ language with Rust's surface syntax, Go's runtime, and the forward pipe operator
 Source files use the `.gos` extension. The CLI is `gos`. Manifests
 live in `project.toml`.
 
-Not yet stable. Everything here is subject to change without notice.
+Pre-stable (version 0.0.0). The compatibility policy the
+project will adopt at its first stable tag is drafted at
+[`docs_src/stability.md`](docs_src/stability.md); until then,
+treat the public API as may-change-with-notice and pin to a
+specific commit if you depend on it.
 
 ## Gossamer's Syntax
 

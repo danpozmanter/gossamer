@@ -192,22 +192,36 @@ the hardening roadmap. Reporting details are in
 <p>Before shipping production services on Gossamer, you should
 know:</p>
 <ul>
-<li>The HTTP server does not bound header / body size today. An
-  attacker can send an unbounded stream and OOM the process.
-  <strong>Do not expose the default server past a trust boundary.</strong></li>
-<li><code>std::tls</code> is not yet implemented. Every built-in HTTP
-  listener is cleartext. Use a reverse proxy (nginx, Caddy) for
-  TLS termination in the interim.</li>
-<li><code>crypto::rand::fill</code> only works on Linux today. On other
-  platforms it returns an <code>Err</code>; callers that discard the error
-  will read zeros. Do not ship key generation on non-Linux
-  hosts yet.</li>
-<li><code>os::env</code>, <code>os::args</code>, and the filesystem stubs are no-ops in
-  the current interpreter. Programs that assume they work get
-  silent Unit values.</li>
+<li>The HTTP server enforces <code>max_header_bytes</code> (default 8 KiB)
+  and <code>max_body_bytes</code> (default 1 MiB). Tune via <code>http::Config</code>
+  if your traffic justifies a larger envelope; the defaults
+  are deliberately conservative.</li>
+<li><code>std::tls</code> is wired through <code>http::Server::bind_and_run_tls</code>
+  and <code>http::Client::tls(...)</code>. mTLS, ALPN, and SNI are
+  exposed. Reverse-proxy termination is no longer required.</li>
+<li><code>crypto::rand::fill</code> uses <code>getrandom</code> and returns an explicit
+  error if the OS RNG is unavailable. Callers must not
+  silently discard that error in security-sensitive code.</li>
+<li><code>os::env</code> / <code>os::args</code> / <code>os::set_env</code> work in both the
+  interpreter and the compiled tier. Mutation paths
+  (<code>set_env</code> / <code>unset_env</code>) route through
+  <code>gossamer_runtime::safe_env</code> so they are safe to call before
+  spawning goroutines.</li>
+<li>The data-race detector (<code>gos test --race</code>) catches
+  unsynchronised concurrent writes via vector-clock
+  happens-before analysis. CI gating on <code>--race</code> is
+  recommended for any code that touches goroutines.</li>
 </ul>
-<p>Each item is tracked with a remediation PR on the security
-hardening backlog.</p>
+<p>Open caveats tracked in
+<a href="../non_goals_v1/"><code>docs_src/non_goals_v1.md</code></a>:</p>
+<ul>
+<li>HTTP/2 + WebSockets are deferred.</li>
+<li>Per-line coverage instrumentation (Phase 2 follow-up) —
+  the <code>--coverage</code> output today is at the test-file
+  granularity.</li>
+<li>Postgres / MySQL drivers belong to the package ecosystem
+  with their own maintainers and CVE response cadence.</li>
+</ul>
 <h2 id="reporting-a-vulnerability">Reporting a vulnerability<a class="headerlink" href="#reporting-a-vulnerability" title="Permanent link">&para;</a></h2>
 <p>Email security@gossamer-lang.org with a PoC and a suggested
 severity. A <code>SECURITY.md</code> lands in the repository root alongside

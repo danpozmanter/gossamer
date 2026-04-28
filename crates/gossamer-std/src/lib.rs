@@ -9,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod blocking_pool;
 pub mod bufio;
 pub mod bytes;
 pub mod collections;
@@ -17,12 +18,17 @@ pub mod compress;
 pub mod context;
 #[cfg(feature = "crypto")]
 pub mod crypto;
+#[cfg(feature = "sql")]
+pub mod database;
 pub mod encoding;
 pub mod errors;
 pub mod exec;
+pub mod ffi;
 pub mod flag;
 pub mod fmt;
 pub mod fs;
+#[cfg(feature = "templates")]
+pub mod html;
 pub mod http;
 pub mod io;
 pub mod json;
@@ -32,10 +38,12 @@ pub mod net;
 pub mod os;
 pub mod panic;
 pub mod path;
+pub mod pprof;
 #[cfg(feature = "regex")]
 pub mod regex;
 pub mod registry;
 pub mod runtime;
+pub mod sched_global;
 pub mod signal;
 pub mod slog;
 pub mod sort;
@@ -43,6 +51,8 @@ pub mod strconv;
 pub mod strings;
 pub mod sync;
 pub mod testing;
+#[cfg(feature = "templates")]
+pub mod text;
 pub mod time;
 #[cfg(feature = "tls")]
 pub mod tls;

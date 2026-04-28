@@ -11,8 +11,13 @@
 
 pub mod builtins;
 pub mod c_abi;
+pub mod ffi;
+pub mod gc;
 pub mod layout;
+pub mod preempt;
+pub mod race;
 pub mod safe_env;
+pub mod sigquit;
 pub mod value;
 
 pub use layout::{HEAP_ALIGN, ObjHeader, Ptr, TypeInfo, WORD_BYTES, header_align, header_size};

@@ -19,6 +19,14 @@ ignore = [
     # functionality is folded into `rustls-pki-types`. Pulled in by
     # `reqwest`; drop when reqwest migrates.
     "RUSTSEC-2025-0134",
+    # RUSTSEC-2023-0071 — `rsa` 0.9.x Marvin Attack timing side
+    # channel during PKCS#1 v1.5 *decryption*. *No fixed upgrade
+    # is available* in the rsa crate as of audit time. We use the
+    # crate only for PKCS#1 v1.5 signing / verification through
+    # `gossamer-std::crypto::rsa`; the vulnerable decryption path
+    # is not reachable. Re-audit when the crate ships a
+    # constant-time decryption fix.
+    "RUSTSEC-2023-0071",
 ]
 
 [licenses]

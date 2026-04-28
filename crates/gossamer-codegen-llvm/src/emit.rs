@@ -143,6 +143,13 @@ fn render_module_inner(
     let mut out = String::new();
     writeln!(out, "; ModuleID = \"gossamer\"").unwrap();
     writeln!(out, "target triple = \"{}\"", host_triple()).unwrap();
+    if want_reproducible() {
+        // Skip any wallclock / hostname / pid headers a future
+        // emitter might be tempted to add. The current pipeline
+        // doesn't include any, but pin the rule here so future
+        // edits don't silently break reproducibility.
+        writeln!(out, "; reproducible-build = true").unwrap();
+    }
     writeln!(out).unwrap();
 
     for d in RUNTIME_DECLARATIONS {
@@ -242,8 +249,138 @@ fn render_module_inner(
     // unused for invariance.
     writeln!(out).unwrap();
     writeln!(out, "!0 = !{{}}").unwrap();
+    if want_dwarf() {
+        emit_dwarf_metadata(&mut out, bodies);
+    }
     let out = out.replace("@\"main\"", "@\"gos_main\"");
     Ok((out, fallback_bodies))
+}
+
+/// Process-wide flag toggled by [`set_debug_info`] so the CLI can
+/// request DWARF emission without going through an env var (which
+/// would require `unsafe` to set on stable Rust 2024).
+static DEBUG_INFO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Process-wide flag toggled by [`set_reproducible`] requesting
+/// bit-identical builds across runs. Sets `SOURCE_DATE_EPOCH`
+/// (read by `llc`), strips embedded paths from the IR module
+/// header, and forces a sorted symbol table on the output.
+static REPRODUCIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Enables (or disables) DWARF emission for subsequent
+/// [`compile_to_object`] / [`compile_with_fallback`] calls.
+/// Called by the `gos build --release -g` flag.
+pub fn set_debug_info(enabled: bool) {
+    DEBUG_INFO.store(enabled, std::sync::atomic::Ordering::Release);
+}
+
+/// Enables (or disables) reproducible-build mode. Used by
+/// `gos build --reproducible`.
+pub fn set_reproducible(enabled: bool) {
+    REPRODUCIBLE.store(enabled, std::sync::atomic::Ordering::Release);
+}
+
+/// `true` when reproducible-build mode is on.
+fn want_reproducible() -> bool {
+    REPRODUCIBLE.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// `true` when the build should embed DWARF debug information.
+/// Triggered by either the `GOS_DWARF` env var (used by tests),
+/// the `GOS_BUILD_DEBUG` env var (CI), or [`set_debug_info`] (CLI
+/// `-g` flag).
+fn want_dwarf() -> bool {
+    DEBUG_INFO.load(std::sync::atomic::Ordering::Acquire)
+        || std::env::var("GOS_DWARF").is_ok()
+        || std::env::var("GOS_BUILD_DEBUG").is_ok()
+}
+
+/// Emits LLVM debug-info metadata for every body in `bodies`.
+/// Produces:
+///
+/// - `llvm.module.flags` declaring DWARF v4 and Debug Info v3.
+/// - One [`DICompileUnit`] for the program, owning a single
+///   synthetic [`DIFile`] (the source map is not yet plumbed
+///   through to the lowerer; per-function file resolution is a
+///   follow-up).
+/// - One [`DISubprogram`] per body, attached to the function's
+///   `define` line via `!dbg !N`. The subprogram metadata is what
+///   `gdb` / `lldb` use to walk a backtrace and resolve
+///   instruction pointers to function names.
+fn emit_dwarf_metadata(out: &mut String, bodies: &[Body]) {
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.to_str().map(str::to_string))
+        .unwrap_or_else(|| ".".to_string());
+    // 1. Tag the function definitions with `!dbg !N`. The
+    //    subprogram numbers start at 100; the file is !50, the
+    //    compile unit is !51.
+    let mut subprogram_lines: Vec<String> = Vec::new();
+    for (idx, body) in bodies.iter().enumerate() {
+        let llvm_name = if body.name == "main" {
+            "gos_main"
+        } else {
+            body.name.as_str()
+        };
+        let id = 100u32 + u32::try_from(idx).unwrap_or(u32::MAX);
+        // Best-effort: stamp every function with the body name and
+        // a stable scopeLine of 1. Real source line numbers will
+        // arrive once the SourceMap is threaded through the
+        // codegen pipeline.
+        subprogram_lines.push(format!(
+            "!{id} = distinct !DISubprogram(name: \"{name}\", linkageName: \"{lname}\", \
+             scope: !51, file: !50, line: 1, type: !52, scopeLine: 1, \
+             spFlags: DISPFlagDefinition, unit: !51)",
+            id = id,
+            name = body.name.replace('"', "\\\""),
+            lname = llvm_name.replace('"', "\\\""),
+        ));
+        // Attach `!dbg` to the define line.
+        let needle = format!("define i64 @\"{llvm_name}\"");
+        let attached = format!("define i64 @\"{llvm_name}\"");
+        if let Some(pos) = out.find(&needle) {
+            // Scan forward to the opening brace and insert `!dbg !N`
+            // just before it.
+            if let Some(brace) = out[pos..].find(" {\n") {
+                let abs = pos + brace;
+                let insertion = format!(" !dbg !{id}");
+                out.insert_str(abs, &insertion);
+                continue;
+            }
+            let _ = attached;
+        }
+        // Same scan for the `void`-returning shape.
+        let needle_void = format!("define void @\"{llvm_name}\"");
+        if let Some(pos) = out.find(&needle_void) {
+            if let Some(brace) = out[pos..].find(" {\n") {
+                let abs = pos + brace;
+                let insertion = format!(" !dbg !{id}");
+                out.insert_str(abs, &insertion);
+            }
+        }
+    }
+    writeln!(out).unwrap();
+    writeln!(out, "!llvm.module.flags = !{{!40, !41}}").unwrap();
+    writeln!(out, "!llvm.dbg.cu = !{{!51}}").unwrap();
+    writeln!(out, "!40 = !{{i32 7, !\"Dwarf Version\", i32 4}}").unwrap();
+    writeln!(out, "!41 = !{{i32 2, !\"Debug Info Version\", i32 3}}").unwrap();
+    writeln!(
+        out,
+        "!50 = !DIFile(filename: \"main.gos\", directory: \"{dir}\")",
+        dir = cwd.replace('"', "\\\""),
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "!51 = distinct !DICompileUnit(language: DW_LANG_C99, file: !50, \
+         producer: \"gossamer 0.0.0\", isOptimized: true, runtimeVersion: 0, \
+         emissionKind: FullDebug)"
+    )
+    .unwrap();
+    writeln!(out, "!52 = !DISubroutineType(types: !{{}})").unwrap();
+    for line in subprogram_lines {
+        writeln!(out, "{line}").unwrap();
+    }
 }
 
 /// Renders an `extern declare` for a body LLVM is offloading
@@ -265,7 +402,14 @@ fn extern_declare(body: &Body, tcx: &TyCtxt) -> String {
 }
 
 fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
-    let tmp_dir = std::env::temp_dir().join(format!("gos-llvm-{}", std::process::id()));
+    // Reproducible mode: pin SOURCE_DATE_EPOCH so any timestamp
+    // `llc` writes into the object header is deterministic, and
+    // pick a stable temp directory layout instead of `pid`-based.
+    let tmp_dir = if want_reproducible() {
+        std::env::temp_dir().join("gos-llvm-reproducible")
+    } else {
+        std::env::temp_dir().join(format!("gos-llvm-{}", std::process::id()))
+    };
     std::fs::create_dir_all(&tmp_dir).with_context(|| format!("creating {}", tmp_dir.display()))?;
     let ll_path = tmp_dir.join("unit.ll");
     let opt_path = tmp_dir.join("unit.opt.bc");

@@ -1,0 +1,15 @@
+[project]
+id = "example.com/web_service_full"
+version = "0.1.0"
+authors = ["Track B"]
+license = "Apache-2.0"
+
+[dependencies]
+
+# FFI declaration: this service links libsqlite3 (bundled with the
+# rusqlite-driven runtime). When the compiler-side `extern "C"`
+# syntax lands (see `~/dev/contexts/lang/ffi_design.md`), the same
+# section is what the driver consumes.
+[[ffi.libraries]]
+name = "sqlite3"
+kind = "dylib"

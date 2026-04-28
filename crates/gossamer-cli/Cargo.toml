@@ -46,6 +46,7 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = "4"
 gossamer-ast = { workspace = true }
+gossamer-codegen-llvm = { workspace = true }
 gossamer-diagnostics = { workspace = true }
 gossamer-driver = { workspace = true }
 gossamer-hir = { workspace = true }
@@ -56,8 +57,10 @@ gossamer-lsp = { workspace = true }
 gossamer-parse = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
+gossamer-runtime = { workspace = true }
 gossamer-types = { workspace = true }
 rustyline = { version = "14", default-features = false, features = ["with-file-history"] }
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 
 [dev-dependencies]
 gossamer-std = { workspace = true }

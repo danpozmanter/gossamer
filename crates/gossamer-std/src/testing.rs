@@ -45,6 +45,14 @@ pub fn check_ok<T, E: std::fmt::Debug>(result: Result<T, E>, message: &str) -> R
     result.map_err(|err| Error::new(format!("{message}: {err:?}")))
 }
 
+/// Boxed test body: a `FnOnce` that runs the test and returns its
+/// outcome. `Send + 'static` so the parallel runner can move cases
+/// onto worker threads.
+pub type TestBody = Box<dyn FnOnce() -> Result<(), Error> + Send + 'static>;
+
+/// One named test case as supplied to [`Runner::run_parallel`].
+pub type TestCase = (String, TestBody);
+
 /// One sub-test result.
 #[derive(Debug, Clone)]
 pub struct TestResult {
@@ -126,6 +134,74 @@ impl Runner {
         }
         out
     }
+
+    /// Runs every subtest in `cases` across `worker_count` OS threads
+    /// in parallel, mirroring Go's `t.Run(name, ...) + t.Parallel()`
+    /// idiom. Each subtest body runs to completion on its assigned
+    /// worker; results are aggregated in subtest-name order so the
+    /// final summary is deterministic.
+    pub fn run_parallel<F>(&mut self, worker_count: usize, cases: Vec<(String, F)>)
+    where
+        F: FnOnce() -> Result<(), Error> + Send + 'static,
+    {
+        use std::sync::Arc;
+        use std::sync::Mutex as StdMutex;
+        if worker_count <= 1 || cases.len() <= 1 {
+            for (name, body) in cases {
+                self.run(name, body);
+            }
+            return;
+        }
+        let queue = Arc::new(StdMutex::new(
+            cases
+                .into_iter()
+                .enumerate()
+                .map(|(idx, (name, body))| (idx, name, body))
+                .collect::<Vec<_>>(),
+        ));
+        let results: Arc<StdMutex<Vec<(usize, TestResult)>>> = Arc::new(StdMutex::new(Vec::new()));
+        let mut handles = Vec::with_capacity(worker_count.min(queue.lock().expect("lock").len()));
+        for _ in 0..worker_count {
+            let queue = Arc::clone(&queue);
+            let results = Arc::clone(&results);
+            handles.push(std::thread::spawn(move || {
+                loop {
+                    let next = {
+                        let mut q = queue.lock().expect("queue lock");
+                        q.pop()
+                    };
+                    let Some((idx, name, body)) = next else {
+                        return;
+                    };
+                    let outcome = body();
+                    let result = match outcome {
+                        Ok(()) => TestResult {
+                            name,
+                            ok: true,
+                            error: None,
+                        },
+                        Err(err) => TestResult {
+                            name,
+                            ok: false,
+                            error: Some(err.message().to_string()),
+                        },
+                    };
+                    results.lock().expect("results lock").push((idx, result));
+                }
+            }));
+        }
+        for h in handles {
+            let _ = h.join();
+        }
+        let mut collected = Arc::try_unwrap(results)
+            .expect("arc unwrap")
+            .into_inner()
+            .expect("lock");
+        collected.sort_by_key(|(idx, _)| *idx);
+        for (_, r) in collected {
+            self.results.push(r);
+        }
+    }
 }
 
 impl Default for Runner {
@@ -162,5 +238,21 @@ mod tests {
         let summary = runner.summary();
         assert!(summary.contains("PASS: 2  FAIL: 1"));
         assert!(summary.contains("- fail: nope"));
+    }
+
+    #[test]
+    fn run_parallel_preserves_input_order() {
+        let mut runner = Runner::new();
+        let cases: Vec<TestCase> = vec![
+            ("a".to_string(), Box::new(|| Ok(()))),
+            ("b".to_string(), Box::new(|| Err(Error::new("boom")))),
+            ("c".to_string(), Box::new(|| Ok(()))),
+        ];
+        runner.run_parallel(4, cases);
+        assert_eq!(runner.results().len(), 3);
+        assert_eq!(runner.results()[0].name, "a");
+        assert_eq!(runner.results()[1].name, "b");
+        assert_eq!(runner.results()[2].name, "c");
+        assert!(!runner.results()[1].ok);
     }
 }

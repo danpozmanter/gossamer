@@ -12,3 +12,8 @@ description = "M:N goroutine scheduler and network poller for the Gossamer runti
 workspace = true
 
 [dependencies]
+crossbeam-deque = { workspace = true }
+crossbeam-utils = { workspace = true }
+gossamer-runtime = { workspace = true }
+parking_lot = { workspace = true }
+mio = { workspace = true }

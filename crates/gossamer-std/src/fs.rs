@@ -100,26 +100,35 @@ pub fn metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
     stdfs::metadata(path)
 }
 
-/// Reads the entire contents of `path` into a string.
+/// Reads the entire contents of `path` into a string. Routes the
+/// blocking read through the goroutine-aware blocking thread pool
+/// so the calling worker P slot is freed for other goroutines.
 pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
-    let mut file = stdfs::File::open(path)?;
-    let mut out = String::new();
-    file.read_to_string(&mut out)?;
-    Ok(out)
+    let path = path.as_ref().to_path_buf();
+    crate::blocking_pool::run(move || {
+        let mut file = stdfs::File::open(&path)?;
+        let mut out = String::new();
+        file.read_to_string(&mut out)?;
+        Ok(out)
+    })
 }
 
 /// Writes `contents` to `path`, truncating any existing file and
-/// creating parent directories if needed.
+/// creating parent directories if needed. Same blocking-pool dispatch
+/// as [`read_to_string`].
 pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
-    let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            stdfs::create_dir_all(parent)?;
+    let path = path.as_ref().to_path_buf();
+    let bytes = contents.as_ref().to_vec();
+    crate::blocking_pool::run(move || {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                stdfs::create_dir_all(parent)?;
+            }
         }
-    }
-    let mut file = stdfs::File::create(path)?;
-    file.write_all(contents.as_ref())?;
-    Ok(())
+        let mut file = stdfs::File::create(&path)?;
+        file.write_all(&bytes)?;
+        Ok(())
+    })
 }
 
 /// Returns `true` iff `path` exists.

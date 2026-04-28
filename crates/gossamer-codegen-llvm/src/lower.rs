@@ -336,7 +336,39 @@ impl<'a> Lowerer<'a> {
             self.lower_place_address(place)
         };
         writeln!(self.out, "  store {leaf_llvm} {value}, ptr {addr}").unwrap();
+        // Write barrier: when the *destination* is heap-resident
+        // (i.e. the place projects through a deref / heap pointer)
+        // and the *value* is itself a heap pointer, the concurrent
+        // collector needs to know about the new edge so its mark
+        // phase doesn't lose track of it. The barrier is a no-op
+        // while the collector is idle (a single load + branch in
+        // the runtime helper) so we emit it unconditionally for
+        // qualifying stores rather than try to model GC liveness
+        // statically here.
+        if !place.projection.is_empty() && Self::is_pointer_local_ty(self.tcx, leaf_ty) {
+            self.emit_write_barrier(&value);
+        }
         Ok(())
+    }
+
+    /// Emits a `gos_rt_write_barrier` call for the supplied
+    /// LLVM value (an `i64` representation of a heap reference).
+    /// Idempotent registration of the runtime declaration.
+    fn emit_write_barrier(&mut self, value: &str) {
+        self.runtime_refs
+            .insert("declare void @gos_rt_write_barrier(i32)".to_string());
+        let truncated = self.fresh();
+        // Heap refs are stored as 64-bit values in the flat ABI;
+        // the runtime symbol takes a 32-bit index. Truncating is
+        // safe here: the compiled tier never produces refs above
+        // the u32 boundary (heap slots are u32-indexed in
+        // gossamer-gc).
+        writeln!(self.out, "  {truncated} = trunc i64 {value} to i32").unwrap();
+        writeln!(
+            self.out,
+            "  call void @gos_rt_write_barrier(i32 {truncated})"
+        )
+        .unwrap();
     }
 
     /// Populates an aggregate stack slot (the destination

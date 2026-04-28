@@ -16,8 +16,15 @@ the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPE
 - **What changes:** syntax (Rust-shaped), error handling
   (`Result<T, E>` + `?`), interfaces become traits (nominal),
   no implicit numeric coercion (`as` is explicit).
-- **What's missing in v1:** HTTP/2, gRPC, database/sql, async I/O
-  beyond goroutines, M:N scheduling, real package registry.
+- **What's missing today:** HTTP/2, gRPC, WebSockets, Postgres /
+  MySQL drivers (drivers belong with the package ecosystem,
+  same as Go pre-2009), real package registry. M:N scheduling
+  with work stealing, the netpoller, async preemption, GC
+  safepoints, and goroutine-aware sync primitives all shipped
+  in the production-readiness pass — see
+  [`/perf_characteristics.md`](../perf_characteristics.md).
+  `database/sql` ships with a bundled SQLite driver; other
+  drivers come through the package manager.
 
 ## Syntax cheat-sheet
 
@@ -359,6 +366,94 @@ Subjective list:
 - The `|>` pipe operator threads data through transformations
   more readably than `f(g(h(x)))`.
 
+## Side-by-side recipes
+
+### HTTP server
+
+Go:
+
+```go
+http.HandleFunc("/notes", func(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintln(w, "hi")
+})
+log.Fatal(http.ListenAndServe(":8080", nil))
+```
+
+Gossamer:
+
+```gos
+fn handle(req: &http::Request) -> http::Response {
+    http::Response::ok().text("hi")
+}
+
+fn main() {
+    let mut server = http::Server::new()
+    server.route("/notes", handle)
+    server.bind_and_run("0.0.0.0:8080").expect("listen")
+}
+```
+
+### sql.DB usage
+
+Go:
+
+```go
+db, _ := sql.Open("sqlite3", ":memory:")
+rows, _ := db.Query("SELECT id, body FROM notes WHERE id = ?", 1)
+defer rows.Close()
+for rows.Next() {
+    var id int64
+    var body string
+    rows.Scan(&id, &body)
+}
+```
+
+Gossamer:
+
+```gos
+let mut conn = database::sql::open("sqlite", ":memory:")?
+let mut rows = conn.query("SELECT id, body FROM notes WHERE id = ?1",
+                          &[database::sql::Value::Int(1)])?
+while let Some(row) = rows.next_row()? {
+    let id   = row.get_i64("id")?
+    let body = row.get_string("body")?
+}
+```
+
+### Signal handling
+
+Go:
+
+```go
+ch := make(chan os.Signal, 1)
+signal.Notify(ch, syscall.SIGTERM)
+<-ch
+```
+
+Gossamer:
+
+```gos
+let term = signal::on(signal::sigs::SIGTERM)
+term.wait()         // Condvar-blocked, no 50 ms polling
+```
+
+### Structured logging
+
+Go:
+
+```go
+logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+logger.Info("started", "port", 8080)
+```
+
+Gossamer:
+
+```gos
+let logger = slog::Logger::new()
+    .handler(slog::JsonHandler::new(os::stdout()))
+logger.info("started", &[slog::field("port", 8080)])
+```
+
 ## Cross-references
 
 - [`../syntax.md`](../syntax.md) — the language tour.
@@ -366,3 +461,5 @@ Subjective list:
 - [`../non_goals_v1.md`](../non_goals_v1.md) — deferred features.
 - [`../stdlib_coverage.md`](../stdlib_coverage.md) — every
   stdlib item, support state.
+- [`../debugging.md`](../debugging.md) — gdb / SIGQUIT / pprof
+  / `--race` recipes.

@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/debugging/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Debugging guide - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Debugging guide";
+        var mkdocs_page_input_path = "debugging.md";
+        var mkdocs_page_url = "/gossamer/docs/debugging/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="..">
+          <img src="../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/incremental/">Incremental compilation</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Debugging guide</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="debugging-guide">Debugging guide<a class="headerlink" href="#debugging-guide" title="Permanent link">&para;</a></h1>
+<p>Four production-incident workflows the runtime supports today.</p>
+<h2 id="1-attaching-gdb-lldb">1. Attaching <code>gdb</code> / <code>lldb</code><a class="headerlink" href="#1-attaching-gdb-lldb" title="Permanent link">&para;</a></h2>
+<p>Build with <code>--release -g</code> to embed DWARF:</p>
+<pre><code class="language-sh">gos build --release -g src/main.gos
+</code></pre>
+<p>Then:</p>
+<pre><code class="language-sh">gdb ./main
+(gdb) break main
+(gdb) run
+(gdb) backtrace
+</code></pre>
+<p>Or <code>lldb</code>:</p>
+<pre><code class="language-sh">lldb ./main -- arg1 arg2
+(lldb) breakpoint set --name main
+(lldb) run
+</code></pre>
+<p>The <code>-g</code> flag emits <code>DICompileUnit</code> + <code>DISubprogram</code> per
+function, with <code>!dbg</code> attached to each <code>define</code>. Source-line
+columns within a function are best-effort today (the
+SourceMap-driven per-instruction map is a Phase-2 follow-up);
+function-name granularity works.</p>
+<h2 id="2-reading-a-sigquit-dump">2. Reading a <code>SIGQUIT</code> dump<a class="headerlink" href="#2-reading-a-sigquit-dump" title="Permanent link">&para;</a></h2>
+<p>Sending <code>SIGQUIT</code> to a Gossamer process (or pressing Ctrl-\
+on a foreground process) prints every live goroutine to
+stderr and exits non-zero. Output format:</p>
+<pre><code class="language-text">SIGQUIT: dumping 1342 goroutine(s)
+
+goroutine 17 [running]:
+  main::handle_request()
+        src/main.gos:128
+        0:   &lt;host backtrace frame&gt;
+        1:   &lt;host backtrace frame&gt;
+        ...
+
+goroutine 18 [chan receive]:
+  ...
+</code></pre>
+<p>The header line shows the live goroutine count; each
+goroutine block shows its last-known wait state in brackets
+(<code>running</code>, <code>chan receive</code>, <code>chan send</code>, <code>mutex wait</code>,
+<code>io wait</code>, <code>timer</code>). The function-line pair is the user
+function the runtime last recorded for that goroutine.</p>
+<p>To diagnose a hung process:</p>
+<ol>
+<li>Find the dominant wait state across goroutines.</li>
+<li>If most are <code>chan receive</code> on the same channel, you have
+   a producer-side bug (the producer goroutine is missing
+   from the dump or itself blocked).</li>
+<li>If most are <code>mutex wait</code>, look for the goroutine <em>not</em> in
+   <code>mutex wait</code> — it holds the lock and is doing something
+   the holder shouldn't be doing.</li>
+</ol>
+<h2 id="3-running-pprof">3. Running pprof<a class="headerlink" href="#3-running-pprof" title="Permanent link">&para;</a></h2>
+<p>Mount <code>/debug/pprof/*</code> in your HTTP router by routing to
+<code>std::pprof::route(path, query)</code> (see the deployment doc).
+Then:</p>
+<pre><code class="language-sh">go tool pprof -text http://localhost:8080/debug/pprof/profile?seconds=30
+go tool pprof -web  http://localhost:8080/debug/pprof/heap
+go tool pprof       http://localhost:8080/debug/pprof/goroutine
+</code></pre>
+<p>The wire format is the legacy textual pprof shape, which
+<code>go tool pprof</code> parses unchanged. The protobuf
+(<code>profile.proto</code>) variant lands in Phase 2.</p>
+<p>Available endpoints:</p>
+<ul>
+<li><code>/debug/pprof/profile?seconds=N</code> — CPU profile over <code>N</code>
+  seconds (default 30). Sampler ticks at ~100 Hz when active.</li>
+<li><code>/debug/pprof/heap</code> — live allocation samples.</li>
+<li><code>/debug/pprof/goroutine</code> — one entry per live goroutine.</li>
+<li><code>/debug/pprof/mutex</code> — contention snapshot (Phase 2:
+  populated once per-Mutex counters land).</li>
+<li><code>/debug/pprof/block</code> — park/unpark snapshot (Phase 2).</li>
+<li><code>/debug/pprof/</code> — index page listing the others.</li>
+</ul>
+<h2 id="4-reading-a-race-report">4. Reading a <code>--race</code> report<a class="headerlink" href="#4-reading-a-race-report" title="Permanent link">&para;</a></h2>
+<p>Run the test suite under the race detector:</p>
+<pre><code class="language-sh">gos test --race
+</code></pre>
+<p>Each detected race surfaces as a single line:</p>
+<pre><code class="language-text">DATA RACE: addr=0xdeadbeef prev=17 (write) curr=42 (read)
+</code></pre>
+<p><code>addr</code> is the heap address; <code>prev=N</code> is the goroutine that
+performed the conflicting access; <code>curr=N</code> is the goroutine
+whose access tripped the detector.</p>
+<p>The detector seeds happens-before relations from the
+scheduler's park/unpark events plus <code>Mutex::with</code> and
+channel send/receive operations. Spurious reports are
+unusual; if you see one, the most likely cause is a custom
+synchronisation primitive that bypasses the standard
+<code>std::sync</code> types — file an issue with the source.</p>
+<h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../deployment/"><code>deployment.md</code></a> — observability stack
+  for production.</li>
+<li><a href="../stability/"><code>stability.md</code></a> — versioning + deprecation
+  policy.</li>
+<li><a href="../stdlib/"><code>stdlib.md</code></a> — <code>runtime</code>, <code>pprof</code>, <code>signal</code>.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/danpozmanter/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> danpozmanter/gossamer</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../js/repo_button.js"></script>
+      <script src="../js/scroll_top.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

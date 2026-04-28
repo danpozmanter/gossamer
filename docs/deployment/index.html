@@ -130,6 +130,18 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#updates-zero-downtime-deploys">Updates / zero-downtime deploys</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#observability">Observability</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#sigquit-goroutine-dump">SIGQUIT goroutine dump</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#pprof-endpoint">pprof endpoint</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#gos-test-race">gos test --race</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#reproducible-builds-supply-chain">Reproducible builds + supply-chain</a>
+    </li>
+        </ul>
+    </li>
     <li class="toctree-l2"><a class="reference internal" href="#cross-references">Cross-references</a>
     </li>
     </ul>
@@ -399,9 +411,11 @@ that spawn thousands of goroutines, drop the stack with
 ./myservice
 </code></pre>
 <p>Or in systemd: <code>LimitSTACK=1048576</code>.</p>
-<p>When M:N scheduling lands in v1.x this becomes a no-op —
-goroutines will be lightweight and the OS-thread limit will
-no longer constrain goroutine count.</p>
+<p>As of 0.1.0 the M:N scheduler is live, so goroutines no
+longer correspond 1:1 to OS threads — the <code>ulimit</code> is only
+relevant if you spawn unbounded <em>threads</em> directly. Idle
+goroutines are parked on the netpoller and consume
+constant memory.</p>
 <h3 id="memory">Memory<a class="headerlink" href="#memory" title="Permanent link">&para;</a></h3>
 <p>Gossamer's GC runs concurrently with the program but pauses for
 mark / sweep phases. For tail-latency-sensitive services, set
@@ -435,12 +449,64 @@ load balancer:</p>
 <p>In-place hot-swap (<code>SIGUSR2</code> exec-the-new-binary-without-dropping-listeners)
 is not in v1; the <code>os::exec</code> and <code>os::signal</code> work in v1.x will
 make it possible.</p>
+<h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
+<p>A production Gossamer service ships with three diagnostic
+surfaces that match Go's. Configure as:</p>
+<h3 id="sigquit-goroutine-dump"><code>SIGQUIT</code> goroutine dump<a class="headerlink" href="#sigquit-goroutine-dump" title="Permanent link">&para;</a></h3>
+<p>Sending <code>SIGQUIT</code> (or pressing Ctrl-\ on a foreground process)
+prints every live goroutine's last-known frame to stderr, then
+exits. The handler is installed automatically on first scheduler
+start. Output format mirrors Go's so existing tools
+(<code>stackparse</code>, log-shipping rules) read it unchanged.</p>
+<pre><code class="language-text">SIGQUIT: dumping 1342 goroutine(s)
+
+goroutine 17 [chan receive]:
+  main::handle_request()
+        src/main.gos:128
+  ...
+</code></pre>
+<h3 id="pprof-endpoint">pprof endpoint<a class="headerlink" href="#pprof-endpoint" title="Permanent link">&para;</a></h3>
+<p>Mount <code>/debug/pprof/*</code> in your HTTP router by routing to
+<code>std::pprof::route(path, query)</code>:</p>
+<pre><code class="language-gos">fn pprof_handler(req: &amp;http::Request) -&gt; http::Response {
+    match pprof::route(req.path(), req.query()) {
+        Some(bytes) =&gt; http::Response::ok().body(bytes),
+        None =&gt; http::Response::not_found(),
+    }
+}
+</code></pre>
+<p>Then:</p>
+<pre><code class="language-sh">go tool pprof -text http://localhost:8080/debug/pprof/profile
+go tool pprof -web  http://localhost:8080/debug/pprof/heap
+go tool pprof       http://localhost:8080/debug/pprof/goroutine
+</code></pre>
+<p>The legacy text profile format is what Gossamer emits today;
+the protobuf-encoded variant lands in Phase 2.</p>
+<h3 id="gos-test-race"><code>gos test --race</code><a class="headerlink" href="#gos-test-race" title="Permanent link">&para;</a></h3>
+<p>Runs the test suite under the data-race detector. Catches
+unsynchronised concurrent writes via vector-clock happens-before
+analysis seeded from the scheduler's park/unpark events. CI
+gate:</p>
+<pre><code class="language-sh">gos test --race                  # exits non-zero on first race
+gos test --race --coverage cov.lcov
+</code></pre>
+<h3 id="reproducible-builds-supply-chain">Reproducible builds + supply-chain<a class="headerlink" href="#reproducible-builds-supply-chain" title="Permanent link">&para;</a></h3>
+<p>Production builds:</p>
+<pre><code class="language-sh">gos build --release -g --reproducible
+</code></pre>
+<p>The <code>--reproducible</code> flag pins <code>SOURCE_DATE_EPOCH</code> and the
+LLVM tmp-dir layout so two builds of the same source on the
+same target produce bit-identical artifacts. Releases shipped
+through <code>.github/workflows/release.yml</code> are cosign-signed
+(keyless / OIDC), carry a SLSA-3 build-provenance attestation,
+and ship alongside a CycloneDX SBOM.</p>
 <h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../non_goals_v1/"><code>non_goals_v1.md</code></a> — what's deferred.</li>
 <li><a href="../perf_characteristics/"><code>perf_characteristics.md</code></a> — GC,
   goroutine memory, scheduler under load.</li>
 <li><a href="../stdlib/"><code>stdlib.md</code></a> — <code>slog</code>, <code>http</code>, <code>os</code>.</li>
+<li><a href="../stability/"><code>stability.md</code></a> — versioning + deprecation policy.</li>
 </ul>
               
             </div>

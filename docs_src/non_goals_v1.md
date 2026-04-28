@@ -39,31 +39,46 @@ in five minutes whether the gaps will block their use case.
 
 ## Runtime
 
-- **One OS thread per goroutine.** Real M:N scheduling is a
-  v1.x optimisation. The current model is correct but not as
-  cheap as Go's scheduler. Document the constraint, ship.
-- **No green-thread-aware blocking I/O.** Calls into the host
-  block the OS thread. Spawn another goroutine to make progress.
-- **GC pauses are stop-the-world.** A concurrent / generational
-  GC is post-v1. The stop-the-world mark-sweep is fine for
-  typical service workloads under tens of thousands of live
-  goroutines, but a real-time game loop is not the target.
+The runtime gaps that this section originally listed are
+**now in scope** — work-stealing M:N scheduler, async
+preemption with GC safepoints, write barriers wired through
+the LLVM lowerer, goroutine-aware sync primitives, and an
+`epoll` / `kqueue` / `IOCP` netpoller all landed in the
+production-readiness pass. The remaining runtime non-goals:
+
+- **No generational GC.** The current collector is concurrent
+  mark-sweep with a write barrier. A generational variant
+  would help long-lived service workloads further; it is
+  filed for Phase 2.
+- **No stack-switching coroutines.** Goroutines are
+  cooperative state machines on top of the work-stealing
+  scheduler — no per-goroutine OS stack. Switch cost is
+  function-call shaped, not register-flush shaped. A
+  stackful coroutine variant requires `unsafe` and is
+  outside the workspace's safe-Rust posture.
 
 ## Standard library
 
-The following Go stdlib equivalents are **deliberately deferred
-to v1.x**:
+The following Go stdlib equivalents shipped during the
+production-readiness pass and are no longer non-goals:
 
-- HTTP/2 server + client. v1 ships HTTP/1.1 only.
-- gRPC. Land via a third-party package once the registry is
-  open for publishing.
-- `database/sql`-shaped driver interface plus PostgreSQL /
-  MySQL drivers. Third-party.
-- Locale-aware time formatting (`time::format_locale`).
-- Full TLS client cert verification + ALPN beyond `h2`. The
-  `rustls` handle is exposed; the high-level convenience API
-  is in v1.x.
-- `encoding/csv`, `encoding/xml`. v1 ships JSON only.
+- ✅ `database/sql` interface + bundled SQLite driver
+  (`std::database::sql`).
+- ✅ Locale-aware / IANA-tz time formatting via
+  `std::time::tz`.
+- ✅ TLS client-cert verification, ALPN, SNI, mTLS through
+  both `http::Client` and `http::Server`.
+
+Still deliberately deferred:
+
+- HTTP/2 server + client. The `0.x` series ships HTTP/1.1.
+- WebSockets. Phase-2 stdlib addition.
+- gRPC. Lands via a third-party package once the registry
+  publishing flow opens.
+- Postgres / MySQL drivers. Third-party — drivers belong
+  with their own maintainers and CVE response cadence.
+- `encoding/csv`, `encoding/xml`. JSON + YAML cover the
+  config / interchange surface for now.
 
 ## Tooling
 
@@ -82,8 +97,10 @@ to v1.x**:
   exists but does not run statistically rigorous comparisons or
   emit machine-readable JSON. Treat the numbers as developer
   feedback, not CI gates.
-- **No coverage tooling.** `gos test` runs the test suite; it
-  does not emit lcov / cobertura output.
+- ✅ **Coverage tooling shipped (test-file granularity).**
+  `gos test --coverage out.lcov` emits well-formed lcov.
+  MIR-level basic-block instrumentation that would let us
+  compute per-line hits is filed for Phase 2.
 - **No ergonomic editor extensions beyond LSP.** Gossamer
   ships an LSP 3.16 server. VS Code / Neovim / Emacs / Helix
   pick it up via the standard generic-LSP plugins.

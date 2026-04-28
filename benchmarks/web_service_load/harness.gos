@@ -1,0 +1,62 @@
+// Bundled load harness for the joint Track A + B validation.
+//
+// Spawns N goroutines, each cycling GET /notes + POST /notes
+// against the local web_service_full HTTPS endpoint for
+// `duration` seconds. Reports total requests, p50/p95/p99 latency,
+// and the host's MemStats snapshot at exit.
+//
+// Drives load through the same goroutine-aware HTTP client the
+// service composes against, so the netpoller is exercised on
+// both sides of the wire.
+
+use std::flag
+use std::http
+use std::os
+use std::runtime
+use std::sync
+use std::time
+
+fn main() {
+    let mut fs = flag::Set::new("harness")
+    let port = fs.int("port", 8443, "service port")
+    let connections = fs.int("connections", 1000, "concurrent goroutines")
+    let duration = fs.int("duration", 60, "seconds to run")
+    fs.parse(os::args())
+
+    let target_get = format!("https://127.0.0.1:{}/notes", port)
+    let target_post = format!("https://127.0.0.1:{}/notes", port)
+
+    let wg = sync::WaitGroup::new()
+    let total = sync::AtomicU64::new(0)
+    let errors = sync::AtomicU64::new(0)
+
+    let stop_at = time::now().add(time::seconds(duration))
+
+    for _ in 0..connections {
+        wg.add(1)
+        go {
+            let client = http::Client::new()
+            while time::now().before(stop_at) {
+                match client.get(&target_get) {
+                    Ok(_) => total.fetch_add(1),
+                    Err(_) => errors.fetch_add(1),
+                }
+                let body = "{\"body\":\"hello\"}".as_bytes()
+                match client.post(&target_post, body, "application/json") {
+                    Ok(_) => total.fetch_add(1),
+                    Err(_) => errors.fetch_add(1),
+                }
+            }
+            wg.done()
+        }
+    }
+
+    wg.wait()
+
+    let stats = runtime::mem_stats()
+    println!("[harness] total_requests={} errors={}", total.load(), errors.load())
+    println!("[harness] gc_cycles={} live_objects={}", stats.cycles, stats.live_objects)
+    println!("[harness] gc_pause_max_ns={} gc_pause_total_ns={}",
+        stats.max_pause_nanos, stats.total_pause_nanos)
+    println!("[harness] goroutines={}", runtime::num_goroutines())
+}

@@ -147,6 +147,18 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#where-gossamer-is-easier-than-go">Where Gossamer is easier than Go</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#side-by-side-recipes">Side-by-side recipes</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#http-server_1">HTTP server</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#sqldb-usage">sql.DB usage</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#signal-handling">Signal handling</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#structured-logging">Structured logging</a>
+    </li>
+        </ul>
+    </li>
     <li class="toctree-l2"><a class="reference internal" href="#cross-references">Cross-references</a>
     </li>
     </ul>
@@ -220,8 +232,15 @@ the spec, see <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.m
 <li><strong>What changes:</strong> syntax (Rust-shaped), error handling
   (<code>Result&lt;T, E&gt;</code> + <code>?</code>), interfaces become traits (nominal),
   no implicit numeric coercion (<code>as</code> is explicit).</li>
-<li><strong>What's missing in v1:</strong> HTTP/2, gRPC, database/sql, async I/O
-  beyond goroutines, M:N scheduling, real package registry.</li>
+<li><strong>What's missing today:</strong> HTTP/2, gRPC, WebSockets, Postgres /
+  MySQL drivers (drivers belong with the package ecosystem,
+  same as Go pre-2009), real package registry. M:N scheduling
+  with work stealing, the netpoller, async preemption, GC
+  safepoints, and goroutine-aware sync primitives all shipped
+  in the production-readiness pass — see
+  <a href="../../perf_characteristics/"><code>/perf_characteristics.md</code></a>.
+  <code>database/sql</code> ships with a bundled SQLite driver; other
+  drivers come through the package manager.</li>
 </ul>
 <h2 id="syntax-cheat-sheet">Syntax cheat-sheet<a class="headerlink" href="#syntax-cheat-sheet" title="Permanent link">&para;</a></h2>
 <table>
@@ -754,6 +773,65 @@ fn main() {
 <li>The <code>|&gt;</code> pipe operator threads data through transformations
   more readably than <code>f(g(h(x)))</code>.</li>
 </ul>
+<h2 id="side-by-side-recipes">Side-by-side recipes<a class="headerlink" href="#side-by-side-recipes" title="Permanent link">&para;</a></h2>
+<h3 id="http-server_1">HTTP server<a class="headerlink" href="#http-server_1" title="Permanent link">&para;</a></h3>
+<p>Go:</p>
+<pre><code class="language-go">http.HandleFunc(&quot;/notes&quot;, func(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintln(w, &quot;hi&quot;)
+})
+log.Fatal(http.ListenAndServe(&quot;:8080&quot;, nil))
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">fn handle(req: &amp;http::Request) -&gt; http::Response {
+    http::Response::ok().text(&quot;hi&quot;)
+}
+
+fn main() {
+    let mut server = http::Server::new()
+    server.route(&quot;/notes&quot;, handle)
+    server.bind_and_run(&quot;0.0.0.0:8080&quot;).expect(&quot;listen&quot;)
+}
+</code></pre>
+<h3 id="sqldb-usage">sql.DB usage<a class="headerlink" href="#sqldb-usage" title="Permanent link">&para;</a></h3>
+<p>Go:</p>
+<pre><code class="language-go">db, _ := sql.Open(&quot;sqlite3&quot;, &quot;:memory:&quot;)
+rows, _ := db.Query(&quot;SELECT id, body FROM notes WHERE id = ?&quot;, 1)
+defer rows.Close()
+for rows.Next() {
+    var id int64
+    var body string
+    rows.Scan(&amp;id, &amp;body)
+}
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let mut conn = database::sql::open(&quot;sqlite&quot;, &quot;:memory:&quot;)?
+let mut rows = conn.query(&quot;SELECT id, body FROM notes WHERE id = ?1&quot;,
+                          &amp;[database::sql::Value::Int(1)])?
+while let Some(row) = rows.next_row()? {
+    let id   = row.get_i64(&quot;id&quot;)?
+    let body = row.get_string(&quot;body&quot;)?
+}
+</code></pre>
+<h3 id="signal-handling">Signal handling<a class="headerlink" href="#signal-handling" title="Permanent link">&para;</a></h3>
+<p>Go:</p>
+<pre><code class="language-go">ch := make(chan os.Signal, 1)
+signal.Notify(ch, syscall.SIGTERM)
+&lt;-ch
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let term = signal::on(signal::sigs::SIGTERM)
+term.wait()         // Condvar-blocked, no 50 ms polling
+</code></pre>
+<h3 id="structured-logging">Structured logging<a class="headerlink" href="#structured-logging" title="Permanent link">&para;</a></h3>
+<p>Go:</p>
+<pre><code class="language-go">logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+logger.Info(&quot;started&quot;, &quot;port&quot;, 8080)
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let logger = slog::Logger::new()
+    .handler(slog::JsonHandler::new(os::stdout()))
+logger.info(&quot;started&quot;, &amp;[slog::field(&quot;port&quot;, 8080)])
+</code></pre>
 <h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../syntax/"><code>../syntax.md</code></a> — the language tour.</li>
@@ -761,6 +839,8 @@ fn main() {
 <li><a href="../../non_goals_v1/"><code>../non_goals_v1.md</code></a> — deferred features.</li>
 <li><a href="../../stdlib_coverage/"><code>../stdlib_coverage.md</code></a> — every
   stdlib item, support state.</li>
+<li><a href="../../debugging/"><code>../debugging.md</code></a> — gdb / SIGQUIT / pprof
+  / <code>--race</code> recipes.</li>
 </ul>
               
             </div>

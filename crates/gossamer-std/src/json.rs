@@ -14,7 +14,8 @@
     clippy::cast_lossless,
     clippy::missing_errors_doc,
     clippy::needless_continue,
-    clippy::too_many_lines
+    clippy::too_many_lines,
+    clippy::struct_excessive_bools
 )]
 
 use std::collections::BTreeMap;
@@ -229,6 +230,267 @@ pub mod serde_surface {
         type Error;
         /// Builds `Self` from a [`Value`].
         fn from_json(value: &Value) -> Result<Self, Self::Error>;
+    }
+}
+
+/// Streaming JSON decoder over an [`io::Read`] source. Mirrors Go's
+/// `json.NewDecoder(r).Decode(&v)` shape: each call to [`Decoder::decode`]
+/// returns the next document on the stream as a [`Value`]. Suitable for
+/// JSON-Lines / NDJSON workloads where the response body is too large
+/// to buffer fully.
+///
+/// The decoder reads into an internal buffer one chunk at a time, so a
+/// caller streaming a 1 GiB response body never holds more than the
+/// next document plus the buffer in memory.
+pub struct Decoder<R: std::io::Read> {
+    reader: R,
+    buffer: Vec<u8>,
+    cursor: usize,
+    eof: bool,
+}
+
+impl<R: std::io::Read> Decoder<R> {
+    /// Constructs a decoder reading from `reader`.
+    #[must_use]
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            buffer: Vec::new(),
+            cursor: 0,
+            eof: false,
+        }
+    }
+
+    /// Decodes the next JSON document from the stream.
+    /// Returns `Ok(None)` when the stream has been fully consumed
+    /// (whitespace-only tail).
+    pub fn decode(&mut self) -> Result<Option<Value>, Error> {
+        self.skip_whitespace_buffered()?;
+        if self.cursor >= self.buffer.len() && self.eof {
+            return Ok(None);
+        }
+        let span = self.read_one_document()?;
+        let text = std::str::from_utf8(&span).map_err(|_| Error {
+            message: "invalid UTF-8 in stream".into(),
+            line: 0,
+            column: 0,
+        })?;
+        let value = parse(text)?;
+        Ok(Some(value))
+    }
+
+    /// Drains every remaining document.
+    pub fn decode_all(&mut self) -> Result<Vec<Value>, Error> {
+        let mut out = Vec::new();
+        while let Some(v) = self.decode()? {
+            out.push(v);
+        }
+        Ok(out)
+    }
+
+    fn fill_more(&mut self) -> Result<bool, Error> {
+        if self.eof {
+            return Ok(false);
+        }
+        let mut chunk = [0u8; 4096];
+        match self.reader.read(&mut chunk) {
+            Ok(0) => {
+                self.eof = true;
+                Ok(false)
+            }
+            Ok(n) => {
+                self.buffer.extend_from_slice(&chunk[..n]);
+                Ok(true)
+            }
+            Err(e) => Err(Error {
+                message: format!("io: {e}"),
+                line: 0,
+                column: 0,
+            }),
+        }
+    }
+
+    fn skip_whitespace_buffered(&mut self) -> Result<(), Error> {
+        loop {
+            while self.cursor < self.buffer.len()
+                && matches!(self.buffer[self.cursor], b' ' | b'\t' | b'\n' | b'\r')
+            {
+                self.cursor += 1;
+            }
+            if self.cursor < self.buffer.len() {
+                return Ok(());
+            }
+            if !self.fill_more()? {
+                return Ok(());
+            }
+        }
+    }
+
+    fn read_one_document(&mut self) -> Result<Vec<u8>, Error> {
+        let start = self.cursor;
+        let first = self.peek_byte_buffered()?;
+        match first {
+            b'{' => self.read_balanced(b'{', b'}'),
+            b'[' => self.read_balanced(b'[', b']'),
+            b'"' => {
+                self.cursor += 1;
+                self.read_until_string_end()?;
+                Ok(self.buffer[start..self.cursor].to_vec())
+            }
+            _ => self.read_scalar(),
+        }
+    }
+
+    fn peek_byte_buffered(&mut self) -> Result<u8, Error> {
+        loop {
+            if self.cursor < self.buffer.len() {
+                return Ok(self.buffer[self.cursor]);
+            }
+            if !self.fill_more()? {
+                return Err(Error {
+                    message: "unexpected end of stream".into(),
+                    line: 0,
+                    column: 0,
+                });
+            }
+        }
+    }
+
+    fn read_balanced(&mut self, open: u8, close: u8) -> Result<Vec<u8>, Error> {
+        let start = self.cursor;
+        let mut depth = 0i64;
+        let mut in_string = false;
+        let mut escape = false;
+        loop {
+            while self.cursor < self.buffer.len() {
+                let b = self.buffer[self.cursor];
+                self.cursor += 1;
+                if in_string {
+                    if escape {
+                        escape = false;
+                    } else if b == b'\\' {
+                        escape = true;
+                    } else if b == b'"' {
+                        in_string = false;
+                    }
+                    continue;
+                }
+                if b == b'"' {
+                    in_string = true;
+                } else if b == open {
+                    depth += 1;
+                } else if b == close {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Ok(self.buffer[start..self.cursor].to_vec());
+                    }
+                }
+            }
+            if !self.fill_more()? {
+                return Err(Error {
+                    message: "unterminated JSON document".into(),
+                    line: 0,
+                    column: 0,
+                });
+            }
+        }
+    }
+
+    fn read_until_string_end(&mut self) -> Result<(), Error> {
+        let mut escape = false;
+        loop {
+            while self.cursor < self.buffer.len() {
+                let b = self.buffer[self.cursor];
+                self.cursor += 1;
+                if escape {
+                    escape = false;
+                } else if b == b'\\' {
+                    escape = true;
+                } else if b == b'"' {
+                    return Ok(());
+                }
+            }
+            if !self.fill_more()? {
+                return Err(Error {
+                    message: "unterminated string in stream".into(),
+                    line: 0,
+                    column: 0,
+                });
+            }
+        }
+    }
+
+    fn read_scalar(&mut self) -> Result<Vec<u8>, Error> {
+        let start = self.cursor;
+        loop {
+            while self.cursor < self.buffer.len() {
+                let b = self.buffer[self.cursor];
+                if matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b',' | b']' | b'}') {
+                    return Ok(self.buffer[start..self.cursor].to_vec());
+                }
+                self.cursor += 1;
+            }
+            if !self.fill_more()? {
+                return Ok(self.buffer[start..self.cursor].to_vec());
+            }
+        }
+    }
+}
+
+/// Streaming JSON encoder writing one document per [`Encoder::encode`]
+/// call into an [`io::Write`] sink.
+pub struct Encoder<W: std::io::Write> {
+    writer: W,
+}
+
+impl<W: std::io::Write> Encoder<W> {
+    /// Constructs a streaming encoder.
+    pub fn new(writer: W) -> Self {
+        Self { writer }
+    }
+
+    /// Writes `value` followed by a newline.
+    pub fn encode(&mut self, value: &Value) -> std::io::Result<()> {
+        let s = encode(value);
+        self.writer.write_all(s.as_bytes())?;
+        self.writer.write_all(b"\n")
+    }
+
+    /// Returns the underlying writer.
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
+}
+
+/// Field-tag descriptor. The compiler's derive machinery (deferred —
+/// see [`serde_surface`]) walks a struct's tags to know how to map
+/// JSON keys onto Rust fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldTag {
+    /// Source-side identifier (`Rust`-side struct field).
+    pub field: &'static str,
+    /// JSON-side name (`json("name")`).
+    pub json_name: &'static str,
+    /// Whether the field is omitted when its value is the zero value.
+    pub omit_empty: bool,
+}
+
+impl FieldTag {
+    /// Convenience constructor for field tag tables.
+    #[must_use]
+    pub const fn new(field: &'static str, json_name: &'static str) -> Self {
+        Self {
+            field,
+            json_name,
+            omit_empty: false,
+        }
+    }
+
+    /// Marks the tag with `omit_empty`.
+    #[must_use]
+    pub const fn omit_empty(mut self) -> Self {
+        self.omit_empty = true;
+        self
     }
 }
 
@@ -525,4 +787,63 @@ fn write_string(out: &mut String, text: &str) {
         }
     }
     out.push('"');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trips_object() {
+        let value = parse(r#"{"name":"gossamer","stars":42}"#).unwrap();
+        assert_eq!(get(&value, "name").and_then(as_str), Some("gossamer"));
+        assert_eq!(get(&value, "stars").and_then(as_i64), Some(42));
+        let back = encode(&value);
+        let again = parse(&back).unwrap();
+        assert_eq!(value, again);
+    }
+
+    #[test]
+    fn streaming_decoder_yields_each_document() {
+        let stream = b"{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n".as_slice();
+        let mut dec = Decoder::new(stream);
+        let one = dec.decode().unwrap().unwrap();
+        let two = dec.decode().unwrap().unwrap();
+        let three = dec.decode().unwrap().unwrap();
+        assert!(dec.decode().unwrap().is_none());
+        assert_eq!(get(&one, "a").and_then(as_i64), Some(1));
+        assert_eq!(get(&two, "a").and_then(as_i64), Some(2));
+        assert_eq!(get(&three, "a").and_then(as_i64), Some(3));
+    }
+
+    #[test]
+    fn streaming_decoder_handles_arrays_and_strings() {
+        let stream = b"[1,2,3] \"hello\" 42 true null".as_slice();
+        let mut dec = Decoder::new(stream);
+        let arr = dec.decode().unwrap().unwrap();
+        assert_eq!(as_array(&arr).unwrap().len(), 3);
+        assert_eq!(dec.decode().unwrap(), Some(Value::String("hello".into())));
+        assert_eq!(dec.decode().unwrap(), Some(Value::Number(42.0)));
+        assert_eq!(dec.decode().unwrap(), Some(Value::Bool(true)));
+        assert_eq!(dec.decode().unwrap(), Some(Value::Null));
+        assert!(dec.decode().unwrap().is_none());
+    }
+
+    #[test]
+    fn streaming_encoder_writes_ndjson() {
+        let mut buf = Vec::new();
+        {
+            let mut enc = Encoder::new(&mut buf);
+            enc.encode(&Value::Number(1.0)).unwrap();
+            enc.encode(&Value::String("two".into())).unwrap();
+        }
+        assert_eq!(buf.as_slice(), b"1\n\"two\"\n".as_slice());
+    }
+
+    #[test]
+    fn field_tag_omit_empty_builder() {
+        let tag = FieldTag::new("user_id", "userId").omit_empty();
+        assert!(tag.omit_empty);
+        assert_eq!(tag.json_name, "userId");
+    }
 }

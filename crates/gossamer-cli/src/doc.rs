@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 
-use crate::read_source;
+use crate::paths::read_source;
 
 pub(crate) fn cmd_doc(file: &PathBuf, html_out: Option<&std::path::Path>) -> Result<()> {
     let source = read_source(file)?;

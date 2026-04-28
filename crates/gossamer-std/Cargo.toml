@@ -15,7 +15,18 @@ workspace = true
 # By default we link everything so existing programs keep working;
 # disabling these trims the host stdlib for deployment scenarios
 # where a program never touches the gated module.
-default = ["regex", "tls", "crypto", "compress"]
+default = [
+    "regex",
+    "tls",
+    "crypto",
+    "compress",
+    "yaml",
+    "tz",
+    "templates",
+    "sql",
+    "ffi-sqlite",
+    "http-client",
+]
 
 # Regular-expression engine behind `std::regex`.
 regex = ["dep:regex"]
@@ -24,16 +35,50 @@ regex = ["dep:regex"]
 # `rustls-pemfile`.
 tls = ["dep:rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
 
-# Host CSPRNG behind `std::crypto::rand`. Pulls in `getrandom`.
-crypto = ["dep:getrandom"]
+# Crypto primitives behind `std::crypto`: AEAD, signatures, KDFs, hashes.
+crypto = [
+    "dep:getrandom",
+    "dep:aes-gcm",
+    "dep:chacha20poly1305",
+    "dep:rsa",
+    "dep:p256",
+    "dep:ed25519-dalek",
+    "dep:x509-parser",
+    "dep:pbkdf2",
+    "dep:scrypt",
+    "dep:argon2",
+    "dep:sha2",
+    "dep:blake3",
+    "dep:rand_core",
+]
 
 # gzip encoder/decoder behind `std::compress::gzip`. Pulls in
 # `flate2` (which itself uses `miniz_oxide` in pure Rust).
 compress = ["dep:flate2"]
 
+# General-purpose YAML parsing behind `std::encoding::yaml`.
+yaml = ["dep:serde_yaml", "dep:serde"]
+
+# IANA tzdata + arbitrary-layout time parsing behind `std::time`.
+tz = ["dep:chrono", "dep:chrono-tz"]
+
+# `std::html::template` + `std::text::template`.
+templates = []
+
+# Driver-pluggable `std::database::sql` interface.
+sql = []
+
+# Bundled SQLite driver (`std::database::sql::sqlite`). Implies `sql`.
+ffi-sqlite = ["sql", "dep:rusqlite"]
+
+# Real `http::Client` (HTTPS, redirects, connection pool).
+http-client = ["tls", "dep:ureq"]
+
 [dependencies]
 gossamer-pkg = { workspace = true }
 gossamer-runtime = { workspace = true }
+gossamer-sched = { workspace = true }
+gossamer-gc = { workspace = true }
 getrandom = { version = "0.2", optional = true }
 regex = { version = "1", default-features = false, features = ["std", "unicode"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
@@ -41,3 +86,25 @@ rustls-pemfile = { version = "2", optional = true }
 webpki-roots = { version = "1", optional = true }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
 thiserror = { workspace = true }
+parking_lot = { workspace = true }
+mio = { workspace = true }
+signal-hook = { workspace = true }
+aes-gcm = { version = "0.10", optional = true }
+chacha20poly1305 = { version = "0.10", optional = true }
+rsa = { version = "0.9", default-features = false, features = ["std", "sha2", "pem"], optional = true }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pem"], optional = true }
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "pkcs8", "pem", "rand_core"], optional = true }
+x509-parser = { version = "0.16", optional = true }
+pbkdf2 = { version = "0.12", default-features = false, features = ["std", "hmac"], optional = true }
+scrypt = { version = "0.11", default-features = false, features = ["std"], optional = true }
+argon2 = { version = "0.5", default-features = false, features = ["std", "alloc", "password-hash"], optional = true }
+sha2 = { version = "0.10", default-features = false, features = ["std"], optional = true }
+blake3 = { version = "1", default-features = false, features = ["std"], optional = true }
+rand_core = { version = "0.6", optional = true }
+serde = { workspace = true, optional = true }
+serde_yaml = { version = "0.9", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
+chrono-tz = { version = "0.10", default-features = false, optional = true }
+rusqlite = { version = "0.32", default-features = false, features = ["bundled"], optional = true }
+ureq = { version = "2", default-features = false, features = ["tls", "json", "cookies", "gzip"], optional = true }
+libloading = "0.8"

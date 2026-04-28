@@ -1,9 +1,14 @@
-//! Runtime support for `std::encoding::{base64, hex, binary}`.
+//! Runtime support for `std::encoding::{base64, hex, binary, yaml}`.
 //! Pure-Rust, allocation-conscious one-shot encode/decode helpers.
-//! The `binary` submodule wraps endianness packing, the `base64` and
-//! `hex` submodules handle byte-string conversion.
+//! The `binary` submodule wraps endianness packing, `base64` and
+//! `hex` handle byte-string conversion, and `yaml` provides a
+//! general-purpose YAML 1.2 parser/emitter (gated on the `yaml`
+//! feature).
 
 #![forbid(unsafe_code)]
+
+#[cfg(feature = "yaml")]
+pub mod yaml;
 
 pub mod base64 {
     //! RFC 4648 base64 with the standard alphabet.

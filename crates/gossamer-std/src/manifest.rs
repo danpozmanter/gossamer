@@ -50,6 +50,19 @@ pub const ALL_MODULES: &[StdModule] = &[
     TLS,
     REGEX,
     COMPRESS_GZIP,
+    // Track B additions: crypto breadth, encoding, templates, db.
+    CRYPTO_SHA512,
+    CRYPTO_BLAKE3,
+    CRYPTO_AEAD,
+    CRYPTO_ED25519,
+    CRYPTO_ECDSA,
+    CRYPTO_RSA,
+    CRYPTO_X509,
+    CRYPTO_KDF,
+    ENCODING_YAML,
+    HTML_TEMPLATE,
+    TEXT_TEMPLATE,
+    DATABASE_SQL,
 ];
 
 const OS_EXEC: StdModule = StdModule {
@@ -140,7 +153,7 @@ const COMPRESS_GZIP: StdModule = StdModule {
 
 const TLS: StdModule = StdModule {
     path: "std::tls",
-    summary: "TLS termination and TLS client dialling (rustls-backed; not yet wired).",
+    summary: "TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed.",
     items: &[
         StdItem {
             name: "CertKey",
@@ -625,6 +638,285 @@ const CRYPTO_SUBTLE: StdModule = StdModule {
         kind: StdItemKind::Function,
         doc: "Compares two byte slices without data-dependent branches.",
     }],
+};
+
+const CRYPTO_SHA512: StdModule = StdModule {
+    path: "std::crypto::sha512",
+    summary: "SHA-512 hashing.",
+    items: &[
+        StdItem {
+            name: "digest",
+            kind: StdItemKind::Function,
+            doc: "Returns the 64-byte digest of an input.",
+        },
+        StdItem {
+            name: "hex",
+            kind: StdItemKind::Function,
+            doc: "Returns the digest as lowercase hex.",
+        },
+    ],
+};
+
+const CRYPTO_BLAKE3: StdModule = StdModule {
+    path: "std::crypto::blake3",
+    summary: "BLAKE3 hashing.",
+    items: &[
+        StdItem {
+            name: "digest",
+            kind: StdItemKind::Function,
+            doc: "Returns the 32-byte BLAKE3 digest of an input.",
+        },
+        StdItem {
+            name: "hex",
+            kind: StdItemKind::Function,
+            doc: "Returns the digest as lowercase hex.",
+        },
+    ],
+};
+
+const CRYPTO_AEAD: StdModule = StdModule {
+    path: "std::crypto::aead",
+    summary: "Authenticated encryption with associated data.",
+    items: &[
+        StdItem {
+            name: "aes_256_gcm_seal",
+            kind: StdItemKind::Function,
+            doc: "AES-256-GCM seal: encrypts plaintext with key, nonce, and AAD.",
+        },
+        StdItem {
+            name: "aes_256_gcm_open",
+            kind: StdItemKind::Function,
+            doc: "AES-256-GCM open: decrypts and authenticates ciphertext.",
+        },
+        StdItem {
+            name: "chacha20_poly1305_seal",
+            kind: StdItemKind::Function,
+            doc: "ChaCha20-Poly1305 seal.",
+        },
+        StdItem {
+            name: "chacha20_poly1305_open",
+            kind: StdItemKind::Function,
+            doc: "ChaCha20-Poly1305 open.",
+        },
+    ],
+};
+
+const CRYPTO_ED25519: StdModule = StdModule {
+    path: "std::crypto::ed25519",
+    summary: "Ed25519 digital signatures.",
+    items: &[
+        StdItem {
+            name: "keypair",
+            kind: StdItemKind::Function,
+            doc: "Generates a fresh Ed25519 keypair from the host CSPRNG.",
+        },
+        StdItem {
+            name: "sign",
+            kind: StdItemKind::Function,
+            doc: "Signs a message with a 32-byte secret key.",
+        },
+        StdItem {
+            name: "verify",
+            kind: StdItemKind::Function,
+            doc: "Verifies a 64-byte signature against a 32-byte public key.",
+        },
+    ],
+};
+
+const CRYPTO_ECDSA: StdModule = StdModule {
+    path: "std::crypto::ecdsa",
+    summary: "ECDSA over the NIST P-256 curve.",
+    items: &[
+        StdItem {
+            name: "keypair_pem",
+            kind: StdItemKind::Function,
+            doc: "Generates (secret_pem, public_pem) for a fresh P-256 keypair.",
+        },
+        StdItem {
+            name: "sign_pem",
+            kind: StdItemKind::Function,
+            doc: "Signs a message with a PKCS#8-PEM-encoded P-256 secret key.",
+        },
+        StdItem {
+            name: "verify_pem",
+            kind: StdItemKind::Function,
+            doc: "Verifies a DER-encoded signature against an SPKI-PEM public key.",
+        },
+    ],
+};
+
+const CRYPTO_RSA: StdModule = StdModule {
+    path: "std::crypto::rsa",
+    summary: "RSA-PKCS#1 v1.5 digital signatures.",
+    items: &[
+        StdItem {
+            name: "keypair_pem",
+            kind: StdItemKind::Function,
+            doc: "Generates (secret_pem, public_pem) for a fresh RSA-2048 keypair.",
+        },
+        StdItem {
+            name: "sign_pkcs1_sha256",
+            kind: StdItemKind::Function,
+            doc: "PKCS#1 v1.5 SHA-256 signature.",
+        },
+        StdItem {
+            name: "verify_pkcs1_sha256",
+            kind: StdItemKind::Function,
+            doc: "PKCS#1 v1.5 SHA-256 verification.",
+        },
+    ],
+};
+
+const CRYPTO_X509: StdModule = StdModule {
+    path: "std::crypto::x509",
+    summary: "X.509 certificate parsing.",
+    items: &[
+        StdItem {
+            name: "CertInfo",
+            kind: StdItemKind::Type,
+            doc: "Inspected fields of an X.509 certificate.",
+        },
+        StdItem {
+            name: "parse_pem",
+            kind: StdItemKind::Function,
+            doc: "Parses one PEM-encoded certificate.",
+        },
+        StdItem {
+            name: "parse_der",
+            kind: StdItemKind::Function,
+            doc: "Parses one DER-encoded certificate.",
+        },
+    ],
+};
+
+const CRYPTO_KDF: StdModule = StdModule {
+    path: "std::crypto::kdf",
+    summary: "Password-based key-derivation functions.",
+    items: &[
+        StdItem {
+            name: "pbkdf2_sha256",
+            kind: StdItemKind::Function,
+            doc: "PBKDF2-HMAC-SHA256 KDF.",
+        },
+        StdItem {
+            name: "scrypt_interactive",
+            kind: StdItemKind::Function,
+            doc: "scrypt with the standard interactive parameters.",
+        },
+        StdItem {
+            name: "argon2id_hash",
+            kind: StdItemKind::Function,
+            doc: "Argon2id PHC-format password hash.",
+        },
+        StdItem {
+            name: "argon2id_verify",
+            kind: StdItemKind::Function,
+            doc: "Verifies a password against an Argon2id PHC string.",
+        },
+    ],
+};
+
+const ENCODING_YAML: StdModule = StdModule {
+    path: "std::encoding::yaml",
+    summary: "YAML 1.2 parser/emitter (serde_yaml-backed).",
+    items: &[
+        StdItem {
+            name: "Value",
+            kind: StdItemKind::Type,
+            doc: "Dynamically typed YAML value.",
+        },
+        StdItem {
+            name: "parse",
+            kind: StdItemKind::Function,
+            doc: "Parses a YAML document into a Value.",
+        },
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "Encodes a Value as a YAML document.",
+        },
+    ],
+};
+
+const HTML_TEMPLATE: StdModule = StdModule {
+    path: "std::html::template",
+    summary: "Context-aware HTML templates with auto-escape.",
+    items: &[
+        StdItem {
+            name: "Template",
+            kind: StdItemKind::Type,
+            doc: "Compiled HTML template.",
+        },
+        StdItem {
+            name: "parse",
+            kind: StdItemKind::Function,
+            doc: "Parses a template string.",
+        },
+        StdItem {
+            name: "render",
+            kind: StdItemKind::Function,
+            doc: "Renders a template with the supplied data context.",
+        },
+    ],
+};
+
+const TEXT_TEMPLATE: StdModule = StdModule {
+    path: "std::text::template",
+    summary: "Plain-text templates (no escaping).",
+    items: &[
+        StdItem {
+            name: "Template",
+            kind: StdItemKind::Type,
+            doc: "Compiled text template.",
+        },
+        StdItem {
+            name: "parse",
+            kind: StdItemKind::Function,
+            doc: "Parses a template string.",
+        },
+        StdItem {
+            name: "render",
+            kind: StdItemKind::Function,
+            doc: "Renders a template with the supplied data context.",
+        },
+    ],
+};
+
+const DATABASE_SQL: StdModule = StdModule {
+    path: "std::database::sql",
+    summary: "Driver-pluggable SQL database access.",
+    items: &[
+        StdItem {
+            name: "Driver",
+            kind: StdItemKind::Trait,
+            doc: "Database driver — opens connections.",
+        },
+        StdItem {
+            name: "Conn",
+            kind: StdItemKind::Type,
+            doc: "Open database connection.",
+        },
+        StdItem {
+            name: "Tx",
+            kind: StdItemKind::Type,
+            doc: "Active transaction handle.",
+        },
+        StdItem {
+            name: "Stmt",
+            kind: StdItemKind::Type,
+            doc: "Prepared statement.",
+        },
+        StdItem {
+            name: "Rows",
+            kind: StdItemKind::Type,
+            doc: "Result-set iterator.",
+        },
+        StdItem {
+            name: "open",
+            kind: StdItemKind::Function,
+            doc: "Opens a database connection by driver name + URL.",
+        },
+    ],
 };
 
 const SORT: StdModule = StdModule {

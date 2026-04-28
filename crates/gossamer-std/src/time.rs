@@ -110,9 +110,16 @@ impl SystemTime {
     }
 }
 
-/// Suspends the current thread for `duration`.
+/// Suspends the current goroutine (or OS thread, when called from
+/// outside a goroutine context) for `duration`. Internally registers
+/// a one-shot timer with the netpoller so a sleeping goroutine does
+/// not consume an OS thread while it waits.
 pub fn sleep(duration: Duration) {
-    std::thread::sleep(duration.0);
+    if duration.0.is_zero() {
+        return;
+    }
+    let deadline = std::time::Instant::now() + duration.0;
+    crate::sched_global::sleep_until(deadline);
 }
 
 /// Convenience wrapper around [`Instant::now`].
@@ -347,6 +354,302 @@ fn days_to_civil(days: i64) -> CivilDate {
         year: year + i32::from(month <= 2),
         month,
         day,
+    }
+}
+
+/// IANA timezone-aware operations. Gated on the `tz` feature so the
+/// stdlib stays slim by default; once the feature is on, callers
+/// can construct a [`Location`] from any IANA name and convert
+/// `SystemTime`s into local civil time and back.
+#[cfg(feature = "tz")]
+pub mod tz {
+
+    use std::str::FromStr;
+
+    use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
+    use chrono_tz::Tz;
+
+    use super::{FormatError, SystemTime};
+
+    /// Reference to an IANA timezone (e.g. `"America/Los_Angeles"`).
+    /// Cheap to clone — wraps the `chrono_tz::Tz` enum by value.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Location {
+        tz: Tz,
+    }
+
+    impl Location {
+        /// Resolves an IANA timezone name. Returns `Err` when the
+        /// name is not in the bundled tzdata set.
+        pub fn lookup(name: &str) -> Result<Self, FormatError> {
+            Tz::from_str(name)
+                .map(|tz| Self { tz })
+                .map_err(|e| FormatError::BadInput(format!("unknown timezone {name:?}: {e}")))
+        }
+
+        /// UTC location (always available; never traps).
+        #[must_use]
+        pub fn utc() -> Self {
+            Self { tz: Tz::UTC }
+        }
+
+        /// IANA name of the timezone.
+        #[must_use]
+        pub fn name(self) -> &'static str {
+            self.tz.name()
+        }
+
+        /// Civil time fields for `when` rendered through `self`.
+        #[must_use]
+        pub fn civil(self, when: SystemTime) -> Civil {
+            let unix = i64::try_from(when.unix_millis() / 1000).unwrap_or(0);
+            let utc: DateTime<Utc> = DateTime::from_timestamp(unix, 0)
+                .unwrap_or_else(|| DateTime::from_timestamp(0, 0).expect("epoch is valid"));
+            let local = utc.with_timezone(&self.tz);
+            Civil {
+                year: local.year(),
+                month: local.month(),
+                day: local.day(),
+                hour: local.hour(),
+                minute: local.minute(),
+                second: local.second(),
+                offset_seconds: chrono::Offset::fix(local.offset()).local_minus_utc(),
+                weekday: local.weekday().num_days_from_monday(),
+            }
+        }
+    }
+
+    /// Civil time fields rendered in a specific [`Location`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Civil {
+        /// Calendar year (e.g. `2026`).
+        pub year: i32,
+        /// 1..=12 calendar month.
+        pub month: u32,
+        /// 1..=31 calendar day.
+        pub day: u32,
+        /// 0..=23 hour-of-day.
+        pub hour: u32,
+        /// 0..=59 minute.
+        pub minute: u32,
+        /// 0..=59 second.
+        pub second: u32,
+        /// Offset from UTC in seconds (positive east of Greenwich).
+        pub offset_seconds: i32,
+        /// 0=Mon … 6=Sun.
+        pub weekday: u32,
+    }
+
+    /// Parses `input` against the supplied `layout` in Go's reference-time
+    /// format. The reference time is `2006-01-02 15:04:05 MST` (Mon Jan 2,
+    /// 03:04:05 PM 2006). Extra layout tokens are passed through verbatim.
+    /// Returns the time normalised to UTC.
+    pub fn parse(layout: &str, input: &str) -> Result<SystemTime, FormatError> {
+        let chrono_fmt = go_layout_to_chrono(layout);
+        // Try with timezone first, fall back to naive.
+        if let Ok(dt) = DateTime::parse_from_str(input, &chrono_fmt) {
+            let unix = dt.with_timezone(&Utc).timestamp();
+            return Ok(SystemTime::from_unix_millis(unix.saturating_mul(1000)));
+        }
+        match NaiveDateTime::parse_from_str(input, &chrono_fmt) {
+            Ok(dt) => {
+                let utc = Utc.from_utc_datetime(&dt);
+                Ok(SystemTime::from_unix_millis(
+                    utc.timestamp().saturating_mul(1000),
+                ))
+            }
+            Err(e) => Err(FormatError::BadInput(format!(
+                "time::parse({layout:?}, {input:?}): {e}"
+            ))),
+        }
+    }
+
+    /// Renders `when` according to the Go-shaped `layout` in `loc`.
+    pub fn format_in(layout: &str, when: SystemTime, loc: Location) -> Result<String, FormatError> {
+        let chrono_fmt = go_layout_to_chrono(layout);
+        let unix = i64::try_from(when.unix_millis() / 1000)
+            .map_err(|_| FormatError::OutOfRange("time too far from epoch".into()))?;
+        let utc: DateTime<Utc> = DateTime::from_timestamp(unix, 0)
+            .ok_or_else(|| FormatError::OutOfRange(format!("{unix} seconds out of range")))?;
+        let local = utc.with_timezone(&loc.tz);
+        Ok(local.format(&chrono_fmt).to_string())
+    }
+
+    /// Adds `years`, `months`, and `days` to `when` in the supplied
+    /// location, mirroring Go's `Time.AddDate`. Negative values
+    /// subtract; month-end clamping matches `chrono`'s behaviour.
+    pub fn add_date(
+        when: SystemTime,
+        loc: Location,
+        years: i32,
+        months: i32,
+        days: i32,
+    ) -> Result<SystemTime, FormatError> {
+        let unix = i64::try_from(when.unix_millis() / 1000)
+            .map_err(|_| FormatError::OutOfRange("time too far from epoch".into()))?;
+        let utc: DateTime<Utc> = DateTime::from_timestamp(unix, 0)
+            .ok_or_else(|| FormatError::OutOfRange(format!("{unix} out of range")))?;
+        let local = utc.with_timezone(&loc.tz);
+        // Year/month manually so we clamp to the last day of the
+        // target month rather than wrapping into the next.
+        let mut new_year = local.year() + years;
+        let mut new_month_zero = (local.month0() as i32) + months;
+        new_year += new_month_zero.div_euclid(12);
+        new_month_zero = new_month_zero.rem_euclid(12);
+        let new_month = (new_month_zero as u32) + 1;
+        let dim = days_in_month(new_year, new_month);
+        let new_day = local.day().min(dim);
+        let candidate = loc
+            .tz
+            .with_ymd_and_hms(
+                new_year,
+                new_month,
+                new_day,
+                local.hour(),
+                local.minute(),
+                local.second(),
+            )
+            .single()
+            .ok_or_else(|| FormatError::BadInput("ambiguous local time".into()))?
+            + chrono::Duration::days(i64::from(days));
+        let new_unix = candidate.with_timezone(&Utc).timestamp();
+        Ok(SystemTime::from_unix_millis(new_unix.saturating_mul(1000)))
+    }
+
+    fn days_in_month(year: i32, month: u32) -> u32 {
+        match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if super::is_leap(year) {
+                    29
+                } else {
+                    28
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    /// Maps Go's reference-time tokens onto chrono's `strftime` format.
+    /// The reference time is:
+    ///   Mon Jan  2 15:04:05 MST 2006
+    /// We translate the well-known tokens and pass everything else
+    /// through verbatim. Not exhaustive — covers RFC3339 / common log
+    /// shapes.
+    fn go_layout_to_chrono(layout: &str) -> String {
+        let mut out = String::with_capacity(layout.len() + 8);
+        let bytes = layout.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            // Match longest-token-first.
+            let rest = &bytes[i..];
+            if rest.starts_with(b"2006") {
+                out.push_str("%Y");
+                i += 4;
+            } else if rest.starts_with(b"06") {
+                out.push_str("%y");
+                i += 2;
+            } else if rest.starts_with(b"01") {
+                out.push_str("%m");
+                i += 2;
+            } else if rest.starts_with(b"Jan") {
+                out.push_str("%b");
+                i += 3;
+            } else if rest.starts_with(b"02") {
+                out.push_str("%d");
+                i += 2;
+            } else if rest.starts_with(b"Mon") {
+                out.push_str("%a");
+                i += 3;
+            } else if rest.starts_with(b"15") {
+                out.push_str("%H");
+                i += 2;
+            } else if rest.starts_with(b"04") {
+                out.push_str("%M");
+                i += 2;
+            } else if rest.starts_with(b"05") {
+                out.push_str("%S");
+                i += 2;
+            } else if rest.starts_with(b"-0700") {
+                out.push_str("%z");
+                i += 5;
+            } else if rest.starts_with(b"Z07:00") {
+                out.push_str("%:z");
+                i += 6;
+            } else if rest.starts_with(b"MST") {
+                out.push_str("%Z");
+                i += 3;
+            } else if rest[0] == b'%' {
+                out.push_str("%%");
+                i += 1;
+            } else {
+                out.push(rest[0] as char);
+                i += 1;
+            }
+        }
+        out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn lookup_known_zone() {
+            let la = Location::lookup("America/Los_Angeles").unwrap();
+            assert_eq!(la.name(), "America/Los_Angeles");
+        }
+
+        #[test]
+        fn lookup_unknown_zone_errors() {
+            assert!(Location::lookup("Pluto/Crater").is_err());
+        }
+
+        #[test]
+        fn parse_go_layout() {
+            let t = parse("2006-01-02T15:04:05Z07:00", "2026-04-27T12:34:56-07:00").unwrap();
+            assert_eq!(
+                super::super::format_rfc3339(t).unwrap(),
+                "2026-04-27T19:34:56Z"
+            );
+        }
+
+        #[test]
+        fn parse_naive_layout() {
+            let t = parse("2006-01-02 15:04:05", "2026-04-27 12:00:00").unwrap();
+            assert_eq!(
+                super::super::format_rfc3339(t).unwrap(),
+                "2026-04-27T12:00:00Z"
+            );
+        }
+
+        #[test]
+        fn add_date_handles_month_overflow() {
+            let t = super::super::parse_rfc3339("2026-01-31T12:00:00Z").unwrap();
+            let utc = Location::utc();
+            let plus_month = add_date(t, utc, 0, 1, 0).unwrap();
+            // Feb has 28 days in 2026, so day clamps to 28.
+            assert_eq!(
+                super::super::format_rfc3339(plus_month).unwrap(),
+                "2026-02-28T12:00:00Z"
+            );
+            let plus_year = add_date(t, utc, 1, 0, 0).unwrap();
+            assert_eq!(
+                super::super::format_rfc3339(plus_year).unwrap(),
+                "2027-01-31T12:00:00Z"
+            );
+        }
+
+        #[test]
+        fn civil_in_location_includes_offset() {
+            let when = super::super::parse_rfc3339("2026-04-27T12:00:00Z").unwrap();
+            let la = Location::lookup("America/Los_Angeles").unwrap();
+            let civil = la.civil(when);
+            // Pacific Daylight Time (UTC-7).
+            assert_eq!(civil.offset_seconds, -7 * 3600);
+            assert_eq!(civil.hour, 5);
+        }
     }
 }
 

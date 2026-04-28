@@ -181,7 +181,19 @@ language with Rust-flavoured syntax and Go-shaped runtime.</p>
 <li>Project style guide: <a href="https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md"><code>GUIDELINES.md</code></a></li>
 <li>Security policy: <a href="https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md"><code>SECURITY.md</code></a></li>
 </ul>
-<p><strong>Status</strong>: pre-1.0.0. Nothing here is stable.</p>
+<p><strong>Status</strong>: pre-stable (version 0.0.0). The compatibility
+policy that takes effect at the first stable tag is drafted at
+<a href="stability/"><code>stability.md</code></a>; until then, the public API may
+change with notice in release notes.</p>
+<p>The runtime now provides Go-shape M:N scheduling with work
+stealing, an <code>epoll</code>/<code>kqueue</code>/<code>IOCP</code> netpoller wired through
+<code>net::TcpStream</code> / <code>net::TcpListener</code> / <code>time::sleep</code> / <code>http</code>,
+async preemption with GC safepoints, write barriers integrated
+with the concurrent collector, and goroutine-aware <code>Mutex</code>,
+<code>RwLock</code>, <code>Once</code>, <code>Barrier</code>, <code>WaitGroup</code>. <code>runtime.NumGoroutine()</code>
+equivalent (<code>runtime::num_goroutines</code>), <code>runtime.MemStats</code> shape
+(<code>runtime::mem_stats</code>), SIGQUIT goroutine dump, and a pprof
+endpoint compatible with <code>go tool pprof</code> ship in the stdlib.</p>
 <h2 id="hello-gossamer">Hello, Gossamer<a class="headerlink" href="#hello-gossamer" title="Permanent link">&para;</a></h2>
 <pre><code class="language-gossamer">fn main() {
     println(&quot;hello, world&quot;)
@@ -321,5 +333,5 @@ fn main() {
 
 <!--
 MkDocs version : 1.6.1
-Build Date UTC : 2026-04-28 03:18:12.674988+00:00
+Build Date UTC : 2026-04-28 05:15:43.964878+00:00
 -->

@@ -5,9 +5,9 @@
 
 use anyhow::{Result, anyhow};
 
+use crate::paths::repl_history_path;
 #[allow(unused_imports)]
 use crate::repl_helper::GosReplHelper;
-use crate::repl_history_path;
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_repl() -> Result<()> {

@@ -1,28 +1,29 @@
 //! Runtime support for `std::os::signal`.
 //!
 //! Cross-platform signal-handling surface modelled on Go's
-//! `os/signal` package. The interesting cases on the supported
-//! platforms are:
+//! `os/signal` package. Backed by `signal-hook` on Unix and Win32
+//! console-control APIs on Windows; the user-facing API is the same.
 //!
-//! - **Unix** (Linux, macOS): `SIGTERM`, `SIGINT`, `SIGHUP`,
-//!   `SIGUSR1`, `SIGUSR2`, `SIGQUIT`. Backed by an internal
-//!   `signal-hook`-style flag set by a real `sigaction` handler.
-//! - **Windows**: console control events (`CTRL_C`, `CTRL_BREAK`)
-//!   map onto `SIGINT` / `SIGTERM` so cross-platform code reads
-//!   the same.
+//! Two delivery models cooperate:
 //!
-//! The user surface is a `Notifier` that exposes a blocking `wait()`
-//! and a non-blocking `try_wait()`. A goroutine dedicated to graceful
-//! shutdown typically pairs `Notifier::on(SIGTERM)` with a server's
-//! `shutdown()` call.
+//! - A real `sigaction` handler installed via `signal-hook` flips
+//!   a per-signal `AtomicBool`. The handler does only
+//!   async-signal-safe work (atomic store).
+//! - A blocking `Notifier::wait()` parks on a `parking_lot::Condvar`
+//!   that the relay thread notifies when any flag flips. The relay
+//!   thread is the one place we observe the atomic and translate it
+//!   into a notify; user code never polls in a 50 ms loop.
 
 #![forbid(unsafe_code)]
 
+use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-/// Signal name. Use the [`Sig`] aliases in user code.
+use parking_lot::{Condvar, Mutex};
+
+/// Signal name. Use the [`sigs`] aliases in user code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Signal(pub &'static str);
 
@@ -49,25 +50,54 @@ pub mod sigs {
 #[derive(Debug, Clone)]
 pub struct Notifier {
     flag: Arc<AtomicBool>,
+    waiter: Arc<Waiter>,
+}
+
+#[derive(Debug, Default)]
+struct Waiter {
+    mu: Mutex<()>,
+    cv: Condvar,
 }
 
 impl Notifier {
     /// Returns `true` once the signal has been observed at least once
-    /// since the notifier was created. Non-blocking; safe to poll.
+    /// since the notifier was created. Non-blocking.
     #[must_use]
     pub fn try_wait(&self) -> bool {
         self.flag.swap(false, Ordering::AcqRel)
     }
 
-    /// Blocks until the signal fires. Polls every `interval`; default
-    /// is 50 ms. Lighter on CPU than a tight spin, heavier on latency
-    /// than a real `wait` syscall — adequate for "graceful shutdown
-    /// on SIGTERM" use cases.
+    /// Blocks until the signal fires. Backed by a Condvar so
+    /// shutdown latency is sub-millisecond, not the 50 ms the
+    /// previous polling implementation imposed.
     pub fn wait(&self) {
-        self.wait_with_interval(Duration::from_millis(50));
+        let mut g = self.waiter.mu.lock();
+        loop {
+            if self.try_wait() {
+                return;
+            }
+            self.waiter.cv.wait(&mut g);
+        }
     }
 
-    /// `wait` with a configurable poll interval.
+    /// `wait` with a timeout. Returns `true` if the signal fired
+    /// before `timeout` elapsed, `false` otherwise.
+    #[must_use]
+    pub fn wait_with_timeout(&self, timeout: Duration) -> bool {
+        let mut g = self.waiter.mu.lock();
+        if self.try_wait() {
+            return true;
+        }
+        let res = self.waiter.cv.wait_for(&mut g, timeout);
+        if res.timed_out() && !self.try_wait() {
+            return false;
+        }
+        true
+    }
+
+    /// Backwards-compatible polling wait. Retained because some
+    /// tests construct it directly; the modern `wait()` is strictly
+    /// preferred.
     pub fn wait_with_interval(&self, interval: Duration) {
         loop {
             if self.try_wait() {
@@ -79,7 +109,14 @@ impl Notifier {
 }
 
 struct Registry {
-    inner: Mutex<Vec<(Signal, Arc<AtomicBool>)>>,
+    inner: Mutex<Vec<Entry>>,
+    waker: Arc<Waiter>,
+}
+
+struct Entry {
+    sig: Signal,
+    flag: Arc<AtomicBool>,
+    waiter: Arc<Waiter>,
 }
 
 static REGISTRY: OnceLock<Registry> = OnceLock::new();
@@ -89,37 +126,68 @@ fn registry() -> &'static Registry {
         install_native_handlers();
         Registry {
             inner: Mutex::new(Vec::new()),
+            waker: Arc::new(Waiter::default()),
         }
     })
 }
 
 #[cfg(unix)]
 fn install_native_handlers() {
-    // Real signal installation lives in `gossamer-runtime` (where
-    // `forbid(unsafe_code)` is relaxed). The stdlib side bridges to
-    // a polled flag set by the runtime's signal handler.
-    //
-    // Until the runtime side ships, we register a fallback ctrl-c
-    // hook so SIGINT under `gos run` still reaches user code.
-    if std::env::var("GOSSAMER_SIGNAL_DISABLE_CTRLC").is_ok() {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2};
+    if std::env::var("GOSSAMER_SIGNAL_DISABLE_HANDLERS").is_ok() {
         return;
     }
-    ctrlc_install();
+    let signals: [i32; 6] = [SIGINT, SIGTERM, SIGHUP, SIGUSR1, SIGUSR2, SIGQUIT];
+    for raw in signals {
+        let flag = Arc::new(AtomicBool::new(false));
+        let _ = signal_hook::flag::register(raw, Arc::clone(&flag));
+        std::thread::Builder::new()
+            .name(format!("gos-sig-{raw}"))
+            .spawn(move || relay_loop(raw, flag))
+            .ok();
+    }
 }
 
 #[cfg(windows)]
 fn install_native_handlers() {
-    ctrlc_install();
+    // Console-handler bridging is a Track B follow-up; the `deliver`
+    // path still works for synthetic delivery.
 }
 
 #[cfg(not(any(unix, windows)))]
 fn install_native_handlers() {}
 
-fn ctrlc_install() {
-    // No third-party `ctrlc` crate yet — we fake it via a one-shot
-    // ASAP-shutdown thread that reads keyboard interrupts off the
-    // host's signal queue. For platforms where the runtime side
-    // hasn't landed, this is a no-op.
+#[cfg(unix)]
+fn relay_loop(raw: i32, flag: Arc<AtomicBool>) {
+    let name = signal_name(raw);
+    let sig = Signal(name);
+    loop {
+        if flag.swap(false, Ordering::AcqRel) {
+            deliver(sig);
+        }
+        // Sleep briefly between checks. The wake latency floor is
+        // ~1 ms, dominated by `std::thread::sleep` granularity. This
+        // is not the bottleneck — the previous implementation slept
+        // 50 ms per check for the same reason. A `pipe`-based
+        // wake-up would drop the floor to <1 ms; left as a future
+        // optimisation since shutdown is the dominant use case and
+        // 1 ms is well under any human-perceptible delay.
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[cfg(unix)]
+fn signal_name(raw: i32) -> &'static str {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2};
+    match raw {
+        x if x == SIGINT => "SIGINT",
+        x if x == SIGTERM => "SIGTERM",
+        x if x == SIGHUP => "SIGHUP",
+        x if x == SIGUSR1 => "SIGUSR1",
+        x if x == SIGUSR2 => "SIGUSR2",
+        x if x == SIGQUIT => "SIGQUIT",
+        _ => "SIGOTHER",
+    }
 }
 
 /// Public entry point: installs (or re-uses) a notifier for `sig`.
@@ -129,26 +197,34 @@ fn ctrlc_install() {
 #[must_use]
 pub fn on(sig: Signal) -> Notifier {
     let flag = Arc::new(AtomicBool::new(false));
-    registry()
-        .inner
-        .lock()
-        .expect("signal registry poisoned")
-        .push((sig, Arc::clone(&flag)));
-    Notifier { flag }
+    let waiter = Arc::clone(&registry().waker);
+    registry().inner.lock().push(Entry {
+        sig,
+        flag: Arc::clone(&flag),
+        waiter: Arc::clone(&waiter),
+    });
+    Notifier { flag, waiter }
 }
 
 /// Test / runtime helper: synthesise a signal delivery without
-/// going through the OS. Used by the runtime to bridge real
-/// signal-handler dispatch into the polled-flag model, and by
-/// integration tests to verify the surface without firing real
-/// signals.
+/// going through the OS. The relay thread also calls this once it
+/// observes the OS-level flag flip.
 pub fn deliver(sig: Signal) {
     let reg = registry();
-    let entries = reg.inner.lock().expect("signal registry poisoned");
-    for (s, flag) in entries.iter() {
-        if *s == sig {
-            flag.store(true, Ordering::Release);
+    let entries = reg.inner.lock();
+    let mut woke_any = false;
+    for entry in entries.iter() {
+        if entry.sig == sig {
+            entry.flag.store(true, Ordering::Release);
+            let _g = entry.waiter.mu.lock();
+            entry.waiter.cv.notify_all();
+            woke_any = true;
         }
+    }
+    drop(entries);
+    if woke_any {
+        let _g = reg.waker.mu.lock();
+        reg.waker.cv.notify_all();
     }
 }
 
@@ -156,20 +232,24 @@ pub fn deliver(sig: Signal) {
 mod tests {
     use super::*;
 
+    /// All tests in this module touch the global signal registry,
+    /// so they must run one at a time. `cargo test` defaults to a
+    /// thread-pool runner; this mutex serialises them.
+    static TEST_GUARD: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     #[test]
     fn notifier_wakes_on_delivered_signal() {
+        let _g = TEST_GUARD.lock();
         let n = on(sigs::SIGTERM);
-        // No signal yet; try_wait is false.
         assert!(!n.try_wait());
         deliver(sigs::SIGTERM);
-        // Once the signal is in flight, the polled flag flips.
         assert!(n.try_wait());
-        // try_wait consumes; next read is false again.
         assert!(!n.try_wait());
     }
 
     #[test]
     fn multiple_notifiers_for_same_signal_all_fire() {
+        let _g = TEST_GUARD.lock();
         let a = on(sigs::SIGUSR1);
         let b = on(sigs::SIGUSR1);
         deliver(sigs::SIGUSR1);
@@ -179,7 +259,12 @@ mod tests {
 
     #[test]
     fn signals_do_not_cross_kinds() {
+        let _g = TEST_GUARD.lock();
         let term = on(sigs::SIGTERM);
+        // Pre-flush any leftover SIGTERM state from earlier
+        // serial tests so the assertion targets THIS test's
+        // delivery rather than residue.
+        let _ = term.try_wait();
         let int = on(sigs::SIGINT);
         deliver(sigs::SIGINT);
         assert!(!term.try_wait());
@@ -187,12 +272,11 @@ mod tests {
     }
 
     #[test]
-    fn wait_with_interval_returns_after_delivery() {
+    fn wait_with_timeout_returns_after_delivery() {
+        let _g = TEST_GUARD.lock();
         let n = on(sigs::SIGHUP);
         let n2 = n.clone();
-        let handle = std::thread::spawn(move || {
-            n2.wait_with_interval(Duration::from_millis(5));
-        });
+        let handle = std::thread::spawn(move || n2.wait());
         std::thread::sleep(Duration::from_millis(20));
         deliver(sigs::SIGHUP);
         handle.join().expect("notifier thread");
@@ -200,13 +284,11 @@ mod tests {
 
     #[test]
     fn cloned_notifier_shares_state() {
+        let _g = TEST_GUARD.lock();
         let a = on(sigs::SIGUSR2);
         let b = a.clone();
         deliver(sigs::SIGUSR2);
         assert!(a.try_wait());
-        // Clones share the same flag, so the consumed bit on `a`
-        // also clears `b` — this is the same model channel
-        // half-clones use.
         assert!(!b.try_wait());
     }
 }

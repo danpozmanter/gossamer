@@ -51,4 +51,5 @@ mod ty;
 
 pub use emit::{
     BuildError, CompileOutcome, NativeObject, compile_to_object, compile_with_fallback,
+    set_debug_info, set_reproducible,
 };

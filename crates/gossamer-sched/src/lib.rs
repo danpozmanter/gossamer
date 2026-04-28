@@ -23,8 +23,8 @@ mod select;
 mod task;
 
 pub use channel::{Channel, RecvResult, SendResult};
-pub use multi::{MultiScheduler, MultiStats, SendTask};
-pub use poller::{Interest, MockPoller, PollSource, Poller, Readiness};
+pub use multi::{MultiScheduler, MultiStats, ParkReason, SchedTask, SendTask};
+pub use poller::{Interest, MockPoller, OsPoller, PollSource, Poller, Readiness};
 pub use queue::RunQueue;
 pub use scheduler::{SchedStats, Scheduler};
 pub use select::{SelectOp, SelectOutcome, poll_select};

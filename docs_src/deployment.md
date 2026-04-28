@@ -223,9 +223,11 @@ ulimit -s 1024  # 1 MiB stacks
 
 Or in systemd: `LimitSTACK=1048576`.
 
-When M:N scheduling lands in v1.x this becomes a no-op —
-goroutines will be lightweight and the OS-thread limit will
-no longer constrain goroutine count.
+As of 0.1.0 the M:N scheduler is live, so goroutines no
+longer correspond 1:1 to OS threads — the `ulimit` is only
+relevant if you spawn unbounded *threads* directly. Idle
+goroutines are parked on the netpoller and consume
+constant memory.
 
 ### Memory
 
@@ -270,9 +272,84 @@ In-place hot-swap (`SIGUSR2` exec-the-new-binary-without-dropping-listeners)
 is not in v1; the `os::exec` and `os::signal` work in v1.x will
 make it possible.
 
+## Observability
+
+A production Gossamer service ships with three diagnostic
+surfaces that match Go's. Configure as:
+
+### `SIGQUIT` goroutine dump
+
+Sending `SIGQUIT` (or pressing Ctrl-\\ on a foreground process)
+prints every live goroutine's last-known frame to stderr, then
+exits. The handler is installed automatically on first scheduler
+start. Output format mirrors Go's so existing tools
+(`stackparse`, log-shipping rules) read it unchanged.
+
+```text
+SIGQUIT: dumping 1342 goroutine(s)
+
+goroutine 17 [chan receive]:
+  main::handle_request()
+        src/main.gos:128
+  ...
+```
+
+### pprof endpoint
+
+Mount `/debug/pprof/*` in your HTTP router by routing to
+`std::pprof::route(path, query)`:
+
+```gos
+fn pprof_handler(req: &http::Request) -> http::Response {
+    match pprof::route(req.path(), req.query()) {
+        Some(bytes) => http::Response::ok().body(bytes),
+        None => http::Response::not_found(),
+    }
+}
+```
+
+Then:
+
+```sh
+go tool pprof -text http://localhost:8080/debug/pprof/profile
+go tool pprof -web  http://localhost:8080/debug/pprof/heap
+go tool pprof       http://localhost:8080/debug/pprof/goroutine
+```
+
+The legacy text profile format is what Gossamer emits today;
+the protobuf-encoded variant lands in Phase 2.
+
+### `gos test --race`
+
+Runs the test suite under the data-race detector. Catches
+unsynchronised concurrent writes via vector-clock happens-before
+analysis seeded from the scheduler's park/unpark events. CI
+gate:
+
+```sh
+gos test --race                  # exits non-zero on first race
+gos test --race --coverage cov.lcov
+```
+
+### Reproducible builds + supply-chain
+
+Production builds:
+
+```sh
+gos build --release -g --reproducible
+```
+
+The `--reproducible` flag pins `SOURCE_DATE_EPOCH` and the
+LLVM tmp-dir layout so two builds of the same source on the
+same target produce bit-identical artifacts. Releases shipped
+through `.github/workflows/release.yml` are cosign-signed
+(keyless / OIDC), carry a SLSA-3 build-provenance attestation,
+and ship alongside a CycloneDX SBOM.
+
 ## Cross-references
 
 - [`non_goals_v1.md`](non_goals_v1.md) — what's deferred.
 - [`perf_characteristics.md`](perf_characteristics.md) — GC,
   goroutine memory, scheduler under load.
 - [`stdlib.md`](stdlib.md) — `slog`, `http`, `os`.
+- [`stability.md`](stability.md) — versioning + deprecation policy.

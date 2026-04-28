@@ -8,7 +8,20 @@ language with Rust-flavoured syntax and Go-shaped runtime.
 - Project style guide: [`GUIDELINES.md`](https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md)
 - Security policy: [`SECURITY.md`](https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md)
 
-**Status**: pre-1.0.0. Nothing here is stable.
+**Status**: pre-stable (version 0.0.0). The compatibility
+policy that takes effect at the first stable tag is drafted at
+[`stability.md`](stability.md); until then, the public API may
+change with notice in release notes.
+
+The runtime now provides Go-shape M:N scheduling with work
+stealing, an `epoll`/`kqueue`/`IOCP` netpoller wired through
+`net::TcpStream` / `net::TcpListener` / `time::sleep` / `http`,
+async preemption with GC safepoints, write barriers integrated
+with the concurrent collector, and goroutine-aware `Mutex`,
+`RwLock`, `Once`, `Barrier`, `WaitGroup`. `runtime.NumGoroutine()`
+equivalent (`runtime::num_goroutines`), `runtime.MemStats` shape
+(`runtime::mem_stats`), SIGQUIT goroutine dump, and a pprof
+endpoint compatible with `go tool pprof` ship in the stdlib.
 
 ## Hello, Gossamer
 

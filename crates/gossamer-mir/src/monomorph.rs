@@ -170,21 +170,52 @@ pub fn check_generic_layouts(bodies: &[Body], tcx: &TyCtxt) -> Vec<String> {
     errors
 }
 
-/// Predicate matching exactly the set of types the codegen can
-/// pass through a single `i64` register slot without further ABI
-/// machinery. Kept narrow on purpose — see
-/// [`check_generic_layouts`] for why heap-handle types like
-/// `String`/`Vec<T>` are excluded even though they fit one register.
+/// Predicate matching the set of types the codegen can plumb
+/// through a generic parameter. The original ABI restricted this
+/// to scalars (Bool/Char/Int/Float/Unit/Never); the widened ABI
+/// allows aggregate types as generics by passing them through a
+/// single-pointer environment slot, mirroring the closure
+/// strategy already in use (see `lowering_bugs_round2.md`).
+///
+/// Permitted today:
+///
+/// - Scalars: `bool`, `char`, integer / float, `()`, `!`.
+/// - `String`, `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`,
+///   `BTreeMap<K, V>` — by-pointer in the flat ABI.
+/// - Tuples and named ADTs (struct/enum) — by-pointer.
+/// - Function references and channel handles (`Sender<T>` /
+///   `Receiver<T>`) — already round-trip through `i64` in the
+///   compiled tier.
+/// - Refs (`&T`).
+///
+/// Still rejected:
+/// - `TyKind::Closure` — needs explicit env pointer wiring at
+///   the call site that monomorphisation doesn't yet rewrite.
+/// - `TyKind::Alias` (unresolved type alias) — should never
+///   reach codegen, but flagged here defensively.
 fn fits_flat_i64_abi(tcx: &TyCtxt, ty: Ty) -> bool {
-    matches!(
-        tcx.kind_of(ty),
+    match tcx.kind_of(ty) {
         TyKind::Bool
-            | TyKind::Char
-            | TyKind::Int(_)
-            | TyKind::Float(_)
-            | TyKind::Unit
-            | TyKind::Never
-    )
+        | TyKind::Char
+        | TyKind::Int(_)
+        | TyKind::Float(_)
+        | TyKind::Unit
+        | TyKind::Never
+        | TyKind::String
+        | TyKind::Vec(_)
+        | TyKind::HashMap { .. }
+        | TyKind::Sender(_)
+        | TyKind::Receiver(_)
+        | TyKind::Ref { .. }
+        | TyKind::FnDef { .. }
+        | TyKind::FnPtr(_)
+        | TyKind::Adt { .. }
+        | TyKind::Tuple(_)
+        | TyKind::Array { .. }
+        | TyKind::Slice(_) => true,
+        TyKind::Closure { .. } | TyKind::Alias { .. } => false,
+        _ => false,
+    }
 }
 
 /// Best-effort one-line spelling of a `Ty` for the diagnostic.

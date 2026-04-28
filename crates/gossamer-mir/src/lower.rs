@@ -2412,7 +2412,19 @@ impl<'a> Builder<'a> {
                     .is_some_and(|n| self.impl_methods.contains_key(n)) =>
             {
                 let _ = def;
-                Operand::Const(ConstValue::Str(joined_path.clone().unwrap()))
+                // The `is_some_and` guard above already verified
+                // `joined_path` is `Some`. Pattern-match it instead
+                // of `.unwrap()` so a future refactor that drops the
+                // guard surfaces a real diagnostic at the
+                // type-checker layer rather than panicking here.
+                let Some(name) = joined_path.clone() else {
+                    return self.lower_unsupported_with_kind(
+                        "joined_path_missing_after_guard",
+                        ty,
+                        span,
+                    );
+                };
+                Operand::Const(ConstValue::Str(name))
             }
             HirExprKind::Path { def: Some(def), .. } => Operand::FnRef {
                 def: *def,

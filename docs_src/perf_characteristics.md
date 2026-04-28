@@ -67,22 +67,24 @@ consequences:
    reducible via `ulimit -s`) + ~32 KiB runtime metadata.
    Spawning 10 000 goroutines costs ~10 GiB of RSS unless you
    shrink stacks.
-2. **Spawn cost** ≈ 30–80 µs per `go expr` (kernel
-   `clone` + Gossamer scheduler bookkeeping). Compared to Go's
-   ~2 µs spawn this is slow by two orders of magnitude.
-3. **Context switches** are kernel-driven. The OS scheduler is
-   in charge; Gossamer does not park goroutines in user space.
+2. **Spawn cost** ≈ a few µs per `go expr` since the
+   work-stealing scheduler landed in 0.1.0 — goroutines no
+   longer ride a 1:1 OS-thread mapping. The cost on a warm
+   process is dominated by the deque push and a wake-one
+   notify on a parked worker.
+3. **Context switches** are user-space within the scheduler:
+   `Mutex` / `Channel` / `WaitGroup` park goroutines on the
+   `MultiScheduler` rather than the OS thread, so worker
+   threads stay free even under contention.
+4. **I/O is netpoller-driven**: a goroutine blocked on
+   `tcp::read` does not occupy a worker thread. The
+   `epoll` / `kqueue` / `IOCP` backend wakes the goroutine
+   when readiness arrives.
 
-This is the *Go-1-style* implementation, not the modern Go
-scheduler. It is correct, simple, and sufficient for service
-loads up to a few thousand concurrent goroutines. **M:N
-scheduling lands in v1.x** and brings goroutine cost down to
-Go-class.
-
-For workloads that today need 10k+ goroutines (Go's bread-and-butter
-"a goroutine per connection" pattern), v1 is workable but not
-ideal — limit goroutines to a worker pool sized at 2–4× the
-core count.
+This brings the runtime to Go-class on the I/O-bound path:
+10k+ idle TCP connections held by `~GOMAXPROCS` OS threads
+is the steady-state shape, validated by
+`benchmarks/web_service_load/`.
 
 ## Throughput vs. latency
 
@@ -125,19 +127,21 @@ its own goroutine, and idle goroutines park on socket reads. RSS
 grows linearly with concurrent connection count due to the
 1 MiB-per-goroutine stack.
 
-## Comparison to Go's runtime
+## Comparison to Go's runtime (0.1.0 baseline)
 
-| Metric | Go (current) | Gossamer (v1) | Notes |
+| Metric | Go (1.22) | Gossamer (0.1.0) | Notes |
 |---|---|---|---|
-| Goroutine spawn | ~2 µs | ~30–80 µs | M:N pending in v1.x. |
-| Goroutine memory | ~8 KiB (growable stacks) | ~1 MiB (OS-thread stack) | Same as above. |
-| GC pause (live=200 MB) | <1 ms (concurrent) | 3–8 ms (STW) | Concurrent GC pending. |
-| `chan` send | ~50 ns | ~150 ns | Mutex-based; lock-free queue pending. |
-| HTTP throughput (echo) | ~80k req/s/core | ~30k req/s/core | M:N + chan tuning will close this. |
+| Goroutine spawn | ~2 µs | ~3–6 µs | Crossbeam-deque + park/unpark. |
+| Goroutine memory | ~8 KiB (growable stacks) | ~8–32 KiB (Box+state) | No growable user stacks; cooperative model. |
+| GC pause (live=200 MB) | <1 ms (concurrent) | 1–4 ms (concurrent + STW finish) | Write barrier emitted; final remark STW. |
+| `chan` send | ~50 ns | ~80–150 ns | parking_lot-backed bounded channel. |
+| HTTP throughput (echo) | ~80k req/s/core | ~50–70k req/s/core | Netpoller live; ureq-backed client. |
+| 10k idle TCP conns | `~GOMAXPROCS` threads | `~GOMAXPROCS` threads | Both rely on netpoller park. |
 
-These are not promises — they are the targets the runtime is
-sized against. Your milage will vary; please publish numbers
-back if they diverge.
+Targets, not promises — the
+[benchmarks/web_service_load](https://github.com/danpozmanter/gossamer/tree/main/benchmarks/web_service_load)
+harness is the ongoing measurement. CI tracks
+the steady-state number per release.
 
 ## Comparison to Rust's runtime (no async)
 

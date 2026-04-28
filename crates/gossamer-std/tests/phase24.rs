@@ -107,7 +107,7 @@ fn stub_server_and_client_construct_without_error() {
 
 #[test]
 fn tcp_listener_accepts_a_local_connection() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let mut listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     let addr_string = addr.to_string();
     let handle = thread::spawn(move || {

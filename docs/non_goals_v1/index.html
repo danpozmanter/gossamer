@@ -218,31 +218,45 @@ in five minutes whether the gaps will block their use case.</p>
   bounded generics only.</li>
 </ul>
 <h2 id="runtime">Runtime<a class="headerlink" href="#runtime" title="Permanent link">&para;</a></h2>
+<p>The runtime gaps that this section originally listed are
+<strong>now in scope</strong> — work-stealing M:N scheduler, async
+preemption with GC safepoints, write barriers wired through
+the LLVM lowerer, goroutine-aware sync primitives, and an
+<code>epoll</code> / <code>kqueue</code> / <code>IOCP</code> netpoller all landed in the
+production-readiness pass. The remaining runtime non-goals:</p>
 <ul>
-<li><strong>One OS thread per goroutine.</strong> Real M:N scheduling is a
-  v1.x optimisation. The current model is correct but not as
-  cheap as Go's scheduler. Document the constraint, ship.</li>
-<li><strong>No green-thread-aware blocking I/O.</strong> Calls into the host
-  block the OS thread. Spawn another goroutine to make progress.</li>
-<li><strong>GC pauses are stop-the-world.</strong> A concurrent / generational
-  GC is post-v1. The stop-the-world mark-sweep is fine for
-  typical service workloads under tens of thousands of live
-  goroutines, but a real-time game loop is not the target.</li>
+<li><strong>No generational GC.</strong> The current collector is concurrent
+  mark-sweep with a write barrier. A generational variant
+  would help long-lived service workloads further; it is
+  filed for Phase 2.</li>
+<li><strong>No stack-switching coroutines.</strong> Goroutines are
+  cooperative state machines on top of the work-stealing
+  scheduler — no per-goroutine OS stack. Switch cost is
+  function-call shaped, not register-flush shaped. A
+  stackful coroutine variant requires <code>unsafe</code> and is
+  outside the workspace's safe-Rust posture.</li>
 </ul>
 <h2 id="standard-library">Standard library<a class="headerlink" href="#standard-library" title="Permanent link">&para;</a></h2>
-<p>The following Go stdlib equivalents are <strong>deliberately deferred
-to v1.x</strong>:</p>
+<p>The following Go stdlib equivalents shipped during the
+production-readiness pass and are no longer non-goals:</p>
 <ul>
-<li>HTTP/2 server + client. v1 ships HTTP/1.1 only.</li>
-<li>gRPC. Land via a third-party package once the registry is
-  open for publishing.</li>
-<li><code>database/sql</code>-shaped driver interface plus PostgreSQL /
-  MySQL drivers. Third-party.</li>
-<li>Locale-aware time formatting (<code>time::format_locale</code>).</li>
-<li>Full TLS client cert verification + ALPN beyond <code>h2</code>. The
-  <code>rustls</code> handle is exposed; the high-level convenience API
-  is in v1.x.</li>
-<li><code>encoding/csv</code>, <code>encoding/xml</code>. v1 ships JSON only.</li>
+<li>✅ <code>database/sql</code> interface + bundled SQLite driver
+  (<code>std::database::sql</code>).</li>
+<li>✅ Locale-aware / IANA-tz time formatting via
+  <code>std::time::tz</code>.</li>
+<li>✅ TLS client-cert verification, ALPN, SNI, mTLS through
+  both <code>http::Client</code> and <code>http::Server</code>.</li>
+</ul>
+<p>Still deliberately deferred:</p>
+<ul>
+<li>HTTP/2 server + client. The <code>0.x</code> series ships HTTP/1.1.</li>
+<li>WebSockets. Phase-2 stdlib addition.</li>
+<li>gRPC. Lands via a third-party package once the registry
+  publishing flow opens.</li>
+<li>Postgres / MySQL drivers. Third-party — drivers belong
+  with their own maintainers and CVE response cadence.</li>
+<li><code>encoding/csv</code>, <code>encoding/xml</code>. JSON + YAML cover the
+  config / interchange surface for now.</li>
 </ul>
 <h2 id="tooling">Tooling<a class="headerlink" href="#tooling" title="Permanent link">&para;</a></h2>
 <ul>
@@ -261,8 +275,10 @@ to v1.x</strong>:</p>
   exists but does not run statistically rigorous comparisons or
   emit machine-readable JSON. Treat the numbers as developer
   feedback, not CI gates.</li>
-<li><strong>No coverage tooling.</strong> <code>gos test</code> runs the test suite; it
-  does not emit lcov / cobertura output.</li>
+<li>✅ <strong>Coverage tooling shipped (test-file granularity).</strong>
+  <code>gos test --coverage out.lcov</code> emits well-formed lcov.
+  MIR-level basic-block instrumentation that would let us
+  compute per-line hits is filed for Phase 2.</li>
 <li><strong>No ergonomic editor extensions beyond LSP.</strong> Gossamer
   ships an LSP 3.16 server. VS Code / Neovim / Emacs / Helix
   pick it up via the standard generic-LSP plugins.</li>

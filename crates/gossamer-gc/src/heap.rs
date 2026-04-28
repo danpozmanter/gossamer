@@ -22,6 +22,16 @@ impl GcRef {
     pub const fn as_u32(self) -> u32 {
         self.0
     }
+
+    /// Reconstructs a [`GcRef`] from its raw numeric index. Used by
+    /// the runtime ABI bridge to round-trip handles through the
+    /// `extern "C"` boundary; the compiled tier passes
+    /// `GcRef::as_u32()` over the wire and resurrects the handle on
+    /// the receiving side.
+    #[must_use]
+    pub const fn from_u32(raw: u32) -> Self {
+        Self(raw)
+    }
 }
 
 /// One entry in the GC arena.
