@@ -2338,6 +2338,18 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
                 .collect();
             json_std::Value::Array(arr)
         }
+        Value::FloatVec(data) => {
+            let arr: Vec<json_std::Value> =
+                data.iter().copied().map(json_std::Value::Number).collect();
+            json_std::Value::Array(arr)
+        }
+        Value::IntMap(map) => {
+            let mut out = std::collections::BTreeMap::new();
+            for (k, v) in map.lock().iter() {
+                out.insert(k.to_string(), json_std::Value::Number(*v as f64));
+            }
+            json_std::Value::Object(out)
+        }
     }
 }
 
@@ -2346,6 +2358,7 @@ fn builtin_len(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::String(s)) => s.chars().count(),
         Some(Value::Array(parts) | Value::Tuple(parts)) => parts.len(),
         Some(Value::IntArray(data)) => data.len(),
+        Some(Value::FloatVec(data)) => data.len(),
         Some(Value::Map(m)) => m.lock().len(),
         _ => return Ok(Value::Int(0)),
     };
@@ -2486,6 +2499,13 @@ fn builtin_push(args: &[Value]) -> RuntimeResult<Value> {
                 owned.push(*n);
             }
             Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            if let Some(Value::Float(f)) = args.get(1) {
+                owned.push(*f);
+            }
+            Ok(Value::FloatVec(Arc::new(owned)))
         }
         _ => Ok(Value::Unit),
     }
@@ -3487,6 +3507,43 @@ fn u8vec_lookup(handle: i64) -> Option<Arc<Vec<std::sync::atomic::AtomicU8>>> {
         U8VEC_LAST.with(|cell| *cell.borrow_mut() = Some((handle, cached)));
     }
     arc
+}
+
+/// Inline `set_byte` for the VM's `Op::U8VecSetByte` super-instruction.
+/// Skips the `args: &[Value]` round-trip and the per-arg
+/// `MapKey`-style discriminant matching that
+/// [`builtin_u8vec_set_byte`] does. Returns `true` on success;
+/// `false` lets the caller fall back to the generic method
+/// dispatch path when the receiver shape doesn't match.
+#[inline]
+pub(crate) fn u8vec_set_byte_inline(handle: i64, idx: i64, byte: i64) -> bool {
+    let Some(arc) = u8vec_lookup(handle) else {
+        return false;
+    };
+    if idx < 0 {
+        // Out-of-range writes are silently dropped, matching
+        // `builtin_u8vec_set_byte`'s `if let Some(slot)` branch.
+        return true;
+    }
+    if let Some(slot) = arc.get(idx as usize) {
+        slot.store(byte as u8, std::sync::atomic::Ordering::Relaxed);
+    }
+    true
+}
+
+/// Inline `get_byte` for the VM's `Op::U8VecGetByte`. Returns
+/// `None` when the handle is stale (caller falls back to the
+/// generic dispatch path); returns `Some(0)` for out-of-range
+/// reads, matching [`builtin_u8vec_get_byte`].
+#[inline]
+pub(crate) fn u8vec_get_byte_inline(handle: i64, idx: i64) -> Option<i64> {
+    let arc = u8vec_lookup(handle)?;
+    if idx < 0 {
+        return Some(0);
+    }
+    Some(arc.get(idx as usize).map_or(0, |s| {
+        i64::from(s.load(std::sync::atomic::Ordering::Relaxed))
+    }))
 }
 
 fn builtin_u8vec_new(args: &[Value]) -> RuntimeResult<Value> {

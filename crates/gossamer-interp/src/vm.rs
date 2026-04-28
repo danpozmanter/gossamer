@@ -61,35 +61,104 @@ pub struct Vm {
     /// nested calls each pop their own buffers off the free
     /// list and push them back on return.
     pool: RefCell<FramePool>,
-    /// Lowered MIR for the program, captured at `load` time so the
-    /// deferred Tier-D2 JIT compile can run later through `&self`
-    /// without needing to re-lower from HIR. `None` when the JIT
-    /// is disabled (`gos run --no-jit` / `GOS_JIT=0`) — we skip the
-    /// MIR-lower work entirely in that case.
-    mir_bodies: Option<Vec<Body>>,
+    /// Lowered MIR for the program, shared across goroutines via
+    /// `Arc` so a child `Vm` can drive its own deferred JIT
+    /// compile without reflowing HIR → MIR. `None` when the JIT
+    /// is disabled (`gos run --no-jit` / `GOS_JIT=0`).
+    mir_bodies: Option<Arc<Vec<Body>>>,
     /// Snapshot of the type context as it stood when MIR was
-    /// lowered. Cranelift's `compile_to_jit` only needs `&TyCtxt`,
-    /// so the clone keeps the deferred-compile path off the
-    /// caller's `&mut TyCtxt`.
-    tcx_snapshot: Option<TyCtxt>,
-    /// JIT artifact + override map filled by [`Vm::try_compile_jit_lazy`]
-    /// the first time any chunk's hot counter trips. The artifact
-    /// owns the `JITModule`'s code pages; the override map gives
-    /// `apply` an O(1) lookup from chunk name to JIT entry without
-    /// having to swap entries in `globals`.
-    jit: RefCell<JitState>,
-    /// Process-wide hint that the deferred compile has either
-    /// already happened or has been declined (--no-jit,
-    /// `compile_to_jit` returned `Err`, …). Once `true`, no future
-    /// hot-counter trip retries — so a pathological program
-    /// can't burn CPU re-attempting a compile that's known to fail.
-    jit_attempted: Cell<bool>,
+    /// lowered. Cranelift's `compile_to_jit` only needs `&TyCtxt`.
+    /// `Arc` so spawned goroutines reuse the parent's snapshot
+    /// rather than re-lowering it.
+    tcx_snapshot: Option<Arc<TyCtxt>>,
+    /// JIT artifact + override map filled by
+    /// [`Vm::try_compile_jit_lazy`] the first time any chunk's hot
+    /// counter trips on this `Vm`. Per-`Vm` (not shared across
+    /// goroutines) because Cranelift's `JITModule` carries raw
+    /// pointers and `dyn Fn` boxes that aren't `Send + Sync`.
+    /// Goroutines spawned via [`Op::Spawn`] start with an empty
+    /// JIT and stay on bytecode unless their own per-`Vm` hot
+    /// counter trips — which only happens for genuinely long-lived
+    /// child VMs, where the per-thread compile cost amortises.
+    jit: parking_lot::RwLock<JitState>,
+    /// Per-`Vm` cache state pinned in a never-shrinking arena. The
+    /// hot dispatch loop reaches into `chunk_state_for(chunk)` once
+    /// per call entry and threads `&ChunkState` through the
+    /// dispatch arms. Replacing the prior shared
+    /// `parking_lot::Mutex<Vec<CacheSlot>>` on `FnChunk` removes
+    /// cross-goroutine cache-line bouncing while keeping the
+    /// single-thread fast path lock-free (`RefCell` borrow check
+    /// only). The `Box` is load-bearing: `chunk_state_for` hands
+    /// out `&ChunkState` references that outlive the arena's
+    /// reallocations, which only the `Box` indirection survives
+    /// (a bare `Vec<ChunkState>` would move its elements on grow
+    /// and invalidate every reference).
+    #[allow(clippy::vec_box)]
+    chunk_state_arena: RefCell<Vec<Box<ChunkState>>>,
+    /// Side index into [`Self::chunk_state_arena`] keyed by
+    /// `Arc::as_ptr(chunk) as usize`. The map's `&'static` lifetime
+    /// is a stand-in: `chunk_state_for` casts each lookup to a
+    /// borrow tied to `&self` (the arena outlives every reference
+    /// it hands out). See `chunk_state_for` for the full safety
+    /// argument.
+    chunk_state_map: RefCell<HashMap<usize, &'static ChunkState>>,
+    /// Single-slot last-seen-chunk cache, populated on every
+    /// `chunk_state_for` lookup. Recursive / self-call patterns
+    /// (e.g. nbody's `energy` calling `fsqrt` then itself again)
+    /// hit this slot before the `HashMap` probe, saving ~10 ns of
+    /// hash + comparison per `apply()` call.
+    chunk_state_last: Cell<Option<(usize, &'static ChunkState)>>,
+}
+
+/// Per-`Vm` per-chunk dispatch caches. Pinned inside
+/// [`Vm::chunk_state_arena`]; references handed out by
+/// [`Vm::chunk_state_for`] are valid for the lifetime of the
+/// owning `Vm`.
+pub(crate) struct ChunkState {
+    /// Inline-cache slots for `Op::Call` / `Op::MethodCall` sites.
+    /// One slot per `cache_idx`. `RefCell` because the dispatch
+    /// arms read the slot, then on miss take a brief `borrow_mut`
+    /// to refill it — never held across a sub-call.
+    pub(crate) call_caches: RefCell<Vec<crate::bytecode::CacheSlot>>,
+    /// Adaptive-arith cache slots. The outer `Vec` is fixed at
+    /// chunk-construction time so no outer cell is needed; each
+    /// slot's `Cell<u8>` handles the per-shape transition.
+    pub(crate) arith_caches: Vec<crate::bytecode::ArithCacheSlot>,
+    /// Tier-D2 hot counter — decremented on every call into the
+    /// chunk; trips a deferred whole-program JIT compile at zero.
+    /// `Cell<i32>` (single-thread mutation only — each `Vm` owns
+    /// its own counter, so cross-thread atomicity is unneeded).
+    pub(crate) hot_counter: Cell<i32>,
+}
+
+impl ChunkState {
+    fn new(call_cache_count: u16, arith_cache_count: u16, jit_disabled: bool) -> Self {
+        let initial = if jit_disabled {
+            crate::bytecode::HOT_DISABLED
+        } else {
+            crate::bytecode::HOT_THRESHOLD
+        };
+        Self {
+            call_caches: RefCell::new(vec![
+                crate::bytecode::CacheSlot::default();
+                call_cache_count as usize
+            ]),
+            arith_caches: (0..arith_cache_count)
+                .map(|_| crate::bytecode::ArithCacheSlot::default())
+                .collect(),
+            hot_counter: Cell::new(initial),
+        }
+    }
 }
 
 /// Owns the cranelift JIT state once the deferred compile has
 /// run. The `artifact` keeps every code page alive; the
 /// `overrides` map lets `apply` route a `Global::Fn(chunk)` call
-/// through native dispatch by name.
+/// through native dispatch by name. `compiled` collapses the
+/// previous `jit_attempted` flag so two goroutines tripping the
+/// hot counter concurrently can't both kick a compile — the
+/// first transitions `Pending → InProgress`, the others see
+/// `InProgress` / `Done` / `Failed` and skip.
 #[derive(Default)]
 struct JitState {
     /// Owns the finalised `JITModule`; dropped along with the Vm so
@@ -100,6 +169,27 @@ struct JitState {
     /// for `main` (see vm.rs:343 comment) and any function the
     /// cranelift backend rejected.
     overrides: HashMap<String, Arc<JitFn>>,
+    /// State machine for the one-shot deferred compile. Once it
+    /// reaches `Done` or `Failed` no thread retries.
+    compiled: JitCompileState,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+enum JitCompileState {
+    /// No tier-up trigger has fired on this `Vm` yet.
+    #[default]
+    Pending,
+    /// `compile_to_jit` is mid-flight on this thread. Other
+    /// hot-counter trips on the same `Vm` skip; child VMs in
+    /// other goroutines run their own per-`Vm` compile.
+    #[allow(dead_code)]
+    InProgress,
+    /// JIT artefact installed on this `Vm`.
+    #[allow(dead_code)]
+    Done,
+    /// `compile_to_jit` returned `Err`, or the JIT is disabled
+    /// outright. Future hot-counter trips short-circuit.
+    Failed,
 }
 
 /// Per-VM free list of register-file `Vec`s. Stack-discipline:
@@ -275,8 +365,10 @@ impl Vm {
             pool: RefCell::new(FramePool::default()),
             mir_bodies: None,
             tcx_snapshot: None,
-            jit: RefCell::new(JitState::default()),
-            jit_attempted: Cell::new(false),
+            jit: parking_lot::RwLock::new(JitState::default()),
+            chunk_state_arena: RefCell::new(Vec::new()),
+            chunk_state_map: RefCell::new(HashMap::new()),
+            chunk_state_last: Cell::new(None),
         };
         let mut list = Vec::new();
         builtins::install(&mut list);
@@ -284,6 +376,31 @@ impl Vm {
             vm.globals.insert(name.to_string(), Global::Value(value));
         }
         vm
+    }
+
+    /// Builds a VM from a pre-populated `globals` map. Used by
+    /// `Op::Spawn` so a freshly spawned goroutine runs the callee
+    /// through the bytecode VM with the parent's `Arc<FnChunk>`
+    /// graph shared (chunks are immutable + `Sync`). The child has
+    /// its own per-`Vm` cache state and JIT slot — see [`Self::jit`]
+    /// for why JIT state can't cross threads.
+    #[must_use]
+    pub(crate) fn with_globals(
+        globals: HashMap<String, Global>,
+        mir_bodies: Option<Arc<Vec<Body>>>,
+        tcx_snapshot: Option<Arc<TyCtxt>>,
+    ) -> Self {
+        Self {
+            globals,
+            walker: RefCell::new(Interpreter::new()),
+            pool: RefCell::new(FramePool::default()),
+            mir_bodies,
+            tcx_snapshot,
+            jit: parking_lot::RwLock::new(JitState::default()),
+            chunk_state_arena: RefCell::new(Vec::new()),
+            chunk_state_map: RefCell::new(HashMap::new()),
+            chunk_state_last: Cell::new(None),
+        }
     }
 
     /// Compiles and registers every `fn`/`const`/`static`/impl item in
@@ -343,38 +460,53 @@ impl Vm {
         // `--no-jit` / `GOS_JIT=0` skips the MIR lower too.
         if jit_call::jit_enabled() {
             let bodies = gossamer_mir::lower_program(program, tcx);
-            self.mir_bodies = Some(bodies);
-            self.tcx_snapshot = Some(tcx.clone());
+            self.mir_bodies = Some(Arc::new(bodies));
+            self.tcx_snapshot = Some(Arc::new(tcx.clone()));
         } else {
-            self.jit_attempted.set(true);
+            self.jit.write().compiled = JitCompileState::Failed;
         }
         Ok(())
     }
 
     /// Compiles the saved MIR through cranelift and fills the JIT
     /// override map. Called the first time any chunk's tier-up
-    /// counter trips. Subsequent calls are short-circuited by
-    /// `jit_attempted`. Failures (codegen rejection, MIR lowering
-    /// surprises, …) leave the VM on pure bytecode — no
-    /// propagation, no observable behaviour change.
-    ///
-    /// The eager-promotion path (swapping `Global::Fn` for
-    /// `Global::Jit` in `globals`) is gone: we keep `globals`
-    /// unchanged and route native dispatch through the override
-    /// map in `apply`. That keeps the mutation off `globals` so
-    /// the tier-up trigger doesn't need `&mut self`.
+    /// counter trips. The state machine on `JitState::compiled`
+    /// short-circuits concurrent goroutine trips so `compile_to_jit`
+    /// runs at most once per `Arc<RwLock<JitState>>`. Failures
+    /// transition to `Failed` and stay there — no observable
+    /// behaviour change for the bytecode path.
     fn try_compile_jit_lazy(&self) {
-        if self.jit_attempted.get() {
-            return;
+        // Fast read-only check first: avoids exclusive locks once
+        // the compile has settled (Done / Failed). The hot
+        // counter at the call site already got us here, so the
+        // common case after the first goroutine wins is `Done`.
+        {
+            let state = self.jit.read();
+            if matches!(
+                state.compiled,
+                JitCompileState::Done | JitCompileState::InProgress | JitCompileState::Failed
+            ) {
+                return;
+            }
         }
-        self.jit_attempted.set(true);
+        // Take an exclusive lock to flip Pending → InProgress.
+        {
+            let mut state = self.jit.write();
+            if state.compiled != JitCompileState::Pending {
+                return;
+            }
+            state.compiled = JitCompileState::InProgress;
+        }
         if !jit_call::jit_enabled() {
+            self.jit.write().compiled = JitCompileState::Failed;
             return;
         }
         let Some(bodies) = self.mir_bodies.as_ref() else {
+            self.jit.write().compiled = JitCompileState::Failed;
             return;
         };
         let Some(tcx) = self.tcx_snapshot.as_ref() else {
+            self.jit.write().compiled = JitCompileState::Failed;
             return;
         };
         let trace = jit_call::jit_trace();
@@ -410,7 +542,7 @@ impl Vm {
         // those builtins fire reliably; helper functions still
         // get the native lowering, which is where the perf win
         // actually matters.
-        let mut state = self.jit.borrow_mut();
+        let mut state = self.jit.write();
         for (name, jit_fn) in &artifact.functions {
             if name == "main" {
                 continue;
@@ -505,28 +637,20 @@ impl Vm {
     fn apply(&self, global: Global, args: Vec<Value>) -> RuntimeResult<Value> {
         match global {
             Global::Fn(chunk) => {
-                // Tier D2 — decrement the per-chunk hot counter
-                // and trigger a deferred JIT compile when the
-                // budget is spent. A saturated counter (sentinel
-                // `HOT_DISABLED`) skips both the decrement and
-                // the trigger so non-runnable chunks (extern
-                // declarations, etc.) never burn the budget.
-                //
-                // Special case: `main` is called exactly once for
-                // the typical single-fn program (`fasta`, `nbody`,
-                // any benchmark with a hot inner loop). The
-                // counter would never trip from a single call, so
-                // the entire program would run on bytecode. Force
-                // tier-up on the first invocation of `main` so
-                // JIT compilation kicks in before the inner loop
-                // starts spinning.
+                // Look up the per-`Vm` cache state for this chunk
+                // (creates a fresh `ChunkState` on first call).
+                let state = self.chunk_state_for(&chunk);
+                // Tier D2 — decrement the per-`Vm` hot counter and
+                // trigger a deferred JIT compile when the budget is
+                // spent. The counter is per-thread (in `ChunkState`),
+                // so each goroutine independently warms up.
                 if chunk.name.as_str() == "main" {
                     self.try_compile_jit_lazy();
                 } else {
-                    let hot = chunk.hot_counter.get();
+                    let hot = state.hot_counter.get();
                     if hot > 0 && hot != crate::bytecode::HOT_DISABLED {
                         let next = hot - 1;
-                        chunk.hot_counter.set(next);
+                        state.hot_counter.set(next);
                         if next == 0 {
                             self.try_compile_jit_lazy();
                         }
@@ -534,16 +658,11 @@ impl Vm {
                 }
                 // Tier D1 — if the deferred compile produced a
                 // native entry for this chunk, route through the
-                // trampoline first. Any unsupported shape (rare,
-                // since the JIT's typing reflects the signature
-                // the bytecode chunk also sees) falls through to
-                // the bytecode body so the call still completes.
-                let jit_opt = self
-                    .jit
-                    .borrow()
-                    .overrides
-                    .get(chunk.name.as_str())
-                    .cloned();
+                // trampoline first. The override map is shared
+                // across goroutines via `Arc<RwLock<JitState>>`, so
+                // a child goroutine that tripped the hot counter
+                // installs entries every other thread sees.
+                let jit_opt = self.jit.read().overrides.get(chunk.name.as_str()).cloned();
                 if let Some(jit) = jit_opt {
                     match jit_call::invoke(&jit, &args) {
                         jit_call::Dispatch::Ok(value) => return Ok(value),
@@ -555,7 +674,7 @@ impl Vm {
                         }
                     }
                 }
-                self.run(&chunk, args)
+                self.run(&chunk, state, args)
             }
             Global::Value(value) => match value {
                 Value::Builtin(inner) => (inner.call)(&args),
@@ -595,9 +714,62 @@ impl Vm {
     // separately. The `items_after_statements` allow covers
     // per-arm `type` and `const` definitions (e.g. `BuiltinFn`
     // in `Op::MethodCall`); hoisting them out of their match
+    /// Returns the per-`Vm` [`ChunkState`] for `chunk`, allocating
+    /// it on first lookup. The returned reference is tied to
+    /// `&self` and stays valid for the lifetime of the `Vm`.
+    ///
+    /// SAFETY (the localized `unsafe { &*ptr }` below): the arena
+    /// is append-only — entries are inserted on first encounter
+    /// and never removed, so the `Box<ChunkState>` stays at a
+    /// stable heap address. The `Vec<Box<...>>` may reallocate
+    /// when growing, but only the `Box` slots in the spine move;
+    /// the heap-allocated `ChunkState` each `Box` points to does
+    /// not. `&self` outlives every reference we hand out, so the
+    /// `'static` cast in the side-index map is collapsed back to
+    /// `&'a self::ChunkState` at the call site. Single-thread
+    /// access (each `Vm` is owned by one goroutine) means no
+    /// cross-thread aliasing concerns.
+    fn chunk_state_for(&self, chunk: &Arc<FnChunk>) -> &ChunkState {
+        let key = Arc::as_ptr(chunk) as usize;
+        // Single-slot cache: nbody-shape recursion (`energy` →
+        // `fsqrt` → `energy` …) keeps hitting the same chunk on
+        // many adjacent calls, so this saves ~10 ns of hash +
+        // comparison per `apply` entry.
+        if let Some((last_key, last_state)) = self.chunk_state_last.get() {
+            if last_key == key {
+                return last_state;
+            }
+        }
+        // Fast path: shared borrow of the side index.
+        if let Some(state) = self.chunk_state_map.borrow().get(&key).copied() {
+            self.chunk_state_last.set(Some((key, state)));
+            return state;
+        }
+        // Miss: allocate a fresh `ChunkState`, pin it in the
+        // arena, register the side-index reference. `jit_disabled`
+        // is read once per chunk and frozen — the JIT can't be
+        // toggled mid-run.
+        let jit_disabled = !jit_call::jit_enabled();
+        let state_box = Box::new(ChunkState::new(
+            chunk.call_cache_count,
+            chunk.arith_cache_count,
+            jit_disabled,
+        ));
+        let mut arena = self.chunk_state_arena.borrow_mut();
+        arena.push(state_box);
+        // SAFETY: see the doc-comment above. Arena is append-only,
+        // boxed entries are heap-pinned, single-thread access.
+        let state_ref: &'static ChunkState =
+            unsafe { &*std::ptr::from_ref(arena.last().unwrap().as_ref()) };
+        drop(arena);
+        self.chunk_state_map.borrow_mut().insert(key, state_ref);
+        self.chunk_state_last.set(Some((key, state_ref)));
+        state_ref
+    }
+
     // arm scope would obscure the dispatch shape.
     #[allow(clippy::cognitive_complexity, clippy::items_after_statements)]
-    fn run(&self, chunk: &FnChunk, args: Vec<Value>) -> RuntimeResult<Value> {
+    fn run(&self, chunk: &FnChunk, state: &ChunkState, args: Vec<Value>) -> RuntimeResult<Value> {
         if chunk.arity as usize != args.len() {
             return Err(RuntimeError::Arity {
                 expected: chunk.arity as usize,
@@ -668,8 +840,8 @@ impl Vm {
                 } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
-                    registers[dst as usize] = adaptive_add(chunk, cache_idx, shape, a, b)?;
+                    let shape = state.arith_caches[cache_idx as usize].shape.get();
+                    registers[dst as usize] = adaptive_add(state, cache_idx, shape, a, b)?;
                 }
                 Op::SubInt {
                     dst,
@@ -679,9 +851,9 @@ impl Vm {
                 } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
+                    let shape = state.arith_caches[cache_idx as usize].shape.get();
                     registers[dst as usize] = adaptive_arith(
-                        chunk,
+                        state,
                         cache_idx,
                         shape,
                         a,
@@ -699,9 +871,9 @@ impl Vm {
                 } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
+                    let shape = state.arith_caches[cache_idx as usize].shape.get();
                     registers[dst as usize] = adaptive_arith(
-                        chunk,
+                        state,
                         cache_idx,
                         shape,
                         a,
@@ -719,8 +891,8 @@ impl Vm {
                 } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
-                    registers[dst as usize] = adaptive_div(chunk, cache_idx, shape, a, b)?;
+                    let shape = state.arith_caches[cache_idx as usize].shape.get();
+                    registers[dst as usize] = adaptive_div(state, cache_idx, shape, a, b)?;
                 }
                 Op::RemInt {
                     dst,
@@ -730,8 +902,8 @@ impl Vm {
                 } => {
                     let a = &registers[lhs as usize];
                     let b = &registers[rhs as usize];
-                    let shape = chunk.arith_caches.borrow()[cache_idx as usize].shape.get();
-                    registers[dst as usize] = adaptive_rem(chunk, cache_idx, shape, a, b)?;
+                    let shape = state.arith_caches[cache_idx as usize].shape.get();
+                    registers[dst as usize] = adaptive_rem(state, cache_idx, shape, a, b)?;
                 }
                 Op::Neg { dst, operand } => {
                     registers[dst as usize] = neg(&registers[operand as usize])?;
@@ -815,7 +987,7 @@ impl Vm {
                     // loops calling small helper functions.
                     let token = call_token(callee_val);
                     let cached: Option<Global> = if token != 0 {
-                        let cache = chunk.call_caches.borrow();
+                        let cache = state.call_caches.borrow_mut();
                         let slot = &cache[cache_idx as usize];
                         if slot.type_token == token {
                             slot.resolved.clone()
@@ -834,7 +1006,7 @@ impl Vm {
                             _ => None,
                         };
                         if let Some(ref g) = resolved_global {
-                            let mut cache = chunk.call_caches.borrow_mut();
+                            let mut cache = state.call_caches.borrow_mut();
                             cache[cache_idx as usize] = fill_cache_slot(token, g);
                         }
                         match resolved_global {
@@ -880,7 +1052,7 @@ impl Vm {
                     type BuiltinFn = fn(&[Value]) -> RuntimeResult<Value>;
                     let (cached_builtin, cached_general): (Option<BuiltinFn>, Option<Global>) =
                         if recv_token != 0 {
-                            let cache = chunk.call_caches.borrow();
+                            let cache = state.call_caches.borrow_mut();
                             let slot = &cache[cache_idx as usize];
                             if slot.type_token == recv_token {
                                 (slot.builtin_fn, slot.resolved.clone())
@@ -926,7 +1098,7 @@ impl Vm {
                                 .or_else(|| self.globals.get(name.as_str()).cloned());
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
-                                    let mut cache = chunk.call_caches.borrow_mut();
+                                    let mut cache = state.call_caches.borrow_mut();
                                     cache[cache_idx as usize] = fill_cache_slot(recv_token, g);
                                 }
                             }
@@ -960,7 +1132,7 @@ impl Vm {
                                 .or_else(|| self.globals.get(name.as_str()).cloned());
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
-                                    let mut cache = chunk.call_caches.borrow_mut();
+                                    let mut cache = state.call_caches.borrow_mut();
                                     cache[cache_idx as usize] = fill_cache_slot(recv_token, g);
                                 }
                             }
@@ -1050,6 +1222,149 @@ impl Vm {
                         registers[dst as usize] = result;
                     }
                 }
+                Op::U8VecSetByte {
+                    dst,
+                    u8vec_reg,
+                    idx_reg,
+                    byte_reg,
+                } => {
+                    // Super-instruction for `<u8vec>.set_byte(<idx>, <byte>)`.
+                    // Same fast-path / fallback shape as
+                    // [`Op::StreamWriteByte`]. The inline helper
+                    // returns `false` when the handle has been
+                    // dropped (extremely rare — U8Vec is held by
+                    // the user-side struct for its full lifetime),
+                    // letting us fall through to the generic
+                    // dispatch path for correctness.
+                    let recv = &registers[u8vec_reg as usize];
+                    let idx_val = &registers[idx_reg as usize];
+                    let byte_val = &registers[byte_reg as usize];
+                    let fast = matches!(
+                        recv,
+                        Value::Struct(inner) if inner.name == "U8Vec"
+                    ) && matches!(idx_val, Value::Int(_))
+                        && matches!(byte_val, Value::Int(_));
+                    if fast {
+                        let handle = match recv {
+                            Value::Struct(inner) => {
+                                let mut h = 0i64;
+                                for (n, v) in inner.fields.iter() {
+                                    if n.name == "handle" {
+                                        if let Value::Int(x) = v {
+                                            h = *x;
+                                            break;
+                                        }
+                                    }
+                                }
+                                h
+                            }
+                            _ => unreachable!(),
+                        };
+                        let idx = match idx_val {
+                            Value::Int(n) => *n,
+                            _ => unreachable!(),
+                        };
+                        let byte = match byte_val {
+                            Value::Int(n) => *n,
+                            _ => unreachable!(),
+                        };
+                        if crate::builtins::u8vec_set_byte_inline(handle, idx, byte) {
+                            registers[dst as usize] = Value::Unit;
+                            continue;
+                        }
+                    }
+                    // Fallback: same generic-dispatch shape as
+                    // `StreamWriteByte`'s miss path.
+                    let recv_clone = recv.clone();
+                    let idx_clone = idx_val.clone();
+                    let byte_clone = byte_val.clone();
+                    let resolved = match &recv_clone {
+                        Value::Struct(_) => qualified_key(&recv_clone, "set_byte")
+                            .and_then(|q| self.globals.get(q).cloned()),
+                        _ => None,
+                    }
+                    .or_else(|| self.globals.get("set_byte").cloned());
+                    let args = vec![recv_clone, idx_clone, byte_clone];
+                    let result = match resolved {
+                        Some(Global::Value(Value::Builtin(builtin_inner))) => {
+                            (builtin_inner.call)(&args)?
+                        }
+                        Some(g) => self.apply(g, args)?,
+                        None => {
+                            return Err(RuntimeError::UnresolvedName("set_byte".to_string()));
+                        }
+                    };
+                    registers[dst as usize] = result;
+                }
+                Op::U8VecGetByte {
+                    dst_i,
+                    u8vec_reg,
+                    idx_reg,
+                } => {
+                    let recv = &registers[u8vec_reg as usize];
+                    let idx_val = &registers[idx_reg as usize];
+                    let fast = matches!(
+                        recv,
+                        Value::Struct(inner) if inner.name == "U8Vec"
+                    ) && matches!(idx_val, Value::Int(_));
+                    if fast {
+                        let handle = match recv {
+                            Value::Struct(inner) => {
+                                let mut h = 0i64;
+                                for (n, v) in inner.fields.iter() {
+                                    if n.name == "handle" {
+                                        if let Value::Int(x) = v {
+                                            h = *x;
+                                            break;
+                                        }
+                                    }
+                                }
+                                h
+                            }
+                            _ => unreachable!(),
+                        };
+                        let idx = match idx_val {
+                            Value::Int(n) => *n,
+                            _ => unreachable!(),
+                        };
+                        if let Some(b) = crate::builtins::u8vec_get_byte_inline(handle, idx) {
+                            // SAFETY: `dst_i` is a compile-allocated
+                            // i64 register slot.
+                            unsafe {
+                                *ints.get_unchecked_mut(dst_i as usize) = b;
+                            }
+                            continue;
+                        }
+                    }
+                    // Fallback: dispatch through the generic
+                    // `get_byte` builtin, then unbox the resulting
+                    // `Value::Int` into the typed register.
+                    let recv_clone = recv.clone();
+                    let idx_clone = idx_val.clone();
+                    let resolved = match &recv_clone {
+                        Value::Struct(_) => qualified_key(&recv_clone, "get_byte")
+                            .and_then(|q| self.globals.get(q).cloned()),
+                        _ => None,
+                    }
+                    .or_else(|| self.globals.get("get_byte").cloned());
+                    let args = vec![recv_clone, idx_clone];
+                    let result = match resolved {
+                        Some(Global::Value(Value::Builtin(builtin_inner))) => {
+                            (builtin_inner.call)(&args)?
+                        }
+                        Some(g) => self.apply(g, args)?,
+                        None => {
+                            return Err(RuntimeError::UnresolvedName("get_byte".to_string()));
+                        }
+                    };
+                    let n = match result {
+                        Value::Int(n) => n,
+                        _ => 0,
+                    };
+                    unsafe {
+                        *ints.get_unchecked_mut(dst_i as usize) = n;
+                    }
+                }
                 Op::MapInc {
                     dst,
                     map_reg,
@@ -1133,6 +1448,23 @@ impl Vm {
                                 _ => {
                                     return Err(RuntimeError::Type(
                                         "IndexSet on IntArray expects i64 value".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                        Value::FloatVec(data) => {
+                            let v = Arc::make_mut(data);
+                            if idx >= v.len() {
+                                return Err(RuntimeError::Arithmetic(
+                                    "index out of bounds".to_string(),
+                                ));
+                            }
+                            match new_value {
+                                Value::Float(f) => v[idx] = f,
+                                Value::Int(n) => v[idx] = n as f64,
+                                _ => {
+                                    return Err(RuntimeError::Type(
+                                        "IndexSet on FloatVec expects f64 value".to_string(),
                                     ));
                                 }
                             }
@@ -2157,8 +2489,198 @@ impl Vm {
                     }
                     *ints.get_unchecked_mut(dst_i as usize) = *data.get_unchecked(i);
                 },
+                Op::BuildFloatVec {
+                    dst_v,
+                    first_f,
+                    count,
+                } => {
+                    let n = count as usize;
+                    let start = first_f as usize;
+                    let mut data: Vec<f64> = Vec::with_capacity(n);
+                    // SAFETY: `first_f .. first_f + count` is a
+                    // compile-allocated span in the float register
+                    // file (mirrors `BuildIntArray`).
+                    unsafe {
+                        for i in 0..n {
+                            data.push(*floats.get_unchecked(start + i));
+                        }
+                    }
+                    registers[dst_v as usize] = Value::FloatVec(Arc::new(data));
+                }
+                Op::FloatVecGetF64 {
+                    dst_f,
+                    base,
+                    index_i,
+                } => unsafe {
+                    let idx = *ints.get_unchecked(index_i as usize);
+                    if idx < 0 {
+                        return Err(RuntimeError::Arithmetic(
+                            "negative index into sequence".to_string(),
+                        ));
+                    }
+                    let i = idx as usize;
+                    let b = registers.get_unchecked(base as usize);
+                    let Value::FloatVec(data) = b else {
+                        return Err(RuntimeError::Type(
+                            "FloatVecGetF64: receiver lost flat invariant".to_string(),
+                        ));
+                    };
+                    if i >= data.len() {
+                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                    }
+                    *floats.get_unchecked_mut(dst_f as usize) = *data.get_unchecked(i);
+                },
+                Op::FloatVecSetF64 {
+                    base,
+                    index_i,
+                    value_f,
+                } => unsafe {
+                    let idx = *ints.get_unchecked(index_i as usize);
+                    if idx < 0 {
+                        return Err(RuntimeError::Arithmetic(
+                            "negative index into sequence".to_string(),
+                        ));
+                    }
+                    let i = idx as usize;
+                    let new_f = *floats.get_unchecked(value_f as usize);
+                    let b = registers.get_unchecked_mut(base as usize);
+                    let Value::FloatVec(data_arc) = b else {
+                        return Err(RuntimeError::Type(
+                            "FloatVecSetF64: receiver lost flat invariant".to_string(),
+                        ));
+                    };
+                    let buf = Arc::make_mut(data_arc);
+                    if i >= buf.len() {
+                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                    }
+                    *buf.get_unchecked_mut(i) = new_f;
+                },
+                Op::BuildIntMap { dst_v } => {
+                    registers[dst_v as usize] = Value::IntMap(Arc::new(parking_lot::Mutex::new(
+                        rustc_hash::FxHashMap::default(),
+                    )));
+                }
+                Op::IntMapInc {
+                    dst_i,
+                    map_reg,
+                    key_i,
+                    by_i,
+                } => unsafe {
+                    let key = *ints.get_unchecked(key_i as usize);
+                    let by = *ints.get_unchecked(by_i as usize);
+                    let m = registers.get_unchecked(map_reg as usize);
+                    let Value::IntMap(map) = m else {
+                        return Err(RuntimeError::Type(
+                            "IntMapInc: receiver lost typed invariant".to_string(),
+                        ));
+                    };
+                    let mut guard = map.lock();
+                    let entry = guard.entry(key).or_insert(0);
+                    *entry += by;
+                    let post = *entry;
+                    drop(guard);
+                    *ints.get_unchecked_mut(dst_i as usize) = post;
+                },
+                Op::IntMapGetOr {
+                    dst_i,
+                    map_reg,
+                    key_i,
+                    default_i,
+                } => unsafe {
+                    let key = *ints.get_unchecked(key_i as usize);
+                    let default = *ints.get_unchecked(default_i as usize);
+                    let m = registers.get_unchecked(map_reg as usize);
+                    let Value::IntMap(map) = m else {
+                        return Err(RuntimeError::Type(
+                            "IntMapGetOr: receiver lost typed invariant".to_string(),
+                        ));
+                    };
+                    let v = map.lock().get(&key).copied().unwrap_or(default);
+                    *ints.get_unchecked_mut(dst_i as usize) = v;
+                },
+                Op::IntMapInsert {
+                    dst_v,
+                    map_reg,
+                    key_i,
+                    value_i,
+                } => unsafe {
+                    let key = *ints.get_unchecked(key_i as usize);
+                    let val = *ints.get_unchecked(value_i as usize);
+                    let m = registers.get_unchecked(map_reg as usize);
+                    let Value::IntMap(map) = m else {
+                        return Err(RuntimeError::Type(
+                            "IntMapInsert: receiver lost typed invariant".to_string(),
+                        ));
+                    };
+                    map.lock().insert(key, val);
+                    let cloned = Arc::clone(map);
+                    registers[dst_v as usize] = Value::IntMap(cloned);
+                },
+                Op::IntMapLen { dst_i, map_reg } => unsafe {
+                    let m = registers.get_unchecked(map_reg as usize);
+                    let Value::IntMap(map) = m else {
+                        return Err(RuntimeError::Type(
+                            "IntMapLen: receiver lost typed invariant".to_string(),
+                        ));
+                    };
+                    let n = map.lock().len() as i64;
+                    *ints.get_unchecked_mut(dst_i as usize) = n;
+                },
+                Op::IntMapContainsKey {
+                    dst_v,
+                    map_reg,
+                    key_i,
+                } => unsafe {
+                    let key = *ints.get_unchecked(key_i as usize);
+                    let m = registers.get_unchecked(map_reg as usize);
+                    let Value::IntMap(map) = m else {
+                        return Err(RuntimeError::Type(
+                            "IntMapContainsKey: receiver lost typed invariant".to_string(),
+                        ));
+                    };
+                    let has = map.lock().contains_key(&key);
+                    registers[dst_v as usize] = Value::Bool(has);
+                },
+                Op::Spawn { callee, args, argc } => {
+                    let callee_val = registers[callee as usize].clone();
+                    let arg_values: Vec<Value> = (0..argc as usize)
+                        .map(|i| registers[args as usize + i].clone())
+                        .collect();
+                    self.spawn_goroutine_native(callee_val, arg_values)?;
+                }
             }
         }
+    }
+
+    /// Spawns a goroutine that runs `callee(args)` entirely through
+    /// the bytecode VM. The new thread builds a fresh `Vm` with the
+    /// same globals graph as `self` (an `Arc<FnChunk>` per fn entry,
+    /// so chunks are shared) and dispatches the call there. Errors
+    /// inside the goroutine are isolated and printed to stderr —
+    /// they do not propagate to the spawning thread, mirroring the
+    /// tree-walker's previous goroutine semantics.
+    fn spawn_goroutine_native(&self, callee: Value, args: Vec<Value>) -> RuntimeResult<()> {
+        let globals = self.globals.clone();
+        // Share MIR + tcx via `Arc` so the child's deferred JIT
+        // compile (if it ever trips its own hot counter) reuses
+        // the parent's lowering work. JIT state itself is per-`Vm`:
+        // Cranelift's `JITModule` carries non-`Send` raw pointers
+        // and `dyn Fn` resolvers, so we can't share the override
+        // map across threads. In practice goroutine bodies are
+        // short enough that the bytecode tier is the right home.
+        let mir_bodies = self.mir_bodies.clone();
+        let tcx_snapshot = self.tcx_snapshot.clone();
+        let handle = std::thread::Builder::new()
+            .name("gossamer-goroutine".to_string())
+            .spawn(move || {
+                let vm = Vm::with_globals(globals, mir_bodies, tcx_snapshot);
+                if let Err(err) = vm.dispatch_call(&callee, args) {
+                    eprintln!("goroutine panic (isolated): {err}");
+                }
+            })
+            .map_err(|e| RuntimeError::Panic(format!("spawn goroutine: {e}")))?;
+        crate::interp::push_goroutine_handle(handle);
+        Ok(())
     }
 
     fn dispatch_call(&self, callee: &Value, args: Vec<Value>) -> RuntimeResult<Value> {
@@ -2294,6 +2816,11 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
             .copied()
             .map(Value::Int)
             .ok_or_else(|| RuntimeError::Arithmetic("index out of bounds".to_string())),
+        Value::FloatVec(data) => data
+            .get(i)
+            .copied()
+            .map(Value::Float)
+            .ok_or_else(|| RuntimeError::Arithmetic("index out of bounds".to_string())),
         _ => Err(RuntimeError::Type(format!(
             "value of kind `{base}` is not indexable"
         ))),
@@ -2337,7 +2864,9 @@ pub(crate) fn type_token(v: &Value) -> u64 {
         }
         Value::Channel(_) => TAG_CHANNEL,
         Value::String(_) => TAG_STRING,
-        Value::Array(_) | Value::FloatArray(_) => TAG_ARRAY,
+        Value::Array(_) | Value::FloatArray(_) | Value::IntArray(_) | Value::FloatVec(_) => {
+            TAG_ARRAY
+        }
         Value::Tuple(_) => TAG_TUPLE,
         Value::Variant(inner) => {
             let interned = intern_type_name(&inner.name);
@@ -2488,9 +3017,8 @@ fn classify_pair(a: &Value, b: &Value, allow_string: bool) -> u8 {
 /// the initial specialised shape goes straight to
 /// [`bytecode::ARITH_POLYMORPHIC`] so subsequent dispatches skip
 /// the re-observation cost.
-fn record_shape(chunk: &FnChunk, cache_idx: u16, observed: u8) {
-    let cache = chunk.arith_caches.borrow();
-    let slot = &cache[cache_idx as usize];
+fn record_shape(state: &ChunkState, cache_idx: u16, observed: u8) {
+    let slot = &state.arith_caches[cache_idx as usize];
     let cur = slot.shape.get();
     if cur == bytecode::ARITH_UNKNOWN {
         slot.shape.set(observed);
@@ -2505,7 +3033,7 @@ fn record_shape(chunk: &FnChunk, cache_idx: u16, observed: u8) {
 /// because `+` is the only Gossamer operator that overloads onto
 /// `Value::String`.
 fn adaptive_add(
-    chunk: &FnChunk,
+    state: &ChunkState,
     cache_idx: u16,
     shape: u8,
     a: &Value,
@@ -2532,7 +3060,7 @@ fn adaptive_add(
         }
         _ => {}
     }
-    record_shape(chunk, cache_idx, classify_pair(a, b, true));
+    record_shape(state, cache_idx, classify_pair(a, b, true));
     if let (Value::String(x), Value::String(y)) = (a, b) {
         let mut s = String::with_capacity(x.len() + y.len());
         s.push_str(x);
@@ -2548,7 +3076,7 @@ fn adaptive_add(
 /// fallback path's error message.
 #[allow(clippy::too_many_arguments)]
 fn adaptive_arith(
-    chunk: &FnChunk,
+    state: &ChunkState,
     cache_idx: u16,
     shape: u8,
     a: &Value,
@@ -2570,7 +3098,7 @@ fn adaptive_arith(
         }
         _ => {}
     }
-    record_shape(chunk, cache_idx, classify_pair(a, b, false));
+    record_shape(state, cache_idx, classify_pair(a, b, false));
     bin_arith(a, b, int_fn, float_fn, label)
 }
 
@@ -2578,7 +3106,7 @@ fn adaptive_arith(
 /// surfaces as a runtime error, so the int-int hot path still
 /// has to branch on `y == 0`. Float division never errors.
 fn adaptive_div(
-    chunk: &FnChunk,
+    state: &ChunkState,
     cache_idx: u16,
     shape: u8,
     a: &Value,
@@ -2602,13 +3130,13 @@ fn adaptive_div(
         }
         _ => {}
     }
-    record_shape(chunk, cache_idx, classify_pair(a, b, false));
+    record_shape(state, cache_idx, classify_pair(a, b, false));
     div_int(a, b)
 }
 
 /// Specialised dispatch for `Op::RemInt`. Mirrors [`adaptive_div`].
 fn adaptive_rem(
-    chunk: &FnChunk,
+    state: &ChunkState,
     cache_idx: u16,
     shape: u8,
     a: &Value,
@@ -2632,7 +3160,7 @@ fn adaptive_rem(
         }
         _ => {}
     }
-    record_shape(chunk, cache_idx, classify_pair(a, b, false));
+    record_shape(state, cache_idx, classify_pair(a, b, false));
     rem_int(a, b)
 }
 

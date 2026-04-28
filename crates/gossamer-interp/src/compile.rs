@@ -79,12 +79,8 @@ pub fn compile_fn(
             deferred_exprs: Vec::new(),
             deferred_envs: Vec::new(),
             deferred_env_regs: Vec::new(),
-            call_caches: std::cell::RefCell::new(Vec::new()),
-            arith_caches: std::cell::RefCell::new(Vec::new()),
-            // Body-less chunks (extern declarations, trait method
-            // signatures with no default) never run, so leave the
-            // tier-up disabled to keep them out of the JIT pipeline.
-            hot_counter: std::cell::Cell::new(crate::bytecode::HOT_DISABLED),
+            call_cache_count: 0,
+            arith_cache_count: 0,
         });
     };
     let mut builder = FnBuilder::new(decl.name.name.clone(), tcx, layouts, wrappers);
@@ -129,6 +125,11 @@ struct FnBuilder<'tcx> {
     /// against one of these registers route through
     /// [`Op::IntArrayGetI64`] into a typed `i64` register.
     flat_int_locals: std::collections::HashSet<Reg>,
+    /// Mirror of [`Self::flat_int_locals`] for `Value::FloatVec` —
+    /// `[f64; N]` literals built via [`Self::try_build_float_vec`].
+    /// Lets indexed reads / writes route through the typed-`f64`
+    /// fast path that skips the `Value::Float` round-trip.
+    flat_float_locals: std::collections::HashSet<Reg>,
     instrs: Vec<Op>,
     consts: Vec<Value>,
     const_cache: HashMap<ConstKey, ConstIdx>,
@@ -198,6 +199,7 @@ impl<'tcx> FnBuilder<'tcx> {
             wrappers,
             flat_locals: std::collections::HashMap::new(),
             flat_int_locals: std::collections::HashSet::new(),
+            flat_float_locals: std::collections::HashSet::new(),
             instrs: Vec::new(),
             consts: Vec::new(),
             const_cache: HashMap::new(),
@@ -373,6 +375,29 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    /// Returns `true` when `ty` resolves to `HashMap<i64, i64>`,
+    /// the typed shape that rides through `Value::IntMap`. The
+    /// resolver may already have erased one or both of the
+    /// generic args when the inference variable couldn't be
+    /// pinned; callers fall back to the boxed `Value::Map` in
+    /// that case rather than risk a typed op crashing on a
+    /// non-`i64` payload.
+    fn is_int_map_ty(&self, ty: gossamer_types::Ty) -> bool {
+        let ty = self.unwrap_ref(ty);
+        let Some(TyKind::HashMap { key, value }) = self.tcx.kind(ty) else {
+            return false;
+        };
+        let key_is_i64 = matches!(
+            self.tcx.kind(*key),
+            Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
+        );
+        let value_is_i64 = matches!(
+            self.tcx.kind(*value),
+            Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
+        );
+        key_is_i64 && value_is_i64
+    }
+
     /// Coerces a typed-reg into the `Value` register file,
     /// emitting `BoxF64` / `BoxI64` as required.
     fn as_value(&mut self, tr: TypedReg) -> Reg {
@@ -528,7 +553,6 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     fn finish(self, arity: u16) -> FnChunk {
-        let cache_count = self.next_cache_idx as usize;
         FnChunk {
             name: self.name,
             arity,
@@ -543,21 +567,11 @@ impl<'tcx> FnBuilder<'tcx> {
             deferred_exprs: self.deferred_exprs,
             deferred_envs: self.deferred_envs,
             deferred_env_regs: self.deferred_env_regs,
-            call_caches: std::cell::RefCell::new(vec![
-                crate::bytecode::CacheSlot::default();
-                cache_count
-            ]),
-            arith_caches: std::cell::RefCell::new(
-                (0..self.next_arith_cache_idx as usize)
-                    .map(|_| crate::bytecode::ArithCacheSlot::default())
-                    .collect(),
-            ),
-            // Tier D2: every chunk starts with a fresh tier-up
-            // budget. The Vm decrements on call entry; whether
-            // the trip-fire actually compiles is gated by
-            // `jit_call::jit_enabled()` at trigger time, so we
-            // don't have to plumb that flag through to here.
-            hot_counter: std::cell::Cell::new(crate::bytecode::HOT_THRESHOLD),
+            // The actual cache `Vec`s live in per-`Vm`
+            // `ChunkState` and are sized from these counts. See
+            // `vm::Vm::chunk_state_for`.
+            call_cache_count: self.next_cache_idx,
+            arith_cache_count: self.next_arith_cache_idx,
         }
     }
 
@@ -624,16 +638,76 @@ impl<'tcx> FnBuilder<'tcx> {
                 let _ = self.compile_expr(expr)?;
                 Ok(expr_diverges(expr))
             }
-            HirStmtKind::Defer(expr) | HirStmtKind::Go(expr) => {
-                // Delegate to the bundled tree-walker — `defer`
-                // needs cleanup ordering the VM doesn't model,
-                // and `go` needs spawn semantics. Both behave
-                // correctly through the deferred path.
+            HirStmtKind::Go(expr) => {
+                // Native goroutine spawn: compile the callee and
+                // args directly into VM ops and emit `Op::Spawn`.
+                // The dispatcher creates a fresh `Vm` on the new
+                // thread that executes the call entirely in
+                // bytecode — never re-entering the tree-walker.
+                if self.try_compile_go_native(expr)? {
+                    return Ok(false);
+                }
+                // Non-call shapes (e.g., `go { block }`) keep the
+                // deferred path until we lower them too — but they
+                // don't appear in the bench-game programs.
+                let _ = self.compile_deferred(expr)?;
+                Ok(false)
+            }
+            HirStmtKind::Defer(expr) => {
+                // `defer` keeps tree-walker delegation: the VM
+                // doesn't model the cleanup ordering it needs.
                 let _ = self.compile_deferred(expr)?;
                 Ok(false)
             }
             HirStmtKind::Item(_) => Err(RuntimeError::Unsupported("nested items")),
         }
+    }
+
+    /// Attempts a native lowering of `go callable(args)`. Returns
+    /// `Ok(true)` when the spawn was emitted; `Ok(false)` when the
+    /// shape is something the VM doesn't yet handle natively (and
+    /// the caller should fall back to `compile_deferred`).
+    fn try_compile_go_native(&mut self, expr: &HirExpr) -> RuntimeResult<bool> {
+        // The HIR shape we native-lower is `go callable(args)` —
+        // a `Call` whose callee is any expression and whose args
+        // are arbitrary expressions. The runtime side accepts the
+        // resulting callee `Value` (closure / global fn / builtin)
+        // and walks the args vector exactly as the synchronous
+        // dispatch path does.
+        let HirExprKind::Call { callee, args } = &expr.kind else {
+            return Ok(false);
+        };
+        let callee_reg = self.compile_expr(callee)?;
+        let argc = u16::try_from(args.len()).map_err(|_| RuntimeError::Arity {
+            expected: u16::MAX as usize,
+            found: args.len(),
+        })?;
+        // Reserve a contiguous span before lowering args so
+        // intermediate compiles don't grab overlapping registers.
+        let args_start = self.next_reg;
+        self.next_reg = self
+            .next_reg
+            .checked_add(argc)
+            .expect("register overflow reserving spawn args");
+        let arg_regs: Vec<Reg> = args
+            .iter()
+            .map(|arg| self.compile_expr(arg))
+            .collect::<RuntimeResult<Vec<_>>>()?;
+        for (i, arg_reg) in arg_regs.iter().enumerate() {
+            let slot = args_start
+                .checked_add(u16::try_from(i).unwrap())
+                .expect("register overflow");
+            self.emit(Op::Move {
+                dst: slot,
+                src: *arg_reg,
+            });
+        }
+        self.emit(Op::Spawn {
+            callee: callee_reg,
+            args: args_start,
+            argc,
+        });
+        Ok(true)
     }
 
     /// Typed counterpart to [`Self::compile_expr`]. Returns
@@ -666,7 +740,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(tr) = self.try_intrinsic_call(callee, args)? {
                     return Ok(tr);
                 }
-                let reg = self.compile_call(callee, args)?;
+                let reg = self.compile_call_ex(callee, args, expr.ty)?;
                 Ok(TypedReg {
                     reg,
                     kind: RegKind::Value,
@@ -760,11 +834,62 @@ impl<'tcx> FnBuilder<'tcx> {
                     kind: RegKind::Value,
                 })
             }
+            // Typed flat-f64 indexed read fast path. Same shape as
+            // the flat-i64 path above but for `Value::FloatVec` —
+            // the inner-loop scratch arrays in nbody-style code
+            // ride this branch.
+            HirExprKind::Index { base, index }
+                if matches!(self.tcx.kind(expr.ty), Some(TyKind::Float(FloatTy::F64))) =>
+            {
+                let base_reg = self.compile_expr(base)?;
+                if self.flat_float_locals.contains(&base_reg) {
+                    let idx_tr = self.compile_expr_ex(index)?;
+                    let idx_i = self.as_i64(idx_tr);
+                    let dst_f = self.alloc_float();
+                    self.emit(Op::FloatVecGetF64 {
+                        dst_f,
+                        base: base_reg,
+                        index_i: idx_i,
+                    });
+                    return Ok(TypedReg {
+                        reg: dst_f,
+                        kind: RegKind::F64,
+                    });
+                }
+                // Slow path: generic IndexGet → boxed Value reg.
+                let idx_reg = self.compile_expr(index)?;
+                let dst = self.alloc_reg();
+                self.emit(Op::IndexGet {
+                    dst,
+                    base: base_reg,
+                    index: idx_reg,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
             HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) => {
                 if let Some(tr) = self.try_build_float_array(expr.ty, elems.as_slice())? {
                     return Ok(tr);
                 }
                 if let Some(tr) = self.try_build_int_array(expr.ty, elems.as_slice())? {
+                    return Ok(tr);
+                }
+                if let Some(tr) = self.try_build_float_vec(expr.ty, elems.as_slice())? {
+                    return Ok(tr);
+                }
+                let reg = self.compile_expr(expr)?;
+                Ok(TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                })
+            }
+            HirExprKind::Array(gossamer_hir::HirArrayExpr::Repeat { value, count }) => {
+                if let Some(tr) = self.try_build_float_vec_repeat(expr.ty, value, count)? {
+                    return Ok(tr);
+                }
+                if let Some(tr) = self.try_build_int_array_repeat(expr.ty, value, count)? {
                     return Ok(tr);
                 }
                 let reg = self.compile_expr(expr)?;
@@ -803,7 +928,7 @@ impl<'tcx> FnBuilder<'tcx> {
                     if let Some(tr) = intr {
                         tr
                     } else {
-                        let reg = self.compile_call(callee, args)?;
+                        let reg = self.compile_call_ex(callee, args, expr.ty)?;
                         TypedReg {
                             reg,
                             kind: RegKind::Value,
@@ -1967,6 +2092,160 @@ impl<'tcx> FnBuilder<'tcx> {
         }))
     }
 
+    /// Repeat-form variant of [`Self::try_build_float_vec`] for
+    /// `[value; count]` shapes where the count is a literal that
+    /// fits in `u16`. Evaluates `value` once into an f64 register
+    /// and broadcasts it across the `FloatVec`'s storage with a
+    /// constant-fill loop.
+    fn try_build_float_vec_repeat(
+        &mut self,
+        array_ty: Ty,
+        value: &HirExpr,
+        count: &HirExpr,
+    ) -> RuntimeResult<Option<TypedReg>> {
+        let elem_ty = match self.tcx.kind(array_ty) {
+            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
+            _ => return Ok(None),
+        };
+        if !matches!(self.tcx.kind(elem_ty), Some(TyKind::Float(FloatTy::F64))) {
+            return Ok(None);
+        }
+        let Some(n) = resolve_const_count(count) else {
+            return Ok(None);
+        };
+        let Ok(count_u) = u16::try_from(n) else {
+            return Ok(None);
+        };
+        let first_f = self.next_float_reg;
+        if u32::from(count_u) > u32::from(u16::MAX - first_f) {
+            return Ok(None);
+        }
+        self.next_float_reg = first_f + count_u;
+        // Compile the source value once; broadcast into every slot.
+        let src_tr = self.compile_expr_ex(value)?;
+        let src_f = self.as_f64(src_tr);
+        for i in 0..count_u {
+            let target = first_f + i;
+            self.emit(Op::MoveF64 {
+                dst_f: target,
+                src_f,
+            });
+        }
+        let dst = self.alloc_reg();
+        self.emit(Op::BuildFloatVec {
+            dst_v: dst,
+            first_f,
+            count: count_u,
+        });
+        self.flat_float_locals.insert(dst);
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
+    }
+
+    /// Repeat-form mirror of [`Self::try_build_int_array`] for
+    /// `[value; count]` `[i64]` literals — used by integer scratch
+    /// buffers initialised at function entry.
+    fn try_build_int_array_repeat(
+        &mut self,
+        array_ty: Ty,
+        value: &HirExpr,
+        count: &HirExpr,
+    ) -> RuntimeResult<Option<TypedReg>> {
+        let elem_ty = match self.tcx.kind(array_ty) {
+            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
+            _ => return Ok(None),
+        };
+        if !matches!(
+            self.tcx.kind(elem_ty),
+            Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
+        ) {
+            return Ok(None);
+        }
+        let Some(n) = resolve_const_count(count) else {
+            return Ok(None);
+        };
+        let Ok(count_u) = u16::try_from(n) else {
+            return Ok(None);
+        };
+        let first_i = self.next_int_reg;
+        if u32::from(count_u) > u32::from(u16::MAX - first_i) {
+            return Ok(None);
+        }
+        self.next_int_reg = first_i + count_u;
+        let src_tr = self.compile_expr_ex(value)?;
+        let src_i = self.as_i64(src_tr);
+        for i in 0..count_u {
+            let target = first_i + i;
+            self.emit(Op::MoveI64 {
+                dst_i: target,
+                src_i,
+            });
+        }
+        let dst = self.alloc_reg();
+        self.emit(Op::BuildIntArray {
+            dst_v: dst,
+            first_i,
+            count: count_u,
+        });
+        self.flat_int_locals.insert(dst);
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
+    }
+
+    /// Mirror of [`Self::try_build_int_array`] for `[f64; N]`
+    /// literals. Compiles each element into a contiguous f64
+    /// register span and emits [`Op::BuildFloatVec`], which wraps
+    /// the span into a `Value::FloatVec`. Subsequent indexed reads
+    /// / writes route through [`Op::FloatVecGetF64`] and
+    /// [`Op::FloatVecSetF64`] so each element load lands directly
+    /// in the typed-`f64` register file.
+    fn try_build_float_vec(
+        &mut self,
+        array_ty: Ty,
+        elems: &[HirExpr],
+    ) -> RuntimeResult<Option<TypedReg>> {
+        let elem_ty = match self.tcx.kind(array_ty) {
+            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
+            _ => return Ok(None),
+        };
+        let elem_is_f64 = matches!(self.tcx.kind(elem_ty), Some(TyKind::Float(FloatTy::F64)));
+        if !elem_is_f64 {
+            return Ok(None);
+        }
+        let Ok(count) = u16::try_from(elems.len()) else {
+            return Ok(None);
+        };
+        let first_f = self.next_float_reg;
+        if u32::from(count) > u32::from(u16::MAX - first_f) {
+            return Ok(None);
+        }
+        self.next_float_reg = first_f + count;
+        for (i, elem) in elems.iter().enumerate() {
+            let target = first_f + u16::try_from(i).expect("count overflow");
+            let tr = self.compile_expr_ex(elem)?;
+            let src_f = self.as_f64(tr);
+            self.emit(Op::MoveF64 {
+                dst_f: target,
+                src_f,
+            });
+        }
+        let dst = self.alloc_reg();
+        self.emit(Op::BuildFloatVec {
+            dst_v: dst,
+            first_f,
+            count,
+        });
+        self.flat_float_locals.insert(dst);
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
+    }
+
     /// Phase-2 field-read fast path. When the field's own
     /// type is `f64`, emit `IndexedFieldGetF64` /
     /// `FieldGetF64` so the scalar skips a `Value::Float`
@@ -2240,6 +2519,28 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(first) = segments.first() {
                     if let Some(target) = self.lookup_local(&first.name) {
                         if target.kind == RegKind::Value {
+                            // Typed flat-f64 store fast path: when
+                            // the receiver is a `Value::FloatVec`
+                            // and the RHS is f64-typed, write
+                            // straight from the f64 register file.
+                            // Mirrors the IntArray IndexSet bypass
+                            // in `IntArray` users.
+                            let value_is_f64 = matches!(
+                                self.tcx.kind(value.ty),
+                                Some(TyKind::Float(FloatTy::F64))
+                            );
+                            if value_is_f64 && self.flat_float_locals.contains(&target.reg) {
+                                let idx_tr = self.compile_expr_ex(index)?;
+                                let idx_i = self.as_i64(idx_tr);
+                                let value_tr = self.compile_expr_ex(value)?;
+                                let value_f = self.as_f64(value_tr);
+                                self.emit(Op::FloatVecSetF64 {
+                                    base: target.reg,
+                                    index_i: idx_i,
+                                    value_f,
+                                });
+                                return Ok(self.load_unit());
+                            }
                             let idx_reg = self.compile_expr(index)?;
                             let value_reg = self.compile_expr(value)?;
                             self.emit(Op::IndexSet {
@@ -2363,6 +2664,32 @@ impl<'tcx> FnBuilder<'tcx> {
         if name.name == "insert" && args.len() == 2 {
             if let Some((key_expr, by_expr)) = match_map_inc_pattern(receiver, &args[0], &args[1]) {
                 if matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. })) {
+                    // Typed `HashMap<i64, i64>` route: use
+                    // `Op::IntMapInc` so the key + delta stay in
+                    // the i64 register file the whole time.
+                    if self.is_int_map_ty(receiver.ty) {
+                        let map_reg = self.compile_expr(receiver)?;
+                        let key_tr = self.compile_expr_ex(key_expr)?;
+                        let key_i = self.as_i64(key_tr);
+                        let by_tr = self.compile_expr_ex(by_expr)?;
+                        let by_i = self.as_i64(by_tr);
+                        let dst_i = self.alloc_int();
+                        self.emit(Op::IntMapInc {
+                            dst_i,
+                            map_reg,
+                            key_i,
+                            by_i,
+                        });
+                        // Caller wants a `Value` register; box the
+                        // post-increment value back so the existing
+                        // statement-context code keeps working.
+                        let dst = self.alloc_reg();
+                        self.emit(Op::BoxI64 {
+                            dst_v: dst,
+                            src_i: dst_i,
+                        });
+                        return Ok(dst);
+                    }
                     let map_reg = self.compile_expr(receiver)?;
                     let key_reg = self.compile_expr(key_expr)?;
                     let by_reg = self.compile_expr(by_expr)?;
@@ -2375,6 +2702,14 @@ impl<'tcx> FnBuilder<'tcx> {
                     });
                     return Ok(dst);
                 }
+            }
+        }
+        // Typed-IntMap method dispatch fast paths. Skip the
+        // generic builtin-IC route for the handful of HashMap
+        // methods that knucleotide-style hot loops drive.
+        if self.is_int_map_ty(receiver.ty) {
+            if let Some(reg) = self.try_compile_int_map_method(receiver, &name.name, args)? {
+                return Ok(reg);
             }
         }
         let receiver_reg = self.compile_expr(receiver)?;
@@ -2399,6 +2734,47 @@ impl<'tcx> FnBuilder<'tcx> {
                 dst,
                 stream_reg: receiver_reg,
                 byte_reg,
+            });
+            return Ok(dst);
+        }
+        // Mirror super-instruction for `<u8vec>.set_byte(<idx>, <byte>)`.
+        // fasta's per-byte buffer fill drives this op millions of
+        // times per phase; the inline handler skips the
+        // MethodCall + IC + `&[Value]` round-trip.
+        if name.name == "set_byte" && args.len() == 2 {
+            let idx_tr = self.compile_expr_ex(&args[0])?;
+            let idx_reg = self.as_value(idx_tr);
+            let byte_tr = self.compile_expr_ex(&args[1])?;
+            let byte_reg = self.as_value(byte_tr);
+            let dst = self.alloc_reg();
+            self.emit(Op::U8VecSetByte {
+                dst,
+                u8vec_reg: receiver_reg,
+                idx_reg,
+                byte_reg,
+            });
+            return Ok(dst);
+        }
+        // Mirror super-instruction for `<u8vec>.get_byte(<idx>) -> i64`.
+        // The handler writes into a typed `i64` register, so a
+        // downstream `Op::Add` etc. picks the result up without an
+        // intermediate `Value::Int` round-trip. Caller still
+        // expects a `Value` register, so we box back through
+        // `Op::BoxI64` — the register allocator and downstream
+        // typed-arith specialisation usually elide that pair.
+        if name.name == "get_byte" && args.len() == 1 {
+            let idx_tr = self.compile_expr_ex(&args[0])?;
+            let idx_reg = self.as_value(idx_tr);
+            let dst_i = self.alloc_int();
+            self.emit(Op::U8VecGetByte {
+                dst_i,
+                u8vec_reg: receiver_reg,
+                idx_reg,
+            });
+            let dst = self.alloc_reg();
+            self.emit(Op::BoxI64 {
+                dst_v: dst,
+                src_i: dst_i,
             });
             return Ok(dst);
         }
@@ -2432,7 +2808,105 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(dst)
     }
 
-    fn compile_call(&mut self, callee: &HirExpr, args: &[HirExpr]) -> RuntimeResult<Reg> {
+    /// Routes the typed-`HashMap<i64, i64>` method-call surface
+    /// through dedicated typed ops. Returns `Some(reg)` when the
+    /// method is handled here; the caller falls through to the
+    /// generic dispatch otherwise.
+    fn try_compile_int_map_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &str,
+        args: &[HirExpr],
+    ) -> RuntimeResult<Option<Reg>> {
+        match (method, args.len()) {
+            ("insert", 2) => {
+                let map_reg = self.compile_expr(receiver)?;
+                let key_tr = self.compile_expr_ex(&args[0])?;
+                let key_i = self.as_i64(key_tr);
+                let val_tr = self.compile_expr_ex(&args[1])?;
+                let val_i = self.as_i64(val_tr);
+                let dst = self.alloc_reg();
+                self.emit(Op::IntMapInsert {
+                    dst_v: dst,
+                    map_reg,
+                    key_i,
+                    value_i: val_i,
+                });
+                Ok(Some(dst))
+            }
+            ("get_or", 2) => {
+                let map_reg = self.compile_expr(receiver)?;
+                let key_tr = self.compile_expr_ex(&args[0])?;
+                let key_i = self.as_i64(key_tr);
+                let def_tr = self.compile_expr_ex(&args[1])?;
+                let def_i = self.as_i64(def_tr);
+                let dst_i = self.alloc_int();
+                self.emit(Op::IntMapGetOr {
+                    dst_i,
+                    map_reg,
+                    key_i,
+                    default_i: def_i,
+                });
+                let dst = self.alloc_reg();
+                self.emit(Op::BoxI64 {
+                    dst_v: dst,
+                    src_i: dst_i,
+                });
+                Ok(Some(dst))
+            }
+            ("len", 0) => {
+                let map_reg = self.compile_expr(receiver)?;
+                let dst_i = self.alloc_int();
+                self.emit(Op::IntMapLen { dst_i, map_reg });
+                let dst = self.alloc_reg();
+                self.emit(Op::BoxI64 {
+                    dst_v: dst,
+                    src_i: dst_i,
+                });
+                Ok(Some(dst))
+            }
+            ("contains_key", 1) => {
+                let map_reg = self.compile_expr(receiver)?;
+                let key_tr = self.compile_expr_ex(&args[0])?;
+                let key_i = self.as_i64(key_tr);
+                let dst = self.alloc_reg();
+                self.emit(Op::IntMapContainsKey {
+                    dst_v: dst,
+                    map_reg,
+                    key_i,
+                });
+                Ok(Some(dst))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Variant of [`Self::compile_call`] that takes the call's
+    /// **result** type. Used by callers that have it on hand (for
+    /// example `HirExprKind::Call`'s `expr.ty`) so the typed
+    /// `HashMap<i64, i64>` construction can route to
+    /// [`Op::BuildIntMap`] instead of the generic
+    /// `builtin_map_new` path.
+    fn compile_call_ex(
+        &mut self,
+        callee: &HirExpr,
+        args: &[HirExpr],
+        result_ty: Ty,
+    ) -> RuntimeResult<Reg> {
+        // Typed-IntMap construction fast path: when the callee is
+        // `HashMap::new` and the result type is `HashMap<i64, i64>`,
+        // emit a dedicated `Op::BuildIntMap` so the receiver lands
+        // as `Value::IntMap` and downstream typed ops fire.
+        if args.is_empty() {
+            if let HirExprKind::Path { segments, .. } = &callee.kind {
+                let segs: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+                if matches!(segs.as_slice(), ["HashMap", "new"]) && self.is_int_map_ty(result_ty) {
+                    let dst = self.alloc_reg();
+                    self.emit(Op::BuildIntMap { dst_v: dst });
+                    return Ok(dst);
+                }
+            }
+        }
         let callee_reg = self.compile_expr(callee)?;
         let argc = u16::try_from(args.len()).map_err(|_| RuntimeError::Arity {
             expected: u16::MAX as usize,
@@ -2887,6 +3361,38 @@ fn literal_const(lit: &HirLiteral) -> (ConstKey, Value) {
             )
         }
     }
+}
+
+/// Resolves a `[value; count]` count expression to an integer at
+/// compile time. Only matches plain `i64` / `usize` literals so the
+/// bytecode emitter can pre-allocate exactly `count` registers.
+/// Other shapes (`const`-folded path, function call) fall back to
+/// the deferred path.
+fn resolve_const_count(expr: &HirExpr) -> Option<i64> {
+    use gossamer_hir::{HirExprKind as H, HirLiteral as L};
+    if let H::Literal(L::Int(s)) = &expr.kind {
+        // The HIR preserves source-form integer literals; strip the
+        // optional type suffix and underscore separators before parsing.
+        let trimmed = s
+            .trim_end_matches("i64")
+            .trim_end_matches("usize")
+            .trim_end_matches("u64")
+            .trim_end_matches("isize")
+            .trim_end_matches("u32")
+            .trim_end_matches("i32");
+        let cleaned: String = trimmed.chars().filter(|c| *c != '_').collect();
+        if let Some(stripped) = cleaned.strip_prefix("0x") {
+            return i64::from_str_radix(stripped, 16).ok();
+        }
+        if let Some(stripped) = cleaned.strip_prefix("0o") {
+            return i64::from_str_radix(stripped, 8).ok();
+        }
+        if let Some(stripped) = cleaned.strip_prefix("0b") {
+            return i64::from_str_radix(stripped, 2).ok();
+        }
+        return cleaned.parse::<i64>().ok();
+    }
+    None
 }
 
 /// Recursively walks `expr` looking for expression kinds the VM

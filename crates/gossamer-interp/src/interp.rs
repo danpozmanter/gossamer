@@ -36,6 +36,14 @@ pub fn join_outstanding_goroutines() {
     }
 }
 
+/// Records an outstanding goroutine handle so the CLI's
+/// post-`main` join sweep waits on it. The bytecode VM's native
+/// `Op::Spawn` calls this directly; the tree-walker's `Go`
+/// branch keeps using the same thread-local list.
+pub(crate) fn push_goroutine_handle(handle: JoinHandle<()>) {
+    GOROUTINE_HANDLES.with(|cell| cell.borrow_mut().push(handle));
+}
+
 use gossamer_ast::Ident;
 use gossamer_hir::{
     HirBinaryOp, HirBlock, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind, HirLiteral,
@@ -1655,6 +1663,7 @@ fn classify(value: &Value) -> &'static str {
         Value::Array(_) => "array",
         Value::FloatArray { .. } => "array",
         Value::IntArray(_) => "array",
+        Value::FloatVec(_) => "array",
         Value::Variant { .. } => "variant",
         Value::Struct { .. } => "struct",
         Value::Closure(_) => "closure",
@@ -1662,6 +1671,7 @@ fn classify(value: &Value) -> &'static str {
         Value::Native { .. } => "native",
         Value::Channel(_) => "channel",
         Value::Map(_) => "map",
+        Value::IntMap(_) => "map",
         Value::Void => "void",
     }
 }

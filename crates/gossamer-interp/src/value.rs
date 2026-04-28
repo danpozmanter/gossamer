@@ -71,6 +71,12 @@ pub enum Value {
     FloatArray(Arc<FloatArrayInner>),
     /// Flat `i64` storage for a primitive integer array literal.
     IntArray(Arc<Vec<i64>>),
+    /// Flat `f64` storage for a primitive float array literal /
+    /// `Vec<f64>`. Avoids per-element `Value::Float` boxing on
+    /// hot loops over numeric arrays (nbody's `dx`/`dy`/`dz`/`mag`
+    /// scratch arrays read every f64 here straight into a typed
+    /// register).
+    FloatVec(Arc<Vec<f64>>),
     /// Enum variant or tuple-struct constructor payload.
     Variant(Arc<VariantInner>),
     /// Struct-shaped aggregate.
@@ -90,6 +96,12 @@ pub enum Value {
     /// `Value: Send + Sync` so goroutines can pass maps through
     /// channels.
     Map(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<MapKey, Value>>>),
+    /// Typed `HashMap<i64, i64>` aggregate. Skips the [`MapKey`]
+    /// enum-tag dispatch on every op and avoids the [`Value`]
+    /// box around each integer value. k-nucleotide's k-mer
+    /// frequency tables ride this variant, dropping per-iteration
+    /// hash + compare cost dramatically.
+    IntMap(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<i64, i64>>>),
     /// Poisoned / uninitialised sentinel.
     Void,
 }
@@ -699,6 +711,13 @@ impl Value {
                 let id = register_heap(RegistryEntry::Array(Arc::new(boxed)));
                 from_heap_handle(id)
             }
+            Self::FloatVec(data) => {
+                // Rehydrate flat-f64 storage into a `Value::Array<Value::Float>`
+                // before crossing the FFI boundary.
+                let boxed: Vec<Value> = data.iter().copied().map(Value::Float).collect();
+                let id = register_heap(RegistryEntry::Array(Arc::new(boxed)));
+                from_heap_handle(id)
+            }
             Self::Variant(inner) => {
                 let id = register_heap(RegistryEntry::Variant {
                     name: inner.name.clone(),
@@ -721,7 +740,7 @@ impl Value {
                 let id = register_heap(RegistryEntry::Channel(ch.clone()));
                 from_heap_handle(id)
             }
-            Self::Map(_) | Self::Builtin(_) | Self::Native(_) | Self::Void => {
+            Self::Map(_) | Self::IntMap(_) | Self::Builtin(_) | Self::Native(_) | Self::Void => {
                 // Unencodable in the raw layout — return a sentinel
                 // that `from_raw` maps back to `Void`.
                 from_singleton(SINGLETON_UNIT)
@@ -791,6 +810,10 @@ impl fmt::Display for Value {
                 let elems: Vec<Value> = data.iter().copied().map(Value::Int).collect();
                 write_array(out, &elems)
             }
+            Self::FloatVec(data) => {
+                let elems: Vec<Value> = data.iter().copied().map(Value::Float).collect();
+                write_array(out, &elems)
+            }
             Self::Variant(inner) => write_variant(out, &inner.name, &inner.fields),
             Self::Struct(inner) => write_struct(out, &inner.name, &inner.fields),
             Self::Closure(_) => out.write_str("<closure>"),
@@ -804,6 +827,16 @@ impl fmt::Display for Value {
                         out.write_str(", ")?;
                     }
                     write!(out, "{}: {v}", k.to_value())?;
+                }
+                out.write_str("}")
+            }
+            Self::IntMap(map) => {
+                out.write_str("{")?;
+                for (i, (k, v)) in map.lock().iter().enumerate() {
+                    if i > 0 {
+                        out.write_str(", ")?;
+                    }
+                    write!(out, "{k}: {v}")?;
                 }
                 out.write_str("}")
             }

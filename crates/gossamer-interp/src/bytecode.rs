@@ -7,7 +7,6 @@
 #![forbid(unsafe_code)]
 #![allow(missing_docs, unreachable_pub)]
 
-use std::cell::Cell;
 use std::sync::Arc;
 
 use crate::value::Value;
@@ -200,6 +199,37 @@ pub enum Op {
         /// `[0, 255]` in the steady state).
         byte_reg: Reg,
     },
+    /// Specialised `<u8vec>.set_byte(<idx>, <byte>)` — the
+    /// `U8Vec` counterpart to [`Op::StreamWriteByte`]. The runtime
+    /// inlines the handle lookup and `AtomicU8::store`, skipping
+    /// the `Op::MethodCall` IC + builtin `&[Value]` round-trip
+    /// per call. fasta's per-byte buffer fill rides this op.
+    /// Falls back to a generic method dispatch on shape miss.
+    U8VecSetByte {
+        /// Destination register (always `Value::Unit` since
+        /// `set_byte` returns unit).
+        dst: Reg,
+        /// Register holding the `U8Vec` receiver
+        /// (`Value::Struct{ name: "U8Vec", … }`).
+        u8vec_reg: Reg,
+        /// Register holding the byte index (`Value::Int`).
+        idx_reg: Reg,
+        /// Register holding the byte value (`Value::Int` in
+        /// `[0, 255]`).
+        byte_reg: Reg,
+    },
+    /// Specialised `<u8vec>.get_byte(<idx>)` returning into a
+    /// typed `i64` register. Mirror of [`Op::U8VecSetByte`] for
+    /// reads — the typed destination lets a downstream `Op::AddI64`
+    /// chain off the result without a `Value::Int` round-trip.
+    U8VecGetByte {
+        /// Destination `i64` register.
+        dst_i: Reg,
+        /// Register holding the `U8Vec` receiver.
+        u8vec_reg: Reg,
+        /// Register holding the byte index (`Value::Int`).
+        idx_reg: Reg,
+    },
     /// Specialised `m.insert(k, m.get_or(k, 0) + by)` — fused
     /// counter-increment super-instruction. Collapses the two
     /// `MethodCall`s, two IC probes, two arg-vec materialisations,
@@ -275,6 +305,123 @@ pub enum Op {
         /// `i64` register holding the index. Negative indices
         /// surface as a runtime error.
         index_i: Reg,
+    },
+    /// Builds a `Value::FloatVec` by copying `count` consecutive
+    /// `f64` registers starting at `first_f`. Mirrors `BuildIntArray`
+    /// but for primitive `[f64; N]` literals so subsequent indexed
+    /// reads route through the typed-`f64` fast path.
+    BuildFloatVec {
+        /// Destination `Value` register.
+        dst_v: Reg,
+        /// First float register in the source span.
+        first_f: Reg,
+        /// Number of f64 elements to gather.
+        count: u16,
+    },
+    /// Typed read into an `f64` register from a `Value::FloatVec`
+    /// at `index_i`. Skips the boxed `Value::Float` round-trip the
+    /// generic `Op::IndexGet` would impose.
+    FloatVecGetF64 {
+        /// Destination `f64` register.
+        dst_f: Reg,
+        /// Value register holding the `Value::FloatVec`.
+        base: Reg,
+        /// `i64` register holding the index.
+        index_i: Reg,
+    },
+    /// Typed write into a `Value::FloatVec` from an `f64` register.
+    /// `Arc::make_mut` mutates the inner `Vec<f64>` in place when
+    /// the `FloatVec` has unique ownership.
+    FloatVecSetF64 {
+        /// Value register holding the `Value::FloatVec`.
+        base: Reg,
+        /// `i64` register holding the index.
+        index_i: Reg,
+        /// Source `f64` register.
+        value_f: Reg,
+    },
+    /// Constructs an empty `Value::IntMap` (typed `HashMap<i64, i64>`).
+    /// Emitted in place of a `HashMap::new()` call when the type
+    /// checker can prove the map's key + value types are both
+    /// `i64` — k-nucleotide rides this op for its k-mer counters.
+    BuildIntMap {
+        /// Destination `Value` register.
+        dst_v: Reg,
+    },
+    /// Typed counterpart to [`Op::MapInc`] for `Value::IntMap`. Reads
+    /// the key and increment from the i64 register file, mutates
+    /// the map's slot in place, and writes the post-increment value
+    /// to `dst_i`. Skips the [`MapKey`] enum dispatch and the
+    /// [`Value::Int`] box that the generic `Op::MapInc` does.
+    IntMapInc {
+        /// Destination `i64` register receiving the post-increment value.
+        dst_i: Reg,
+        /// `Value` register holding the `Value::IntMap`.
+        map_reg: Reg,
+        /// `i64` register holding the key.
+        key_i: Reg,
+        /// `i64` register holding the increment amount.
+        by_i: Reg,
+    },
+    /// `dst_i = map.get_or(key, default)` for `Value::IntMap`.
+    IntMapGetOr {
+        /// Destination `i64` register.
+        dst_i: Reg,
+        /// `Value` register holding the `Value::IntMap`.
+        map_reg: Reg,
+        /// `i64` register holding the key.
+        key_i: Reg,
+        /// `i64` register holding the default to return on miss.
+        default_i: Reg,
+    },
+    /// `map.insert(key, value)` for `Value::IntMap`. The map handle
+    /// stays in `map_reg`; `dst_v` receives a clone of the handle
+    /// so callers using the result `m.insert(...)` form get the
+    /// same semantics as `Op::MapInc`'s generic counterpart.
+    IntMapInsert {
+        /// Destination `Value` register receiving the map handle.
+        dst_v: Reg,
+        /// `Value` register holding the `Value::IntMap`.
+        map_reg: Reg,
+        /// `i64` register holding the key.
+        key_i: Reg,
+        /// `i64` register holding the value to store.
+        value_i: Reg,
+    },
+    /// `dst_i = map.len()` for `Value::IntMap`. Locks once, reads
+    /// `len()`, returns. No `MapKey` allocation.
+    IntMapLen {
+        /// Destination `i64` register.
+        dst_i: Reg,
+        /// `Value` register holding the `Value::IntMap`.
+        map_reg: Reg,
+    },
+    /// `dst_v = bool(map.contains_key(key))` for `Value::IntMap`.
+    IntMapContainsKey {
+        /// Destination `Value` register (holds `Value::Bool`).
+        dst_v: Reg,
+        /// `Value` register holding the `Value::IntMap`.
+        map_reg: Reg,
+        /// `i64` register holding the key.
+        key_i: Reg,
+    },
+    /// `go callee(args[0..argc])` — spawns a goroutine that runs
+    /// `callee` with the supplied args entirely through the bytecode
+    /// VM (no tree-walker re-entry). Replaces the prior
+    /// `compile_deferred(Go)` path that bounced every goroutine
+    /// body through the slow walker; required `FnChunk` to be
+    /// `Send + Sync` (call/arith caches now `parking_lot::Mutex`
+    /// rather than `RefCell`).
+    Spawn {
+        /// Register holding the callee value (`Value::Closure` /
+        /// `Value::Builtin` / `Value::String` global name / etc.).
+        callee: Reg,
+        /// First register of the argument span. The block of `argc`
+        /// registers starting here is cloned into the new
+        /// goroutine's frame at spawn time.
+        args: Reg,
+        /// Number of arguments to pass.
+        argc: u16,
     },
     /// `dst = base[index]` — native indexed read over arrays,
     /// strings, tuples, vecs, and structs (tuple-struct
@@ -709,7 +856,7 @@ pub(crate) struct CacheSlot {
 }
 
 /// Compiled function — the unit of bytecode the VM can call.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FnChunk {
     /// Source-level name (useful in diagnostics).
     pub name: String,
@@ -745,55 +892,27 @@ pub struct FnChunk {
     /// writes them back afterwards so in-place mutations through
     /// the walker flow back into the VM's register file.
     pub deferred_env_regs: Vec<Vec<Reg>>,
-    /// Inline-cache slots, one per dispatch-shaped opcode in
-    /// `instrs`. Indexed by the `cache_idx` field on
-    /// [`Op::Call`] / [`Op::MethodCall`]. Behind a `RefCell` so
-    /// the run loop can write through `&Arc<FnChunk>` without
-    /// the chunk having to be exclusively owned. Borrows are
-    /// scoped to the slot read/write inside the dispatch arm —
-    /// no sub-call ever runs while the borrow is held, so the
-    /// usual nested-borrow trap doesn't apply.
-    pub(crate) call_caches: std::cell::RefCell<Vec<CacheSlot>>,
-    /// Tier-up budget — see Tier D2 of the interp wow plan.
-    /// Decremented by 1 on every call into this chunk; when it
-    /// reaches zero the VM kicks a deferred whole-program
-    /// cranelift JIT compile and patches the resulting native
-    /// entry into the dispatch path. Initialised to
-    /// [`HOT_THRESHOLD`] (or `i32::MAX` when the JIT is disabled
-    /// at construction time, which the VM treats as "never trip").
-    /// `Cell` rather than `AtomicI32` because the VM is single-
-    /// threaded today and the tier-up signal is not safety-
-    /// critical — a dropped tick just delays the compile.
-    pub(crate) hot_counter: Cell<i32>,
-    /// Per-arith-op inline cache (Tier C2). One slot per emitted
-    /// `Op::AddInt`/`SubInt`/`MulInt`/`DivInt`/`RemInt`, indexed
-    /// by their `cache_idx` field. Each slot starts at
-    /// [`ARITH_UNKNOWN`] and the dispatch loop transitions it to
-    /// [`ARITH_INT_INT`] / [`ARITH_FLOAT_FLOAT`] /
-    /// [`ARITH_STRING_STRING`] on first observation, or
-    /// [`ARITH_POLYMORPHIC`] if the operand shape changes later.
-    /// The borrow is short-lived — the slot is read once at the
-    /// start of each arith op and written at most when the shape
-    /// transitions, never across a sub-call.
-    pub(crate) arith_caches: std::cell::RefCell<Vec<ArithCacheSlot>>,
+    /// Number of inline-cache slots this chunk needs (`Op::Call`
+    /// / `Op::MethodCall` sites). The actual `Vec<CacheSlot>` lives
+    /// per-`Vm` inside [`crate::vm::ChunkState`], not on the chunk —
+    /// goroutines spawned from a parent VM each get their own
+    /// `ChunkState` so cache writes don't bounce cache lines across
+    /// CPUs. `FnChunk` stays purely-immutable and `Sync`.
+    pub call_cache_count: u16,
+    /// Number of adaptive-arith cache slots this chunk needs
+    /// (`Op::AddInt` / `Op::SubInt` / etc. sites). Same per-`Vm`
+    /// ownership story as [`Self::call_cache_count`].
+    pub arith_cache_count: u16,
 }
 
 /// One adaptive-arith inline-cache slot. Tier C2 of the interp
-/// wow plan — see [`FnChunk::arith_caches`].
+/// wow plan — held inside [`crate::vm::ChunkState`].
 #[derive(Debug, Default)]
 pub(crate) struct ArithCacheSlot {
     /// Observed operand shape, encoded as one of the `ARITH_*`
-    /// constants. `Cell` rather than `AtomicU8` because the VM is
-    /// single-threaded today.
-    pub(crate) shape: Cell<u8>,
-}
-
-impl Clone for ArithCacheSlot {
-    fn clone(&self) -> Self {
-        Self {
-            shape: Cell::new(self.shape.get()),
-        }
-    }
+    /// constants. `Cell<u8>` because the slot lives in per-`Vm`
+    /// state; only the owning thread mutates it.
+    pub(crate) shape: std::cell::Cell<u8>,
 }
 
 /// Sentinel for an arith cache slot that has not yet observed an

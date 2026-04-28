@@ -26,7 +26,7 @@ left-to-right. `x |> f(a, b)` desugars to
 `f(a, b, x)`, and `|>` chains cleanly with methods, closures, and
 plain functions:
 
-```rust
+```gossamer
 fn double(x: i64) -> i64 { x * 2 }
 fn add(a: i64, b: i64) -> i64 { a + b }
 fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
@@ -35,11 +35,11 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 
 fn main() {
     // 3 -> double -> add 10 -> clamp to [0, 100]
-    let n = 3i64 |> double |> add(10i64) |> clamp(0i64, 100i64)
+    let n = 3 |> double |> add(10) |> clamp(0, 100)
     println("arithmetic:", n)
 
     // Methods pipe the same way.
-    let words = "  Hello  World  ".to_string()
+    let words = "  Hello  World  "
         |> str::trim
         |> str::to_lowercase
         |> str::split(" ")
@@ -51,10 +51,10 @@ fn main() {
 
 A goroutine + channel sketch:
 
-```rust
+```gossamer
 fn main() {
     let (tx, rx) = channel::<i64>()
-    go fn() { tx.send(40i64 |> add(2i64)) }()
+    go fn() { tx.send(40 |> add(2)) }()
     println("answer:", rx.recv())
 }
 ```
