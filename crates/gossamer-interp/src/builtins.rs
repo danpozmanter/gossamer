@@ -865,7 +865,10 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "U8Vec::window_key",
         builtin("U8Vec::window_key", builtin_u8vec_window_key),
     ));
-    globals.push(("window_key", builtin("window_key", builtin_u8vec_window_key)));
+    globals.push((
+        "window_key",
+        builtin("window_key", builtin_u8vec_window_key),
+    ));
     // Whole-program k-mer count: scan the entire buffer and
     // emit a `Value::IntMap` of (packed_kmer_key -> count).
     // Replaces the user-side `while i < stop { … insert … }`
@@ -2614,9 +2617,7 @@ fn builtin_map_get_or(args: &[Value]) -> RuntimeResult<Value> {
                 return Ok(default);
             };
             let fallback = if let Value::Int(d) = &default { *d } else { 0 };
-            Ok(Value::Int(
-                map.lock().get(k).copied().unwrap_or(fallback),
-            ))
+            Ok(Value::Int(map.lock().get(k).copied().unwrap_or(fallback)))
         }
         _ => Ok(default),
     }
@@ -3771,8 +3772,7 @@ fn builtin_u8vec_count_kmers(args: &[Value]) -> RuntimeResult<Value> {
     let buf_len = arg_int(args, 1).unwrap_or(0).max(0) as usize;
     let k = arg_int(args, 2).unwrap_or(0).max(0) as usize;
     let len = vec_arc.len().min(buf_len);
-    let counts: rustc_hash::FxHashMap<i64, i64> =
-        kmer_count(&vec_arc[..len], k);
+    let counts: rustc_hash::FxHashMap<i64, i64> = kmer_count(&vec_arc[..len], k);
     Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(counts))))
 }
 
@@ -3792,11 +3792,7 @@ fn kmer_count(buf: &[std::sync::atomic::AtomicU8], k: usize) -> rustc_hash::FxHa
     let stop = buf.len() - k + 1;
     // Rolling key: drop the high 2 bits, shift, OR in the new
     // byte. Keeps the inner loop O(1) per iter regardless of k.
-    let mask: i64 = if k >= 32 {
-        -1
-    } else {
-        (1i64 << (k * 2)) - 1
-    };
+    let mask: i64 = if k >= 32 { -1 } else { (1i64 << (k * 2)) - 1 };
     let mut key: i64 = 0;
     for slot in buf.iter().take(k) {
         let b = slot.load(std::sync::atomic::Ordering::Relaxed);
