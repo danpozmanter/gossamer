@@ -184,12 +184,11 @@ pub fn render_to(out: &mut impl Write) -> std::io::Result<usize> {
 #[cfg(unix)]
 pub fn install_handler() {}
 
+/// No-op on platforms without SIGQUIT. The equivalent (CTRL+BREAK)
+/// is owned by `signal::Notifier`; a Windows SIGQUIT-style dump is
+/// a Phase-2 item.
 #[cfg(not(unix))]
-pub fn install_handler() {
-    // Windows has no SIGQUIT; the equivalent (CTRL+BREAK) is owned
-    // by signal::Notifier. SIGQUIT-style dump is a Phase-2 item on
-    // Windows.
-}
+pub fn install_handler() {}
 
 #[cfg(test)]
 mod tests {

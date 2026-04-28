@@ -158,12 +158,11 @@ impl Symbol {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(target_os = "linux")]
     fn opens_libc_and_calls_strlen() {
         let Ok(lib) = Library::open("libc.so.6") else {
             return;
