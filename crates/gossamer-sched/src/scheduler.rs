@@ -26,6 +26,11 @@ pub struct Scheduler {
     tasks: Vec<Slot>,
     queue: RunQueue,
     next_id: u32,
+    /// Live goroutine count, maintained in O(1) by `spawn` / `finish`
+    /// instead of an O(n) walk of `tasks`. Lets `active_count` skip
+    /// the scan on hot paths and gives `compact_if_quiescent` a
+    /// cheap "are we idle?" check after `run`.
+    active: usize,
     stats: SchedStats,
 }
 
@@ -61,6 +66,7 @@ impl Scheduler {
             .expect("too many goroutines spawned");
         self.tasks.push(Slot::Active(Box::new(task)));
         self.queue.push(gid);
+        self.active += 1;
         self.stats.spawned = self.stats.spawned.saturating_add(1);
         gid
     }
@@ -93,6 +99,7 @@ impl Scheduler {
                 }
             }
         }
+        self.compact_if_quiescent();
         steps
     }
 
@@ -119,6 +126,7 @@ impl Scheduler {
                 Step::Done => self.finish(gid),
             }
         }
+        self.compact_if_quiescent();
         performed
     }
 
@@ -142,12 +150,24 @@ impl Scheduler {
     }
 
     /// Returns the number of goroutines still in the active state.
+    /// O(1) — maintained incrementally by `spawn` / `finish`.
     #[must_use]
     pub fn active_count(&self) -> usize {
-        self.tasks
-            .iter()
-            .filter(|slot| matches!(slot, Slot::Active(_)))
-            .count()
+        self.active
+    }
+
+    /// Drops every Finished slot when the scheduler is quiescent
+    /// (no live goroutines, empty run queue). Patterns that spawn
+    /// many transient goroutines and then drain see the per-slot
+    /// 16-B `Slot::Finished` discriminant return to the heap
+    /// instead of growing the `tasks` Vec linearly with cumulative
+    /// spawn count.
+    fn compact_if_quiescent(&mut self) {
+        if self.active == 0 && self.queue.is_empty() {
+            self.tasks.clear();
+            self.tasks.shrink_to_fit();
+            self.next_id = 0;
+        }
     }
 
     fn slot(&self, gid: Gid) -> Option<&Slot> {
@@ -167,6 +187,9 @@ impl Scheduler {
 
     fn finish(&mut self, gid: Gid) {
         if let Some(slot) = self.tasks.get_mut(gid.0 as usize) {
+            if matches!(slot, Slot::Active(_)) {
+                self.active = self.active.saturating_sub(1);
+            }
             *slot = Slot::Finished;
             self.stats.finished = self.stats.finished.saturating_add(1);
         }
