@@ -2533,14 +2533,33 @@ pub unsafe extern "C" fn gos_rt_now_ns() -> i64 {
 // GC — bump allocator with safepoint reset
 // ---------------------------------------------------------------
 //
-// Thread-local 4 MB arena. `gos_rt_gc_alloc(size)` bumps a pointer;
+// Thread-local arena. `gos_rt_gc_alloc(size)` bumps a pointer;
 // when the arena fills, a new one is allocated and the old one
-// leaks (bounded by the process). `gos_rt_gc_reset()` discards
-// every arena on the current thread — call at well-defined
-// safepoints (end of main, between benchmark iterations, etc.).
+// stays alive until `gos_rt_gc_reset()` discards every arena on
+// the current thread. Call reset at well-defined safepoints
+// (end of main, between benchmark iterations, etc.).
+//
+// Arena buffers are capped at `MAX_ARENA_CAP` so the geometric
+// growth path (2× per fresh arena) plateaus instead of running
+// away. Without the cap, after K arenas total capacity was
+// `ARENA_BYTES * (2^K - 1)`; with the cap it's at most
+// `MAX_ARENA_CAP * K`. For long-running format-heavy programs
+// this turns "exponential blowup of slack space at the tail of
+// each arena" into "linear in the number of arenas needed".
+//
+// `gos_rt_arena_save() -> u64` / `gos_rt_arena_restore(saved)`
+// expose a checkpoint/rewind primitive so codegen can wrap
+// scope-bounded allocations (e.g. ephemeral format!() output that
+// is consumed before the surrounding function returns) without
+// permanently leaking the slack. The semantics are "undo every
+// allocation made since the matching save"; callers must
+// guarantee no live pointer into the saved range escapes the
+// scope, since restore makes those pointers dangling.
+//
 // A real tri-color GC replaces this without changing the ABI.
 
 const ARENA_BYTES: usize = 4 * 1024 * 1024;
+const MAX_ARENA_CAP: usize = 16 * 1024 * 1024;
 
 struct Arena {
     buf: Vec<u8>,
@@ -2568,18 +2587,24 @@ pub unsafe extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
     ARENAS.with(|cell| {
         let mut arenas = cell.borrow_mut();
         if arenas.last().is_none_or(|a| a.used + size > a.buf.len()) {
-            // Grow geometrically: each new arena is at least 2x the
-            // requested size (and at least ARENA_BYTES). Without
-            // the 2x headroom, an exact-fit arena causes the
-            // *next* extension attempt to overflow and allocate
-            // yet another exact-fit arena, reintroducing the
-            // O(N²) blowup the in-place extension was supposed
-            // to fix. Doubling keeps amortised allocation O(N).
+            // The 2× headroom on `size` keeps `try_extend_last_cstring`
+            // amortised: an exact-fit arena would force every
+            // subsequent extension to roll over into a new arena, and
+            // each rollover copies the current buffer, reintroducing
+            // the O(N²) blowup the in-place extension was meant to
+            // fix. The 2× on `prev_cap` keeps that amortisation
+            // working when several large strings share the same
+            // arena. Both are bounded by `MAX_ARENA_CAP` so the
+            // doubling can't run away — beyond the cap each new
+            // arena is `MAX_ARENA_CAP` bytes, so total slack across
+            // K arenas is at most `K * MAX_ARENA_CAP` instead of
+            // `ARENA_BYTES * (2^K - 1)`.
             let prev_cap = arenas.last().map_or(0, |a| a.buf.len());
             let cap = size
                 .saturating_mul(2)
                 .max(ARENA_BYTES)
-                .max(prev_cap.saturating_mul(2));
+                .max(prev_cap.saturating_mul(2))
+                .min(MAX_ARENA_CAP.max(size));
             // Zero-initialised arena. Allocations are bumped out
             // of `buf` and the caller writes before reading, but
             // zeroing avoids reading-before-write UB if anyone
@@ -2605,6 +2630,63 @@ pub unsafe extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
 pub unsafe extern "C" fn gos_rt_gc_reset() {
     ARENAS.with(|cell| {
         cell.borrow_mut().clear();
+    });
+}
+
+/// Records the current arena watermark on the calling thread.
+///
+/// The returned `u64` packs `(arena_index << 32) | byte_used` so
+/// `gos_rt_arena_restore` can identify both the arena and the
+/// position within it. Calls outside any active arena return zero,
+/// which `restore` interprets as "rewind everything" (equivalent
+/// to `gos_rt_gc_reset`).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_arena_save() -> u64 {
+    ARENAS.with(|cell| {
+        let arenas = cell.borrow();
+        if arenas.is_empty() {
+            return 0;
+        }
+        let idx = arenas.len() - 1;
+        let used = arenas[idx].used;
+        ((idx as u64) << 32) | (used as u64)
+    })
+}
+
+/// Rewinds the calling thread's arena to the watermark `saved`
+/// returned by an earlier `gos_rt_arena_save` call.
+///
+/// All arenas allocated after `saved` are dropped, and the active
+/// arena's `used` is rolled back to the saved offset. Pointers
+/// returned by `gos_rt_gc_alloc` between save and restore become
+/// dangling; the caller is responsible for ensuring no live value
+/// references them. This is the rewind half of the scope-bounded
+/// allocation pattern; codegen-side wiring is a separate concern.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_arena_restore(saved: u64) {
+    ARENAS.with(|cell| {
+        let mut arenas = cell.borrow_mut();
+        if saved == 0 {
+            arenas.clear();
+            return;
+        }
+        let idx = (saved >> 32) as usize;
+        let used = (saved & 0xFFFF_FFFF) as usize;
+        if idx >= arenas.len() {
+            return;
+        }
+        arenas.truncate(idx + 1);
+        if let Some(arena) = arenas.last_mut() {
+            // If the saved offset is past the current high-water
+            // mark (shouldn't happen for valid saves), clamp to
+            // avoid producing garbage `used`.
+            arena.used = arena.used.min(used).max(used.min(arena.buf.len()));
+            // Reset the in-place extension cursor so the next
+            // alloc isn't mistaken for an extension of an
+            // already-rewound allocation.
+            arena.last_start = arena.used;
+            arena.last_len = 0;
+        }
     });
 }
 

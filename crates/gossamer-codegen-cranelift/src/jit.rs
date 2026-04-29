@@ -111,7 +111,7 @@ impl Drop for JitArtifact {
 pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
     let isa = build_native_isa(false)?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
-    register_runtime_symbols(&mut builder);
+    let runtime_symbol_set = register_runtime_symbols(&mut builder);
     let mut module = JITModule::new(builder);
 
     // Rename the user's `main` to `gos_main` in the JIT's symbol
@@ -126,6 +126,8 @@ pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
         .finalize_definitions()
         .map_err(|e| anyhow!("jit finalize: {e}"))?;
 
+    let body_name_set: std::collections::HashSet<&str> =
+        bodies.iter().map(|b| b.name.as_str()).collect();
     let mut functions = HashMap::new();
     for body in bodies {
         let Some(id) = lowered.function_ids_by_name.get(&body.name).copied() else {
@@ -137,6 +139,20 @@ pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
             // fall back to bytecode for this fn.
             continue;
         };
+        if body_calls_jit_unsafe(body, &runtime_symbol_set, &body_name_set) {
+            // Body invokes something cranelift would lower as the
+            // "soft-zero stub" at native.rs (~line 2099): unknown
+            // by-name calls that aren't in the runtime symbol table
+            // and aren't user-defined bodies. The stub silently
+            // zeroes the destination, scrambling the program state.
+            // Skip the JIT entry so the bytecode VM keeps semantics
+            // intact for this function. The most common offenders
+            // are closure-callback methods (`sort_by`, `sort_by_key`,
+            // `map`, `filter`) plus any other user-facing helper
+            // wired in the interpreter but not yet in the codegen
+            // dispatch table.
+            continue;
+        }
         let ptr = module.get_finalized_function(id);
         functions.insert(
             body.name.clone(),
@@ -153,6 +169,52 @@ pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
         module: Some(module),
         functions,
     })
+}
+
+/// Returns `true` when `body` contains a `Call(Const(Str(name)))`
+/// whose `name` cranelift would lower as the "soft-zero stub"
+/// (native.rs ~line 2099) — i.e. neither a registered runtime
+/// symbol nor a user-defined body name nor a recognised
+/// variant-constructor / qualified-path shape. The stub silently
+/// zeroes the destination, so JIT-promoting such a body would
+/// corrupt every program that exercises that call.
+///
+/// Variant constructors (`Ok`, `Err`, `Some`, `None`, user-defined
+/// uppercase-starting names) and qualified paths (`std::…`,
+/// `fmt::…`) get a dedicated shape in the cranelift backend at
+/// native.rs ~line 2061 and are tolerated; only true unknowns
+/// disqualify a body.
+fn body_calls_jit_unsafe(
+    body: &Body,
+    runtime_symbols: &std::collections::HashSet<&'static str>,
+    body_names: &std::collections::HashSet<&str>,
+) -> bool {
+    use gossamer_mir::{ConstValue, Operand, Terminator};
+    for block in &body.blocks {
+        let Terminator::Call { callee, .. } = &block.terminator else {
+            continue;
+        };
+        let Operand::Const(ConstValue::Str(name)) = callee else {
+            continue;
+        };
+        let n = name.as_str();
+        if runtime_symbols.contains(n) {
+            continue;
+        }
+        if body_names.contains(n) {
+            continue;
+        }
+        // Variant-constructor / qualified-path shape: the cranelift
+        // backend handles these explicitly (Ok/Err/Some pass-through;
+        // anything qualified or capitalised falls through to a sound
+        // zero-default semantics — uncommon but well-formed).
+        let starts_uppercase = n.chars().next().is_some_and(char::is_uppercase);
+        if n.contains("::") || starts_uppercase {
+            continue;
+        }
+        return true;
+    }
+    false
 }
 
 fn body_kinds(body: &Body, tcx: &TyCtxt) -> Option<(Vec<JitKind>, JitKind)> {
@@ -190,15 +252,21 @@ fn ty_to_kind(tcx: &TyCtxt, ty: Ty) -> Option<JitKind> {
 /// runtime in-process. Kept in lock-step with the symbol set the
 /// AOT object backend imports — anything the codegen knows how to
 /// emit must resolve here.
+///
+/// Returns the set of registered symbol names so the JIT-eligibility
+/// check can identify bodies that call something cranelift can't
+/// resolve (and would silently lower to a typed-zero stub).
 #[allow(clippy::too_many_lines)]
-fn register_runtime_symbols(builder: &mut JITBuilder) {
+fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashSet<&'static str> {
     use gossamer_runtime::c_abi as rt;
     use gossamer_runtime::gc;
     use gossamer_runtime::preempt;
+    let mut names: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
     macro_rules! reg {
         ($($name:literal => $f:path),* $(,)?) => {
             $(
                 builder.symbol($name, $f as *const u8);
+                names.insert($name);
             )*
         };
     }
@@ -392,6 +460,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
         "gos_rt_gc_collect_with_stack_roots"
                                      => gc::gos_rt_gc_collect_with_stack_roots,
         "gos_rt_gc_reset"            => rt::gos_rt_gc_reset,
+        "gos_rt_arena_save"          => rt::gos_rt_arena_save,
+        "gos_rt_arena_restore"       => rt::gos_rt_arena_restore,
         "gos_rt_http_serve"          => rt::gos_rt_http_serve,
         "gos_rt_panic"               => rt::gos_rt_panic,
         "gos_rt_exit"                => rt::gos_rt_exit,
@@ -507,4 +577,5 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
         "gos_rt_go_spawn_call_5"     => rt::gos_rt_go_spawn_call_5,
         "gos_rt_go_spawn_call_6"     => rt::gos_rt_go_spawn_call_6,
     }
+    names
 }
