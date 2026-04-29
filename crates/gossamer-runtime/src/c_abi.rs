@@ -2168,11 +2168,26 @@ use std::collections::VecDeque;
 use std::sync::Condvar as StdCondvar;
 use std::sync::Mutex as StdMutex;
 
+/// Channel payload storage. The 8-byte specialisation matches the
+/// most common shape (every i64-class scalar plus pointer-sized
+/// values fit) and avoids the per-message `Vec<u8>` allocation that
+/// the byte-erased path needs. The codegen always knows
+/// `elem_bytes` at the `gos_rt_chan_new` site, so the dispatch is
+/// a one-time check at construction.
+enum ChanStorage {
+    /// 8-byte inline payloads. A 1M-message run with cap=100
+    /// holds at most 100 * 8 = 800 B of payload here, vs ~3.2 MB
+    /// of `Vec<u8>` headers + 8 B allocations under `Bytes`.
+    I64(VecDeque<i64>),
+    /// Erased byte storage for any other element size.
+    Bytes(VecDeque<Vec<u8>>),
+}
+
 pub struct GosChan {
     pub elem_bytes: u32,
     pub cap: i64, // 0 = unbounded
     pub closed: StdMutex<bool>,
-    pub buf: StdMutex<VecDeque<Vec<u8>>>,
+    buf: StdMutex<ChanStorage>,
     pub not_empty: StdCondvar,
     pub not_full: StdCondvar,
     /// Goroutine id of the most recent sender. Read by recv to
@@ -2183,11 +2198,16 @@ pub struct GosChan {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_chan_new(elem_bytes: u32, cap: i64) -> *mut GosChan {
+    let buf = if elem_bytes == 8 {
+        ChanStorage::I64(VecDeque::new())
+    } else {
+        ChanStorage::Bytes(VecDeque::new())
+    };
     Box::into_raw(Box::new(GosChan {
         elem_bytes,
         cap,
         closed: StdMutex::new(false),
-        buf: StdMutex::new(VecDeque::new()),
+        buf: StdMutex::new(buf),
         not_empty: StdCondvar::new(),
         not_full: StdCondvar::new(),
         last_sender: AtomicI64::new(-1),
@@ -2201,15 +2221,11 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
     }
     let chan = unsafe { &*c };
     let bytes_len = chan.elem_bytes as usize;
-    let mut data = vec![0u8; bytes_len];
-    unsafe {
-        std::ptr::copy_nonoverlapping(val, data.as_mut_ptr(), bytes_len);
-    }
     let mut guard = chan.buf.lock().unwrap();
-    while chan.cap > 0 && guard.len() as i64 >= chan.cap {
+    while chan.cap > 0 && storage_len(&guard) as i64 >= chan.cap {
         guard = chan.not_full.wait(guard).unwrap();
     }
-    guard.push_back(data);
+    push_back(&mut guard, val, bytes_len);
     drop(guard);
     chan.last_sender
         .store(i64::from(crate::race::current_gid()), Ordering::Release);
@@ -2223,15 +2239,11 @@ pub unsafe extern "C" fn gos_rt_chan_try_send(c: *mut GosChan, val: *const u8) -
     }
     let chan = unsafe { &*c };
     let bytes_len = chan.elem_bytes as usize;
-    let mut data = vec![0u8; bytes_len];
-    unsafe {
-        std::ptr::copy_nonoverlapping(val, data.as_mut_ptr(), bytes_len);
-    }
     let mut guard = chan.buf.lock().unwrap();
-    if chan.cap > 0 && guard.len() as i64 >= chan.cap {
+    if chan.cap > 0 && storage_len(&guard) as i64 >= chan.cap {
         return 0;
     }
-    guard.push_back(data);
+    push_back(&mut guard, val, bytes_len);
     drop(guard);
     chan.last_sender
         .store(i64::from(crate::race::current_gid()), Ordering::Release);
@@ -2248,10 +2260,7 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
     let bytes_len = chan.elem_bytes as usize;
     let mut guard = chan.buf.lock().unwrap();
     loop {
-        if let Some(item) = guard.pop_front() {
-            unsafe {
-                std::ptr::copy_nonoverlapping(item.as_ptr(), out, bytes_len);
-            }
+        if pop_front(&mut guard, out, bytes_len) {
             drop(guard);
             record_chan_handoff(chan);
             chan.not_full.notify_one();
@@ -2272,16 +2281,59 @@ pub unsafe extern "C" fn gos_rt_chan_try_recv(c: *mut GosChan, out: *mut u8) -> 
     let chan = unsafe { &*c };
     let bytes_len = chan.elem_bytes as usize;
     let mut guard = chan.buf.lock().unwrap();
-    if let Some(item) = guard.pop_front() {
-        unsafe {
-            std::ptr::copy_nonoverlapping(item.as_ptr(), out, bytes_len);
-        }
+    if pop_front(&mut guard, out, bytes_len) {
         drop(guard);
         record_chan_handoff(chan);
         chan.not_full.notify_one();
         return 1;
     }
     0
+}
+
+fn storage_len(storage: &ChanStorage) -> usize {
+    match storage {
+        ChanStorage::I64(d) => d.len(),
+        ChanStorage::Bytes(d) => d.len(),
+    }
+}
+
+fn push_back(storage: &mut ChanStorage, val: *const u8, bytes_len: usize) {
+    match storage {
+        ChanStorage::I64(deque) => {
+            // Read 8 bytes from `val` into an i64 in a way that
+            // doesn't assume natural alignment of the source.
+            let mut tmp = [0u8; 8];
+            unsafe {
+                std::ptr::copy_nonoverlapping(val, tmp.as_mut_ptr(), 8);
+            }
+            deque.push_back(i64::from_ne_bytes(tmp));
+        }
+        ChanStorage::Bytes(deque) => {
+            let mut data = vec![0u8; bytes_len];
+            unsafe {
+                std::ptr::copy_nonoverlapping(val, data.as_mut_ptr(), bytes_len);
+            }
+            deque.push_back(data);
+        }
+    }
+}
+
+fn pop_front(storage: &mut ChanStorage, out: *mut u8, bytes_len: usize) -> bool {
+    match storage {
+        ChanStorage::I64(deque) => deque.pop_front().is_some_and(|n| {
+            let bytes = n.to_ne_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, 8);
+            }
+            true
+        }),
+        ChanStorage::Bytes(deque) => deque.pop_front().is_some_and(|item| {
+            unsafe {
+                std::ptr::copy_nonoverlapping(item.as_ptr(), out, bytes_len);
+            }
+            true
+        }),
+    }
 }
 
 /// Records the sender->receiver synchronisation edge into the race
