@@ -114,5 +114,7 @@ pub use bytecode::{FnChunk, Op};
 pub use compile::compile_fn;
 pub use env::Env;
 pub use interp::{Interpreter, join_outstanding_goroutines};
-pub use value::{Channel, Closure, RuntimeError, RuntimeResult, SmolStr, Value};
+pub use value::{
+    Channel, Closure, RuntimeError, RuntimeResult, SmolStr, Value, registry_stats_for_test,
+};
 pub use vm::Vm;

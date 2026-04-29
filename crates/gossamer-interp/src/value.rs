@@ -863,7 +863,7 @@ impl Value {
             }
             TAG_HEAP => {
                 let id = to_heap_handle(raw);
-                match lookup_heap(id) {
+                match take_heap(id) {
                     Some(RegistryEntry::Int(n)) => Self::Int(n),
                     Some(RegistryEntry::String(s)) => Self::String(SmolStr::from_arc(s)),
                     Some(RegistryEntry::Tuple(t)) => Self::Tuple(t),
@@ -1115,28 +1115,58 @@ enum RegistryEntry {
 /// Global registry mapping `u32` handles to [`RegistryEntry`] values.
 /// Protected by a [`Mutex`] so it is safe to access from goroutine
 /// threads.
-static REGISTRY: Mutex<Vec<Option<RegistryEntry>>> = Mutex::new(Vec::new());
+///
+/// The companion `FREE_SLOTS` free-list keeps slot reuse O(1):
+/// `register_heap` pops a known-empty index off the stack instead of
+/// linearly scanning every slot for `None` (which was O(n) per
+/// registration on long-running programs).
+static REGISTRY: Mutex<RegistryStorage> = Mutex::new(RegistryStorage {
+    slots: Vec::new(),
+    free: Vec::new(),
+});
+
+struct RegistryStorage {
+    slots: Vec<Option<RegistryEntry>>,
+    free: Vec<u32>,
+}
 
 /// Stores `entry` in the global side table and returns its stable
-/// handle.
+/// handle. Reuses a previously-released slot when one is available
+/// so the registry stays bounded by the in-flight raw-value count
+/// instead of growing monotonically with cumulative `to_raw` calls.
 fn register_heap(entry: RegistryEntry) -> u32 {
     let mut reg = REGISTRY.lock();
-    for (i, slot) in reg.iter_mut().enumerate() {
-        if slot.is_none() {
-            *slot = Some(entry);
-            return u32::try_from(i).expect("registry index overflow");
-        }
+    if let Some(idx) = reg.free.pop() {
+        reg.slots[idx as usize] = Some(entry);
+        return idx;
     }
-    let id = reg.len();
-    reg.push(Some(entry));
+    let id = reg.slots.len();
+    reg.slots.push(Some(entry));
     u32::try_from(id).expect("registry handle overflow")
 }
 
-/// Looks up `handle` in the global side table.  Returns `None` when
-/// the slot is empty (the object was GC'd or never registered).
-fn lookup_heap(handle: u32) -> Option<RegistryEntry> {
+/// Removes `handle` from the global side table and returns the
+/// stored entry. The slot is recycled onto the free-list so the next
+/// `register_heap` can reuse it. Returns `None` when the slot is
+/// empty (the object was already taken or never registered).
+fn take_heap(handle: u32) -> Option<RegistryEntry> {
+    let mut reg = REGISTRY.lock();
+    let entry = reg.slots.get_mut(handle as usize).and_then(Option::take)?;
+    reg.free.push(handle);
+    Some(entry)
+}
+
+/// Returns `(slots, occupied)` where `slots` is the size of the
+/// registry's slot vector and `occupied` is the count of currently
+/// non-empty slots. Test-only — exposed so the value-roundtrip suite
+/// can assert that the registry stays bounded under repeated
+/// `to_raw`/`from_raw` cycles.
+#[doc(hidden)]
+#[must_use]
+pub fn registry_stats_for_test() -> (usize, usize) {
     let reg = REGISTRY.lock();
-    reg.get(handle as usize).and_then(std::clone::Clone::clone)
+    let occupied = reg.slots.iter().filter(|s| s.is_some()).count();
+    (reg.slots.len(), occupied)
 }
 
 #[cfg(test)]

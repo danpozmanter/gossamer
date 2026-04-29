@@ -205,3 +205,33 @@ fn void_roundtrips_as_sentinel() {
     let decoded = Value::from_raw(v.to_raw());
     assert!(matches!(decoded, Value::Unit | Value::Void));
 }
+
+/// Regression: the heap registry used to leak monotonically because
+/// `lookup_heap` cloned without freeing the slot. Each `to_raw` →
+/// `from_raw` cycle is now a balanced register/take pair, so the
+/// registry stays bounded by the in-flight raw-value count.
+#[test]
+fn heap_registry_stays_bounded_under_repeated_roundtrip() {
+    use gossamer_interp::registry_stats_for_test;
+
+    let (baseline_slots, _) = registry_stats_for_test();
+    for _ in 0..10_000 {
+        let v = Value::Tuple(Arc::new(vec![
+            Value::Int(1),
+            Value::String(SmolStr::from("hello".to_string())),
+            Value::Bool(true),
+        ]));
+        let raw = v.to_raw();
+        let _decoded = Value::from_raw(raw);
+    }
+    let (final_slots, occupied) = registry_stats_for_test();
+    let growth = final_slots.saturating_sub(baseline_slots);
+    assert!(
+        growth < 64,
+        "registry grew by {growth} slots over 10000 round-trips (before fix this was 10000)"
+    );
+    assert_eq!(
+        occupied, 0,
+        "every round-tripped slot should have been taken; {occupied} slots still occupied"
+    );
+}
