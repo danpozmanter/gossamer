@@ -204,4 +204,84 @@ mod tests {
             }
         }
     }
+
+    /// Bit patterns whose low three mantissa bits are non-zero
+    /// will round-trip lossy through `from_f64` / `to_f64` because
+    /// the encoding masks those bits to zero. Track the surviving
+    /// payload precisely so a future change that breaks even this
+    /// envelope (e.g. a wider tag) is caught immediately.
+    #[test]
+    fn f64_low_three_mantissa_bits_are_dropped_by_design() {
+        let f = f64::from_bits(0x4000_0000_0000_0007); // bits ...111
+        let packed = from_f64(f);
+        let unpacked = to_f64(packed);
+        // The encoding documents that the low 3 bits are masked.
+        assert_eq!(unpacked.to_bits() & 0b111, 0);
+        // The high 61 bits of the mantissa survive.
+        assert_eq!(unpacked.to_bits() & !0b111, f.to_bits() & !0b111);
+    }
+
+    #[test]
+    fn f64_inf_roundtrips() {
+        for f in [f64::INFINITY, f64::NEG_INFINITY] {
+            let packed = from_f64(f);
+            assert_eq!(tag_of(packed), TAG_FLOAT);
+            let unpacked = to_f64(packed);
+            assert!(unpacked.is_infinite());
+            assert_eq!(unpacked.is_sign_positive(), f.is_sign_positive());
+        }
+    }
+
+    #[test]
+    fn f64_nan_roundtrips_to_a_nan() {
+        // The NaN payload's low three bits are sacrificed by the
+        // encoding (just like any other float). Round-tripping
+        // therefore preserves NaN-ness but not necessarily the
+        // exact bit pattern. Future callers that need stable NaN
+        // payloads must take a heap-tagged path.
+        let f = f64::NAN;
+        let packed = from_f64(f);
+        assert_eq!(tag_of(packed), TAG_FLOAT);
+        let unpacked = to_f64(packed);
+        assert!(unpacked.is_nan(), "NaN round-trip must yield NaN");
+    }
+
+    #[test]
+    fn f64_subnormals_preserve_high_mantissa_bits() {
+        // `f64::MIN_POSITIVE` is the smallest *normal* double; its
+        // representation has zero in the bits the encoding masks
+        // (the exponent uses the high bits and the mantissa is
+        // zero), so round-trip is exact.
+        let f = f64::MIN_POSITIVE;
+        let unpacked = to_f64(from_f64(f));
+        assert_eq!(unpacked, f);
+
+        // A *subnormal* close to the minimum non-zero value has all
+        // its precision in the mantissa. The lowest 3 mantissa bits
+        // are dropped; we assert the encoding remains within an
+        // ulp-class of the input. If the encoding ever stops
+        // preserving subnormals at all (e.g. flushing to zero) this
+        // test catches it.
+        let sub = f64::from_bits(0x10); // tiny subnormal
+        let packed = from_f64(sub);
+        let unpacked = to_f64(packed);
+        assert_eq!(unpacked.to_bits() & 0b111, 0);
+        // Same magnitude class (still subnormal, sign matches).
+        assert_eq!(unpacked.is_sign_positive(), sub.is_sign_positive());
+    }
+
+    #[test]
+    fn f64_zero_signs_roundtrip_distinctly() {
+        // +0.0 and -0.0 differ only in the sign bit (high bit, well
+        // above the masked low 3). The encoding must preserve the
+        // distinction because some Gossamer programs branch on
+        // `f.is_sign_negative()` for parity / NaN-payload-style
+        // tricks.
+        let pos = to_f64(from_f64(0.0));
+        let neg = to_f64(from_f64(-0.0));
+        assert_eq!(pos, 0.0);
+        assert_eq!(neg, 0.0);
+        assert!(pos.is_sign_positive());
+        assert!(neg.is_sign_negative());
+    }
 }

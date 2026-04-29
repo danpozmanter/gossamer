@@ -193,6 +193,8 @@ fn ty_to_kind(tcx: &TyCtxt, ty: Ty) -> Option<JitKind> {
 #[allow(clippy::too_many_lines)]
 fn register_runtime_symbols(builder: &mut JITBuilder) {
     use gossamer_runtime::c_abi as rt;
+    use gossamer_runtime::gc;
+    use gossamer_runtime::preempt;
     macro_rules! reg {
         ($($name:literal => $f:path),* $(,)?) => {
             $(
@@ -315,6 +317,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
         "gos_rt_stream_read_line"    => rt::gos_rt_stream_read_line,
         "gos_rt_stream_read_to_string" => rt::gos_rt_stream_read_to_string,
         "gos_rt_println"             => rt::gos_rt_println,
+        "gos_rt_stdout_acquire"      => rt::gos_rt_stdout_acquire,
+        "gos_rt_stdout_release"      => rt::gos_rt_stdout_release,
         "gos_rt_vec_new"             => rt::gos_rt_vec_new,
         "gos_rt_vec_with_capacity"   => rt::gos_rt_vec_with_capacity,
         "gos_rt_vec_len"             => rt::gos_rt_vec_len,
@@ -381,6 +385,12 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
         "gos_rt_sleep_ns"            => rt::gos_rt_sleep_ns,
         "gos_rt_now_ns"              => rt::gos_rt_now_ns,
         "gos_rt_gc_alloc"            => rt::gos_rt_gc_alloc,
+        "gos_rt_gc_alloc_rooted"     => gc::gos_rt_gc_alloc_rooted,
+        "gos_rt_gc_shadow_push"      => gc::gos_rt_gc_shadow_push,
+        "gos_rt_gc_shadow_save"      => gc::gos_rt_gc_shadow_save,
+        "gos_rt_gc_shadow_restore"   => gc::gos_rt_gc_shadow_restore,
+        "gos_rt_gc_collect_with_stack_roots"
+                                     => gc::gos_rt_gc_collect_with_stack_roots,
         "gos_rt_gc_reset"            => rt::gos_rt_gc_reset,
         "gos_rt_http_serve"          => rt::gos_rt_http_serve,
         "gos_rt_panic"               => rt::gos_rt_panic,
@@ -453,10 +463,44 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
         "gos_rt_wg_add"              => rt::gos_rt_wg_add,
         "gos_rt_wg_done"             => rt::gos_rt_wg_done,
         "gos_rt_wg_wait"             => rt::gos_rt_wg_wait,
+        "gos_rt_wg_error"            => rt::gos_rt_wg_error,
+        "gos_rt_wg_error_clear"      => rt::gos_rt_wg_error_clear,
         "gos_rt_atomic_i64_new"      => rt::gos_rt_atomic_i64_new,
         "gos_rt_atomic_i64_load"     => rt::gos_rt_atomic_i64_load,
         "gos_rt_atomic_i64_store"    => rt::gos_rt_atomic_i64_store,
         "gos_rt_atomic_i64_fetch_add"=> rt::gos_rt_atomic_i64_fetch_add,
+        "gos_rt_atomic_i64_load_acquire"
+                                     => rt::gos_rt_atomic_i64_load_acquire,
+        "gos_rt_atomic_i64_store_release"
+                                     => rt::gos_rt_atomic_i64_store_release,
+        "gos_rt_atomic_i64_load_relaxed"
+                                     => rt::gos_rt_atomic_i64_load_relaxed,
+        "gos_rt_atomic_i64_store_relaxed"
+                                     => rt::gos_rt_atomic_i64_store_relaxed,
+        "gos_rt_atomic_i64_fetch_add_acqrel"
+                                     => rt::gos_rt_atomic_i64_fetch_add_acqrel,
+        "gos_rt_atomic_i64_cas"      => rt::gos_rt_atomic_i64_cas,
+        "gos_rt_atomic_i64_cas_acq_rel"
+                                     => rt::gos_rt_atomic_i64_cas_acq_rel,
+        "gos_rt_atomic_i64_swap"     => rt::gos_rt_atomic_i64_swap,
+        "gos_rt_preempt_check"       => preempt::gos_rt_preempt_check,
+        "gos_rt_preempt_check_and_yield"
+                                     => preempt::gos_rt_preempt_check_and_yield,
+        "gos_rt_stdout_acquire"      => rt::gos_rt_stdout_acquire,
+        "gos_rt_stdout_release"      => rt::gos_rt_stdout_release,
+        "gos_rt_sync_i64_new"        => rt::gos_rt_sync_i64_new,
+        "gos_rt_sync_i64_drop"       => rt::gos_rt_sync_i64_drop,
+        "gos_rt_sync_i64_len"        => rt::gos_rt_sync_i64_len,
+        "gos_rt_sync_i64_get"        => rt::gos_rt_sync_i64_get,
+        "gos_rt_sync_i64_set"        => rt::gos_rt_sync_i64_set,
+        "gos_rt_sync_i64_push"       => rt::gos_rt_sync_i64_push,
+        "gos_rt_sync_i64_add"        => rt::gos_rt_sync_i64_add,
+        "gos_rt_sync_u8_new"         => rt::gos_rt_sync_u8_new,
+        "gos_rt_sync_u8_drop"        => rt::gos_rt_sync_u8_drop,
+        "gos_rt_sync_u8_len"         => rt::gos_rt_sync_u8_len,
+        "gos_rt_sync_u8_get"         => rt::gos_rt_sync_u8_get,
+        "gos_rt_sync_u8_set"         => rt::gos_rt_sync_u8_set,
+        "gos_rt_sync_u8_push"        => rt::gos_rt_sync_u8_push,
         "gos_rt_lcg_jump"            => rt::gos_rt_lcg_jump,
         "gos_rt_go_spawn_call_3"     => rt::gos_rt_go_spawn_call_3,
         "gos_rt_go_spawn_call_4"     => rt::gos_rt_go_spawn_call_4,

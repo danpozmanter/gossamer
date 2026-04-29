@@ -7,12 +7,14 @@
 
 #![forbid(unsafe_code)]
 
+mod cleanup;
 mod escape;
 mod ir;
 mod lower;
 mod monomorph;
 mod opt;
 
+pub use cleanup::{CleanupEntry, CleanupPlan, HEAP_ALLOCATOR_PAIRS, plan as plan_cleanup};
 pub use escape::{EscapeSet, analyse as analyse_escape};
 pub use ir::{
     AggregateKind, AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl,

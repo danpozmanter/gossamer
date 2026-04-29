@@ -271,7 +271,13 @@ impl MultiScheduler {
         let raw = self.inner.next_gid.fetch_add(1, Ordering::Relaxed);
         let gid = Gid(u32::try_from(raw & 0xFFFF_FFFF).unwrap_or(u32::MAX));
         gossamer_runtime::sigquit::register(gid.as_u32(), std::any::type_name::<T>());
-        self.inner.injector.push(Box::new(task));
+        // Wrap the task with a `GidStamped` adapter so the worker
+        // publishes the goroutine's `gid` into the race-detector
+        // thread-local before each `step` and clears it after. This
+        // is a no-op when the race detector is disabled (the only
+        // cost is one TLS write per step).
+        let stamped = GidStamped { gid, inner: task };
+        self.inner.injector.push(Box::new(stamped));
         self.inner.stats.spawned.fetch_add(1, Ordering::Relaxed);
         self.wake_any();
         Some(gid)
@@ -302,10 +308,32 @@ impl MultiScheduler {
     /// Resizes the worker pool to `n`. Honoured asynchronously: extra
     /// workers are spawned immediately; surplus workers retire after
     /// finishing their current task. A value of `0` is clamped to one.
+    /// Values larger than the worker-count cap (see
+    /// [`Self::worker_count_cap`]) are clamped down so a runaway
+    /// caller cannot exhaust kernel-thread budget by asking for tens
+    /// of thousands of OS threads.
     pub fn set_worker_count(&self, n: usize) {
-        let target = n.max(1);
+        let cap = Self::worker_count_cap();
+        let target = n.clamp(1, cap);
         self.inner.target_workers.store(target, Ordering::Relaxed);
         self.reconcile_pool();
+    }
+
+    /// Hard upper bound on the worker pool. The default is
+    /// `min(num_cpus * 4, 256)`; the `GOSSAMER_MAX_WORKERS`
+    /// environment variable overrides it (clamped to `[1, 4096]`).
+    /// Exposed so tests and tooling can read the bound the same way
+    /// `set_worker_count` enforces it.
+    #[must_use]
+    pub fn worker_count_cap() -> usize {
+        if let Ok(v) = std::env::var("GOSSAMER_MAX_WORKERS") {
+            if let Ok(n) = v.parse::<usize>() {
+                return n.clamp(1, 4096);
+            }
+        }
+        let cores = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get);
+        cores.saturating_mul(4).clamp(1, 256)
     }
 
     /// Returns the configured target worker count.
@@ -422,6 +450,43 @@ impl MultiScheduler {
     /// Clears the safepoint request once the caller is done.
     pub fn clear_safepoint(&self) {
         self.inner.request_safepoint.store(false, Ordering::Release);
+    }
+
+    /// Informs the scheduler that the caller is about to enter a
+    /// blocking syscall (file read, DNS lookup, FFI call into a
+    /// non-poller-friendly C library, etc.). The scheduler may
+    /// spin up a fresh M so other goroutines on this worker keep
+    /// running while the original M is parked in the syscall.
+    ///
+    /// The current implementation:
+    ///
+    /// 1. Takes a snapshot of `live_workers` vs `target_workers`.
+    /// 2. If they are equal (i.e. every M is busy), bumps
+    ///    `target_workers` by one and reconciles, so a fresh M
+    ///    becomes available.
+    /// 3. The original M is expected to call
+    ///    [`Self::resume_from_blocking_syscall`] when it returns
+    ///    from the syscall so the temporary headroom is released.
+    pub fn enter_blocking_syscall(&self) {
+        let live = self.inner.live_workers.load(Ordering::Acquire);
+        let target = self.inner.target_workers.load(Ordering::Acquire);
+        let cap = Self::worker_count_cap();
+        if live >= target && target < cap {
+            self.inner.target_workers.fetch_add(1, Ordering::AcqRel);
+            self.reconcile_pool();
+        }
+    }
+
+    /// Pair to [`Self::enter_blocking_syscall`]. Releases the
+    /// temporary headroom by retiring one surplus worker.
+    pub fn resume_from_blocking_syscall(&self) {
+        let target = self.inner.target_workers.load(Ordering::Acquire);
+        if target > 1 {
+            // Decrement target; reconcile retires the highest-index
+            // worker on its next park.
+            self.inner.target_workers.fetch_sub(1, Ordering::AcqRel);
+            self.reconcile_pool();
+        }
     }
 
     fn reconcile_pool(&self) {
@@ -715,6 +780,26 @@ fn park_worker(slot: &Arc<WorkerSlot>, shared: &Arc<Shared>) {
 fn since_ms(t: Instant) -> u64 {
     let ms = t.elapsed().as_millis().min(u128::from(u64::MAX));
     u64::try_from(ms).unwrap_or(u64::MAX)
+}
+
+/// Task adapter that publishes the goroutine's `gid` into the
+/// race-detector thread-local for the duration of each `step`,
+/// so `gossamer_runtime::race::current_gid` returns the right
+/// value when the task touches a sync primitive. Cleared after
+/// the step so the host thread's gid does not pollute work the
+/// scheduler queue runs between tasks.
+struct GidStamped<T> {
+    gid: Gid,
+    inner: T,
+}
+
+impl<T: Task> Task for GidStamped<T> {
+    fn step(&mut self) -> Step {
+        gossamer_runtime::race::set_current_gid(self.gid.as_u32());
+        let result = self.inner.step();
+        gossamer_runtime::race::set_current_gid(0);
+        result
+    }
 }
 
 #[cfg(test)]

@@ -25,7 +25,33 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     const_fold(body);
     copy_propagate(body, tcx);
     const_branch_elim(body);
-    dead_store_elim(body);
+    dead_store_elim(body, tcx);
+}
+
+/// Identifies which locals hold aggregate types
+/// (`Array` / `Tuple` / `Adt`). Aggregates have storage-identity
+/// semantics: a `&mut _X` borrow is bound to `_X`'s slot, not to
+/// the rvalue that flowed into it. Any optimisation that would
+/// alias two aggregate locals (copy propagation forwarding
+/// `_X -> _Y`, GVN/CSE folding two equal aggregate constructions
+/// into one local, DCE dropping a write that "looks dead" but
+/// whose slot a later borrow points at) must consult this map and
+/// bail on aggregate-typed locals.
+///
+/// Factored out of [`copy_propagate`] so [`dead_store_elim`] and
+/// any future GVN/CSE pass can share one source of truth — the
+/// previous one-pass-only encoding had been a copy-prop fix that
+/// the audit flagged as too narrow.
+pub(crate) fn aggregate_locals(body: &Body, tcx: &TyCtxt) -> Vec<bool> {
+    body.locals
+        .iter()
+        .map(|decl| {
+            matches!(
+                tcx.kind(decl.ty),
+                Some(TyKind::Array { .. } | TyKind::Tuple(_) | TyKind::Adt { .. })
+            )
+        })
+        .collect()
 }
 
 /// Replaces `SwitchInt` terminators whose discriminant is a known
@@ -207,16 +233,7 @@ fn fold_unary(op: crate::ir::UnOp, operand: &ConstValue) -> Option<ConstValue> {
 /// stored `a[hi]` value instead of the original `a[lo]`. We only
 /// retain bindings whose RHS is a `Const` or `Copy(simple-local)`.
 pub fn copy_propagate(body: &mut Body, tcx: &TyCtxt) {
-    let aggregate_locals: Vec<bool> = body
-        .locals
-        .iter()
-        .map(|decl| {
-            matches!(
-                tcx.kind(decl.ty),
-                Some(TyKind::Array { .. } | TyKind::Tuple(_) | TyKind::Adt { .. })
-            )
-        })
-        .collect();
+    let aggregate_locals = aggregate_locals(body, tcx);
     for block in &mut body.blocks {
         let mut bindings: HashMap<Local, Operand> = HashMap::new();
         for stmt in &mut block.stmts {
@@ -285,7 +302,13 @@ fn substitute_operand(operand: &mut Operand, bindings: &HashMap<Local, Operand>)
 /// Removes assignments whose destination local is never read again and
 /// is not observable (no projections, no exported writes). A simple
 /// forward-use count keeps it local to each block.
-pub fn dead_store_elim(body: &mut Body) {
+///
+/// Aggregate-typed locals are also exempt: even with `use_count` == 0,
+/// a later `&mut _X`-style borrow may bind to `_X`'s storage slot,
+/// and dropping the write would surface uninitialised data through
+/// the borrow. The same guard `copy_propagate` uses applies here so
+/// the two passes treat aggregate identity consistently.
+pub fn dead_store_elim(body: &mut Body, tcx: &TyCtxt) {
     // Walk the whole body once and tally cross-block reads, then drop
     // const-producing assignments whose destination local is read
     // nowhere. A per-block counter misses the common case where a
@@ -308,6 +331,7 @@ pub fn dead_store_elim(body: &mut Body) {
     // Pin its use count so dead-store-elim never drops writes into it.
     *use_count.entry(Local::RETURN).or_insert(0) += 1;
 
+    let aggregates = aggregate_locals(body, tcx);
     for block in &mut body.blocks {
         let mut retained = Vec::with_capacity(block.stmts.len());
         for stmt in std::mem::take(&mut block.stmts) {
@@ -316,7 +340,14 @@ pub fn dead_store_elim(body: &mut Body) {
                 rvalue: Rvalue::Use(Operand::Const(_)),
             } = &stmt.kind
             {
-                if place.is_simple() && use_count.get(&place.local).copied().unwrap_or(0) == 0 {
+                let dest_aggregate = aggregates
+                    .get(place.local.0 as usize)
+                    .copied()
+                    .unwrap_or(false);
+                if place.is_simple()
+                    && !dest_aggregate
+                    && use_count.get(&place.local).copied().unwrap_or(0) == 0
+                {
                     continue;
                 }
             }

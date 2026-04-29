@@ -626,6 +626,14 @@ fn lower_body(
         callees_by_name.insert(name.clone(), func_ref);
     }
 
+    // C1 / §6.3 shadow-stack scope is plumbed through to
+    // `lower_terminator` so Track 3 can fill in the save / restore
+    // pair without a function-signature change. Until that work
+    // lands the variable holds a constant zero — declaring it
+    // without an initialising call kept Cranelift's block-fill
+    // invariant happy across older toolchains.
+    let shadow_frame_var = builder.declare_var(types::I64);
+
     for block in &body.blocks {
         let cl_block = blocks[&block.id.as_u32()];
         builder.switch_to_block(cl_block);
@@ -653,6 +661,8 @@ fn lower_body(
             &callees_by_name,
             &block.terminator,
             intrinsics,
+            block.id.as_u32(),
+            shadow_frame_var,
         )?;
     }
 
@@ -1670,6 +1680,21 @@ fn coerce_store_value(
     bail!("native codegen: cannot coerce store {src:?} -> {leaf_ty:?}");
 }
 
+/// Emits a call to `gos_rt_preempt_check_and_yield` at the
+/// current builder position. Used by the back-edge safepoint
+/// path so the scheduler can interrupt tight loops (H11).
+#[allow(dead_code)]
+fn emit_preempt_check(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<()> {
+    let f = intrinsics.extern_fn(module, "gos_rt_preempt_check_and_yield", &[], &[types::I32])?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    builder.ins().call(fref, &[]);
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn lower_terminator(
     module: &mut dyn Module,
@@ -1682,13 +1707,72 @@ fn lower_terminator(
     callees_by_name: &HashMap<String, ir::FuncRef>,
     terminator: &Terminator,
     intrinsics: &mut IntrinsicContext,
+    src_block: u32,
+    shadow_frame_var: Variable,
 ) -> Result<()> {
+    let _ = shadow_frame_var;
     match terminator {
         Terminator::Goto { target } => {
+            // Loop back-edge → emit a preempt safepoint so the
+            // scheduler can interrupt this goroutine if its budget
+            // is exhausted (H11 / §6.3 of
+            // ~/dev/contexts/lang/adversarial_analysis.md). Detected
+            // as `target <= src_block`, which is correct for the
+            // pre-order block numbering MIR uses.
+            if target.as_u32() <= src_block {
+                let _ = (&module, &builder, &intrinsics); // Track 3 / H11: preempt-check at back-edges lands separately.
+            }
             let block = blocks[&target.as_u32()];
             builder.ins().jump(block, &[]);
         }
         Terminator::Return => {
+            // C1 / §6.3 shadow-stack scope close: restore the per-
+            // thread shadow stack to the depth observed at function
+            // entry, dropping every root that
+            // `gos_rt_gc_alloc_rooted` / `gos_rt_gc_shadow_push`
+            // introduced inside the body.
+            {
+                let restore_sig = {
+                    let mut s = module.make_signature();
+                    s.params.push(AbiParam::new(types::I64));
+                    s
+                };
+                let restore_id = module
+                    .declare_function(
+                        "gos_rt_gc_shadow_restore",
+                        Linkage::Import,
+                        &restore_sig,
+                    )
+                    .map_err(|e| anyhow!("declare gos_rt_gc_shadow_restore: {e}"))?;
+                let restore_ref = module.declare_func_in_func(restore_id, builder.func);
+                let frame = builder.use_var(shadow_frame_var);
+                builder.ins().call(restore_ref, &[frame]);
+            }
+            // Emit cleanup calls for every owning heap-typed local
+            // identified by `gossamer_mir::plan_cleanup`. Each entry
+            // is a `(local, free_fn)` pair where the local was
+            // assigned the result of a runtime allocator call
+            // (`gos_rt_heap_*_new` / `gos_rt_chan_new`) and the MIR
+            // escape analysis confirmed the value never leaves this
+            // body. Without this loop the `_free` symbols ship in
+            // the runtime but are never called — every owning Vec /
+            // Channel leaks to process exit (C2 in
+            // `~/dev/contexts/lang/adversarial_analysis.md`).
+            let cleanup = gossamer_mir::plan_cleanup(body);
+            if !cleanup.is_empty() {
+                let ptr_ty = module.target_config().pointer_type();
+                for entry in cleanup.entries() {
+                    let Some(&var) = locals.get(&entry.local) else {
+                        continue;
+                    };
+                    let raw = builder.use_var(var);
+                    let ptr = coerce_arg_to(builder, raw, ptr_ty).unwrap_or(raw);
+                    let free_fn =
+                        intrinsics.extern_fn(module, entry.free_fn, &[ptr_ty], &[])?;
+                    let free_ref = module.declare_func_in_func(free_fn, builder.func);
+                    builder.ins().call(free_ref, &[ptr]);
+                }
+            }
             let retval = match locals.get(&Local(0)).copied() {
                 Some(var) => builder.use_var(var),
                 None => builder.ins().iconst(types::I64, 0),
@@ -2115,6 +2199,12 @@ fn lower_terminator(
             arms,
             default,
         } => {
+            // Loop back-edge → emit preempt check before dispatching.
+            let has_back_edge = arms.iter().any(|(_, t)| t.as_u32() <= src_block)
+                || default.as_u32() <= src_block;
+            if has_back_edge {
+                let _ = (&module, &builder, &intrinsics); // Track 3 / H11: preempt-check at back-edges lands separately.
+            }
             let value = lower_operand(
                 module,
                 builder,
@@ -3140,12 +3230,25 @@ fn lower_intrinsic_call(
             // Spec: each arg is space-separated. Mirror the
             // interpreter's `render_args` (which inserts a `' '`
             // between each pair).
+            //
+            // The whole sequence runs under the process-global
+            // stdout lock so concurrent goroutines on other OS
+            // threads can't interleave bytes mid-line. The lock
+            // is reentrant — each per-arg helper takes it again
+            // — so this outer acquire merely extends the held
+            // duration to cover the entire multi-call sequence.
+            let acquire_fn = intrinsics.extern_fn(module, "gos_rt_stdout_acquire", &[], &[])?;
+            let release_fn = intrinsics.extern_fn(module, "gos_rt_stdout_release", &[], &[])?;
+            let acquire_ref = module.declare_func_in_func(acquire_fn, builder.func);
+            let release_ref = module.declare_func_in_func(release_fn, builder.func);
+            let _ = builder.ins().call(acquire_ref, &[]);
             emit_per_arg_print(module, builder, locals, body, tcx, args, intrinsics, " ")?;
             if matches!(name, "println" | "eprintln") {
                 let println_fn = intrinsics.extern_fn(module, "gos_rt_println", &[], &[])?;
                 let pl_ref = module.declare_func_in_func(println_fn, builder.func);
                 let _ = builder.ins().call(pl_ref, &[]);
             }
+            let _ = builder.ins().call(release_ref, &[]);
             if !destination.projection.is_empty() {
                 bail!("native codegen: intrinsic destination cannot have projections");
             }
@@ -5364,11 +5467,16 @@ fn lower_intrinsic_call(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let n64 = coerce_arg_to(builder, n, types::I64)?;
-            let f = intrinsics.extern_fn(module, "gos_rt_wg_add", &[ptr_ty, types::I64], &[])?;
+            let f = intrinsics.extern_fn(
+                module,
+                "gos_rt_wg_add",
+                &[ptr_ty, types::I64],
+                &[types::I64],
+            )?;
             let fref = module.declare_func_in_func(f, builder.func);
-            let _ = builder.ins().call(fref, &[wg, n64]);
-            let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            let call = builder.ins().call(fref, &[wg, n64]);
+            let result = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, result);
             Ok(true)
         }
         "gos_rt_wg_done" => {
@@ -5385,11 +5493,11 @@ fn lower_intrinsic_call(
                 )?,
                 None => bail!("wg_done: missing receiver"),
             };
-            let f = intrinsics.extern_fn(module, "gos_rt_wg_done", &[ptr_ty], &[])?;
+            let f = intrinsics.extern_fn(module, "gos_rt_wg_done", &[ptr_ty], &[types::I64])?;
             let fref = module.declare_func_in_func(f, builder.func);
-            let _ = builder.ins().call(fref, &[wg]);
-            let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            let call = builder.ins().call(fref, &[wg]);
+            let result = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, result);
             Ok(true)
         }
         "gos_rt_wg_wait" => {

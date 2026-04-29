@@ -121,6 +121,16 @@ pub struct Vm {
     /// hit this slot before the `HashMap` probe, saving ~10 ns of
     /// hash + comparison per `apply()` call.
     chunk_state_last: Cell<Option<(usize, &'static ChunkState)>>,
+    /// Monotonically-increasing version of [`Self::globals`]. Bumped
+    /// whenever the globals map is mutated (today: only inside
+    /// [`Self::load_item`] during program load; reserved for any
+    /// future op that reassigns a global). Inline-cache slots stamp
+    /// their resolved entry with the generation they observed and
+    /// re-validate on hit so a stale slot from before a reassignment
+    /// is treated as a miss instead of dispatching to the prior
+    /// target. Per-`Vm`: spawned goroutines start at 1 and climb
+    /// independently, mirroring the per-`Vm` `ChunkState` ownership.
+    globals_generation: Cell<u32>,
 }
 
 /// Per-`Vm` per-chunk dispatch caches. Pinned inside
@@ -194,11 +204,43 @@ struct JitState {
     /// Map from chunk name to the JIT entry the deferred compile
     /// produced. Populated together with `artifact`. Skips entries
     /// for `main` (see vm.rs:343 comment) and any function the
-    /// cranelift backend rejected.
+    /// cranelift backend rejected. Soft-bounded by
+    /// [`Self::insertion_order`] + [`JIT_OVERRIDE_CAP`] so a
+    /// long-running daemon that JITs new functions over time
+    /// doesn't grow this map without bound.
     overrides: HashMap<String, Arc<JitFn>>,
+    /// FIFO record of insertion order for `overrides`. On every
+    /// insert that pushes the map past [`JIT_OVERRIDE_CAP`] entries
+    /// the front name is popped and its entry dropped — releasing
+    /// the `Arc<JitFn>`. Cheaper to maintain than a true LRU
+    /// (no per-hit reordering on the dispatch hot path) and
+    /// sufficient for the long-running-daemon shape that motivates
+    /// the cap.
+    insertion_order: std::collections::VecDeque<String>,
     /// State machine for the one-shot deferred compile. Once it
     /// reaches `Done` or `Failed` no thread retries.
     compiled: JitCompileState,
+}
+
+/// Soft cap on the size of [`JitState::overrides`]. Picked an
+/// order of magnitude above any realistic single-program function
+/// count so steady-state programs never trip the eviction path
+/// while a daemon that synthesises new functions stays bounded.
+const JIT_OVERRIDE_CAP: usize = 1024;
+
+impl JitState {
+    /// Inserts a JIT entry, evicting the oldest entry when the map
+    /// is at capacity. Cheap (one `pop_front` + one `HashMap::remove`)
+    /// since eviction only fires past the cap.
+    fn insert_override(&mut self, name: String, jit: Arc<JitFn>) {
+        if self.overrides.len() >= JIT_OVERRIDE_CAP
+            && let Some(old) = self.insertion_order.pop_front()
+        {
+            self.overrides.remove(&old);
+        }
+        self.insertion_order.push_back(name.clone());
+        self.overrides.insert(name, jit);
+    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -235,7 +277,35 @@ struct FramePool {
     /// the pool when the args have been moved into the new
     /// frame's register file.
     args: Vec<Vec<Value>>,
+    /// Highest `n` requested from each `take_*` since the last
+    /// `shrink_to`. Used to drive exponential hysteresis: once
+    /// several consecutive tasks have observed `< 50%` capacity
+    /// utilisation we reclaim the excess so a single large
+    /// goroutine can't permanently fatten every subsequent task
+    /// on the same worker.
+    peak_value: usize,
+    peak_float: usize,
+    peak_int: usize,
+    /// Count of consecutive `shrink_to` calls with sub-50%
+    /// utilisation across all three kinds. Once it crosses
+    /// [`HYSTERESIS_RUNS`], the next `shrink_to` reclaims excess
+    /// per-buffer capacity to `max(peak * 2, SHRINK_FLOOR)`.
+    low_util_runs: u32,
 }
+
+/// Threshold of consecutive low-utilisation `shrink_to` calls
+/// before per-buffer capacity reclamation kicks in. Picked low
+/// enough that a worker that just handled one big task gets its
+/// buffers back to size within a few subsequent tasks, high
+/// enough that a noisy mix of small and big tasks doesn't
+/// thrash on the shrink path.
+const HYSTERESIS_RUNS: u32 = 4;
+
+/// Floor under which `shrink_to` will not reclaim a buffer's
+/// capacity. Sized so that small short-lived tasks (think a
+/// handful of arguments and a tiny number of locals) keep the
+/// re-use win without the next `take_*` having to grow.
+const SHRINK_FLOOR: usize = 16;
 
 impl FramePool {
     fn take_values(&mut self, n: usize) -> Vec<Value> {
@@ -243,6 +313,9 @@ impl FramePool {
         // `give_values` to have already cleared the buffer, so
         // the pop is constant-time. `resize` to the requested
         // length re-fills with `Value::Void`.
+        if n > self.peak_value {
+            self.peak_value = n;
+        }
         let mut v = self.values.pop().unwrap_or_default();
         v.resize(n, Value::Void);
         v
@@ -258,6 +331,9 @@ impl FramePool {
         self.values.push(v);
     }
     fn take_floats(&mut self, n: usize) -> Vec<f64> {
+        if n > self.peak_float {
+            self.peak_float = n;
+        }
         let mut v = self.floats.pop().unwrap_or_default();
         v.reserve(n);
         // SAFETY: `f64` is `Copy` with no `Drop`. We ensured
@@ -283,6 +359,9 @@ impl FramePool {
         self.floats.push(v);
     }
     fn take_ints(&mut self, n: usize) -> Vec<i64> {
+        if n > self.peak_int {
+            self.peak_int = n;
+        }
         let mut v = self.ints.pop().unwrap_or_default();
         v.reserve(n);
         // SAFETY: see `take_floats`. `i64` is `Copy` with no
@@ -318,6 +397,15 @@ impl FramePool {
     /// excess to release backing capacity. Called after each
     /// goroutine task completes so a worker `Vm` does not ratchet
     /// to high-water and stay there for the rest of the program.
+    ///
+    /// Also applies exponential hysteresis on each surviving
+    /// buffer's capacity: when several consecutive tasks have run
+    /// with sub-50% utilisation across every kind, surviving
+    /// buffers are shrunk to `max(peak * 2, SHRINK_FLOOR)`. Without
+    /// this, one large goroutine permanently fattens every
+    /// subsequent task on this worker — the per-buffer capacity
+    /// stays at the high-water mark even though the task that
+    /// needed it has long since returned.
     fn shrink_to(&mut self, keep_per_kind: usize) {
         if self.values.len() > keep_per_kind {
             self.values.truncate(keep_per_kind);
@@ -331,6 +419,43 @@ impl FramePool {
         if self.args.len() > keep_per_kind {
             self.args.truncate(keep_per_kind);
         }
+
+        let cap_v = self.values.iter().map(Vec::capacity).max().unwrap_or(0);
+        let cap_f = self.floats.iter().map(Vec::capacity).max().unwrap_or(0);
+        let cap_i = self.ints.iter().map(Vec::capacity).max().unwrap_or(0);
+        let low_util = self.peak_value.saturating_mul(2) < cap_v
+            && self.peak_float.saturating_mul(2) < cap_f
+            && self.peak_int.saturating_mul(2) < cap_i;
+        if low_util {
+            self.low_util_runs = self.low_util_runs.saturating_add(1);
+        } else {
+            self.low_util_runs = 0;
+        }
+        if self.low_util_runs >= HYSTERESIS_RUNS {
+            let target_v = self.peak_value.saturating_mul(2).max(SHRINK_FLOOR);
+            let target_f = self.peak_float.saturating_mul(2).max(SHRINK_FLOOR);
+            let target_i = self.peak_int.saturating_mul(2).max(SHRINK_FLOOR);
+            for buf in &mut self.values {
+                if buf.capacity() > target_v {
+                    buf.shrink_to(target_v);
+                }
+            }
+            for buf in &mut self.floats {
+                if buf.capacity() > target_f {
+                    buf.shrink_to(target_f);
+                }
+            }
+            for buf in &mut self.ints {
+                if buf.capacity() > target_i {
+                    buf.shrink_to(target_i);
+                }
+            }
+            self.low_util_runs = 0;
+        }
+        self.peak_value = 0;
+        self.peak_float = 0;
+        self.peak_int = 0;
+
         // Free the trailing capacity that pop()/push() rounds up
         // over time so `Vec` headers do not pin allocations
         // larger than the steady-state high-water mark.
@@ -423,6 +548,7 @@ impl Vm {
             chunk_state_arena: RefCell::new(Vec::new()),
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
+            globals_generation: Cell::new(1),
         };
         let mut list = Vec::new();
         builtins::install(&mut list);
@@ -456,7 +582,42 @@ impl Vm {
             chunk_state_arena: RefCell::new(Vec::new()),
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
+            globals_generation: Cell::new(1),
         }
+    }
+
+    /// Bumps the [`Self::globals_generation`] counter and returns
+    /// the new value. Call from any code path that mutates
+    /// [`Self::globals`] after `Vm::new` / `Vm::with_globals` have
+    /// returned. Inline caches stamped with an older value will be
+    /// treated as misses and re-resolved against the new map.
+    pub fn bump_globals_generation(&self) -> u32 {
+        let next = self.globals_generation.get().wrapping_add(1);
+        // Skip 0 on wrap so the empty-slot sentinel stays distinct
+        // from a real generation. Wrapping after 4 billion mutations
+        // is purely defensive — we never expect to get there in a
+        // single program run.
+        let next = if next == 0 { 1 } else { next };
+        self.globals_generation.set(next);
+        next
+    }
+
+    /// Snapshot of the current globals generation. IC slot writers
+    /// stamp the value they observed; readers re-validate against
+    /// the live counter.
+    #[inline]
+    #[must_use]
+    pub fn globals_generation(&self) -> u32 {
+        self.globals_generation.get()
+    }
+
+    /// Test-only override that lets the test suite drive the
+    /// generation counter to a specific value (e.g. `u32::MAX` to
+    /// force the wrap-skips-zero path). Production code never needs
+    /// this — it always uses [`Self::bump_globals_generation`].
+    #[doc(hidden)]
+    pub fn set_globals_generation_for_test(&self, value: u32) {
+        self.globals_generation.set(value);
     }
 
     /// Trims per-`Vm` mutable buffers back toward a steady-state
@@ -662,7 +823,7 @@ impl Vm {
             // override references on shutdown.
             #[allow(clippy::arc_with_non_send_sync)]
             let jit_arc = Arc::new(jit_fn.clone());
-            state.overrides.insert(name.clone(), jit_arc);
+            state.insert_override(name.clone(), jit_arc);
         }
         self.jit_override_count
             .store(state.overrides.len(), Ordering::Release);
@@ -677,6 +838,14 @@ impl Vm {
         wrappers: &HashMap<String, Vec<String>>,
         module_consts: &HashMap<String, Value>,
     ) -> RuntimeResult<()> {
+        // Loading an item mutates the globals map. Bump the
+        // generation so any IC slots already populated against an
+        // earlier snapshot of `globals` re-validate. Today every
+        // `load_item` call happens before the dispatch loop runs
+        // for the current chunk, but the bump is correctness-by-
+        // construction: any future op that calls `load_item` mid-
+        // run still gets a valid invalidation signal.
+        self.bump_globals_generation();
         let globals = Arc::make_mut(&mut self.globals);
         match &item.kind {
             HirItemKind::Fn(decl) => {
@@ -1101,10 +1270,11 @@ impl Vm {
                     // probe — typically the dominant cost in tight
                     // loops calling small helper functions.
                     let token = call_token(callee_val);
+                    let live_generation = self.globals_generation();
                     let cached: Option<Global> = if token != 0 {
                         let cache = state.call_caches.borrow_mut();
                         let slot = &cache[cache_idx as usize];
-                        if slot.type_token == token {
+                        if slot.type_token == token && slot.generation == live_generation {
                             // Same two-tier shape as MethodCall: fast
                             // builtin-fn-ptr first, then resolved chunk.
                             if let Some(call_fn) = slot.builtin_fn {
@@ -1128,7 +1298,8 @@ impl Vm {
                         };
                         if let Some(ref g) = resolved_global {
                             let mut cache = state.call_caches.borrow_mut();
-                            cache[cache_idx as usize] = fill_cache_slot(token, g);
+                            cache[cache_idx as usize] =
+                                fill_cache_slot(token, live_generation, g);
                         }
                         match resolved_global {
                             Some(g) => self.apply(g, arg_values)?,
@@ -1163,6 +1334,7 @@ impl Vm {
                     let argc_usz = argc as usize;
                     let total = argc_usz + 1;
                     let recv_token = type_token(&registers[receiver as usize]);
+                    let live_generation = self.globals_generation();
                     // Two-tier IC probe. The hottest hit is the
                     // builtin fn-pointer fast path: the slot's
                     // `builtin_fn` is the resolved
@@ -1175,7 +1347,9 @@ impl Vm {
                         if recv_token != 0 {
                             let cache = state.call_caches.borrow_mut();
                             let slot = &cache[cache_idx as usize];
-                            if slot.type_token == recv_token {
+                            if slot.type_token == recv_token
+                                && slot.generation == live_generation
+                            {
                                 let general =
                                     slot.fn_chunk.as_ref().map(|c| Global::Fn(Arc::clone(c)));
                                 (slot.builtin_fn, general)
@@ -1222,7 +1396,8 @@ impl Vm {
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
-                                    cache[cache_idx as usize] = fill_cache_slot(recv_token, g);
+                                    cache[cache_idx as usize] =
+                                        fill_cache_slot(recv_token, live_generation, g);
                                 }
                             }
                             match r {
@@ -1256,7 +1431,8 @@ impl Vm {
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
-                                    cache[cache_idx as usize] = fill_cache_slot(recv_token, g);
+                                    cache[cache_idx as usize] =
+                                        fill_cache_slot(recv_token, live_generation, g);
                                 }
                             }
                             match r {
@@ -2524,6 +2700,15 @@ impl Vm {
                         pc = target;
                     }
                 },
+                Op::BranchIfGtI64 {
+                    lhs_i,
+                    rhs_i,
+                    target,
+                } => unsafe {
+                    if *ints.get_unchecked(lhs_i as usize) > *ints.get_unchecked(rhs_i as usize) {
+                        pc = target;
+                    }
+                },
                 Op::BranchIfLtF64 {
                     lhs_f,
                     rhs_f,
@@ -2878,6 +3063,36 @@ impl Vm {
                         .collect();
                     self.spawn_goroutine_native(callee_val, arg_values);
                 }
+                Op::SpawnMethod {
+                    receiver,
+                    name_idx,
+                    args,
+                    argc,
+                } => {
+                    let recv = registers[receiver as usize].clone();
+                    let name = chunk.globals[name_idx as usize].as_str();
+                    // Resolve method dispatch the same way `Op::MethodCall`
+                    // does (qualified key first, bare name fallback). The
+                    // resolved global is what the spawned goroutine
+                    // applies; the receiver is prepended to the arg
+                    // vector so the callee sees `[receiver, a0, a1, …]`.
+                    let resolved = qualified_key(&recv, name)
+                        .and_then(|qual| self.globals.get(qual).cloned())
+                        .or_else(|| self.globals.get(name).cloned());
+                    let mut arg_values: Vec<Value> = Vec::with_capacity(argc as usize + 1);
+                    arg_values.push(recv);
+                    for i in 0..argc as usize {
+                        arg_values.push(registers[args as usize + i].clone());
+                    }
+                    let callee_val = match resolved {
+                        Some(Global::Value(v)) => v,
+                        Some(Global::Fn(_)) => Value::String(SmolStr::from(name.to_string())),
+                        None => {
+                            return Err(RuntimeError::UnresolvedName(name.to_string()));
+                        }
+                    };
+                    self.spawn_goroutine_native(callee_val, arg_values);
+                }
             }
         }
     }
@@ -3128,7 +3343,7 @@ pub(crate) fn type_token(v: &Value) -> u64 {
 /// { call, .. })`. Mirrors `CPython` 3.11's specialisation of
 /// `LOAD_METHOD_NO_DICT` (where the resolved `__call__` is cached
 /// alongside the type-version guard).
-fn fill_cache_slot(token: u64, g: &Global) -> crate::bytecode::CacheSlot {
+fn fill_cache_slot(token: u64, generation: u32, g: &Global) -> crate::bytecode::CacheSlot {
     let builtin_fn = match g {
         Global::Value(Value::Builtin(inner)) => Some(inner.call),
         _ => None,
@@ -3139,6 +3354,7 @@ fn fill_cache_slot(token: u64, g: &Global) -> crate::bytecode::CacheSlot {
     };
     crate::bytecode::CacheSlot {
         type_token: token,
+        generation,
         builtin_fn,
         fn_chunk,
     }
