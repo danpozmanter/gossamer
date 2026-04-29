@@ -1261,6 +1261,7 @@ name = "gossamer-lex"
 version = "0.0.0"
 dependencies = [
  "insta",
+ "parking_lot",
  "serde",
  "thiserror 2.0.18",
 ]
