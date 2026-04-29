@@ -252,7 +252,14 @@ fn render_module_inner(
     if want_dwarf() {
         emit_dwarf_metadata(&mut out, bodies);
     }
-    let out = out.replace("@\"main\"", "@\"gos_main\"");
+    // The previous implementation emitted `@"main"` and then ran
+    // `out.replace("@\"main\"", "@\"gos_main\"")` here. That cloned
+    // the entire IR string into a second buffer — on a 50k-LOC
+    // program with ~50 MB of IR text, peak heap doubled to ~100 MB
+    // for one tick. Both `lower::Lowerer::define_open` and the
+    // `body_decl` declarer now route the function name through
+    // `mangle_fn_name`, so the IR is emitted with `@"gos_main"`
+    // already in place and no second pass is needed.
     Ok((out, fallback_bodies))
 }
 
@@ -398,7 +405,10 @@ fn extern_declare(body: &Body, tcx: &TyCtxt) -> String {
         let p_ty = crate::ty::render_ty(tcx, body.local_ty(local));
         let _ = write!(params, "{p_ty}");
     }
-    format!("declare {ret_ty} @\"{name}\"({params})\n", name = body.name)
+    format!(
+        "declare {ret_ty} @\"{name}\"({params})\n",
+        name = crate::lower::mangle_fn_name(&body.name)
+    )
 }
 
 fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {

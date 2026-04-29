@@ -184,7 +184,7 @@ impl<'a> Lowerer<'a> {
         writeln!(
             self.out,
             "define {ret_ty} @\"{name}\"({params}) {{",
-            name = escape_ident(&self.body.name),
+            name = escape_ident(mangle_fn_name(&self.body.name)),
             ret_ty = ret_ty,
             params = params,
         )
@@ -3083,6 +3083,20 @@ fn float_cmp_pred(op: BinOp) -> &'static str {
 /// inside quotes.
 fn escape_ident(name: &str) -> String {
     name.replace('"', "\\\"")
+}
+
+/// Returns the LLVM-side function symbol for a Gossamer function
+/// name. The user's `main` becomes `gos_main` so the C runtime can
+/// own the real `main` (it sets up argv, calls into `gos_main`,
+/// then forwards the i64 return through `gos_rt_main_exit_code`).
+/// Every other name passes through unchanged.
+///
+/// Centralising this here lets both the `define` line in `lower`
+/// and the declaration emitter in `emit` agree without a post-hoc
+/// `out.replace("@\"main\"", ...)` pass that doubled the IR
+/// string's peak heap on big programs.
+pub(crate) fn mangle_fn_name(name: &str) -> &str {
+    if name == "main" { "gos_main" } else { name }
 }
 
 /// Maps user-level math path names onto the LLVM intrinsic
