@@ -4,7 +4,7 @@
  * Gossamer's built-in aggregates are:
  *
  *     [T]              — growable array / vector literal
- *     (A, B, …)         — tuple
+ *     (A, B, …)        — tuple
  *     struct Foo { … } — record
  *     enum E { … }     — sum type
  *
@@ -20,22 +20,31 @@ fn main() {
     println!("primes: {} entries, first={}, last={}",
              primes.len(), primes[0], primes[primes.len() - 1])
 
-    // --- map (hash) ---
+    // --- map (hash) — `if let` reads the natural way ---
     let mut scores: HashMap<String, i64> = HashMap::new()
     scores.insert("alice", 95)
     scores.insert("bob", 87)
-    match scores.get(&"alice") {
-        Some(n) => println!("alice -> {n}"),
-        None => println!("alice missing"),
+    if let Some(n) = scores.get(&"alice") {
+        println!("alice -> {n}")
+    } else {
+        println!("alice missing")
     }
 
-    // --- map (sorted) — when you need stable iteration order ---
+    // --- counter idiom — `inc` halves the lock + hash work ---
+    let mut tally: HashMap<String, i64> = HashMap::new()
+    tally.inc("apple")
+    tally.inc("apple", 4)
+    tally.inc("banana")
+    println!("apple = {}, banana = {}",
+             tally.get_or("apple", 0), tally.get_or("banana", 0))
+
+    // --- map (sorted) — destructured iteration ---
     let mut ranked: BTreeMap<String, i64> = BTreeMap::new()
     ranked.insert("c", 3)
     ranked.insert("a", 1)
     ranked.insert("b", 2)
-    for pair in ranked.iter() {
-        println!("  {} = {}", pair.0, pair.1)
+    for (key, value) in ranked.iter() {
+        println!("  {} = {}", key, value)
     }
 
     // --- set ---
@@ -45,7 +54,9 @@ fn main() {
     seen.insert("alpha")
     println!("unique tags: {}", seen.len())
 
-    // --- tuple + struct ---
-    let origin: (f64, f64) = (0.0, 0.0)
-    println!("origin = ({}, {})", origin.0, origin.1)
+    // --- tuple destructuring at the call site ---
+    let (x, y) = origin()
+    println!("origin = ({}, {})", x, y)
 }
+
+fn origin() -> (f64, f64) { (0.0, 0.0) }

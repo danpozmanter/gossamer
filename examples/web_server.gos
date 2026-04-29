@@ -1,57 +1,81 @@
 /*
- * Echo HTTP server — idiomatic Gossamer.
+ * Web server with method + path routing.
  *
- * Approximately equivalent to the FastAPI pattern
+ * Each endpoint is its own free function — none of the handlers
+ * are inline lambdas. The dispatch lives in `App::serve`, which
+ * matches on `(method, path)` and forwards to the appropriate
+ * handler. This is the shape Go's `http.ServeMux` produces:
+ * registration is declarative, every handler does one job.
  *
- *     @app.api_route("/echo", methods=["GET","POST","PUT","DELETE","PATCH"])
- *     async def echo(request):
- *         return {
- *             "method": request.method,
- *             "path":   request.path,
- *             "query":  request.query,
- *             "body":   request.body,
- *         }
+ * For richer apps, lift the dispatch into a reusable `Router`
+ * (see SKILL.md §14 for the pattern). The free-function-per-
+ * route layout in this file scales fine to a few dozen routes
+ * and is the easiest shape to read at a glance.
  *
- * Accepts any HTTP method and echoes the request metadata back
- * as JSON. `/health` is a 200 liveness probe; every other path
- * is a 404.
- *
- * Uses compile-time-expanded `format!` / `println!` macros.
- * These are the *only* macros Gossamer exposes — six
- * format-shaped entries (`format!`, `println!`, `print!`,
- * `eprintln!`, `eprint!`, `panic!`) that expand at parse time
- * to a single call on the internal `__concat` builtin. No
- * general macro system; no user-defined macros; no runtime
- * engine.
+ * Run:
+ *     gos run examples/web_server.gos
+ *     curl -i http://localhost:8080/
+ *     curl -i http://localhost:8080/health
+ *     curl -i http://localhost:8080/users
+ *     curl -i -X POST http://localhost:8080/users -d '{"name":"jane"}'
+ *     curl -i 'http://localhost:8080/echo?msg=hi'
  */
 
 use std::http
 
-struct Echo { }
+// --- Handlers — each is a one-job function ---
 
-impl http::Handler for Echo {
-    fn serve(&self, request: http::Request) -> Result<http::Response, http::Error> {
-        match request.path() {
-            "/health" => Ok(http::Response::text(200, "ok")),
-            "/echo" => Ok(http::Response::json(200, render_echo(&request))),
-            _ => Ok(http::Response::text(404, "not found")),
-        }
-    }
+fn index(_request: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::text(200, "Gossamer web server. Try /health, /users, /echo"))
 }
 
-// One `format!` call = one allocation inside `__concat`. Each
-// placeholder captures the enclosing-scope binding by name.
-fn render_echo(request: &http::Request) -> String {
+fn health(_request: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::text(200, "ok"))
+}
+
+fn list_users(_request: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::json(200, "[{\"id\":1,\"name\":\"ada\"},{\"id\":2,\"name\":\"grace\"}]"))
+}
+
+fn create_user(request: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::json(201, format!("{{\"created\":true,\"body\":\"{}\"}}", request.body)))
+}
+
+// Echoes the full request shape back as JSON. The integration
+// test (crates/gossamer-cli/tests/cli.rs) hits this endpoint.
+fn echo(request: http::Request) -> Result<http::Response, http::Error> {
     let method = &request.method
     let path = &request.path
     let query = &request.query
     let body = &request.body
-    format!("{{\"method\":\"{method}\",\"path\":\"{path}\",\"query\":\"{query}\",\"body\":\"{body}\"}}")
+    Ok(http::Response::json(200,
+        format!("{{\"method\":\"{method}\",\"path\":\"{path}\",\"query\":\"{query}\",\"body\":\"{body}\"}}")))
+}
+
+fn not_found(request: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::text(404, format!("not found: {} {}", request.method, request.path)))
+}
+
+// --- Dispatch ---
+
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&self, request: http::Request) -> Result<http::Response, http::Error> {
+        let method = &request.method
+        let path = request.path()
+        if path == "/" { return index(request) }
+        if path == "/health" { return health(request) }
+        if path == "/users" {
+            if method == "POST" { return create_user(request) }
+            return list_users(request)
+        }
+        if path == "/echo" || path.starts_with("/echo") { return echo(request) }
+        not_found(request)
+    }
 }
 
 fn main() -> Result<(), http::Error> {
-    let app = Echo { }
     println!("listening on 0.0.0.0:8080")
-    println!("try: curl 'http://localhost:8080/echo?name=jane'")
-    http::serve("0.0.0.0:8080", app)
+    http::serve("0.0.0.0:8080", App { })
 }

@@ -1,0 +1,50 @@
+# --- Gossamer build artifacts ---
+
+# `gos build` writes here (debug + release binaries, intermediate
+# object files, the cached static-link runtime archive).
+target/
+
+# `gos add` / `gos vendor` materialises dependency sources here.
+# Vendoring is opt-in for reproducibility; uncomment if you DO
+# want it under version control.
+vendor/
+
+# Per-run JIT / scheduler / GC traces (`GOS_VM_TRACE=1`,
+# `GOS_JIT_TRACE=1`, `GOS_SCHED_TRACE=1` …).
+*.trace
+*.pprof
+
+# `gos test --json` / coverage drops.
+coverage/
+*.profraw
+*.profdata
+
+# --- Editor / OS noise ---
+
+# IDE state.
+.vscode/
+.idea/
+*.iml
+
+# Backup + swap files.
+*.bak
+*.orig
+*~
+*.swp
+*.swo
+
+# macOS / Windows junk.
+.DS_Store
+Thumbs.db
+
+# --- Local-only configuration ---
+
+# `gos run` ad-hoc env files. Keep `.env.example` checked in,
+# ignore the live secret-bearing copy.
+.env
+.env.local
+
+# --- Notes ---
+#
+# Do NOT ignore `project.toml` or `project.lock` — both are
+# part of the reproducible build surface.

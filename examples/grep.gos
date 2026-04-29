@@ -53,10 +53,10 @@ fn scan<R: io::Read>(
     let mut line_no: u64 = 0
     let mut hits: u64 = 0
     while scanner.scan() {
-        line_no = line_no + 1
+        line_no += 1
         let text = scanner.text()
         if text.contains(&opts.pattern) {
-            hits = hits + 1
+            hits += 1
             if !opts.count_only {
                 if opts.line_numbers {
                     println!("{source}:{line_no}:{text}")
@@ -76,11 +76,11 @@ fn main() -> Result<(), errors::Error> {
     let opts = parse_opts()?
     let mut matched: u64 = 0
     if opts.files.is_empty() {
-        matched = matched + scan(&"<stdin>", os::stdin(), &opts)?
+        matched += scan(&"<stdin>", os::stdin(), &opts)?
     } else {
         for path in opts.files.iter() {
             let file = fs::open(path).map_err(|e| errors::wrap(e, format!("open {path}")))?
-            matched = matched + scan(path, file, &opts)?
+            matched += scan(path, file, &opts)?
         }
     }
     if matched == 0 {

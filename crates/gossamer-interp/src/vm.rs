@@ -3705,9 +3705,10 @@ fn compare(
 /// so a program whose only function is `main` never benefits from
 /// the cranelift compile).
 fn has_jit_eligible_fn(program: &HirProgram) -> bool {
-    program.items.iter().any(|item| {
-        matches!(&item.kind, HirItemKind::Fn(decl) if decl.name.name != "main")
-    })
+    program
+        .items
+        .iter()
+        .any(|item| matches!(&item.kind, HirItemKind::Fn(decl) if decl.name.name != "main"))
 }
 
 fn truthy(v: &Value) -> RuntimeResult<bool> {

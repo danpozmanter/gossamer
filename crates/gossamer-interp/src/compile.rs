@@ -2858,6 +2858,49 @@ impl<'tcx> FnBuilder<'tcx> {
             });
             return Ok(dst);
         }
+        // `arr.swap(i, j)` super-instruction. The generic
+        // `MethodCall` dispatch routes through the `swap` builtin
+        // which returns a fresh aggregate, then the writeback `Op::Move`
+        // copies it back into the receiver's slot. That works under
+        // pure bytecode but the cranelift JIT lowers MIR for the
+        // function body and has no intrinsic for the writeback —
+        // the JIT silently drops the mutation, leaving callers
+        // looping on stale data. Inlining the swap as
+        // `t = recv[i]; recv[i] = recv[j]; recv[j] = t` keeps the
+        // semantics identical between bytecode and JIT and turns a
+        // value-clone-per-swap into two index reads + two index
+        // writes (in place).
+        if name.name == "swap" && args.len() == 2 {
+            let recv_reg = self.compile_expr(receiver)?;
+            let i_reg = self.compile_expr(&args[0])?;
+            let j_reg = self.compile_expr(&args[1])?;
+            let temp_i = self.alloc_reg();
+            self.emit(Op::IndexGet {
+                dst: temp_i,
+                base: recv_reg,
+                index: i_reg,
+            });
+            let temp_j = self.alloc_reg();
+            self.emit(Op::IndexGet {
+                dst: temp_j,
+                base: recv_reg,
+                index: j_reg,
+            });
+            self.emit(Op::IndexSet {
+                base: recv_reg,
+                index: i_reg,
+                value: temp_j,
+            });
+            self.emit(Op::IndexSet {
+                base: recv_reg,
+                index: j_reg,
+                value: temp_i,
+            });
+            let dst = self.alloc_reg();
+            let unit_idx = self.const_idx(ConstKey::Unit, Value::Unit);
+            self.emit(Op::LoadConst { dst, idx: unit_idx });
+            return Ok(dst);
+        }
         // Typed-IntMap method dispatch fast paths. Skip the
         // generic builtin-IC route for the handful of HashMap
         // methods that hot counter loops drive.
@@ -2999,6 +3042,8 @@ impl<'tcx> FnBuilder<'tcx> {
                 | "append"
                 | "truncate"
                 | "sort"
+                | "sort_by"
+                | "sort_by_key"
                 | "reverse"
                 | "retain"
                 | "drain"

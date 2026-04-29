@@ -23,11 +23,11 @@ fn analyse(text: &String) -> Stats {
     let mut in_token = false
     for byte in text.as_bytes().iter() {
         let b = *byte as i64
-        chars = chars + 1
+        chars += 1
         if is_space(b) {
             in_token = false
         } else if !in_token {
-            words = words + 1
+            words += 1
             in_token = true
         }
     }
@@ -42,8 +42,8 @@ fn main() {
         "one\ttwo\nthree four",
         "",
     ]
-    for s in inputs.iter() {
-        let stats = analyse(s)
-        println!("chars={}, words={}: {}", stats.chars, stats.words, *s)
+    for s in inputs {
+        let stats = analyse(&s)
+        println!("chars={}, words={}: {}", stats.chars, stats.words, s)
     }
 }

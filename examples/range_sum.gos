@@ -8,24 +8,18 @@
 
 fn sum(xs: &[i64]) -> i64 {
     let mut acc: i64 = 0
-    for n in xs.iter() {
-        acc = acc + *n
-    }
+    for n in xs.iter() { acc += *n }
     acc
 }
 
 fn product(xs: &[i64]) -> i64 {
     let mut acc: i64 = 1
-    for n in xs.iter() {
-        acc = acc * *n
-    }
+    for n in xs.iter() { acc *= *n }
     acc
 }
 
 fn maximum(xs: &[i64]) -> Option<i64> {
-    if xs.len() == 0 {
-        return None
-    }
+    if xs.len() == 0 { return None }
     let mut best = xs[0]
     for n in xs.iter() {
         if *n > best { best = *n }
@@ -38,14 +32,12 @@ fn main() {
     println!("sum     = {}", sum(&xs))
     println!("product = {}", product(&xs))
 
-    match maximum(&xs) {
-        Some(v) => println!("maximum = {}", v),
-        None    => println!("maximum: undefined for empty input"),
-    }
+    if let Some(v) = maximum(&xs) { println!("maximum = {}", v) }
 
     let empty: [i64] = []
-    match maximum(&empty) {
-        Some(v) => println!("maximum of empty = {}", v),
-        None    => println!("maximum of empty: undefined (None)"),
+    if let Some(v) = maximum(&empty) {
+        println!("maximum of empty = {}", v)
+    } else {
+        println!("maximum of empty: undefined (None)")
     }
 }

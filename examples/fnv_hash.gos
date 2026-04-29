@@ -16,21 +16,18 @@ const FNV_PRIME:  i64 = 1099511628211           // 0x100000001b3
 fn fnv1a(bytes: &[u8]) -> i64 {
     let mut h: i64 = FNV_OFFSET
     for byte in bytes.iter() {
-        h = h ^ (*byte as i64)
+        h ^= *byte as i64
         // Multiply mod 2^64 — wrapping is the spec; we let Gossamer's
         // i64 arithmetic wrap and take the low bits.
-        h = h * FNV_PRIME
+        h *= FNV_PRIME
     }
     h
 }
 
 fn main() {
-    let inputs = ["", "a", "abc", "the quick brown fox", "the quick brown box"]
-
-    for s in inputs.iter() {
-        let bytes = s.as_bytes()
-        let h = fnv1a(&bytes)
-        println!("fnv1a({}) = {}", *s, h)
+    for s in ["", "a", "abc", "the quick brown fox", "the quick brown box"] {
+        let h = fnv1a(&s.as_bytes())
+        println!("fnv1a({}) = {}", s, h)
     }
 
     // Determinism: same input twice yields the same hash.

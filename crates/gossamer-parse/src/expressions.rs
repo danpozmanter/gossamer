@@ -5,8 +5,8 @@
 
 use gossamer_ast::{
     ArrayExpr, AssignOp, BinaryOp, Block, ClosureParam, Expr, ExprKind, FieldSelector, Ident,
-    Label, Literal, MacroCall, MacroDelim, PathExpr, PathSegment, RangeKind, StructExprField,
-    UnaryOp,
+    Label, Literal, MacroCall, MacroDelim, MatchArm, PathExpr, PathSegment, Pattern, PatternKind,
+    RangeKind, StructExprField, UnaryOp,
 };
 use gossamer_lex::{Keyword, Punct, Span, TokenKind};
 
@@ -590,6 +590,9 @@ impl Parser<'_> {
 
     fn parse_if_expr(&mut self) -> ExprKind {
         self.bump();
+        if self.at_keyword(Keyword::Let) {
+            return self.parse_if_let_expr();
+        }
         self.enter_no_struct();
         let condition = self.parse_expr_no_assign();
         self.leave_no_struct();
@@ -621,6 +624,58 @@ impl Parser<'_> {
             condition: Box::new(condition),
             then_branch: Box::new(then_expr),
             else_branch,
+        }
+    }
+
+    /// Parses `if let PAT = SCRUTINEE { THEN } else? { ELSE? }` and lowers
+    /// to a `match` expression. Called after the leading `if` is consumed
+    /// and `let` is the next token.
+    fn parse_if_let_expr(&mut self) -> ExprKind {
+        self.bump();
+        let pattern = self.parse_pattern();
+        self.expect_punct(Punct::Eq, "after `if let` pattern");
+        self.enter_no_struct();
+        let scrutinee = self.parse_expr_no_assign();
+        self.leave_no_struct();
+        self.expect_punct(Punct::LBrace, "to open `if let` branch");
+        let then_start = self.last_span();
+        let then_block = self.parse_block_body();
+        let then_span = self.join(then_start, self.last_span());
+        let then_expr = Expr::new(self.alloc_id(), then_span, ExprKind::Block(then_block));
+        let else_expr = if self.eat_keyword(Keyword::Else) {
+            if self.at_keyword(Keyword::If) {
+                let start = self.peek_span();
+                let kind = self.parse_if_expr();
+                let end = self.last_span();
+                let span = self.join(start, end);
+                Expr::new(self.alloc_id(), span, kind)
+            } else {
+                self.expect_punct(Punct::LBrace, "to open `else` branch");
+                let start = self.last_span();
+                let block = self.parse_block_body();
+                let span = self.join(start, self.last_span());
+                Expr::new(self.alloc_id(), span, ExprKind::Block(block))
+            }
+        } else {
+            let span = self.last_span();
+            Expr::new(self.alloc_id(), span, ExprKind::Block(Block::empty()))
+        };
+        let wildcard_span = else_expr.span;
+        let wildcard = Pattern::new(self.alloc_id(), wildcard_span, PatternKind::Wildcard);
+        ExprKind::Match {
+            scrutinee: Box::new(scrutinee),
+            arms: vec![
+                MatchArm {
+                    pattern,
+                    guard: None,
+                    body: then_expr,
+                },
+                MatchArm {
+                    pattern: wildcard,
+                    guard: None,
+                    body: else_expr,
+                },
+            ],
         }
     }
 
@@ -673,6 +728,9 @@ impl Parser<'_> {
 
     fn parse_while_expr(&mut self, label: Option<Label>) -> ExprKind {
         self.bump();
+        if self.at_keyword(Keyword::Let) {
+            return self.parse_while_let_expr(label);
+        }
         self.enter_no_struct();
         let condition = self.parse_expr_no_assign();
         self.leave_no_struct();
@@ -685,6 +743,61 @@ impl Parser<'_> {
             label,
             condition: Box::new(condition),
             body: Box::new(body_expr),
+        }
+    }
+
+    /// Parses `while let PAT = SCRUTINEE { BODY }` and lowers to
+    /// `loop { match SCRUTINEE { PAT => BODY, _ => break } }`.
+    /// Called after the leading `while` is consumed and `let` is next.
+    fn parse_while_let_expr(&mut self, label: Option<Label>) -> ExprKind {
+        self.bump();
+        let pattern = self.parse_pattern();
+        self.expect_punct(Punct::Eq, "after `while let` pattern");
+        self.enter_no_struct();
+        let scrutinee = self.parse_expr_no_assign();
+        self.leave_no_struct();
+        self.expect_punct(Punct::LBrace, "to open `while let` body");
+        let body_start = self.last_span();
+        let body_block = self.parse_block_body();
+        let body_span = self.join(body_start, self.last_span());
+        let body_expr = Expr::new(self.alloc_id(), body_span, ExprKind::Block(body_block));
+        let break_span = body_span;
+        let break_expr = Expr::new(
+            self.alloc_id(),
+            break_span,
+            ExprKind::Break {
+                label: None,
+                value: None,
+            },
+        );
+        let wildcard = Pattern::new(self.alloc_id(), break_span, PatternKind::Wildcard);
+        let match_expr = Expr::new(
+            self.alloc_id(),
+            body_span,
+            ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms: vec![
+                    MatchArm {
+                        pattern,
+                        guard: None,
+                        body: body_expr,
+                    },
+                    MatchArm {
+                        pattern: wildcard,
+                        guard: None,
+                        body: break_expr,
+                    },
+                ],
+            },
+        );
+        let loop_body_block = Block {
+            stmts: Vec::new(),
+            tail: Some(Box::new(match_expr)),
+        };
+        let loop_body = Expr::new(self.alloc_id(), body_span, ExprKind::Block(loop_body_block));
+        ExprKind::Loop {
+            label,
+            body: Box::new(loop_body),
         }
     }
 

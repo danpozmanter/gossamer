@@ -38,11 +38,10 @@ fn lcm(a: i64, b: i64) -> i64 {
 }
 
 fn main() {
-    let pairs = [(12, 18), (100, 75), (17, 13), (0, 7), (1071, 462)]
-    for pair in pairs.iter() {
-        let g = gcd_recursive(pair.0, pair.1)
-        let l = lcm(pair.0, pair.1)
-        println!("gcd({}, {}) = {}, lcm = {}", pair.0, pair.1, g, l)
+    for (a, b) in [(12, 18), (100, 75), (17, 13), (0, 7), (1071, 462)].iter() {
+        let g = gcd_recursive(a, b)
+        let l = lcm(a, b)
+        println!("gcd({}, {}) = {}, lcm = {}", a, b, g, l)
     }
 
     // Sanity: iterative and recursive should agree everywhere.

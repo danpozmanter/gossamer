@@ -15,6 +15,15 @@ fn compiled_vec_alloc_and_drop_stays_under_rss_cap() {
         eprintln!("skipping: /usr/bin/time not available on this host");
         return;
     }
+    let probe = Command::new("/usr/bin/time").arg("-v").arg("true").output();
+    let is_gnu_time = probe.as_ref().is_ok_and(|o| {
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        stderr.contains("Maximum resident set size")
+    });
+    if !is_gnu_time {
+        eprintln!("skipping: /usr/bin/time does not support GNU -v on this host");
+        return;
+    }
     let dir = env::temp_dir().join(format!("gos-mem-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let source = dir.join("mem.gos");

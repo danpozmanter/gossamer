@@ -11,11 +11,7 @@ fn sorted_ascending(xs: &[i64]) -> [i64] {
     let n = out.len()
     for i in 0..n {
         for j in 0..n - i - 1 {
-            if out[j] > out[j + 1] {
-                let tmp = out[j]
-                out[j] = out[j + 1]
-                out[j + 1] = tmp
-            }
+            if out[j] > out[j + 1] { out.swap(j, j + 1) }
         }
     }
     out

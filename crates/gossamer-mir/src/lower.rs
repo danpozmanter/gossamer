@@ -1069,6 +1069,63 @@ impl<'a> Builder<'a> {
     /// call. Same map receiver, same key, integer add — emits
     /// nothing and returns `None` for any other shape so the
     /// caller falls through to the regular insert dispatch.
+    /// Inlines `arr.swap(i, j)` as four index ops so the swap
+    /// survives every backend (tree-walker, bytecode VM, JIT, AOT).
+    /// Without this the generic Call fallback emits
+    /// `Call(Const(Str("swap")), …)` — cranelift has no `swap`
+    /// intrinsic and silently lowers it to a typed-zero stub,
+    /// leaving the receiver unmodified.
+    fn try_lower_array_swap(
+        &mut self,
+        receiver: &HirExpr,
+        i_expr: &HirExpr,
+        j_expr: &HirExpr,
+        _ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        // Build a Place that names the receiver as a place
+        // expression. Bail out if the receiver isn't an
+        // assignable l-value (a path, field, or index chain).
+        let recv_place = self.lower_place_expr(receiver)?;
+        let i_local = self.lower_expr(i_expr)?;
+        let j_local = self.lower_expr(j_expr)?;
+        let elem_ty = match self
+            .tcx
+            .kind_of(self.locals[recv_place.local.0 as usize].ty)
+        {
+            gossamer_types::TyKind::Array { elem, .. } => *elem,
+            gossamer_types::TyKind::Slice(elem) => *elem,
+            gossamer_types::TyKind::Vec(elem) => *elem,
+            gossamer_types::TyKind::Ref { inner, .. } => match self.tcx.kind_of(*inner) {
+                gossamer_types::TyKind::Array { elem, .. } => *elem,
+                gossamer_types::TyKind::Slice(elem) => *elem,
+                gossamer_types::TyKind::Vec(elem) => *elem,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let mut at_i = recv_place.clone();
+        at_i.projection.push(crate::ir::Projection::Index(i_local));
+        let mut at_j = recv_place.clone();
+        at_j.projection.push(crate::ir::Projection::Index(j_local));
+        let temp_i = self.fresh(elem_ty);
+        let temp_j = self.fresh(elem_ty);
+        self.emit_assign(
+            Place::local(temp_i),
+            Rvalue::Use(Operand::Copy(at_i.clone())),
+            span,
+        );
+        self.emit_assign(
+            Place::local(temp_j),
+            Rvalue::Use(Operand::Copy(at_j.clone())),
+            span,
+        );
+        self.emit_assign(at_i, Rvalue::Use(Operand::Copy(Place::local(temp_j))), span);
+        self.emit_assign(at_j, Rvalue::Use(Operand::Copy(Place::local(temp_i))), span);
+        let unit_local = self.lower_unit(span);
+        Some(unit_local)
+    }
+
     fn try_lower_map_inc(
         &mut self,
         outer_recv: &HirExpr,
@@ -4454,6 +4511,21 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
+        // `arr.swap(i, j)` super-instruction. The generic Call
+        // fallback at the end of this function would lower this as
+        // `Call(Const(Str("swap")), …)` which the cranelift backend
+        // can't resolve — JIT- and AOT-compiled bodies silently
+        // produced a typed-zero stub, leaving the receiver
+        // unmutated. Inlining as four index ops (read i, read j,
+        // write j-into-i, write i-into-j) keeps the semantics
+        // intact across every backend.
+        if method.name.as_str() == "swap" && args.len() == 2 {
+            if let Some(swap_local) =
+                self.try_lower_array_swap(receiver, &args[0], &args[1], ty, span)
+            {
+                return Some(swap_local);
+            }
+        }
         // Fused-increment peephole: `m.insert(k, m.get_or(k, 0)
         // + by)` (or `… + 1`) on an i64-keyed map collapses into
         // a single `gos_rt_map_inc_i64(m, k, by)` call. Halves

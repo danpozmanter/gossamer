@@ -11,9 +11,7 @@
 fn count_newlines(text: String) -> i64 {
     let mut count = 0
     for i in 0..text.len() {
-        if text[i] == 10 {
-            count = count + 1
-        }
+        if text[i] == 10 { count += 1 }
     }
     count
 }

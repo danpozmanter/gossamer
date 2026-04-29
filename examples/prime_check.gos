@@ -20,10 +20,8 @@ fn is_prime(n: i64) -> bool {
     // Trial-divide by odd factors only; stop at sqrt(n).
     let mut d: i64 = 3
     while d * d <= n {
-        if n % d == 0 {
-            return false
-        }
-        d = d + 2
+        if n % d == 0 { return false }
+        d += 2
     }
     true
 }
@@ -38,12 +36,10 @@ fn main() {
     println("")
 
     // A few targeted spot-checks.
-    let cases = [(2, true), (3, true), (4, false), (97, true),
-                 (100, false), (7919, true), (7920, false)]
-    for case in cases.iter() {
-        let actual = is_prime(case.0)
-        let label = if actual == case.1 { "ok" } else { "WRONG" }
-        println!("is_prime({}) = {} (expected {}): {}",
-            case.0, actual, case.1, label)
+    for (n, expected) in [(2, true), (3, true), (4, false), (97, true),
+                          (100, false), (7919, true), (7920, false)].iter() {
+        let actual = is_prime(n)
+        let label = if actual == expected { "ok" } else { "WRONG" }
+        println!("is_prime({}) = {} (expected {}): {}", n, actual, expected, label)
     }
 }

@@ -15,7 +15,7 @@ fn reverse_bytes(text: &String) -> [i64] {
     let mut out: [i64] = []
     let mut i = bytes.len()
     while i > 0 {
-        i = i - 1
+        i -= 1
         out.push(bytes[i] as i64)
     }
     out
@@ -25,27 +25,19 @@ fn is_palindrome(text: &String) -> bool {
     let bytes = text.as_bytes()
     let n = bytes.len()
     for i in 0..n / 2 {
-        if bytes[i] != bytes[n - 1 - i] {
-            return false
-        }
+        if bytes[i] != bytes[n - 1 - i] { return false }
     }
     true
 }
 
 fn main() {
     let inputs = ["hello", "racecar", "Gossamer", "level"]
-    for s in inputs.iter() {
-        let rev = reverse_bytes(s)
-        let palin = is_palindrome(s)
-        let label = if palin { "palindrome" } else { "not palindrome" }
-        // Render the reversed bytes as a list of codes — the
-        // current branch prints chars-as-integers, so we keep
-        // the output unambiguous.
-        println!("{} reversed-bytes={} ({})", *s, rev.len(), label)
+    for s in inputs {
+        let rev = reverse_bytes(&s)
+        let label = if is_palindrome(&s) { "palindrome" } else { "not palindrome" }
+        println!("{} reversed-bytes={} ({})", s, rev.len(), label)
         print("  codes:")
-        for code in rev.iter() {
-            print!(" {}", *code)
-        }
+        for code in rev.iter() { print!(" {}", *code) }
         println("")
     }
 }

@@ -425,7 +425,10 @@ pub fn collect_pattern_names<S: std::hash::BuildHasher + Clone>(
     }
 }
 
-fn is_closed<S: std::hash::BuildHasher + Clone>(expr: &HirExpr, bound: &HashSet<String, S>) -> bool {
+fn is_closed<S: std::hash::BuildHasher + Clone>(
+    expr: &HirExpr,
+    bound: &HashSet<String, S>,
+) -> bool {
     match &expr.kind {
         HirExprKind::Path { segments, def } => {
             // Fully-qualified paths and resolved DefIds point to top-
@@ -694,7 +697,10 @@ fn walk_free_block<S: std::hash::BuildHasher + Clone>(
     }
 }
 
-fn is_closed_block<S: std::hash::BuildHasher + Clone>(block: &HirBlock, bound: &HashSet<String, S>) -> bool {
+fn is_closed_block<S: std::hash::BuildHasher + Clone>(
+    block: &HirBlock,
+    bound: &HashSet<String, S>,
+) -> bool {
     let mut local = bound.clone();
     for stmt in &block.stmts {
         match &stmt.kind {

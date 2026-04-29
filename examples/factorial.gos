@@ -7,25 +7,17 @@
  */
 
 fn factorial_recursive(n: i64) -> i64 {
-    if n <= 1 {
-        1
-    } else {
-        n * factorial_recursive(n - 1)
-    }
+    if n <= 1 { 1 } else { n * factorial_recursive(n - 1) }
 }
 
 fn factorial_iterative(n: i64) -> i64 {
     let mut acc: i64 = 1
-    for i in 2..=n {
-        acc = acc * i
-    }
+    for i in 2..=n { acc *= i }
     acc
 }
 
 fn main() {
-    for n in [0, 1, 5, 10, 12, 20].iter() {
-        let r = factorial_recursive(*n)
-        let i = factorial_iterative(*n)
-        println!("{}! = recursive {}, iterative {}", *n, r, i)
+    for n in [0, 1, 5, 10, 12, 20] {
+        println!("{}! = recursive {}, iterative {}", n, factorial_recursive(n), factorial_iterative(n))
     }
 }

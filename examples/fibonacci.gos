@@ -9,17 +9,11 @@
  */
 
 fn fib_recursive(n: i64) -> i64 {
-    if n < 2 {
-        n
-    } else {
-        fib_recursive(n - 1) + fib_recursive(n - 2)
-    }
+    if n < 2 { n } else { fib_recursive(n - 1) + fib_recursive(n - 2) }
 }
 
 fn fib_iterative(n: i64) -> i64 {
-    if n < 2 {
-        return n
-    }
+    if n < 2 { return n }
     let mut a: i64 = 0
     let mut b: i64 = 1
     for _ in 2..=n {
@@ -31,10 +25,8 @@ fn fib_iterative(n: i64) -> i64 {
 }
 
 fn main() {
-    for n in [0, 1, 5, 10, 20].iter() {
-        let r = fib_recursive(*n)
-        let it = fib_iterative(*n)
-        println!("fib({}) = recursive {}, iterative {}", *n, r, it)
+    for n in [0, 1, 5, 10, 20] {
+        println!("fib({}) = recursive {}, iterative {}", n, fib_recursive(n), fib_iterative(n))
     }
 
     // Iterative fits comfortably in i64 up to fib(92).

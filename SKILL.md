@@ -34,6 +34,40 @@ Prefer these shapes when writing Gossamer:
   values with expressions (`if`, `match`, `loop … break v`,
   iterator-style folds) before reaching for an accumulator
   pattern. Functions return the new value; callers shadow.
+- **Compound-assign accumulators.** Use `+= -= *= /= %= &= |= ^= <<= >>=`.
+  Never write `x = x + 1`; write `x += 1`. The compound forms
+  parse, lower, and run on every tier — the longhand is a code
+  smell that doubles the line length of every accumulator.
+- **`if let` / `while let` for `Option` and single-variant matches.**
+  `if let Some(n) = m.get(&k) { use(n) }` (one line) instead of
+  `match m.get(&k) { Some(n) => use(n), None => () }` (four
+  lines). `while let Some(v) = rx.recv()` is the canonical
+  channel-drain shape.
+- **Tuple destructuring at every binding site.**
+  `let (a, b) = pair`, `for (k, v) in m.iter()`,
+  `let (tx, rx) = channel()`. Skip the `pair.0` / `pair.1`
+  reach-through.
+- **`for x in xs` over collections — no `.iter()`, no `*x`.**
+  `for n in [1, 2, 3] { sum += n }`. The binding is the value
+  for `Copy` types and a borrow for the rest; the explicit
+  `.iter()` + deref is legacy noise.
+- **Bare integer indices — no `as usize` cast.**
+  `arr[i]` works for `i: i64`. The runtime widens / bounds-checks
+  for you. `arr[i as usize]` is a Rust habit that doesn't apply.
+- **`Vec::swap` over the manual three-line dance.**
+  `arr.swap(i, j)` mutates in place across every tier. Three-line
+  `let t = arr[i]; arr[i] = arr[j]; arr[j] = t` is only justified
+  in the hottest swap loops where the JIT-compiled register
+  layout matters more than readability.
+- **`m.inc(k)` / `m.inc(k, by)` for counter idioms.**
+  `m.inc("apple")` (one call, one lock acquire) instead of
+  `m.insert("apple", m.get_or("apple", 0) + 1)`. `m.or_insert(k, default)`
+  for the get-or-fill pattern.
+- **Recursive enums with `Box<T>`.** `enum List { Cons(i64, Box<List>), Nil }`
+  works directly — `Box`, `Arc`, and `Rc` are transparent in a
+  GC'd language, and the spelling matches Rust exactly. The
+  bare `enum List { Cons(i64, List), Nil }` form works too;
+  every variant payload is heap-shared.
 - **Left-to-right dataflow with `|>`.** Chain calls with the
   forward-pipe operator instead of nesting.
 - **Plain functions for free-standing logic.** Reach for
@@ -74,11 +108,11 @@ let label = match shape {
 }
 
 // For accumulator work, push the mutation into a small helper
-// that returns the final value. The caller's binding stays
-// `let`, not `let mut`:
+// that returns the final value. Use `+=`, never `acc = acc + x`.
+// The caller's binding stays `let`, not `let mut`:
 fn sum(xs: &[i64]) -> i64 {
     let mut acc = 0
-    for n in xs.iter() { acc = acc + *n }
+    for n in xs.iter() { acc += *n }
     acc
 }
 
@@ -90,6 +124,35 @@ loop, a builder pattern, an in-place sort), inside a small
 function whose return value is the new state. If the binding
 is written from many places, the function probably wants to
 be broken into smaller pieces that each return a fresh value.
+
+### `if let` / `while let` — when to reach for them
+
+```gossamer
+// One-shot Option lookup — `if let` collapses a 4-line match.
+if let Some(score) = scores.get(&name) {
+    println!("{name}: {score}")
+}
+
+// Drain a channel until the producer hangs up.
+while let Some(value) = rx.recv() {
+    handle(value)
+}
+
+// Walk a linked-list / cause chain until the option exhausts.
+let mut cursor = err.cause()
+while let Some(inner) = cursor {
+    println!("  caused by: {}", inner.message())
+    cursor = inner.cause()
+}
+
+// Pattern-matching a single enum variant in flow.
+if let Tree::Node(value, _, _) = node {
+    println!("node = {value}")
+}
+```
+
+Avoid `if let` when you genuinely need to handle every variant
+— that's `match` with a guard, not `if let` with an `else`.
 
 ## 3. The `|>` forward-pipe operator
 
@@ -197,7 +260,15 @@ fn main() {
 - **Patterns.** Wildcard `_`, literals, `name`, `mut name`,
   `Variant(…)`, `Struct { … }`, tuples `(a, b)`, ranges
   `1..=5`, or-patterns `a | b`, `@`-bindings `x @ 1..=3`,
-  rest `..`. Guards: `Some(n) if n > 0 => …`.
+  rest `..`. Guards: `Some(n) if n > 0 => …`. Patterns appear
+  in `let`, `for`, function parameters, `match`, `if let`,
+  and `while let`.
+- **`if let` / `while let`** — sugar for the
+  refutable-pattern-or-skip cases. `if let PAT = SCRUTINEE { … }
+  else { … }` desugars to `match SCRUTINEE { PAT => …, _ => … }`;
+  `while let PAT = SCRUTINEE { … }` to `loop { match SCRUTINEE
+  { PAT => …, _ => break } }`. No new behavior, just shorter
+  reading.
 
 ## 6. Formatted output (the only macros)
 
@@ -340,17 +411,30 @@ world). `FnMut` / `FnOnce` parse but lower to the same
 
 ## 9. Data structures
 
-- `[T]` — growable array. Literal: `[1, 2, 3]`.
-- `(A, B, …)` — tuple. Field access via `.0`, `.1`, ….
+- `[T]` — growable array. Literal: `[1, 2, 3]`. Iterate with
+  `for x in xs { … }` (no `.iter()`, no `*x`). Mutate in place
+  with `xs.push(v)`, `xs.pop()`, `xs.swap(i, j)`, `xs.sort()`,
+  `xs.sort_by(|a, b| …)`.
+- `[T; N]` — fixed-size array. Literal: `[v; N]` (repeat) or
+  `[a, b, c]` (annotated `[T; 3]`). Stack-allocatable, no
+  growth — pick when the size is a compile-time constant.
+- `(A, B, …)` — tuple. Field access via `.0`, `.1`, …, or
+  destructure inline: `let (a, b) = pair`,
+  `for (k, v) in m.iter()`.
 - `struct Foo { x, y }` / `struct Pair(A, B)` — GC-managed
   value types.
 - `enum E { A, B(Payload) }` — sum types, pattern-matched
-  exhaustively.
-- `Option<T>` — `Some(T)` / `None`.
-- `Result<T, E>` — `Ok(T)` / `Err(E)`.
-- `std::collections::{Vec, HashMap, HashSet, BTreeMap}` —
-  the richer containers; dispatch is wiring-dependent today,
-  so verify with a small test if unsure.
+  exhaustively. Recursive payloads work directly:
+  `enum List { Cons(i64, Box<List>), Nil }`. `Box<T>` /
+  `Arc<T>` / `Rc<T>` are transparent — every variant payload
+  is heap-shared regardless of the spelling.
+- `Option<T>` — `Some(T)` / `None`. Read with `if let`.
+- `Result<T, E>` — `Ok(T)` / `Err(E)`. Propagate with `?`.
+- `std::collections::{Vec, HashMap, HashSet, BTreeMap}` — the
+  richer containers. `HashMap` extras worth knowing:
+  `m.inc(k)` / `m.inc(k, by)` (counter-style increment),
+  `m.or_insert(k, default)` (get-or-fill),
+  `m.iter()` (yields `[(K, V)]` for direct destructuring).
 
 ## 10. The `gos` toolchain
 
@@ -474,25 +558,52 @@ fn main() -> Result<(), flag::Error> {
 }
 ```
 
-### HTTP server
+### HTTP server with method + path routing
+
+A real service routes per (method, path) and keeps each handler
+a one-job free function. Lift dispatch into one `App::serve`
+that matches and forwards — never inline the response shape in
+the dispatcher. The full pattern is in `examples/web_server.gos`.
 
 ```gossamer
 use std::http
+
+fn health(_r: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::text(200, "ok"))
+}
+
+fn list_users(_r: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::json(200, "[{\"id\":1,\"name\":\"ada\"}]"))
+}
+
+fn create_user(r: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::json(201, format!("{{\"body\":\"{}\"}}", r.body)))
+}
 
 struct App { }
 
 impl http::Handler for App {
     fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
-        Ok(http::Response::text(200, format!("hi from {}", r.path)))
+        let method = &r.method
+        let path = r.path()
+        if path == "/health" { return health(r) }
+        if path == "/users" {
+            if method == "POST" { return create_user(r) }
+            return list_users(r)
+        }
+        Ok(http::Response::text(404, "not found"))
     }
 }
 
 fn main() -> Result<(), http::Error> {
-    let app = App { }
-    println!("listening on 0.0.0.0:8080")
-    http::serve("0.0.0.0:8080", app)
+    http::serve("0.0.0.0:8080", App { })
 }
 ```
+
+Mirrors Go's `http.ServeMux` ergonomics: handlers are free
+functions with the standard signature, the dispatcher is one
+match per (method, path), exact match by default with
+`path.starts_with` giving prefix routes when you need them.
 
 ## 15. Current gaps (pre-1.0.0)
 
@@ -507,6 +618,16 @@ fn main() -> Result<(), http::Error> {
   a clear message. `go` spawn by itself builds natively.
 - `os::args()` can return empty under some codegen paths —
   prefer `std::flag` with explicit defaults.
+- `arr.sort_by(|a, b| …)` works in the bytecode VM and the
+  tree-walker. The cranelift JIT auto-skips bodies that call
+  it (the closure-callback ABI isn't wired through native
+  code yet) and the body runs on the bytecode VM instead, so
+  sort behaviour is correct everywhere — just not JIT-fast.
+- Tree-walker numeric casts (`x as f64` etc.) auto-promote at
+  arithmetic sites instead of producing a typed `Value::Float`.
+  The bytecode VM and the AOT compiler emit the proper
+  conversion. Visible only in `gos run --tree-walker` for
+  programs whose hot loop crosses int/float boundaries.
 
 ## 16. Style rules
 
@@ -515,6 +636,21 @@ fn main() -> Result<(), http::Error> {
   Express transformations with `if` / `match` / `fold` /
   `map` / `collect`; mutate locally and return the final
   value rather than threading mutation through callers.
+- **Compound assignment everywhere.** `x += 1`, never `x = x + 1`.
+  Same for `-= *= /= %= &= |= ^= <<= >>=`.
+- **`if let` / `while let` for refutable patterns.** Reach for
+  `match` only when you need every variant; otherwise the
+  one-line `if let Some(n) = …` form is strictly better.
+- **Tuple destructuring at the binding.** `let (a, b) = pair`,
+  `for (k, v) in m.iter()`, `let (tx, rx) = channel()` — no
+  `pair.0` / `pair.1` reach-through unless the tuple is
+  threaded somewhere else first.
+- **`for x in xs` over `for x in xs.iter()`.** No `.iter()`,
+  no `*x`. The binding is the value (`Copy`) or a borrow
+  (others).
+- **No `as usize` on indices.** `arr[i]` works for `i: i64`.
+- **Use the helpers.** `arr.swap(i, j)`, `m.inc(k)`,
+  `m.or_insert(k, default)` — never the longhand.
 - **Clear, low-complexity, concise.** Plain reads beat clever
   ones. If a helper, type, or comment doesn't earn its space,
   drop it.

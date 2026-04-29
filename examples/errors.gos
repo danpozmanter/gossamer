@@ -40,18 +40,13 @@ fn main() -> Result<(), errors::Error> {
         Ok(v) => println!("parsed {v}"),
         Err(e) => {
             println!("top-level: {}", e.message())
-            // Walk the cause chain. `if let` / `while let` are not
-            // part of the grammar yet; a plain `loop` + `match` is
-            // the idiom.
+            // Walk the cause chain — the natural `while let` shape.
+            // `cursor: Option<errors::Error>` falls through to `None`
+            // once the cause chain is exhausted.
             let mut cursor = e.cause()
-            loop {
-                match cursor {
-                    Some(inner) => {
-                        println!("  caused by: {}", inner.message())
-                        cursor = inner.cause()
-                    }
-                    None => break,
-                }
+            while let Some(inner) = cursor {
+                println!("  caused by: {}", inner.message())
+                cursor = inner.cause()
             }
         }
     }

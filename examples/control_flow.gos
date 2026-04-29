@@ -32,19 +32,19 @@ fn area(shape: &Shape) -> f64 {
 }
 
 fn main() {
-    // while loop
+    // while loop with `+=`
     let mut n = 0
     let mut total = 0
     while n < 5 {
-        total = total + n
-        n = n + 1
+        total += n
+        n += 1
     }
     println!("while total (0..5): {total}")
 
     // for loop over a range
     let mut product = 1
     for i in 1..6 {
-        product = product * i
+        product *= i
     }
     println!("5! = {product}")
 
@@ -53,29 +53,30 @@ fn main() {
         let mut i = 1
         let mut sq = 1
         while sq <= 100 {
-            i = i + 1
+            i += 1
             sq = i * i
         }
         break sq
     }
     println!("first square > 100: {first_square_over_100}")
 
-    // match with guards
-    for n in [-3, 0, 3, 42].iter() {
-        let label = match *n {
+    // match with guards (binds the value directly — no `*n` deref)
+    for n in [-3, 0, 3, 42] {
+        let label = match n {
             x if x < 0 => "negative",
             0 => "zero",
             1..=9 => "single-digit",
             _ => "many",
         }
-        println!("{} -> {}", *n, label)
+        println!("{} -> {}", n, label)
     }
 
-    // if-let style (via match)
+    // `if let` over an `Option` — one line where `match` was four.
     let maybe: Option<i64> = Some(7)
-    match maybe {
-        Some(n) => println!("got {n}"),
-        None => println!("got nothing"),
+    if let Some(n) = maybe {
+        println!("got {n}")
+    } else {
+        println!("got nothing")
     }
 
     // trait-dispatched pattern

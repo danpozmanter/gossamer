@@ -1,83 +1,49 @@
 /*
- * Singly-linked list — stored as parallel arrays to side-step
- * recursive `Box` ergonomics on the current branch.
+ * Singly-linked list — the textbook recursive enum.
  *
- * Each node is an index into two parallel `[i64]` arrays:
- * `values[i]` holds the payload, `next[i]` the index of the
- * successor (or -1 for the end-of-list sentinel). The head
- * pointer is the index of the first live node.
- *
- * Demonstrates: nullable handles via -1, cons-style growth that
- * returns a fresh struct (no in-place mutation by the caller),
- * and read-only traversal helpers.
+ * `enum List { Cons(i64, Box<List>), Nil }` is the natural shape;
+ * `Box<T>` is transparent in a fully GC'd language, so the type
+ * accepts the Rust spelling (and `enum List { Cons(i64, List), Nil }`
+ * works just as well — every variant payload is heap-shared).
+ * Construct with `cons` / `Nil`, walk with `match`.
  */
 
-struct LinkedList {
-    values: [i64],
-    next: [i64],
-    head: i64,
+enum List {
+    Nil,
+    Cons(i64, Box<List>),
 }
 
-fn empty() -> LinkedList {
-    LinkedList { values: [], next: [], head: -1 }
+fn cons(v: i64, rest: List) -> List { List::Cons(v, Box::new(rest)) }
+
+fn length(list: &List) -> i64 {
+    match list {
+        List::Nil => 0,
+        List::Cons(_, rest) => 1 + length(rest),
+    }
 }
 
-// Returns a *new* list with `value` prepended; the input is
-// consumed (Gossamer's GC keeps any sharing safe). This is the
-// idiomatic immutable-style: callers shadow `xs = push_head(xs, …)`.
-fn push_head(list: LinkedList, value: i64) -> LinkedList {
-    let mut values = list.values
-    let mut nxt = list.next
-    let new_idx = values.len() as i64
-    values.push(value)
-    nxt.push(list.head)
-    LinkedList { values: values, next: nxt, head: new_idx }
+fn sum(list: &List) -> i64 {
+    match list {
+        List::Nil => 0,
+        List::Cons(v, rest) => *v + sum(rest),
+    }
 }
 
-fn print_list(list: &LinkedList) {
+fn print_list(list: &List) {
     print("[")
-    let mut cursor = list.head
+    let mut cursor = list
     let mut first = true
-    while cursor >= 0 {
+    while let List::Cons(v, rest) = cursor {
         if !first { print(", ") }
-        print!("{}", list.values[cursor as usize])
+        print!("{}", v)
         first = false
-        cursor = list.next[cursor as usize]
+        cursor = rest
     }
     println("]")
 }
 
-fn length(list: &LinkedList) -> i64 {
-    let mut cursor = list.head
-    let mut n: i64 = 0
-    while cursor >= 0 {
-        n = n + 1
-        cursor = list.next[cursor as usize]
-    }
-    n
-}
-
-fn sum(list: &LinkedList) -> i64 {
-    let mut cursor = list.head
-    let mut total: i64 = 0
-    while cursor >= 0 {
-        total = total + list.values[cursor as usize]
-        cursor = list.next[cursor as usize]
-    }
-    total
-}
-
 fn main() {
-    // Build the list functionally: each `push_head` returns a
-    // fresh `LinkedList`; the caller shadows `xs` rather than
-    // mutating in place.
-    let xs = empty()
-    let xs = push_head(xs, 1)
-    let xs = push_head(xs, 2)
-    let xs = push_head(xs, 3)
-    let xs = push_head(xs, 4)
-    let xs = push_head(xs, 5)
-
+    let xs = cons(1, cons(2, cons(3, cons(4, cons(5, List::Nil)))))
     println!("length = {}", length(&xs))
     println!("sum    = {}", sum(&xs))
     print("xs     = ")

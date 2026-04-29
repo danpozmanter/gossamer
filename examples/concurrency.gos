@@ -2,31 +2,19 @@
  * Goroutines + channels — the canonical producer / consumer shape.
  *
  * `go expr` spawns a goroutine. `channel()` returns a
- * (Sender, Receiver) pair. `tx.send(v)` hands a value to a
- * receiver; `rx.recv()` yields the next value waiting on the
- * channel.
+ * (Sender, Receiver) pair, destructurable inline. `tx.send(v)`
+ * hands a value to a receiver; `rx.recv()` yields the next
+ * value waiting on the channel as `Option<T>` — drain with
+ * `while let Some(v) = rx.recv()`.
  *
  * Runs under `gos run` on both the tree-walker and the VM.
- * Also builds and runs natively under `gos build` — `channel()`,
- * `send`, and `recv` lower through the `gos_rt_chan_*` runtime
- * symbols. The example deliberately avoids two pre-1.0.0 native
- * codegen gaps:
- *   - Option pattern matching (Some/None) on `recv` results is
- *     not yet wired natively, so the example uses `_` patterns
- *     to drain a known number of values rather than looping
- *     until None.
- *   - Multi-argument formatted output (`println!("{} {}", a,
- *     b)`) is not wired natively; the example uses
- *     single-argument string-literal `println` for status.
  */
 
 use std::sync::channel
 use std::time
 
 fn main() {
-    let pair = channel()
-    let tx = pair.0
-    let rx = pair.1
+    let (tx, rx) = channel()
 
     // Three producers push one value each. `tx` is shared via
     // the channel's internal Arc, so every goroutine talks to

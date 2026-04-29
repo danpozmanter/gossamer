@@ -457,8 +457,7 @@ impl Interpreter {
                 // scope used to leak unrelated locals into every
                 // closure clone — a real RSS-growth source on long-
                 // running services that build closures per request.
-                let mut bound: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
+                let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
                 for param in params {
                     collect_pattern_names(&param.pattern, &mut bound);
                 }
@@ -1720,7 +1719,11 @@ fn arith_floats(op: HirBinaryOp, x: f64, y: f64) -> RuntimeResult<Value> {
         HirBinaryOp::Mul => x * y,
         HirBinaryOp::Div => x / y,
         HirBinaryOp::Rem => x % y,
-        _ => return Err(RuntimeError::Type(format!("non-arith op `{op:?}` in arith_floats"))),
+        _ => {
+            return Err(RuntimeError::Type(format!(
+                "non-arith op `{op:?}` in arith_floats"
+            )));
+        }
     }))
 }
 
