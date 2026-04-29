@@ -1185,6 +1185,7 @@ name = "gossamer-codegen-llvm"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "gossamer-lex",
  "gossamer-mir",
  "gossamer-runtime",
  "gossamer-types",

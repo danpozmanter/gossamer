@@ -139,6 +139,19 @@ impl<T> Channel<T> {
         self.closed = true;
     }
 
+    /// Closes the channel and removes every parked goroutine. The
+    /// caller (the scheduler) is responsible for waking the drained
+    /// goroutines — they will observe `RecvResult::Closed` /
+    /// `SendResult::Closed` when they retry. Returns
+    /// `(senders, receivers)` so the caller can wake them in one
+    /// pass without a follow-up `wake_*` loop.
+    pub fn close_and_drain_parked(&mut self) -> (Vec<Gid>, Vec<Gid>) {
+        self.closed = true;
+        let senders = std::mem::take(&mut self.parked_senders);
+        let receivers = std::mem::take(&mut self.parked_receivers);
+        (senders, receivers)
+    }
+
     /// Returns `true` when the channel has been closed.
     #[must_use]
     pub fn is_closed(&self) -> bool {
@@ -187,5 +200,19 @@ impl<T> Channel<T> {
 impl<T> Default for Channel<T> {
     fn default() -> Self {
         Self::unbuffered()
+    }
+}
+
+impl<T> Drop for Channel<T> {
+    /// Marks the channel closed. Any goroutine still parked on the
+    /// channel will be left on the channel's internal lists when
+    /// the storage is freed; the scheduler is expected to call
+    /// [`Channel::close_and_drain_parked`] before dropping the
+    /// channel so it can wake them. The Drop impl exists so that
+    /// the closed flag flips even when a test drops a channel
+    /// without going through the scheduler — `is_closed()` then
+    /// observes the right value before the memory is reclaimed.
+    fn drop(&mut self) {
+        self.closed = true;
     }
 }

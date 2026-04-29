@@ -400,6 +400,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("get", builtin_map_get),
             ("get_or", builtin_map_get_or),
             ("inc_at", builtin_map_inc_at),
+            ("inc_batch", builtin_map_inc_batch),
             ("insert", builtin_map_insert),
             ("remove", builtin_map_remove),
             ("contains_key", builtin_map_contains_key),
@@ -2837,6 +2838,61 @@ fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
         _ => {}
     }
     Ok(Value::Array(Arc::new(out)))
+}
+
+/// `m.inc_batch(keys, by)` — typed batch counter increment for
+/// `Value::IntMap`. Takes the map's mutex once and applies the
+/// `+= by` to every i64 key in the input vec, amortising the
+/// `parking_lot::Mutex` acquisition that `Op::IntMapInc` would
+/// pay per call. Returns the map handle to mirror `insert`'s
+/// shape.
+///
+/// Falls through to a no-op for non-IntMap receivers and for
+/// keys-vec shapes the runtime can't index as `i64` (the audit
+/// flagged the per-op lock cost as the gap; this is the
+/// minimum-viable amortisation primitive).
+fn builtin_map_inc_batch(args: &[Value]) -> RuntimeResult<Value> {
+    let by = match args.get(2) {
+        Some(Value::Int(n)) => *n,
+        _ => 1,
+    };
+    match args.first() {
+        Some(Value::IntMap(map)) => {
+            let mut locked = map.lock();
+            match args.get(1) {
+                Some(Value::IntArray(keys)) => {
+                    for k in keys.iter() {
+                        *locked.entry(*k).or_insert(0) += by;
+                    }
+                }
+                Some(Value::Array(items)) => {
+                    for v in items.iter() {
+                        if let Value::Int(k) = v {
+                            *locked.entry(*k).or_insert(0) += by;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            drop(locked);
+            Ok(Value::IntMap(Arc::clone(map)))
+        }
+        Some(Value::Map(map)) => {
+            let mut locked = map.lock();
+            if let Some(Value::Array(items)) = args.get(1) {
+                for v in items.iter() {
+                    let key = MapKey::from_value(v);
+                    let entry = locked.entry(key).or_insert(Value::Int(0));
+                    if let Value::Int(n) = entry {
+                        *n += by;
+                    }
+                }
+            }
+            drop(locked);
+            Ok(Value::Map(Arc::clone(map)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    }
 }
 
 fn builtin_map_clear(args: &[Value]) -> RuntimeResult<Value> {

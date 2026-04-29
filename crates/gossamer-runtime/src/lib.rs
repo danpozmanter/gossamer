@@ -21,6 +21,13 @@ pub mod sigquit;
 pub mod value;
 
 pub use layout::{HEAP_ALIGN, ObjHeader, Ptr, TypeInfo, WORD_BYTES, header_align, header_size};
+// Re-export preempt-check FFI symbols so JIT-side
+// `rt::gos_rt_preempt_check{,_and_yield}` lookups resolve through
+// the crate root rather than the `preempt` submodule path. The
+// `#[unsafe(no_mangle)]` attribute on each function gives the
+// linker a single canonical symbol; the re-export only affects the
+// Rust-side path.
+pub use preempt::{gos_rt_preempt_check, gos_rt_preempt_check_and_yield};
 pub use value::{
     GossamerValue, SINGLETON_FALSE, SINGLETON_TRUE, SINGLETON_UNIT, TAG_FLOAT, TAG_HEAP,
     TAG_IMMEDIATE, TAG_MASK, TAG_SINGLETON, fits_i56, from_f64, from_heap_handle, from_i64,

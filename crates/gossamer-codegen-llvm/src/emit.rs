@@ -428,7 +428,9 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
     // `alloca` + `load` + `store` survives into the asm and the
     // hot loops spill aggressively.
     let opt_tool = find_opt()?;
-    let opt_output = std::process::Command::new(&opt_tool)
+    let mcpu = mcpu_target();
+    let mut opt_cmd = std::process::Command::new(&opt_tool);
+    opt_cmd
         .arg("-O3")
         .arg(format!("-mtriple={triple}"))
         // Match `rustc -C target-cpu=native`: tell the
@@ -436,11 +438,17 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
         // loop / SLP vectorisers can emit AVX2 / FMA when the
         // host supports them. Without this, `opt` only knows
         // the baseline triple's features.
-        .arg("-mcpu=native")
+        //
+        // `GOS_LLVM_MCPU` overrides — `x86-64-v3` is the
+        // documented escape hatch when the host's AVX-512
+        // entry/exit transition penalty hurts short-running
+        // benchmarks (the §5 release-perf investigation
+        // found this on fannkuch).
+        .arg(format!("-mcpu={mcpu}"))
         .arg(&ll_path)
         .arg("-o")
-        .arg(&opt_path)
-        .output()
+        .arg(&opt_path);
+    let opt_output = run_with_timeout(opt_cmd, opt_timeout(), "opt")
         .with_context(|| format!("spawn {}", opt_tool.display()))?;
     if !opt_output.status.success() {
         if !keep_artifacts {
@@ -449,7 +457,10 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
             eprintln!("llvm backend: failing IR kept at {}", ll_path.display());
         }
         return Err(anyhow!(
-            "opt failed ({status}): {stderr}",
+            "opt failed ({status}): {stderr}\n\
+             hint: largest IR usually drives `opt -O3` blowups; \
+             dump with GOS_LLVM_DUMP=1 and inspect the function \
+             names in the IR to find the offender.",
             status = opt_output.status,
             stderr = String::from_utf8_lossy(&opt_output.stderr)
         ));
@@ -462,16 +473,24 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
     // matches what `rustc -C target-cpu=native` does for the
     // bench-game references.
     let llc = find_llc()?;
-    let output = std::process::Command::new(&llc)
+    let mut llc_cmd = std::process::Command::new(&llc);
+    llc_cmd
         .arg("-O3")
         .arg("-filetype=obj")
         .arg(format!("-mtriple={triple}"))
         .arg("-relocation-model=pic")
-        .arg("-mcpu=native")
+        .arg(format!("-mcpu={mcpu}", mcpu = mcpu_target()))
         .arg(&opt_path)
         .arg("-o")
-        .arg(&obj_path)
-        .output()
+        .arg(&obj_path);
+    // Pin DWARF version to match what the module metadata declared
+    // (`!{i32 7, "Dwarf Version", i32 4}`). `llc` may otherwise pick
+    // a newer default if the host LLVM is bumped, producing object
+    // files that older debuggers can't read.
+    if want_dwarf() {
+        llc_cmd.arg("-dwarf-version=4");
+    }
+    let output = run_with_timeout(llc_cmd, opt_timeout(), "llc")
         .with_context(|| format!("spawn {}", llc.display()))?;
     if !output.status.success() {
         if !keep_artifacts {
@@ -493,6 +512,72 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
     Ok(bytes)
+}
+
+/// Returns the wall-clock cap for the `opt` and `llc` subprocesses.
+/// `GOS_LLVM_OPT_TIMEOUT_SECS=N` overrides; defaults to 10 minutes,
+/// generous enough for huge monomorph fan-outs but tight enough
+/// that an unbounded `opt -O3` blowup turns into a build failure
+/// instead of a process holding the runner forever.
+/// Target CPU passed to `opt` and `llc`. Defaults to `native`
+/// (matching `rustc -C target-cpu=native`); `GOS_LLVM_MCPU` lets
+/// callers override — `x86-64-v3` is the documented escape hatch
+/// for short-running benchmarks where the AVX-512 dirty-state
+/// transition penalty dominates the savings (§5 release-perf
+/// investigation, fannkuch).
+fn mcpu_target() -> String {
+    std::env::var("GOS_LLVM_MCPU").unwrap_or_else(|_| "native".to_string())
+}
+
+fn opt_timeout() -> std::time::Duration {
+    let secs = std::env::var("GOS_LLVM_OPT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(600);
+    std::time::Duration::from_secs(secs)
+}
+
+/// Spawns `cmd`, waits up to `timeout`, and surfaces a clear error
+/// when the subprocess exceeds the cap (kills the child first so
+/// it doesn't outlive the build). Captures stdout / stderr so the
+/// caller can fold them into its diagnostics. The polling cadence
+/// (50 ms) keeps the steady-state overhead negligible compared to
+/// `opt -O3`'s usual runtime.
+fn run_with_timeout(
+    mut cmd: std::process::Command,
+    timeout: std::time::Duration,
+    tool: &str,
+) -> Result<std::process::Output> {
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawn {tool}"))?;
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(anyhow!(
+                        "{tool} exceeded {secs}s timeout (set GOS_LLVM_OPT_TIMEOUT_SECS to raise it)",
+                        secs = timeout.as_secs(),
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(anyhow!("{tool} wait failed: {e}"));
+            }
+        }
+    }
+    child
+        .wait_with_output()
+        .with_context(|| format!("wait {tool}"))
 }
 
 fn find_opt() -> Result<PathBuf> {
@@ -595,6 +680,11 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare void @gos_rt_flush_stdout()",
     "declare void @gos_rt_panic(ptr)",
     "declare void @gos_rt_exit(i32)",
+    // Stdout buffer lock — paired around every inline byte-write
+    // region the lowerer emits so multi-thread output stays
+    // serialised against `@GOS_RT_STDOUT_LEN`.
+    "declare void @gos_rt_stdout_acquire()",
+    "declare void @gos_rt_stdout_release()",
     // Prelude printers.
     "declare void @gos_rt_print_str(ptr)",
     "declare void @gos_rt_println()",
@@ -764,9 +854,24 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare void @gos_rt_mutex_lock(ptr)",
     "declare void @gos_rt_mutex_unlock(ptr)",
     "declare ptr @gos_rt_wg_new()",
-    "declare void @gos_rt_wg_add(ptr, i64)",
-    "declare void @gos_rt_wg_done(ptr)",
+    "declare i64 @gos_rt_wg_add(ptr, i64)",
+    "declare i64 @gos_rt_wg_done(ptr)",
     "declare void @gos_rt_wg_wait(ptr)",
+    "declare i64 @gos_rt_wg_error(ptr)",
+    "declare i64 @gos_rt_wg_error_clear(ptr)",
+    "declare ptr @gos_rt_sync_i64_new(i64)",
+    "declare void @gos_rt_sync_i64_drop(ptr)",
+    "declare i64 @gos_rt_sync_i64_len(ptr)",
+    "declare i64 @gos_rt_sync_i64_get(ptr, i64)",
+    "declare void @gos_rt_sync_i64_set(ptr, i64, i64)",
+    "declare void @gos_rt_sync_i64_push(ptr, i64)",
+    "declare i64 @gos_rt_sync_i64_add(ptr, i64, i64)",
+    "declare ptr @gos_rt_sync_u8_new(i64)",
+    "declare void @gos_rt_sync_u8_drop(ptr)",
+    "declare i64 @gos_rt_sync_u8_len(ptr)",
+    "declare i64 @gos_rt_sync_u8_get(ptr, i64)",
+    "declare void @gos_rt_sync_u8_set(ptr, i64, i64)",
+    "declare void @gos_rt_sync_u8_push(ptr, i64)",
     "declare ptr @gos_rt_heap_i64_new(i64)",
     "declare void @gos_rt_heap_i64_free(ptr)",
     "declare i64 @gos_rt_heap_i64_get(ptr, i64)",
@@ -775,10 +880,27 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare void @gos_rt_heap_i64_write_bytes_to_stdout(ptr, i64, i64)",
     "declare void @gos_rt_heap_i64_write_lines_to_stdout(ptr, i64, i64, i64)",
     "declare ptr @gos_rt_heap_u8_to_string(ptr, i64)",
+    "declare void @gos_rt_heap_u8_free(ptr)",
+    "declare void @gos_rt_chan_drop(ptr)",
     "declare ptr @gos_rt_atomic_i64_new(i64)",
     "declare i64 @gos_rt_atomic_i64_load(ptr)",
     "declare void @gos_rt_atomic_i64_store(ptr, i64)",
     "declare i64 @gos_rt_atomic_i64_fetch_add(ptr, i64)",
+    "declare i64 @gos_rt_atomic_i64_load_acquire(ptr)",
+    "declare void @gos_rt_atomic_i64_store_release(ptr, i64)",
+    "declare i64 @gos_rt_atomic_i64_load_relaxed(ptr)",
+    "declare void @gos_rt_atomic_i64_store_relaxed(ptr, i64)",
+    "declare i64 @gos_rt_atomic_i64_fetch_add_acqrel(ptr, i64)",
+    "declare i32 @gos_rt_atomic_i64_cas(ptr, i64, i64)",
+    "declare i32 @gos_rt_atomic_i64_cas_acq_rel(ptr, i64, i64)",
+    "declare i64 @gos_rt_atomic_i64_swap(ptr, i64)",
+    "declare i32 @gos_rt_preempt_check()",
+    "declare i32 @gos_rt_preempt_check_and_yield()",
+    "declare i32 @gos_rt_gc_alloc_rooted(i64)",
+    "declare void @gos_rt_gc_shadow_push(i32)",
+    "declare i64 @gos_rt_gc_shadow_save()",
+    "declare void @gos_rt_gc_shadow_restore(i64)",
+    "declare i64 @gos_rt_gc_collect_with_stack_roots()",
     // Goroutine spawn helpers (the LLVM backend currently
     // falls back to Cranelift for `go expr` bodies, but
     // declaring these makes future direct-LLVM lowering a
@@ -828,6 +950,14 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     // directly from the runtime to bypass per-byte FFI calls
     // in the fasta hot loop. Sizes match
     // `gossamer-runtime::c_abi::STDOUT_BUF_SIZE`.
-    "@GOS_RT_STDOUT_BYTES = external global [65536 x i8]",
-    "@GOS_RT_STDOUT_LEN = external global i64",
+    //
+    // `unnamed_addr` tells `opt`'s alias analysis that the symbols'
+    // identities (i.e. addresses) don't matter — only their values.
+    // Without this, `opt -O3` cannot prove that two ptr-typed
+    // arguments to a function don't both alias `@GOS_RT_STDOUT_LEN`,
+    // forcing a reload of `LEN` after every potentially-aliasing
+    // store. This is one of the three fixes the §5 release-perf
+    // investigation produced.
+    "@GOS_RT_STDOUT_BYTES = external local_unnamed_addr global [65536 x i8]",
+    "@GOS_RT_STDOUT_LEN = external local_unnamed_addr global i64",
 ];
