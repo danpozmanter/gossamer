@@ -56,6 +56,15 @@ pub(crate) type StructLayouts = std::collections::HashMap<gossamer_resolve::DefI
 /// frame, no boxing across the call boundary.
 pub(crate) type InlinableWrappers = std::collections::HashMap<String, Vec<String>>;
 
+/// Top-level `const` items, keyed by name, with their already-
+/// evaluated `Value`. The bytecode compiler inlines a path that
+/// resolves to one of these into a `LoadConst` (constant-pool
+/// fetch — single index) instead of a `LoadGlobal` (string-keyed
+/// `HashMap` lookup). The win shows up on hot loops that close
+/// over constants — fasta's `(state*IA+IC) % IM` LCG step would
+/// otherwise pay three name lookups per iteration.
+pub(crate) type ConstValues = std::collections::HashMap<String, Value>;
+
 /// Compiles an [`HirFn`] body into a [`FnChunk`]. The caller owns the
 /// resulting chunk; the compiler itself has no shared state.
 pub fn compile_fn(
@@ -63,6 +72,7 @@ pub fn compile_fn(
     tcx: &TyCtxt,
     layouts: &StructLayouts,
     wrappers: &InlinableWrappers,
+    consts: &ConstValues,
 ) -> RuntimeResult<FnChunk> {
     let Some(body) = decl.body.as_ref() else {
         return Ok(FnChunk {
@@ -84,7 +94,7 @@ pub fn compile_fn(
             field_cache_count: 0,
         });
     };
-    let mut builder = FnBuilder::new(decl.name.name.clone(), tcx, layouts, wrappers);
+    let mut builder = FnBuilder::new(decl.name.name.clone(), tcx, layouts, wrappers, consts);
     for param in &decl.params {
         let reg = builder.alloc_reg();
         builder.bind_param(&param.pattern, reg);
@@ -114,6 +124,12 @@ struct FnBuilder<'tcx> {
     tcx: &'tcx TyCtxt,
     layouts: &'tcx StructLayouts,
     wrappers: &'tcx InlinableWrappers,
+    /// Pre-evaluated values for top-level `const` items. A path
+    /// expression that resolves to one of these inlines as a
+    /// `LoadConst` instead of a `LoadGlobal` so the bytecode VM
+    /// fetches it via constant-pool index instead of a runtime
+    /// name lookup.
+    module_consts: &'tcx ConstValues,
     /// Value registers that are compile-time-proven to hold
     /// `Value::FloatArray` — populated by `BuildFloatArray`
     /// emission and cleared whenever the register is
@@ -194,12 +210,14 @@ impl<'tcx> FnBuilder<'tcx> {
         tcx: &'tcx TyCtxt,
         layouts: &'tcx StructLayouts,
         wrappers: &'tcx InlinableWrappers,
+        module_consts: &'tcx ConstValues,
     ) -> Self {
         Self {
             name,
             tcx,
             layouts,
             wrappers,
+            module_consts,
             flat_locals: std::collections::HashMap::new(),
             flat_int_locals: std::collections::HashSet::new(),
             flat_float_locals: std::collections::HashSet::new(),
@@ -964,6 +982,17 @@ impl<'tcx> FnBuilder<'tcx> {
             // None => break } }`) defers the whole loop so the
             // walker can handle Break propagation correctly.
             HirExprKind::Loop { body } => {
+                // Try the typed-i64 for-range fast path *before* the
+                // generic-unsupported check. A `for i in 0..n { ... }`
+                // desugar contains a `Match` (Some/None on `next()`),
+                // which the unsupported check would otherwise route
+                // to `compile_deferred` — sending every iteration of
+                // every range loop through the tree-walker. The
+                // fast-path emit handles the desugar shape directly,
+                // so the walker fallback isn't needed.
+                if let Some(reg) = self.try_compile_for_loop_range(body)? {
+                    return Ok(reg);
+                }
                 if body_contains_unsupported(body) {
                     self.compile_deferred(expr)
                 } else {
@@ -1193,6 +1222,18 @@ impl<'tcx> FnBuilder<'tcx> {
         if segments.len() == 1 {
             if let Some(tr) = self.lookup_local(&first.name) {
                 return Ok(self.as_value(tr));
+            }
+            // Top-level `const` items inline through the constant
+            // pool (single-index fetch) instead of `LoadGlobal`
+            // (string-keyed HashMap lookup). Hot loops that close
+            // over module-level consts pay only a register move
+            // per access.
+            if let Some(value) = self.module_consts.get(first.name.as_str()) {
+                let key = const_key_for_value(value);
+                let idx = self.const_idx(key, value.clone());
+                let dst = self.alloc_reg();
+                self.emit(Op::LoadConst { dst, idx });
+                return Ok(dst);
             }
         }
         // For multi-segment paths (`fmt::println`,
@@ -3365,6 +3406,159 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(result)
     }
 
+    /// `for var in start..end { body }` and `for _ in start..end { body }`.
+    ///
+    /// HIR lowers a `for` into the generic `loop { match iter.next() { Some(p)
+    /// => body, None => break } }` shape so every iterable goes through
+    /// the same machinery. For an integer range that path costs an
+    /// `Option` allocation + a match dispatch *per iteration* — on
+    /// nbody's nested `for a in 0..4 { for b in (a+1)..5 { ... } }` the
+    /// overhead dominated everything inside.
+    ///
+    /// We pattern-match the desugar back out and emit a typed-i64
+    /// counter loop:
+    ///
+    /// ```text
+    ///     start_i = <start>
+    ///     end_i   = <end>
+    /// header:
+    ///     if start_i >= end_i goto exit       (BranchIfGeI64)
+    ///     <body>                              (binding sees var via I64 reg)
+    ///     start_i = start_i + 1               (AddI64)
+    ///     jump header
+    /// exit:
+    /// ```
+    ///
+    /// Falls through to the generic match-loop on:
+    ///   - inclusive ranges (`a..=b`) — caller's body would observe the
+    ///     final `b` value, which the counter form doesn't currently emit
+    ///   - non-i64 range bounds (the typed file is i64-only; f64-step
+    ///     ranges would need a separate fast path nobody currently writes)
+    ///   - non-`Range` iterators (`Vec::iter`, `HashMap::keys`, etc.) —
+    ///     those still go through `next()`.
+    fn try_compile_for_loop_range(&mut self, body: &HirExpr) -> RuntimeResult<Option<Reg>> {
+        let HirExprKind::Block(block) = &body.kind else {
+            return Ok(None);
+        };
+        if !block.stmts.is_empty() {
+            return Ok(None);
+        }
+        let Some(tail) = block.tail.as_deref() else {
+            return Ok(None);
+        };
+        let HirExprKind::Match { scrutinee, arms } = &tail.kind else {
+            return Ok(None);
+        };
+        if arms.len() != 2 {
+            return Ok(None);
+        }
+        let HirExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+        } = &scrutinee.kind
+        else {
+            return Ok(None);
+        };
+        if name.name != "next" || !args.is_empty() {
+            return Ok(None);
+        }
+        let HirExprKind::Range {
+            start: Some(start),
+            end: Some(end),
+            inclusive: false,
+        } = &receiver.kind
+        else {
+            return Ok(None);
+        };
+        if self.expr_kind(start) != RegKind::I64 || self.expr_kind(end) != RegKind::I64 {
+            return Ok(None);
+        }
+        let some_arm = &arms[0];
+        let none_arm = &arms[1];
+        let HirPatKind::Variant {
+            name: some_name,
+            fields: some_fields,
+        } = &some_arm.pattern.kind
+        else {
+            return Ok(None);
+        };
+        if some_name.name != "Some" || some_fields.len() != 1 {
+            return Ok(None);
+        }
+        let HirPatKind::Variant {
+            name: none_name,
+            fields: none_fields,
+        } = &none_arm.pattern.kind
+        else {
+            return Ok(None);
+        };
+        if none_name.name != "None" || !none_fields.is_empty() {
+            return Ok(None);
+        }
+        // Bind the Some-arm's pattern (an ident or `_`) so the body
+        // can read it. The body is some_arm.body in the desugar.
+        let loop_var = match &some_fields[0].kind {
+            HirPatKind::Binding { name, .. } => Some(name.name.clone()),
+            HirPatKind::Wildcard => None,
+            _ => return Ok(None),
+        };
+
+        let start_tr = self.compile_expr_ex(start)?;
+        let end_tr = self.compile_expr_ex(end)?;
+        let counter_i = self.as_i64(start_tr);
+        let end_i = self.as_i64(end_tr);
+        let one_idx = self.i64_const_idx(1);
+        let one_i = self.alloc_int();
+        self.emit(Op::LoadConstI64 {
+            dst_i: one_i,
+            idx: one_idx,
+        });
+
+        let result = self.alloc_reg();
+        self.push_scope();
+        if let Some(name) = &loop_var {
+            self.bind_local(
+                name,
+                TypedReg {
+                    reg: counter_i,
+                    kind: RegKind::I64,
+                },
+            );
+        }
+
+        let header = self.cur_idx();
+        let exit_branch_idx = self.emit(Op::BranchIfGeI64 {
+            lhs_i: counter_i,
+            rhs_i: end_i,
+            target: 0,
+        });
+
+        self.loop_stack.push(LoopCtx {
+            break_patches: Vec::new(),
+            result_reg: result,
+            loop_start: header,
+        });
+        let _ = self.compile_expr(&some_arm.body)?;
+        self.emit(Op::AddI64 {
+            dst_i: counter_i,
+            lhs_i: counter_i,
+            rhs_i: one_i,
+        });
+        self.emit(Op::Jump { target: header });
+        let after = self.cur_idx();
+        self.patch_jump(exit_branch_idx, after);
+        let ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack underflow on for-range");
+        for patch in ctx.break_patches {
+            self.patch_jump(patch, after);
+        }
+        self.pop_scope();
+        Ok(Some(result))
+    }
+
     fn compile_return(&mut self, value: Option<&HirExpr>) -> RuntimeResult<Reg> {
         let reg = match value {
             Some(value) => self.compile_expr(value)?,
@@ -3420,6 +3614,24 @@ fn expr_diverges(expr: &HirExpr) -> bool {
 /// directly.
 fn is_path_expr(expr: &HirExpr) -> bool {
     matches!(&expr.kind, HirExprKind::Path { .. })
+}
+
+/// Maps a runtime [`Value`] back into the [`ConstKey`] used to
+/// dedupe entries in the per-chunk constant pool. Falls back to a
+/// disambiguating string key for shapes the pool doesn't model
+/// (arrays, maps, etc.) — those still get pooled, but no two
+/// inserts will ever collide because each call uses a fresh
+/// formatter output.
+fn const_key_for_value(value: &Value) -> ConstKey {
+    match value {
+        Value::Unit | Value::Void => ConstKey::Unit,
+        Value::Bool(b) => ConstKey::Bool(*b),
+        Value::Int(n) => ConstKey::Int(*n),
+        Value::Float(f) => ConstKey::Float(f.to_bits()),
+        Value::Char(c) => ConstKey::Char(*c),
+        Value::String(s) => ConstKey::String(s.as_ref().to_string()),
+        other => ConstKey::String(format!("__const_value_{other:?}")),
+    }
 }
 
 fn literal_const(lit: &HirLiteral) -> (ConstKey, Value) {

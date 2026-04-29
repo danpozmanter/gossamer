@@ -518,8 +518,26 @@ impl Vm {
             }
         }
         crate::builtins::set_struct_layouts(name_layouts);
+        // Snapshot every top-level `const NAME = ...` value the
+        // tree-walker has already evaluated. Passed to `compile_fn`
+        // so a path that resolves to one of these inlines as a
+        // `LoadConst` instead of a string-keyed `LoadGlobal` lookup.
+        let mut module_consts: HashMap<String, Value> = HashMap::new();
+        {
+            let walker = self.walker.borrow();
+            for item in &program.items {
+                let name = match &item.kind {
+                    HirItemKind::Const(decl) => &decl.name.name,
+                    HirItemKind::Static(decl) => &decl.name.name,
+                    _ => continue,
+                };
+                if let Some(value) = walker.lookup_global(name) {
+                    module_consts.insert(name.clone(), value);
+                }
+            }
+        }
         for item in &program.items {
-            self.load_item(item, tcx, &def_layouts, &wrappers)?;
+            self.load_item(item, tcx, &def_layouts, &wrappers, &module_consts)?;
         }
         // Tier D2 — deferred JIT. Lower MIR up front so the
         // tier-up trigger (in `apply`) can dispatch a compile via
@@ -657,16 +675,17 @@ impl Vm {
         tcx: &TyCtxt,
         layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
         wrappers: &HashMap<String, Vec<String>>,
+        module_consts: &HashMap<String, Value>,
     ) -> RuntimeResult<()> {
         let globals = Arc::make_mut(&mut self.globals);
         match &item.kind {
             HirItemKind::Fn(decl) => {
-                let chunk = compile_fn(decl, tcx, layouts, wrappers)?;
+                let chunk = compile_fn(decl, tcx, layouts, wrappers, module_consts)?;
                 globals.insert(decl.name.name.clone(), Global::Fn(chunk.into_shared()));
             }
             HirItemKind::Impl(decl) => {
                 for method in &decl.methods {
-                    let chunk = compile_fn(method, tcx, layouts, wrappers)?;
+                    let chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
                     let shared = chunk.into_shared();
                     // Register both the short name and the
                     // `TypeName::method` qualified key so runtime
@@ -683,7 +702,7 @@ impl Vm {
             HirItemKind::Trait(decl) => {
                 for method in &decl.methods {
                     if method.body.is_some() {
-                        let chunk = compile_fn(method, tcx, layouts, wrappers)?;
+                        let chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
                         globals.insert(method.name.name.clone(), Global::Fn(chunk.into_shared()));
                     }
                 }
