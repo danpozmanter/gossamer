@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use gossamer_ast::NodeId;
+use gossamer_lex::Symbol;
 
 use crate::def_id::{DefId, DefKind};
 use crate::resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution};
@@ -55,31 +56,31 @@ impl Binding {
 pub(crate) struct Scope {
     /// Names live in the type namespace (struct/enum/trait/alias/module/
     /// type-parameter/primitive).
-    types: HashMap<String, Binding>,
+    types: HashMap<Symbol, Binding>,
     /// Names live in the value namespace (fn/const/static/variant/local
     /// binding).
-    values: HashMap<String, Binding>,
+    values: HashMap<Symbol, Binding>,
 }
 
 impl Scope {
-    pub(crate) fn insert_type(&mut self, name: impl Into<String>, binding: Binding) -> bool {
+    pub(crate) fn insert_type(&mut self, name: impl Into<Symbol>, binding: Binding) -> bool {
         self.types.insert(name.into(), binding).is_none()
     }
 
-    pub(crate) fn insert_value(&mut self, name: impl Into<String>, binding: Binding) -> bool {
+    pub(crate) fn insert_value(&mut self, name: impl Into<Symbol>, binding: Binding) -> bool {
         self.values.insert(name.into(), binding).is_none()
     }
 
-    pub(crate) fn shadow_value(&mut self, name: impl Into<String>, binding: Binding) {
+    pub(crate) fn shadow_value(&mut self, name: impl Into<Symbol>, binding: Binding) {
         self.values.insert(name.into(), binding);
     }
 
     pub(crate) fn lookup_type(&self, name: &str) -> Option<Binding> {
-        self.types.get(name).copied()
+        self.types.get(&Symbol::intern(name)).copied()
     }
 
     pub(crate) fn lookup_value(&self, name: &str) -> Option<Binding> {
-        self.values.get(name).copied()
+        self.values.get(&Symbol::intern(name)).copied()
     }
 }
 

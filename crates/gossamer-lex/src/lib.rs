@@ -14,10 +14,12 @@ mod punct;
 mod source_map;
 mod span;
 mod string;
+mod symbol;
 mod token;
 
 pub use diagnostic::LexError;
 pub use lexer::{Lexer, tokenize};
 pub use source_map::SourceMap;
 pub use span::{FileId, LineCol, Span};
+pub use symbol::Symbol;
 pub use token::{Keyword, Punct, Token, TokenKind};

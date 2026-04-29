@@ -58,7 +58,7 @@ struct TypeChecker<'a> {
     table: TypeTable,
     diagnostics: Vec<TypeDiagnostic>,
     resolutions: &'a Resolutions,
-    scopes: Vec<HashMap<String, Ty>>,
+    scopes: Vec<HashMap<gossamer_lex::Symbol, Ty>>,
     binding_types: HashMap<NodeId, Ty>,
     /// Ordered field name + type for every named struct, keyed by
     /// the struct's `DefId`. Built during `collect_signatures` so
@@ -126,13 +126,14 @@ impl<'a> TypeChecker<'a> {
 
     fn bind_local(&mut self, name: &str, ty: Ty) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.to_string(), ty);
+            scope.insert(gossamer_lex::Symbol::intern(name), ty);
         }
     }
 
     fn lookup_local(&self, name: &str) -> Option<Ty> {
+        let sym = gossamer_lex::Symbol::intern(name);
         for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(name) {
+            if let Some(ty) = scope.get(&sym) {
                 return Some(*ty);
             }
         }
@@ -1189,6 +1190,20 @@ impl<'a> TypeChecker<'a> {
                 let key = tys.first().copied().unwrap_or_else(|| self.fresh());
                 let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
                 return self.tcx.intern(TyKind::HashMap { key, value });
+            }
+            // `Box<T>` / `Arc<T>` / `Rc<T>` are transparent in a fully
+            // GC'd language — every value is heap-shared already, so
+            // these wrappers carry no runtime distinction. Keep the
+            // surface accepting the spelling (Rust users expect to be
+            // able to write `Box<List>` for a recursive enum payload)
+            // by unwrapping to the inner type at type-check time.
+            "Box" | "Arc" | "Rc" => {
+                let substs = self.substs_from_ast(path);
+                let tys = substs.types();
+                if let Some(inner) = tys.first().copied() {
+                    return inner;
+                }
+                return self.fresh();
             }
             _ => {}
         }
