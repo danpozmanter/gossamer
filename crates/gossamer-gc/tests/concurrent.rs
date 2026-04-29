@@ -69,3 +69,48 @@ fn write_barrier_outside_marking_is_a_noop() {
     heap.collect();
     assert!(!heap.is_live(obj));
 }
+
+#[test]
+fn alloc_during_marking_is_born_black_and_survives_sweep() {
+    // Allocation shading: the mutator allocates a fresh object after
+    // marking has begun. Without allocation shading the object would
+    // be born white and the sweep would reclaim it even though the
+    // mutator still holds it on its (unscanned) stack.
+    let mut heap = Heap::new();
+    let rooted = heap.alloc(ObjKind::Leaf, Vec::new(), 1, 16);
+    heap.add_root(rooted);
+    heap.concurrent_start();
+    let fresh = heap.alloc(ObjKind::Leaf, Vec::new(), 2, 16);
+    while heap.concurrent_phase() == ConcurrentPhase::Marking {
+        heap.concurrent_step(8);
+    }
+    heap.concurrent_finish();
+    assert!(heap.is_live(rooted));
+    assert!(
+        heap.is_live(fresh),
+        "allocation-shaded object reclaimed mid-cycle",
+    );
+}
+
+#[test]
+fn write_barrier_with_source_re_greys_a_marked_source() {
+    // Defensive Yuasa-style barrier variant: re-greying the source
+    // forces a re-traversal even if the children list was mutated
+    // after the source was marked black.
+    let mut heap = Heap::new();
+    let aggregate = heap.alloc(ObjKind::Aggregate, Vec::new(), 0, 32);
+    let leaf = heap.alloc(ObjKind::Leaf, Vec::new(), 1, 16);
+    heap.add_root(aggregate);
+    heap.concurrent_start();
+    // Drain so the aggregate has been marked.
+    while heap.concurrent_phase() == ConcurrentPhase::Marking {
+        heap.concurrent_step(8);
+    }
+    // Mutator publishes a new child into the (now black) aggregate
+    // and uses the source-aware barrier to re-grey the aggregate.
+    heap.get_mut(aggregate).add_child(leaf);
+    heap.write_barrier_with_source(aggregate, leaf);
+    heap.concurrent_finish();
+    assert!(heap.is_live(aggregate));
+    assert!(heap.is_live(leaf));
+}

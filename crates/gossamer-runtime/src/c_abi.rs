@@ -529,40 +529,148 @@ pub unsafe extern "C" fn gos_rt_char_to_str(c: i32) -> *mut c_char {
 // routes through a fixed-signature wrapper.)
 // ---------------------------------------------------------------
 
-// Process-global 64 KiB stdout buffer. The previous design
-// used a thread-local `RefCell<Vec<u8>>`, but every byte write
-// then paid for: (a) the TLS slot lookup, (b) `RefCell`
-// borrow-tracking, and (c) `Vec` capacity-check + push. For
-// character-at-a-time output (fasta's hot loop emits ~50M
-// bytes one at a time), that overhead dominated the wall
-// clock. The reference Rust / Go programs reach byte-write
-// speed by inlining `BufWriter`/`bufio.Writer`, which we can't
-// do across an FFI boundary; the next best thing is a
-// monomorphic process-global buffer and unsynchronised
-// pointer arithmetic in the byte-write fast path. Multi-
-// threaded programs are still safe because the bytecode VM /
-// scheduler do not concurrently call into this buffer (each
-// goroutine's writes are serialised through a single thread
-// at the boundary today; full TLS-per-thread remains a
-// follow-up if anyone hits contention).
+// Process-global 64 KiB stdout buffer. The buffer's lifetime is
+// the whole process, but every entry into the inline byte-write
+// fast path takes the buffer mutex (`STDOUT_LOCK` below) so two
+// goroutines on different OS threads cannot race on
+// `GOS_RT_STDOUT_LEN`. The previous design (no lock) tore the
+// length under any multi-thread output and is the C3 finding in
+// `~/dev/contexts/lang/adversarial_analysis.md`.
+//
+// Performance: parking_lot's uncontended acquire/release is ~10 ns
+// total. The LLVM lowerer takes the lock once per inline write
+// region (a single byte, or a contiguous range — the array
+// writer in `lower_stream_write_byte_array_inline` packs up to
+// 65 K bytes per acquire). For fasta's 60-byte lines that is
+// ~4 M acquires across 250 MB of output → ~40 ms of total mutex
+// overhead, lost in the noise against the ~2 s of I/O.
+//
+// `STDOUT_LOCK` is exposed to the codegen via
+// `gos_rt_stdout_acquire` / `gos_rt_stdout_release`. The codegen
+// pairs them around any inline access; the runtime helpers
+// (`gos_rt_print_*`) acquire it via the safe `lock()` path.
 /// Hot-path stdout buffer capacity. Codegen inlines a buffer
 /// length check against this value, so it must stay in sync
 /// with `GOS_RT_STDOUT_BYTES`'s length below.
 pub const STDOUT_BUF_SIZE: usize = 64 * 1024;
+
+/// Process-global mutex protecting [`GOS_RT_STDOUT_BYTES`] and
+/// [`GOS_RT_STDOUT_LEN`]. Held for the duration of any inline
+/// byte-write region (codegen-emitted) or any
+/// `gos_rt_print_*` / `gos_rt_println` runtime helper. The
+/// underlying lock is non-recursive; reentrant nesting on the
+/// same OS thread routes through the per-thread depth counter
+/// below so `gos_rt_println("foo")` (which acquires inside the
+/// helper) can be called from inside an inline write region
+/// (which already acquired) without deadlocking.
+static STDOUT_LOCK: parking_lot::RawMutex = {
+    use parking_lot::lock_api::RawMutex;
+    parking_lot::RawMutex::INIT
+};
+
+thread_local! {
+    /// Reentrancy counter for [`STDOUT_LOCK`] on the current
+    /// thread. Bumped on each `acquire`, dropped on each
+    /// `release`. The mutex is taken on the 0→1 transition and
+    /// released on the 1→0 transition; intermediate transitions
+    /// are no-ops at the lock layer. This makes
+    /// `gos_rt_stdout_acquire` / `_release` recursion-safe even
+    /// though `parking_lot::RawMutex` itself is not.
+    static STDOUT_LOCK_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Internal entry point: increments the per-thread reentrancy
+/// counter, taking the mutex on the outermost acquire. Called by
+/// every code path that touches the stdout buffer.
+#[allow(dead_code)]
+fn stdout_lock_acquire() {
+    STDOUT_LOCK_DEPTH.with(|depth| {
+        let n = depth.get();
+        if n == 0 {
+            use parking_lot::lock_api::RawMutex;
+            STDOUT_LOCK.lock();
+        }
+        depth.set(n + 1);
+    });
+}
+
+/// Internal entry point: decrements the per-thread reentrancy
+/// counter, releasing the mutex when the counter returns to zero.
+/// Calling this without a matching `stdout_lock_acquire` is a
+/// programming error; debug builds assert.
+#[allow(dead_code)]
+fn stdout_lock_release() {
+    STDOUT_LOCK_DEPTH.with(|depth| {
+        let n = depth.get();
+        debug_assert!(n > 0, "stdout_lock_release without acquire");
+        if n == 1 {
+            use parking_lot::lock_api::RawMutex;
+            // SAFETY: invariant — `stdout_lock_acquire` ran on
+            // the same thread when `n` was 0, taking the lock.
+            unsafe { STDOUT_LOCK.unlock() };
+        }
+        depth.set(n.saturating_sub(1));
+    });
+}
 
 /// Process-global stdout buffer storage. The LLVM backend
 /// emits inline fast-path code that loads
 /// `GOS_RT_STDOUT_LEN`, stores the new byte at offset
 /// `bytes[len]`, and bumps the length — bypassing the FFI
 /// call and saving the per-call overhead that dominates
-/// character-at-a-time output (fasta hot loop).
+/// character-at-a-time output (fasta hot loop). Access from any
+/// thread requires the `STDOUT_LOCK` mutex be held.
 #[unsafe(no_mangle)]
 pub static mut GOS_RT_STDOUT_BYTES: [u8; STDOUT_BUF_SIZE] = [0; STDOUT_BUF_SIZE];
 
 /// Current write offset in `GOS_RT_STDOUT_BYTES`. The inline
 /// fast path reads this, stores the byte, and writes it back.
+/// Access from any thread requires the `STDOUT_LOCK` mutex be
+/// held.
 #[unsafe(no_mangle)]
 pub static mut GOS_RT_STDOUT_LEN: usize = 0;
+
+/// Acquires the process-wide stdout buffer lock. Codegen wraps
+/// every inline byte-write region in matched
+/// [`gos_rt_stdout_acquire`] / [`gos_rt_stdout_release`] calls so
+/// concurrent goroutines on different OS threads serialise their
+/// writes against the buffer. Re-entry on the same thread is
+/// supported via the per-thread `STDOUT_LOCK_DEPTH` counter so
+/// the runtime FFI helpers (`gos_rt_print_*`, `gos_rt_println`,
+/// `gos_rt_flush_stdout`) remain safe to call from inside an
+/// outer acquire.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_stdout_acquire() {
+    stdout_lock_acquire();
+}
+
+/// Releases the process-wide stdout buffer lock acquired by a
+/// matching [`gos_rt_stdout_acquire`]. Calling this without a
+/// prior acquire is a programming error; the codegen always
+/// emits matched pairs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_stdout_release() {
+    stdout_lock_release();
+}
+
+/// Convenience RAII guard: acquires `STDOUT_LOCK` for the duration
+/// of the current scope. Reentrant via the per-thread depth
+/// counter so a runtime helper that holds a guard can call
+/// another runtime helper that also acquires.
+struct StdoutGuard;
+
+impl StdoutGuard {
+    fn acquire() -> Self {
+        stdout_lock_acquire();
+        Self
+    }
+}
+
+impl Drop for StdoutGuard {
+    fn drop(&mut self) {
+        stdout_lock_release();
+    }
+}
 
 fn raw_write_stdout(bytes: &[u8]) {
     if bytes.is_empty() {
@@ -574,8 +682,13 @@ fn raw_write_stdout(bytes: &[u8]) {
     let _ = handle.write_all(bytes);
 }
 
+/// Inner mechanic shared by `write_stdout` and any internal
+/// caller that already holds `STDOUT_LOCK`. Splitting the lock
+/// acquisition from the buffer manipulation lets us avoid
+/// re-entering the (non-recursive) `RawMutex` from helpers that
+/// already entered through the safe guard.
 #[allow(static_mut_refs)]
-unsafe fn write_stdout(bytes: &[u8]) {
+unsafe fn write_stdout_locked(bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }
@@ -613,12 +726,21 @@ unsafe fn write_stdout(bytes: &[u8]) {
     }
 }
 
+unsafe fn write_stdout(bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+    let _guard = StdoutGuard::acquire();
+    unsafe { write_stdout_locked(bytes) };
+}
+
 /// Flushes the process-global stdout buffer. Called on every
 /// `println`-family intrinsic and on process exit via
 /// `gos_rt_flush_stdout`.
 #[unsafe(no_mangle)]
 #[allow(static_mut_refs)]
 pub unsafe extern "C" fn gos_rt_flush_stdout() {
+    let _guard = StdoutGuard::acquire();
     let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
     let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
     let len = unsafe { *len_ptr };
@@ -770,6 +892,7 @@ fn raw_write_fd(fd: i32, bytes: &[u8]) {
 pub unsafe extern "C" fn gos_rt_stream_write_byte(stream: *const GosStream, b: i64) {
     let fd = unsafe { stream_fd(stream) };
     if fd == 1 {
+        let _guard = StdoutGuard::acquire();
         let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
         let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
         let len = unsafe { *len_ptr };
@@ -834,6 +957,7 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte_array(
         // remaining capacity) flushes and retries; for the
         // small-block case (fasta's 61-byte lines) the buffer
         // is rarely full, so the fast path runs every line.
+        let guard = StdoutGuard::acquire();
         let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
         let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
         let cur = unsafe { *len_ptr };
@@ -847,13 +971,15 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte_array(
             }
             return;
         }
-        // Slow path: block doesn't fit. Flush and recurse with
-        // a now-empty buffer.
+        // Slow path: block doesn't fit. Flush and either pack
+        // an oversized payload directly, or recurse so the
+        // first arm fires with an empty buffer. The recursion
+        // case has to drop the guard first — `STDOUT_LOCK` is
+        // a non-recursive `RawMutex`, so re-entering on the
+        // same OS thread would deadlock.
         unsafe {
             raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), cur));
             *len_ptr = 0;
-            // Block bigger than the buffer? Pack into a heap
-            // vec and write it directly.
             if len > STDOUT_BUF_SIZE {
                 let mut tmp = Vec::<u8>::with_capacity(len);
                 for i in 0..len {
@@ -861,9 +987,9 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte_array(
                 }
                 raw_write_stdout(&tmp);
             } else {
-                // Recurse; now the buffer is empty so the
-                // first arm fires.
+                drop(guard);
                 gos_rt_stream_write_byte_array(stream, arr, len as i64);
+                return;
             }
         }
         return;
@@ -945,6 +1071,7 @@ pub unsafe extern "C" fn gos_rt_println() {
     // Batched programs (fasta et al.) fill the buffer and flush
     // in 64 KiB chunks, which is dramatically cheaper than per-
     // write syscalls.
+    let _guard = StdoutGuard::acquire();
     let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
     let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
     let len = unsafe { *len_ptr };
@@ -2048,6 +2175,10 @@ pub struct GosChan {
     pub buf: StdMutex<VecDeque<Vec<u8>>>,
     pub not_empty: StdCondvar,
     pub not_full: StdCondvar,
+    /// Goroutine id of the most recent sender. Read by recv to
+    /// record a happens-before edge into the race detector. `-1`
+    /// means "no sender yet observed".
+    pub last_sender: AtomicI64,
 }
 
 #[unsafe(no_mangle)]
@@ -2059,6 +2190,7 @@ pub unsafe extern "C" fn gos_rt_chan_new(elem_bytes: u32, cap: i64) -> *mut GosC
         buf: StdMutex::new(VecDeque::new()),
         not_empty: StdCondvar::new(),
         not_full: StdCondvar::new(),
+        last_sender: AtomicI64::new(-1),
     }))
 }
 
@@ -2079,6 +2211,9 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
     }
     guard.push_back(data);
     drop(guard);
+    chan
+        .last_sender
+        .store(i64::from(crate::race::current_gid()), Ordering::Release);
     chan.not_empty.notify_one();
 }
 
@@ -2099,6 +2234,9 @@ pub unsafe extern "C" fn gos_rt_chan_try_send(c: *mut GosChan, val: *const u8) -
     }
     guard.push_back(data);
     drop(guard);
+    chan
+        .last_sender
+        .store(i64::from(crate::race::current_gid()), Ordering::Release);
     chan.not_empty.notify_one();
     1
 }
@@ -2117,6 +2255,7 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
                 std::ptr::copy_nonoverlapping(item.as_ptr(), out, bytes_len);
             }
             drop(guard);
+            record_chan_handoff(chan);
             chan.not_full.notify_one();
             return 1;
         }
@@ -2140,10 +2279,23 @@ pub unsafe extern "C" fn gos_rt_chan_try_recv(c: *mut GosChan, out: *mut u8) -> 
             std::ptr::copy_nonoverlapping(item.as_ptr(), out, bytes_len);
         }
         drop(guard);
+        record_chan_handoff(chan);
         chan.not_full.notify_one();
         return 1;
     }
     0
+}
+
+/// Records the sender->receiver synchronisation edge into the race
+/// detector. Called immediately after a successful recv. No-op
+/// when the race detector is disabled.
+fn record_chan_handoff(chan: &GosChan) {
+    let from = chan.last_sender.load(Ordering::Acquire);
+    if from < 0 {
+        return;
+    }
+    let to = crate::race::current_gid();
+    crate::race::record_sync(u32::try_from(from).unwrap_or(0), to);
 }
 
 #[unsafe(no_mangle)]
@@ -2155,6 +2307,38 @@ pub unsafe extern "C" fn gos_rt_chan_close(c: *mut GosChan) {
     *chan.closed.lock().unwrap() = true;
     chan.not_empty.notify_all();
     chan.not_full.notify_all();
+}
+
+/// Drops a channel created with `gos_rt_chan_new`.
+/// Closes the channel first so any thread parked on `not_empty` /
+/// `not_full` wakes with `RecvResult::Closed` / `SendResult::Closed`
+/// before the underlying storage is reclaimed. Calling this on a
+/// channel that other threads are still using is a logic error;
+/// the codegen emits the call at the channel's last live use.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_chan_drop(c: *mut GosChan) {
+    if c.is_null() {
+        return;
+    }
+    // Close + notify before reclamation so parked threads observe
+    // the closed flag rather than racing the Box drop. The Drop
+    // impl on `GosChan` repeats the close+notify, harmlessly,
+    // because callers may also drop a `Box<GosChan>` directly in
+    // tests without going through this entry point.
+    unsafe {
+        gos_rt_chan_close(c);
+        drop(Box::from_raw(c));
+    }
+}
+
+impl Drop for GosChan {
+    fn drop(&mut self) {
+        if let Ok(mut closed) = self.closed.lock() {
+            *closed = true;
+        }
+        self.not_empty.notify_all();
+        self.not_full.notify_all();
+    }
 }
 
 // ---------------------------------------------------------------
@@ -2739,12 +2923,17 @@ pub unsafe extern "C" fn gos_rt_time_now_ms() -> i64 {
 
 pub struct GosMutex {
     inner: parking_lot::Mutex<()>,
+    /// Goroutine id of the most recent unlocker. Read by the next
+    /// lock acquirer to record a happens-before edge into the race
+    /// detector. `-1` means "never been locked".
+    last_unlocker: AtomicI64,
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mutex_new() -> *mut GosMutex {
     Box::into_raw(Box::new(GosMutex {
         inner: parking_lot::Mutex::new(()),
+        last_unlocker: AtomicI64::new(-1),
     }))
 }
 
@@ -2757,6 +2946,13 @@ pub unsafe extern "C" fn gos_rt_mutex_lock(m: *mut GosMutex) {
     // Forget the guard — the user calls unlock explicitly.
     let guard = m.inner.lock();
     std::mem::forget(guard);
+    let from = m.last_unlocker.load(Ordering::Acquire);
+    if from >= 0 {
+        crate::race::record_sync(
+            u32::try_from(from).unwrap_or(0),
+            crate::race::current_gid(),
+        );
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -2769,6 +2965,9 @@ pub unsafe extern "C" fn gos_rt_mutex_unlock(m: *mut GosMutex) {
     // is undefined; the user's discipline (one lock per
     // unlock) is required.
     let m = unsafe { &*m };
+    m
+        .last_unlocker
+        .store(i64::from(crate::race::current_gid()), Ordering::Release);
     unsafe { m.inner.force_unlock() };
 }
 
@@ -2779,11 +2978,23 @@ pub unsafe extern "C" fn gos_rt_mutex_unlock(m: *mut GosMutex) {
 // Mirrors `sync.WaitGroup` in Go. `add(n)` bumps a counter,
 // `done()` decrements, `wait()` blocks until the counter hits
 // zero. Implemented as `(parking_lot::Mutex<i64>, parking_lot
-// ::Condvar)`.
+// ::Condvar)` plus a sticky error flag so misuse never panics
+// while the lock is held.
 
 pub struct GosWaitGroup {
     counter: parking_lot::Mutex<i64>,
     cv: parking_lot::Condvar,
+    /// Sticky misuse marker. Bit 0 set on underflow (done called
+    /// more than add granted), bit 1 set on overflow (counter would
+    /// pass `i64::MAX`). Surfaced via `gos_rt_wg_error` so callers
+    /// can fail loudly without taking a panic path while the
+    /// counter mutex is held.
+    error: AtomicI64,
+    /// Goroutine id of the most recent caller of `done`. Used by
+    /// `wait` to record a happens-before edge so the race detector
+    /// observes that the waiter sees everything the done-callers
+    /// did before signalling.
+    last_done: AtomicI64,
 }
 
 #[unsafe(no_mangle)]
@@ -2791,30 +3002,53 @@ pub unsafe extern "C" fn gos_rt_wg_new() -> *mut GosWaitGroup {
     Box::into_raw(Box::new(GosWaitGroup {
         counter: parking_lot::Mutex::new(0),
         cv: parking_lot::Condvar::new(),
+        error: AtomicI64::new(0),
+        last_done: AtomicI64::new(-1),
     }))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_wg_add(wg: *mut GosWaitGroup, n: i64) {
+pub unsafe extern "C" fn gos_rt_wg_add(wg: *mut GosWaitGroup, n: i64) -> i64 {
     if wg.is_null() {
-        return;
+        return -1;
     }
     let wg = unsafe { &*wg };
     let mut c = wg.counter.lock();
-    *c += n;
+    if let Some(v) = c.checked_add(n) {
+        *c = v;
+        if v < 0 {
+            wg.error.fetch_or(1, Ordering::Relaxed);
+        }
+        if v <= 0 {
+            wg.cv.notify_all();
+        }
+        v
+    } else {
+        wg.error.fetch_or(2, Ordering::Relaxed);
+        -1
+    }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_wg_done(wg: *mut GosWaitGroup) {
+pub unsafe extern "C" fn gos_rt_wg_done(wg: *mut GosWaitGroup) -> i64 {
     if wg.is_null() {
-        return;
+        return -1;
     }
     let wg = unsafe { &*wg };
     let mut c = wg.counter.lock();
     *c -= 1;
-    if *c <= 0 {
+    let value = *c;
+    if value < 0 {
+        wg.error.fetch_or(1, Ordering::Relaxed);
+    }
+    if value <= 0 {
         wg.cv.notify_all();
     }
+    drop(c);
+    wg
+        .last_done
+        .store(i64::from(crate::race::current_gid()), Ordering::Release);
+    value
 }
 
 #[unsafe(no_mangle)]
@@ -2827,6 +3061,37 @@ pub unsafe extern "C" fn gos_rt_wg_wait(wg: *mut GosWaitGroup) {
     while *c > 0 {
         wg.cv.wait(&mut c);
     }
+    drop(c);
+    let from = wg.last_done.load(Ordering::Acquire);
+    if from >= 0 {
+        crate::race::record_sync(
+            u32::try_from(from).unwrap_or(0),
+            crate::race::current_gid(),
+        );
+    }
+}
+
+/// Returns the sticky misuse bitmask: 0 = ok, 1 = underflow seen,
+/// 2 = overflow seen, 3 = both. Reading does not clear the flag;
+/// `gos_rt_wg_error_clear` resets it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_wg_error(wg: *const GosWaitGroup) -> i64 {
+    if wg.is_null() {
+        return 0;
+    }
+    let wg = unsafe { &*wg };
+    wg.error.load(Ordering::Relaxed)
+}
+
+/// Clears the sticky misuse bitmask. Returns the value observed
+/// before the clear so callers can act on whatever was queued.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_wg_error_clear(wg: *mut GosWaitGroup) -> i64 {
+    if wg.is_null() {
+        return 0;
+    }
+    let wg = unsafe { &*wg };
+    wg.error.swap(0, Ordering::Relaxed)
 }
 
 // ---------------------------------------------------------------
@@ -2839,6 +3104,16 @@ pub unsafe extern "C" fn gos_rt_wg_wait(wg: *mut GosWaitGroup) {
 // through `go expr` / channels. Indexing goes through the
 // runtime so the language doesn't have to grow `&mut [T]`
 // semantics for fan-out workloads.
+//
+// **Concurrency contract.** `GosI64Vec` and `GosU8Vec` are
+// **single-owner**: the backing buffer is allocated and freed by
+// one goroutine, and concurrent mutation across goroutines is
+// undefined behaviour. `gos_rt_arr_push`-style operations resize
+// by reallocating `data`, so two goroutines that both observe
+// `len == cap` and both reallocate corrupt the heap. For
+// cross-goroutine sharing use the `GosSyncI64Vec` / `GosSyncU8Vec`
+// types defined below — same conceptual shape, every operation
+// guarded by an internal `parking_lot` mutex.
 
 #[repr(C)]
 pub struct GosI64Vec {
@@ -2933,6 +3208,7 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_lines_to_stdout(
     if end > v_ref.len {
         return;
     }
+    let _guard = StdoutGuard::acquire();
     let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
     let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
     let mut cur = unsafe { *len_ptr };
@@ -3017,6 +3293,7 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_bytes_to_stdout(
     if end > v_ref.len {
         return;
     }
+    let _guard = StdoutGuard::acquire();
     let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
     let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
     let mut cur = unsafe { *len_ptr };
@@ -3172,6 +3449,7 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_lines_to_stdout(
     if end > v_ref.len {
         return;
     }
+    let _guard = StdoutGuard::acquire();
     let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
     let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
     let mut cur = unsafe { *len_ptr };
@@ -3251,6 +3529,7 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_bytes_to_stdout(
     if end > v_ref.len {
         return;
     }
+    let _guard = StdoutGuard::acquire();
     let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
     let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
     let mut cur = unsafe { *len_ptr };
@@ -3284,6 +3563,154 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_bytes_to_stdout(
         }
     }
     unsafe { *len_ptr = cur };
+}
+
+// ---------------------------------------------------------------
+// SyncI64Vec / SyncU8Vec — cross-goroutine-safe vec wrappers
+// ---------------------------------------------------------------
+//
+// Same conceptual shape as `GosI64Vec` / `GosU8Vec` but with the
+// backing storage owned by a `parking_lot::Mutex<Vec<_>>`. Every
+// operation takes the mutex briefly so concurrent push/get/set
+// across goroutines is safe. Use this whenever the same `vec`
+// value is captured into a `go` closure or placed on a channel.
+
+pub struct GosSyncI64Vec {
+    inner: parking_lot::Mutex<Vec<i64>>,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_i64_new(len: i64) -> *mut GosSyncI64Vec {
+    let n = if len < 0 { 0 } else { len as usize };
+    Box::into_raw(Box::new(GosSyncI64Vec {
+        inner: parking_lot::Mutex::new(vec![0i64; n]),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_i64_drop(v: *mut GosSyncI64Vec) {
+    if v.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(v) });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_i64_len(v: *const GosSyncI64Vec) -> i64 {
+    if v.is_null() {
+        return 0;
+    }
+    let v = unsafe { &*v };
+    i64::try_from(v.inner.lock().len()).unwrap_or(i64::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_i64_get(v: *const GosSyncI64Vec, idx: i64) -> i64 {
+    if v.is_null() || idx < 0 {
+        return 0;
+    }
+    let v = unsafe { &*v };
+    let g = v.inner.lock();
+    g.get(idx as usize).copied().unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_i64_set(v: *mut GosSyncI64Vec, idx: i64, val: i64) {
+    if v.is_null() || idx < 0 {
+        return;
+    }
+    let v = unsafe { &*v };
+    let mut g = v.inner.lock();
+    if let Some(slot) = g.get_mut(idx as usize) {
+        *slot = val;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_i64_push(v: *mut GosSyncI64Vec, val: i64) {
+    if v.is_null() {
+        return;
+    }
+    let v = unsafe { &*v };
+    v.inner.lock().push(val);
+}
+
+/// Atomic increment: `vec[idx] += delta`, returns the new value.
+/// Used by fan-out workers that share a counter slot without
+/// needing a separate AtomicI64 per slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_i64_add(v: *mut GosSyncI64Vec, idx: i64, delta: i64) -> i64 {
+    if v.is_null() || idx < 0 {
+        return 0;
+    }
+    let v = unsafe { &*v };
+    let mut g = v.inner.lock();
+    if let Some(slot) = g.get_mut(idx as usize) {
+        *slot = slot.wrapping_add(delta);
+        *slot
+    } else {
+        0
+    }
+}
+
+pub struct GosSyncU8Vec {
+    inner: parking_lot::Mutex<Vec<u8>>,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_u8_new(len: i64) -> *mut GosSyncU8Vec {
+    let n = if len < 0 { 0 } else { len as usize };
+    Box::into_raw(Box::new(GosSyncU8Vec {
+        inner: parking_lot::Mutex::new(vec![0u8; n]),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_u8_drop(v: *mut GosSyncU8Vec) {
+    if v.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(v) });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_u8_len(v: *const GosSyncU8Vec) -> i64 {
+    if v.is_null() {
+        return 0;
+    }
+    let v = unsafe { &*v };
+    i64::try_from(v.inner.lock().len()).unwrap_or(i64::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_u8_get(v: *const GosSyncU8Vec, idx: i64) -> i64 {
+    if v.is_null() || idx < 0 {
+        return 0;
+    }
+    let v = unsafe { &*v };
+    let g = v.inner.lock();
+    g.get(idx as usize).copied().map_or(0, i64::from)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_u8_set(v: *mut GosSyncU8Vec, idx: i64, val: i64) {
+    if v.is_null() || idx < 0 {
+        return;
+    }
+    let v = unsafe { &*v };
+    let mut g = v.inner.lock();
+    if let Some(slot) = g.get_mut(idx as usize) {
+        *slot = val as u8;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sync_u8_push(v: *mut GosSyncU8Vec, val: i64) {
+    if v.is_null() {
+        return;
+    }
+    let v = unsafe { &*v };
+    v.inner.lock().push(val as u8);
 }
 
 // ---------------------------------------------------------------
@@ -3330,6 +3757,120 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_fetch_add(a: *mut GosAtomicI64, delta
     }
     let a = unsafe { &*a };
     a.inner.fetch_add(delta, Ordering::SeqCst)
+}
+
+/// Acquire-ordered load. Cheaper than the SeqCst variant on
+/// architectures with relaxed memory models (ARM64, RISC-V); on
+/// x86 it lowers to the same instruction. Pair with the `_release`
+/// store at the producer side for the standard release/acquire
+/// pattern (`Mutex`-like handoff, lock-free queue head, etc.).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_i64_load_acquire(a: *const GosAtomicI64) -> i64 {
+    if a.is_null() {
+        return 0;
+    }
+    let a = unsafe { &*a };
+    a.inner.load(Ordering::Acquire)
+}
+
+/// Release-ordered store, paired with `_load_acquire`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_i64_store_release(a: *mut GosAtomicI64, val: i64) {
+    if a.is_null() {
+        return;
+    }
+    let a = unsafe { &*a };
+    a.inner.store(val, Ordering::Release);
+}
+
+/// Relaxed load — no synchronisation, only atomicity. Useful for
+/// progress counters, generation tokens, and other observable-
+/// from-anywhere values where ordering is enforced separately.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_i64_load_relaxed(a: *const GosAtomicI64) -> i64 {
+    if a.is_null() {
+        return 0;
+    }
+    let a = unsafe { &*a };
+    a.inner.load(Ordering::Relaxed)
+}
+
+/// Relaxed store, paired with `_load_relaxed`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_i64_store_relaxed(a: *mut GosAtomicI64, val: i64) {
+    if a.is_null() {
+        return;
+    }
+    let a = unsafe { &*a };
+    a.inner.store(val, Ordering::Relaxed);
+}
+
+/// AcqRel-ordered fetch_add. Use when both producer and consumer
+/// observe the modification (CAS loops, ticket counters).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_i64_fetch_add_acqrel(
+    a: *mut GosAtomicI64,
+    delta: i64,
+) -> i64 {
+    if a.is_null() {
+        return 0;
+    }
+    let a = unsafe { &*a };
+    a.inner.fetch_add(delta, Ordering::AcqRel)
+}
+
+/// Compare-and-swap with SeqCst semantics. Returns `1` when the
+/// swap happened, `0` when the observed value did not match
+/// `expected`. Used to implement spin-locks and lock-free
+/// data structures from compiled code.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_i64_cas(
+    a: *mut GosAtomicI64,
+    expected: i64,
+    new: i64,
+) -> i32 {
+    if a.is_null() {
+        return 0;
+    }
+    let a = unsafe { &*a };
+    match a
+        .inner
+        .compare_exchange(expected, new, Ordering::SeqCst, Ordering::SeqCst)
+    {
+        Ok(_) => 1,
+        Err(_) => 0,
+    }
+}
+
+/// Acquire-on-success / Acquire-on-failure CAS. Cheaper than the
+/// SeqCst variant on relaxed-memory hosts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_i64_cas_acq_rel(
+    a: *mut GosAtomicI64,
+    expected: i64,
+    new: i64,
+) -> i32 {
+    if a.is_null() {
+        return 0;
+    }
+    let a = unsafe { &*a };
+    match a
+        .inner
+        .compare_exchange(expected, new, Ordering::AcqRel, Ordering::Acquire)
+    {
+        Ok(_) => 1,
+        Err(_) => 0,
+    }
+}
+
+/// Atomic exchange — returns the previous value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_i64_swap(a: *mut GosAtomicI64, val: i64) -> i64 {
+    if a.is_null() {
+        return 0;
+    }
+    let a = unsafe { &*a };
+    a.inner.swap(val, Ordering::AcqRel)
 }
 
 // ---------------------------------------------------------------

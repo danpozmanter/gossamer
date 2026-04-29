@@ -48,6 +48,16 @@ pub(crate) struct Lowerer<'a> {
     /// populated by the emitter before calling
     /// [`Lowerer::lower`].
     pub(crate) strings: std::rc::Rc<std::cell::RefCell<StringPool>>,
+    /// Tracks which MIR block we're currently lowering so the
+    /// safepoint emitter can place its `!dbg`-style comment in the
+    /// right place. Track 3 / §6.3 of the audit owns the actual
+    /// safepoint semantics; this slot is the bookkeeping the
+    /// codegen needs while that work threads through.
+    pub(crate) current_block: Option<u32>,
+    /// Monotonically-increasing counter for safepoint label
+    /// suffixes so the LLVM IR has unique block names per
+    /// preempt-check call site.
+    pub(crate) preempt_seq: u32,
 }
 
 /// Module-scoped string intern pool.
@@ -114,6 +124,8 @@ impl<'a> Lowerer<'a> {
             runtime_refs: std::collections::BTreeSet::new(),
             fn_name_by_def: std::collections::HashMap::new(),
             strings: std::rc::Rc::new(std::cell::RefCell::new(StringPool::default())),
+            current_block: None,
+            preempt_seq: 0,
         }
     }
 
@@ -236,8 +248,24 @@ impl<'a> Lowerer<'a> {
         for stmt in &block.stmts {
             self.lower_stmt(stmt)?;
         }
+        self.current_block = Some(block.id.as_u32());
         self.lower_terminator(&block.terminator)?;
+        self.current_block = None;
         Ok(())
+    }
+
+    /// Emits a call to the runtime preempt-and-yield helper. The
+    /// codegen invokes this just before any terminator that takes
+    /// a back-edge so the scheduler can interrupt tight loops
+    /// (H11 / §6.3 of `~/dev/contexts/lang/adversarial_analysis.md`).
+    fn emit_preempt_check(&mut self) {
+        writeln!(
+            self.out,
+            "  %prempt_{n} = call i32 @gos_rt_preempt_check_and_yield()",
+            n = self.preempt_seq,
+        )
+        .unwrap();
+        self.preempt_seq = self.preempt_seq.wrapping_add(1);
     }
 
     fn lower_stmt(&mut self, stmt: &Statement) -> Result<(), BuildError> {
@@ -1195,6 +1223,27 @@ impl<'a> Lowerer<'a> {
     fn lower_terminator(&mut self, term: &Terminator) -> Result<(), BuildError> {
         match term {
             Terminator::Return => {
+                // Emit cleanup calls for owning heap-typed locals before
+                // the actual `ret`. Mirrors the Cranelift Return path —
+                // see `gossamer_mir::plan_cleanup` for the analysis.
+                // Each entry is `(local, free_fn)`: load the alloca
+                // backing the local and call the runtime reclamation
+                // helper. Without this loop the `_free` symbols ship in
+                // the runtime but are never called and every owning
+                // `Vec<i64>` / `Vec<u8>` / channel leaks until process
+                // exit (C2 in `~/dev/contexts/lang/adversarial_analysis.md`).
+                let cleanup = gossamer_mir::plan_cleanup(self.body);
+                for entry in cleanup.entries() {
+                    let tmp = self.fresh();
+                    writeln!(
+                        self.out,
+                        "  {tmp} = load ptr, ptr {slot}",
+                        slot = local_slot(entry.local)
+                    )
+                    .unwrap();
+                    writeln!(self.out, "  call void @{free}(ptr {tmp})", free = entry.free_fn)
+                        .unwrap();
+                }
                 let ret_ty = self.body.local_ty(Local::RETURN);
                 let ret_llvm = render_ty(self.tcx, ret_ty);
                 if is_unit(self.tcx, ret_ty) {
@@ -1233,6 +1282,14 @@ impl<'a> Lowerer<'a> {
                 Ok(())
             }
             Terminator::Goto { target } => {
+                if self
+                    .current_block
+                    .is_some_and(|src| target.as_u32() <= src)
+                {
+                    self.runtime_refs
+                        .insert("gos_rt_preempt_check_and_yield".to_string());
+                    self.emit_preempt_check();
+                }
                 writeln!(self.out, "  br label %bb{}", target.as_u32()).unwrap();
                 Ok(())
             }
@@ -1241,6 +1298,14 @@ impl<'a> Lowerer<'a> {
                 arms,
                 default,
             } => {
+                let src = self.current_block.unwrap_or(u32::MAX);
+                let has_back_edge = arms.iter().any(|(_, t)| t.as_u32() <= src)
+                    || default.as_u32() <= src;
+                if has_back_edge {
+                    self.runtime_refs
+                        .insert("gos_rt_preempt_check_and_yield".to_string());
+                    self.emit_preempt_check();
+                }
                 let v = self.lower_operand(discriminant)?;
                 let ty = render_ty(self.tcx, self.operand_ty(discriminant));
                 writeln!(
@@ -1448,6 +1513,16 @@ impl<'a> Lowerer<'a> {
                 "println destination cannot have projections",
             ));
         }
+        // Hold the stdout lock for the whole sequence — every
+        // per-arg print + the trailing newline is one atomic
+        // unit so concurrent goroutines on other OS threads
+        // can't interleave their output mid-line. The lock is
+        // reentrant, so the inner runtime helpers (which also
+        // acquire) coexist with this outer acquire on the same
+        // thread. On `Unsupported` we abandon the whole build
+        // and fall back to Cranelift, so the dangling acquire
+        // is harmless — the LLVM module itself is dropped.
+        writeln!(self.out, "  call void @gos_rt_stdout_acquire()").unwrap();
         // Spec: each arg is space-separated. Mirrors the
         // interpreter's `render_args` (which inserts a `' '`
         // between each pair).
@@ -1455,6 +1530,7 @@ impl<'a> Lowerer<'a> {
         if matches!(name, "println" | "eprintln") {
             writeln!(self.out, "  call void @gos_rt_println()").unwrap();
         }
+        writeln!(self.out, "  call void @gos_rt_stdout_release()").unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let dest_llvm = render_ty(self.tcx, self.body.local_ty(destination.local));
             let slot = local_slot(destination.local);
@@ -2366,15 +2442,32 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
 
-        // fast_check: bounds-check the buffer.
+        // fast_check: bounds-check the buffer. Take the
+        // process-global stdout lock first so this thread's
+        // load+store on `@GOS_RT_STDOUT_LEN` cannot tear against
+        // a concurrent goroutine on another worker thread.
+        // `gos_rt_stdout_acquire` / `_release` wrap a
+        // `parking_lot::RawMutex`; uncontended cost is ~10 ns.
         writeln!(self.out, "{fast_check}:").unwrap();
+        writeln!(self.out, "  call void @gos_rt_stdout_acquire()").unwrap();
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr @GOS_RT_STDOUT_LEN").unwrap();
         let full = self.fresh();
         writeln!(self.out, "  {full} = icmp uge i64 {len}, 65536").unwrap();
-        writeln!(self.out, "  br i1 {full}, label %{slow}, label %{append}").unwrap();
+        // On overflow we still hold the lock — release before
+        // routing to the slow call path so the slow path can
+        // re-acquire through the safe Rust guard.
+        let full_release = format!("wb_full_rel_{suffix}");
+        writeln!(
+            self.out,
+            "  br i1 {full}, label %{full_release}, label %{append}"
+        )
+        .unwrap();
+        writeln!(self.out, "{full_release}:").unwrap();
+        writeln!(self.out, "  call void @gos_rt_stdout_release()").unwrap();
+        writeln!(self.out, "  br label %{slow}").unwrap();
 
-        // append: store the byte at bytes[len], bump len.
+        // append: store the byte at bytes[len], bump len, release.
         writeln!(self.out, "{append}:").unwrap();
         let dst = self.fresh();
         writeln!(
@@ -2388,9 +2481,11 @@ impl<'a> Lowerer<'a> {
         let newlen = self.fresh();
         writeln!(self.out, "  {newlen} = add i64 {len}, 1").unwrap();
         writeln!(self.out, "  store i64 {newlen}, ptr @GOS_RT_STDOUT_LEN").unwrap();
+        writeln!(self.out, "  call void @gos_rt_stdout_release()").unwrap();
         writeln!(self.out, "  br label %{end}").unwrap();
 
-        // slow: full-call path.
+        // slow: full-call path. The runtime helper acquires the
+        // lock itself through the safe `StdoutGuard`.
         writeln!(self.out, "{slow}:").unwrap();
         writeln!(
             self.out,
@@ -2583,19 +2678,28 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
 
-        // Capacity check
+        // Capacity check. Acquire the stdout lock before the
+        // `LEN` load so the read + `LEN` store on the inline
+        // path are atomic with respect to other goroutines.
+        // The lock is released along every exit (store_len,
+        // and the slow-call branch).
         writeln!(self.out, "{fast_check}:").unwrap();
+        writeln!(self.out, "  call void @gos_rt_stdout_acquire()").unwrap();
         let cur_len = self.fresh();
         writeln!(self.out, "  {cur_len} = load i64, ptr @GOS_RT_STDOUT_LEN").unwrap();
         let new_len = self.fresh();
         writeln!(self.out, "  {new_len} = add i64 {cur_len}, {len_v}").unwrap();
         let fits = self.fresh();
         writeln!(self.out, "  {fits} = icmp ule i64 {new_len}, 65536").unwrap();
+        let fits_release = format!("wba_nofit_rel_{suffix}");
         writeln!(
             self.out,
-            "  br i1 {fits}, label %{pack_header}, label %{slow}"
+            "  br i1 {fits}, label %{pack_header}, label %{fits_release}"
         )
         .unwrap();
+        writeln!(self.out, "{fits_release}:").unwrap();
+        writeln!(self.out, "  call void @gos_rt_stdout_release()").unwrap();
+        writeln!(self.out, "  br label %{slow}").unwrap();
 
         // Pack loop header (PHI for the loop counter).
         writeln!(self.out, "{pack_header}:").unwrap();
@@ -2639,9 +2743,11 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  %t_inext_{suffix} = add i64 {i_phi}, 1").unwrap();
         writeln!(self.out, "  br label %{pack_header}").unwrap();
 
-        // Store the new length once we've packed the whole block.
+        // Store the new length once we've packed the whole block,
+        // then release the stdout lock acquired in fast_check.
         writeln!(self.out, "{store_len_lbl}:").unwrap();
         writeln!(self.out, "  store i64 {new_len}, ptr @GOS_RT_STDOUT_LEN").unwrap();
+        writeln!(self.out, "  call void @gos_rt_stdout_release()").unwrap();
         writeln!(self.out, "  br label %{end}").unwrap();
 
         // Slow path: fall back to the runtime helper.
