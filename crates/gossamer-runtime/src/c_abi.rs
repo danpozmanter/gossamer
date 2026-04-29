@@ -551,8 +551,19 @@ pub unsafe extern "C" fn gos_rt_char_to_str(c: i32) -> *mut c_char {
 // (`gos_rt_print_*`) acquire it via the safe `lock()` path.
 /// Hot-path stdout buffer capacity. Codegen inlines a buffer
 /// length check against this value, so it must stay in sync
-/// with `GOS_RT_STDOUT_BYTES`'s length below.
-pub const STDOUT_BUF_SIZE: usize = 64 * 1024;
+/// with `GOS_RT_STDOUT_BYTES`'s length declared in
+/// `gossamer-codegen-llvm::emit` (see the `@GOS_RT_STDOUT_BYTES`
+/// extern there) and with the inline `icmp ... 8192` checks
+/// emitted by `lower::Lowerer`.
+///
+/// Sized for the line-buffered shape of `println!` / `print!`:
+/// 8 KiB holds ~100 lines of typical output between flushes.
+/// Programs that emit one giant block per flush (rare in practice)
+/// take additional spills through `gos_rt_flush_stdout` — still
+/// correct, just more syscalls. The previous 64 KiB cost 56 KiB
+/// of BSS in every Gossamer binary for what is almost always wasted
+/// slack.
+pub const STDOUT_BUF_SIZE: usize = 8 * 1024;
 
 /// Process-global mutex protecting [`GOS_RT_STDOUT_BYTES`] and
 /// [`GOS_RT_STDOUT_LEN`]. Held for the duration of any inline
@@ -4478,7 +4489,18 @@ thread_local! {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_concat_init() {
-    CONCAT_BUF.with(|b| b.borrow_mut().clear());
+    CONCAT_BUF.with(|b| {
+        let mut buf = b.borrow_mut();
+        buf.clear();
+        // Bound the high-water mark: a one-time large `format!()`
+        // result would otherwise pin the buffer's capacity at the
+        // peak forever. 4 KiB is plenty for typical concat chains;
+        // anything larger reallocates next time and shrinks again
+        // here, returning the slack to the allocator.
+        if buf.capacity() > 4096 {
+            *buf = Vec::with_capacity(256);
+        }
+    });
 }
 
 #[unsafe(no_mangle)]

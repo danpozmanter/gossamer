@@ -1713,7 +1713,7 @@ impl Vm {
                             // Drop is cheap for short k-mer keys, and
                             // the table stores the new String only on
                             // the first occurrence.
-                            let key = MapKey::Str(key_str.to_string());
+                            let key = MapKey::Str(crate::value::SmolStr::from(key_str.to_string()));
                             let mut guard = map.lock();
                             let entry = guard.entry(key).or_insert(Value::Int(0));
                             let new_val = match entry {

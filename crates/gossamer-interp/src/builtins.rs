@@ -2868,7 +2868,7 @@ fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
         }
         _ => return Ok(Value::Int(0)),
     };
-    let key = MapKey::Str(key_str);
+    let key = MapKey::Str(SmolStr::from(key_str));
     match args.first() {
         Some(Value::Map(map)) => {
             let mut guard = map.lock();

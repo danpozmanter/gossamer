@@ -2391,7 +2391,7 @@ impl<'a> Lowerer<'a> {
     ///   br i1 %is_stdout, label %fast_check, label %slow
     /// fast_check:
     ///   %len = load i64, ptr @GOS_RT_STDOUT_LEN
-    ///   %full = icmp uge i64 %len, 65536
+    ///   %full = icmp uge i64 %len, 8192
     ///   br i1 %full, label %slow, label %append
     /// append:
     ///   %dst = getelementptr i8, ptr @GOS_RT_STDOUT_BYTES, i64 %len
@@ -2453,7 +2453,7 @@ impl<'a> Lowerer<'a> {
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr @GOS_RT_STDOUT_LEN").unwrap();
         let full = self.fresh();
-        writeln!(self.out, "  {full} = icmp uge i64 {len}, 65536").unwrap();
+        writeln!(self.out, "  {full} = icmp uge i64 {len}, 8192").unwrap();
         // On overflow we still hold the lock — release before
         // routing to the slow call path so the slow path can
         // re-acquire through the safe Rust guard.
@@ -2624,7 +2624,7 @@ impl<'a> Lowerer<'a> {
     /// fast_check:
     ///   %len = load i64, ptr @GOS_RT_STDOUT_LEN
     ///   %sum = add i64 %len, %wlen
-    ///   %fits = icmp ule i64 %sum, 65536
+    ///   %fits = icmp ule i64 %sum, 8192
     ///   br i1 %fits, label %pack, label %slow_call
     /// pack:
     ///   %i = phi i64 [0, %fast_check], [%inext, %pack_body]
@@ -2690,7 +2690,7 @@ impl<'a> Lowerer<'a> {
         let new_len = self.fresh();
         writeln!(self.out, "  {new_len} = add i64 {cur_len}, {len_v}").unwrap();
         let fits = self.fresh();
-        writeln!(self.out, "  {fits} = icmp ule i64 {new_len}, 65536").unwrap();
+        writeln!(self.out, "  {fits} = icmp ule i64 {new_len}, 8192").unwrap();
         let fits_release = format!("wba_nofit_rel_{suffix}");
         writeln!(
             self.out,

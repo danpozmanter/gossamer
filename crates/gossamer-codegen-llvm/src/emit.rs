@@ -966,6 +966,6 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     // forcing a reload of `LEN` after every potentially-aliasing
     // store. This is one of the three fixes the §5 release-perf
     // investigation produced.
-    "@GOS_RT_STDOUT_BYTES = external local_unnamed_addr global [65536 x i8]",
+    "@GOS_RT_STDOUT_BYTES = external local_unnamed_addr global [8192 x i8]",
     "@GOS_RT_STDOUT_LEN = external local_unnamed_addr global i64",
 ];

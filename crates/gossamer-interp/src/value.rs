@@ -111,6 +111,12 @@ pub enum Value {
 /// can hash (int / bool / char / string) sorts deterministically.
 /// Aggregate values (arrays, structs, closures) collapse to a
 /// single bucket — they're rejected at insert time, not here.
+///
+/// String keys are stored as [`SmolStr`] (8 B inline for ≤ 7-byte
+/// keys, otherwise an `Arc<str>` behind a tag bit) instead of an
+/// owned `String`. For maps with many short string keys (k-mer
+/// counts, tag dictionaries, …) this halves per-key residency
+/// and removes one heap allocation per insert.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MapKey {
     /// Sentinel for non-hashable inputs; all equal so their map
@@ -123,8 +129,8 @@ pub enum MapKey {
     Int(i64),
     /// `char` key.
     Char(char),
-    /// String key.
-    Str(String),
+    /// String key (stored inline when ≤ 7 bytes — see [`SmolStr`]).
+    Str(SmolStr),
 }
 
 impl MapKey {
@@ -136,7 +142,7 @@ impl MapKey {
             Value::Bool(b) => Self::Bool(*b),
             Value::Int(n) => Self::Int(*n),
             Value::Char(c) => Self::Char(*c),
-            Value::String(s) => Self::Str(s.as_str().to_string()),
+            Value::String(s) => Self::Str(s.clone()),
             _ => Self::NonHashable,
         }
     }
@@ -149,7 +155,7 @@ impl MapKey {
             Self::Bool(b) => Value::Bool(*b),
             Self::Int(n) => Value::Int(*n),
             Self::Char(c) => Value::Char(*c),
-            Self::Str(s) => Value::String(SmolStr::from(s.clone())),
+            Self::Str(s) => Value::String(s.clone()),
             Self::NonHashable => Value::Unit,
         }
     }
