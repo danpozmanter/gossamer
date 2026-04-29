@@ -550,11 +550,9 @@ impl Vm {
             chunk_state_last: Cell::new(None),
             globals_generation: Cell::new(1),
         };
-        let mut list = Vec::new();
-        builtins::install(&mut list);
         let globals = Arc::get_mut(&mut vm.globals).expect("fresh Vm globals are uniquely owned");
-        for (name, value) in list {
-            globals.insert(name.to_string(), Global::Value(value));
+        for (name, value) in builtins::cached() {
+            globals.insert((*name).to_string(), Global::Value(value.clone()));
         }
         vm
     }

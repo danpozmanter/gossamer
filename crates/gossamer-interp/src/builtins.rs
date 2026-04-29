@@ -152,6 +152,24 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("serve", native("serve", native_http_serve)));
 }
 
+/// Returns the process-wide cached builtin table (built once on
+/// first call). Each `Value::Builtin` / `Value::Native` payload is
+/// behind an `Arc`, so cloning the entries is a refcount bump per
+/// builtin — cheap enough that downstream consumers (`Vm::new`,
+/// `Interpreter::new`) can iterate the cached slice when populating
+/// their own globals maps. Pre-cache, both call sites independently
+/// rebuilt all ~330 entries, doubling startup work and per-VM
+/// memory.
+pub(crate) fn cached() -> &'static [(&'static str, Value)] {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Vec<(&'static str, Value)>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let mut list = Vec::new();
+        install(&mut list);
+        list
+    })
+}
+
 fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("println", builtin("println", builtin_println)));
     globals.push(("print", builtin("print", builtin_print)));
@@ -406,6 +424,8 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("with_capacity", builtin_map_with_capacity),
             ("get", builtin_map_get),
             ("get_or", builtin_map_get_or),
+            ("inc", builtin_map_inc),
+            ("or_insert", builtin_map_or_insert),
             ("inc_at", builtin_map_inc_at),
             ("inc_batch", builtin_map_inc_batch),
             ("insert", builtin_map_insert),
@@ -414,6 +434,8 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("len", builtin_map_len),
             ("keys", builtin_map_keys),
             ("values", builtin_map_values),
+            ("iter", builtin_map_iter),
+            ("entries", builtin_map_iter),
             ("clear", builtin_map_clear),
             ("is_empty", builtin_map_is_empty),
         ],
@@ -429,7 +451,11 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     ));
     globals.push(("keys", builtin("keys", builtin_map_keys)));
     globals.push(("values", builtin("values", builtin_map_values)));
+    globals.push(("iter", builtin("iter", builtin_map_iter)));
+    globals.push(("entries", builtin("entries", builtin_map_iter)));
     globals.push(("get_or", builtin("get_or", builtin_map_get_or)));
+    globals.push(("inc", builtin("inc", builtin_map_inc)));
+    globals.push(("or_insert", builtin("or_insert", builtin_map_or_insert)));
     // `get` and `insert` and `remove` and `len` and `clear` already
     // exist as bare names for other types; the builtin already
     // routes by receiver so we don't double-register.
@@ -742,9 +768,20 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("extend", builtin("extend", builtin_extend)));
     globals.push(("truncate", builtin("truncate", builtin_truncate)));
     globals.push(("sort", builtin("sort", builtin_sort)));
+    globals.push(("sort_by", native("sort_by", native_sort_by)));
     globals.push(("reverse", builtin("reverse", builtin_reverse)));
     globals.push(("swap", builtin("swap", builtin_swap)));
     globals.push(("clone", builtin("clone", builtin_clone)));
+    // `Box<T>` / `Arc<T>` / `Rc<T>` are transparent in a fully GC'd
+    // language: every value is heap-shared already, so the wrapper
+    // type is purely a Rust-flavoured ergonomic spelling. The
+    // constructors return their argument unchanged so user code
+    // that writes `Box::new(rest)` for a recursive enum payload
+    // (or pattern-matches on the unwrapped value) works without a
+    // distinct runtime representation.
+    globals.push(("Box::new", builtin("Box::new", builtin_clone)));
+    globals.push(("Arc::new", builtin("Arc::new", builtin_clone)));
+    globals.push(("Rc::new", builtin("Rc::new", builtin_clone)));
     // String surface that the MIR method-dispatch table already
     // wires for compiled mode. Keep the interpreter's coverage
     // in lockstep so `gos run` and `gos build` agree.
@@ -2729,6 +2766,75 @@ fn builtin_map_get_or(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+/// `m.inc(k)` / `m.inc(k, by)` — counter-style increment for an
+/// integer-valued `HashMap` or `IntMap`. Returns the post-increment
+/// value. Equivalent to `*m.entry(k).or_insert(0) += by` in Rust.
+fn builtin_map_inc(args: &[Value]) -> RuntimeResult<Value> {
+    let by = match args.get(2) {
+        Some(Value::Int(n)) => *n,
+        _ => 1,
+    };
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let Some(key_value) = args.get(1) else {
+                return Ok(Value::Int(0));
+            };
+            let key = MapKey::from_value(key_value);
+            let mut guard = map.lock();
+            let new_val = match guard.get(&key) {
+                Some(Value::Int(v)) => v + by,
+                _ => by,
+            };
+            guard.insert(key, Value::Int(new_val));
+            Ok(Value::Int(new_val))
+        }
+        Some(Value::IntMap(map)) => {
+            let Some(Value::Int(k)) = args.get(1) else {
+                return Ok(Value::Int(0));
+            };
+            let mut guard = map.lock();
+            let new_val = guard.get(k).copied().unwrap_or(0) + by;
+            guard.insert(*k, new_val);
+            Ok(Value::Int(new_val))
+        }
+        _ => Ok(Value::Int(0)),
+    }
+}
+
+/// `m.or_insert(k, default)` — returns the existing value for `k`,
+/// inserting `default` first if missing. The Gossamer-shaped
+/// equivalent of Rust's `entry().or_insert()`.
+fn builtin_map_or_insert(args: &[Value]) -> RuntimeResult<Value> {
+    let default = args.get(2).cloned().unwrap_or(Value::Unit);
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let Some(key_value) = args.get(1) else {
+                return Ok(default);
+            };
+            let key = MapKey::from_value(key_value);
+            let mut guard = map.lock();
+            if let Some(existing) = guard.get(&key) {
+                return Ok(existing.clone());
+            }
+            guard.insert(key, default.clone());
+            Ok(default)
+        }
+        Some(Value::IntMap(map)) => {
+            let Some(Value::Int(k)) = args.get(1) else {
+                return Ok(default);
+            };
+            let fallback = if let Value::Int(d) = &default { *d } else { 0 };
+            let mut guard = map.lock();
+            if let Some(existing) = guard.get(k).copied() {
+                return Ok(Value::Int(existing));
+            }
+            guard.insert(*k, fallback);
+            Ok(Value::Int(fallback))
+        }
+        _ => Ok(default),
+    }
+}
+
 /// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` —
 /// the zero-allocation analogue of `m[seq[start..start+len]] += by`.
 /// Wired into the interp tree-walker so `gos run` doesn't degrade
@@ -2886,6 +2992,35 @@ fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
         _ => {}
     }
     Ok(Value::Array(Arc::new(out)))
+}
+
+/// `m.iter()` / `m.entries()` — yields a `[(K, V)]` array of tuples
+/// suitable for direct destructuring in `for (k, v) in m.iter()`.
+/// Snapshots the map under the lock so the caller's iteration is
+/// safe even if other goroutines are mutating concurrently.
+///
+/// For non-map receivers (`Array`, `IntArray`, `FloatVec`, etc.)
+/// returns the receiver unchanged so `arr.iter()` continues to work
+/// as a no-op pass-through to the for-loop.
+fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let mut out: Vec<Value> = Vec::new();
+            for (k, v) in map.lock().iter() {
+                out.push(Value::Tuple(Arc::new(vec![k.to_value(), v.clone()])));
+            }
+            Ok(Value::Array(Arc::new(out)))
+        }
+        Some(Value::IntMap(map)) => {
+            let mut out: Vec<Value> = Vec::new();
+            for (k, v) in map.lock().iter() {
+                out.push(Value::Tuple(Arc::new(vec![Value::Int(*k), Value::Int(*v)])));
+            }
+            Ok(Value::Array(Arc::new(out)))
+        }
+        Some(other) => Ok(other.clone()),
+        None => Ok(Value::Unit),
+    }
 }
 
 /// `m.inc_batch(keys, by)` — typed batch counter increment for
@@ -3063,22 +3198,39 @@ fn builtin_reverse(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_swap(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Array(parts)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
     let i = match args.get(1) {
         Some(Value::Int(n)) if *n >= 0 => *n as usize,
-        _ => return Ok(Value::Array(Arc::clone(parts))),
+        _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
     };
     let j = match args.get(2) {
         Some(Value::Int(n)) if *n >= 0 => *n as usize,
-        _ => return Ok(Value::Array(Arc::clone(parts))),
+        _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
     };
-    let mut owned = parts.as_ref().clone();
-    if i < owned.len() && j < owned.len() {
-        owned.swap(i, j);
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            if i < owned.len() && j < owned.len() {
+                owned.swap(i, j);
+            }
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            if i < owned.len() && j < owned.len() {
+                owned.swap(i, j);
+            }
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            if i < owned.len() && j < owned.len() {
+                owned.swap(i, j);
+            }
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        Some(other) => Ok(other.clone()),
+        None => Ok(Value::Unit),
     }
-    Ok(Value::Array(Arc::new(owned)))
 }
 
 fn builtin_clone(args: &[Value]) -> RuntimeResult<Value> {
@@ -3219,6 +3371,38 @@ fn invoke_callable(
     args: Vec<Value>,
 ) -> RuntimeResult<Value> {
     dispatch.call_value(callable, args)
+}
+
+/// `arr.sort_by(|a, b| ordering)` — drives Rust's `sort_by` with a
+/// Gossamer comparator. The comparator returns an i64 (negative
+/// if a < b, zero if equal, positive if a > b), matching Rust's
+/// `Ordering::cmp`. Falls back to identity when the receiver isn't
+/// an array or the second arg isn't callable.
+fn native_sort_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Array(parts)) = args.first() else {
+        return Ok(args.first().cloned().unwrap_or(Value::Unit));
+    };
+    let comparator = args.get(1).cloned().unwrap_or(Value::Unit);
+    let mut owned = parts.as_ref().clone();
+    let mut sort_err: Option<RuntimeError> = None;
+    owned.sort_by(|a, b| {
+        if sort_err.is_some() {
+            return std::cmp::Ordering::Equal;
+        }
+        match invoke_callable(dispatch, &comparator, vec![a.clone(), b.clone()]) {
+            Ok(Value::Int(n)) => n.cmp(&0),
+            Ok(Value::Float(f)) => f.partial_cmp(&0.0).unwrap_or(std::cmp::Ordering::Equal),
+            Ok(_) => std::cmp::Ordering::Equal,
+            Err(e) => {
+                sort_err = Some(e);
+                std::cmp::Ordering::Equal
+            }
+        }
+    });
+    if let Some(err) = sort_err {
+        return Err(err);
+    }
+    Ok(Value::Array(Arc::new(owned)))
 }
 
 fn native_spawn(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {

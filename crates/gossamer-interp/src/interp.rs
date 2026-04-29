@@ -192,10 +192,8 @@ impl Interpreter {
     #[must_use]
     pub fn new() -> Self {
         let mut globals = HashMap::new();
-        let mut builtin_list = Vec::new();
-        builtins::install(&mut builtin_list);
-        for (name, value) in builtin_list {
-            globals.insert(name.to_string(), value);
+        for (name, value) in builtins::cached() {
+            globals.insert((*name).to_string(), value.clone());
         }
         Self {
             globals,
