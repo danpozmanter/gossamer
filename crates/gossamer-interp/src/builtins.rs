@@ -333,7 +333,14 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     );
     install_module("exec", &[("run", builtin_exec_run)], globals);
     install_module("os::exec", &[("run", builtin_exec_run)], globals);
-    install_module("fs", &[("walk_dir", builtin_fs_walk_dir)], globals);
+    install_module(
+        "fs",
+        &[
+            ("walk_dir", builtin_fs_walk_dir),
+            ("list_dir", builtin_fs_list_dir),
+        ],
+        globals,
+    );
     install_module("path", &[("walk", builtin_fs_walk_dir)], globals);
     install_module(
         "gzip",
@@ -1908,6 +1915,47 @@ fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
         }
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
+}
+
+/// `fs::list_dir(path: String) -> Result<[DirInfo], String>` — direct-children
+/// listing with metadata. `DirInfo` is a struct carrying the entry's
+/// name, full path, type predicates, byte size (`0` for directories),
+/// and modification time as unix milliseconds. The result is sorted
+/// by name. Pairs with `fs::walk_dir` (recursive) and `os::read_dir`
+/// (names only); use this one when the call site needs to render or
+/// filter on metadata.
+fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(path) = args.first().and_then(as_str) else {
+        return Ok(err_variant("fs::list_dir: path argument must be a string"));
+    };
+    let entries = match fs_std::read_dir(path) {
+        Ok(es) => es,
+        Err(e) => return Ok(err_variant(format!("{e}"))),
+    };
+    let mut items: Vec<Value> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let (size, modified_ms) = std::fs::metadata(&entry.path).map_or((0_i64, 0_i64), |m| {
+            let size = i64::try_from(m.len()).unwrap_or(i64::MAX);
+            let modified_ms = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+            (size, modified_ms)
+        });
+        let path_str = entry.path.to_string_lossy().into_owned();
+        let fields = vec![
+            (Ident::new("name"), Value::String(SmolStr::from(entry.name))),
+            (Ident::new("path"), Value::String(SmolStr::from(path_str))),
+            (Ident::new("is_file"), Value::Bool(entry.is_file)),
+            (Ident::new("is_dir"), Value::Bool(entry.is_dir)),
+            (Ident::new("is_symlink"), Value::Bool(entry.is_symlink)),
+            (Ident::new("size"), Value::Int(size)),
+            (Ident::new("modified_ms"), Value::Int(modified_ms)),
+        ];
+        items.push(Value::struct_("DirInfo", Arc::new(fields)));
+    }
+    Ok(ok_variant(Value::Array(Arc::new(items))))
 }
 
 /// `fs::walk_dir(root: String) -> Result<[String], String>`. Recursive

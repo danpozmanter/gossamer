@@ -1,0 +1,135 @@
+/*
+ * Directory listing — `ls`-shaped utility with metadata.
+ *
+ * Prints each direct child of the target directory with:
+ *   - a single-letter kind tag (d/f/l for dir / file / symlink)
+ *   - the byte size, rendered with thousands separators
+ *   - the modification time as ISO-8601 UTC
+ *   - the entry name
+ *
+ * Followed by a summary line counting files vs directories and
+ * the total bytes occupied by the regular files in the listing.
+ *
+ * Pulls metadata from `fs::list_dir`, which wraps the runtime's
+ * direct-children walk and calls `metadata` per entry. The
+ * single-pass design keeps the call site short — one builtin
+ * call, then formatting.
+ *
+ * Run:
+ *     gos run examples/list_dir.gos
+ *     gos run examples/list_dir.gos -- /tmp
+ */
+
+use std::errors
+use std::fs
+use std::os
+use std::time
+
+fn kind_tag(entry: &fs::DirInfo) -> String {
+    if entry.is_symlink {
+        "l".to_string()
+    } else if entry.is_dir {
+        "d".to_string()
+    } else if entry.is_file {
+        "f".to_string()
+    } else {
+        "?".to_string()
+    }
+}
+
+// Renders an i64 byte count with `,` thousands separators so a
+// directory full of multi-MB files lines up cleanly under
+// `right-pad-to-width`. Returns a freshly allocated string;
+// callers pad it to whatever column width they want.
+fn comma_size(n: i64) -> String {
+    if n == 0 {
+        return "0".to_string()
+    }
+    let mut out = "".to_string()
+    let mut value = n
+    let mut digits_since_comma = 0i64
+    while value > 0 {
+        let digit = value % 10
+        if digits_since_comma == 3 {
+            out = ",".to_string() + &out
+            digits_since_comma = 0
+        }
+        out = format!("{}", digit) + &out
+        value = value / 10
+        digits_since_comma = digits_since_comma + 1
+    }
+    out
+}
+
+// Right-pad `s` with spaces so its on-screen width is at least
+// `width`. Skips when the string is already long enough; the
+// terminal handles the resulting wrap.
+fn pad_right(s: &String, width: i64) -> String {
+    let mut out = s.clone()
+    while (out.len() as i64) < width {
+        out = out + " "
+    }
+    out
+}
+
+// Left-pad `s` with spaces so size columns line up on the right
+// edge. Long values overflow; the listing stays readable.
+fn pad_left(s: &String, width: i64) -> String {
+    let mut out = s.clone()
+    while (out.len() as i64) < width {
+        out = " ".to_string() + &out
+    }
+    out
+}
+
+fn render_modified(unix_ms: i64) -> String {
+    if unix_ms <= 0 {
+        return "                     ".to_string()
+    }
+    match time::format_rfc3339(unix_ms) {
+        Ok(s) => s,
+        Err(_) => "                     ".to_string(),
+    }
+}
+
+fn main() -> Result<(), errors::Error> {
+    let args = os::args()
+    let target = if args.len() >= 1 { args[0].clone() } else { ".".to_string() }
+
+    let entries = fs::list_dir(&target)
+        .map_err(|e| errors::new(format!("list_dir {}: {}", target, e)))?
+
+    println!("listing of {}", target)
+    println!("{} {} {} {}",
+        pad_right(&"kind".to_string(), 4),
+        pad_left(&"size".to_string(), 14),
+        pad_right(&"modified".to_string(), 22),
+        "name")
+
+    let mut files = 0i64
+    let mut dirs = 0i64
+    let mut total_bytes = 0i64
+    for i in 0..entries.len() {
+        let entry = &entries[i]
+        let tag = kind_tag(entry)
+        let size_str = comma_size(entry.size)
+        let modified = render_modified(entry.modified_ms)
+        println!("{} {} {} {}",
+            pad_right(&tag, 4),
+            pad_left(&size_str, 14),
+            pad_right(&modified, 22),
+            entry.name)
+
+        if entry.is_dir {
+            dirs = dirs + 1
+        } else if entry.is_file {
+            files = files + 1
+            total_bytes = total_bytes + entry.size
+        }
+    }
+
+    println!("---")
+    println!("{} file(s), {} dir(s), {} bytes total in regular files",
+        files, dirs, comma_size(total_bytes))
+    Ok(())
+}
