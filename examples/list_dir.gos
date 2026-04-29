@@ -37,20 +37,16 @@ fn comma_size(n: i64) -> String {
 
 fn pad_right(s: &String, width: i64) -> String {
     let mut out = s.clone()
-    let mut cur = out.len() as i64
-    while cur < width {
+    while out.len() as i64 < width {
         out = out + " "
-        cur = cur + 1
     }
     out
 }
 
 fn pad_left(s: &String, width: i64) -> String {
     let mut out = s.clone()
-    let mut cur = out.len() as i64
-    while cur < width {
+    while out.len() as i64 < width {
         out = " ".to_string() + &out
-        cur = cur + 1
     }
     out
 }

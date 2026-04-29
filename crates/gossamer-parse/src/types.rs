@@ -140,7 +140,16 @@ impl Parser<'_> {
 
     fn parse_type_path_segment(&mut self) -> TypePathSegment {
         let name = self.parse_path_ident_text();
-        let generics = if self.at_punct(Punct::Lt) {
+        // Primitive type names never carry generic arguments. Refusing
+        // to consume `<` after a primitive disambiguates the ambiguity
+        // exposed by `expr as i64 < width` — without this guard the
+        // parser greedily opens a generic-argument list, fails when it
+        // sees `width {`, and rejects perfectly valid comparison code
+        // (and the formatter, which strips redundant parens, can
+        // produce the same shape from `(expr as i64) < width`).
+        // See `examples/list_dir.gos::pad_right` for the regression
+        // that motivated this guard.
+        let generics = if self.at_punct(Punct::Lt) && !is_non_generic_primitive(&name) {
             self.parse_type_generic_args()
         } else {
             Vec::new()
@@ -217,4 +226,34 @@ fn is_const_arg_start(parser: &Parser<'_>) -> bool {
             | TokenKind::FloatLit
             | TokenKind::Keyword(Keyword::True | Keyword::False)
     ) || parser.at_punct(Punct::LBrace)
+}
+
+/// Returns `true` for built-in scalar / primitive type names that
+/// can never carry generic arguments. Used by
+/// [`Parser::parse_type_path_segment`] to skip a `<…>` lookahead
+/// after a primitive — required so `expr as i64 < width` parses as
+/// the comparison the user wrote rather than as an opening generic
+/// argument list. The list is intentionally narrow; user-defined
+/// types and stdlib types like `Vec` / `Result` / `Option` are not
+/// here so their `<…>` arguments still parse.
+fn is_non_generic_primitive(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "str"
+    )
 }
