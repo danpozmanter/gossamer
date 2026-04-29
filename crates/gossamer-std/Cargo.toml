@@ -12,21 +12,12 @@ description = "Standard library for the Gossamer language."
 workspace = true
 
 [features]
-# By default we link everything so existing programs keep working;
-# disabling these trims the host stdlib for deployment scenarios
-# where a program never touches the gated module.
-default = [
-    "regex",
-    "tls",
-    "crypto",
-    "compress",
-    "yaml",
-    "tz",
-    "templates",
-    "sql",
-    "ffi-sqlite",
-    "http-client",
-]
+# Empty default. Each consumer enables the features it actually
+# uses; building a slim host stdlib is the common case and was the
+# RAM-analysis recommendation. Existing default-on consumers in the
+# workspace pin the features they need explicitly (see
+# gossamer-interp/Cargo.toml).
+default = []
 
 # Regular-expression engine behind `std::regex`.
 regex = ["dep:regex"]
