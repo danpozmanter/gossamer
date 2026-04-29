@@ -324,6 +324,7 @@ impl<'tcx> FnBuilder<'tcx> {
             | Op::BranchIfNot { target: t, .. }
             | Op::BranchIfLtI64 { target: t, .. }
             | Op::BranchIfGeI64 { target: t, .. }
+            | Op::BranchIfGtI64 { target: t, .. }
             | Op::BranchIfLtF64 { target: t, .. }
             | Op::BranchIfGeF64 { target: t, .. } => *t = target,
             other => panic!("cannot patch non-jump: {other:?}"),
@@ -700,12 +701,58 @@ impl<'tcx> FnBuilder<'tcx> {
     /// shape is something the VM doesn't yet handle natively (and
     /// the caller should fall back to `compile_deferred`).
     fn try_compile_go_native(&mut self, expr: &HirExpr) -> RuntimeResult<bool> {
-        // The HIR shape we native-lower is `go callable(args)` —
-        // a `Call` whose callee is any expression and whose args
-        // are arbitrary expressions. The runtime side accepts the
-        // resulting callee `Value` (closure / global fn / builtin)
-        // and walks the args vector exactly as the synchronous
-        // dispatch path does.
+        // The HIR shapes we native-lower are:
+        //   `go callable(args)`     — a `Call`, dispatched via
+        //                              `Op::Spawn` against the
+        //                              resolved callee `Value`.
+        //   `go obj.method(args)`   — a `MethodCall`, dispatched via
+        //                              `Op::SpawnMethod` which
+        //                              resolves the method by name
+        //                              the same way the synchronous
+        //                              `Op::MethodCall` does.
+        //
+        // Anything else (bare blocks, closures defined inline at
+        // the spawn site, etc.) falls through to the deferred
+        // walker — those shapes don't appear in the bench-game
+        // programs but are flagged for follow-up.
+        if let HirExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+        } = &expr.kind
+        {
+            let receiver_reg = self.compile_expr(receiver)?;
+            let argc = u16::try_from(args.len()).map_err(|_| RuntimeError::Arity {
+                expected: u16::MAX as usize,
+                found: args.len(),
+            })?;
+            let arg_regs: Vec<Reg> = args
+                .iter()
+                .map(|arg| self.compile_expr(arg))
+                .collect::<RuntimeResult<Vec<_>>>()?;
+            let args_start = self.next_reg;
+            self.next_reg = self
+                .next_reg
+                .checked_add(argc)
+                .expect("register overflow reserving spawn-method args");
+            for (i, arg_reg) in arg_regs.iter().enumerate() {
+                let slot = args_start
+                    .checked_add(u16::try_from(i).expect("argc fits u16"))
+                    .expect("register overflow");
+                self.emit(Op::Move {
+                    dst: slot,
+                    src: *arg_reg,
+                });
+            }
+            let name_idx = self.global_idx(name.name.as_str());
+            self.emit(Op::SpawnMethod {
+                receiver: receiver_reg,
+                name_idx,
+                args: args_start,
+                argc,
+            });
+            return Ok(true);
+        }
         let HirExprKind::Call { callee, args } = &expr.kind else {
             return Ok(false);
         };
@@ -714,20 +761,28 @@ impl<'tcx> FnBuilder<'tcx> {
             expected: u16::MAX as usize,
             found: args.len(),
         })?;
-        // Reserve a contiguous span before lowering args so
-        // intermediate compiles don't grab overlapping registers.
+        // Compile each arg first so any intermediate register
+        // allocations land above the not-yet-reserved span. Then
+        // reserve a fresh contiguous block and move the results
+        // into it. Reserving up front and *then* compiling — the
+        // shape this method used to have — is fine for trivial
+        // args (paths, literals) but slips on any arg that itself
+        // emits a fused fast-path opcode that pre-bumps `next_reg`
+        // for its own scratch use; that scratch can land inside
+        // the reserved span and corrupt the spawn's `args`
+        // payload before the move runs.
+        let arg_regs: Vec<Reg> = args
+            .iter()
+            .map(|arg| self.compile_expr(arg))
+            .collect::<RuntimeResult<Vec<_>>>()?;
         let args_start = self.next_reg;
         self.next_reg = self
             .next_reg
             .checked_add(argc)
             .expect("register overflow reserving spawn args");
-        let arg_regs: Vec<Reg> = args
-            .iter()
-            .map(|arg| self.compile_expr(arg))
-            .collect::<RuntimeResult<Vec<_>>>()?;
         for (i, arg_reg) in arg_regs.iter().enumerate() {
             let slot = args_start
-                .checked_add(u16::try_from(i).unwrap())
+                .checked_add(u16::try_from(i).expect("argc fits u16"))
                 .expect("register overflow");
             self.emit(Op::Move {
                 dst: slot,
@@ -993,6 +1048,9 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(reg) = self.try_compile_for_loop_range(body)? {
                     return Ok(reg);
                 }
+                if let Some(reg) = self.try_compile_for_loop_vec_iter(body)? {
+                    return Ok(reg);
+                }
                 if body_contains_unsupported(body) {
                     self.compile_deferred(expr)
                 } else {
@@ -1136,6 +1194,18 @@ impl<'tcx> FnBuilder<'tcx> {
     /// list is stored in `deferred_env_regs` so the VM can both
     /// pass the values in and sync mutations back out.
     fn compile_deferred(&mut self, expr: &HirExpr) -> RuntimeResult<Reg> {
+        // GOS_VM_FALLBACK=1 surfaces every walker-fallback emit point
+        // so users hunting an interp perf cliff can see which HIR
+        // shapes are routing iterations through the slow path.
+        // Stop-gap until every `EvalDeferred` site has a native
+        // opcode (closures with captures, complex method receivers,
+        // and a few other tails noted in the H2 audit).
+        if std::env::var("GOS_VM_FALLBACK").is_ok() {
+            eprintln!(
+                "vm: deferred-walker fallback for HirExprKind::{:?}",
+                std::mem::discriminant(&expr.kind),
+            );
+        }
         // Snapshot the visible locals (inner scopes shadow
         // outer ones — overwrite slot for already-seen names).
         let mut entries: Vec<(String, TypedReg)> = Vec::new();
@@ -3406,7 +3476,8 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(result)
     }
 
-    /// `for var in start..end { body }` and `for _ in start..end { body }`.
+    /// `for var in start..end { body }`, `for _ in start..end { body }`,
+    /// and the inclusive variant `for var in start..=end { body }`.
     ///
     /// HIR lowers a `for` into the generic `loop { match iter.next() { Some(p)
     /// => body, None => break } }` shape so every iterable goes through
@@ -3422,7 +3493,8 @@ impl<'tcx> FnBuilder<'tcx> {
     ///     start_i = <start>
     ///     end_i   = <end>
     /// header:
-    ///     if start_i >= end_i goto exit       (BranchIfGeI64)
+    ///     if start_i >= end_i goto exit       (exclusive: BranchIfGeI64)
+    ///     if start_i >  end_i goto exit       (inclusive: BranchIfGtI64)
     ///     <body>                              (binding sees var via I64 reg)
     ///     start_i = start_i + 1               (AddI64)
     ///     jump header
@@ -3430,12 +3502,10 @@ impl<'tcx> FnBuilder<'tcx> {
     /// ```
     ///
     /// Falls through to the generic match-loop on:
-    ///   - inclusive ranges (`a..=b`) — caller's body would observe the
-    ///     final `b` value, which the counter form doesn't currently emit
     ///   - non-i64 range bounds (the typed file is i64-only; f64-step
     ///     ranges would need a separate fast path nobody currently writes)
-    ///   - non-`Range` iterators (`Vec::iter`, `HashMap::keys`, etc.) —
-    ///     those still go through `next()`.
+    ///   - non-`Range` iterators with non-trivial state — those still
+    ///     go through `next()`.
     fn try_compile_for_loop_range(&mut self, body: &HirExpr) -> RuntimeResult<Option<Reg>> {
         let HirExprKind::Block(block) = &body.kind else {
             return Ok(None);
@@ -3466,7 +3536,7 @@ impl<'tcx> FnBuilder<'tcx> {
         let HirExprKind::Range {
             start: Some(start),
             end: Some(end),
-            inclusive: false,
+            inclusive,
         } = &receiver.kind
         else {
             return Ok(None);
@@ -3503,6 +3573,7 @@ impl<'tcx> FnBuilder<'tcx> {
             HirPatKind::Wildcard => None,
             _ => return Ok(None),
         };
+        let inclusive = *inclusive;
 
         let start_tr = self.compile_expr_ex(start)?;
         let end_tr = self.compile_expr_ex(end)?;
@@ -3528,10 +3599,18 @@ impl<'tcx> FnBuilder<'tcx> {
         }
 
         let header = self.cur_idx();
-        let exit_branch_idx = self.emit(Op::BranchIfGeI64 {
-            lhs_i: counter_i,
-            rhs_i: end_i,
-            target: 0,
+        let exit_branch_idx = self.emit(if inclusive {
+            Op::BranchIfGtI64 {
+                lhs_i: counter_i,
+                rhs_i: end_i,
+                target: 0,
+            }
+        } else {
+            Op::BranchIfGeI64 {
+                lhs_i: counter_i,
+                rhs_i: end_i,
+                target: 0,
+            }
         });
 
         self.loop_stack.push(LoopCtx {
@@ -3552,6 +3631,238 @@ impl<'tcx> FnBuilder<'tcx> {
             .loop_stack
             .pop()
             .expect("loop stack underflow on for-range");
+        for patch in ctx.break_patches {
+            self.patch_jump(patch, after);
+        }
+        self.pop_scope();
+        Ok(Some(result))
+    }
+
+    /// `for x in v.iter() { body }` and `for (i, x) in v.iter().enumerate() { body }`.
+    ///
+    /// Emits a typed counter loop that dereferences `v[counter]` via
+    /// `Op::IndexGet`, sidestepping the per-iteration `Option`
+    /// allocation + match dispatch the generic iterator path would
+    /// pay. The iterator's length is captured once at loop entry
+    /// from `v.len()`; the body sees the element binding through a
+    /// regular Value register.
+    ///
+    /// Falls through to the generic match-loop when the receiver
+    /// shape isn't a recognised `MethodCall` chain (e.g. a stateful
+    /// custom iterator, a `HashMap::keys` view, or a chained
+    /// `filter`/`map` whose bytecode shape isn't fixed).
+    fn try_compile_for_loop_vec_iter(&mut self, body: &HirExpr) -> RuntimeResult<Option<Reg>> {
+        let HirExprKind::Block(block) = &body.kind else {
+            return Ok(None);
+        };
+        if !block.stmts.is_empty() {
+            return Ok(None);
+        }
+        let Some(tail) = block.tail.as_deref() else {
+            return Ok(None);
+        };
+        let HirExprKind::Match { scrutinee, arms } = &tail.kind else {
+            return Ok(None);
+        };
+        if arms.len() != 2 {
+            return Ok(None);
+        }
+        let HirExprKind::MethodCall {
+            receiver: next_recv,
+            name: next_name,
+            args: next_args,
+        } = &scrutinee.kind
+        else {
+            return Ok(None);
+        };
+        if next_name.name != "next" || !next_args.is_empty() {
+            return Ok(None);
+        }
+        // Walk the iterator chain. Recognise:
+        //   `vec.iter()`              → element binding, no enumerate
+        //   `vec.iter().enumerate()`  → tuple binding (i, x)
+        let (vec_expr, is_enumerate) = match &next_recv.kind {
+            HirExprKind::MethodCall {
+                receiver: chain_recv,
+                name: chain_name,
+                args: chain_args,
+            } if chain_name.name == "iter" && chain_args.is_empty() => {
+                (chain_recv.as_ref(), false)
+            }
+            HirExprKind::MethodCall {
+                receiver: enum_recv,
+                name: enum_name,
+                args: enum_args,
+            } if enum_name.name == "enumerate" && enum_args.is_empty() => {
+                let HirExprKind::MethodCall {
+                    receiver: chain_recv,
+                    name: chain_name,
+                    args: chain_args,
+                } = &enum_recv.kind
+                else {
+                    return Ok(None);
+                };
+                if chain_name.name != "iter" || !chain_args.is_empty() {
+                    return Ok(None);
+                }
+                (chain_recv.as_ref(), true)
+            }
+            _ => return Ok(None),
+        };
+
+        let some_arm = &arms[0];
+        let none_arm = &arms[1];
+        let HirPatKind::Variant {
+            name: some_name,
+            fields: some_fields,
+        } = &some_arm.pattern.kind
+        else {
+            return Ok(None);
+        };
+        if some_name.name != "Some" || some_fields.len() != 1 {
+            return Ok(None);
+        }
+        let HirPatKind::Variant {
+            name: none_name,
+            fields: none_fields,
+        } = &none_arm.pattern.kind
+        else {
+            return Ok(None);
+        };
+        if none_name.name != "None" || !none_fields.is_empty() {
+            return Ok(None);
+        }
+        let elem_pat = &some_fields[0];
+        // Pattern shapes we accept:
+        //   non-enumerate: Binding (or Wildcard)
+        //   enumerate:     Tuple of two bindings (or wildcards)
+        let (elem_binding, idx_binding): (Option<String>, Option<String>) = if is_enumerate {
+            let HirPatKind::Tuple(parts) = &elem_pat.kind else {
+                return Ok(None);
+            };
+            if parts.len() != 2 {
+                return Ok(None);
+            }
+            let pick = |p: &HirPat| match &p.kind {
+                HirPatKind::Binding { name, .. } => Some(Some(name.name.clone())),
+                HirPatKind::Wildcard => Some(None),
+                _ => None,
+            };
+            let i_b = pick(&parts[0]).ok_or(RuntimeError::Unsupported(
+                "enumerate: index pat must be ident/_",
+            ))?;
+            let x_b = pick(&parts[1]).ok_or(RuntimeError::Unsupported(
+                "enumerate: elem pat must be ident/_",
+            ))?;
+            (x_b, i_b)
+        } else {
+            let pick = match &elem_pat.kind {
+                HirPatKind::Binding { name, .. } => Some(name.name.clone()),
+                HirPatKind::Wildcard => None,
+                _ => return Ok(None),
+            };
+            (pick, None)
+        };
+
+        // Compile the vec receiver and capture it once.
+        let vec_reg = self.compile_expr(vec_expr)?;
+
+        // Length: emit a `len()` MethodCall whose result we treat as
+        // an i64 by unboxing through `as_i64`.
+        let len_dst = self.alloc_reg();
+        let len_name = self.global_idx("len");
+        let cache_idx = self.alloc_cache_idx();
+        self.emit(Op::MethodCall {
+            dst: len_dst,
+            receiver: vec_reg,
+            name_idx: len_name,
+            args: 0,
+            argc: 0,
+            cache_idx,
+        });
+        let len_tr = TypedReg {
+            reg: len_dst,
+            kind: RegKind::Value,
+        };
+        let len_i = self.as_i64(len_tr);
+
+        // Counter starts at 0.
+        let zero_idx = self.i64_const_idx(0);
+        let counter_i = self.alloc_int();
+        self.emit(Op::LoadConstI64 {
+            dst_i: counter_i,
+            idx: zero_idx,
+        });
+        let one_idx = self.i64_const_idx(1);
+        let one_i = self.alloc_int();
+        self.emit(Op::LoadConstI64 {
+            dst_i: one_i,
+            idx: one_idx,
+        });
+
+        let result = self.alloc_reg();
+        self.push_scope();
+
+        // Element register: a fresh Value reg refilled each iteration.
+        let elem_reg = self.alloc_reg();
+        if let Some(name) = &elem_binding {
+            self.bind_local(
+                name,
+                TypedReg {
+                    reg: elem_reg,
+                    kind: RegKind::Value,
+                },
+            );
+        }
+        // Index binding (enumerate only) — alias the counter i64 reg.
+        if let Some(name) = &idx_binding {
+            self.bind_local(
+                name,
+                TypedReg {
+                    reg: counter_i,
+                    kind: RegKind::I64,
+                },
+            );
+        }
+
+        let header = self.cur_idx();
+        let exit_branch_idx = self.emit(Op::BranchIfGeI64 {
+            lhs_i: counter_i,
+            rhs_i: len_i,
+            target: 0,
+        });
+
+        // Refill element register from `vec[counter]`. We need a
+        // Value register holding the index; `BoxI64` covers that.
+        let idx_v = self.alloc_reg();
+        self.emit(Op::BoxI64 {
+            dst_v: idx_v,
+            src_i: counter_i,
+        });
+        self.emit(Op::IndexGet {
+            dst: elem_reg,
+            base: vec_reg,
+            index: idx_v,
+        });
+
+        self.loop_stack.push(LoopCtx {
+            break_patches: Vec::new(),
+            result_reg: result,
+            loop_start: header,
+        });
+        let _ = self.compile_expr(&some_arm.body)?;
+        self.emit(Op::AddI64 {
+            dst_i: counter_i,
+            lhs_i: counter_i,
+            rhs_i: one_i,
+        });
+        self.emit(Op::Jump { target: header });
+        let after = self.cur_idx();
+        self.patch_jump(exit_branch_idx, after);
+        let ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack underflow on for-vec-iter");
         for patch in ctx.break_patches {
             self.patch_jump(patch, after);
         }

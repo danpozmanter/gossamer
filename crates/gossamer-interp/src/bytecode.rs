@@ -444,6 +444,25 @@ pub enum Op {
         /// Number of arguments to pass.
         argc: u16,
     },
+    /// `go receiver.method_name(args[0..argc])` — spawns a
+    /// goroutine running the method whose name lives in the
+    /// chunk's globals at `name_idx`. Mirrors `Op::MethodCall`'s
+    /// resolution chain (`qualified_key` then bare name) so a
+    /// freshly-spawned goroutine takes the same dispatch path the
+    /// synchronous call would. Without this op, `go obj.method()`
+    /// fell through to the deferred tree-walker which ran the body
+    /// on the calling thread synchronously — defeating goroutine
+    /// semantics.
+    SpawnMethod {
+        /// Register holding the receiver value.
+        receiver: Reg,
+        /// Index into `FnChunk::globals` — holds the bare method name.
+        name_idx: GlobalIdx,
+        /// First register of the argument span.
+        args: Reg,
+        /// Number of user-supplied arguments (receiver excluded).
+        argc: u16,
+    },
     /// `dst = base[index]` — native indexed read over arrays,
     /// strings, tuples, vecs, and structs (tuple-struct
     /// projection). Mirrors the tree-walker's `eval_index`.
@@ -760,6 +779,14 @@ pub enum Op {
         rhs_i: Reg,
         target: InstrIdx,
     },
+    /// Branch to `target` when `ints[lhs_i] > ints[rhs_i]`.
+    /// Used by the inclusive-range for-loop fast path: `for i in a..=b`
+    /// exits when `i > b`.
+    BranchIfGtI64 {
+        lhs_i: Reg,
+        rhs_i: Reg,
+        target: InstrIdx,
+    },
     /// Branch to `target` when `floats[lhs_f] < floats[rhs_f]`.
     BranchIfLtF64 {
         lhs_f: Reg,
@@ -875,6 +902,14 @@ pub(crate) struct CacheSlot {
     /// Stable identity for the receiver / callee the slot last
     /// resolved against. `0` means empty / non-cacheable.
     pub type_token: u64,
+    /// Snapshot of the owning `Vm`'s `globals_generation` when the
+    /// slot was populated. The dispatch arm compares this against
+    /// the live counter on every hit; a mismatch (i.e. globals
+    /// were reassigned since this slot was filled) demotes the
+    /// hit to a miss and forces a fresh resolution. `0` is the
+    /// empty-slot sentinel and never matches a live counter
+    /// (which starts at 1).
+    pub generation: u32,
     /// Fast path: when the resolved dispatch target is a
     /// `Value::Builtin`, we cache its raw `call` fn pointer
     /// here so the hit path is a single indirect call, no

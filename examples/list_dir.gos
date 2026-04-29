@@ -1,0 +1,128 @@
+use std::errors
+use std::fs
+use std::os
+use std::time
+
+fn kind_tag(entry: &fs::DirInfo) -> String {
+    if entry.is_symlink {
+        "l".to_string()
+    } else if entry.is_dir {
+        "d".to_string()
+    } else if entry.is_file {
+        "f".to_string()
+    } else {
+        "?".to_string()
+    }
+}
+
+fn comma_size(n: i64) -> String {
+    if n == 0 {
+        return "0".to_string()
+    }
+    let mut out = "".to_string()
+    let mut value = n
+    let mut digits_since_comma = 0i64
+    while value > 0 {
+        let digit = value % 10
+        if digits_since_comma == 3 {
+            out = ",".to_string() + &out
+            digits_since_comma = 0
+        }
+        out = __concat(digit) + &out
+        value = value / 10
+        digits_since_comma = digits_since_comma + 1
+    }
+    out
+}
+
+fn pad_right(s: &String, width: i64) -> String {
+    let mut out = s.clone()
+    let mut cur = out.len() as i64
+    while cur < width {
+        out = out + " "
+        cur = cur + 1
+    }
+    out
+}
+
+fn pad_left(s: &String, width: i64) -> String {
+    let mut out = s.clone()
+    let mut cur = out.len() as i64
+    while cur < width {
+        out = " ".to_string() + &out
+        cur = cur + 1
+    }
+    out
+}
+
+fn render_modified(unix_ms: i64) -> String {
+    if unix_ms <= 0 {
+        return "                     ".to_string()
+    }
+    match time::format_rfc3339(unix_ms) {
+        Ok(s) => s,
+        Err(_) => "                     ".to_string(),
+    }
+}
+
+fn main() -> Result<(), errors::Error> {
+    let args = os::args()
+    let target = if args.len() >= 1 {
+        args[0].clone()
+    } else {
+        ".".to_string()
+    }
+    let entries = fs::list_dir(&target).map_err(
+        |e| errors::new(__concat("list_dir ", target, ": ", e)),
+    )?
+    println(__concat("listing of ", target))
+    println(
+        __concat(
+            pad_right(&"kind".to_string(), 4),
+            " ",
+            pad_left(&"size".to_string(), 14),
+            " ",
+            pad_right(&"modified".to_string(), 22),
+            " ",
+            "name",
+        ),
+    )
+    let mut files = 0i64
+    let mut dirs = 0i64
+    let mut total_bytes = 0i64
+    for i in 0..entries.len() {
+        let entry = &entries[i]
+        let tag = kind_tag(entry)
+        let size_str = comma_size(entry.size)
+        let modified = render_modified(entry.modified_ms)
+        println(
+            __concat(
+                pad_right(&tag, 4),
+                " ",
+                pad_left(&size_str, 14),
+                " ",
+                pad_right(&modified, 22),
+                " ",
+                entry.name,
+            ),
+        )
+        if entry.is_dir {
+            dirs = dirs + 1
+        } else if entry.is_file {
+            files = files + 1
+            total_bytes = total_bytes + entry.size
+        }
+    }
+    println(__concat("---"))
+    println(
+        __concat(
+            files,
+            " file(s), ",
+            dirs,
+            " dir(s), ",
+            comma_size(total_bytes),
+            " bytes total in regular files",
+        ),
+    )
+    Ok(())
+}

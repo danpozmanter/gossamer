@@ -992,6 +992,17 @@ impl Parser<'_> {
             return self.expand_format_macro(&macro_name, args);
         }
 
+        // `vec![...]` / `vec![v; n]` — desugar straight to the
+        // matching array-literal HIR shape so the existing
+        // `Op::BuildIntArray` / `Op::BuildFloatVec` fast paths fire.
+        // Without this the macro lowered to `HirExprKind::Placeholder`
+        // and the runtime returned a `<stub>` struct instead of a
+        // typed vec — silently wrong.
+        if macro_name == "vec" && delim == MacroDelim::Bracket {
+            self.expect_punct(Punct::LBracket, "to open `vec!` invocation");
+            return self.parse_array_expr();
+        }
+
         self.record(
             ParseError::Unexpected {
                 expected: format!(

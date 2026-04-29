@@ -333,7 +333,14 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     );
     install_module("exec", &[("run", builtin_exec_run)], globals);
     install_module("os::exec", &[("run", builtin_exec_run)], globals);
-    install_module("fs", &[("walk_dir", builtin_fs_walk_dir)], globals);
+    install_module(
+        "fs",
+        &[
+            ("walk_dir", builtin_fs_walk_dir),
+            ("list_dir", builtin_fs_list_dir),
+        ],
+        globals,
+    );
     install_module("path", &[("walk", builtin_fs_walk_dir)], globals);
     install_module(
         "gzip",
@@ -400,6 +407,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("get", builtin_map_get),
             ("get_or", builtin_map_get_or),
             ("inc_at", builtin_map_inc_at),
+            ("inc_batch", builtin_map_inc_batch),
             ("insert", builtin_map_insert),
             ("remove", builtin_map_remove),
             ("contains_key", builtin_map_contains_key),
@@ -1909,6 +1917,47 @@ fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+/// `fs::list_dir(path: String) -> Result<[DirInfo], String>` — direct-children
+/// listing with metadata. `DirInfo` is a struct carrying the entry's
+/// name, full path, type predicates, byte size (`0` for directories),
+/// and modification time as unix milliseconds. The result is sorted
+/// by name. Pairs with `fs::walk_dir` (recursive) and `os::read_dir`
+/// (names only); use this one when the call site needs to render or
+/// filter on metadata.
+fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(path) = args.first().and_then(as_str) else {
+        return Ok(err_variant("fs::list_dir: path argument must be a string"));
+    };
+    let entries = match fs_std::read_dir(path) {
+        Ok(es) => es,
+        Err(e) => return Ok(err_variant(format!("{e}"))),
+    };
+    let mut items: Vec<Value> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let (size, modified_ms) = std::fs::metadata(&entry.path).map_or((0_i64, 0_i64), |m| {
+            let size = i64::try_from(m.len()).unwrap_or(i64::MAX);
+            let modified_ms = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+            (size, modified_ms)
+        });
+        let path_str = entry.path.to_string_lossy().into_owned();
+        let fields = vec![
+            (Ident::new("name"), Value::String(SmolStr::from(entry.name))),
+            (Ident::new("path"), Value::String(SmolStr::from(path_str))),
+            (Ident::new("is_file"), Value::Bool(entry.is_file)),
+            (Ident::new("is_dir"), Value::Bool(entry.is_dir)),
+            (Ident::new("is_symlink"), Value::Bool(entry.is_symlink)),
+            (Ident::new("size"), Value::Int(size)),
+            (Ident::new("modified_ms"), Value::Int(modified_ms)),
+        ];
+        items.push(Value::struct_("DirInfo", Arc::new(fields)));
+    }
+    Ok(ok_variant(Value::Array(Arc::new(items))))
+}
+
 /// `fs::walk_dir(root: String) -> Result<[String], String>`. Recursive
 /// walk; returns every descendant path as a flat array. The
 /// gossamer-std API uses a visitor closure for streaming; this
@@ -2837,6 +2886,61 @@ fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
         _ => {}
     }
     Ok(Value::Array(Arc::new(out)))
+}
+
+/// `m.inc_batch(keys, by)` — typed batch counter increment for
+/// `Value::IntMap`. Takes the map's mutex once and applies the
+/// `+= by` to every i64 key in the input vec, amortising the
+/// `parking_lot::Mutex` acquisition that `Op::IntMapInc` would
+/// pay per call. Returns the map handle to mirror `insert`'s
+/// shape.
+///
+/// Falls through to a no-op for non-IntMap receivers and for
+/// keys-vec shapes the runtime can't index as `i64` (the audit
+/// flagged the per-op lock cost as the gap; this is the
+/// minimum-viable amortisation primitive).
+fn builtin_map_inc_batch(args: &[Value]) -> RuntimeResult<Value> {
+    let by = match args.get(2) {
+        Some(Value::Int(n)) => *n,
+        _ => 1,
+    };
+    match args.first() {
+        Some(Value::IntMap(map)) => {
+            let mut locked = map.lock();
+            match args.get(1) {
+                Some(Value::IntArray(keys)) => {
+                    for k in keys.iter() {
+                        *locked.entry(*k).or_insert(0) += by;
+                    }
+                }
+                Some(Value::Array(items)) => {
+                    for v in items.iter() {
+                        if let Value::Int(k) = v {
+                            *locked.entry(*k).or_insert(0) += by;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            drop(locked);
+            Ok(Value::IntMap(Arc::clone(map)))
+        }
+        Some(Value::Map(map)) => {
+            let mut locked = map.lock();
+            if let Some(Value::Array(items)) = args.get(1) {
+                for v in items.iter() {
+                    let key = MapKey::from_value(v);
+                    let entry = locked.entry(key).or_insert(Value::Int(0));
+                    if let Value::Int(n) = entry {
+                        *n += by;
+                    }
+                }
+            }
+            drop(locked);
+            Ok(Value::Map(Arc::clone(map)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    }
 }
 
 fn builtin_map_clear(args: &[Value]) -> RuntimeResult<Value> {

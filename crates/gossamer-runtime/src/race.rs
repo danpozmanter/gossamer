@@ -185,13 +185,9 @@ pub extern "C" fn gos_rt_race_access(addr: usize, write: i32) {
 
 /// Returns the goroutine id for the current OS thread. Falls back
 /// to `0` when no goroutine is registered for this thread (e.g.
-/// the program's main thread before scheduler boot). The full
-/// implementation reads from a thread-local published by
-/// the scheduler when it dispatches a task; for now we use a
-/// conservative `0` fallback that still surfaces races between
-/// distinct goroutines but loses precision when many goroutines
-/// share `gid 0`.
-fn current_gid() -> u32 {
+/// the program's main thread before scheduler boot).
+#[must_use]
+pub fn current_gid() -> u32 {
     CURRENT_GID.with(std::cell::Cell::get)
 }
 

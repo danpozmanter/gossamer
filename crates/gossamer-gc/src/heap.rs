@@ -186,6 +186,14 @@ impl Heap {
     /// Allocates a fresh object of the given kind. The caller provides
     /// the initial child list, payload word, and payload-size hint
     /// used by the GC-trigger heuristic.
+    ///
+    /// When a concurrent mark is in progress, the new object is born
+    /// **black** (`marked = true`). Allocation shading is the standard
+    /// counterpart to Dijkstra's insertion barrier: it ensures objects
+    /// that exist only on the mutator stack at allocation time are not
+    /// reclaimed by the in-progress sweep, even if no stack-root scan
+    /// runs. Without it, a freshly allocated object would be white and
+    /// the sweep would treat it as garbage.
     pub fn alloc(
         &mut self,
         kind: ObjKind,
@@ -200,13 +208,14 @@ impl Heap {
         } else {
             Some(children.into_boxed_slice())
         };
+        let born_marked = matches!(self.phase, ConcurrentPhase::Marking);
         if let Some(slot) = self.free_list.pop() {
             self.objects[slot as usize] = Obj {
                 kind,
                 children,
                 payload,
                 size,
-                marked: false,
+                marked: born_marked,
                 alive: true,
             };
             return GcRef(slot);
@@ -217,7 +226,7 @@ impl Heap {
             children,
             payload,
             size,
-            marked: false,
+            marked: born_marked,
             alive: true,
         });
         GcRef(index)
@@ -416,12 +425,44 @@ impl Heap {
     /// Write barrier: shade `target` so any mutator-visible write of
     /// a reference while a concurrent cycle is active re-greys the
     /// newly stored reference. Has no effect between collections.
+    ///
+    /// Implements **Dijkstra's insertion barrier**: shading the target
+    /// grey at every store guarantees the tri-color invariant
+    /// "no black -> white pointer" by construction — the target is
+    /// at least grey by the time the mutator can publish it. Allocation
+    /// shading in [`Self::alloc`] handles the fresh-allocation case so
+    /// objects that live only on the mutator stack are not reclaimed
+    /// mid-cycle.
     pub fn write_barrier(&mut self, target: GcRef) {
         if matches!(self.phase, ConcurrentPhase::Idle) {
             return;
         }
         if self.is_live(target) {
             self.grey.push(target);
+        }
+    }
+
+    /// Variant of [`Self::write_barrier`] that also re-greys the source
+    /// object. Defensive: useful when callers know a black source has
+    /// just been mutated but cannot guarantee that every reachable
+    /// child has already been re-greyed via the insertion barrier.
+    /// Equivalent to a one-shot Yuasa-style snapshot of the affected
+    /// object — at the cost of an extra grey-stack push.
+    pub fn write_barrier_with_source(&mut self, source: GcRef, target: GcRef) {
+        if matches!(self.phase, ConcurrentPhase::Idle) {
+            return;
+        }
+        if self.is_live(target) {
+            self.grey.push(target);
+        }
+        if self.is_live(source) {
+            let slot = source.0 as usize;
+            if let Some(obj) = self.objects.get_mut(slot) {
+                if obj.marked {
+                    obj.marked = false;
+                    self.grey.push(source);
+                }
+            }
         }
     }
 

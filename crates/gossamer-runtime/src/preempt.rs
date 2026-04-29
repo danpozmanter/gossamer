@@ -131,6 +131,27 @@ pub extern "C" fn gos_rt_preempt_check() -> i32 {
     }
 }
 
+/// Combined safepoint: polls and, when a yield is requested,
+/// honours it by handing the OS slice back to the kernel via
+/// `sched_yield`. Cheaper at the call site than the
+/// poll-then-conditional-yield pattern because compiled code
+/// emits a single call per back-edge instead of poll + branch +
+/// call. Returns `1` if a yield was performed, `0` otherwise.
+///
+/// On platforms without `sched_yield` (none on the supported
+/// targets), the cooperative bump is the only behaviour and the
+/// next safepoint will observe the same flag and try again.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_preempt_check_and_yield() -> i32 {
+    if should_yield() {
+        note_yield();
+        std::thread::yield_now();
+        1
+    } else {
+        0
+    }
+}
+
 /// Watchdog tick used by the scheduler. Returns the number of
 /// outstanding `request_yield_*` calls a worker has not yet honoured.
 /// Useful for diagnostics; the value is best-effort because workers
