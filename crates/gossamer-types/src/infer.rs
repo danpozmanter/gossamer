@@ -47,6 +47,13 @@ pub struct InferCtxt {
     /// before reading), and unions propagate the constraint through
     /// the union-find merge in [`Self::bind_var`].
     integer_constrained: Vec<bool>,
+    /// Direct lookup from `TyVid` index to the interned `Ty` handle
+    /// that wraps it. The previous implementation walked the entire
+    /// interner on every `walk_var` lookup (an O(N) scan that turned
+    /// `unify`/`resolve`/`occurs` into O(N²) on programs with many
+    /// inference variables). Populating this side-table at
+    /// `alloc_var` time keeps the lookup O(1).
+    var_to_ty: Vec<Ty>,
 }
 
 impl InferCtxt {
@@ -56,6 +63,7 @@ impl InferCtxt {
         Self {
             slots: Vec::new(),
             integer_constrained: Vec::new(),
+            var_to_ty: Vec::new(),
         }
     }
 
@@ -75,7 +83,11 @@ impl InferCtxt {
         let idx = u32::try_from(self.slots.len()).expect("too many inference vars");
         self.slots.push(VarSlot::Parent(idx));
         self.integer_constrained.push(integer_constrained);
-        tcx.intern(TyKind::Var(TyVid(idx)))
+        let ty = tcx.intern(TyKind::Var(TyVid(idx)));
+        // Side-table: O(1) lookup for `walk_var` to avoid a full
+        // interner scan on every resolve / unify / occurs.
+        self.var_to_ty.push(ty);
+        ty
     }
 
     /// Defaults every integer-constrained variable that is still
@@ -128,7 +140,18 @@ impl InferCtxt {
         loop {
             match self.slots.get(idx as usize)? {
                 VarSlot::Parent(parent) if *parent == idx => {
-                    return Some(lookup_var(tcx, idx));
+                    // Side-table lookup: O(1) instead of the
+                    // historical full-interner scan in `lookup_var`.
+                    // Falls back to the scan for the impossible case
+                    // where a var slot exists without a side-table
+                    // entry — keeps the function total under any
+                    // future churn.
+                    return Some(
+                        self.var_to_ty
+                            .get(idx as usize)
+                            .copied()
+                            .unwrap_or_else(|| lookup_var(tcx, idx)),
+                    );
                 }
                 VarSlot::Parent(parent) => idx = *parent,
                 VarSlot::Resolved(resolved) => return Some(*resolved),
