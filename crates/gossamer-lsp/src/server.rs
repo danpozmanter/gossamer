@@ -507,9 +507,12 @@ impl ServerState {
         }
 
         // Bare prefix path: top-level items, locals, keywords, builtins.
-        for (ident, _) in &doc.top_level {
-            if ident.name.starts_with(prefix) && seen.insert(ident.name.clone()) {
-                items.push(completion_item_for(doc, &ident.name, prefix));
+        // The DefinitionIndex already records every top-level item with
+        // its `name` and `name_span`, so iterate it directly instead of
+        // keeping a parallel `top_level: Vec<(Ident, Span)>` cache.
+        for (_, info) in doc.index.def_iter() {
+            if info.name.starts_with(prefix) && seen.insert(info.name.clone()) {
+                items.push(completion_item_for(doc, &info.name, prefix));
             }
         }
         // Locals in scope: we don't track scopes at hover-time, so just
@@ -616,7 +619,7 @@ impl ServerState {
         items: &mut Vec<Value>,
         seen: &mut std::collections::HashSet<String>,
     ) {
-        let already_imported = collect_existing_imports(&doc.source);
+        let already_imported = collect_existing_imports(doc.source());
         for path in self.stdlib.fuzzy_paths_for_prefix(prefix) {
             // The user already typed an exact-name match: only suggest
             // when the bare-name space doesn't already cover this name.
@@ -746,7 +749,7 @@ impl ServerState {
         let Some(word) = doc.word_at(offset) else {
             return Value::Null;
         };
-        let bytes = doc.source.as_bytes();
+        let bytes = doc.source().as_bytes();
         let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
         let mut start = offset as usize;
         while start > 0 && is_word(bytes[start - 1]) {
@@ -850,7 +853,7 @@ impl ServerState {
         let Some((doc, offset)) = self.locate(params) else {
             return Value::Null;
         };
-        let Some((callee_name, active_param)) = enclosing_call(&doc.source, offset) else {
+        let Some((callee_name, active_param)) = enclosing_call(doc.source(), offset) else {
             return Value::Null;
         };
         for (_, info) in doc.index_pairs() {
@@ -883,11 +886,11 @@ impl ServerState {
         } else {
             format!("{formatted}\n")
         };
-        if formatted == doc.source {
+        if formatted == doc.source() {
             return Value::Array(Vec::new());
         }
         // Replace the entire document.
-        let (end_line, end_col) = doc.offset_to_position(doc.source.len() as u32);
+        let (end_line, end_col) = doc.offset_to_position(doc.source().len() as u32);
         let mut start = BTreeMap::new();
         start.insert("line".to_string(), Value::Number(0.0));
         start.insert("character".to_string(), Value::Number(0.0));
@@ -1438,7 +1441,7 @@ enum BuiltinReceiver {
 fn receiver_descriptor(doc: &DocumentAnalysis, offset: u32) -> ReceiverDescriptor {
     // Locate the receiver expression: walk left from the dot in the
     // source, skipping the suffix word the user is typing.
-    let bytes = doc.source.as_bytes();
+    let bytes = doc.source().as_bytes();
     let mut idx = (offset as usize).min(bytes.len());
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     while idx > 0 && is_word(bytes[idx - 1]) {
@@ -1494,7 +1497,7 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
     }
     // Identifier — try resolving via let-binding type annotation.
     if let Some(name) = identifier_token(head) {
-        if let Some(ty) = lookup_let_annotation(&doc.source, name) {
+        if let Some(ty) = lookup_let_annotation(doc.source(), name) {
             return classify_type_string(&ty);
         }
     }
@@ -2188,7 +2191,7 @@ fn import_completion_item(doc: &DocumentAnalysis, leaf: &str, full_path: &str) -
             docs
         }),
     );
-    let insert_offset = import_insert_offset(&doc.source);
+    let insert_offset = import_insert_offset(doc.source());
     let (line, col) = doc.offset_to_position(insert_offset);
     let mut start = BTreeMap::new();
     start.insert("line".to_string(), Value::Number(f64::from(line)));

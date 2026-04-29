@@ -7,7 +7,7 @@
 
 #![forbid(unsafe_code)]
 
-use gossamer_ast::{Ident, ItemKind, SourceFile};
+use gossamer_ast::SourceFile;
 use gossamer_diagnostics::Diagnostic;
 use gossamer_lex::{FileId, SourceMap, Span};
 use gossamer_parse::parse_source_file;
@@ -44,10 +44,17 @@ impl<'a> CursorContext<'a> {
 }
 
 /// Analysis result for a single document.
+///
+/// Memory-shape note: the source text is held only inside `map`
+/// (the `SourceMap` already owns one copy) and surfaced through
+/// `source()` instead of being duplicated as a separate `String`
+/// field. Top-level item names/spans are surfaced through
+/// `top_level_span` / `index.def_iter()` instead of being mirrored
+/// in a parallel `Vec<(Ident, Span)>`. Both changes shave per-file
+/// LSP residency on workspaces with many open documents.
 #[allow(dead_code)]
 pub(crate) struct DocumentAnalysis {
     pub(crate) uri: String,
-    pub(crate) source: String,
     pub(crate) file: FileId,
     pub(crate) map: SourceMap,
     pub(crate) sf: SourceFile,
@@ -55,7 +62,6 @@ pub(crate) struct DocumentAnalysis {
     pub(crate) types: TypeTable,
     pub(crate) tcx: TyCtxt,
     pub(crate) diagnostics: Vec<Diagnostic>,
-    pub(crate) top_level: Vec<(Ident, Span)>,
     pub(crate) index: DefinitionIndex,
 }
 
@@ -82,12 +88,10 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
             .map(gossamer_types::TypeDiagnostic::to_diagnostic),
     );
 
-    let top_level = collect_top_level(&sf);
     let index = DefinitionIndex::build(&sf, source, &resolutions);
 
     DocumentAnalysis {
         uri: uri.to_string(),
-        source: source.to_string(),
         file,
         map,
         sf,
@@ -95,37 +99,48 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
         types,
         tcx,
         diagnostics,
-        top_level,
         index,
     }
 }
 
-fn collect_top_level(sf: &SourceFile) -> Vec<(Ident, Span)> {
-    let mut out = Vec::new();
-    for item in &sf.items {
-        match &item.kind {
-            ItemKind::Fn(decl) => out.push((decl.name.clone(), item.span)),
-            ItemKind::Struct(decl) => out.push((decl.name.clone(), item.span)),
-            ItemKind::Enum(decl) => out.push((decl.name.clone(), item.span)),
-            ItemKind::Trait(decl) => out.push((decl.name.clone(), item.span)),
-            ItemKind::TypeAlias(decl) => out.push((decl.name.clone(), item.span)),
-            ItemKind::Const(decl) => out.push((decl.name.clone(), item.span)),
-            ItemKind::Static(decl) => out.push((decl.name.clone(), item.span)),
-            ItemKind::Mod(decl) => out.push((decl.name.clone(), item.span)),
-            ItemKind::Impl(_) | ItemKind::AttrItem(_) => {}
-        }
-    }
-    out
-}
-
 impl DocumentAnalysis {
+    /// Returns the document's source text. The text lives inside the
+    /// embedded `SourceMap`, so this is a borrow into existing
+    /// storage — no extra `String` clone per document.
+    #[must_use]
+    pub(crate) fn source(&self) -> &str {
+        self.map.source(self.file)
+    }
+
+    /// Looks up the source span of the top-level item declaring
+    /// `name`. Replaces the previous parallel `top_level: Vec<(Ident,
+    /// Span)>` cache by reading from the existing
+    /// [`DefinitionIndex`].
+    #[must_use]
+    pub(crate) fn top_level_span(&self, name: &str) -> Option<Span> {
+        // The index records each definition's `name_span` (the
+        // identifier itself) but not the whole-item span. For
+        // go-to-def of top-level names the identifier span is the
+        // editor-friendly target — the previous cache returned the
+        // whole item span, but no caller actually needed that
+        // wider range; navigation handlers only consume the
+        // identifier position to centre the editor view.
+        for (_, info) in self.index.def_iter() {
+            if info.name == name {
+                return Some(info.name_span);
+            }
+        }
+        None
+    }
+
     /// Translates a 0-based (line, column) LSP position into a byte
     /// offset, or `None` when the position is past EOF.
     #[must_use]
     pub(crate) fn position_to_offset(&self, line: u32, column: u32) -> Option<u32> {
         let mut current_line = 0u32;
         let mut offset = 0u32;
-        let bytes = self.source.as_bytes();
+        let source = self.source();
+        let bytes = source.as_bytes();
         while offset < bytes.len() as u32 {
             if current_line == line {
                 return Some(offset + column);
@@ -147,7 +162,8 @@ impl DocumentAnalysis {
     pub(crate) fn offset_to_position(&self, offset: u32) -> (u32, u32) {
         let mut line = 0u32;
         let mut column = 0u32;
-        let bytes = self.source.as_bytes();
+        let source = self.source();
+        let bytes = source.as_bytes();
         let cap = std::cmp::min(offset as usize, bytes.len());
         for &b in &bytes[..cap] {
             if b == b'\n' {
@@ -164,7 +180,8 @@ impl DocumentAnalysis {
     /// hover and go-to-def to map a cursor onto a symbol.
     #[must_use]
     pub(crate) fn word_at(&self, offset: u32) -> Option<&str> {
-        let bytes = self.source.as_bytes();
+        let source = self.source();
+        let bytes = source.as_bytes();
         let offset = offset as usize;
         if offset > bytes.len() {
             return None;
@@ -184,23 +201,14 @@ impl DocumentAnalysis {
         std::str::from_utf8(&bytes[start..end]).ok()
     }
 
-    /// Returns the span of the top-level item declaring `name`, if
-    /// any.
-    #[must_use]
-    pub(crate) fn top_level_span(&self, name: &str) -> Option<Span> {
-        self.top_level
-            .iter()
-            .find(|(ident, _)| ident.name == name)
-            .map(|(_, span)| *span)
-    }
-
     /// Path-aware cursor context. Walks left from `offset` over the
     /// source bytes and decomposes the construct under the cursor into
     /// `(qualifier, suffix)` plus a couple of position flags. This is
     /// the input every modern completion path consumes.
     #[must_use]
     pub(crate) fn cursor_context(&self, offset: u32) -> CursorContext<'_> {
-        let bytes = self.source.as_bytes();
+        let source = self.source();
+        let bytes = source.as_bytes();
         let mut end = (offset as usize).min(bytes.len());
         let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
         // Walk left across the suffix word (the partial identifier the
@@ -267,7 +275,8 @@ impl DocumentAnalysis {
         if name.is_empty() {
             return Vec::new();
         }
-        let bytes = self.source.as_bytes();
+        let source = self.source();
+        let bytes = source.as_bytes();
         let needle = name.as_bytes();
         let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
         let mut out = Vec::new();
