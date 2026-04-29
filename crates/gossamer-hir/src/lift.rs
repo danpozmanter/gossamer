@@ -384,7 +384,16 @@ impl Lifter {
     }
 }
 
-fn collect_pattern_names(pat: &HirPat, out: &mut HashSet<String>) {
+/// Collects every binding name introduced by `pat` into `out`.
+///
+/// Used by free-variable analysis: a name is "bound" if it's
+/// introduced by an enclosing pattern (parameter, `let`, match arm),
+/// so collecting pattern names builds the bound-set passed into
+/// [`collect_free_vars`].
+pub fn collect_pattern_names<S: std::hash::BuildHasher + Clone>(
+    pat: &HirPat,
+    out: &mut HashSet<String, S>,
+) {
     match &pat.kind {
         HirPatKind::Binding { name, .. } => {
             out.insert(name.name.clone());
@@ -416,7 +425,7 @@ fn collect_pattern_names(pat: &HirPat, out: &mut HashSet<String>) {
     }
 }
 
-fn is_closed(expr: &HirExpr, bound: &HashSet<String>) -> bool {
+fn is_closed<S: std::hash::BuildHasher + Clone>(expr: &HirExpr, bound: &HashSet<String, S>) -> bool {
     match &expr.kind {
         HirExprKind::Path { segments, def } => {
             // Fully-qualified paths and resolved DefIds point to top-
@@ -510,17 +519,23 @@ fn is_closed(expr: &HirExpr, bound: &HashSet<String>) -> bool {
 /// Collects the free variables referenced by `expr` that are not in
 /// `bound`. Variables appear in first-use order (each distinct name
 /// shows up exactly once). Used by the lifter to produce a stable
-/// capture ordering.
-fn collect_free_vars(expr: &HirExpr, bound: &HashSet<String>) -> Vec<String> {
+/// capture ordering, and by the tree-walking interpreter so closures
+/// capture only the bindings they actually reference (instead of
+/// the full enclosing scope).
+#[must_use]
+pub fn collect_free_vars<S: std::hash::BuildHasher + Clone>(
+    expr: &HirExpr,
+    bound: &HashSet<String, S>,
+) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     walk_free(expr, bound, &mut out, &mut seen);
     out
 }
 
-fn walk_free(
+fn walk_free<S: std::hash::BuildHasher + Clone>(
     expr: &HirExpr,
-    bound: &HashSet<String>,
+    bound: &HashSet<String, S>,
     out: &mut Vec<String>,
     seen: &mut HashSet<String>,
 ) {
@@ -644,18 +659,18 @@ fn walk_free(
     }
 }
 
-fn walk_free_with(
+fn walk_free_with<S: std::hash::BuildHasher + Clone>(
     expr: &HirExpr,
-    bound: &HashSet<String>,
+    bound: &HashSet<String, S>,
     out: &mut Vec<String>,
     seen: &mut HashSet<String>,
 ) {
     walk_free(expr, bound, out, seen);
 }
 
-fn walk_free_block(
+fn walk_free_block<S: std::hash::BuildHasher + Clone>(
     block: &HirBlock,
-    bound: &HashSet<String>,
+    bound: &HashSet<String, S>,
     out: &mut Vec<String>,
     seen: &mut HashSet<String>,
 ) {
@@ -679,7 +694,7 @@ fn walk_free_block(
     }
 }
 
-fn is_closed_block(block: &HirBlock, bound: &HashSet<String>) -> bool {
+fn is_closed_block<S: std::hash::BuildHasher + Clone>(block: &HirBlock, bound: &HashSet<String, S>) -> bool {
     let mut local = bound.clone();
     for stmt in &block.stmts {
         match &stmt.kind {

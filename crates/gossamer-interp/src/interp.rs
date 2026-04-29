@@ -168,6 +168,7 @@ use gossamer_ast::Ident;
 use gossamer_hir::{
     HirBinaryOp, HirBlock, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind, HirLiteral,
     HirMatchArm, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind, HirUnaryOp,
+    collect_free_vars, collect_pattern_names,
 };
 
 use crate::builtins;
@@ -452,10 +453,22 @@ impl Interpreter {
             HirExprKind::While { condition, body } => self.eval_while(condition, body, env),
             HirExprKind::Block(block) => self.eval_block(block, env),
             HirExprKind::Closure { params, body, .. } => {
+                // Capture only the free variables of the closure body
+                // (variables referenced inside `body` that aren't
+                // bound by `params`). Capturing the entire enclosing
+                // scope used to leak unrelated locals into every
+                // closure clone — a real RSS-growth source on long-
+                // running services that build closures per request.
+                let mut bound: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for param in params {
+                    collect_pattern_names(&param.pattern, &mut bound);
+                }
+                let free = collect_free_vars(body, &bound);
                 Ok(Flow::Value(Value::Closure(Arc::new(Closure {
                     params: params.clone(),
                     body: (**body).clone(),
-                    captures: env.capture_all(),
+                    captures: env.capture_named(&free),
                 }))))
             }
             HirExprKind::LiftedClosure { .. } => {
@@ -490,6 +503,17 @@ impl Interpreter {
             }
             HirExprKind::Array(arr) => self.eval_array(arr, env),
             HirExprKind::Cast { value, .. } => {
+                // Without a TyCtxt handle on the tree-walker we
+                // cannot resolve the target's `Ty` to a concrete
+                // kind, so the cast is a runtime no-op for the
+                // tree-walker — every numeric cast we care about
+                // (i64↔f64, etc.) is handled directly by the
+                // bytecode VM's `compile_cast`. To stay sound when
+                // the tree-walker IS the executor (fallback or
+                // explicit `--tree-walker`), promote `Int`→`Float`
+                // and `Float`→`Int` based on the receiving operator
+                // at use sites — see `eval_binary` for the
+                // arithmetic auto-promotion that compensates.
                 Ok(Flow::Value(self.eval_expr_to_value(value, env)?))
             }
             HirExprKind::Range {
@@ -498,14 +522,12 @@ impl Interpreter {
                 inclusive,
             } => self.eval_range(start.as_deref(), end.as_deref(), *inclusive, env),
             HirExprKind::Go(inner) => {
-                // `go expr` spawns a real OS thread. We capture the
-                // current env into a clone-owned vector and clone
-                // the interpreter's globals so the worker is fully
-                // independent of the caller's state. A runtime
-                // error inside the goroutine body is caught by the
-                // worker itself and logged; it does not propagate
-                // to the spawning thread.
-                let captured_env = env.capture_all();
+                // `go expr` spawns a real OS thread. We capture only
+                // the free variables of the spawned expression so the
+                // worker thread doesn't pin the entire enclosing
+                // scope's heap aggregates while it runs.
+                let free = collect_free_vars(inner, &std::collections::HashSet::new());
+                let captured_env = env.capture_named(&free);
                 let body = (**inner).clone();
                 let mut worker = self.clone();
                 let handle = std::thread::Builder::new()
@@ -1354,6 +1376,8 @@ fn is_mutating_method(name: &str) -> bool {
             | "append"
             | "truncate"
             | "sort"
+            | "sort_by"
+            | "sort_by_key"
             | "reverse"
             | "retain"
             | "drain"
@@ -1621,6 +1645,46 @@ fn apply_binary(op: HirBinaryOp, a: Value, b: Value) -> RuntimeResult<Value> {
         (HirBinaryOp::Mul, Value::Float(x), Value::Float(y)) => Ok(Value::Float(x * y)),
         (HirBinaryOp::Div, Value::Float(x), Value::Float(y)) => Ok(Value::Float(x / y)),
         (HirBinaryOp::Rem, Value::Float(x), Value::Float(y)) => Ok(Value::Float(x % y)),
+        // Mixed-arithmetic auto-promotion. The tree-walker treats
+        // `Cast { ... }` as a no-op (no `TyCtxt` on hand to resolve
+        // the target kind), so an expression like `i64 as f64`
+        // arrives at this dispatch as a plain `Value::Int`. Promote
+        // it to `Value::Float` here so the user-visible behaviour
+        // matches the bytecode VM and the AOT compiler. Without this
+        // hook, `100.0 * (n as f64)` raises `cannot apply Mul to
+        // float/int` whenever the tree-walker is the executor.
+        (op, Value::Int(x), Value::Float(y))
+            if matches!(
+                op,
+                HirBinaryOp::Add
+                    | HirBinaryOp::Sub
+                    | HirBinaryOp::Mul
+                    | HirBinaryOp::Div
+                    | HirBinaryOp::Rem
+            ) =>
+        {
+            arith_floats(op, x as f64, y)
+        }
+        (op, Value::Float(x), Value::Int(y))
+            if matches!(
+                op,
+                HirBinaryOp::Add
+                    | HirBinaryOp::Sub
+                    | HirBinaryOp::Mul
+                    | HirBinaryOp::Div
+                    | HirBinaryOp::Rem
+            ) =>
+        {
+            arith_floats(op, x, y as f64)
+        }
+        (HirBinaryOp::Lt, Value::Int(x), Value::Float(y)) => Ok(Value::Bool((x as f64) < y)),
+        (HirBinaryOp::Le, Value::Int(x), Value::Float(y)) => Ok(Value::Bool((x as f64) <= y)),
+        (HirBinaryOp::Gt, Value::Int(x), Value::Float(y)) => Ok(Value::Bool((x as f64) > y)),
+        (HirBinaryOp::Ge, Value::Int(x), Value::Float(y)) => Ok(Value::Bool((x as f64) >= y)),
+        (HirBinaryOp::Lt, Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x < (y as f64))),
+        (HirBinaryOp::Le, Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x <= (y as f64))),
+        (HirBinaryOp::Gt, Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x > (y as f64))),
+        (HirBinaryOp::Ge, Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x >= (y as f64))),
         (HirBinaryOp::Eq, a, b) => Ok(Value::Bool(values_equal(&a, &b))),
         (HirBinaryOp::Ne, a, b) => Ok(Value::Bool(!values_equal(&a, &b))),
         (HirBinaryOp::Lt, Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x < y)),
@@ -1631,12 +1695,35 @@ fn apply_binary(op: HirBinaryOp, a: Value, b: Value) -> RuntimeResult<Value> {
         (HirBinaryOp::Le, Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x <= y)),
         (HirBinaryOp::Gt, Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x > y)),
         (HirBinaryOp::Ge, Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x >= y)),
+        (HirBinaryOp::Lt, Value::String(x), Value::String(y)) => {
+            Ok(Value::Bool(x.as_str() < y.as_str()))
+        }
+        (HirBinaryOp::Le, Value::String(x), Value::String(y)) => {
+            Ok(Value::Bool(x.as_str() <= y.as_str()))
+        }
+        (HirBinaryOp::Gt, Value::String(x), Value::String(y)) => {
+            Ok(Value::Bool(x.as_str() > y.as_str()))
+        }
+        (HirBinaryOp::Ge, Value::String(x), Value::String(y)) => {
+            Ok(Value::Bool(x.as_str() >= y.as_str()))
+        }
         (op, a, b) => Err(RuntimeError::Type(format!(
             "cannot apply `{op:?}` to `{:?}`/`{:?}`",
             classify(&a),
             classify(&b)
         ))),
     }
+}
+
+fn arith_floats(op: HirBinaryOp, x: f64, y: f64) -> RuntimeResult<Value> {
+    Ok(Value::Float(match op {
+        HirBinaryOp::Add => x + y,
+        HirBinaryOp::Sub => x - y,
+        HirBinaryOp::Mul => x * y,
+        HirBinaryOp::Div => x / y,
+        HirBinaryOp::Rem => x % y,
+        _ => return Err(RuntimeError::Type(format!("non-arith op `{op:?}` in arith_floats"))),
+    }))
 }
 
 fn values_equal(a: &Value, b: &Value) -> bool {

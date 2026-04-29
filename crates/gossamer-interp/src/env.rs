@@ -102,4 +102,26 @@ impl Env {
         }
         seen
     }
+
+    /// Captures only the bindings whose names appear in `names`,
+    /// preserving inner-frame precedence. Used when constructing
+    /// closures (or spawning goroutines) so the captured environment
+    /// holds only the free variables actually referenced by the body
+    /// — not the entire enclosing scope. Names that don't resolve
+    /// in the live environment are silently skipped (they will
+    /// either resolve to a top-level item via globals at call time
+    /// or surface as a runtime "undefined name" error).
+    #[must_use]
+    pub fn capture_named(&self, names: &[String]) -> Vec<(String, Value)> {
+        let mut out: Vec<(String, Value)> = Vec::with_capacity(names.len());
+        for name in names {
+            if out.iter().any(|(n, _)| n == name) {
+                continue;
+            }
+            if let Some(value) = self.lookup(name) {
+                out.push((name.clone(), value.clone()));
+            }
+        }
+        out
+    }
 }

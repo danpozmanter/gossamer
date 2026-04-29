@@ -16,7 +16,7 @@ mod lower;
 mod tree;
 
 pub use ids::{HirId, HirIdGenerator};
-pub use lift::lift_closures;
+pub use lift::{collect_free_vars, collect_pattern_names, lift_closures};
 pub use lower::lower_source_file;
 pub use tree::{
     HirAdt, HirAdtKind, HirArrayExpr, HirBinaryOp, HirBlock, HirBody, HirConst, HirExpr,
