@@ -29,8 +29,10 @@ use crate::inlay::{InlayHint, collect_inlays};
 use crate::navigation::{BindingInfo, DefinitionInfo, Locate, attach_resolution, locate};
 use crate::protocol::{Transport, field, field_str, field_u32, notification, response_ok};
 use crate::semantic_tokens::{TOKEN_MODIFIERS, TOKEN_TYPES, full_tokens};
-use crate::session::{DocumentAnalysis, analyse};
+use crate::session::{CursorContext, DocumentAnalysis, analyse};
+use crate::stdlib_index::{MemberSpec, StdlibIndex};
 use crate::symbols::{document_symbols, folding_ranges, workspace_symbols};
+use crate::workspace_index::{WorkspaceIndex, WorkspaceItem};
 
 /// Runs the server over the supplied reader/writer streams. Returns
 /// `Ok(())` when the client sends `exit` after `shutdown`.
@@ -182,6 +184,12 @@ fn initialize_result() -> Value {
             Value::String(":".to_string()),
         ]),
     );
+    let mut completion_item_caps = BTreeMap::new();
+    completion_item_caps.insert("snippetSupport".to_string(), Value::Bool(true));
+    completion.insert(
+        "completionItem".to_string(),
+        Value::Object(completion_item_caps),
+    );
     caps.insert("completionProvider".to_string(), Value::Object(completion));
     let mut sig = BTreeMap::new();
     sig.insert(
@@ -258,22 +266,28 @@ fn extract_did_change(params: &Value) -> Option<(String, String)> {
 
 struct ServerState {
     documents: HashMap<String, DocumentAnalysis>,
+    stdlib: StdlibIndex,
+    workspace: WorkspaceIndex,
 }
 
 impl ServerState {
     fn new() -> Self {
         Self {
             documents: HashMap::new(),
+            stdlib: StdlibIndex::build(),
+            workspace: WorkspaceIndex::default(),
         }
     }
 
     fn update(&mut self, uri: &str, text: &str) {
         let analysis = analyse(uri, text);
+        self.workspace.update(uri, &analysis);
         self.documents.insert(uri.to_string(), analysis);
     }
 
     fn close(&mut self, uri: &str) {
         self.documents.remove(uri);
+        self.workspace.remove(uri);
     }
 
     fn publish_diagnostics(&self, uri: &str) -> Vec<Value> {
@@ -447,9 +461,52 @@ impl ServerState {
         let Some((doc, offset)) = self.locate(params) else {
             return Value::Array(Vec::new());
         };
-        let prefix = doc.word_at(offset).unwrap_or("");
+        let cursor = doc.cursor_context(offset);
+        let prefix = cursor.suffix;
         let mut items: Vec<Value> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // Use-context: surface module / item members of the qualifier.
+        if cursor.is_use_context {
+            if cursor.qualifier.is_empty() {
+                for spec in self.stdlib.root_modules() {
+                    if spec.name.starts_with(prefix) && seen.insert(spec.name.clone()) {
+                        items.push(member_to_completion(&spec));
+                    }
+                }
+            } else if let Some(members) = self.stdlib.members_of(&cursor.qualifier_segments()) {
+                for spec in &members {
+                    if spec.name.starts_with(prefix) && seen.insert(spec.name.clone()) {
+                        items.push(member_to_completion(spec));
+                    }
+                }
+            }
+            return Value::Array(items);
+        }
+
+        // Receiver-method completion (`expr.p|`).
+        if cursor.is_method_position {
+            self.method_completions(doc, offset, prefix, &mut items, &mut seen);
+            return Value::Array(items);
+        }
+
+        // Module / type-qualified path completion (`os::p|`, `Vec::n|`).
+        if !cursor.qualifier.is_empty() {
+            if let Some(members) = self.stdlib.members_of(&cursor.qualifier_segments()) {
+                for spec in &members {
+                    if spec.name.starts_with(prefix) && seen.insert(spec.name.clone()) {
+                        items.push(member_to_completion(spec));
+                    }
+                }
+            }
+            // Type-qualified user types (e.g. `MyEnum::V`).
+            self.type_qualified_completions(doc, &cursor, prefix, &mut items, &mut seen);
+            // No fall-through to bare prefix when the user already
+            // typed `::` — that would surface unrelated names.
+            return Value::Array(items);
+        }
+
+        // Bare prefix path: top-level items, locals, keywords, builtins.
         for (ident, _) in &doc.top_level {
             if ident.name.starts_with(prefix) && seen.insert(ident.name.clone()) {
                 items.push(completion_item_for(doc, &ident.name, prefix));
@@ -470,10 +527,111 @@ impl ServerState {
         }
         for name in BUILTIN_COMPLETIONS {
             if name.starts_with(prefix) && seen.insert((*name).to_string()) {
-                items.push(completion_item(name, 3));
+                items.push(completion_function_item_with_snippet(name));
             }
         }
+        // Workspace-wide top-level items (other open files).
+        if !prefix.is_empty() {
+            for item in self.workspace.by_prefix(prefix, &doc.uri) {
+                if seen.insert(item.name.clone()) {
+                    items.push(workspace_completion_item(&item));
+                }
+            }
+        }
+        // Auto-import suggestions for unqualified names that don't
+        // resolve in the current file.
+        if !prefix.is_empty() {
+            self.auto_import_completions(doc, prefix, &mut items, &mut seen);
+        }
         Value::Array(items)
+    }
+
+    /// Fills `items` with method-call completions when the cursor is in
+    /// `receiver.suffix|` position. Best-effort: walks the receiver's
+    /// resolved type back to a set of impl/trait methods either declared
+    /// on the receiver in this file or known to be built-in.
+    fn method_completions(
+        &self,
+        doc: &DocumentAnalysis,
+        offset: u32,
+        prefix: &str,
+        items: &mut Vec<Value>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        let receiver_kind = receiver_descriptor(doc, offset);
+        for method in builtin_methods_for(&receiver_kind) {
+            if method.name.starts_with(prefix) && seen.insert(method.name.to_string()) {
+                items.push(method_completion_item(method));
+            }
+        }
+        // Walk every impl block in this file looking for methods whose
+        // receiver type spelling matches.
+        if let Some(receiver_type) = receiver_kind.type_name() {
+            for method in user_methods_for(doc, receiver_type) {
+                if method.name.starts_with(prefix) && seen.insert(method.name.clone()) {
+                    items.push(user_method_completion_item(&method));
+                }
+            }
+        }
+        // Last-ditch fallback: when we can't resolve the receiver type,
+        // surface every known builtin method whose name matches the
+        // prefix. Keeps `vec.p` useful even mid-edit when the receiver
+        // expression doesn't typecheck.
+        if items.is_empty() && !prefix.is_empty() {
+            for method in ALL_BUILTIN_METHODS {
+                if method.name.starts_with(prefix) && seen.insert(method.name.to_string()) {
+                    items.push(method_completion_item(method));
+                }
+            }
+        }
+    }
+
+    /// Type-qualified completions. Looks up the qualifier's last segment
+    /// against in-file enums (variants) and impl blocks (associated fns).
+    fn type_qualified_completions(
+        &self,
+        doc: &DocumentAnalysis,
+        cursor: &CursorContext<'_>,
+        prefix: &str,
+        items: &mut Vec<Value>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        let Some(last) = cursor.qualifier.last().copied() else {
+            return;
+        };
+        for assoc in user_associated_items(doc, last) {
+            if assoc.name.starts_with(prefix) && seen.insert(assoc.name.clone()) {
+                items.push(user_method_completion_item(&assoc));
+            }
+        }
+    }
+
+    /// Suggests `use` imports for unqualified names that don't already
+    /// resolve in scope. Each completion item carries
+    /// `additionalTextEdits` inserting the matching `use` statement.
+    fn auto_import_completions(
+        &self,
+        doc: &DocumentAnalysis,
+        prefix: &str,
+        items: &mut Vec<Value>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        let already_imported = collect_existing_imports(&doc.source);
+        for path in self.stdlib.fuzzy_paths_for_prefix(prefix) {
+            // The user already typed an exact-name match: only suggest
+            // when the bare-name space doesn't already cover this name.
+            let leaf = path.rsplit("::").next().unwrap_or("");
+            if leaf.is_empty() || !leaf.starts_with(prefix) {
+                continue;
+            }
+            if already_imported.iter().any(|imp| imp == &path) {
+                continue;
+            }
+            if !seen.insert(format!("{leaf}::__import__::{path}")) {
+                continue;
+            }
+            items.push(import_completion_item(doc, leaf, &path));
+        }
     }
 
     fn locate<'s>(&'s self, params: &Value) -> Option<(&'s DocumentAnalysis, u32)> {
@@ -1213,6 +1371,860 @@ fn completion_item_for(doc: &DocumentAnalysis, label: &str, _prefix: &str) -> Va
     Value::Object(item)
 }
 
+fn member_to_completion(spec: &MemberSpec) -> Value {
+    let mut item = BTreeMap::new();
+    item.insert("label".to_string(), Value::String(spec.name.clone()));
+    item.insert("kind".to_string(), Value::Number(f64::from(spec.kind)));
+    if let Some(detail) = &spec.detail {
+        item.insert("detail".to_string(), Value::String(detail.clone()));
+    }
+    if let Some(doc) = &spec.doc {
+        let mut docs = BTreeMap::new();
+        docs.insert("kind".to_string(), Value::String("markdown".to_string()));
+        docs.insert("value".to_string(), Value::String(doc.clone()));
+        item.insert("documentation".to_string(), Value::Object(docs));
+    }
+    // Function-like members carry a snippet so the editor opens the
+    // parens for the user. Module / type / const stay as bare names.
+    if spec.kind == 3 {
+        item.insert(
+            "insertText".to_string(),
+            Value::String(format!("{}($0)", spec.name)),
+        );
+        item.insert("insertTextFormat".to_string(), Value::Number(2.0));
+    }
+    Value::Object(item)
+}
+
+fn completion_function_item_with_snippet(name: &str) -> Value {
+    let mut item = BTreeMap::new();
+    item.insert("label".to_string(), Value::String(name.to_string()));
+    item.insert("kind".to_string(), Value::Number(3.0));
+    item.insert(
+        "insertText".to_string(),
+        Value::String(format!("{name}($0)")),
+    );
+    item.insert("insertTextFormat".to_string(), Value::Number(2.0));
+    Value::Object(item)
+}
+
+/// Receiver-side identification used to look up methods.
+#[derive(Debug, Clone)]
+struct ReceiverDescriptor {
+    /// Builtin classification (`Vec` / `String` / `HashMap` / `Option` / `Result` / …).
+    builtin: BuiltinReceiver,
+    /// User-facing type name extracted from `let r: Foo = …` or
+    /// `struct Foo { … }`. Used to match `impl Foo` blocks.
+    type_name: Option<String>,
+}
+
+impl ReceiverDescriptor {
+    fn type_name(&self) -> Option<&str> {
+        self.type_name.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuiltinReceiver {
+    Vec,
+    String,
+    HashMap,
+    HashSet,
+    Option,
+    Result,
+    Unknown,
+}
+
+fn receiver_descriptor(doc: &DocumentAnalysis, offset: u32) -> ReceiverDescriptor {
+    // Locate the receiver expression: walk left from the dot in the
+    // source, skipping the suffix word the user is typing.
+    let bytes = doc.source.as_bytes();
+    let mut idx = (offset as usize).min(bytes.len());
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    while idx > 0 && is_word(bytes[idx - 1]) {
+        idx -= 1;
+    }
+    if idx == 0 || bytes[idx - 1] != b'.' {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Unknown,
+            type_name: None,
+        };
+    }
+    // Walk left across the receiver expression (very conservative: stop
+    // at common statement boundaries / unmatched parens).
+    let dot_pos = idx - 1;
+    let mut start = dot_pos;
+    let mut depth: i32 = 0;
+    while start > 0 {
+        let b = bytes[start - 1];
+        match b {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            b';' | b',' | b'\n' if depth == 0 => break,
+            _ => {}
+        }
+        start -= 1;
+    }
+    let receiver = std::str::from_utf8(&bytes[start..dot_pos])
+        .unwrap_or("")
+        .trim();
+    classify_receiver(doc, receiver)
+}
+
+fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
+    let head = expr.trim();
+    // Direct string literal.
+    if head.starts_with('"') {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::String,
+            type_name: Some("String".to_string()),
+        };
+    }
+    // Vec literal `vec![...]` / `[...]`.
+    if head.starts_with("vec![") || head.starts_with('[') {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Vec,
+            type_name: None,
+        };
+    }
+    // Identifier — try resolving via let-binding type annotation.
+    if let Some(name) = identifier_token(head) {
+        if let Some(ty) = lookup_let_annotation(&doc.source, name) {
+            return classify_type_string(&ty);
+        }
+    }
+    ReceiverDescriptor {
+        builtin: BuiltinReceiver::Unknown,
+        type_name: None,
+    }
+}
+
+fn classify_type_string(ty: &str) -> ReceiverDescriptor {
+    let ty = ty.trim();
+    let head = ty
+        .trim_start_matches(['&', '*', ' '])
+        .trim_end_matches([',', ';', ' ']);
+    if head.starts_with("Vec<") || head.starts_with("&[") || head.starts_with('[') {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Vec,
+            type_name: None,
+        };
+    }
+    if head.starts_with("HashMap<") {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::HashMap,
+            type_name: None,
+        };
+    }
+    if head.starts_with("HashSet<") {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::HashSet,
+            type_name: None,
+        };
+    }
+    if head == "String" || head == "&str" || head == "str" {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::String,
+            type_name: Some("String".to_string()),
+        };
+    }
+    if head.starts_with("Option<") || head == "Option" {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Option,
+            type_name: Some("Option".to_string()),
+        };
+    }
+    if head.starts_with("Result<") || head == "Result" {
+        return ReceiverDescriptor {
+            builtin: BuiltinReceiver::Result,
+            type_name: Some("Result".to_string()),
+        };
+    }
+    let bare = head.split(['<', '[', '(', ' ']).next().unwrap_or(head);
+    if bare.is_empty() {
+        ReceiverDescriptor {
+            builtin: BuiltinReceiver::Unknown,
+            type_name: None,
+        }
+    } else {
+        ReceiverDescriptor {
+            builtin: BuiltinReceiver::Unknown,
+            type_name: Some(bare.to_string()),
+        }
+    }
+}
+
+fn identifier_token(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+    if trimmed.chars().next()?.is_ascii_digit() {
+        return None;
+    }
+    Some(trimmed)
+}
+
+/// Looks for a `let <name>: <type> = ...` binding for `name` in the
+/// document and returns the rendered type spelling.
+fn lookup_let_annotation(source: &str, name: &str) -> Option<String> {
+    let needle = format!("let {name}");
+    let needle_mut = format!("let mut {name}");
+    let mut start = 0usize;
+    while start < source.len() {
+        let position = source[start..].find(&needle)?;
+        let absolute = start + position;
+        let head_ok = absolute == 0
+            || !matches!(
+                source.as_bytes()[absolute - 1],
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_'
+            );
+        if !head_ok {
+            start = absolute + 1;
+            continue;
+        }
+        // After the `let <name>` (or `let mut <name>`), look for a `:`
+        // that starts the type annotation, stopping at `=` or newline.
+        let after = if source[absolute..].starts_with(&needle_mut) {
+            absolute + needle_mut.len()
+        } else {
+            absolute + needle.len()
+        };
+        let tail = &source[after..];
+        // Strict word boundary: next char must not be word.
+        if tail
+            .as_bytes()
+            .first()
+            .copied()
+            .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
+            start = absolute + 1;
+            continue;
+        }
+        let stripped = tail.trim_start();
+        if let Some(rest_with_ws) = stripped.strip_prefix(':') {
+            let rest = rest_with_ws.trim_start();
+            // Capture until `=` or newline at top depth.
+            let mut depth: i32 = 0;
+            let mut end = 0usize;
+            for (i, ch) in rest.char_indices() {
+                match ch {
+                    '<' | '(' | '[' => depth += 1,
+                    '>' | ')' | ']' => depth -= 1,
+                    '=' | '\n' | ';' if depth == 0 => {
+                        end = i;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if end == 0 {
+                end = rest.len();
+            }
+            let ty = rest[..end].trim().trim_end_matches(',').trim();
+            if !ty.is_empty() {
+                return Some(ty.to_string());
+            }
+        }
+        start = absolute + 1;
+    }
+    None
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BuiltinMethod {
+    name: &'static str,
+    signature: &'static str,
+    doc: &'static str,
+    snippet: &'static str,
+}
+
+const VEC_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "push",
+        signature: "fn push(&mut self, value: T)",
+        doc: "Appends `value` to the back of the vec.",
+        snippet: "push($0)",
+    },
+    BuiltinMethod {
+        name: "pop",
+        signature: "fn pop(&mut self) -> Option<T>",
+        doc: "Removes the last element and returns it, or `None` when empty.",
+        snippet: "pop()$0",
+    },
+    BuiltinMethod {
+        name: "len",
+        signature: "fn len(&self) -> usize",
+        doc: "Number of elements currently in the vec.",
+        snippet: "len()$0",
+    },
+    BuiltinMethod {
+        name: "is_empty",
+        signature: "fn is_empty(&self) -> bool",
+        doc: "Returns `true` when the vec has no elements.",
+        snippet: "is_empty()$0",
+    },
+    BuiltinMethod {
+        name: "clear",
+        signature: "fn clear(&mut self)",
+        doc: "Removes every element, leaving the vec at length 0.",
+        snippet: "clear()$0",
+    },
+    BuiltinMethod {
+        name: "iter",
+        signature: "fn iter(&self) -> Iter<T>",
+        doc: "Returns an iterator over the vec's elements.",
+        snippet: "iter()$0",
+    },
+    BuiltinMethod {
+        name: "clone",
+        signature: "fn clone(&self) -> Self",
+        doc: "Clones every element into a new vec.",
+        snippet: "clone()$0",
+    },
+    BuiltinMethod {
+        name: "contains",
+        signature: "fn contains(&self, value: &T) -> bool",
+        doc: "Returns `true` when the vec contains an element equal to `value`.",
+        snippet: "contains(&$0)",
+    },
+    BuiltinMethod {
+        name: "sort",
+        signature: "fn sort(&mut self)",
+        doc: "Sorts the vec in place.",
+        snippet: "sort()$0",
+    },
+];
+
+const STRING_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "len",
+        signature: "fn len(&self) -> usize",
+        doc: "Length of the string in bytes.",
+        snippet: "len()$0",
+    },
+    BuiltinMethod {
+        name: "is_empty",
+        signature: "fn is_empty(&self) -> bool",
+        doc: "Returns `true` for the empty string.",
+        snippet: "is_empty()$0",
+    },
+    BuiltinMethod {
+        name: "to_uppercase",
+        signature: "fn to_uppercase(&self) -> String",
+        doc: "Returns the upper-cased clone of the string.",
+        snippet: "to_uppercase()$0",
+    },
+    BuiltinMethod {
+        name: "to_lowercase",
+        signature: "fn to_lowercase(&self) -> String",
+        doc: "Returns the lower-cased clone of the string.",
+        snippet: "to_lowercase()$0",
+    },
+    BuiltinMethod {
+        name: "trim",
+        signature: "fn trim(&self) -> &str",
+        doc: "Returns the string with leading + trailing whitespace stripped.",
+        snippet: "trim()$0",
+    },
+    BuiltinMethod {
+        name: "split",
+        signature: "fn split(&self, sep: &str) -> Vec<String>",
+        doc: "Splits on every occurrence of `sep`.",
+        snippet: "split(\"$0\")",
+    },
+    BuiltinMethod {
+        name: "lines",
+        signature: "fn lines(&self) -> Vec<String>",
+        doc: "Splits the string on `\\n`.",
+        snippet: "lines()$0",
+    },
+    BuiltinMethod {
+        name: "starts_with",
+        signature: "fn starts_with(&self, prefix: &str) -> bool",
+        doc: "True when the string begins with `prefix`.",
+        snippet: "starts_with(\"$0\")",
+    },
+    BuiltinMethod {
+        name: "ends_with",
+        signature: "fn ends_with(&self, suffix: &str) -> bool",
+        doc: "True when the string ends with `suffix`.",
+        snippet: "ends_with(\"$0\")",
+    },
+    BuiltinMethod {
+        name: "contains",
+        signature: "fn contains(&self, needle: &str) -> bool",
+        doc: "True when `needle` appears anywhere in the string.",
+        snippet: "contains(\"$0\")",
+    },
+    BuiltinMethod {
+        name: "repeat",
+        signature: "fn repeat(&self, n: i64) -> String",
+        doc: "Returns the string repeated `n` times.",
+        snippet: "repeat($0)",
+    },
+    BuiltinMethod {
+        name: "to_string",
+        signature: "fn to_string(&self) -> String",
+        doc: "Returns a fresh owned copy.",
+        snippet: "to_string()$0",
+    },
+];
+
+const HASHMAP_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "insert",
+        signature: "fn insert(&mut self, key: K, value: V) -> Option<V>",
+        doc: "Inserts a key/value pair, returning the previous value (if any).",
+        snippet: "insert($1, $2)$0",
+    },
+    BuiltinMethod {
+        name: "get",
+        signature: "fn get(&self, key: &K) -> Option<&V>",
+        doc: "Looks up `key`.",
+        snippet: "get(&$0)",
+    },
+    BuiltinMethod {
+        name: "get_or",
+        signature: "fn get_or(&self, key: K, default: V) -> V",
+        doc: "Looks up `key`, returning `default` when absent.",
+        snippet: "get_or($1, $2)$0",
+    },
+    BuiltinMethod {
+        name: "remove",
+        signature: "fn remove(&mut self, key: &K) -> Option<V>",
+        doc: "Removes `key`'s entry, returning the removed value.",
+        snippet: "remove(&$0)",
+    },
+    BuiltinMethod {
+        name: "len",
+        signature: "fn len(&self) -> usize",
+        doc: "Number of entries.",
+        snippet: "len()$0",
+    },
+    BuiltinMethod {
+        name: "is_empty",
+        signature: "fn is_empty(&self) -> bool",
+        doc: "Returns `true` when there are no entries.",
+        snippet: "is_empty()$0",
+    },
+    BuiltinMethod {
+        name: "contains_key",
+        signature: "fn contains_key(&self, key: &K) -> bool",
+        doc: "Returns `true` when an entry for `key` exists.",
+        snippet: "contains_key(&$0)",
+    },
+    BuiltinMethod {
+        name: "clear",
+        signature: "fn clear(&mut self)",
+        doc: "Removes every entry.",
+        snippet: "clear()$0",
+    },
+    BuiltinMethod {
+        name: "keys",
+        signature: "fn keys(&self) -> Iter<K>",
+        doc: "Iterator over keys.",
+        snippet: "keys()$0",
+    },
+    BuiltinMethod {
+        name: "values",
+        signature: "fn values(&self) -> Iter<V>",
+        doc: "Iterator over values.",
+        snippet: "values()$0",
+    },
+];
+
+const OPTION_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "is_some",
+        signature: "fn is_some(&self) -> bool",
+        doc: "Returns `true` when the option is `Some`.",
+        snippet: "is_some()$0",
+    },
+    BuiltinMethod {
+        name: "is_none",
+        signature: "fn is_none(&self) -> bool",
+        doc: "Returns `true` when the option is `None`.",
+        snippet: "is_none()$0",
+    },
+    BuiltinMethod {
+        name: "unwrap",
+        signature: "fn unwrap(self) -> T",
+        doc: "Returns the contained value, panicking if `None`.",
+        snippet: "unwrap()$0",
+    },
+    BuiltinMethod {
+        name: "unwrap_or",
+        signature: "fn unwrap_or(self, default: T) -> T",
+        doc: "Returns the contained value, or `default` if `None`.",
+        snippet: "unwrap_or($0)",
+    },
+    BuiltinMethod {
+        name: "map",
+        signature: "fn map<U>(self, f: fn(T) -> U) -> Option<U>",
+        doc: "Maps the contained value through `f`.",
+        snippet: "map(|x| $0)",
+    },
+];
+
+const RESULT_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "is_ok",
+        signature: "fn is_ok(&self) -> bool",
+        doc: "Returns `true` when the result is `Ok`.",
+        snippet: "is_ok()$0",
+    },
+    BuiltinMethod {
+        name: "is_err",
+        signature: "fn is_err(&self) -> bool",
+        doc: "Returns `true` when the result is `Err`.",
+        snippet: "is_err()$0",
+    },
+    BuiltinMethod {
+        name: "unwrap",
+        signature: "fn unwrap(self) -> T",
+        doc: "Returns the `Ok` value, panicking on `Err`.",
+        snippet: "unwrap()$0",
+    },
+    BuiltinMethod {
+        name: "unwrap_or",
+        signature: "fn unwrap_or(self, default: T) -> T",
+        doc: "Returns the `Ok` value, or `default` on `Err`.",
+        snippet: "unwrap_or($0)",
+    },
+    BuiltinMethod {
+        name: "map",
+        signature: "fn map<U>(self, f: fn(T) -> U) -> Result<U, E>",
+        doc: "Maps the `Ok` value.",
+        snippet: "map(|x| $0)",
+    },
+    BuiltinMethod {
+        name: "map_err",
+        signature: "fn map_err<F>(self, f: fn(E) -> F) -> Result<T, F>",
+        doc: "Maps the `Err` value.",
+        snippet: "map_err(|e| $0)",
+    },
+];
+
+const ALL_BUILTIN_METHODS: &[BuiltinMethod] = &[
+    BuiltinMethod {
+        name: "to_string",
+        signature: "fn to_string(&self) -> String",
+        doc: "Default ToString rendering.",
+        snippet: "to_string()$0",
+    },
+    BuiltinMethod {
+        name: "clone",
+        signature: "fn clone(&self) -> Self",
+        doc: "Clones the receiver.",
+        snippet: "clone()$0",
+    },
+];
+
+fn builtin_methods_for(receiver: &ReceiverDescriptor) -> &'static [BuiltinMethod] {
+    match receiver.builtin {
+        BuiltinReceiver::Vec => VEC_METHODS,
+        BuiltinReceiver::String => STRING_METHODS,
+        BuiltinReceiver::HashMap | BuiltinReceiver::HashSet => HASHMAP_METHODS,
+        BuiltinReceiver::Option => OPTION_METHODS,
+        BuiltinReceiver::Result => RESULT_METHODS,
+        BuiltinReceiver::Unknown => &[],
+    }
+}
+
+fn method_completion_item(method: &BuiltinMethod) -> Value {
+    let mut item = BTreeMap::new();
+    item.insert("label".to_string(), Value::String(method.name.to_string()));
+    item.insert("kind".to_string(), Value::Number(2.0)); // Method
+    item.insert(
+        "detail".to_string(),
+        Value::String(method.signature.to_string()),
+    );
+    let mut docs = BTreeMap::new();
+    docs.insert("kind".to_string(), Value::String("markdown".to_string()));
+    docs.insert("value".to_string(), Value::String(method.doc.to_string()));
+    item.insert("documentation".to_string(), Value::Object(docs));
+    item.insert(
+        "insertText".to_string(),
+        Value::String(method.snippet.to_string()),
+    );
+    item.insert("insertTextFormat".to_string(), Value::Number(2.0));
+    Value::Object(item)
+}
+
+#[derive(Debug, Clone)]
+struct UserMethod {
+    name: String,
+    signature: String,
+    doc: String,
+    is_associated: bool,
+}
+
+fn user_methods_for(doc: &DocumentAnalysis, type_name: &str) -> Vec<UserMethod> {
+    collect_impl_items(doc, type_name, false)
+}
+
+fn user_associated_items(doc: &DocumentAnalysis, type_name: &str) -> Vec<UserMethod> {
+    let mut out = collect_impl_items(doc, type_name, true);
+    // Add enum variants of `type_name` if any.
+    out.extend(enum_variants_for(doc, type_name));
+    out
+}
+
+fn collect_impl_items(
+    doc: &DocumentAnalysis,
+    type_name: &str,
+    want_associated: bool,
+) -> Vec<UserMethod> {
+    use gossamer_ast::{FnParam, ImplItem, ItemKind, TypeKind};
+    let mut out: Vec<UserMethod> = Vec::new();
+    for item in &doc.sf.items {
+        let ItemKind::Impl(decl) = &item.kind else {
+            continue;
+        };
+        let TypeKind::Path(path) = &decl.self_ty.kind else {
+            continue;
+        };
+        let Some(seg) = path.segments.last() else {
+            continue;
+        };
+        if seg.name.name != type_name {
+            continue;
+        }
+        for impl_item in &decl.items {
+            let ImplItem::Fn(fn_decl) = impl_item else {
+                continue;
+            };
+            let has_receiver = fn_decl
+                .params
+                .first()
+                .is_some_and(|p| matches!(p, FnParam::Receiver(_)));
+            let is_associated = !has_receiver;
+            if is_associated != want_associated {
+                continue;
+            }
+            let signature = render_user_signature(fn_decl);
+            out.push(UserMethod {
+                name: fn_decl.name.name.clone(),
+                signature,
+                doc: String::new(),
+                is_associated,
+            });
+        }
+    }
+    out
+}
+
+fn enum_variants_for(doc: &DocumentAnalysis, type_name: &str) -> Vec<UserMethod> {
+    use gossamer_ast::ItemKind;
+    let mut out: Vec<UserMethod> = Vec::new();
+    for item in &doc.sf.items {
+        let ItemKind::Enum(decl) = &item.kind else {
+            continue;
+        };
+        if decl.name.name != type_name {
+            continue;
+        }
+        for variant in &decl.variants {
+            out.push(UserMethod {
+                name: variant.name.name.clone(),
+                signature: format!("{}::{}", type_name, variant.name.name),
+                doc: String::new(),
+                is_associated: true,
+            });
+        }
+    }
+    out
+}
+
+fn render_user_signature(decl: &gossamer_ast::FnDecl) -> String {
+    use gossamer_ast::FnParam;
+    let mut out = String::new();
+    out.push_str("fn ");
+    out.push_str(&decl.name.name);
+    out.push('(');
+    let mut first = true;
+    for param in &decl.params {
+        if !first {
+            out.push_str(", ");
+        }
+        first = false;
+        match param {
+            FnParam::Receiver(receiver) => out.push_str(receiver.as_str()),
+            FnParam::Typed { pattern, ty } => {
+                let mut printer = gossamer_ast::Printer::new();
+                printer.print_type(ty);
+                out.push_str(&pattern_label(pattern));
+                out.push_str(": ");
+                out.push_str(&printer.finish());
+            }
+        }
+    }
+    out.push(')');
+    if let Some(ret) = &decl.ret {
+        out.push_str(" -> ");
+        let mut printer = gossamer_ast::Printer::new();
+        printer.print_type(ret);
+        out.push_str(&printer.finish());
+    }
+    out
+}
+
+fn pattern_label(pattern: &gossamer_ast::Pattern) -> String {
+    use gossamer_ast::PatternKind;
+    match &pattern.kind {
+        PatternKind::Ident { name, .. } => name.name.clone(),
+        _ => "_".to_string(),
+    }
+}
+
+fn user_method_completion_item(method: &UserMethod) -> Value {
+    let mut item = BTreeMap::new();
+    item.insert("label".to_string(), Value::String(method.name.clone()));
+    let kind = if method.is_associated { 3.0 } else { 2.0 };
+    item.insert("kind".to_string(), Value::Number(kind));
+    item.insert(
+        "detail".to_string(),
+        Value::String(method.signature.clone()),
+    );
+    if !method.doc.is_empty() {
+        let mut docs = BTreeMap::new();
+        docs.insert("kind".to_string(), Value::String("markdown".to_string()));
+        docs.insert("value".to_string(), Value::String(method.doc.clone()));
+        item.insert("documentation".to_string(), Value::Object(docs));
+    }
+    item.insert(
+        "insertText".to_string(),
+        Value::String(format!("{}($0)", method.name)),
+    );
+    item.insert("insertTextFormat".to_string(), Value::Number(2.0));
+    Value::Object(item)
+}
+
+fn workspace_completion_item(item: &WorkspaceItem) -> Value {
+    let mut entry = BTreeMap::new();
+    entry.insert("label".to_string(), Value::String(item.name.clone()));
+    let kind = match item.kind {
+        DefKind::Fn => 3.0,
+        DefKind::Struct => 22.0,
+        DefKind::Enum => 13.0,
+        DefKind::Trait => 8.0,
+        DefKind::TypeAlias => 25.0,
+        DefKind::Const => 21.0,
+        DefKind::Static => 6.0,
+        DefKind::Mod => 9.0,
+        DefKind::Variant => 20.0,
+        DefKind::TypeParam => 25.0,
+    };
+    entry.insert("kind".to_string(), Value::Number(kind));
+    if !item.signature.is_empty() {
+        entry.insert(
+            "detail".to_string(),
+            Value::String(format!("{}  // {}", item.signature, short_uri(&item.uri))),
+        );
+    }
+    if !item.doc.is_empty() {
+        let mut docs = BTreeMap::new();
+        docs.insert("kind".to_string(), Value::String("markdown".to_string()));
+        docs.insert("value".to_string(), Value::String(item.doc.clone()));
+        entry.insert("documentation".to_string(), Value::Object(docs));
+    }
+    if matches!(item.kind, DefKind::Fn) {
+        entry.insert(
+            "insertText".to_string(),
+            Value::String(format!("{}($0)", item.name)),
+        );
+        entry.insert("insertTextFormat".to_string(), Value::Number(2.0));
+    }
+    Value::Object(entry)
+}
+
+fn short_uri(uri: &str) -> String {
+    uri.rsplit('/').next().unwrap_or(uri).to_string()
+}
+
+fn collect_existing_imports(source: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("use ") {
+            let path = rest.trim_end_matches(';').trim().to_string();
+            if !path.is_empty() {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+fn import_completion_item(doc: &DocumentAnalysis, leaf: &str, full_path: &str) -> Value {
+    let mut item = BTreeMap::new();
+    item.insert("label".to_string(), Value::String(leaf.to_string()));
+    item.insert("kind".to_string(), Value::Number(3.0));
+    item.insert(
+        "detail".to_string(),
+        Value::String(format!("use {full_path}")),
+    );
+    item.insert(
+        "documentation".to_string(),
+        Value::Object({
+            let mut docs = BTreeMap::new();
+            docs.insert("kind".to_string(), Value::String("markdown".to_string()));
+            docs.insert(
+                "value".to_string(),
+                Value::String(format!("Adds `use {full_path};` to the top of the file.")),
+            );
+            docs
+        }),
+    );
+    let insert_offset = import_insert_offset(&doc.source);
+    let (line, col) = doc.offset_to_position(insert_offset);
+    let mut start = BTreeMap::new();
+    start.insert("line".to_string(), Value::Number(f64::from(line)));
+    start.insert("character".to_string(), Value::Number(f64::from(col)));
+    let end = start.clone();
+    let mut range = BTreeMap::new();
+    range.insert("start".to_string(), Value::Object(start));
+    range.insert("end".to_string(), Value::Object(end));
+    let mut edit = BTreeMap::new();
+    edit.insert("range".to_string(), Value::Object(range));
+    edit.insert(
+        "newText".to_string(),
+        Value::String(format!("use {full_path}\n")),
+    );
+    item.insert(
+        "additionalTextEdits".to_string(),
+        Value::Array(vec![Value::Object(edit)]),
+    );
+    Value::Object(item)
+}
+
+fn import_insert_offset(source: &str) -> u32 {
+    // Place new `use` after the last existing top-of-file `use` line,
+    // or at byte 0 when there are none.
+    let mut offset = 0usize;
+    for line in source.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("use ") || trimmed.is_empty() {
+            offset += line.len();
+            continue;
+        }
+        break;
+    }
+    u32::try_from(offset).unwrap_or(0)
+}
+
 fn span_to_range(doc: &DocumentAnalysis, span: Span) -> Value {
     let (start_line, start_col) = doc.offset_to_position(span.start);
     let (end_line, end_col) = doc.offset_to_position(span.end);
@@ -1471,6 +2483,250 @@ mod tests {
         if let Value::Object(fields) = response {
             assert!(fields.contains_key("signatures"));
         }
+    }
+
+    fn complete_at(state: &mut ServerState, src_with_cursor: &str, uri: &str) -> Vec<String> {
+        let cursor = src_with_cursor
+            .find('|')
+            .expect("cursor marker `|` missing");
+        let cleaned: String =
+            src_with_cursor[..cursor].to_string() + &src_with_cursor[cursor + 1..];
+        state.update(uri, &cleaned);
+        let doc = state.documents.get(uri).expect("document just added");
+        let (line, col) = doc.offset_to_position(u32::try_from(cursor).unwrap());
+        let response = state.completion(&locate_params(uri, line, col));
+        extract_labels(&response)
+    }
+
+    fn complete_full(state: &mut ServerState, src_with_cursor: &str, uri: &str) -> Value {
+        let cursor = src_with_cursor
+            .find('|')
+            .expect("cursor marker `|` missing");
+        let cleaned: String =
+            src_with_cursor[..cursor].to_string() + &src_with_cursor[cursor + 1..];
+        state.update(uri, &cleaned);
+        let doc = state.documents.get(uri).expect("document just added");
+        let (line, col) = doc.offset_to_position(u32::try_from(cursor).unwrap());
+        state.completion(&locate_params(uri, line, col))
+    }
+
+    #[test]
+    fn module_qualified_completion_returns_module_members() {
+        let mut state = ServerState::new();
+        let labels = complete_at(&mut state, "fn main() { os::e| }\n", "file:///os.gos");
+        // `os::e|` should suggest `env`, `exit`, `exists`, and the
+        // `exec` submodule.
+        assert!(
+            labels.iter().any(|l| l == "env"),
+            "expected `env` in {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|l| l == "exec"),
+            "expected `exec` submodule in {labels:?}"
+        );
+    }
+
+    #[test]
+    fn nested_module_qualifier_resolves() {
+        let mut state = ServerState::new();
+        let labels = complete_at(&mut state, "fn main() { std::os::e| }\n", "file:///os2.gos");
+        // std::os::exec is a known submodule.
+        assert!(
+            labels.iter().any(|l| l == "exec"),
+            "expected `exec` in labels {labels:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_qualifier_returns_no_member_match() {
+        let mut state = ServerState::new();
+        let labels = complete_at(&mut state, "fn main() { xyzzy::p| }\n", "file:///x.gos");
+        // Unknown qualifier short-circuits — should produce no matches.
+        assert!(
+            labels.iter().all(|l| l != "println"),
+            "did not expect bare-prefix items in qualifier completion: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn use_statement_completion_lists_modules() {
+        let mut state = ServerState::new();
+        let labels = complete_at(&mut state, "use std::|\n", "file:///use.gos");
+        assert!(
+            labels.iter().any(|l| l == "fmt"),
+            "expected `fmt` in {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|l| l == "os"),
+            "expected `os` in {labels:?}"
+        );
+    }
+
+    #[test]
+    fn vec_dot_completes_to_vec_methods() {
+        let mut state = ServerState::new();
+        let labels = complete_at(
+            &mut state,
+            "fn main() { let v: Vec<i64> = vec![]\n    v.p| }\n",
+            "file:///vec.gos",
+        );
+        assert!(
+            labels.iter().any(|l| l == "push"),
+            "expected `push` in {labels:?}"
+        );
+    }
+
+    #[test]
+    fn string_method_completion_includes_to_uppercase() {
+        let mut state = ServerState::new();
+        let labels = complete_at(&mut state, "fn main() { \"hi\".to_u| }\n", "file:///s.gos");
+        assert!(
+            labels.iter().any(|l| l == "to_uppercase"),
+            "expected `to_uppercase` in {labels:?}"
+        );
+    }
+
+    #[test]
+    fn user_type_qualified_completion_returns_associated_fns() {
+        let mut state = ServerState::new();
+        let src = r"struct Foo {}
+impl Foo {
+    fn new() -> Foo { Foo {} }
+    fn make_default() -> Foo { Foo {} }
+}
+fn main() { Foo::n| }
+";
+        let labels = complete_at(&mut state, src, "file:///foo.gos");
+        assert!(
+            labels.iter().any(|l| l == "new"),
+            "expected `new` in {labels:?}"
+        );
+    }
+
+    #[test]
+    fn enum_qualified_completion_returns_variants() {
+        let mut state = ServerState::new();
+        let src = r"enum Color { Red, Green, Blue }
+fn main() { Color::R| }
+";
+        let labels = complete_at(&mut state, src, "file:///enum.gos");
+        assert!(
+            labels.iter().any(|l| l == "Red"),
+            "expected `Red` in {labels:?}"
+        );
+    }
+
+    #[test]
+    fn auto_import_suggestion_includes_use_edit() {
+        let mut state = ServerState::new();
+        let response = complete_full(&mut state, "fn main() { format| }\n", "file:///fmt_use.gos");
+        let Value::Array(items) = response else {
+            panic!("expected array response");
+        };
+        let mut found = false;
+        for item in items {
+            let Value::Object(fields) = item else {
+                continue;
+            };
+            let Some(Value::String(label)) = fields.get("label") else {
+                continue;
+            };
+            if label != "format" {
+                continue;
+            }
+            if let Some(Value::Array(edits)) = fields.get("additionalTextEdits") {
+                if !edits.is_empty() {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            found,
+            "expected at least one `format` completion with additionalTextEdits"
+        );
+    }
+
+    #[test]
+    fn function_completion_carries_snippet_insert_text() {
+        let mut state = ServerState::new();
+        let response = complete_full(&mut state, "fn main() { printl| }\n", "file:///snippet.gos");
+        let Value::Array(items) = response else {
+            panic!("expected array");
+        };
+        let mut found_snippet = false;
+        for item in items {
+            let Value::Object(fields) = item else {
+                continue;
+            };
+            let Some(Value::String(label)) = fields.get("label") else {
+                continue;
+            };
+            if label == "println"
+                && matches!(fields.get("insertTextFormat"), Some(Value::Number(n)) if (*n - 2.0).abs() < 0.5)
+            {
+                found_snippet = true;
+                break;
+            }
+        }
+        assert!(
+            found_snippet,
+            "expected a snippet-format `println` completion"
+        );
+    }
+
+    #[test]
+    fn module_member_completion_carries_documentation() {
+        let mut state = ServerState::new();
+        let response = complete_full(&mut state, "fn main() { os::a| }\n", "file:///doc.gos");
+        let Value::Array(items) = response else {
+            panic!("expected array");
+        };
+        let mut found_doc = false;
+        for item in items {
+            let Value::Object(fields) = item else {
+                continue;
+            };
+            let Some(Value::String(label)) = fields.get("label") else {
+                continue;
+            };
+            if label == "args" {
+                if let Some(Value::Object(docs)) = fields.get("documentation") {
+                    if let Some(Value::String(value)) = docs.get("value") {
+                        if !value.is_empty() {
+                            found_doc = true;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            found_doc,
+            "expected `os::args` completion to carry documentation"
+        );
+    }
+
+    #[test]
+    fn workspace_completion_surfaces_symbol_from_other_file() {
+        let mut state = ServerState::new();
+        state.update("file:///util.gos", "fn shared_helper() -> i64 { 1 }\n");
+        let labels = complete_at(&mut state, "fn main() { shared_h| }\n", "file:///main.gos");
+        assert!(
+            labels.iter().any(|l| l == "shared_helper"),
+            "expected `shared_helper` from util.gos in {labels:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_completion_drops_renamed_symbol_after_didchange() {
+        let mut state = ServerState::new();
+        state.update("file:///lib.gos", "fn old_thing() { }\n");
+        state.update("file:///lib.gos", "fn new_thing() { }\n");
+        let labels = complete_at(&mut state, "fn main() { old_t| }\n", "file:///main.gos");
+        assert!(
+            !labels.iter().any(|l| l == "old_thing"),
+            "expected `old_thing` to be gone after rename; got {labels:?}"
+        );
     }
 
     #[test]

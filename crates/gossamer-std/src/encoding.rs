@@ -54,7 +54,7 @@ pub mod base64 {
     /// characters.
     pub fn decode(input: &str) -> Result<Vec<u8>, Error> {
         let filtered: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-        if filtered.len() % 4 != 0 {
+        if !filtered.len().is_multiple_of(4) {
             return Err(Error::new("base64 input length must be a multiple of 4"));
         }
         let mut out = Vec::with_capacity(filtered.len() / 4 * 3);
@@ -115,7 +115,7 @@ pub mod hex {
 
     /// Decodes a hex string, rejecting non-hex bytes and odd length.
     pub fn decode(input: &str) -> Result<Vec<u8>, Error> {
-        if input.len() % 2 != 0 {
+        if !input.len().is_multiple_of(2) {
             return Err(Error::new("hex input must have even length"));
         }
         let bytes = input.as_bytes();

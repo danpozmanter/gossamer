@@ -42,6 +42,9 @@ cast_sign_loss = "allow"
 cast_possible_wrap = "allow"
 float_cmp = "allow"
 unreadable_literal = "allow"
+# Mirrors the workspace allow: nested `if let` over the
+# 1.88+ let-chain rewrite is the in-codebase convention.
+collapsible_if = "allow"
 
 [dependencies]
 gossamer-ast = { workspace = true }

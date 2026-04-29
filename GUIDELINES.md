@@ -7,7 +7,7 @@ runtime. It overrides any conflicting guidance.
 
 ## Language
 
-Only idiomatic Rust. Rust edition 2024, MSRV 1.85.
+Only idiomatic Rust. Rust edition 2024, MSRV 1.88.
 
 Use standard library features when they fit. Reach for an external crate
 only when the standard library does not provide the primitive

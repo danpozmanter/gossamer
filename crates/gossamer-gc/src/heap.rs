@@ -457,11 +457,11 @@ impl Heap {
         }
         if self.is_live(source) {
             let slot = source.0 as usize;
-            if let Some(obj) = self.objects.get_mut(slot) {
-                if obj.marked {
-                    obj.marked = false;
-                    self.grey.push(source);
-                }
+            if let Some(obj) = self.objects.get_mut(slot)
+                && obj.marked
+            {
+                obj.marked = false;
+                self.grey.push(source);
             }
         }
     }

@@ -2211,8 +2211,7 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
     }
     guard.push_back(data);
     drop(guard);
-    chan
-        .last_sender
+    chan.last_sender
         .store(i64::from(crate::race::current_gid()), Ordering::Release);
     chan.not_empty.notify_one();
 }
@@ -2234,8 +2233,7 @@ pub unsafe extern "C" fn gos_rt_chan_try_send(c: *mut GosChan, val: *const u8) -
     }
     guard.push_back(data);
     drop(guard);
-    chan
-        .last_sender
+    chan.last_sender
         .store(i64::from(crate::race::current_gid()), Ordering::Release);
     chan.not_empty.notify_one();
     1
@@ -2948,10 +2946,7 @@ pub unsafe extern "C" fn gos_rt_mutex_lock(m: *mut GosMutex) {
     std::mem::forget(guard);
     let from = m.last_unlocker.load(Ordering::Acquire);
     if from >= 0 {
-        crate::race::record_sync(
-            u32::try_from(from).unwrap_or(0),
-            crate::race::current_gid(),
-        );
+        crate::race::record_sync(u32::try_from(from).unwrap_or(0), crate::race::current_gid());
     }
 }
 
@@ -2965,8 +2960,7 @@ pub unsafe extern "C" fn gos_rt_mutex_unlock(m: *mut GosMutex) {
     // is undefined; the user's discipline (one lock per
     // unlock) is required.
     let m = unsafe { &*m };
-    m
-        .last_unlocker
+    m.last_unlocker
         .store(i64::from(crate::race::current_gid()), Ordering::Release);
     unsafe { m.inner.force_unlock() };
 }
@@ -3045,8 +3039,7 @@ pub unsafe extern "C" fn gos_rt_wg_done(wg: *mut GosWaitGroup) -> i64 {
         wg.cv.notify_all();
     }
     drop(c);
-    wg
-        .last_done
+    wg.last_done
         .store(i64::from(crate::race::current_gid()), Ordering::Release);
     value
 }
@@ -3064,10 +3057,7 @@ pub unsafe extern "C" fn gos_rt_wg_wait(wg: *mut GosWaitGroup) {
     drop(c);
     let from = wg.last_done.load(Ordering::Acquire);
     if from >= 0 {
-        crate::race::record_sync(
-            u32::try_from(from).unwrap_or(0),
-            crate::race::current_gid(),
-        );
+        crate::race::record_sync(u32::try_from(from).unwrap_or(0), crate::race::current_gid());
     }
 }
 
@@ -4441,12 +4431,11 @@ pub unsafe extern "C" fn gos_rt_error_is(err: *const GosError, needle: *const c_
     let mut cur = err;
     while !cur.is_null() {
         let m = unsafe { (*cur).message };
-        if !m.is_null() {
-            if let Ok(text) = unsafe { CStr::from_ptr(m).to_str() } {
-                if text.contains(needle) {
-                    return true;
-                }
-            }
+        if !m.is_null()
+            && let Ok(text) = unsafe { CStr::from_ptr(m).to_str() }
+            && text.contains(needle)
+        {
+            return true;
         }
         cur = unsafe { (*cur).cause };
     }

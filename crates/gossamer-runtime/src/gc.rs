@@ -136,14 +136,7 @@ pub extern "C" fn gos_rt_gc_shadow_restore(frame: u64) {
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_gc_alloc_rooted(size: i64) -> u32 {
     let size = usize::try_from(size).unwrap_or(0);
-    let r = with_heap(|h| {
-        h.alloc(
-            gossamer_gc::ObjKind::Leaf,
-            Vec::new(),
-            0,
-            size,
-        )
-    });
+    let r = with_heap(|h| h.alloc(gossamer_gc::ObjKind::Leaf, Vec::new(), 0, size));
     let raw = r.as_u32();
     shadow_push(r);
     raw
@@ -174,12 +167,11 @@ static HEAP: OnceLock<Mutex<Heap>> = OnceLock::new();
 fn heap() -> &'static Mutex<Heap> {
     HEAP.get_or_init(|| {
         let mut config = GcConfig::default();
-        if let Ok(v) = std::env::var("GOSSAMER_GC_TARGET") {
-            if let Ok(bytes) = v.parse::<usize>() {
-                if bytes > 0 {
-                    config.threshold_bytes = bytes;
-                }
-            }
+        if let Ok(v) = std::env::var("GOSSAMER_GC_TARGET")
+            && let Ok(bytes) = v.parse::<usize>()
+            && bytes > 0
+        {
+            config.threshold_bytes = bytes;
         }
         Mutex::new(Heap::with_config(config))
     })

@@ -58,11 +58,11 @@ pub fn render(diag: &Diagnostic, map: &SourceMap, options: RenderOptions) -> Str
 #[must_use]
 pub fn render_plain(diag: &Diagnostic) -> String {
     let mut out = format!("{}[{}]: {}", diag.severity, diag.code, diag.title);
-    if let Some(primary) = diag.primary_label() {
-        if let Some(msg) = &primary.message {
-            out.push_str(" — ");
-            out.push_str(msg);
-        }
+    if let Some(primary) = diag.primary_label()
+        && let Some(msg) = &primary.message
+    {
+        out.push_str(" — ");
+        out.push_str(msg);
     }
     out
 }

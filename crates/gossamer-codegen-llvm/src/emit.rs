@@ -550,9 +550,7 @@ fn run_with_timeout(
 ) -> Result<std::process::Output> {
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawn {tool}"))?;
+    let mut child = cmd.spawn().with_context(|| format!("spawn {tool}"))?;
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {

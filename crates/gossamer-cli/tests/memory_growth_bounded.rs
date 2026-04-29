@@ -70,9 +70,8 @@ fn main() {
             String::from_utf8_lossy(&out.stderr)
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let kb = parse_max_rss_kb(&stderr).unwrap_or_else(|| {
-            panic!("could not parse Maximum resident set size:\n{stderr}")
-        });
+        let kb = parse_max_rss_kb(&stderr)
+            .unwrap_or_else(|| panic!("could not parse Maximum resident set size:\n{stderr}"));
         let cap_kb = 96 * 1024;
         assert!(
             kb < cap_kb,

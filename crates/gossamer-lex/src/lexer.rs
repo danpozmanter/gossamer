@@ -62,10 +62,10 @@ impl<'src> Lexer<'src> {
             self.cursor.bump_while(is_whitespace);
             return TokenKind::Whitespace;
         }
-        if first == '/' {
-            if let Some(kind) = self.try_comment(start) {
-                return kind;
-            }
+        if first == '/'
+            && let Some(kind) = self.try_comment(start)
+        {
+            return kind;
         }
         if first == '"' {
             return self.finish_string(start);

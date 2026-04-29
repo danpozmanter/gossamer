@@ -70,12 +70,13 @@ fn run_native(source: &Path) -> Option<String> {
     let stem = source.file_stem()?.to_string_lossy().into_owned();
     let bin = workspace_target().join("debug").join(stem);
     if !bin.exists() {
-        eprintln!("skipping native parity: produced binary not found at {}", bin.display());
+        eprintln!(
+            "skipping native parity: produced binary not found at {}",
+            bin.display()
+        );
         return None;
     }
-    let run = Command::new(&bin)
-        .output()
-        .expect("invoke produced binary");
+    let run = Command::new(&bin).output().expect("invoke produced binary");
     let _ = std::fs::remove_file(&bin);
     if !run.status.success() {
         eprintln!(

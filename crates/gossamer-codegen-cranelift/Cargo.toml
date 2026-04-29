@@ -36,6 +36,9 @@ cast_possible_wrap = "allow"
 float_cmp = "allow"
 unreadable_literal = "allow"
 format_push_string = "allow"
+# Mirrors the workspace allow: nested `if let` over the
+# 1.88+ let-chain rewrite is the in-codebase convention.
+collapsible_if = "allow"
 
 [dependencies]
 anyhow = { workspace = true }

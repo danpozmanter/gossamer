@@ -43,10 +43,10 @@ struct IntDoubler;
 
 impl VisitorMut for IntDoubler {
     fn visit_expr(&mut self, expr: &mut Expr) {
-        if let ExprKind::Literal(Literal::Int(raw)) = &mut expr.kind {
-            if let Ok(value) = raw.parse::<i64>() {
-                *raw = (value * 2).to_string();
-            }
+        if let ExprKind::Literal(Literal::Int(raw)) = &mut expr.kind
+            && let Ok(value) = raw.parse::<i64>()
+        {
+            *raw = (value * 2).to_string();
         }
         walk_expr_mut(self, expr);
     }

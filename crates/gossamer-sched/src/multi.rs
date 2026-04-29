@@ -331,8 +331,7 @@ impl MultiScheduler {
                 return n.clamp(1, 4096);
             }
         }
-        let cores = std::thread::available_parallelism()
-            .map_or(1, std::num::NonZeroUsize::get);
+        let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
         cores.saturating_mul(4).clamp(1, 256)
     }
 

@@ -254,18 +254,21 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// Emits a call to the runtime preempt-and-yield helper. The
-    /// codegen invokes this just before any terminator that takes
-    /// a back-edge so the scheduler can interrupt tight loops
-    /// (H11 / §6.3 of `~/dev/contexts/lang/adversarial_analysis.md`).
+    /// Back-edge safepoint for cooperative preemption. Currently a
+    /// no-op: a runtime call inserted on every loop back-edge
+    /// blocks `opt -O3` from vectorising tight numeric inner loops
+    /// (the call is opaque to alias analysis and the loop
+    /// vectoriser refuses to lift it across iterations), which is
+    /// the difference between sub-1-second and 5+ second runs on
+    /// spectral-norm and n-body. Mirrors the Cranelift backend,
+    /// where the matching insertion point in
+    /// `crates/gossamer-codegen-cranelift/src/native.rs:1723` is
+    /// also a stub. Both backends will gain a real safepoint when
+    /// the runtime grows SIGURG-based async preemption (Track 3
+    /// follow-up); until then the function-level safepoint at the
+    /// scheduler boundary is what limits runaway goroutines.
     fn emit_preempt_check(&mut self) {
-        writeln!(
-            self.out,
-            "  %prempt_{n} = call i32 @gos_rt_preempt_check_and_yield()",
-            n = self.preempt_seq,
-        )
-        .unwrap();
-        self.preempt_seq = self.preempt_seq.wrapping_add(1);
+        let _ = self.preempt_seq;
     }
 
     fn lower_stmt(&mut self, stmt: &Statement) -> Result<(), BuildError> {
@@ -1241,8 +1244,12 @@ impl<'a> Lowerer<'a> {
                         slot = local_slot(entry.local)
                     )
                     .unwrap();
-                    writeln!(self.out, "  call void @{free}(ptr {tmp})", free = entry.free_fn)
-                        .unwrap();
+                    writeln!(
+                        self.out,
+                        "  call void @{free}(ptr {tmp})",
+                        free = entry.free_fn
+                    )
+                    .unwrap();
                 }
                 let ret_ty = self.body.local_ty(Local::RETURN);
                 let ret_llvm = render_ty(self.tcx, ret_ty);
@@ -1282,12 +1289,7 @@ impl<'a> Lowerer<'a> {
                 Ok(())
             }
             Terminator::Goto { target } => {
-                if self
-                    .current_block
-                    .is_some_and(|src| target.as_u32() <= src)
-                {
-                    self.runtime_refs
-                        .insert("gos_rt_preempt_check_and_yield".to_string());
+                if self.current_block.is_some_and(|src| target.as_u32() <= src) {
                     self.emit_preempt_check();
                 }
                 writeln!(self.out, "  br label %bb{}", target.as_u32()).unwrap();
@@ -1299,11 +1301,9 @@ impl<'a> Lowerer<'a> {
                 default,
             } => {
                 let src = self.current_block.unwrap_or(u32::MAX);
-                let has_back_edge = arms.iter().any(|(_, t)| t.as_u32() <= src)
-                    || default.as_u32() <= src;
+                let has_back_edge =
+                    arms.iter().any(|(_, t)| t.as_u32() <= src) || default.as_u32() <= src;
                 if has_back_edge {
-                    self.runtime_refs
-                        .insert("gos_rt_preempt_check_and_yield".to_string());
                     self.emit_preempt_check();
                 }
                 let v = self.lower_operand(discriminant)?;

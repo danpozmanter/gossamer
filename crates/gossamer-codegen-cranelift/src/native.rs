@@ -1738,11 +1738,7 @@ fn lower_terminator(
                     s
                 };
                 let restore_id = module
-                    .declare_function(
-                        "gos_rt_gc_shadow_restore",
-                        Linkage::Import,
-                        &restore_sig,
-                    )
+                    .declare_function("gos_rt_gc_shadow_restore", Linkage::Import, &restore_sig)
                     .map_err(|e| anyhow!("declare gos_rt_gc_shadow_restore: {e}"))?;
                 let restore_ref = module.declare_func_in_func(restore_id, builder.func);
                 let frame = builder.use_var(shadow_frame_var);
@@ -1767,8 +1763,7 @@ fn lower_terminator(
                     };
                     let raw = builder.use_var(var);
                     let ptr = coerce_arg_to(builder, raw, ptr_ty).unwrap_or(raw);
-                    let free_fn =
-                        intrinsics.extern_fn(module, entry.free_fn, &[ptr_ty], &[])?;
+                    let free_fn = intrinsics.extern_fn(module, entry.free_fn, &[ptr_ty], &[])?;
                     let free_ref = module.declare_func_in_func(free_fn, builder.func);
                     builder.ins().call(free_ref, &[ptr]);
                 }
@@ -2200,8 +2195,8 @@ fn lower_terminator(
             default,
         } => {
             // Loop back-edge → emit preempt check before dispatching.
-            let has_back_edge = arms.iter().any(|(_, t)| t.as_u32() <= src_block)
-                || default.as_u32() <= src_block;
+            let has_back_edge =
+                arms.iter().any(|(_, t)| t.as_u32() <= src_block) || default.as_u32() <= src_block;
             if has_back_edge {
                 let _ = (&module, &builder, &intrinsics); // Track 3 / H11: preempt-check at back-edges lands separately.
             }
@@ -5476,7 +5471,15 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[wg, n64]);
             let result = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, result);
+            define_var_to(
+                builder,
+                locals,
+                body,
+                tcx,
+                module,
+                destination.local,
+                result,
+            );
             Ok(true)
         }
         "gos_rt_wg_done" => {
@@ -5497,7 +5500,15 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[wg]);
             let result = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, result);
+            define_var_to(
+                builder,
+                locals,
+                body,
+                tcx,
+                module,
+                destination.local,
+                result,
+            );
             Ok(true)
         }
         "gos_rt_wg_wait" => {

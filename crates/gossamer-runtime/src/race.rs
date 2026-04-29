@@ -101,16 +101,18 @@ pub fn record_access(gid: u32, addr: usize, write: bool) {
     bump_clock(gid);
     let clock = ensure_clock_for(gid);
     let mut accesses = tracker().accesses.lock();
-    if let Some(prev) = accesses.get(&addr).cloned() {
-        if prev.gid != gid && (prev.write || write) && !happens_before(&prev.clock, &clock, gid) {
-            let msg = format!(
-                "DATA RACE: addr={addr:#x} prev={prev_gid} ({prev_op}) curr={gid} ({op})",
-                prev_gid = prev.gid,
-                prev_op = if prev.write { "write" } else { "read" },
-                op = if write { "write" } else { "read" },
-            );
-            tracker().races.lock().push(msg);
-        }
+    if let Some(prev) = accesses.get(&addr).cloned()
+        && prev.gid != gid
+        && (prev.write || write)
+        && !happens_before(&prev.clock, &clock, gid)
+    {
+        let msg = format!(
+            "DATA RACE: addr={addr:#x} prev={prev_gid} ({prev_op}) curr={gid} ({op})",
+            prev_gid = prev.gid,
+            prev_op = if prev.write { "write" } else { "read" },
+            op = if write { "write" } else { "read" },
+        );
+        tracker().races.lock().push(msg);
     }
     accesses.insert(addr, Access { gid, write, clock });
 }

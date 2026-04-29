@@ -18,6 +18,8 @@ mod protocol;
 mod semantic_tokens;
 mod server;
 mod session;
+mod stdlib_index;
 mod symbols;
+mod workspace_index;
 
 pub use server::run_stdio;

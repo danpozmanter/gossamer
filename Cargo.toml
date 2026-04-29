@@ -27,7 +27,7 @@ members = [
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/gossamer-lang/gossamer"
 authors = ["Gossamer contributors"]
@@ -67,6 +67,12 @@ cast_possible_wrap = "allow"
 float_cmp = "allow"
 unreadable_literal = "allow"
 format_push_string = "allow"
+# Allow nested `if let` / `if cond { if let … }` over the
+# 1.88+ let-chain syntax. The existing codebase consistently
+# uses the explicit nested form for the symmetry it offers
+# with `match` arms, and rewriting every site is a churn we
+# don't want to take on for a stylistic preference.
+collapsible_if = "allow"
 
 [workspace.dependencies]
 gossamer-ast = { path = "crates/gossamer-ast", version = "0.0.0" }

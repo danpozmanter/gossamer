@@ -33,6 +33,9 @@ fn bump_skips_zero_on_wrap_so_empty_slot_sentinel_stays_distinct() {
     let vm = Vm::new();
     vm.set_globals_generation_for_test(u32::MAX);
     let next = vm.bump_globals_generation();
-    assert_ne!(next, 0, "wrap from u32::MAX must skip the empty-slot 0 value");
+    assert_ne!(
+        next, 0,
+        "wrap from u32::MAX must skip the empty-slot 0 value"
+    );
     assert_eq!(next, 1);
 }

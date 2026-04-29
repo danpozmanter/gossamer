@@ -1298,8 +1298,7 @@ impl Vm {
                         };
                         if let Some(ref g) = resolved_global {
                             let mut cache = state.call_caches.borrow_mut();
-                            cache[cache_idx as usize] =
-                                fill_cache_slot(token, live_generation, g);
+                            cache[cache_idx as usize] = fill_cache_slot(token, live_generation, g);
                         }
                         match resolved_global {
                             Some(g) => self.apply(g, arg_values)?,
@@ -1347,9 +1346,7 @@ impl Vm {
                         if recv_token != 0 {
                             let cache = state.call_caches.borrow_mut();
                             let slot = &cache[cache_idx as usize];
-                            if slot.type_token == recv_token
-                                && slot.generation == live_generation
-                            {
+                            if slot.type_token == recv_token && slot.generation == live_generation {
                                 let general =
                                     slot.fn_chunk.as_ref().map(|c| Global::Fn(Arc::clone(c)));
                                 (slot.builtin_fn, general)

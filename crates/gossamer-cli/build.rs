@@ -136,7 +136,8 @@ fn build_runtime_into(workspace_root: &Path, target_dir: &Path, profile: &str) {
 /// is not referenced by any codegen and is not on the allowlist.
 fn check_dispatch_parity(workspace_root: &Path) {
     let c_abi = read_text(workspace_root.join("crates/gossamer-runtime/src/c_abi.rs"));
-    let cl_native = read_text(workspace_root.join("crates/gossamer-codegen-cranelift/src/native.rs"));
+    let cl_native =
+        read_text(workspace_root.join("crates/gossamer-codegen-cranelift/src/native.rs"));
     let cl_jit = read_text(workspace_root.join("crates/gossamer-codegen-cranelift/src/jit.rs"));
     let llvm_emit = read_text(workspace_root.join("crates/gossamer-codegen-llvm/src/emit.rs"));
     let llvm_lower = read_text(workspace_root.join("crates/gossamer-codegen-llvm/src/lower.rs"));
@@ -241,10 +242,10 @@ fn extract_referenced_symbols(src: &str) -> BTreeSet<String> {
                 while j < bytes.len() && is_ident_byte(bytes[j]) {
                     j += 1;
                 }
-                if j > i + needle.len() {
-                    if let Ok(s) = std::str::from_utf8(&bytes[i..j]) {
-                        out.insert(s.to_string());
-                    }
+                if j > i + needle.len()
+                    && let Ok(s) = std::str::from_utf8(&bytes[i..j])
+                {
+                    out.insert(s.to_string());
                 }
                 i = j;
                 continue;

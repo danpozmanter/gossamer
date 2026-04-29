@@ -21,7 +21,7 @@ install -m 0755 target/release/gos /usr/local/bin/gos
 
 ## Dependencies
 
-- **Rust toolchain** — stable, edition 2024, MSRV 1.85. The
+- **Rust toolchain** — stable, edition 2024, MSRV 1.88. The
   workspace's `rust-toolchain.toml` pins a minimum.
 - **A C linker** — required by Cargo, not by Gossamer. `cc` /
   `gcc` / `clang` will do.

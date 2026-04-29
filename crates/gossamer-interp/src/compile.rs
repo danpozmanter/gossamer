@@ -3686,9 +3686,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 receiver: chain_recv,
                 name: chain_name,
                 args: chain_args,
-            } if chain_name.name == "iter" && chain_args.is_empty() => {
-                (chain_recv.as_ref(), false)
-            }
+            } if chain_name.name == "iter" && chain_args.is_empty() => (chain_recv.as_ref(), false),
             HirExprKind::MethodCall {
                 receiver: enum_recv,
                 name: enum_name,

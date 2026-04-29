@@ -791,7 +791,10 @@ mod tests {
     #[test]
     fn atomic_compare_exchange_round_trips() {
         let a = AtomicI64::new(7);
-        assert_eq!(a.compare_exchange(7, 9, AtomicOrdering::SeqCst, AtomicOrdering::Relaxed), Ok(7));
+        assert_eq!(
+            a.compare_exchange(7, 9, AtomicOrdering::SeqCst, AtomicOrdering::Relaxed),
+            Ok(7)
+        );
         assert_eq!(a.load(), 9);
         assert_eq!(
             a.compare_exchange(7, 11, AtomicOrdering::AcqRel, AtomicOrdering::Acquire),
