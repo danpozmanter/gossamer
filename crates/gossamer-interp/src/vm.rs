@@ -706,7 +706,14 @@ impl Vm {
         // (`hello.gos`, REPL one-liners) never trip the per-chunk
         // hot counter and skip the cranelift cost entirely.
         // `--no-jit` / `GOS_JIT=0` skips the MIR lower too.
-        if jit_call::jit_enabled() {
+        //
+        // Programs with no JIT-eligible helper functions (only
+        // `main`) also skip the MIR lower: `main` is always run on
+        // the bytecode path (see the `if name == "main" { continue; }`
+        // skip in `try_compile_jit_lazy`) so lowering MIR for it
+        // would never be consumed. `hello.gos` lands in this
+        // bucket, shaving the lower + the tcx clone.
+        if jit_call::jit_enabled() && has_jit_eligible_fn(program) {
             let bodies = gossamer_mir::lower_program(program, tcx);
             self.mir_bodies = Some(Arc::new(bodies));
             self.tcx_snapshot = Some(Arc::new(tcx.clone()));
@@ -3691,6 +3698,18 @@ fn compare(
         result == order
     };
     Ok(Value::Bool(matches))
+}
+
+/// True when `program` declares at least one user `fn` other than
+/// `main`. Used by `Vm::load` to skip MIR lowering + tcx cloning
+/// on programs where the JIT could never produce a useful
+/// override (the bytecode VM always runs `main` on its own path,
+/// so a program whose only function is `main` never benefits from
+/// the cranelift compile).
+fn has_jit_eligible_fn(program: &HirProgram) -> bool {
+    program.items.iter().any(|item| {
+        matches!(&item.kind, HirItemKind::Fn(decl) if decl.name.name != "main")
+    })
 }
 
 fn truthy(v: &Value) -> RuntimeResult<bool> {
