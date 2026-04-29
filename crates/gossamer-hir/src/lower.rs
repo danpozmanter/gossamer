@@ -263,9 +263,30 @@ impl Lowerer<'_> {
     }
 
     fn lower_expr(&mut self, expr: &AstExpr) -> HirExpr {
-        let ty = self.ty_of(expr.id);
+        use gossamer_types::TyKind;
+        let mut ty = self.ty_of(expr.id);
         let span = expr.span;
         let kind = self.lower_expr_kind(expr);
+        // `?`-unwrap leaves the typechecker's assigned type for the
+        // outer Match unresolved when the inner Result wasn't
+        // pinned. Pull the Ok-arm body's type up so any binding
+        // bound to the `?`-expression carries something concrete
+        // (typically String). Without this, a `let s = fs::
+        // read_to_string(...)?; s.len()` lands on the generic
+        // `gos_rt_len` instead of `gos_rt_str_len` and reads garbage.
+        if matches!(self.tcx.kind(ty), Some(TyKind::Error | TyKind::Var(_))) {
+            if let HirExprKind::Match { arms, .. } = &kind {
+                if let Some(first) = arms.first() {
+                    let arm_ty = first.body.ty;
+                    if !matches!(
+                        self.tcx.kind(arm_ty),
+                        Some(TyKind::Error | TyKind::Var(_))
+                    ) {
+                        ty = arm_ty;
+                    }
+                }
+            }
+        }
         HirExpr {
             id: self.fresh(),
             span,
@@ -600,9 +621,106 @@ impl Lowerer<'_> {
         HirExprKind::Select { arms: lowered }
     }
 
+    /// Returns the `T` payload type when `ty` is a `Result<T, E>`
+    /// (or a `&Result<T, E>`), `None` otherwise. Used by `lower_try`
+    /// so a `?`-unwrapped binding inherits a real type instead of
+    /// the `Error` sentinel.
+    fn try_ok_payload_ty(&self, ty: gossamer_types::Ty) -> Option<gossamer_types::Ty> {
+        use gossamer_types::TyKind;
+        let mut peeled = ty;
+        loop {
+            match self.tcx.kind(peeled)? {
+                TyKind::Ref { inner, .. } => peeled = *inner,
+                TyKind::Adt { substs, .. } => {
+                    let args = substs.as_slice();
+                    if args.is_empty() {
+                        return None;
+                    }
+                    if let Some(gossamer_types::GenericArg::Type(t)) = args.first() {
+                        return Some(*t);
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// Heuristic fallback for `?` operator's `__try_value` type
+    /// when the inner expression's HIR type is unresolved. Walks
+    /// chained method calls — `fs::read_to_string(...)
+    /// .map_err(...)` is a common shape — and returns `String`
+    /// for stdlib helpers whose runtime return is a c-string. The
+    /// MIR-side `pinned_ret` table is the authoritative source of
+    /// truth; this list mirrors its String entries so the HIR layer
+    /// can ground a `let s = ...?` binding even when the
+    /// typechecker leaks a Var through `?`.
+    fn try_ok_payload_ty_heuristic(
+        &mut self,
+        inner: &AstExpr,
+    ) -> Option<gossamer_types::Ty> {
+        let mut cur = inner;
+        loop {
+            match &cur.kind {
+                AstExprKind::MethodCall { receiver, name, .. }
+                    if matches!(
+                        name.name.as_str(),
+                        "map_err" | "map" | "ok" | "err"
+                    ) =>
+                {
+                    cur = receiver;
+                }
+                AstExprKind::Call { callee, .. } => {
+                    if let AstExprKind::Path(path) = &callee.kind {
+                        let joined: Vec<&str> =
+                            path.segments.iter().map(|s| s.name.name.as_str()).collect();
+                        let last = *joined.last()?;
+                        // Match the same names the parse-side
+                        // resolves to gos_rt_*_-returning helpers
+                        // whose c-string return is logically a
+                        // String. If the MIR pin gets it right we
+                        // never reach here; this is the last-ditch
+                        // path for when the typechecker hasn't
+                        // resolved through `?`.
+                        if matches!(
+                            last,
+                            "read_to_string"
+                                | "read_line"
+                                | "trim"
+                                | "to_lowercase"
+                                | "to_uppercase"
+                                | "replace"
+                                | "format"
+                                | "join"
+                        ) {
+                            return Some(self.tcx.string_ty());
+                        }
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+    }
+
     fn lower_try(&mut self, inner: &AstExpr, span: Span) -> HirExprKind {
         let value = self.lower_expr(inner);
         let value_ty = value.ty;
+        // Recover the Ok-payload type from `value_ty` so the
+        // `__try_value` binding (and thus any downstream `let` bound
+        // to the `?`-expression) carries a real type rather than the
+        // `Error` sentinel. Without this `let s = fs::read_to_string
+        // (...)?` leaves `s` typed as Error/Var and `s.len()` falls
+        // off the dispatch table into `gos_rt_len` instead of the
+        // String-shaped `gos_rt_str_len`. We peek through the
+        // dispatch table for `Result<T, E>` ADTs and any aliasing
+        // refs; everything else falls back to the original
+        // `error_ty` so behaviour is unchanged for unresolved
+        // shapes.
+        let ok_payload_ty = self
+            .try_ok_payload_ty(value_ty)
+            .or_else(|| self.try_ok_payload_ty_heuristic(inner));
+        let try_value_ty = ok_payload_ty.unwrap_or_else(|| self.error_ty());
         let ok_binding_id = self.fresh();
         let err_binding_id = self.fresh();
         let ok_pat = HirPat {
@@ -614,7 +732,7 @@ impl Lowerer<'_> {
                 fields: vec![HirPat {
                     id: ok_binding_id,
                     span,
-                    ty: self.error_ty(),
+                    ty: try_value_ty,
                     kind: HirPatKind::Binding {
                         name: Ident::new("__try_value"),
                         mutable: false,
@@ -642,7 +760,7 @@ impl Lowerer<'_> {
         let ok_body = HirExpr {
             id: self.fresh(),
             span,
-            ty: self.error_ty(),
+            ty: try_value_ty,
             kind: HirExprKind::Path {
                 segments: vec![Ident::new("__try_value")],
                 def: None,

@@ -1507,10 +1507,16 @@ pub struct GosMap {
 enum MapStorage {
     Empty,
     I64I64(FxHashMap<i64, i64>),
-    StrI64(FxHashMap<Vec<u8>, i64>),
-    StrStr(FxHashMap<Vec<u8>, Vec<u8>>),
-    I64Str(FxHashMap<i64, Vec<u8>>),
-    Bytes(FxHashMap<Vec<u8>, Vec<u8>>),
+    /// String-keyed maps store keys as `Box<[u8]>` (16 B header)
+    /// rather than `Vec<u8>` (24 B header) — for the k-mer-counter
+    /// hot shape (HashMap<String, i64> with millions of short
+    /// keys), the saved 8 B per entry compounds visibly: ~8 MB
+    /// off a 1 M-entry table. Same applies to `StrStr` keys and
+    /// the `Bytes` byte-erased fallback.
+    StrI64(FxHashMap<Box<[u8]>, i64>),
+    StrStr(FxHashMap<Box<[u8]>, Box<[u8]>>),
+    I64Str(FxHashMap<i64, Box<[u8]>>),
+    Bytes(FxHashMap<Box<[u8]>, Box<[u8]>>),
 }
 
 #[unsafe(no_mangle)]
@@ -1571,7 +1577,7 @@ pub unsafe extern "C" fn gos_rt_map_insert(m: *mut GosMap, key: *const u8, val: 
     let MapStorage::Bytes(inner) = &mut *storage else {
         return;
     };
-    if inner.insert(k, v).is_none() {
+    if inner.insert(k.into_boxed_slice(), v.into_boxed_slice()).is_none() {
         map.len_cache += 1;
     }
 }
@@ -1789,7 +1795,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
     let MapStorage::StrI64(inner) = &mut *storage else {
         return;
     };
-    if inner.insert(key_bytes, val).is_none() {
+    if inner.insert(key_bytes.into_boxed_slice(), val).is_none() {
         map.len_cache += 1;
     }
 }
@@ -1827,7 +1833,10 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
     let MapStorage::StrStr(inner) = &mut *storage else {
         return;
     };
-    if inner.insert(key_bytes, val_bytes).is_none() {
+    if inner
+        .insert(key_bytes.into_boxed_slice(), val_bytes.into_boxed_slice())
+        .is_none()
+    {
         map.len_cache += 1;
     }
 }
@@ -1848,7 +1857,7 @@ pub unsafe extern "C" fn gos_rt_map_get_str_str(
     };
     match inner.get(key_bytes) {
         Some(v) => {
-            let mut buf = v.clone();
+            let mut buf: Vec<u8> = v.to_vec();
             buf.push(0);
             let boxed = buf.into_boxed_slice();
             Box::leak(boxed).as_mut_ptr().cast::<c_char>()
@@ -1933,7 +1942,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
         *v += by;
         return *v;
     }
-    inner.insert(key_slice.to_vec(), by);
+    inner.insert(key_slice.to_vec().into_boxed_slice(), by);
     map.len_cache += 1;
     by
 }
@@ -1953,7 +1962,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val
     let MapStorage::I64Str(inner) = &mut *storage else {
         return;
     };
-    if inner.insert(key, val_bytes).is_none() {
+    if inner.insert(key, val_bytes.into_boxed_slice()).is_none() {
         map.len_cache += 1;
     }
 }
@@ -2133,14 +2142,14 @@ pub unsafe extern "C" fn gos_rt_map_values_str(m: *const GosMap) -> *mut GosVec 
     }
     let map = unsafe { &*m };
     let storage = map.storage.lock();
-    let push_val = |v: &Vec<u8>| {
+    let push_val = |v: &[u8]| {
         let cstr = alloc_cstring(v);
         let slot = (cstr as usize as i64).to_ne_bytes();
         unsafe { gos_rt_vec_push(out, slot.as_ptr()) };
     };
     match &*storage {
-        MapStorage::StrStr(inner) => inner.values().for_each(push_val),
-        MapStorage::I64Str(inner) => inner.values().for_each(push_val),
+        MapStorage::StrStr(inner) => inner.values().for_each(|v| push_val(v)),
+        MapStorage::I64Str(inner) => inner.values().for_each(|v| push_val(v)),
         _ => {}
     }
     out

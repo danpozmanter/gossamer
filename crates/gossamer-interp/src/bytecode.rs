@@ -253,20 +253,11 @@ pub enum Op {
     /// += by`. Skips the generic builtin-call overhead by
     /// inlining the slice-hash + entry increment under one Mutex
     /// acquisition. Result register holds the post-increment
-    /// value as a `Value::Int`.
-    MapIncAt {
-        /// Destination register (post-increment value, `Value::Int`).
-        dst: Reg,
-        /// Register holding the Map (`Value::Map`).
-        map_reg: Reg,
-        /// Register holding the seq String (`Value::String`).
-        seq_reg: Reg,
-        /// Register holding the slice start offset (`Value::Int`).
-        start_reg: Reg,
-        /// Register holding the slice length (`Value::Int`).
-        len_reg: Reg,
-        /// Register holding the increment (`Value::Int`).
-        by_reg: Reg,
+    /// value as a `Value::Int`. Carried via `WideOp::MapIncAt` in
+    /// the chunk's `wide_ops` side-table — see `Op::Wide`.
+    Wide {
+        /// Index into `FnChunk::wide_ops`.
+        idx: u16,
     },
     /// Builds a `Value::IntArray` from `count` consecutive typed
     /// `i64` registers starting at `first_i`. Counterpart of
@@ -841,33 +832,10 @@ pub enum Op {
         value_f: Reg,
     },
 
-    /// Assembles a `Value::FloatArray` into `dst_v` from a
-    /// contiguous block of float registers. Used when the
-    /// compiler detects `[S; N]` for a struct `S` whose
-    /// fields are all `f64`: each of the `elem_count` × `stride`
-    /// fields is pre-computed into a float reg, then this op
-    /// wraps them into flat storage. The name / field-name
-    /// metadata is drawn from the chunk's const pool so
-    /// downstream read/write ops can rehydrate to
-    /// `Value::Array<Value::Struct>` if needed.
-    BuildFloatArray {
-        /// Destination value register.
-        dst_v: Reg,
-        /// Const-pool index of a `Value::String` holding the
-        /// element struct's name.
-        name_idx: ConstIdx,
-        /// Const-pool index of a `Value::Array<Value::String>`
-        /// holding the field names in declaration order.
-        fields_idx: ConstIdx,
-        /// Number of `f64` fields per element.
-        stride: u16,
-        /// Number of struct elements.
-        elem_count: u16,
-        /// First float register of the flat data block. The
-        /// op reads `stride * elem_count` consecutive float
-        /// registers starting here.
-        first_f: Reg,
-    },
+    // BuildFloatArray (assembles `Value::FloatArray` from a
+    // contiguous block of float registers for `[S; N]` literals
+    // where `S` has all-f64 fields) lives in the `wide_ops`
+    // side-table — see `Op::Wide` and `WideOp::BuildFloatArray`.
 }
 
 /// Resolved builtin call pointer cached in [`CacheSlot::builtin_fn`].
@@ -927,6 +895,51 @@ pub(crate) struct CacheSlot {
     pub fn_chunk: Option<std::sync::Arc<FnChunk>>,
 }
 
+/// Side-table-backed payload for [`Op::Wide`]. Members carry the
+/// payload of the rare 6-field ops (`MapIncAt`, `BuildFloatArray`)
+/// so the in-line `Op` enum can stay narrow on the hot path.
+#[derive(Debug, Clone)]
+pub enum WideOp {
+    /// `m.inc_at(seq, start, len, by)` — see the original
+    /// `Op::MapIncAt` doc; moved to the side table because the
+    /// 6-register payload bloated every `Op` slot.
+    MapIncAt {
+        /// Destination register (post-increment value, `Value::Int`).
+        dst: Reg,
+        /// Register holding the Map (`Value::Map`).
+        map_reg: Reg,
+        /// Register holding the seq String (`Value::String`).
+        seq_reg: Reg,
+        /// Register holding the slice start offset (`Value::Int`).
+        start_reg: Reg,
+        /// Register holding the slice length (`Value::Int`).
+        len_reg: Reg,
+        /// Register holding the increment (`Value::Int`).
+        by_reg: Reg,
+    },
+    /// Builds a `Value::FloatArray` from `stride * elem_count`
+    /// consecutive `f64` registers starting at `first_f`. Same
+    /// shape as the original `Op::BuildFloatArray`; moved here
+    /// because the 6-field payload was the other op driving the
+    /// in-line `Op` enum to its widest case.
+    BuildFloatArray {
+        /// Destination value register.
+        dst_v: Reg,
+        /// Const-pool index of a `Value::String` holding the
+        /// element struct's name.
+        name_idx: ConstIdx,
+        /// Const-pool index of a `Value::Array<Value::String>`
+        /// holding the field names in declaration order.
+        fields_idx: ConstIdx,
+        /// Number of `f64` fields per element.
+        stride: u16,
+        /// Number of struct elements.
+        elem_count: u16,
+        /// First float register of the flat data block.
+        first_f: Reg,
+    },
+}
+
 /// Compiled function — the unit of bytecode the VM can call.
 #[derive(Debug)]
 pub struct FnChunk {
@@ -942,6 +955,13 @@ pub struct FnChunk {
     pub int_count: u16,
     /// Linear instruction stream.
     pub instrs: Vec<Op>,
+    /// Side-table for op payloads that don't fit in the in-line
+    /// `Op` variant width without forcing every other op to
+    /// pay the worst-case slot. Indexed by `Op::Wide(idx)`. The
+    /// dispatch loop takes one extra deref through this Vec for
+    /// the rare wide ops, in exchange for keeping the per-op
+    /// memcpy on the hot path narrow.
+    pub wide_ops: Vec<WideOp>,
     /// Interned constants referenced by `LoadConst`.
     pub consts: Vec<Value>,
     /// Raw `f64` constants referenced by `LoadConstF64`. Kept

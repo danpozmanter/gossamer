@@ -124,7 +124,13 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             Some(total)
         }
         TyKind::Array { elem, len } => {
-            let elem_slots = slot_count(tcx, *elem)?;
+            // An array whose element type didn't resolve (e.g. the
+            // typechecker leaked a `Var(...)`) still has a known
+            // length. Assume the element is scalar (1 slot) instead
+            // of returning `None`, which collapses the alloca to a
+            // single i64 slot and makes a 3-element array literal
+            // overflow into adjacent locals.
+            let elem_slots = slot_count(tcx, *elem).unwrap_or(1).max(1);
             Some(elem_slots * (*len as u32))
         }
         TyKind::Adt { def, .. } => {

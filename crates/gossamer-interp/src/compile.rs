@@ -89,6 +89,7 @@ pub fn compile_fn(
             deferred_exprs: Vec::new(),
             deferred_envs: Vec::new(),
             deferred_env_regs: Vec::new(),
+            wide_ops: Vec::new(),
             call_cache_count: 0,
             arith_cache_count: 0,
             field_cache_count: 0,
@@ -164,6 +165,7 @@ struct FnBuilder<'tcx> {
     deferred_exprs: Vec<HirExpr>,
     deferred_envs: Vec<Vec<String>>,
     deferred_env_regs: Vec<Vec<Reg>>,
+    wide_ops: Vec<crate::bytecode::WideOp>,
     /// Counter incremented every time we emit a dispatch op
     /// (`Op::Call` / `Op::MethodCall`) so each call site gets a
     /// unique inline-cache slot index. The `FnChunk` allocates a
@@ -238,6 +240,7 @@ impl<'tcx> FnBuilder<'tcx> {
             deferred_exprs: Vec::new(),
             deferred_envs: Vec::new(),
             deferred_env_regs: Vec::new(),
+            wide_ops: Vec::new(),
             next_cache_idx: 0,
             next_arith_cache_idx: 0,
             next_field_cache_idx: 0,
@@ -599,6 +602,7 @@ impl<'tcx> FnBuilder<'tcx> {
             deferred_exprs: self.deferred_exprs,
             deferred_envs: self.deferred_envs,
             deferred_env_regs: self.deferred_env_regs,
+            wide_ops: self.wide_ops,
             // The actual cache `Vec`s live in per-`Vm`
             // `ChunkState` and are sized from these counts. See
             // `vm::Vm::chunk_state_for`.
@@ -2139,14 +2143,18 @@ impl<'tcx> FnBuilder<'tcx> {
         ));
         let fields_idx = self.const_idx(ConstKey::String(fields_key), fields_value);
         let dst = self.alloc_reg();
-        self.emit(Op::BuildFloatArray {
-            dst_v: dst,
-            name_idx,
-            fields_idx,
-            stride,
-            elem_count,
-            first_f,
-        });
+        let wide_idx = u16::try_from(self.wide_ops.len())
+            .expect("wide_ops index overflow");
+        self.wide_ops
+            .push(crate::bytecode::WideOp::BuildFloatArray {
+                dst_v: dst,
+                name_idx,
+                fields_idx,
+                stride,
+                elem_count,
+                first_f,
+            });
+        self.emit(Op::Wide { idx: wide_idx });
         // Record the register as known-flat so subsequent
         // indexed-field reads / writes can emit
         // `Flat{Get,Set}F64` and skip the runtime
@@ -2848,7 +2856,9 @@ impl<'tcx> FnBuilder<'tcx> {
             let len_reg = self.compile_expr(&args[2])?;
             let by_reg = self.compile_expr(&args[3])?;
             let dst = self.alloc_reg();
-            self.emit(Op::MapIncAt {
+            let wide_idx = u16::try_from(self.wide_ops.len())
+                .expect("wide_ops index overflow");
+            self.wide_ops.push(crate::bytecode::WideOp::MapIncAt {
                 dst,
                 map_reg,
                 seq_reg,
@@ -2856,6 +2866,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 len_reg,
                 by_reg,
             });
+            self.emit(Op::Wide { idx: wide_idx });
             return Ok(dst);
         }
         // `arr.swap(i, j)` super-instruction. The generic

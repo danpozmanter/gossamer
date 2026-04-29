@@ -2462,19 +2462,27 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         let inner = self.lower_expr(operand)?;
-        let local = self.fresh(ty);
         let mir_op = match op {
             HirUnaryOp::Neg => UnOp::Neg,
             HirUnaryOp::Not => UnOp::Not,
             HirUnaryOp::RefShared | HirUnaryOp::RefMut | HirUnaryOp::Deref => {
-                self.emit_assign(
-                    Place::local(local),
-                    Rvalue::Use(Operand::Copy(Place::local(inner))),
-                    span,
-                );
-                return Some(local);
+                // Ref / deref are no-ops at the MIR layer (the
+                // pointer ABI is a flat i64 throughout). Reuse the
+                // operand's lowered local directly instead of
+                // copying through a fresh local typed to the HIR
+                // expression's `ty`. Pre-fix, the HIR type of
+                // `*byte` (where byte is the loop variable from
+                // `for byte in s.as_bytes().iter()`) was the
+                // narrow byte type; copying an i64 register into
+                // a u8-sized slot left the surrounding stack
+                // bytes touched, and any subsequent `if !flag`
+                // saw a corrupted `flag` slot. Returning the
+                // operand local untouched keeps the slot type
+                // consistent with what the operand really holds.
+                return Some(inner);
             }
         };
+        let local = self.fresh(ty);
         self.emit_assign(
             Place::local(local),
             Rvalue::UnaryOp {
@@ -2715,6 +2723,22 @@ impl<'a> Builder<'a> {
                         }
                         "time::now_ns" | "time::now_ms" | "strconv::parse_i64"
                         | "gos_rt_math_sqrt" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                        // String-returning stdlib helpers. The
+                        // runtime returns a `*mut c_char` which the
+                        // codegen needs to know is a String so
+                        // `.len()` / `.trim()` / `.as_bytes()` etc.
+                        // dispatch to the `gos_rt_str_*` family
+                        // instead of the generic `gos_rt_len`. The
+                        // typechecker leaves these as `Var` because
+                        // it doesn't index stdlib free functions;
+                        // pin here as the last grounding step.
+                        "fs::read_to_string"
+                        | "std::fs::read_to_string"
+                        | "path::join"
+                        | "std::path::join"
+                        | "io::read_line"
+                        | "std::io::read_line"
+                        | "format" => self.tcx.string_ty(),
                         _ => ty,
                     }
                 } else {
@@ -4681,7 +4705,26 @@ impl<'a> Builder<'a> {
                 TyKind::HashMap { .. } => Some("gos_rt_map_len"),
                 TyKind::JsonValue => Some("gos_rt_json_len"),
                 TyKind::Vec(_) | TyKind::Array { .. } | TyKind::Slice(_) => Some("gos_rt_len"),
-                _ => Some("gos_rt_len"),
+                // The MIR type didn't resolve. Inspect the HIR
+                // expression's static type as a fallback — common
+                // shape is `let s = fs::read_to_string(...)?; s.len()`
+                // where the typechecker leaves `s` as `Var(...)` but
+                // the HIR `Path(s)` node still carries `String`.
+                // Without this fallback the dispatch lands on the
+                // generic `gos_rt_len`, which reads a Vec header
+                // out of a `*const c_char` and returns garbage.
+                _ => {
+                    let mut peeled = receiver.ty;
+                    while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+                        peeled = *inner;
+                    }
+                    match self.tcx.kind_of(peeled) {
+                        TyKind::String => Some("gos_rt_str_len"),
+                        TyKind::HashMap { .. } => Some("gos_rt_map_len"),
+                        TyKind::JsonValue => Some("gos_rt_json_len"),
+                        _ => Some("gos_rt_len"),
+                    }
+                }
             },
             "trim" => Some("gos_rt_str_trim"),
             "contains" => Some("gos_rt_str_contains"),
@@ -5081,11 +5124,53 @@ impl<'a> Builder<'a> {
                 // type checker leaves both call expressions as
                 // unresolved and the MIR has to assume something.
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                // For the identity unwraps, prefer the inner generic
+                // when the receiver is a `Result<T, E>` / `Option<T>`
+                // wrapper, then the LOWERED receiver's own MIR type
+                // if it's already concrete (the pinned-`Call` path
+                // may have flattened the wrapper away — `let s =
+                // fs::read_to_string(...).unwrap()` hits exactly
+                // this shape now that `gos_rt_fs_read_to_string`
+                // pins to `String`), and only as a last resort i64.
+                // The HIR-side `receiver_ty` is often Var even when
+                // the lowered local has been pinned by lower_call,
+                // so consult both.
+                let mir_recv_ty = self.locals[receiver_local.0 as usize].ty;
+                let kind_is_concrete = |kind: TyKind| {
+                    matches!(
+                        kind,
+                        TyKind::Bool
+                            | TyKind::Char
+                            | TyKind::Int(_)
+                            | TyKind::Float(_)
+                            | TyKind::String
+                            | TyKind::Vec(_)
+                            | TyKind::Slice(_)
+                            | TyKind::Array { .. }
+                            | TyKind::Tuple(_)
+                            | TyKind::HashMap { .. }
+                            | TyKind::JsonValue
+                    )
+                };
                 let unwrap_inner = matches!(
                     method.name.as_str(),
                     "unwrap" | "unwrap_or" | "ok" | "expect"
                 )
-                .then(|| self.first_generic_of(receiver_ty).unwrap_or(i64_ty));
+                .then(|| {
+                    self.first_generic_of(receiver_ty)
+                        .or_else(|| self.first_generic_of(mir_recv_ty))
+                        .unwrap_or_else(|| {
+                            let mir_kind = self.tcx.kind_of(mir_recv_ty);
+                            let recv_kind = self.tcx.kind_of(receiver_ty);
+                            if kind_is_concrete(mir_kind.clone()) {
+                                mir_recv_ty
+                            } else if kind_is_concrete(recv_kind.clone()) {
+                                receiver_ty
+                            } else {
+                                i64_ty
+                            }
+                        })
+                });
                 let err_inner = matches!(method.name.as_str(), "err")
                     .then(|| self.second_generic_of(receiver_ty).unwrap_or(i64_ty));
                 // For Option/Result identity unwraps, prefer the
@@ -5155,6 +5240,12 @@ impl<'a> Builder<'a> {
                 | "gos_rt_error_message"
                 | "gos_rt_bufio_scanner_text"
                 | "gos_rt_http_response_body"
+                | "gos_rt_fs_read_to_string"
+                | "gos_rt_path_join"
+                | "gos_rt_http_request_path"
+                | "gos_rt_http_request_method"
+                | "gos_rt_http_request_query"
+                | "gos_rt_http_request_body_str"
                 | "gos_rt_regex_find" => self.tcx.string_ty(),
                 "gos_rt_str_split" | "gos_rt_str_lines" => {
                     let s = self.tcx.string_ty();
@@ -5509,8 +5600,10 @@ impl<'a> Builder<'a> {
     }
 
     fn lower_array_list(&mut self, elems: &[HirExpr], ty: Ty, span: Span) -> Option<Local> {
+        use gossamer_types::TyKind;
         let mut operands = Vec::with_capacity(elems.len());
         let mut elem_struct: Option<String> = None;
+        let mut elem_ty: Option<Ty> = None;
         for elem in elems {
             let local = self.lower_expr(elem)?;
             if elem_struct.is_none() {
@@ -5518,9 +5611,35 @@ impl<'a> Builder<'a> {
                     elem_struct = Some(name);
                 }
             }
+            // The HIR-side `expr.ty` for an array literal is often a
+            // leaked inference variable (e.g. `Var(...)`), which sizes
+            // every aggregate alloca to a single i64 slot — and a
+            // 3-element array literal then writes 24 B into 8 B of
+            // stack and clobbers adjacent locals (the recurring
+            // "for x in [1, 2, 3] { ... if !flag ... }" miscompile).
+            // Fall back to the lowered element local's MIR type when
+            // the HIR type can't tell us the stride.
+            if elem_ty.is_none() {
+                let lt = self.locals[local.0 as usize].ty;
+                if !matches!(self.tcx.kind_of(lt), TyKind::Var(_) | TyKind::Error) {
+                    elem_ty = Some(lt);
+                }
+            }
             operands.push(Operand::Copy(Place::local(local)));
         }
-        let dest = self.fresh(ty);
+        // Pin the destination to a real `Array { elem, len }` so the
+        // codegen sees the full slot count.
+        let dest_ty = match self.tcx.kind_of(ty) {
+            TyKind::Array { .. } => ty,
+            _ => match elem_ty {
+                Some(et) => self.tcx.intern(TyKind::Array {
+                    elem: et,
+                    len: elems.len(),
+                }),
+                None => ty,
+            },
+        };
+        let dest = self.fresh(dest_ty);
         if let Some(name) = elem_struct {
             self.local_elem_struct.insert(dest, name);
         }
@@ -5945,6 +6064,20 @@ impl<'a> Builder<'a> {
         }
         if self.is_json_value_ty(for_loop.iter_expr.ty) {
             return self.lower_for_json(for_loop.iter_expr, for_loop.loop_pat, for_loop.body, span);
+        }
+        // `for byte in s.as_bytes()` / `for byte in s.as_bytes().iter()`
+        // — `s` is a String. The Vec fallback below would call
+        // `gos_rt_vec_len`/`gos_rt_vec_get_ptr` on a `*const c_char`
+        // and segfault on the read of the (non-existent) Vec
+        // header. Detect the shape and emit a strlen-bound counter
+        // loop reading bytes via `gos_rt_str_byte_at`.
+        if let Some(string_expr) = self.detect_string_bytes_iter(for_loop.iter_expr) {
+            return self.lower_for_string_bytes(
+                string_expr,
+                for_loop.loop_pat,
+                for_loop.body,
+                span,
+            );
         }
         match &for_loop.iter_expr.kind {
             HirExprKind::Range {
@@ -6432,6 +6565,174 @@ impl<'a> Builder<'a> {
     /// for scalar elements the slot's `*mut u8` is dereferenced
     /// as i64, for pointer-shaped elements (String, struct, ref)
     /// it's reinterpreted directly.
+    /// Detects every shape that should iterate the bytes of a
+    /// String. Recognised forms: `for b in s.as_bytes()`,
+    /// `for b in s.as_bytes().iter()`, and `for b in bytes` (or
+    /// `bytes.iter()`) where `bytes` is a local previously bound
+    /// from `s.as_bytes()` and so carries the String type. Returns
+    /// an expression whose value is the underlying string, suitable
+    /// for `lower_expr` to drop into a runtime `gos_rt_str_*` call.
+    /// Without this detection the for-loop fallback path emits
+    /// `gos_rt_vec_len` against a `*const c_char` pointer and
+    /// segfaults reading the (non-existent) Vec header.
+    fn detect_string_bytes_iter<'h>(&self, iter_expr: &'h HirExpr) -> Option<&'h HirExpr> {
+        use gossamer_types::TyKind;
+        // Peel an outer `.iter()` if present.
+        let cur = match &iter_expr.kind {
+            HirExprKind::MethodCall { receiver, name, .. } if name.name == "iter" => receiver,
+            _ => iter_expr,
+        };
+        // Direct `<x>.as_bytes()`: rewrite the iteration to walk
+        // the bytes of `<x>` directly.
+        if let HirExprKind::MethodCall { receiver, name, .. } = &cur.kind
+            && name.name == "as_bytes"
+            && self.is_string_receiver(receiver)
+        {
+            return Some(receiver);
+        }
+        // Otherwise: a path / general expression whose value is a
+        // String is also iterable byte-by-byte under the same
+        // contract, since `as_bytes` is a runtime no-op (the
+        // receiver IS the bytes — see the dispatch entry
+        // `"as_bytes" => Some("")` in this file).
+        let cur_ty = self
+            .receiver_local_from_path(cur)
+            .map_or(cur.ty, |local| self.locals[local.0 as usize].ty);
+        let mut peeled = cur_ty;
+        loop {
+            match self.tcx.kind_of(peeled) {
+                TyKind::String => return Some(cur),
+                TyKind::Ref { inner, .. } => peeled = *inner,
+                _ => return None,
+            }
+        }
+    }
+
+    /// True when `expr`'s value is a String (or a reference to
+    /// one). Used by `detect_string_bytes_iter`.
+    fn is_string_receiver(&self, expr: &HirExpr) -> bool {
+        use gossamer_types::TyKind;
+        let mut ty = self
+            .receiver_local_from_path(expr)
+            .map_or(expr.ty, |local| self.locals[local.0 as usize].ty);
+        loop {
+            match self.tcx.kind_of(ty) {
+                TyKind::String => return true,
+                TyKind::Ref { inner, .. } => ty = *inner,
+                _ => return false,
+            }
+        }
+    }
+
+    /// Lowers `for byte in s.as_bytes()[ .iter()]` to a counter loop
+    /// over `s`'s bytes. The loop bound comes from `gos_rt_str_len`
+    /// and each iteration reads the byte via `gos_rt_str_byte_at`.
+    /// The pattern binding receives an `i64` (matching how
+    /// `gos_rt_str_byte_at` returns its result), so user code that
+    /// writes `*byte as i64` works the same as in the previous
+    /// (broken) path.
+    fn lower_for_string_bytes(
+        &mut self,
+        string_expr: &HirExpr,
+        loop_pat: &HirPat,
+        body: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+
+        let s_local = self.lower_expr(string_expr)?;
+
+        // len = gos_rt_str_len(s)
+        let len_local = self.fresh(i64_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_str_len".to_string())),
+            args: vec![Operand::Copy(Place::local(s_local))],
+            destination: Place::local(len_local),
+            target: Some(next),
+        });
+        self.set_current(next);
+
+        let counter = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+
+        let header = self.new_block(span);
+        let body_block = self.new_block(span);
+        let step_block = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let bool_ty = self.tcx.bool_ty();
+        let cmp = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(cmp),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(len_local)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(cmp)),
+            arms: vec![(0, exit)],
+            default: body_block,
+        });
+
+        self.set_current(body_block);
+        self.push_scope();
+        // byte = gos_rt_str_byte_at(s, counter)
+        let byte_local = self.fresh(i64_ty);
+        let after_byte = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_str_byte_at".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(s_local)),
+                Operand::Copy(Place::local(counter)),
+            ],
+            destination: Place::local(byte_local),
+            target: Some(after_byte),
+        });
+        self.set_current(after_byte);
+        if let HirPatKind::Binding { name, .. } = &loop_pat.kind {
+            self.bind_local(&name.name, byte_local);
+        }
+        self.loop_stack.push(LoopContext {
+            continue_to: step_block,
+            break_to: exit,
+        });
+        let _ = self.lower_expr(body);
+        self.loop_stack.pop();
+        self.pop_scope();
+        self.terminate(Terminator::Goto { target: step_block });
+
+        self.set_current(step_block);
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        Some(self.lower_unit(span))
+    }
+
     fn lower_for_vec(
         &mut self,
         iter_expr: &HirExpr,
@@ -6708,7 +7009,45 @@ impl<'a> Builder<'a> {
         self.set_current(body_block);
         self.push_scope();
         if let HirPatKind::Binding { name, mutable } = &loop_pat.kind {
-            let elem_ty = loop_pat.ty;
+            // Derive the binding's type from the array element when
+            // the HIR-side `loop_pat.ty` is unresolved (a leaked
+            // `Var(...)`). Without this, `render_ty(Var) = "ptr"`
+            // and the codegen emits `load ptr` against an i64 array
+            // element + `store i64 <ptr>` — a type mismatch that
+            // makes opt complain and silently misroutes through the
+            // Cranelift fallback path.
+            use gossamer_types::TyKind;
+            let mut elem_ty = loop_pat.ty;
+            let needs_pin = matches!(self.tcx.kind_of(elem_ty), TyKind::Var(_) | TyKind::Error);
+            if needs_pin {
+                // Try the array_local's MIR type, then the iter
+                // expression's HIR type, peeling `&` references
+                // along the way.
+                let mut candidates =
+                    vec![self.locals[array_local.0 as usize].ty, iter_expr.ty];
+                while let Some(cand) = candidates.pop() {
+                    let mut peeled = cand;
+                    loop {
+                        match self.tcx.kind_of(peeled) {
+                            TyKind::Array { elem, .. }
+                            | TyKind::Slice(elem)
+                            | TyKind::Vec(elem) => {
+                                elem_ty = *elem;
+                                candidates.clear();
+                                break;
+                            }
+                            TyKind::Ref { inner, .. } => peeled = *inner,
+                            _ => break,
+                        }
+                    }
+                }
+                // Last-resort fallback: assume `i64` so the codegen
+                // at least picks a 64-bit load that matches the
+                // array's slot width, instead of the `ptr` default.
+                if matches!(self.tcx.kind_of(elem_ty), TyKind::Var(_) | TyKind::Error) {
+                    elem_ty = i64_ty;
+                }
+            }
             let bind_local = self.push_local(elem_ty, Some(name.clone()), *mutable);
             self.bind_local(&name.name, bind_local);
             let indexed_place = Place {

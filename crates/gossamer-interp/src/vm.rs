@@ -1666,67 +1666,127 @@ impl Vm {
                         *ints.get_unchecked_mut(dst_i as usize) = n;
                     }
                 }
-                Op::MapIncAt {
-                    dst,
-                    map_reg,
-                    seq_reg,
-                    start_reg,
-                    len_reg,
-                    by_reg,
-                } => {
-                    // Zero-copy slice-hash counter that mirrors
-                    // `*m.entry(&seq[start..start+len]).or_insert(0) += by`.
-                    // Allocates an owned key only on the first
-                    // occurrence of each unique slice — repeat
-                    // hits read+write the existing entry without
-                    // touching the heap.
-                    let result_int: i64 = if let Value::Map(map) = &registers[map_reg as usize] {
-                        let seq_bytes: &[u8] = match &registers[seq_reg as usize] {
-                            Value::String(s) => s.as_bytes(),
-                            _ => &[],
-                        };
-                        let start = match &registers[start_reg as usize] {
-                            Value::Int(n) if *n >= 0 => *n as usize,
-                            _ => 0,
-                        };
-                        let len = match &registers[len_reg as usize] {
-                            Value::Int(n) if *n >= 0 => *n as usize,
-                            _ => 0,
-                        };
-                        let by = match &registers[by_reg as usize] {
-                            Value::Int(n) => *n,
-                            _ => 1,
-                        };
-                        if len == 0 || start + len > seq_bytes.len() {
-                            0
-                        } else {
-                            let key_bytes = &seq_bytes[start..start + len];
-                            // SAFETY: `seq_bytes` came from a UTF-8
-                            // `String`, so any sub-slice on a char
-                            // boundary is also UTF-8. ASCII inputs
-                            // are always safe by definition.
-                            let key_str = unsafe { std::str::from_utf8_unchecked(key_bytes) };
-                            // Single hash + entry update under one
-                            // lock acquisition. The owned String for
-                            // the `MapKey` is always built (because
-                            // `entry()` needs an owned key) — the
-                            // Drop is cheap for short k-mer keys, and
-                            // the table stores the new String only on
-                            // the first occurrence.
-                            let key = MapKey::Str(crate::value::SmolStr::from(key_str.to_string()));
-                            let mut guard = map.lock();
-                            let entry = guard.entry(key).or_insert(Value::Int(0));
-                            let new_val = match entry {
-                                Value::Int(cur) => *cur + by,
-                                _ => by,
+                Op::Wide { idx } => {
+                    // Side-table indirection for the rare
+                    // 6-payload-field ops. Reads the actual
+                    // operation out of `chunk.wide_ops` and
+                    // dispatches inline. Adding a new wide op
+                    // means adding a new arm to the inner match
+                    // here AND a new variant to `WideOp` in
+                    // bytecode.rs (and a matching emit site in
+                    // compile.rs). The hot path stays unchanged
+                    // for every non-wide op.
+                    let wide = unsafe { chunk.wide_ops.get_unchecked(idx as usize) };
+                    match wide {
+                        crate::bytecode::WideOp::MapIncAt {
+                            dst,
+                            map_reg,
+                            seq_reg,
+                            start_reg,
+                            len_reg,
+                            by_reg,
+                        } => {
+                            let dst = *dst;
+                            let map_reg = *map_reg;
+                            let seq_reg = *seq_reg;
+                            let start_reg = *start_reg;
+                            let len_reg = *len_reg;
+                            let by_reg = *by_reg;
+                            // Zero-copy slice-hash counter that mirrors
+                            // `*m.entry(&seq[start..start+len]).or_insert(0) += by`.
+                            let result_int: i64 = if let Value::Map(map) =
+                                &registers[map_reg as usize]
+                            {
+                                let seq_bytes: &[u8] = match &registers[seq_reg as usize] {
+                                    Value::String(s) => s.as_bytes(),
+                                    _ => &[],
+                                };
+                                let start = match &registers[start_reg as usize] {
+                                    Value::Int(n) if *n >= 0 => *n as usize,
+                                    _ => 0,
+                                };
+                                let len = match &registers[len_reg as usize] {
+                                    Value::Int(n) if *n >= 0 => *n as usize,
+                                    _ => 0,
+                                };
+                                let by = match &registers[by_reg as usize] {
+                                    Value::Int(n) => *n,
+                                    _ => 1,
+                                };
+                                if len == 0 || start + len > seq_bytes.len() {
+                                    0
+                                } else {
+                                    let key_bytes = &seq_bytes[start..start + len];
+                                    // SAFETY: `seq_bytes` came from a
+                                    // UTF-8 `String`, so any sub-slice
+                                    // on a char boundary is also UTF-8.
+                                    // ASCII inputs are always safe.
+                                    let key_str =
+                                        unsafe { std::str::from_utf8_unchecked(key_bytes) };
+                                    let key = MapKey::Str(
+                                        crate::value::SmolStr::from(key_str.to_string()),
+                                    );
+                                    let mut guard = map.lock();
+                                    let entry = guard.entry(key).or_insert(Value::Int(0));
+                                    let new_val = match entry {
+                                        Value::Int(cur) => *cur + by,
+                                        _ => by,
+                                    };
+                                    *entry = Value::Int(new_val);
+                                    new_val
+                                }
+                            } else {
+                                0
                             };
-                            *entry = Value::Int(new_val);
-                            new_val
+                            registers[dst as usize] = Value::Int(result_int);
                         }
-                    } else {
-                        0
-                    };
-                    registers[dst as usize] = Value::Int(result_int);
+                        crate::bytecode::WideOp::BuildFloatArray {
+                            dst_v,
+                            name_idx,
+                            fields_idx,
+                            stride,
+                            elem_count,
+                            first_f,
+                        } => {
+                            let dst_v = *dst_v;
+                            let name_idx = *name_idx;
+                            let fields_idx = *fields_idx;
+                            let stride = *stride;
+                            let elem_count = *elem_count;
+                            let first_f = *first_f;
+                            let Value::String(name_arc) = &chunk.consts[name_idx as usize] else {
+                                return Err(RuntimeError::Panic(
+                                    "BuildFloatArray: name must be string const".to_string(),
+                                ));
+                            };
+                            let name = name_arc.as_str().to_string();
+                            let Value::Array(field_names_arr) =
+                                &chunk.consts[fields_idx as usize]
+                            else {
+                                return Err(RuntimeError::Panic(
+                                    "BuildFloatArray: fields must be array of strings"
+                                        .to_string(),
+                                ));
+                            };
+                            let field_names: Vec<String> = field_names_arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::String(s) => Some(s.as_str().to_string()),
+                                    _ => None,
+                                })
+                                .collect();
+                            let total = stride as usize * elem_count as usize;
+                            let start = first_f as usize;
+                            let end = start + total;
+                            let data: Vec<f64> = floats[start..end].to_vec();
+                            registers[dst_v as usize] = Value::float_array(
+                                name,
+                                stride,
+                                Arc::new(field_names),
+                                Arc::new(data),
+                            );
+                        }
+                    }
                 }
                 Op::MapInc {
                     dst,
@@ -2815,39 +2875,6 @@ impl Vm {
                     }
                 },
 
-                Op::BuildFloatArray {
-                    dst_v,
-                    name_idx,
-                    fields_idx,
-                    stride,
-                    elem_count,
-                    first_f,
-                } => {
-                    let Value::String(name_arc) = &chunk.consts[name_idx as usize] else {
-                        return Err(RuntimeError::Panic(
-                            "BuildFloatArray: name must be string const".to_string(),
-                        ));
-                    };
-                    let name = name_arc.as_str().to_string();
-                    let Value::Array(field_names_arr) = &chunk.consts[fields_idx as usize] else {
-                        return Err(RuntimeError::Panic(
-                            "BuildFloatArray: fields must be array of strings".to_string(),
-                        ));
-                    };
-                    let field_names: Vec<String> = field_names_arr
-                        .iter()
-                        .filter_map(|v| match v {
-                            Value::String(s) => Some(s.as_str().to_string()),
-                            _ => None,
-                        })
-                        .collect();
-                    let total = stride as usize * elem_count as usize;
-                    let start = first_f as usize;
-                    let end = start + total;
-                    let data: Vec<f64> = floats[start..end].to_vec();
-                    registers[dst_v as usize] =
-                        Value::float_array(name, stride, Arc::new(field_names), Arc::new(data));
-                }
                 Op::BuildIntArray {
                     dst_v,
                     first_i,
