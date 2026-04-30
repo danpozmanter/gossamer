@@ -1,0 +1,8 @@
+[project]
+id = "example.com/external-libs/02"
+version = "0.1.0"
+
+[dependencies]
+
+[rust-bindings]
+gos-unic-segment = { path = ".gos-bindings/unic-segment" }

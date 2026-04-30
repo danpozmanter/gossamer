@@ -1,0 +1,9 @@
+use echo::shout
+use echo::sum
+use echo::count
+
+fn main() {
+    println(shout("hello, gossamer"))
+    println("sum:", sum([1, 2, 3, 4, 5]))
+    println("count:", count([10, 20, 30]))
+}

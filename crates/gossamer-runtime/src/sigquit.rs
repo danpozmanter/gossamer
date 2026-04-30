@@ -29,8 +29,11 @@
 //! The address-only frame (`+0x4c` style) is filled in if DWARF is
 //! available; otherwise the line falls back to a decimal byte
 //! offset from the function entry. Backtrace symbolication uses
-//! the `backtrace` crate, which honours the DWARF emitted under
-//! `gos build --release -g`.
+//! `std::backtrace::Backtrace::capture()`, which honours the DWARF
+//! emitted under `gos build --release -g`. Using the std API
+//! instead of the standalone `backtrace` crate keeps `libgcc_s` out
+//! of the dependency closure, which is a precondition for the
+//! static-musl link path on Linux.
 
 use std::io::Write;
 use std::sync::OnceLock;
@@ -163,7 +166,7 @@ pub fn render_to(out: &mut impl Write) -> std::io::Result<usize> {
         // per-goroutine stacks land once Track A's stack-switching
         // primitives ship. Even with that limitation, the frame names
         // are useful for "which goroutine is hot".
-        let trace = format!("{:?}", backtrace::Backtrace::new());
+        let trace = std::backtrace::Backtrace::force_capture().to_string();
         for line in trace.lines().take(6) {
             out.write_all(b"        ")?;
             out.write_all(line.as_bytes())?;

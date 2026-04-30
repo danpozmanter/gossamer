@@ -880,6 +880,15 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     // popped, so an aggregate return value has to be copied
     // into a heap arena that survives the return.
     "declare ptr @gos_rt_gc_alloc(i64)",
+    // Arena watermark + rewind primitives. The codegen wraps
+    // calls returning a pure-primitive aggregate (e.g.
+    // `[f64; N]`, `(i64, i64)`, `struct Vec3 { x, y, z }`) with
+    // a save/restore pair so the heap copy of the return value —
+    // which is dead the instant the caller `memcpy`s it into its
+    // own slot — does not accumulate across iterations of a
+    // calling loop. Drives the spectral-norm matvec memory fix.
+    "declare i64 @gos_rt_arena_save()",
+    "declare void @gos_rt_arena_restore(i64)",
     // Sync primitives (Mutex, WaitGroup, Atomic, heap-Vec).
     "declare ptr @gos_rt_mutex_new()",
     "declare void @gos_rt_mutex_lock(ptr)",

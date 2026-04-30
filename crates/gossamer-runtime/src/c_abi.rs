@@ -1403,6 +1403,41 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> 
     }))
 }
 
+/// Builds a fresh `*mut GosVec` from a stack/heap array. Copies
+/// `len * elem_bytes` bytes from `data` into a freshly-allocated
+/// data buffer; `Box::into_raw`s the resulting GosVec header.
+///
+/// Used at the binding-call boundary to convert a Gossamer
+/// `[T; N]` array literal (or similarly-shaped value) into the
+/// `*mut GosVec` shape the binding's C-ABI thunk expects for a
+/// `Vec<T>` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_from_arr(
+    elem_bytes: u32,
+    data: *const u8,
+    len: i64,
+) -> *mut GosVec {
+    let len = len.max(0);
+    let n = (len as usize) * (elem_bytes as usize);
+    let buf_ptr = if n == 0 || data.is_null() {
+        std::ptr::null_mut()
+    } else {
+        let mut buf: Vec<u8> = vec![0u8; n];
+        unsafe {
+            std::ptr::copy_nonoverlapping(data, buf.as_mut_ptr(), n);
+        }
+        let p = buf.as_mut_ptr();
+        std::mem::forget(buf);
+        p
+    };
+    Box::into_raw(Box::new(GosVec {
+        len,
+        cap: len,
+        elem_bytes,
+        ptr: buf_ptr,
+    }))
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_len(v: *const GosVec) -> i64 {
     if v.is_null() {
@@ -1767,6 +1802,116 @@ pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec) -> *mut c_char 
         let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
         let n = unsafe { (p as *const i64).read_unaligned() };
         out.push_str(&format!("{n}"));
+    }
+    out.push(']');
+    alloc_cstring(out.as_bytes())
+}
+
+/// Renders an `f64`-elem `Vec` as `[v0, v1, …]`. Returns a fresh
+/// String pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_f64(v: *const GosVec) -> *mut c_char {
+    if v.is_null() {
+        return alloc_cstring(b"[]");
+    }
+    let vec = unsafe { &*v };
+    let mut out = String::with_capacity(2 + (vec.len as usize) * 6);
+    out.push('[');
+    for i in 0..vec.len {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+        let n = unsafe { (p as *const f64).read_unaligned() };
+        out.push_str(&format!("{n}"));
+    }
+    out.push(']');
+    alloc_cstring(out.as_bytes())
+}
+
+/// Renders a `bool`-elem `Vec` as `[true, false, …]`. Returns a
+/// fresh String pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_bool(v: *const GosVec) -> *mut c_char {
+    if v.is_null() {
+        return alloc_cstring(b"[]");
+    }
+    let vec = unsafe { &*v };
+    let mut out = String::with_capacity(2 + (vec.len as usize) * 6);
+    out.push('[');
+    for i in 0..vec.len {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+        let b = unsafe { *p } != 0;
+        out.push_str(if b { "true" } else { "false" });
+    }
+    out.push(']');
+    alloc_cstring(out.as_bytes())
+}
+
+/// Renders a `String`-elem `Vec` as `[s0, s1, …]`. Each element
+/// in the Vec is a NUL-terminated `*const c_char`; we read it as
+/// an 8-byte word and dereference. Returns a fresh String
+/// pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_string(v: *const GosVec) -> *mut c_char {
+    if v.is_null() {
+        return alloc_cstring(b"[]");
+    }
+    let vec = unsafe { &*v };
+    let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
+    out.push('[');
+    for i in 0..vec.len {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+        let s_ptr = unsafe { (p as *const *const c_char).read_unaligned() };
+        if s_ptr.is_null() {
+            out.push_str("\"\"");
+        } else {
+            let cs = unsafe { std::ffi::CStr::from_ptr(s_ptr) };
+            let payload = cs.to_string_lossy();
+            out.push('"');
+            out.push_str(&payload);
+            out.push('"');
+        }
+    }
+    out.push(']');
+    alloc_cstring(out.as_bytes())
+}
+
+/// Renders a `Vec<Vec<i64>>` as `[[a, b], [c], …]`. Each
+/// element is a `*mut GosVec` (8-byte slot); we recursively
+/// stringify each inner `Vec<i64>`. Returns a fresh String
+/// pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_char {
+    if v.is_null() {
+        return alloc_cstring(b"[]");
+    }
+    let vec = unsafe { &*v };
+    let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
+    out.push('[');
+    for i in 0..vec.len {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+        let inner_ptr = unsafe { (p as *const *const GosVec).read_unaligned() };
+        if inner_ptr.is_null() {
+            out.push_str("[]");
+        } else {
+            let rendered = unsafe { gos_rt_vec_format_i64(inner_ptr) };
+            if rendered.is_null() {
+                out.push_str("[]");
+            } else {
+                let cs = unsafe { std::ffi::CStr::from_ptr(rendered) };
+                out.push_str(&cs.to_string_lossy());
+            }
+        }
     }
     out.push(']');
     alloc_cstring(out.as_bytes())

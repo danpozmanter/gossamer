@@ -26,7 +26,8 @@ pub use fetch::{FetchOptions, Fetcher, vendor};
 pub use id::{ProjectId, ProjectIdError};
 pub use lockfile::{LOCKFILE_HEADER, Lockfile, LockfileError};
 pub use manifest::{
-    DependencySpec, InlineDependency, Manifest, ManifestError, ProjectTable, find_manifest,
+    DependencySpec, GitRef, InlineDependency, Manifest, ManifestError, ProjectTable,
+    RustBindingSpec, find_manifest,
 };
 pub use resolver::{
     Requirement, RequirementSpec, ResolveError, Resolved, ResolvedSource, Resolver,

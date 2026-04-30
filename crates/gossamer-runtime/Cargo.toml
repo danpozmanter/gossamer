@@ -50,7 +50,6 @@ flate2 = "1"
 rustc-hash = "2"
 signal-hook = { workspace = true }
 gossamer-gc = { workspace = true }
-backtrace = "0.3"
 libloading = "0.8"
 crossbeam-deque = { workspace = true }
 crossbeam-utils = { workspace = true }

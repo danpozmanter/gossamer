@@ -86,6 +86,21 @@ pub fn item(qualified: &str) -> Option<(&'static Module, &'static ItemFn)> {
         .map(|i| (module, i))
 }
 
+/// Compiled-mode counterpart to [`install_all`].
+///
+/// Compiled binaries call binding items directly through the C-ABI
+/// thunks emitted by `register_module!` — they don't go through
+/// the interpreter's external-natives table or the resolver. This
+/// function exists so the compiled-mode entry point has a single,
+/// stable symbol to call. It's deliberately a no-op aside from
+/// touching every `Module` to keep the `linkme` distributed-slice
+/// entries alive across LTO.
+pub fn install_all_for_compiled() {
+    for module in REGISTRY.iter().copied() {
+        let _ = module.path;
+    }
+}
+
 /// Installs every registered binding into the interpreter's
 /// external-natives table.
 ///
@@ -105,18 +120,33 @@ pub fn item(qualified: &str) -> Option<(&'static Module, &'static ItemFn)> {
 #[must_use]
 pub fn install_all() -> usize {
     let mut count = 0;
+    let mut leaf_groups: rustc_hash::FxHashMap<&'static str, Vec<&'static ItemFn>> =
+        rustc_hash::FxHashMap::default();
+    for module in REGISTRY.iter().copied() {
+        for item in module.items {
+            leaf_groups.entry(item.name).or_default().push(item);
+        }
+    }
     for module in REGISTRY.iter().copied() {
         for item in module.items {
             let qualified: &'static str =
                 Box::leak(format!("{}::{}", module.path, item.name).into_boxed_str());
             gossamer_interp::register_external_native(qualified, item.call);
-            // Also register under the bare leaf name so a path
-            // expression like `rect(...)` (after
-            // `use tuigoose::layout::rect`) resolves through the
-            // interpreter's single-segment fallback. Stdlib does
-            // the same in `gossamer_interp::builtins::install_module`.
-            gossamer_interp::register_external_native(item.name, item.call);
             count += 1;
+        }
+    }
+    for (leaf, group) in &leaf_groups {
+        if group.len() == 1 {
+            // Unambiguous leaf — install the direct thunk.
+            gossamer_interp::register_external_native(leaf, group[0].call);
+        } else {
+            // Ambiguous leaf — install an arity-aware dispatcher
+            // that picks a candidate matching the call's argc.
+            // Falls back to the first candidate when no arity
+            // matches, so the binding's own arity check produces
+            // the standard error message.
+            let dispatcher = assign_ambig_dispatcher(group.clone());
+            gossamer_interp::register_external_native(leaf, dispatcher);
         }
     }
     populate_resolve_table();
@@ -147,6 +177,134 @@ fn populate_resolve_table() {
         .collect();
     gossamer_resolve::set_external_modules(modules);
 }
+
+/// Capacity of the ambiguous-leaf dispatcher pool. Each ambiguous
+/// leaf consumes one slot; collisions across more than this many
+/// distinct leaves panic. The number is generous given typical
+/// binding-crate sizes (tuigoose has ~50 items across 7 modules).
+const AMBIG_POOL_SIZE: usize = 64;
+
+type AmbigGroup = Vec<&'static ItemFn>;
+
+static AMBIG_SLOTS: parking_lot::RwLock<Vec<Option<AmbigGroup>>> =
+    parking_lot::RwLock::new(Vec::new());
+
+fn ambig_slots() -> parking_lot::RwLockReadGuard<'static, Vec<Option<AmbigGroup>>> {
+    AMBIG_SLOTS.read()
+}
+
+fn ambig_slots_mut() -> parking_lot::RwLockWriteGuard<'static, Vec<Option<AmbigGroup>>> {
+    let mut guard = AMBIG_SLOTS.write();
+    if guard.len() < AMBIG_POOL_SIZE {
+        guard.resize(AMBIG_POOL_SIZE, None);
+    }
+    guard
+}
+
+fn assign_ambig_dispatcher(group: AmbigGroup) -> gossamer_interp::value::NativeCall {
+    let idx = {
+        let mut guard = ambig_slots_mut();
+        let mut chosen: Option<usize> = None;
+        for (i, slot) in guard.iter_mut().enumerate() {
+            if slot.is_none() {
+                *slot = Some(group);
+                chosen = Some(i);
+                break;
+            }
+        }
+        chosen.expect("ambiguous-leaf pool exhausted; raise AMBIG_POOL_SIZE")
+    };
+    AMBIG_DISPATCH_TABLE[idx]
+}
+
+fn ambig_call<const N: usize>(
+    dispatch: &mut dyn gossamer_interp::value::NativeDispatch,
+    args: &[gossamer_interp::value::Value],
+) -> gossamer_interp::value::RuntimeResult<gossamer_interp::value::Value> {
+    let Some(group) = ambig_slots().get(N).cloned().flatten() else {
+        return Err(gossamer_interp::value::RuntimeError::Arity {
+            expected: 0,
+            found: args.len(),
+        });
+    };
+    for item in &group {
+        if item.signature.params.len() == args.len() {
+            return (item.call)(dispatch, args);
+        }
+    }
+    let first = group
+        .first()
+        .copied()
+        .expect("ambig group must be non-empty");
+    (first.call)(dispatch, args)
+}
+
+const AMBIG_DISPATCH_TABLE: [gossamer_interp::value::NativeCall; AMBIG_POOL_SIZE] = [
+    ambig_call::<0>,
+    ambig_call::<1>,
+    ambig_call::<2>,
+    ambig_call::<3>,
+    ambig_call::<4>,
+    ambig_call::<5>,
+    ambig_call::<6>,
+    ambig_call::<7>,
+    ambig_call::<8>,
+    ambig_call::<9>,
+    ambig_call::<10>,
+    ambig_call::<11>,
+    ambig_call::<12>,
+    ambig_call::<13>,
+    ambig_call::<14>,
+    ambig_call::<15>,
+    ambig_call::<16>,
+    ambig_call::<17>,
+    ambig_call::<18>,
+    ambig_call::<19>,
+    ambig_call::<20>,
+    ambig_call::<21>,
+    ambig_call::<22>,
+    ambig_call::<23>,
+    ambig_call::<24>,
+    ambig_call::<25>,
+    ambig_call::<26>,
+    ambig_call::<27>,
+    ambig_call::<28>,
+    ambig_call::<29>,
+    ambig_call::<30>,
+    ambig_call::<31>,
+    ambig_call::<32>,
+    ambig_call::<33>,
+    ambig_call::<34>,
+    ambig_call::<35>,
+    ambig_call::<36>,
+    ambig_call::<37>,
+    ambig_call::<38>,
+    ambig_call::<39>,
+    ambig_call::<40>,
+    ambig_call::<41>,
+    ambig_call::<42>,
+    ambig_call::<43>,
+    ambig_call::<44>,
+    ambig_call::<45>,
+    ambig_call::<46>,
+    ambig_call::<47>,
+    ambig_call::<48>,
+    ambig_call::<49>,
+    ambig_call::<50>,
+    ambig_call::<51>,
+    ambig_call::<52>,
+    ambig_call::<53>,
+    ambig_call::<54>,
+    ambig_call::<55>,
+    ambig_call::<56>,
+    ambig_call::<57>,
+    ambig_call::<58>,
+    ambig_call::<59>,
+    ambig_call::<60>,
+    ambig_call::<61>,
+    ambig_call::<62>,
+    ambig_call::<63>,
+];
 
 fn lower_type(t: &crate::types::Type) -> gossamer_resolve::BindingType {
     use crate::types::Type;

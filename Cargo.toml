@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/gossamer-ast",
+    "crates/gossamer-binding",
     "crates/gossamer-cli",
     "crates/gossamer-codegen-cranelift",
     "crates/gossamer-codegen-llvm",
@@ -18,11 +19,16 @@ members = [
     "crates/gossamer-parse",
     "crates/gossamer-pkg",
     "crates/gossamer-resolve",
+    "crates/gossamer-runner-template",
     "crates/gossamer-runtime",
     "crates/gossamer-sched",
     "crates/gossamer-std",
     "crates/gossamer-types",
     "xtask",
+]
+exclude = [
+    "crates/gossamer-driver/tests/fixtures",
+    "example-external-libraries",
 ]
 
 [workspace.package]
@@ -77,6 +83,7 @@ collapsible_if = "allow"
 
 [workspace.dependencies]
 gossamer-ast = { path = "crates/gossamer-ast", version = "0.0.0" }
+gossamer-binding = { path = "crates/gossamer-binding", version = "0.0.0" }
 gossamer-codegen-cranelift = { path = "crates/gossamer-codegen-cranelift", version = "0.0.0" }
 gossamer-codegen-llvm = { path = "crates/gossamer-codegen-llvm", version = "0.0.0" }
 gossamer-coro = { path = "crates/gossamer-coro", version = "0.0.0" }
@@ -92,6 +99,7 @@ gossamer-mir = { path = "crates/gossamer-mir", version = "0.0.0" }
 gossamer-parse = { path = "crates/gossamer-parse", version = "0.0.0" }
 gossamer-pkg = { path = "crates/gossamer-pkg", version = "0.0.0" }
 gossamer-resolve = { path = "crates/gossamer-resolve", version = "0.0.0" }
+gossamer-runner-template = { path = "crates/gossamer-runner-template", version = "0.0.0" }
 gossamer-runtime = { path = "crates/gossamer-runtime", version = "0.0.0" }
 gossamer-sched = { path = "crates/gossamer-sched", version = "0.0.0" }
 gossamer-std = { path = "crates/gossamer-std", version = "0.0.0" }
@@ -106,12 +114,16 @@ crossbeam-deque = "0.8"
 crossbeam-utils = "0.8"
 gimli = { version = "0.31", default-features = false, features = ["read", "write", "std"] }
 insta = { version = "1", features = ["yaml"] }
+linkme = "0.3"
 mio = { version = "1", features = ["os-poll", "net"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
 thiserror = "2"
+toml = "0.8"
+which = "6"
 
 [profile.release]
 lto = "fat"

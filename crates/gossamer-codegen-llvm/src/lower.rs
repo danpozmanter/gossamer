@@ -17,8 +17,8 @@ use gossamer_types::{FloatTy, Ty, TyCtxt, TyKind};
 
 use crate::emit::BuildError;
 use crate::ty::{
-    NumericKind, elem_slots, int_signed, int_width, is_aggregate, is_unit, numeric_kind, render_ty,
-    slot_count,
+    NumericKind, elem_slots, int_signed, int_width, is_aggregate, is_pure_primitive_aggregate,
+    is_unit, numeric_kind, render_ty, slot_count,
 };
 
 /// Emits one function's LLVM IR text, including the required
@@ -2851,6 +2851,28 @@ impl<'a> Lowerer<'a> {
         }
         let dest_ty_mir = self.body.local_ty(destination.local);
         let dest_ty = render_ty(self.tcx, dest_ty_mir);
+
+        // Detect the call-site arena scoping pattern: a callee
+        // returning a *pure primitive* aggregate (no heap-pointer
+        // fields) hands us a heap pointer; we `memcpy` it into the
+        // caller's stack alloca and the heap copy is dead. Wrap the
+        // call+memcpy in a `gos_rt_arena_save`/`_restore` pair so
+        // the heap copy and any callee-internal allocations are
+        // reclaimed immediately. Drives the spectral-norm matvec
+        // RAM win.
+        let scope_arena = is_aggregate(self.tcx, dest_ty_mir)
+            && is_pure_primitive_aggregate(self.tcx, dest_ty_mir)
+            && !symbol.starts_with("gos_rt_");
+        let saved_tmp = if scope_arena {
+            let s = self.fresh();
+            writeln!(self.out, "  {s} = call i64 @gos_rt_arena_save()").unwrap();
+            self.runtime_refs.insert("gos_rt_arena_save".to_string());
+            self.runtime_refs.insert("gos_rt_arena_restore".to_string());
+            Some(s)
+        } else {
+            None
+        };
+
         if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
             writeln!(self.out, "  call void @\"{symbol}\"({arg_text})").unwrap();
         } else {
@@ -2876,6 +2898,9 @@ impl<'a> Lowerer<'a> {
             } else {
                 writeln!(self.out, "  store {dest_ty} {tmp}, ptr {slot}").unwrap();
             }
+        }
+        if let Some(saved) = saved_tmp {
+            writeln!(self.out, "  call void @gos_rt_arena_restore(i64 {saved})").unwrap();
         }
         emit_terminator_branch(&mut self.out, target);
         Ok(())

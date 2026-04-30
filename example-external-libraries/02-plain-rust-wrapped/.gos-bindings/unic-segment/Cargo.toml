@@ -1,0 +1,14 @@
+[package]
+name = "gos-unic-segment"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+unic-segment = "0.9"
+gossamer-binding = { path = "../../../../crates/gossamer-binding" }

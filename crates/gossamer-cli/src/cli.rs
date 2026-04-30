@@ -95,9 +95,16 @@ enum Command {
         release: bool,
         /// Embed DWARF debug information so `gdb` / `lldb` can step
         /// through Gossamer source. Sets the `GOS_BUILD_DEBUG` env
-        /// var the LLVM lowerer reads.
+        /// var the LLVM lowerer reads. Also suppresses the default
+        /// `--strip-all` applied to release binaries.
         #[arg(short = 'g', long = "debug-info")]
         debug_info: bool,
+        /// Force the legacy dynamic-glibc link path on Linux, even
+        /// when the rustup `x86_64-unknown-linux-musl` target is
+        /// available. Default release builds produce a fully-static
+        /// musl binary on Linux when the target is installed.
+        #[arg(long)]
+        dynamic: bool,
         /// Produce a bit-identical artifact across two clean builds
         /// of the same source on the same target. Pins the build
         /// timestamp via `SOURCE_DATE_EPOCH`, strips embedded
@@ -136,11 +143,22 @@ enum Command {
     },
     /// Add a dependency entry to `project.toml`.
     Add {
-        /// Project identifier with optional `@VERSION` suffix.
+        /// Project identifier with optional `@VERSION` suffix, or
+        /// the Cargo crate spec when `--rust-binding` is set
+        /// (e.g. `ratatui@0.26` or `ratatui` for crates.io,
+        /// `path:./vendor/ratatui` for a local crate).
         spec: String,
         /// Path to the manifest. Defaults to `./project.toml`.
         #[arg(long)]
         manifest: Option<PathBuf>,
+        /// Add the entry to `[rust-bindings]` instead of
+        /// `[dependencies]`. The spec is interpreted as a Cargo
+        /// crate spec; `gos` scaffolds a wrapper crate under
+        /// `.gos-bindings/<crate-name>/` so user-supplied
+        /// `register_module!` blocks can expose the crate to
+        /// Gossamer code.
+        #[arg(long = "rust-binding")]
+        rust_binding: bool,
     },
     /// Remove a dependency entry from `project.toml`.
     Remove {
@@ -357,11 +375,39 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             target,
             release,
             debug_info,
+            dynamic,
             reproducible,
-        }) => dispatch_build(file, target.as_deref(), release, debug_info, reproducible),
+        }) => dispatch_build(
+            file,
+            target.as_deref(),
+            BuildFlags {
+                mode: if release {
+                    BuildMode::Release
+                } else {
+                    BuildMode::Debug
+                },
+                link: if dynamic {
+                    LinkMode::Dynamic
+                } else {
+                    LinkMode::Static
+                },
+                debug_info,
+                reproducible,
+            },
+        ),
         Some(Command::Init { id }) => cmd::scaffold::init(&id),
         Some(Command::New { id, path, template }) => cmd::scaffold::new(&id, path, &template),
-        Some(Command::Add { spec, manifest }) => cmd::pkg::add(&spec, manifest),
+        Some(Command::Add {
+            spec,
+            manifest,
+            rust_binding,
+        }) => {
+            if rust_binding {
+                cmd::pkg::add_rust_binding(&spec, manifest)
+            } else {
+                cmd::pkg::add(&spec, manifest)
+            }
+        }
         Some(Command::Remove { id, manifest }) => cmd::pkg::remove(&id, manifest),
         Some(Command::Tidy { manifest }) => cmd::pkg::tidy(manifest),
         Some(Command::Fetch { manifest, offline }) => cmd::pkg::fetch(manifest, offline),
@@ -435,20 +481,55 @@ fn dispatch_run(
     cmd::run::dispatch(file, mode, args)
 }
 
+/// Codegen tier. `Debug` routes through Cranelift end-to-end; `Release`
+/// runs the LLVM pipeline at `-O3` with per-function fallback to
+/// Cranelift for un-lowered constructs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuildMode {
+    Debug,
+    Release,
+}
+
+/// Linker strategy. `Static` (Linux release) drives `rust-lld -static`
+/// against rustup's musl self-contained CRT; `Dynamic` falls back to
+/// the host `cc` and a glibc-linked binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkMode {
+    Static,
+    Dynamic,
+}
+
+/// Bundled flags for `gos build`. Two orthogonal three-state knobs
+/// (`mode`, `link`) plus two genuinely-boolean toggles. Kept as a
+/// struct so the dispatch site stays under clippy's
+/// `fn_params_excessive_bools` threshold and the field names tell
+/// the reader what each toggle does at the call site.
+#[derive(Debug, Clone, Copy)]
+struct BuildFlags {
+    mode: BuildMode,
+    link: LinkMode,
+    debug_info: bool,
+    reproducible: bool,
+}
+
 fn dispatch_build(
     file: Option<PathBuf>,
     target: Option<&str>,
-    release: bool,
-    debug_info: bool,
-    reproducible: bool,
+    flags: BuildFlags,
 ) -> anyhow::Result<()> {
-    if debug_info {
+    if flags.debug_info {
         gossamer_codegen_llvm::set_debug_info(true);
     }
-    if reproducible {
+    if flags.reproducible {
         gossamer_codegen_llvm::set_reproducible(true);
     }
-    cmd::build::dispatch(file, target, release)
+    cmd::build::dispatch(
+        file,
+        target,
+        flags.mode == BuildMode::Release,
+        flags.debug_info,
+        flags.link == LinkMode::Dynamic,
+    )
 }
 
 #[cfg(test)]

@@ -1,0 +1,8 @@
+[project]
+id = "example.com/external-libs/01"
+version = "0.1.0"
+
+[dependencies]
+
+[rust-bindings]
+echo-binding = { path = "echo-binding" }

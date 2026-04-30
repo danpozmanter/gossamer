@@ -158,6 +158,43 @@ pub(crate) fn elem_slots(tcx: &TyCtxt, ty: Ty) -> u32 {
     }
 }
 
+/// Returns `true` when `ty` and every transitive component is a
+/// primitive scalar (`bool`, integers, floats, `char`) — i.e. the
+/// type contains no pointer to arena-allocated heap data. Used by
+/// the call-site arena scoping pass to decide whether wrapping a
+/// call with `gos_rt_arena_save`/`gos_rt_arena_restore` is safe:
+/// after the callee's return aggregate is `memcpy`'d into the
+/// caller's stack alloca, restoring the arena watermark cannot
+/// dangle any reference.
+///
+/// Anything containing a `Vec<T>`, `String`, `HashMap<K,V>`, or a
+/// channel handle is rejected because those carry pointers into
+/// arena-managed memory; restoring the arena would free their
+/// backing storage and leave the copied pointer dangling. References
+/// (`&T`) are also rejected — they point at storage outside the
+/// caller's slot, which the arena reset may invalidate.
+pub(crate) fn is_pure_primitive_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
+    match tcx.kind(ty) {
+        Some(TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Float(_) | TyKind::Unit) => {
+            true
+        }
+        Some(TyKind::Array { elem, .. }) => is_pure_primitive_aggregate(tcx, *elem),
+        Some(TyKind::Tuple(elems)) => elems.iter().all(|t| is_pure_primitive_aggregate(tcx, *t)),
+        Some(TyKind::Adt { def, .. }) => {
+            // Reject the Result/Option sentinel Adts up front —
+            // they are pointer-shaped and not really aggregates.
+            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                return false;
+            }
+            match tcx.struct_field_tys(*def) {
+                Some(fields) => fields.iter().all(|t| is_pure_primitive_aggregate(tcx, *t)),
+                None => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 /// True when the type is an aggregate whose memory lives in a
 /// stack slot rather than a scalar SSA value. Drives the
 /// choice between a scalar `alloca <ty>` and an aggregate

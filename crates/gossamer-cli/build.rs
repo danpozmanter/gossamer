@@ -1,12 +1,18 @@
 //! Build script for `gossamer-cli`.
 //!
-//! Two responsibilities:
+//! Three responsibilities:
 //!
 //! 1. Ensures the `gossamer-runtime` static library is present at
 //!    the standard `target/<profile>/` location every time `cargo
 //!    build` processes the cli, and exposes that absolute path to
 //!    the cli at compile time via `GOSSAMER_RUNTIME_LIB_PATH`.
-//! 2. Enforces dispatch-table parity: every `gos_rt_*` symbol
+//! 2. On Linux hosts where the `x86_64-unknown-linux-musl` rustup
+//!    target is installed, additionally builds the runtime
+//!    against that target and exposes the resulting archive path
+//!    via `GOSSAMER_RUNTIME_LIB_PATH_MUSL`. The cli's `gos build
+//!    --release` link path uses that archive to produce a fully
+//!    static binary (no glibc/libgcc_s/ld-linux dependency).
+//! 3. Enforces dispatch-table parity: every `gos_rt_*` symbol
 //!    declared in `crates/gossamer-runtime/src/c_abi.rs` must be
 //!    referenced by at least one of the LLVM lowerer, the
 //!    Cranelift native backend, the Cranelift JIT symbol map, or
@@ -81,20 +87,70 @@ fn main() {
     // inner cargo so it picks up source edits and refreshes the
     // staticlib in-place. Cargo's own incremental layer keeps the
     // re-run cheap when nothing has changed.
-    build_runtime_into(&workspace_root, &target_dir, &profile);
+    build_runtime_into(&workspace_root, &target_dir, &profile, None);
 
     println!(
         "cargo:rustc-env=GOSSAMER_RUNTIME_LIB_PATH={}",
         lib_path.display()
     );
+
+    // Linux + release: also build the runtime against musl when the
+    // rustup target is installed. The `gos build --release` link
+    // path consumes this archive to produce a fully static binary.
+    // Skip silently when the target isn't available — we still ship
+    // the dynamic path as a fallback.
+    if cfg!(target_os = "linux") && profile == "release" {
+        let musl_triple = "x86_64-unknown-linux-musl";
+        if rustup_target_installed(musl_triple) {
+            let musl_lib_path =
+                build_runtime_into(&workspace_root, &target_dir, &profile, Some(musl_triple));
+            println!(
+                "cargo:rustc-env=GOSSAMER_RUNTIME_LIB_PATH_MUSL={}",
+                musl_lib_path.display()
+            );
+        }
+    }
+}
+
+/// Returns true when the rustup `<triple>` target's std library is
+/// installed locally — checked by probing for the rustlib dir, not
+/// by shelling out to `rustup`.
+fn rustup_target_installed(triple: &str) -> bool {
+    let Ok(out) = Command::new(env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string()))
+        .args(["--print", "sysroot"])
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let sysroot = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let probe = PathBuf::from(&sysroot)
+        .join("lib")
+        .join("rustlib")
+        .join(triple)
+        .join("lib");
+    probe.exists()
 }
 
 /// Invokes `cargo build -p gossamer-runtime` with an isolated target
 /// directory, then copies the resulting staticlib into the outer
-/// `target/<profile>/` so downstream lookups find it.
-fn build_runtime_into(workspace_root: &Path, target_dir: &Path, profile: &str) {
+/// `target/<profile>/` so downstream lookups find it. When `triple`
+/// is supplied, builds against that rustup target and the artifact
+/// is copied into `target/<triple>/<profile>/`. Returns the path to
+/// the resulting staticlib.
+fn build_runtime_into(
+    workspace_root: &Path,
+    target_dir: &Path,
+    profile: &str,
+    triple: Option<&str>,
+) -> PathBuf {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let inner_target = target_dir.join("runtime-staticlib");
+    let inner_target = match triple {
+        Some(t) => target_dir.join(format!("runtime-staticlib-{t}")),
+        None => target_dir.join("runtime-staticlib"),
+    };
 
     let mut cmd = Command::new(&cargo);
     cmd.arg("build")
@@ -103,20 +159,56 @@ fn build_runtime_into(workspace_root: &Path, target_dir: &Path, profile: &str) {
         .arg("--target-dir")
         .arg(&inner_target)
         .current_dir(workspace_root);
+    if let Some(t) = triple {
+        cmd.arg("--target").arg(t);
+    }
     if profile == "release" {
         cmd.arg("--release");
     }
     // Strip cargo-set vars that bias the inner build toward this
-    // crate's flags. `RUSTFLAGS` is preserved since CI sets
-    // `-D warnings` workspace-wide and the runtime must build clean.
-    for var in ["CARGO_PRIMARY_PACKAGE", "CARGO_PKG_NAME", "RUSTC_WRAPPER"] {
+    // crate's flags. The outer-cargo `RUSTFLAGS` is removed so
+    // workspace-wide flags (CI's `-D warnings`, IDE toggles, etc.)
+    // can't leak into the runtime build. The Gossamer-internal
+    // codegen knobs are owned by this build script (release adds
+    // `function-sections`/`data-sections`); the only user-facing
+    // override is `GOSSAMERFLAGS`, which the cli forwards as
+    // `RUSTFLAGS` to the inner cargo invocation. We deliberately
+    // do NOT honour the outer `RUSTFLAGS` even as a fallback.
+    for var in [
+        "CARGO_PRIMARY_PACKAGE",
+        "CARGO_PKG_NAME",
+        "RUSTC_WRAPPER",
+        "RUSTFLAGS",
+    ] {
         cmd.env_remove(var);
+    }
+    // Function-level sections so the user-binary linker's
+    // `--gc-sections` (static-musl path) can prune unused
+    // `gos_rt_*` helpers. Without these the runtime archive is a
+    // single big `.text` blob — pulling any symbol pulls every
+    // symbol. Promoting each Rust function/static to its own ELF
+    // section lets gc-sections drop the unreferenced ones at user-
+    // binary link time. Only matters in release; debug builds skip
+    // these flags so the inner cargo cache stays warm for `gos
+    // run`. Users can extend the flag set via `GOSSAMERFLAGS`.
+    let mut flags: Vec<String> = Vec::new();
+    if profile == "release" {
+        flags.push("-Cfunction-sections=yes".to_string());
+        flags.push("-Cdata-sections=yes".to_string());
+    }
+    if let Ok(extra) = env::var("GOSSAMERFLAGS") {
+        if !extra.trim().is_empty() {
+            flags.push(extra);
+        }
+    }
+    if !flags.is_empty() {
+        cmd.env("RUSTFLAGS", flags.join(" "));
     }
 
     let status = cmd.status().expect("invoke cargo for runtime build");
     assert!(
         status.success(),
-        "failed to build gossamer-runtime staticlib"
+        "failed to build gossamer-runtime staticlib (triple={triple:?})"
     );
 
     let lib_name = if cfg!(target_env = "msvc") {
@@ -124,12 +216,21 @@ fn build_runtime_into(workspace_root: &Path, target_dir: &Path, profile: &str) {
     } else {
         "libgossamer_runtime.a"
     };
-    let inner_artifact = inner_target.join(profile).join(lib_name);
-    let outer_artifact = target_dir.join(profile).join(lib_name);
+    let inner_profile_dir = match triple {
+        Some(t) => inner_target.join(t).join(profile),
+        None => inner_target.join(profile),
+    };
+    let inner_artifact = inner_profile_dir.join(lib_name);
+    let outer_profile_dir = match triple {
+        Some(t) => target_dir.join(t).join(profile),
+        None => target_dir.join(profile),
+    };
+    let outer_artifact = outer_profile_dir.join(lib_name);
     if let Some(parent) = outer_artifact.parent() {
         std::fs::create_dir_all(parent).expect("create outer profile dir");
     }
     std::fs::copy(&inner_artifact, &outer_artifact).expect("copy staticlib into outer target dir");
+    outer_artifact
 }
 
 /// Fails the build if any `gos_rt_*` symbol declared in `c_abi.rs`

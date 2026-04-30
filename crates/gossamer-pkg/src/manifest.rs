@@ -29,6 +29,8 @@ pub struct Manifest {
     pub dependencies: BTreeMap<String, DependencySpec>,
     /// `[registries]` map keyed by DNS prefix.
     pub registries: BTreeMap<String, String>,
+    /// `[rust-bindings]` map keyed by Cargo crate name.
+    pub rust_bindings: BTreeMap<String, RustBindingSpec>,
 }
 
 /// `[project]` table contents.
@@ -55,6 +57,57 @@ pub enum DependencySpec {
     Registry(CaretRange),
     /// Inline table form: `git`, `path`, or `tarball`.
     Inline(InlineDependency),
+}
+
+/// One entry in `[rust-bindings]` — a Rust crate to statically
+/// link into the per-project runner / compiled binary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RustBindingSpec {
+    /// `{ path = "..." }` — local Cargo path-dep.
+    Path {
+        /// Optional informational version range.
+        version: Option<CaretRange>,
+        /// Path as written in the manifest (relative to the
+        /// manifest dir or absolute).
+        path: String,
+        /// Cargo features.
+        features: Vec<String>,
+        /// Whether `default-features` is enabled.
+        default_features: bool,
+    },
+    /// `{ git = "..." }` — Cargo git-dep.
+    Git {
+        /// Optional informational version range.
+        version: Option<CaretRange>,
+        /// Repository URL.
+        url: String,
+        /// Optional reference (branch/tag/rev).
+        reference: Option<GitRef>,
+        /// Cargo features.
+        features: Vec<String>,
+        /// Whether `default-features` is enabled.
+        default_features: bool,
+    },
+    /// `{ version = "..." }` — crates.io passthrough.
+    Crates {
+        /// Required version range.
+        version: CaretRange,
+        /// Cargo features.
+        features: Vec<String>,
+        /// Whether `default-features` is enabled.
+        default_features: bool,
+    },
+}
+
+/// Reference for a `git` rust-binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitRef {
+    /// `branch = "..."`.
+    Branch(String),
+    /// `tag = "..."`.
+    Tag(String),
+    /// `rev = "..."`.
+    Rev(String),
 }
 
 /// Inline-table dependency variants.
@@ -112,6 +165,18 @@ pub enum ManifestError {
     /// An inline dependency table mixed incompatible keys.
     #[error("ambiguous dependency for {0}: pick at most one of git/path/tarball")]
     AmbiguousDependency(String),
+    /// A `[rust-bindings]` key violates the Cargo package-name regex.
+    #[error("invalid rust-binding name {0:?}: must match [A-Za-z_][A-Za-z0-9_-]*")]
+    BadBindingName(String),
+    /// `[rust-bindings]` entry mixed `path`, `git`, and version-only.
+    #[error("ambiguous rust-binding for {0}: pick exactly one of path/git/version")]
+    AmbiguousRustBinding(String),
+    /// `[rust-bindings]` git source mixed branch/tag/rev.
+    #[error("rust-binding {0} git source: pick at most one of branch/tag/rev")]
+    AmbiguousGitRef(String),
+    /// `[rust-bindings]` crates.io entry missing a `version` value.
+    #[error("rust-binding {0} from crates.io requires a version")]
+    MissingBindingVersion(String),
 }
 
 /// Walks parent directories of `start` looking for a `project.toml`.
@@ -141,6 +206,7 @@ impl Manifest {
         let mut project = RawTable::default();
         let mut deps: BTreeMap<String, DependencySpec> = BTreeMap::new();
         let mut registries: BTreeMap<String, String> = BTreeMap::new();
+        let mut rust_bindings: BTreeMap<String, RustBindingSpec> = BTreeMap::new();
         for (i, raw_line) in source.lines().enumerate() {
             let line_no = u32::try_from(i + 1).expect("line overflow");
             let trimmed = strip_comment(raw_line).trim();
@@ -168,6 +234,13 @@ impl Manifest {
                         expected: "string",
                     })?;
                     registries.insert(key.to_string(), url.to_string());
+                }
+                Some("rust-bindings") => {
+                    if !is_valid_binding_name(&key) {
+                        return Err(ManifestError::BadBindingName(key.clone()));
+                    }
+                    let spec = parse_rust_binding_value(value, &key)?;
+                    rust_bindings.insert(key, spec);
                 }
                 Some(other) => {
                     return Err(ManifestError::Malformed {
@@ -219,7 +292,29 @@ impl Manifest {
             },
             dependencies: deps,
             registries,
+            rust_bindings,
         })
+    }
+
+    /// SHA-256 of the canonicalised `[rust-bindings]` set, with
+    /// path-deps resolved against `manifest_dir`. Used as the cache
+    /// key for the per-project runner.
+    #[must_use]
+    pub fn rust_binding_fingerprint(&self, manifest_dir: &std::path::Path) -> [u8; 32] {
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        for (name, spec) in &self.rust_bindings {
+            hasher.update(name.as_bytes());
+            hasher.update(b"\0");
+            for entry in canonical_binding_kv(spec, manifest_dir) {
+                hasher.update(entry.as_bytes());
+                hasher.update(b"\0");
+            }
+            hasher.update(b"\x1e");
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&hasher.finalize());
+        out
     }
 
     /// Renders the manifest back to canonical TOML.
@@ -257,8 +352,293 @@ impl Manifest {
                 out.push_str(&format!("\"{prefix}\" = \"{url}\"\n"));
             }
         }
+        if !self.rust_bindings.is_empty() {
+            out.push_str("\n[rust-bindings]\n");
+            for (name, spec) in &self.rust_bindings {
+                out.push_str(&format!("{name} = {}\n", render_rust_binding(spec)));
+            }
+        }
         out
     }
+}
+
+fn render_rust_binding(spec: &RustBindingSpec) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    match spec {
+        RustBindingSpec::Path {
+            version,
+            path,
+            features,
+            default_features,
+        } => {
+            if let Some(v) = version {
+                parts.push(format!("version = \"{}\"", v.minimum));
+            }
+            parts.push(format!("path = \"{path}\""));
+            push_features(&mut parts, features, *default_features);
+        }
+        RustBindingSpec::Git {
+            version,
+            url,
+            reference,
+            features,
+            default_features,
+        } => {
+            if let Some(v) = version {
+                parts.push(format!("version = \"{}\"", v.minimum));
+            }
+            parts.push(format!("git = \"{url}\""));
+            if let Some(r) = reference {
+                match r {
+                    GitRef::Branch(b) => parts.push(format!("branch = \"{b}\"")),
+                    GitRef::Tag(t) => parts.push(format!("tag = \"{t}\"")),
+                    GitRef::Rev(r) => parts.push(format!("rev = \"{r}\"")),
+                }
+            }
+            push_features(&mut parts, features, *default_features);
+        }
+        RustBindingSpec::Crates {
+            version,
+            features,
+            default_features,
+        } => {
+            parts.push(format!("version = \"{}\"", version.minimum));
+            push_features(&mut parts, features, *default_features);
+        }
+    }
+    format!("{{ {} }}", parts.join(", "))
+}
+
+fn push_features(parts: &mut Vec<String>, features: &[String], default_features: bool) {
+    if !features.is_empty() {
+        let listed: Vec<String> = features.iter().map(|f| format!("\"{f}\"")).collect();
+        parts.push(format!("features = [{}]", listed.join(", ")));
+    }
+    if !default_features {
+        parts.push("default-features = false".to_string());
+    }
+}
+
+fn canonical_binding_kv(spec: &RustBindingSpec, manifest_dir: &std::path::Path) -> Vec<String> {
+    let mut entries: Vec<String> = Vec::new();
+    match spec {
+        RustBindingSpec::Path {
+            version,
+            path,
+            features,
+            default_features,
+        } => {
+            entries.push("kind=path".to_string());
+            if let Some(v) = version {
+                entries.push(format!("version={}", v.minimum));
+            }
+            let resolved = resolve_path(manifest_dir, path);
+            entries.push(format!("path={}", resolved.display()));
+            push_canonical_features(&mut entries, features, *default_features);
+        }
+        RustBindingSpec::Git {
+            version,
+            url,
+            reference,
+            features,
+            default_features,
+        } => {
+            entries.push("kind=git".to_string());
+            if let Some(v) = version {
+                entries.push(format!("version={}", v.minimum));
+            }
+            entries.push(format!("url={url}"));
+            if let Some(r) = reference {
+                match r {
+                    GitRef::Branch(b) => entries.push(format!("branch={b}")),
+                    GitRef::Tag(t) => entries.push(format!("tag={t}")),
+                    GitRef::Rev(r) => entries.push(format!("rev={r}")),
+                }
+            }
+            push_canonical_features(&mut entries, features, *default_features);
+        }
+        RustBindingSpec::Crates {
+            version,
+            features,
+            default_features,
+        } => {
+            entries.push("kind=crates".to_string());
+            entries.push(format!("version={}", version.minimum));
+            push_canonical_features(&mut entries, features, *default_features);
+        }
+    }
+    entries.sort();
+    entries
+}
+
+fn push_canonical_features(out: &mut Vec<String>, features: &[String], default_features: bool) {
+    let mut sorted: Vec<String> = features.to_vec();
+    sorted.sort();
+    for f in sorted {
+        out.push(format!("feature={f}"));
+    }
+    out.push(format!("default-features={default_features}"));
+}
+
+fn resolve_path(base: &std::path::Path, raw: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(raw);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        base.join(p)
+    }
+}
+
+fn is_valid_binding_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, ManifestError> {
+    let trimmed = value.trim();
+    let Some(table) = trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+        return Err(ManifestError::WrongType {
+            field: format!("rust-bindings.{key}"),
+            expected: "inline table",
+        });
+    };
+    let mut version: Option<CaretRange> = None;
+    let mut path: Option<String> = None;
+    let mut git: Option<String> = None;
+    let mut branch: Option<String> = None;
+    let mut tag: Option<String> = None;
+    let mut rev: Option<String> = None;
+    let mut features: Vec<String> = Vec::new();
+    let mut default_features: bool = true;
+    for entry in split_top_level_commas(table) {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (k, v) = split_key_value(entry).ok_or_else(|| ManifestError::Malformed {
+            line_no: 0,
+            line: entry.to_string(),
+        })?;
+        match k.as_str() {
+            "version" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.version"),
+                    expected: "string",
+                })?;
+                version = Some(CaretRange::parse(s)?);
+            }
+            "path" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.path"),
+                    expected: "string",
+                })?;
+                path = Some(s.to_string());
+            }
+            "git" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.git"),
+                    expected: "string",
+                })?;
+                git = Some(s.to_string());
+            }
+            "branch" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.branch"),
+                    expected: "string",
+                })?;
+                branch = Some(s.to_string());
+            }
+            "tag" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.tag"),
+                    expected: "string",
+                })?;
+                tag = Some(s.to_string());
+            }
+            "rev" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.rev"),
+                    expected: "string",
+                })?;
+                rev = Some(s.to_string());
+            }
+            "features" => {
+                features = parse_string_array(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.features"),
+                    expected: "array of strings",
+                })?;
+            }
+            "default-features" | "default_features" => {
+                let s = v.trim();
+                default_features = match s {
+                    "true" => true,
+                    "false" => false,
+                    _ => {
+                        return Err(ManifestError::WrongType {
+                            field: format!("rust-bindings.{key}.default-features"),
+                            expected: "boolean",
+                        });
+                    }
+                };
+            }
+            other => {
+                return Err(ManifestError::Malformed {
+                    line_no: 0,
+                    line: format!("unknown rust-binding field {other}"),
+                });
+            }
+        }
+    }
+    let active = [path.is_some(), git.is_some()]
+        .iter()
+        .filter(|b| **b)
+        .count();
+    if active > 1 {
+        return Err(ManifestError::AmbiguousRustBinding(key.to_string()));
+    }
+    let git_ref_count = [branch.is_some(), tag.is_some(), rev.is_some()]
+        .iter()
+        .filter(|b| **b)
+        .count();
+    if git_ref_count > 1 {
+        return Err(ManifestError::AmbiguousGitRef(key.to_string()));
+    }
+    if let Some(path) = path {
+        return Ok(RustBindingSpec::Path {
+            version,
+            path,
+            features,
+            default_features,
+        });
+    }
+    if let Some(url) = git {
+        let reference = if let Some(b) = branch {
+            Some(GitRef::Branch(b))
+        } else if let Some(t) = tag {
+            Some(GitRef::Tag(t))
+        } else {
+            rev.map(GitRef::Rev)
+        };
+        return Ok(RustBindingSpec::Git {
+            version,
+            url,
+            reference,
+            features,
+            default_features,
+        });
+    }
+    let version = version.ok_or_else(|| ManifestError::MissingBindingVersion(key.to_string()))?;
+    Ok(RustBindingSpec::Crates {
+        version,
+        features,
+        default_features,
+    })
 }
 
 #[derive(Debug, Default)]

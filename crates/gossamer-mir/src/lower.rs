@@ -1795,6 +1795,198 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// Lowers a call into a Rust binding declared under
+    /// `[rust-bindings]`. The MIR side emits a single
+    /// `Terminator::Call` whose callee is the mangled C-ABI symbol
+    /// produced by the `register_module!` macro
+    /// (`gos_binding_<sym>__<name>`). The cranelift / LLVM tier
+    /// derives the call's C-ABI signature from the MIR types of the
+    /// arguments and destination.
+    fn lower_external_binding_call(
+        &mut self,
+        callee: &HirExpr,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return None;
+        };
+        if segments.is_empty() {
+            return None;
+        }
+        let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        let (module_path, item_name, item) = self.resolve_external_binding(&names, args.len())?;
+
+        let mangled_module = module_path.replace("::", "__");
+        let mangled = format!("gos_binding_{mangled_module}__{item_name}");
+
+        let ret_ty = self.binding_type_to_mir(&item.ret);
+        let mut arg_locals: Vec<Local> = Vec::with_capacity(args.len());
+        for (idx, arg) in args.iter().enumerate() {
+            let raw = self.lower_expr(arg)?;
+            let param_ty = item.params.get(idx);
+            let coerced = self.coerce_arg_for_binding(raw, param_ty, span);
+            arg_locals.push(coerced);
+        }
+        let dest = self.fresh(ret_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(mangled)),
+            args: arg_locals
+                .into_iter()
+                .map(|l| Operand::Copy(Place::local(l)))
+                .collect(),
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Wraps a fixed-size array in a heap `GosVec` when the
+    /// binding parameter expects `Vec<T>` but the call site
+    /// supplied a `[T; N]` literal.
+    fn coerce_arg_for_binding(
+        &mut self,
+        raw: Local,
+        param_ty: Option<&gossamer_resolve::BindingType>,
+        span: Span,
+    ) -> Local {
+        use gossamer_resolve::BindingType as B;
+        use gossamer_types::TyKind;
+        let Some(B::Vec(_)) = param_ty else {
+            return raw;
+        };
+        let raw_ty = self.locals[raw.0 as usize].ty;
+        let TyKind::Array { elem, len } = self.tcx.kind_of(raw_ty) else {
+            return raw;
+        };
+        let elem_ty = *elem;
+        let len_val = *len;
+        let elem_bytes = self.elem_bytes_of(elem_ty);
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let elem_bytes_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(elem_bytes_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(elem_bytes)))),
+            span,
+        );
+        let len_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(len_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(len_val as i128))),
+            span,
+        );
+        let vec_local = self.fresh(i64_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_from_arr".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(elem_bytes_local)),
+                Operand::Copy(Place::local(raw)),
+                Operand::Copy(Place::local(len_local)),
+            ],
+            destination: Place::local(vec_local),
+            target: Some(next),
+        });
+        self.set_current(next);
+        vec_local
+    }
+
+    fn elem_bytes_of(&self, ty: Ty) -> u32 {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Bool => 1,
+            TyKind::Char => 4,
+            TyKind::Int(_) | TyKind::Float(_) => 8,
+            TyKind::String => 8,
+            // Default to pointer-sized for compound types.
+            _ => 8,
+        }
+    }
+
+    /// Resolves a Gossamer-source path to a binding item via the
+    /// resolver's external-modules table. Three forms are
+    /// supported:
+    ///
+    /// - Fully-qualified: `tuigoose::layout::rect`. Looked up by
+    ///   joining segments with `::` and consulting
+    ///   `lookup_external_item` directly.
+    /// - Module-prefixed leaf: `echo::shout` after the module is
+    ///   imported via `use echo`. Same as fully-qualified —
+    ///   matches an `ExternalModule` whose path ends in `echo`.
+    /// - Bare leaf: `shout(...)` after `use echo::shout`. Walks
+    ///   every external module looking for an item whose `name`
+    ///   matches the leaf and whose param count matches `argc`.
+    ///   Returns `None` when ambiguous (more than one arity match)
+    ///   so the surrounding dispatch can keep trying.
+    fn resolve_external_binding(
+        &self,
+        names: &[&str],
+        argc: usize,
+    ) -> Option<(String, String, gossamer_resolve::ExternalItem)> {
+        if names.len() >= 2 {
+            let qualified = names.join("::");
+            if let Some(item) = gossamer_resolve::lookup_external_item(&qualified) {
+                let (module_path, item_name) = qualified.rsplit_once("::")?;
+                return Some((module_path.to_string(), item_name.to_string(), item));
+            }
+            // Module-prefixed lookup: try the leaf segment against
+            // every module whose path ends in the leading segment.
+            // E.g. `echo::shout` matches the `echo` module.
+            let leading = names[0];
+            let leaf = *names.last()?;
+            for m in gossamer_resolve::all_external_modules() {
+                let path_segs: Vec<&str> = m.path.split("::").collect();
+                if path_segs.last().copied() == Some(leading)
+                    && let Some(item) = m.items.iter().find(|i| i.name == leaf)
+                {
+                    return Some((m.path.clone(), item.name.clone(), item.clone()));
+                }
+            }
+            return None;
+        }
+        // Bare-leaf lookup: walk every module's items looking for
+        // the unique candidate matching arity.
+        let leaf = names[0];
+        let mut matches: Vec<(String, gossamer_resolve::ExternalItem)> = Vec::new();
+        for m in gossamer_resolve::all_external_modules() {
+            for item in &m.items {
+                if item.name == leaf && item.params.len() == argc {
+                    matches.push((m.path.clone(), item.clone()));
+                }
+            }
+        }
+        if matches.len() == 1 {
+            let (module_path, item) = matches.pop()?;
+            return Some((module_path, item.name.clone(), item));
+        }
+        None
+    }
+
+    fn binding_type_to_mir(&mut self, t: &gossamer_resolve::BindingType) -> Ty {
+        use gossamer_resolve::BindingType as B;
+        use gossamer_types::TyKind;
+        match t {
+            B::Unit => self.tcx.unit(),
+            B::Bool => self.tcx.bool_ty(),
+            B::I64 => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            B::F64 => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            B::Char => self.tcx.char_ty(),
+            B::String => self.tcx.string_ty(),
+            B::Vec(inner) => {
+                let inner_ty = self.binding_type_to_mir(inner);
+                self.tcx.intern(TyKind::Vec(inner_ty))
+            }
+            // Option / Result map to the runtime's tagged-union
+            // pointer; the codegen treats them as ptr-sized.
+            B::Option(_) | B::Result(_, _) => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            // Tuple / Opaque / Any all flow through as ptr-sized
+            // values (handles or untyped passthroughs).
+            B::Tuple(_) | B::Opaque(_) | B::Any => self.tcx.int_ty(gossamer_types::IntTy::I64),
+        }
+    }
+
     fn lower_json_free_call(
         &mut self,
         callee: &HirExpr,
@@ -2188,16 +2380,14 @@ impl<'a> Builder<'a> {
         match &stmt.kind {
             HirStmtKind::Let { pattern, ty, init } => {
                 let local = self.push_local(*ty, param_name(pattern), param_mutable(pattern));
-                if let HirPatKind::Binding { name, .. } = &pattern.kind {
-                    self.bind_local(&name.name, local);
-                }
-                // `let mut xs: [T] = [a, b, c]` (or `let xs: Vec<T>
-                // = [a, b, c]`): allocate a heap-backed Vec and
-                // push each element so subsequent `xs.push(...)` /
-                // `xs.len()` lands on a real Vec layout instead of
-                // the fixed-size stack array the literal would
-                // otherwise produce. Only fires when the binding
-                // wears an explicit Slice/Vec annotation.
+                // NOTE: do NOT bind the name yet. `let x = expr`
+                // must evaluate `expr` in the *outer* scope so a
+                // shadowing form like `let x = x + 1` reads the
+                // previous binding. We `bind_local` only after
+                // `lower_expr(init)` has resolved every name.
+                // `lower_let_array_as_vec` (the Vec annotation
+                // shortcut) below also defers the bind to its own
+                // post-init point.
                 {
                     use gossamer_types::TyKind;
                     let binding_wants_vec =
@@ -2208,6 +2398,9 @@ impl<'a> Builder<'a> {
                                 &init_expr.kind
                             {
                                 if self.lower_let_array_as_vec(local, elems, stmt.span) {
+                                    if let HirPatKind::Binding { name, .. } = &pattern.kind {
+                                        self.bind_local(&name.name, local);
+                                    }
                                     return;
                                 }
                             }
@@ -2365,6 +2558,13 @@ impl<'a> Builder<'a> {
                             self.bind_tuple_pattern(local, sub_patterns, stmt.span);
                         }
                     }
+                }
+                // Bind the user-name AFTER the init has been
+                // lowered, so a shadowing form like
+                // `let x = x + 1` reads the previous `x` while
+                // evaluating the RHS.
+                if let HirPatKind::Binding { name, .. } = &pattern.kind {
+                    self.bind_local(&name.name, local);
                 }
             }
             HirStmtKind::Expr { expr, .. } => {
@@ -3312,6 +3512,13 @@ impl<'a> Builder<'a> {
         // `json::parse(...)` or the fully-qualified
         // `std::encoding::json::parse(...)` form.
         if let Some(local) = self.lower_json_free_call(callee, args, span) {
+            return Some(local);
+        }
+        // External Rust binding (`tuigoose::layout::rect`, etc.).
+        // Resolves through `gossamer_resolve::external` populated
+        // either by the runner's `install_all` or the build-time
+        // `ensure_signatures` pass.
+        if let Some(local) = self.lower_external_binding_call(callee, args, span) {
             return Some(local);
         }
         // Same for the rest of the stdlib that maps cleanly to
@@ -7288,6 +7495,21 @@ impl<'a> Builder<'a> {
                                     }
                                 };
                                 for_vec_elem = Some(elem);
+                            }
+                        }
+                    }
+                }
+                if for_vec_elem.is_none() {
+                    if let HirExprKind::Call { callee, args } = &for_loop.iter_expr.kind {
+                        if let HirExprKind::Path { segments, .. } = &callee.kind {
+                            let names: Vec<&str> =
+                                segments.iter().map(|s| s.name.as_str()).collect();
+                            if let Some((_, _, item)) =
+                                self.resolve_external_binding(&names, args.len())
+                            {
+                                if let gossamer_resolve::BindingType::Vec(inner) = &item.ret {
+                                    for_vec_elem = Some(self.binding_type_to_mir(inner));
+                                }
                             }
                         }
                     }

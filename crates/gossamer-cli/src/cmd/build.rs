@@ -24,15 +24,66 @@ use crate::paths::{default_main_entry, default_unit_name, read_source, resolve_o
 
 /// `gos build` dispatcher: walks the project root for a default
 /// entry point when no path is supplied.
-pub(crate) fn dispatch(path: Option<PathBuf>, target: Option<&str>, release: bool) -> Result<()> {
+pub(crate) fn dispatch(
+    path: Option<PathBuf>,
+    target: Option<&str>,
+    release: bool,
+    debug_info: bool,
+    dynamic: bool,
+) -> Result<()> {
+    if let Err(err) = crate::binding_dispatch::ensure_external_signatures() {
+        eprintln!("warning: failed to load rust-binding signatures: {err}");
+    }
     let resolved = match path {
         Some(p) => p,
         None => default_main_entry()?,
     };
-    run(&resolved, target, release)
+    run(&resolved, target, release, debug_info, dynamic)
 }
 
-fn run(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> {
+/// Per-build link options assembled at the dispatch boundary and
+/// passed through `try_native_build` → `link_posix` /
+/// `link_windows_msvc`. Centralising these here keeps the
+/// link-strategy decision in one place.
+#[derive(Debug, Clone, Copy)]
+struct LinkOptions {
+    /// True for `gos build --release` (LLVM `-O3`); drives static
+    /// linking, strip, gc-sections.
+    release: bool,
+    /// True when the user passed `-g`. Suppresses strip; everything
+    /// else stays the same.
+    debug_info: bool,
+    /// True when the user passed `--dynamic`. Forces the legacy
+    /// dynamic-glibc link path even on Linux release builds.
+    dynamic: bool,
+}
+
+impl LinkOptions {
+    /// On Linux release builds, prefer the static-musl link when
+    /// the rustup target is installed and the user did not opt out.
+    fn want_static_musl(self) -> bool {
+        self.release && !self.dynamic && cfg!(target_os = "linux") && MUSL_RUNTIME_LIB.is_some()
+    }
+
+    /// Whether to pass `-Wl,--strip-all` to the linker. Stripping
+    /// only kicks in for release builds without `-g`.
+    fn want_strip(self) -> bool {
+        self.release && !self.debug_info
+    }
+}
+
+/// Compile-time path to the musl runtime archive, or `None` when
+/// the rustup `x86_64-unknown-linux-musl` target wasn't installed
+/// at cli build time. Populated by `gossamer-cli/build.rs`.
+const MUSL_RUNTIME_LIB: Option<&str> = option_env!("GOSSAMER_RUNTIME_LIB_PATH_MUSL");
+
+fn run(
+    file: &PathBuf,
+    target: Option<&str>,
+    release: bool,
+    debug_info: bool,
+    dynamic: bool,
+) -> Result<()> {
     let source = read_source(file)?;
 
     // Validate source before attempting any codegen.  A broken AST or
@@ -105,7 +156,12 @@ fn run(file: &PathBuf, target: Option<&str>, release: bool) -> Result<()> {
             return Ok(());
         }
     }
-    let outcome = try_native_build(&source, &unit_name, file, &out_path, release)
+    let opts = LinkOptions {
+        release,
+        debug_info,
+        dynamic,
+    };
+    let outcome = try_native_build(&source, &unit_name, file, &out_path, opts)
         .map_err(|err| anyhow!("build: {}", err.user_message()))?;
     println!(
         "build: {bytes}B native executable at {path} ({note})",
@@ -204,45 +260,152 @@ fn try_native_build(
     unit_name: &str,
     input_path: &PathBuf,
     out_path: &PathBuf,
-    release: bool,
+    opts: LinkOptions,
 ) -> std::result::Result<NativeBuildOutcome, NativeBuildError> {
     let tmp_dir =
         std::env::temp_dir().join(format!("gos-build-{}-{}", std::process::id(), unit_name));
     fs::create_dir_all(&tmp_dir)
         .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", tmp_dir.display())))?;
-    let (object_paths, object_triple) = emit_native_objects(source, unit_name, &tmp_dir, release)?;
-    let runtime_lib = find_runtime_lib()?;
-    let link_result = if cfg!(all(windows, target_env = "msvc")) {
-        link_windows_msvc(&object_paths, &runtime_lib, out_path)
+    let (object_paths, object_triple) =
+        emit_native_objects(source, unit_name, &tmp_dir, opts.release)?;
+    let runtime_lib = if opts.want_static_musl() {
+        // The musl runtime archive lives at a baked path emitted by
+        // `gossamer-cli/build.rs`. If `option_env!` resolved at cli
+        // build time but the file has since been deleted, fall back
+        // to the dynamic-glibc path so the build still produces a
+        // working (just-not-portable) binary.
+        let p = PathBuf::from(MUSL_RUNTIME_LIB.unwrap());
+        if p.exists() { p } else { find_runtime_lib()? }
     } else {
-        link_posix(&object_paths, &runtime_lib, out_path)
+        find_runtime_lib()?
+    };
+    let bindings_archive = build_static_bindings_lib(opts.release).map_err(|err| {
+        NativeBuildError::LinkerMissing(format!("rust-bindings staticlib: {err}"))
+    })?;
+    let mut extra_archives: Vec<PathBuf> = Vec::new();
+    if let Some(p) = bindings_archive {
+        extra_archives.push(p);
+    }
+    let link_result = if cfg!(all(windows, target_env = "msvc")) {
+        link_windows_msvc(&object_paths, &runtime_lib, &extra_archives, out_path)
+    } else {
+        link_posix(&object_paths, &runtime_lib, &extra_archives, out_path, opts)
     };
     let _ = fs::remove_dir_all(&tmp_dir);
     let _ = input_path;
     link_result.map(|()| NativeBuildOutcome {
         size: fs::metadata(out_path).map_or(0, |m| m.len()),
         note: format!(
-            "target {triple}",
+            "target {triple}{tag}",
             triple = object_triple.as_deref().unwrap_or("unknown"),
+            tag = if opts.want_static_musl() {
+                ", static-musl"
+            } else {
+                ""
+            },
         ),
     })
 }
 
-/// POSIX/macOS link path — drives the host `cc` (or `$CC`).
+/// Builds the per-project `libgos_static_bindings.a` if the
+/// project declares `[rust-bindings]`. Returns the archive path
+/// or `None` when bindings are absent.
+fn build_static_bindings_lib(
+    release: bool,
+) -> std::result::Result<Option<PathBuf>, gossamer_driver::binding_runner::BindingRunnerError> {
+    use gossamer_driver::binding_runner::{Profile as RunnerProfile, StaticBindingsLib};
+    use gossamer_pkg::{Manifest, find_manifest};
+
+    let Ok(cwd) = std::env::current_dir() else {
+        return Ok(None);
+    };
+    let Some(manifest_path) = find_manifest(&cwd) else {
+        return Ok(None);
+    };
+    let Ok(manifest_text) = fs::read_to_string(&manifest_path) else {
+        return Ok(None);
+    };
+    let Ok(manifest) = Manifest::parse(&manifest_text) else {
+        return Ok(None);
+    };
+    if manifest.rust_bindings.is_empty() {
+        return Ok(None);
+    }
+    let manifest_dir = manifest_path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let Some(gossamer_root) = crate::binding_dispatch::locate_gossamer_root() else {
+        return Ok(None);
+    };
+    let profile = if release {
+        RunnerProfile::Release
+    } else {
+        RunnerProfile::Debug
+    };
+    let Some(lib) =
+        StaticBindingsLib::from_manifest(&manifest, &manifest_dir, &gossamer_root, profile)
+            .map_err(gossamer_driver::binding_runner::BindingRunnerError::Io)?
+    else {
+        return Ok(None);
+    };
+    let archive = lib.ensure_built()?;
+    Ok(Some(archive))
+}
+
+/// POSIX/macOS link path. On Linux release builds with the rustup
+/// musl target installed and `--dynamic` not set, this routes through
+/// `link_posix_static_musl` to produce a fully static binary.
+/// Otherwise drives the host `cc` (or `$CC`) for a dynamic-glibc
+/// link. macOS always takes the dynamic path (libSystem can't be
+/// statically linked, by Apple policy).
 fn link_posix(
     object_paths: &[PathBuf],
     runtime_lib: &Path,
+    extra_archives: &[PathBuf],
     out_path: &Path,
+    opts: LinkOptions,
 ) -> std::result::Result<(), NativeBuildError> {
+    if opts.want_static_musl() {
+        return link_posix_static_musl(object_paths, runtime_lib, extra_archives, out_path, opts);
+    }
+
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let mut cmd = std::process::Command::new(&cc);
     for p in object_paths {
         cmd.arg(p);
     }
-    cmd.arg(runtime_lib).arg("-o").arg(out_path);
+    cmd.arg(runtime_lib);
+    for archive in extra_archives {
+        cmd.arg(archive);
+    }
+    cmd.arg("-o").arg(out_path);
     cmd.arg("-lpthread").arg("-ldl").arg("-lm");
+    if !extra_archives.is_empty() {
+        // The rust-bindings staticlib pulls in `gossamer-runtime`
+        // as a transitive Cargo dep, which produces a second copy
+        // of every `gos_rt_*` symbol alongside `libgossamer_runtime.a`.
+        // Both copies come from the same source tree and are
+        // functionally identical, so let the linker keep the first
+        // definition rather than failing the link.
+        cmd.arg("-Wl,--allow-multiple-definition");
+    }
+    if opts.want_strip() {
+        // macOS's ld doesn't recognise `--strip-all`; use the
+        // dead-strip + post-link `strip` invocation instead.
+        if cfg!(target_os = "macos") {
+            cmd.arg("-Wl,-dead_strip");
+        } else {
+            cmd.arg("-Wl,--strip-all").arg("-Wl,--gc-sections");
+        }
+    }
     match cmd.status() {
         Ok(s) if s.success() => {
+            if opts.want_strip() && cfg!(target_os = "macos") {
+                let _ = std::process::Command::new("strip")
+                    .arg("-x")
+                    .arg(out_path)
+                    .status();
+            }
             set_executable(out_path).map_err(NativeBuildError::Io)?;
             Ok(())
         }
@@ -251,6 +414,107 @@ fn link_posix(
         ))),
         Err(err) => Err(NativeBuildError::LinkerMissing(format!("{cc}: {err}"))),
     }
+}
+
+/// Linux static-musl link path — invokes the rustup-shipped `ld.lld`
+/// against rustup's self-contained musl CRT/libc/libunwind. Produces
+/// a statically-linked ELF that runs on any `x86_64` Linux host
+/// regardless of glibc/musl install or version. The cli's build
+/// script (`gossamer-cli/build.rs`) builds the runtime against
+/// `x86_64-unknown-linux-musl` and bakes the archive path into
+/// `MUSL_RUNTIME_LIB` at compile time; here we invoke the linker
+/// directly so we don't need `cc` to know about musl.
+fn link_posix_static_musl(
+    object_paths: &[PathBuf],
+    runtime_lib: &Path,
+    extra_archives: &[PathBuf],
+    out_path: &Path,
+    opts: LinkOptions,
+) -> std::result::Result<(), NativeBuildError> {
+    let sysroot = rustc_sysroot()?;
+    let self_contained = sysroot
+        .join("lib")
+        .join("rustlib")
+        .join("x86_64-unknown-linux-musl")
+        .join("lib")
+        .join("self-contained");
+    if !self_contained.exists() {
+        return Err(NativeBuildError::LinkerMissing(format!(
+            "musl self-contained dir not found: {}; \
+             try `rustup target add x86_64-unknown-linux-musl` \
+             or pass `--dynamic` to `gos build --release`",
+            self_contained.display(),
+        )));
+    }
+    let linker = sysroot
+        .join("lib")
+        .join("rustlib")
+        .join("x86_64-unknown-linux-gnu")
+        .join("bin")
+        .join("gcc-ld")
+        .join("ld.lld");
+    if !linker.exists() {
+        return Err(NativeBuildError::LinkerMissing(format!(
+            "ld.lld not found at {}",
+            linker.display(),
+        )));
+    }
+
+    let mut cmd = std::process::Command::new(&linker);
+    cmd.arg("--static")
+        .arg("-o")
+        .arg(out_path)
+        .arg(self_contained.join("crt1.o"))
+        .arg(self_contained.join("crti.o"));
+    for p in object_paths {
+        cmd.arg(p);
+    }
+    cmd.arg(runtime_lib);
+    for archive in extra_archives {
+        cmd.arg(archive);
+    }
+    cmd.arg(self_contained.join("libc.a"))
+        .arg(self_contained.join("libunwind.a"))
+        .arg(self_contained.join("crtn.o"));
+    if !extra_archives.is_empty() {
+        cmd.arg("--allow-multiple-definition");
+    }
+    cmd.arg("--gc-sections");
+    if opts.want_strip() {
+        cmd.arg("--strip-all");
+    }
+    match cmd.status() {
+        Ok(s) if s.success() => {
+            set_executable(out_path).map_err(NativeBuildError::Io)?;
+            Ok(())
+        }
+        Ok(s) => Err(NativeBuildError::LinkerFailed(format!(
+            "{} exited with {s}",
+            linker.display()
+        ))),
+        Err(err) => Err(NativeBuildError::LinkerMissing(format!(
+            "{}: {err}",
+            linker.display()
+        ))),
+    }
+}
+
+/// Resolves `rustc --print sysroot` once per process, as a `PathBuf`.
+fn rustc_sysroot() -> std::result::Result<PathBuf, NativeBuildError> {
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let out = std::process::Command::new(&rustc)
+        .args(["--print", "sysroot"])
+        .output()
+        .map_err(|err| NativeBuildError::LinkerMissing(format!("rustc --print sysroot: {err}")))?;
+    if !out.status.success() {
+        return Err(NativeBuildError::LinkerMissing(format!(
+            "rustc --print sysroot exited with {}",
+            out.status
+        )));
+    }
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&out.stdout).trim().to_string(),
+    ))
 }
 
 /// Windows MSVC link path — invokes `rust-lld -flavor link` with
@@ -263,6 +527,7 @@ fn link_posix(
 fn link_windows_msvc(
     object_paths: &[PathBuf],
     runtime_lib: &Path,
+    extra_archives: &[PathBuf],
     out_path: &Path,
 ) -> std::result::Result<(), NativeBuildError> {
     let linker = locate_rust_lld()?;
@@ -275,6 +540,9 @@ fn link_windows_msvc(
         cmd.arg(p);
     }
     cmd.arg(runtime_lib);
+    for archive in extra_archives {
+        cmd.arg(archive);
+    }
     for lib in [
         "advapi32.lib",
         "bcrypt.lib",
@@ -308,6 +576,7 @@ fn link_windows_msvc(
 fn link_windows_msvc(
     _object_paths: &[PathBuf],
     _runtime_lib: &Path,
+    _extra_archives: &[PathBuf],
     _out_path: &Path,
 ) -> std::result::Result<(), NativeBuildError> {
     Err(NativeBuildError::LinkerMissing(

@@ -191,6 +191,16 @@ macro_rules! __rm_munch {
             #[linkme(crate = $crate::linkme)]
             #[allow(non_upper_case_globals)]
             static REGISTERED: &'static $crate::Module = &MODULE;
+
+            /// Emits a hard reference to `MODULE` so the linker
+            /// keeps the [`linkme`] entry alive across LTO. Every
+            /// binding crate must expose `pub fn
+            /// __bindings_force_link()` at its crate root that
+            /// chains into this; see
+            /// [`crate::register_module!`] for the convention.
+            pub fn force_link() {
+                let _: &'static $crate::Module = &MODULE;
+            }
         }
     };
 

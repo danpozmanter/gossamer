@@ -1198,6 +1198,14 @@ enum PrintKind {
     /// `Vec<i64>` (or any 8-byte-elem Vec): formatted at runtime
     /// via `gos_rt_vec_format_i64` into a `[v0, v1, …]` string.
     VecI64,
+    /// `Vec<f64>` formatted via `gos_rt_vec_format_f64`.
+    VecF64,
+    /// `Vec<bool>` formatted via `gos_rt_vec_format_bool`.
+    VecBool,
+    /// `Vec<String>` formatted via `gos_rt_vec_format_string`.
+    VecString,
+    /// `Vec<Vec<i64>>` formatted via `gos_rt_vec_format_vec_i64`.
+    VecVecI64,
     Unsupported(&'static str),
 }
 
@@ -1270,10 +1278,24 @@ fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -> PrintKind
                 TyKind::Array { .. } => PrintKind::Unsupported("array"),
                 TyKind::Slice(elem) => match tcx.kind_of(*elem) {
                     TyKind::Int(_) => PrintKind::VecI64,
+                    TyKind::Float(_) => PrintKind::VecF64,
+                    TyKind::Bool => PrintKind::VecBool,
+                    TyKind::String => PrintKind::VecString,
+                    TyKind::Vec(inner) => match tcx.kind_of(*inner) {
+                        TyKind::Int(_) => PrintKind::VecVecI64,
+                        _ => PrintKind::Unsupported("nested slice"),
+                    },
                     _ => PrintKind::Unsupported("slice"),
                 },
                 TyKind::Vec(elem) => match tcx.kind_of(*elem) {
                     TyKind::Int(_) => PrintKind::VecI64,
+                    TyKind::Float(_) => PrintKind::VecF64,
+                    TyKind::Bool => PrintKind::VecBool,
+                    TyKind::String => PrintKind::VecString,
+                    TyKind::Vec(inner) => match tcx.kind_of(*inner) {
+                        TyKind::Int(_) => PrintKind::VecVecI64,
+                        _ => PrintKind::Unsupported("nested Vec"),
+                    },
                     _ => PrintKind::Unsupported("Vec"),
                 },
                 TyKind::HashMap { .. } => PrintKind::Unsupported("HashMap"),
@@ -2409,18 +2431,67 @@ fn emit_per_arg_print(
                 let fref = module.declare_func_in_func(print_char, builder.func);
                 builder.ins().call(fref, &[c]);
             }
-            PrintKind::VecI64 => {
-                let f =
-                    intrinsics.extern_fn(module, "gos_rt_vec_format_i64", &[ptr_ty], &[ptr_ty])?;
-                let fref = module.declare_func_in_func(f, builder.func);
-                let call = builder.ins().call(fref, &[value]);
-                let s = builder.inst_results(call)[0];
-                let pref = module.declare_func_in_func(print_str, builder.func);
-                builder.ins().call(pref, &[s]);
-            }
+            PrintKind::VecI64 => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_i64",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::VecF64 => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_f64",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::VecBool => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_bool",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::VecString => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_string",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::VecVecI64 => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_vec_i64",
+                value,
+                print_str,
+                intrinsics,
+            )?,
             PrintKind::Unsupported(_) => unreachable!("checked above"),
         }
     }
+    Ok(())
+}
+
+fn emit_vec_print(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    helper_name: &'static str,
+    value: ir::Value,
+    print_str: cranelift_module::FuncId,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<()> {
+    let ptr_ty = module.target_config().pointer_type();
+    let f = intrinsics.extern_fn(module, helper_name, &[ptr_ty], &[ptr_ty])?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let call = builder.ins().call(fref, &[value]);
+    let s = builder.inst_results(call)[0];
+    let pref = module.declare_func_in_func(print_str, builder.func);
+    builder.ins().call(pref, &[s]);
     Ok(())
 }
 
@@ -2529,7 +2600,12 @@ fn emit_args_to_concat_string(
                 let call = builder.ins().call(fref, &[c]);
                 builder.inst_results(call)[0]
             }
-            PrintKind::VecI64 | PrintKind::Unsupported(_) => unreachable!("handled by caller"),
+            PrintKind::VecI64
+            | PrintKind::VecF64
+            | PrintKind::VecBool
+            | PrintKind::VecString
+            | PrintKind::VecVecI64
+            | PrintKind::Unsupported(_) => unreachable!("handled by caller"),
         };
         Ok(ptr)
     }
@@ -2837,6 +2913,115 @@ fn lower_generic_rt_call(
     Ok(())
 }
 
+/// Lowers a call into a Rust binding declared under
+/// `[rust-bindings]`. The MIR side picks the mangled symbol
+/// (`gos_binding_<sym>__<name>`) emitted by the
+/// `register_module!` macro; we derive the call's C-ABI
+/// signature from the MIR types of the args + destination.
+///
+/// Type mapping mirrors `gossamer_binding::native::BindingAbi`:
+///
+/// | MIR type        | C-ABI shape         | cranelift type |
+/// |-----------------|---------------------|----------------|
+/// | `bool`          | `bool` (1-byte)     | `I8`           |
+/// | `i64` / signed  | `int64_t`           | `I64`          |
+/// | `f64`           | `double`            | `F64`          |
+/// | `char`          | `uint32_t`          | `I32`          |
+/// | `String`        | `*const c_char`     | `ptr_ty`       |
+/// | `Vec<T>`        | `*mut GosVec`       | `ptr_ty`       |
+/// | other (handle / | ptr-sized opaque    | `ptr_ty`       |
+/// | option / result)|                     |                |
+#[allow(clippy::too_many_arguments)]
+fn lower_external_binding_call(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    body: &Body,
+    tcx: &TyCtxt,
+    args: &[Operand],
+    intrinsics: &mut IntrinsicContext,
+    destination: &gossamer_mir::Place,
+    name: &str,
+) -> Result<()> {
+    let ptr_ty = module.target_config().pointer_type();
+
+    let dest_ty = body.local_ty(destination.local);
+    let dest_cl_ty = mir_ty_to_cabi(tcx, dest_ty, ptr_ty);
+
+    let mut params: Vec<ir::Type> = Vec::with_capacity(args.len());
+    for arg in args {
+        let ty = operand_cabi_ty(arg, body, tcx, ptr_ty);
+        params.push(ty);
+    }
+
+    let returns: Vec<ir::Type> = match dest_cl_ty {
+        Some(t) => vec![t],
+        None => Vec::new(),
+    };
+    let static_name: &'static str = Box::leak(name.to_string().into_boxed_str());
+    let extern_fn = intrinsics.extern_fn(module, static_name, &params, &returns)?;
+    let fref = module.declare_func_in_func(extern_fn, builder.func);
+
+    let mut arg_values: Vec<ir::Value> = Vec::with_capacity(args.len());
+    for (arg, &param_ty) in args.iter().zip(params.iter()) {
+        let v = lower_operand(
+            module,
+            builder,
+            locals,
+            body,
+            tcx,
+            arg,
+            Some(param_ty),
+            intrinsics,
+        )?;
+        let coerced = coerce_arg_to(builder, v, param_ty)?;
+        arg_values.push(coerced);
+    }
+
+    let call = builder.ins().call(fref, &arg_values);
+    if dest_cl_ty.is_some() {
+        let v = builder.inst_results(call)[0];
+        define_var_to(builder, locals, body, tcx, module, destination.local, v);
+    } else {
+        let zero = builder.ins().iconst(types::I64, 0);
+        define_var_to(builder, locals, body, tcx, module, destination.local, zero);
+    }
+    Ok(())
+}
+
+fn operand_cabi_ty(operand: &Operand, body: &Body, tcx: &TyCtxt, ptr_ty: ir::Type) -> ir::Type {
+    match operand {
+        Operand::Copy(place) => {
+            mir_ty_to_cabi(tcx, body.local_ty(place.local), ptr_ty).unwrap_or(types::I64)
+        }
+        Operand::Const(value) => match value {
+            ConstValue::Bool(_) => types::I8,
+            ConstValue::Float(_) => types::F64,
+            ConstValue::Char(_) => types::I32,
+            ConstValue::Str(_) => ptr_ty,
+            _ => types::I64,
+        },
+        Operand::FnRef { .. } => ptr_ty,
+    }
+}
+
+fn mir_ty_to_cabi(tcx: &TyCtxt, ty: gossamer_types::Ty, ptr_ty: ir::Type) -> Option<ir::Type> {
+    use gossamer_types::TyKind;
+    match tcx.kind_of(ty) {
+        TyKind::Unit => None,
+        TyKind::Tuple(parts) if parts.is_empty() => None,
+        TyKind::Bool => Some(types::I8),
+        TyKind::Char => Some(types::I32),
+        TyKind::Float(_) => Some(types::F64),
+        TyKind::Int(_) => Some(types::I64),
+        TyKind::String => Some(ptr_ty),
+        TyKind::Vec(_) => Some(ptr_ty),
+        // Option / Result / Adt / Tuple / FnDef / handles all flow
+        // through as pointer-sized values at the C-ABI boundary.
+        _ => Some(ptr_ty),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn lower_intrinsic_outcome(
     name: &str,
@@ -2975,13 +3160,21 @@ fn lower_intrinsic_call(
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[c]);
                     }
-                    PrintKind::VecI64 => {
-                        let format_fn = intrinsics.extern_fn(
-                            module,
-                            "gos_rt_vec_format_i64",
-                            &[ptr_ty],
-                            &[ptr_ty],
-                        )?;
+                    PrintKind::VecI64
+                    | PrintKind::VecF64
+                    | PrintKind::VecBool
+                    | PrintKind::VecString
+                    | PrintKind::VecVecI64 => {
+                        let helper = match kind {
+                            PrintKind::VecI64 => "gos_rt_vec_format_i64",
+                            PrintKind::VecF64 => "gos_rt_vec_format_f64",
+                            PrintKind::VecBool => "gos_rt_vec_format_bool",
+                            PrintKind::VecString => "gos_rt_vec_format_string",
+                            PrintKind::VecVecI64 => "gos_rt_vec_format_vec_i64",
+                            _ => unreachable!(),
+                        };
+                        let format_fn =
+                            intrinsics.extern_fn(module, helper, &[ptr_ty], &[ptr_ty])?;
                         let format_ref = module.declare_func_in_func(format_fn, builder.func);
                         let call = builder.ins().call(format_ref, &[value]);
                         let s = builder.inst_results(call)[0];
@@ -4332,6 +4525,66 @@ fn lower_intrinsic_call(
             };
             let cap64 = coerce_arg_to(builder, cap, types::I64)?;
             let call = builder.ins().call(fref, &[eb, cap64]);
+            let ptr = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            Ok(true)
+        }
+        "gos_rt_vec_from_arr" => {
+            // Wraps a fixed-size array `[T; N]` in a heap GosVec.
+            // Args: (elem_bytes: i64 -> coerced to u32, data: ptr,
+            // len: i64). The MIR side emits this at the binding-
+            // call boundary when a Vec<T> param meets a [T; N]
+            // arg.
+            let new_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_vec_from_arr",
+                &[types::I32, ptr_ty, types::I64],
+                &[ptr_ty],
+            )?;
+            let fref = module.declare_func_in_func(new_fn, builder.func);
+            let elem_bytes = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 8),
+            };
+            let eb_i32 = coerce_arg_to(builder, elem_bytes, types::I32)?;
+            let data_ptr = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let data_coerced = coerce_arg_to(builder, data_ptr, ptr_ty)?;
+            let len = match args.get(2) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let len64 = coerce_arg_to(builder, len, types::I64)?;
+            let call = builder.ins().call(fref, &[eb_i32, data_coerced, len64]);
             let ptr = builder.inst_results(call)[0];
             define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
             Ok(true)
@@ -7190,6 +7443,20 @@ fn lower_intrinsic_call(
                 intrinsics,
                 destination,
                 static_name,
+            )?;
+            Ok(true)
+        }
+        s if s.starts_with("gos_binding_") => {
+            lower_external_binding_call(
+                module,
+                builder,
+                locals,
+                body,
+                tcx,
+                args,
+                intrinsics,
+                destination,
+                s,
             )?;
             Ok(true)
         }

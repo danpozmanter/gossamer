@@ -8,6 +8,10 @@ repository.workspace = true
 authors.workspace = true
 description = "Command-line entry point for the Gossamer toolchain."
 
+[lib]
+name = "gossamer_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "gos"
 path = "src/main.rs"

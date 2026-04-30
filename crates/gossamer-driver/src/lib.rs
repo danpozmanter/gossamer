@@ -7,11 +7,18 @@
 
 #![forbid(unsafe_code)]
 
+pub mod binding_runner;
 pub mod build;
 pub mod frontend_cache;
 pub mod link;
 pub mod pipeline;
 pub mod target;
+
+pub use binding_runner::{
+    BindingRunner, BindingRunnerError, DumpedItem, DumpedModule, DumpedType,
+    Profile as RunnerProfile, RenderedBinding, SignatureDump, StaticBindingsLib,
+    parse_signature_dump,
+};
 
 pub use build::{
     BuildCache, BuildError, BuildGraph, BuildOutput, Crate, Profile, build_workspace,
