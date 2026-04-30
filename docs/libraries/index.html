@@ -232,12 +232,17 @@ mod tests {
 <p>Integration tests live under <code>tests/</code>. <code>gos test src/lib.gos</code>
 runs them through the tree-walker.</p>
 <h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
-<pre><code class="language-gossamer">/// Pixel width of `text` at this font's current size,
-/// including kerning.
+<pre><code class="language-gossamer">// Pixel width of `text` at this font's current size,
+// including kerning.
 pub fn measure_text(&amp;self, text: &amp;str) -&gt; u32 { ... }
 </code></pre>
-<p><code>gos doc src/lib.gos</code> prints every item + its <code>///</code>
-summary. HTML output lands with Stream H polish.</p>
+<p>Gossamer uses one comment form: <code>//</code> for line comments and
+<code>/* ... */</code> for block comments. There is no separate <code>///</code> /
+<code>//!</code> doc-comment syntax — a run of <code>//</code> lines directly above
+an item (no blank line between) is its documentation, and a
+run at the top of a file is the module's. <code>gos doc
+src/lib.gos</code> prints every item plus that summary block. HTML
+output lands with Stream H polish.</p>
 <h2 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h2>
 <p><em>(planned)</em> — <code>gos publish</code> pushes to the default registry once
 the backend lands. Until then, path-based + git-based

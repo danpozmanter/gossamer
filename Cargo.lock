@@ -515,6 +515,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "corosensei"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c54787b605c7df106ceccf798df23da4f2e09918defad66705d1cedf3bb914f"
+dependencies = [
+ "autocfg",
+ "cfg-if",
+ "libc",
+ "scopeguard",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1192,6 +1205,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gossamer-coro"
+version = "0.0.0"
+dependencies = [
+ "corosensei",
+]
+
+[[package]]
 name = "gossamer-diagnostics"
 version = "0.0.0"
 dependencies = [
@@ -1338,11 +1358,15 @@ name = "gossamer-runtime"
 version = "0.0.0"
 dependencies = [
  "backtrace",
+ "crossbeam-deque",
+ "crossbeam-utils",
  "flate2",
+ "gossamer-coro",
  "gossamer-gc",
  "itoa",
  "libc",
  "libloading",
+ "mio",
  "parking_lot",
  "regex",
  "rustc-hash",
@@ -1354,11 +1378,7 @@ dependencies = [
 name = "gossamer-sched"
 version = "0.0.0"
 dependencies = [
- "crossbeam-deque",
- "crossbeam-utils",
  "gossamer-runtime",
- "mio",
- "parking_lot",
 ]
 
 [[package]]
@@ -1375,6 +1395,7 @@ dependencies = [
  "ed25519-dalek",
  "flate2",
  "getrandom 0.2.17",
+ "gossamer-coro",
  "gossamer-gc",
  "gossamer-pkg",
  "gossamer-runtime",

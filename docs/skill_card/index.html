@@ -315,9 +315,12 @@ fn main() {
 </code></pre>
 <h2 id="5-grammar-essentials">5. Grammar essentials<a class="headerlink" href="#5-grammar-essentials" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Comments</strong>: <code>//</code> single-line and <code>/* ... */</code> block
-  (block comments nest). <code>///</code> on <code>pub</code> items is a doc
-  comment that <code>gos doc</code> renders and <code>gos test</code> runs.</li>
+<li><strong>Comments</strong>: <code>//</code> single-line and <code>/* ... */</code> block are
+  the only two forms — block comments do <strong>not</strong> nest, and
+  there is no separate <code>///</code> / <code>//!</code> doc-comment syntax. A
+  run of <code>//</code> lines immediately above an item (no blank line
+  between) is its documentation; <code>gos doc</code> renders these and
+  <code>gos test</code> runs fenced code inside them.</li>
 <li><strong>Semicolons</strong> are optional at statement boundaries; one
   statement per line.</li>
 <li><strong>Expressions-as-statements.</strong> <code>if</code>, <code>match</code>, <code>loop</code>, and
@@ -460,10 +463,12 @@ fn main() {
 <li><code>go</code> takes a full expression — usually a function or method
   call. Closures work (<code>go || { ... }()</code>) but a named helper
   is easier to read and test.</li>
-<li>The current scheduler is cooperative and early-stage. Don't
-  assume blocking semantics; pair producers and consumers
-  with a short <code>time::sleep</code> or a <code>select { default =&gt; … }</code>
-  arm when you need to drain deterministically.</li>
+<li>Goroutines are real stackful coroutines on a work-stealing
+  M:N scheduler. Blocking primitives (<code>channel.recv</code>,
+  <code>mutex.lock</code>, <code>time::sleep</code>, network reads, fs syscalls)
+  park the goroutine, not the OS thread — so writing
+  blocking-shaped code is the right shape; do not pre-emptively
+  add <code>select</code> arms or sleeps to "yield".</li>
 </ul>
 <h2 id="8a-closures-and-higher-order-fns">8a. Closures and higher-order fns<a class="headerlink" href="#8a-closures-and-higher-order-fns" title="Permanent link">&para;</a></h2>
 <p>Lambdas use <code>|param: T| body</code>. Captures from the enclosing scope
@@ -589,8 +594,9 @@ mod tests {
     }
 }
 </code></pre>
-<p>Doc-tests: fenced code inside <code>///</code> doc comments is compiled
-and executed by <code>gos test</code>. Mark non-runnable fences as
+<p>Doc-tests: fenced code inside a <code>//</code> doc-comment block (a
+run of <code>//</code> lines directly above an item) is compiled and
+executed by <code>gos test</code>. Mark non-runnable fences as
 <code>```text</code>.</p>
 <h2 id="12-standard-library-surface">12. Standard library surface<a class="headerlink" href="#12-standard-library-surface" title="Permanent link">&para;</a></h2>
 <ul>
@@ -681,10 +687,10 @@ fn main() -&gt; Result&lt;(), http::Error&gt; {
 <li>Method dispatch is name-global in places. Qualified path
   calls (<code>Point::origin()</code>) always work; method-style may
   collide across types until the resolver tightens.</li>
-<li>The scheduler is cooperative and unbuffered today.
-  Channels work under <code>gos run</code>; <code>gos build</code> for programs
-  that create channels is not yet wired — it will bail with
-  a clear message. <code>go</code> spawn by itself builds natively.</li>
+<li>The scheduler is M:N work-stealing with stackful coroutines.
+  <code>gos run</code> and <code>gos build</code> both route every <code>go fn(args)</code> onto
+  the same shared pool; channels, mutexes, sleeps, and network
+  I/O all park the goroutine without holding a worker thread.</li>
 <li><code>os::args()</code> can return empty under some codegen paths —
   prefer <code>std::flag</code> with explicit defaults.</li>
 </ul>
@@ -695,8 +701,9 @@ fn main() -&gt; Result&lt;(), http::Error&gt; {
   drop it.</li>
 <li><strong>No emojis.</strong> Source, comments, commits, docs — all plain.</li>
 <li><strong>No TODO / FIXME</strong> committed; open an issue.</li>
-<li><strong>Doc every <code>pub</code> item</strong> with a single-line <code>///</code>; don't
-  narrate self-evident code.</li>
+<li><strong>Doc every <code>pub</code> item</strong> with a single-line <code>//</code> directly
+  above it (no blank line between); don't narrate
+  self-evident code. Gossamer has no <code>///</code> / <code>//!</code> form.</li>
 <li><strong>Pipe aggressively</strong> — if a value flows through more
   than one call, use <code>|&gt;</code>.</li>
 <li><strong>One statement per line;</strong> omit semicolons.</li>

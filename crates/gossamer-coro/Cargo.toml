@@ -1,0 +1,40 @@
+[package]
+name = "gossamer-coro"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Stackful coroutines for Gossamer goroutines, built on corosensei."
+
+# Stackful coroutines need `unsafe` for the Send-bound override and the
+# TLS yielder pointer, which corosensei intentionally guards behind
+# `!Send`. The unsafe is localised to a single trait impl + a single
+# pointer-deref; the rest of the crate is safe.
+[lints.rust]
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cognitive_complexity = "deny"
+too_many_lines = "warn"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+match_same_arms = "allow"
+needless_pass_by_value = "allow"
+unused_self = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+float_cmp = "allow"
+unreadable_literal = "allow"
+format_push_string = "allow"
+collapsible_if = "allow"
+
+[dependencies]
+corosensei = "0.3"

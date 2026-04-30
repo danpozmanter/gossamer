@@ -96,9 +96,16 @@ handful of ergonomic ideas picked off from Python:
   - Runtime numeric semantics still follow Rust's rules
     (narrowing truncates, sign changes wrap) — that's
     inherent to `as`, not a soundness hole.
-- **Concurrency.** First-class goroutines (`go expr`), typed
-  channels (`channel::<T>()`), `select` for multiplexed receives,
-  cooperative scheduler.
+- **Concurrency.** First-class goroutines (`go expr`) on a true
+  M:N work-stealing scheduler — every `go fn(args)` runs on a
+  ~16 KiB stackful coroutine (corosensei), not an OS thread.
+  Blocking primitives (`channel.recv`, `mutex.lock`, `time::sleep`,
+  TCP reads, filesystem reads) park the goroutine instead of the
+  worker thread, so 10 000 idle connections fit on a handful of
+  cores. Typed channels (`channel::<T>()`), `select` for
+  multiplexed receives, scheduler-aware `sync::Mutex` /
+  `WaitGroup`. Functions remain colorless — no `async` / `await`
+  in the language surface.
 - **Closures.** `|x| expr` lambdas with capture by GC reference.
   Higher-order functions take `Fn(args) -> ret` parameters, which
   accept both bare `fn` items and capturing closures (env+code
@@ -174,8 +181,8 @@ gos
 
 ```
 crates/               workspace crates (lex / parse / resolve / types / hir / mir /
-                      driver / interp / gc / runtime / sched / std / pkg / lint /
-                      diagnostics / codegen-cranelift / codegen-llvm / cli)
+                      driver / interp / gc / runtime / sched / coro / std / pkg /
+                      lint / diagnostics / codegen-cranelift / codegen-llvm / cli)
 examples/             end-to-end .gos programs (hello_world, line_count,
                       web_server, kv_cache, json_pipeline, selfhost/*)
 docs_src/             mkdocs source for the public docs site (markdown +
@@ -186,6 +193,24 @@ docs/                 built site (output of `mkdocs build`, served by
 references/           external reference material (e.g. the Go language
                       spec used as a comparison baseline)
 ```
+
+## Supported platforms
+
+The runtime's stackful goroutines (corosensei) need a per-arch
+context-switch implementation. The current support matrix:
+
+| OS       | Architecture                  | Status |
+| -------- | ----------------------------- | ------ |
+| Linux    | x86_64                        | First-class |
+| Linux    | aarch64                       | First-class |
+| Linux    | armv7 (32-bit ARM)            | Supported |
+| macOS    | x86_64 (Intel)                | Supported |
+| macOS    | aarch64 (Apple Silicon)       | First-class |
+| Windows  | x86_64 (MSVC ABI)             | Supported |
+
+Other targets compile but the goroutine scheduler will refuse to
+start. Cross-compiling to the supported targets is wired up in
+`gos build --target <triple>`.
 
 ## Build
 

@@ -11,16 +11,20 @@ in five minutes whether the gaps will block their use case.
 ## Language
 
 - **No async / `await`.** Gossamer's concurrency model is
-  Go-shaped goroutines + channels. `go expr` runs on real OS
-  threads with cooperative scheduling. There is no plan for an
-  `async` keyword in v1.
+  Go-shaped goroutines + channels. `go expr` is a real stackful
+  coroutine on the M:N scheduler — functions stay colorless,
+  blocking primitives park the goroutine instead of the OS thread,
+  and there is no `async` keyword.
 - **No macro system.** `println!("{name}")` interpolation is a
   parser-level special case, not user-extensible. Custom
   `derive` is post-v1.
-- **No `unsafe` block.** First-party crates set
-  `#![forbid(unsafe_code)]`. Raw pointers and inline assembly
-  are not exposed to user code. The runtime's FFI boundary is
-  the only `unsafe` in the workspace and is not user-reachable.
+- **No `unsafe` block.** Application code stays safe.
+  `#![forbid(unsafe_code)]` is the workspace default. Raw
+  pointers and inline assembly are not exposed to user code.
+  Internally, two crates carry contained `unsafe`: the
+  runtime's FFI boundary (`gossamer-runtime::c_abi`) and the
+  stackful-coroutine engine (`gossamer-coro`, wrapping
+  `corosensei`). Neither is user-reachable.
 - **No const generics over arbitrary types.** Array sizes are
   literal `usize`. Generic parameters of type `T: const N: T`
   are not supported.
@@ -42,20 +46,27 @@ in five minutes whether the gaps will block their use case.
 The runtime gaps that this section originally listed are
 **now in scope** — work-stealing M:N scheduler, async
 preemption with GC safepoints, write barriers wired through
-the LLVM lowerer, goroutine-aware sync primitives, and an
-`epoll` / `kqueue` / `IOCP` netpoller all landed in the
-production-readiness pass. The remaining runtime non-goals:
+the LLVM lowerer, goroutine-aware sync primitives, an
+`epoll` / `kqueue` / `IOCP` netpoller, and stackful coroutines
+(corosensei) all landed in the production-readiness pass. The
+remaining runtime non-goals:
 
 - **No generational GC.** The current collector is concurrent
   mark-sweep with a write barrier. A generational variant
   would help long-lived service workloads further; it is
   filed for Phase 2.
-- **No stack-switching coroutines.** Goroutines are
-  cooperative state machines on top of the work-stealing
-  scheduler — no per-goroutine OS stack. Switch cost is
-  function-call shaped, not register-flush shaped. A
-  stackful coroutine variant requires `unsafe` and is
-  outside the workspace's safe-Rust posture.
+- **No segmented / growable goroutine stacks.** Each goroutine
+  owns a fixed-size 16 KiB mmap'd stack (override:
+  `GOSSAMER_GOROUTINE_STACK`). Go's segmented + relocating
+  stacks are a compiler-cooperation feature; we leave that
+  out for v1 and live with the trade-off (predictable RAM
+  cost; recursion deeper than the configured stack overflows
+  on the guard page).
+- **Limited platform matrix.** Stackful coroutines need a
+  per-arch context-switch implementation. v1 supports Linux
+  on x86_64 / aarch64 / armv7, macOS on x86_64 / aarch64, and
+  Windows on x86_64 (MSVC ABI). Other targets compile but the
+  scheduler refuses to start.
 
 ## Standard library
 

@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use crate::task::Gid;
+use super::task::Gid;
 
 /// FIFO queue of runnable goroutine identifiers.
 ///

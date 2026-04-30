@@ -17,6 +17,8 @@ pub mod layout;
 pub mod preempt;
 pub mod race;
 pub mod safe_env;
+pub mod sched;
+pub mod sched_global;
 pub mod sigquit;
 pub mod value;
 

@@ -14,7 +14,9 @@ crate-type = ["staticlib", "rlib"]
 # The runtime crate exposes a C-ABI surface (`#[no_mangle] extern "C"`
 # functions accepting raw pointers) so the native codegen can call
 # it by name. That necessarily uses `unsafe`; the rest of the
-# workspace keeps `unsafe_code = "forbid"`.
+# workspace keeps `unsafe_code = "forbid"`. The clippy allow-list
+# mirrors the workspace defaults so the moved scheduler/poller code
+# stays compatible with `cargo clippy --workspace`.
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"
@@ -24,6 +26,20 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 cognitive_complexity = "deny"
 too_many_lines = "warn"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+match_same_arms = "allow"
+needless_pass_by_value = "allow"
+unused_self = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+float_cmp = "allow"
+unreadable_literal = "allow"
+format_push_string = "allow"
+collapsible_if = "allow"
 
 [dependencies]
 itoa = "1"
@@ -36,6 +52,10 @@ signal-hook = { workspace = true }
 gossamer-gc = { workspace = true }
 backtrace = "0.3"
 libloading = "0.8"
+crossbeam-deque = { workspace = true }
+crossbeam-utils = { workspace = true }
+mio = { workspace = true }
+gossamer-coro = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

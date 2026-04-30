@@ -61,6 +61,8 @@
               <ul class="current">
                 <li class="toctree-l1 current"><a class="reference internal current" href="#">Syntax</a>
     <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#comments">Comments</a>
+    </li>
     <li class="toctree-l2"><a class="reference internal" href="#items">Items</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#expressions">Expressions</a>
@@ -200,6 +202,16 @@
 <p>See the full grammar in
 <a href="https://github.com/danpozmanter/gossamer/tree/main/grammar"><code>grammar/</code></a>
 once it is committed.</p>
+<h2 id="comments">Comments<a class="headerlink" href="#comments" title="Permanent link">&para;</a></h2>
+<p>Two forms, no others:</p>
+<ul>
+<li><code>// ...</code> — line comment to end of line.</li>
+<li><code>/* ... */</code> — block comment. Does <strong>not</strong> nest.</li>
+</ul>
+<p>There is no separate <code>///</code> or <code>//!</code> doc-comment syntax. A run
+of <code>//</code> lines immediately above an item (no blank line
+between) is its documentation; a run at the top of a file is
+the module's. Tooling reads these by position.</p>
 <h2 id="items">Items<a class="headerlink" href="#items" title="Permanent link">&para;</a></h2>
 <pre><code class="language-gossamer">const PI: f64 = 3.14159
 static MAX: u32 = 1024
@@ -293,8 +305,11 @@ select {
     _ = time::after(5000) =&gt; timeout(),
 }
 </code></pre>
-<p><code>go expr</code> spawns a goroutine. Channels are typed and bounded;
-<code>select</code> multiplexes receives.</p>
+<p><code>go expr</code> spawns a goroutine — a real stackful coroutine on the
+M:N scheduler. Blocking primitives (channel ops, mutex contention,
+<code>time::sleep</code>, network reads, filesystem syscalls) park the
+goroutine, freeing the worker thread to run other goroutines.
+Channels are typed and bounded; <code>select</code> multiplexes receives.</p>
 <h2 id="closures-and-higher-order-fns">Closures and higher-order fns<a class="headerlink" href="#closures-and-higher-order-fns" title="Permanent link">&para;</a></h2>
 <p>Lambdas use <code>|param: T| body</code>; captures from the enclosing scope
 work transparently (GC-managed, no <code>move</code>).</p>

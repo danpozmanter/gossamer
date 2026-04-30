@@ -411,12 +411,18 @@ pub mod server {
         config: Config,
         dispatch_tx: std::sync::mpsc::Sender<(Request, std::sync::mpsc::Sender<Response>)>,
     ) {
-        // Nonblocking accept + 50 ms sleep on `WouldBlock` lets the
-        // loop poll `shutdown` regardless of whether the wake-self
-        // self-connect lands. macOS in particular sometimes refuses
-        // the wake connection (TIME_WAIT churn under load), and a
-        // pure blocking `accept()` would never observe shutdown.
+        // Non-blocking accept + netpoller readiness wait. The
+        // listener registers with the global netpoller; the
+        // accept loop yields to the scheduler whenever there is
+        // no pending connection, so an idle server does not burn
+        // CPU on a sleep loop and the OS thread driving accept
+        // is free to run other goroutines while it parks on the
+        // poller's `Readable` event.
         let _ = listener.set_nonblocking(true);
+        let mut listener_mio = match listener.try_clone() {
+            Ok(c) => Some(mio::net::TcpListener::from_std(c)),
+            Err(_) => None,
+        };
         loop {
             if shutdown.load(Ordering::Relaxed) {
                 return;
@@ -430,17 +436,20 @@ pub mod server {
                     }
                     let worker_config = config.clone();
                     let tx = dispatch_tx.clone();
-                    let spawn_result = std::thread::Builder::new()
-                        .name("gossamer-http-conn".to_string())
-                        .spawn(move || worker_loop(stream, worker_config, tx));
-                    if let Err(err) = spawn_result {
-                        eprintln!("http: spawn worker failed: {err}");
-                        // Keep accepting — dropping this connection is
-                        // preferable to tearing the server down.
-                    }
+                    // Each accepted connection is a goroutine on
+                    // the M:N pool. The blocking-syscall hooks
+                    // inside `worker_loop` keep the pool warm
+                    // when reads/writes park the worker.
+                    gossamer_runtime::sched_global::spawn(Box::new(move || {
+                        worker_loop(stream, worker_config, tx);
+                    }));
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::WouldBlock) => {
-                    std::thread::sleep(Duration::from_millis(50));
+                    if let Some(ref mut mio_listener) = listener_mio {
+                        wait_listener_readable(mio_listener);
+                    } else {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::Interrupted) => {}
                 Err(err) => {
@@ -453,15 +462,24 @@ pub mod server {
         }
     }
 
+    fn wait_listener_readable(listener: &mut mio::net::TcpListener) {
+        // Goroutine-aware accept-readiness wait: parks the calling
+        // coroutine on the netpoller; the OS thread is freed to run
+        // other goroutines while we're waiting for the next inbound
+        // connection. Synchronous fallback (50 ms tick) when called
+        // from a non-goroutine thread.
+        let _ = crate::sched_global::wait_io(listener, gossamer_sched::Interest::Readable);
+    }
+
     fn wants_close(headers: &super::Headers) -> bool {
         matches!(headers.get("connection"), Some(v) if v.eq_ignore_ascii_case("close"))
     }
 
-    /// Per-connection worker. Runs on its own thread; reads
-    /// requests from a persistent buffered reader, hands each to
-    /// the main thread via `dispatch_tx`, writes the response, and
-    /// loops until the peer (or handler) asks to close or the
-    /// socket errors out.
+    /// Per-connection worker. Runs as a goroutine on the M:N
+    /// scheduler; reads requests from a persistent buffered reader,
+    /// hands each to the handler dispatch thread via `dispatch_tx`,
+    /// writes the response, and loops until the peer (or handler)
+    /// asks to close or the socket errors out.
     fn worker_loop(
         stream: TcpStream,
         config: Config,

@@ -22,23 +22,17 @@ use std::net::{
     SocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream, ToSocketAddrs,
     UdpSocket as StdUdpSocket,
 };
-use std::time::{Duration, Instant};
-
-use parking_lot::{Condvar, Mutex};
+use std::time::Duration;
 
 use crate::io::IoError;
 use crate::sched_global;
-use gossamer_sched::{Interest, PollSource};
-use std::sync::Arc;
-
-const POLL_TIMEOUT_MS: u64 = 5_000;
+use gossamer_sched::Interest;
 
 /// Bound TCP listener.
 #[derive(Debug)]
 pub struct TcpListener {
     inner: StdTcpListener,
     mio: Option<mio::net::TcpListener>,
-    source: Option<PollSource>,
 }
 
 impl TcpListener {
@@ -52,11 +46,7 @@ impl TcpListener {
         // into. mio::net::TcpListener::from_std requires a
         // non-blocking std listener.
         let mirror = inner.try_clone().map(mio::net::TcpListener::from_std).ok();
-        Ok(Self {
-            inner,
-            mio: mirror,
-            source: None,
-        })
+        Ok(Self { inner, mio: mirror })
     }
 
     /// Returns the bound local address.
@@ -90,34 +80,8 @@ impl TcpListener {
             std::thread::sleep(Duration::from_millis(1));
             return Ok(());
         };
-        let gid = sched_global::alloc_runtime_gid();
-        let pair = Arc::new((Mutex::new(false), Condvar::new()));
-        let pair2 = Arc::clone(&pair);
-        sched_global::register_waker(
-            gid,
-            Box::new(move || {
-                let (mu, cv) = &*pair2;
-                let mut done = mu.lock();
-                *done = true;
-                cv.notify_all();
-            }),
-        );
-        let source =
-            sched_global::with_poller(|p| p.register_io(mio_handle, Interest::Readable, gid))
-                .map_err(|e| IoError::from_std(e, "poller register"))?;
-        self.source = Some(source);
-        let (mu, cv) = &*pair;
-        let deadline = Instant::now() + Duration::from_millis(POLL_TIMEOUT_MS);
-        let mut done = mu.lock();
-        while !*done {
-            let now = Instant::now();
-            if now >= deadline {
-                break;
-            }
-            let _ = cv.wait_for(&mut done, deadline - now);
-        }
-        sched_global::forget_waker(gid);
-        Ok(())
+        sched_global::wait_io(mio_handle, Interest::Readable)
+            .map_err(|e| IoError::from_std(e, "poller wait"))
     }
 }
 
@@ -126,8 +90,6 @@ impl TcpListener {
 pub struct TcpStream {
     inner: StdTcpStream,
     mio: Option<mio::net::TcpStream>,
-    read_source: Option<PollSource>,
-    write_source: Option<PollSource>,
 }
 
 impl TcpStream {
@@ -142,12 +104,7 @@ impl TcpStream {
             .set_nonblocking(true)
             .map_err(|e| IoError::from_std(e, "set_nonblocking"))?;
         let mirror = inner.try_clone().map(mio::net::TcpStream::from_std).ok();
-        Ok(Self {
-            inner,
-            mio: mirror,
-            read_source: None,
-            write_source: None,
-        })
+        Ok(Self { inner, mio: mirror })
     }
 
     /// Reads up to `buf.len()` bytes into `buf`. Parks the caller on
@@ -190,37 +147,7 @@ impl TcpStream {
             std::thread::sleep(Duration::from_millis(1));
             return Ok(());
         };
-        let gid = sched_global::alloc_runtime_gid();
-        let pair = Arc::new((Mutex::new(false), Condvar::new()));
-        let pair2 = Arc::clone(&pair);
-        sched_global::register_waker(
-            gid,
-            Box::new(move || {
-                let (mu, cv) = &*pair2;
-                let mut done = mu.lock();
-                *done = true;
-                cv.notify_all();
-            }),
-        );
-        let source = sched_global::with_poller(|p| p.register_io(mio_handle, interest, gid))
-            .map_err(|e| IoError::from_std(e, "poller register"))?;
-        match interest {
-            Interest::Readable => self.read_source = Some(source),
-            Interest::Writable => self.write_source = Some(source),
-            Interest::Timer => {}
-        }
-        let (mu, cv) = &*pair;
-        let deadline = Instant::now() + Duration::from_millis(POLL_TIMEOUT_MS);
-        let mut done = mu.lock();
-        while !*done {
-            let now = Instant::now();
-            if now >= deadline {
-                break;
-            }
-            let _ = cv.wait_for(&mut done, deadline - now);
-        }
-        sched_global::forget_waker(gid);
-        Ok(())
+        sched_global::wait_io(mio_handle, interest).map_err(|e| IoError::from_std(e, "poller wait"))
     }
 }
 

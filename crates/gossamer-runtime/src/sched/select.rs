@@ -13,7 +13,7 @@
 use std::cell::Cell;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::channel::{Channel, RecvResult, SendResult};
+use super::channel::{Channel, RecvResult, SendResult};
 
 thread_local! {
     /// Thread-local xorshift64 seed used to permute select arms.

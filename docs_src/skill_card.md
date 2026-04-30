@@ -256,10 +256,12 @@ select {
 - `go` takes a full expression — usually a function or method
   call. Closures work (`go || { ... }()`) but a named helper
   is easier to read and test.
-- The current scheduler is cooperative and early-stage. Don't
-  assume blocking semantics; pair producers and consumers
-  with a short `time::sleep` or a `select { default => … }`
-  arm when you need to drain deterministically.
+- Goroutines are real stackful coroutines on a work-stealing
+  M:N scheduler. Blocking primitives (`channel.recv`,
+  `mutex.lock`, `time::sleep`, network reads, fs syscalls)
+  park the goroutine, not the OS thread — so writing
+  blocking-shaped code is the right shape; do not pre-emptively
+  add `select` arms or sleeps to "yield".
 
 ## 8a. Closures and higher-order fns
 
@@ -455,10 +457,10 @@ fn main() -> Result<(), http::Error> {
 - Method dispatch is name-global in places. Qualified path
   calls (`Point::origin()`) always work; method-style may
   collide across types until the resolver tightens.
-- The scheduler is cooperative and unbuffered today.
-  Channels work under `gos run`; `gos build` for programs
-  that create channels is not yet wired — it will bail with
-  a clear message. `go` spawn by itself builds natively.
+- The scheduler is M:N work-stealing with stackful coroutines.
+  `gos run` and `gos build` both route every `go fn(args)` onto
+  the same shared pool; channels, mutexes, sleeps, and network
+  I/O all park the goroutine without holding a worker thread.
 - `os::args()` can return empty under some codegen paths —
   prefer `std::flag` with explicit defaults.
 

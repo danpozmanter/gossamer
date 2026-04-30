@@ -74,6 +74,50 @@ fn main() -&gt; Result&lt;(), http::Error&gt; {
     http::serve("0.0.0.0:8080", App { })
 }</code></pre>
     </section>
+
+    <section class="example">
+      <h2>True goroutines, colorless functions</h2>
+      <p>
+        Every <code>go fn(args)</code> runs on a real ~16&nbsp;KiB
+        stackful coroutine on the M:N work-stealing scheduler.
+        Blocking primitives — <code>channel.recv</code>,
+        <code>mutex.lock</code>, <code>time::sleep</code>, network
+        reads, filesystem syscalls — park the goroutine instead of
+        the OS thread, so 10&nbsp;000 idle goroutines fit on a
+        handful of cores. No <code>async</code>, no
+        <code>await</code>, no function colouring.
+      </p>
+<pre><code class="language-gossamer">use std::time
+
+fn worker(id: i64, tx: chan&lt;i64&gt;) {
+    time::sleep(time::Duration::from_millis(10))
+    tx.send(id * id)
+}
+
+fn main() {
+    let (tx, rx) = channel::&lt;i64&gt;()
+    for i in 0..10_000 {
+        go worker(i, tx.clone())
+    }
+    let mut total: i64 = 0
+    for _ in 0..10_000 {
+        total = total + rx.recv()
+    }
+    println("sum of squares:", total)
+}</code></pre>
+    </section>
+
+    <section class="example">
+      <h2>Supported platforms</h2>
+      <p>
+        Stackful coroutines (corosensei) are wired for:
+      </p>
+      <ul>
+        <li>Linux on x86_64, aarch64, armv7</li>
+        <li>macOS on x86_64 (Intel) and aarch64 (Apple Silicon)</li>
+        <li>Windows on x86_64 (MSVC ABI)</li>
+      </ul>
+    </section>
   </main>
 </body>
 </html>

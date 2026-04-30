@@ -138,8 +138,11 @@ select {
 }
 ```
 
-`go expr` spawns a goroutine. Channels are typed and bounded;
-`select` multiplexes receives.
+`go expr` spawns a goroutine — a real stackful coroutine on the
+M:N scheduler. Blocking primitives (channel ops, mutex contention,
+`time::sleep`, network reads, filesystem syscalls) park the
+goroutine, freeing the worker thread to run other goroutines.
+Channels are typed and bounded; `select` multiplexes receives.
 
 ## Closures and higher-order fns
 

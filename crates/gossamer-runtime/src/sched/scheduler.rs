@@ -1,9 +1,9 @@
-//! Cooperative scheduler driving [`crate::Task`] state machines.
+//! Cooperative scheduler driving [`super::Task`] state machines.
 
 #![forbid(unsafe_code)]
 
-use crate::queue::RunQueue;
-use crate::task::{Gid, Step, Task};
+use super::queue::RunQueue;
+use super::task::{Gid, Step, Task};
 
 /// Statistics surfaced after the scheduler has drained its run queue.
 #[derive(Debug, Clone, Copy, Default)]

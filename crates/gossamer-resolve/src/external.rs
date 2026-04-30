@@ -152,6 +152,14 @@ pub fn clear_for_test() {
 mod tests {
     use super::*;
 
+    /// Tests in this module mutate a process-global module table
+    /// (see [`set_external_modules`] / [`clear_for_test`]).
+    /// `cargo test` runs unit tests in parallel by default, so two
+    /// tests interleaving `clear → set → lookup` will silently
+    /// blow each other's state away. This Mutex serialises every
+    /// test that touches the global.
+    static TEST_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     fn fixture() -> Vec<ExternalModule> {
         vec![ExternalModule {
             path: "tuigoose::layout".to_string(),
@@ -167,6 +175,7 @@ mod tests {
 
     #[test]
     fn lookup_module_returns_the_registered_module() {
+        let _guard = TEST_LOCK.lock();
         clear_for_test();
         set_external_modules(fixture());
         let m = lookup_external_module("tuigoose::layout").unwrap();
@@ -176,6 +185,7 @@ mod tests {
 
     #[test]
     fn lookup_item_walks_module_then_item() {
+        let _guard = TEST_LOCK.lock();
         clear_for_test();
         set_external_modules(fixture());
         let i = lookup_external_item("tuigoose::layout::split").unwrap();
@@ -186,6 +196,7 @@ mod tests {
 
     #[test]
     fn unknown_module_returns_none() {
+        let _guard = TEST_LOCK.lock();
         clear_for_test();
         let m = lookup_external_module("does::not::exist");
         assert!(m.is_none());

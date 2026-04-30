@@ -9,7 +9,7 @@
 
 use std::collections::VecDeque;
 
-use crate::task::Gid;
+use super::task::Gid;
 
 /// Result of a non-blocking send.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

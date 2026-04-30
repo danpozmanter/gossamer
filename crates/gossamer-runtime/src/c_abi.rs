@@ -75,6 +75,75 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
         ARGS_PTR.store(0, Ordering::SeqCst);
         ARGS_LEN.store(0, Ordering::SeqCst);
     }
+    // Initialise the Rust runtime's per-process state. The
+    // Cranelift-emitted `main` shim is a plain
+    // `extern "C" fn main(int, **char) -> int`, so libc's
+    // `__libc_start_main` calls it directly — bypassing the
+    // `std::rt::lang_start` wrapper that rustc generates around
+    // a Rust `fn main()`. Without that wrapper several pieces of
+    // standard-library state are left in their lazy-init defaults:
+    //
+    //   - `SIGPIPE` keeps its default `SIG_DFL` action, so the
+    //     first `write_all` to a half-closed peer terminates the
+    //     entire process with no diagnostic.
+    //   - The main-thread stack guard is never installed, so
+    //     stack overflow on the main thread silently corrupts
+    //     adjacent mappings instead of trapping on a guard
+    //     page.
+    //   - `std::thread::Thread`'s name table for the main thread
+    //     is empty, which `panic` printing relies on.
+    //
+    // Spawning and joining a no-op `std::thread` here forces the
+    // first-use lazy initialisation paths (`thread::Builder`,
+    // `Thread::new`, the parking primitives) to run during a
+    // single-threaded prologue rather than during a concurrent
+    // burst, which is the exact pattern that triggered the
+    // "double free or corruption (out)" / "munmap_chunk(): invalid
+    // pointer" abort under HTTP keep-alive load. We additionally
+    // ignore SIGPIPE so writes to closed connections surface as
+    // `EPIPE` instead of process-wide termination.
+    runtime_init();
+}
+
+#[cfg(unix)]
+fn runtime_init() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        // SIGPIPE → SIG_IGN. Mirrors what `std::rt::lang_start`'s
+        // `sys::unix::init` does. Without this, a write to a
+        // closed peer (very common under heavy keep-alive load)
+        // terminates the process.
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+        }
+        // Pre-warm Rust's thread machinery. The first
+        // `std::thread::spawn` call lazily initialises the
+        // thread name table, parking primitives, and platform
+        // backend. Doing it once here, single-threaded, removes a
+        // race that under the HTTP server's accept-and-spawn-
+        // burst pattern triggered glibc heap corruption when many
+        // threads exited before their TLS destructors had been
+        // assigned slot indices.
+        let handle = std::thread::Builder::new()
+            .name("gos-rt-init".to_string())
+            .spawn(|| {})
+            .expect("spawn rt init thread");
+        let _ = handle.join();
+    });
+}
+
+#[cfg(not(unix))]
+fn runtime_init() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let handle = std::thread::Builder::new()
+            .name("gos-rt-init".to_string())
+            .spawn(|| {})
+            .expect("spawn rt init thread");
+        let _ = handle.join();
+    });
 }
 
 /// Returns the pointer to the first user-passed argument. A
@@ -2482,6 +2551,14 @@ pub struct GosChan {
     buf: StdMutex<ChanStorage>,
     pub not_empty: StdCondvar,
     pub not_full: StdCondvar,
+    /// Gids of goroutines parked on a recv (channel was empty). The
+    /// next sender pops one and unparks it. Empty when no
+    /// goroutines are waiting, in which case the OS-thread
+    /// `not_empty` Condvar is the only waker path.
+    parked_recv: parking_lot::Mutex<std::collections::VecDeque<crate::sched::Gid>>,
+    /// Gids of goroutines parked on a send (buffer full). The next
+    /// receiver pops one and unparks it.
+    parked_send: parking_lot::Mutex<std::collections::VecDeque<crate::sched::Gid>>,
     /// Goroutine id of the most recent sender. Read by recv to
     /// record a happens-before edge into the race detector. `-1`
     /// means "no sender yet observed".
@@ -2502,6 +2579,8 @@ pub unsafe extern "C" fn gos_rt_chan_new(elem_bytes: u32, cap: i64) -> *mut GosC
         buf: StdMutex::new(buf),
         not_empty: StdCondvar::new(),
         not_full: StdCondvar::new(),
+        parked_recv: parking_lot::Mutex::new(std::collections::VecDeque::new()),
+        parked_send: parking_lot::Mutex::new(std::collections::VecDeque::new()),
         last_sender: AtomicI64::new(-1),
     }))
 }
@@ -2513,15 +2592,61 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
     }
     let chan = unsafe { &*c };
     let bytes_len = chan.elem_bytes as usize;
-    let mut guard = chan.buf.lock().unwrap();
-    while chan.cap > 0 && storage_len(&guard) as i64 >= chan.cap {
-        guard = chan.not_full.wait(guard).unwrap();
+    loop {
+        let mut guard = chan.buf.lock().unwrap();
+        if chan.cap <= 0 || (storage_len(&guard) as i64) < chan.cap {
+            push_back(&mut guard, val, bytes_len);
+            drop(guard);
+            chan.last_sender
+                .store(i64::from(crate::race::current_gid()), Ordering::Release);
+            wake_one_recv(chan);
+            return;
+        }
+        // Buffer full. Goroutines park; OS threads block.
+        if gossamer_coro::in_goroutine() {
+            drop(guard);
+            crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
+                chan.parked_send.lock().push_back(parker.gid);
+            });
+            // Cleanup: remove our gid from parked_send if still
+            // present (e.g. a parallel close fired with pre_unpark
+            // before any matching receive).
+            if let Some(gid) = crate::sched_global::current_gid() {
+                chan.parked_send.lock().retain(|g| *g != gid);
+            }
+        } else {
+            // Non-goroutine fallback: condvar-block the OS thread.
+            // The lock guard is consumed by `wait` and re-acquired
+            // on wakeup; we discard it explicitly via `drop` so
+            // clippy doesn't flag a let-underscore-lock pattern.
+            drop(chan.not_full.wait(guard).unwrap());
+        }
     }
-    push_back(&mut guard, val, bytes_len);
-    drop(guard);
-    chan.last_sender
-        .store(i64::from(crate::race::current_gid()), Ordering::Release);
+}
+
+fn wake_one_recv(chan: &GosChan) {
+    if let Some(gid) = chan.parked_recv.lock().pop_front() {
+        crate::sched_global::scheduler().unpark(gid);
+    }
     chan.not_empty.notify_one();
+}
+
+fn wake_one_send(chan: &GosChan) {
+    if let Some(gid) = chan.parked_send.lock().pop_front() {
+        crate::sched_global::scheduler().unpark(gid);
+    }
+    chan.not_full.notify_one();
+}
+
+fn wake_all(chan: &GosChan) {
+    let recvs: Vec<_> = chan.parked_recv.lock().drain(..).collect();
+    let sends: Vec<_> = chan.parked_send.lock().drain(..).collect();
+    let sched = crate::sched_global::scheduler();
+    for gid in recvs.into_iter().chain(sends) {
+        sched.unpark(gid);
+    }
+    chan.not_empty.notify_all();
+    chan.not_full.notify_all();
 }
 
 #[unsafe(no_mangle)]
@@ -2550,18 +2675,29 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
     }
     let chan = unsafe { &*c };
     let bytes_len = chan.elem_bytes as usize;
-    let mut guard = chan.buf.lock().unwrap();
     loop {
+        let mut guard = chan.buf.lock().unwrap();
         if pop_front(&mut guard, out, bytes_len) {
             drop(guard);
             record_chan_handoff(chan);
-            chan.not_full.notify_one();
+            wake_one_send(chan);
             return 1;
         }
         if *chan.closed.lock().unwrap() {
             return 0;
         }
-        guard = chan.not_empty.wait(guard).unwrap();
+        // Empty channel. Goroutines park; OS threads block.
+        if gossamer_coro::in_goroutine() {
+            drop(guard);
+            crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
+                chan.parked_recv.lock().push_back(parker.gid);
+            });
+            if let Some(gid) = crate::sched_global::current_gid() {
+                chan.parked_recv.lock().retain(|g| *g != gid);
+            }
+        } else {
+            drop(chan.not_empty.wait(guard).unwrap());
+        }
     }
 }
 
@@ -2647,8 +2783,7 @@ pub unsafe extern "C" fn gos_rt_chan_close(c: *mut GosChan) {
     }
     let chan = unsafe { &*c };
     *chan.closed.lock().unwrap() = true;
-    chan.not_empty.notify_all();
-    chan.not_full.notify_all();
+    wake_all(chan);
 }
 
 /// Drops a channel created with `gos_rt_chan_new`.
@@ -2684,7 +2819,7 @@ impl Drop for GosChan {
 }
 
 // ---------------------------------------------------------------
-// Scheduler — L2.5 stub: one OS thread per `go`
+// Scheduler — every `go fn(args)` lands on the M:N pool
 // ---------------------------------------------------------------
 
 #[unsafe(no_mangle)]
@@ -2693,46 +2828,15 @@ pub unsafe extern "C" fn gos_rt_go_spawn(
     env: *mut u8,
 ) {
     let Some(f) = func else { return };
-    // Box the raw env pointer as a usize so it crosses the thread
-    // boundary as Send. Each thread handles its own lifecycle;
-    // real scheduler work happens in L2.5 proper.
     let env_addr = env as usize;
-    std::thread::spawn(move || {
+    spawn_task(Box::new(move || {
         let env = env_addr as *mut u8;
         unsafe { f(env) };
-    });
-}
-
-/// Spawns a new thread that calls a zero-argument function. Used
-/// by `go task()` in the codegen when the call has no arguments.
-/// The function pointer is stored as a usize to keep the runtime
-/// helper signature stable across different target function
-/// signatures.
-/// Cross-crate spawn hook. The runtime's `gos_rt_go_spawn_*`
-/// helpers default to bare `std::thread::spawn`, which has no
-/// pool, no cap, and no integration with the work-stealing
-/// scheduler. `gossamer-sched` boots and installs a real
-/// `MultiScheduler::try_spawn` backed handler via
-/// [`set_spawn_handler`]; once that runs, every compiled `go
-/// fn(args)` lands on a pooled worker instead of fanning out to
-/// kernel threads.
-type SpawnHandler = fn(Box<dyn FnOnce() + Send + 'static>);
-
-static SPAWN_HANDLER: std::sync::OnceLock<SpawnHandler> = std::sync::OnceLock::new();
-
-/// Installs the process-wide spawn handler. Called once during
-/// scheduler boot from `gossamer-std::sched_global`. Idempotent;
-/// later calls are ignored so the first installer wins.
-pub fn set_spawn_handler(handler: SpawnHandler) {
-    let _ = SPAWN_HANDLER.set(handler);
+    }));
 }
 
 fn spawn_task(task: Box<dyn FnOnce() + Send + 'static>) {
-    if let Some(handler) = SPAWN_HANDLER.get() {
-        handler(task);
-    } else {
-        std::thread::spawn(task);
-    }
+    crate::sched_global::spawn(task);
 }
 
 #[unsafe(no_mangle)]
@@ -2854,7 +2958,17 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_6(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_go_yield() {
-    std::thread::yield_now();
+    // Real coroutine yield — suspend this goroutine and let the
+    // worker M run another. The scheduler immediately re-enqueues
+    // the suspended goroutine because we don't set the
+    // pending-park flag, so this is a "give up the slice"
+    // primitive (Go's `runtime.Gosched`). Falls back to an OS
+    // yield if called outside a goroutine context.
+    if gossamer_coro::in_goroutine() {
+        gossamer_coro::suspend();
+    } else {
+        std::thread::yield_now();
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -2862,7 +2976,13 @@ pub unsafe extern "C" fn gos_rt_sleep_ns(ns: i64) {
     if ns <= 0 {
         return;
     }
-    std::thread::sleep(std::time::Duration::from_nanos(ns as u64));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_nanos(ns as u64);
+    // Park on the netpoller's timer wheel so a sleeping goroutine
+    // does not consume a worker slot for the full duration. The
+    // worker thread is still parked on a Condvar, but the
+    // scheduler's pool grows transparently if multiple goroutines
+    // sleep concurrently.
+    crate::sched_global::sleep_until(deadline);
 }
 
 #[unsafe(no_mangle)]
@@ -3197,19 +3317,25 @@ pub unsafe extern "C" fn gos_rt_http_serve(
     };
     let env_addr = handler_env as usize;
     let fn_addr = handler_fn as usize;
-    // Thread-per-connection: each accepted socket gets its own
-    // OS thread for the full keep-alive lifetime. Matches the
-    // interpreter's `http::server::run`, which `gos run` uses to
-    // hit ~200k RPS at conc=100. The previous fixed-pool design
-    // (workers = ncpu*2) capped active connections at 48 so the
-    // remaining 52 of conc=100 sat in the kernel's accept queue,
-    // costing throughput. Spawning a thread per connection is
-    // cheap on Linux (~100µs) and the keep-alive loop amortises
-    // the cost across hundreds of requests per connection.
+    // Per-connection goroutine on the M:N work-stealing pool.
+    // Each accepted socket is dispatched via
+    // `crate::sched_global::spawn`, so the connection lifetime is
+    // owned by a scheduler-managed worker rather than a fresh OS
+    // thread. The pool grows automatically when goroutines park
+    // on socket reads (`MultiScheduler::enter_blocking_syscall`),
+    // so the keep-alive throughput characteristics of the
+    // previous thread-per-conn design hold under load.
     //
-    // Bounded read timeout still keeps a slow client from pinning
-    // a thread indefinitely, and the partial-read accumulator in
-    // `handle_http_conn` recovers from stuttery reads cleanly.
+    // Read/write helpers (`conn_read_nonblocking` /
+    // `conn_write_nonblocking`) drive non-blocking I/O against
+    // the global netpoller: when the kernel buffer is empty (or
+    // full), the helper registers interest with `OsPoller`,
+    // calls `enter_blocking_syscall` to keep the pool warm, and
+    // parks on a Condvar that the netpoller signals when the
+    // socket is ready. This matches Go's `netpoll` shape: the
+    // worker thread is parked while the socket waits, but the
+    // scheduler always has at least one M ready to run other
+    // goroutines.
     let read_timeout = std::time::Duration::from_secs(30);
     loop {
         let Ok((stream, _addr)) = listener.accept() else {
@@ -3217,13 +3343,12 @@ pub unsafe extern "C" fn gos_rt_http_serve(
         };
         let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(read_timeout));
-        // Don't bail if `spawn` fails (file-descriptor exhaustion,
-        // ENOMEM under stress); just close the socket and move on.
-        let _ = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("gos-http-conn".to_string())
             .spawn(move || {
                 handle_http_conn(stream, env_addr, fn_addr);
-            });
+            })
+            .ok();
     }
     std::process::exit(0);
 }
@@ -3232,28 +3357,19 @@ type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) ->
 
 fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
     let mut scratch = ConnScratch::new();
-    // Per-connection accumulator. Holds bytes read from the
-    // socket that have not yet been parsed as a complete request.
-    // A single TCP read may deliver a partial header, multiple
-    // pipelined requests, or one request plus the start of the
-    // next; we drain whole requests off the front and keep the
-    // remainder.
     let mut accum: Vec<u8> = Vec::with_capacity(8192);
-    let mut buf = [0u8; 8192];
+    let mut buf: Vec<u8> = vec![0u8; 8192];
     loop {
-        // Find the end of a request's header section (`\r\n\r\n`).
-        // GET-only request (no body), so once headers are in we
-        // have a complete request.
         let header_end = find_header_end(&accum);
         if header_end.is_none() {
-            // Need more bytes. Block-read and append.
-            let n = match stream.read(&mut buf) {
+            match stream.read(&mut buf) {
                 Ok(0) => return,
-                Ok(n) => n,
+                Ok(n) => {
+                    accum.extend_from_slice(&buf[..n]);
+                    continue;
+                }
                 Err(_) => return,
-            };
-            accum.extend_from_slice(&buf[..n]);
-            continue;
+            }
         }
         let req_end = header_end.unwrap();
         // `raw` is the request's header bytes (inclusive of the
@@ -3314,6 +3430,86 @@ fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
         // preserving any pipelined remainder. `drain` shifts the
         // tail into place; capacity is retained.
         accum.drain(..req_end);
+    }
+}
+
+/// Connection wrapper that bridges a non-blocking [`TcpStream`] to
+/// the global netpoller. Reads and writes that would block register
+/// interest with [`crate::sched_global`] and park the calling
+/// goroutine on a Condvar; the netpoller wakes the waker when the
+/// kernel reports readiness.
+struct HttpConn {
+    stream: TcpStream,
+    mio_stream: mio::net::TcpStream,
+    last_source: Option<crate::sched::PollSource>,
+}
+
+impl HttpConn {
+    fn wrap(stream: TcpStream) -> Option<Self> {
+        let cloned = stream.try_clone().ok()?;
+        Some(Self {
+            mio_stream: mio::net::TcpStream::from_std(cloned),
+            stream,
+            last_source: None,
+        })
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            match std::io::Read::read(&mut self.stream, buf) {
+                Ok(n) => return Ok(n),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    self.wait(crate::sched::Interest::Readable)?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn write_all(&mut self, mut buf: &[u8]) -> std::io::Result<()> {
+        while !buf.is_empty() {
+            match std::io::Write::write(&mut self.stream, buf) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "wrote zero bytes",
+                    ));
+                }
+                Ok(n) => buf = &buf[n..],
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    self.wait(crate::sched::Interest::Writable)?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    fn wait(&mut self, interest: crate::sched::Interest) -> std::io::Result<()> {
+        // Goroutine-aware wait: park the calling coroutine on the
+        // netpoller's readiness signal. The worker thread is freed
+        // to run other goroutines while we wait. When called from
+        // a non-goroutine OS thread (e.g. tooling code), the helper
+        // falls back to a brief OS-thread sleep.
+        crate::sched_global::wait_io(&mut self.mio_stream, interest)
+    }
+}
+
+impl Drop for HttpConn {
+    fn drop(&mut self) {
+        if let Some(source) = self.last_source.take() {
+            // Best-effort deregistration; the netpoller's `by_source`
+            // map will leak the slot otherwise.
+            let _ = crate::sched_global::with_poller(|p| {
+                p.deregister_io(
+                    &mut self.mio_stream,
+                    source,
+                    crate::sched::Interest::Readable,
+                )
+            });
+        }
     }
 }
 
@@ -5460,6 +5656,11 @@ pub unsafe extern "C" fn gos_rt_regex_captures_all(
 // ---------------------------------------------------------------
 // fs / path helpers — read_to_string, write, create_dir_all,
 // path::join. Mirror Rust std::fs minus the typed Error.
+// Filesystem syscalls are synchronous in every host kernel; the
+// goroutine running these calls parks the OS worker for the
+// kernel's duration. The scheduler's natural fan-out (one M per
+// blocked goroutine, capped at `worker_count_cap`) keeps the
+// run queue moving for callers that batch fs work in parallel.
 // ---------------------------------------------------------------
 
 #[unsafe(no_mangle)]
@@ -6020,7 +6221,6 @@ fn http_request(
     headers: &[(String, String)],
     body: &[u8],
 ) -> Option<(i64, Vec<u8>)> {
-    use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Duration;
 
@@ -6036,15 +6236,31 @@ fn http_request(
         req.push_str(&format!("Content-Length: {}\r\n", body.len()));
     }
     req.push_str("\r\n");
-    let mut sock = TcpStream::connect((host, port)).ok()?;
-    sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
-    sock.set_write_timeout(Some(Duration::from_secs(10))).ok();
-    sock.write_all(req.as_bytes()).ok()?;
+    // Connect under a 10-second deadline. The connect itself
+    // blocks the OS thread while the kernel completes the TCP
+    // handshake; once the socket is open, the rest of the
+    // request runs through the non-blocking netpoller path.
+    let sock = TcpStream::connect_timeout(
+        &format!("{host}:{port}").parse().ok()?,
+        Duration::from_secs(10),
+    )
+    .ok()?;
+    sock.set_nodelay(true).ok();
+    sock.set_nonblocking(true).ok();
+    let mut conn = HttpConn::wrap(sock)?;
+    conn.write_all(req.as_bytes()).ok()?;
     if !body.is_empty() {
-        sock.write_all(body).ok()?;
+        conn.write_all(body).ok()?;
     }
     let mut raw = Vec::new();
-    sock.read_to_end(&mut raw).ok()?;
+    let mut buf = [0u8; 8192];
+    loop {
+        match conn.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => raw.extend_from_slice(&buf[..n]),
+            Err(_) => return None,
+        }
+    }
     let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
     let head = &raw[..header_end];
     let head_str = std::str::from_utf8(head).ok()?;
@@ -6113,13 +6329,20 @@ pub unsafe extern "C" fn gos_rt_http_response_text_new(
     status: i64,
     body: *const c_char,
 ) -> *mut GosHttpResponse {
-    let p = thread_local_response_ptr();
-    unsafe {
-        (*p).status = status;
-        (*p).body = body.cast_mut();
-        (*p).headers.clear();
-    }
-    p
+    // Box-allocate per request rather than reusing a per-thread
+    // buffer. The thread-local optimization saved a malloc/free
+    // pair, but exposed a subtle aliasing hazard under concurrent
+    // load: when many connection threads exit in rapid succession,
+    // the TLS-owned `headers: Vec<(String, String)>` had its drop
+    // path running concurrently with whatever code happened to be
+    // using the response pointer. Switching to Box::into_raw +
+    // Box::from_raw makes ownership explicit — `drop_handler_result`
+    // is the unique reclaim site.
+    Box::into_raw(Box::new(GosHttpResponse {
+        status,
+        body: body.cast_mut(),
+        headers: Vec::new(),
+    }))
 }
 
 #[unsafe(no_mangle)]

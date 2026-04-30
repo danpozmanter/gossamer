@@ -59,6 +59,8 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#verifying">Verifying</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#supported-platforms">Supported platforms</a>
+    </li>
     <li class="toctree-l2"><a class="reference internal" href="#target-toolchains">Target toolchains</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#editor-support">Editor support</a>
@@ -191,7 +193,7 @@ cargo build --workspace --release
 </code></pre>
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Rust toolchain</strong> — stable, edition 2024, MSRV 1.85. The
+<li><strong>Rust toolchain</strong> — stable, edition 2024, MSRV 1.88. The
   workspace's <code>rust-toolchain.toml</code> pins a minimum.</li>
 <li><strong>A C linker</strong> — required by Cargo, not by Gossamer. <code>cc</code> /
   <code>gcc</code> / <code>clang</code> will do.</li>
@@ -203,21 +205,62 @@ cd /tmp/hello
 gos run src/main.gos
 </code></pre>
 <p>You should see <code>hello from hello</code>.</p>
+<h2 id="supported-platforms">Supported platforms<a class="headerlink" href="#supported-platforms" title="Permanent link">&para;</a></h2>
+<p>Gossamer goroutines are stackful coroutines (corosensei).
+Switching contexts requires a per-architecture inline-assembly
+implementation, so the supported platform matrix is narrower than
+"anything Rust can build":</p>
+<table>
+<thead>
+<tr>
+<th>OS</th>
+<th>Architecture</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linux</td>
+<td>x86_64</td>
+<td>First-class</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td>aarch64</td>
+<td>First-class</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td>armv7 (32-bit ARM)</td>
+<td>Supported</td>
+</tr>
+<tr>
+<td>macOS</td>
+<td>x86_64 (Intel)</td>
+<td>Supported</td>
+</tr>
+<tr>
+<td>macOS</td>
+<td>aarch64 (Apple Silicon)</td>
+<td>First-class</td>
+</tr>
+<tr>
+<td>Windows</td>
+<td>x86_64 (MSVC ABI)</td>
+<td>Supported</td>
+</tr>
+</tbody>
+</table>
+<p>Other targets compile but the goroutine scheduler refuses to start
+because corosensei has no context-switch backend for them.</p>
 <h2 id="target-toolchains">Target toolchains<a class="headerlink" href="#target-toolchains" title="Permanent link">&para;</a></h2>
 <p><code>gos build --target &lt;triple&gt;</code> enables cross-compilation. The
-default registered set includes:</p>
-<ul>
-<li><code>x86_64-unknown-linux-gnu</code></li>
-<li><code>aarch64-unknown-linux-gnu</code></li>
-<li><code>x86_64-apple-darwin</code></li>
-<li><code>aarch64-apple-darwin</code></li>
-<li><code>x86_64-pc-windows-msvc</code></li>
-<li><code>riscv64gc-unknown-linux-gnu</code></li>
-<li><code>wasm32-unknown-unknown</code></li>
-<li><code>wasm32-wasi</code></li>
-</ul>
-<p>Musl targets (<code>*-unknown-linux-musl</code>) are gated behind the
-<code>musl</code> Cargo feature. Rebuild with:</p>
+default registered set covers the supported platforms above plus
+the <code>riscv64gc-unknown-linux-gnu</code>, <code>wasm32-unknown-unknown</code>, and
+<code>wasm32-wasi</code> targets — which build but do not run goroutines.</p>
+<p>Musl targets (<code>x86_64-unknown-linux-musl</code>,
+<code>aarch64-unknown-linux-musl</code>) are gated behind the <code>musl</code> Cargo
+feature. Rebuild with:</p>
 <pre><code class="language-sh">cargo build --workspace --release -p gossamer-driver --features musl
 </code></pre>
 <h2 id="editor-support">Editor support<a class="headerlink" href="#editor-support" title="Permanent link">&para;</a></h2>

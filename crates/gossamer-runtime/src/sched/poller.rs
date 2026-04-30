@@ -24,7 +24,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::io;
 use std::time::{Duration, Instant};
 
-use crate::task::Gid;
+use super::task::Gid;
 
 /// Opaque identifier for a registered I/O source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -1147,10 +1147,11 @@ then mutate.
 
 ### 8.1 Goroutines
 
-A goroutine is a lightweight thread scheduled cooperatively by the
-runtime. `go expr` spawns one. Goroutines have small initial stacks
-(8 KiB) that grow by segmented stack switching or by copying (depends
-on arch; copying on x86_64/aarch64, segmented as fallback).
+A goroutine is a stackful coroutine scheduled cooperatively by the
+runtime. `go expr` spawns one. Each goroutine owns a fixed-size
+mmap'd stack (default 16 KiB; override with `GOSSAMER_GOROUTINE_STACK`).
+The stack lives below a guard page, so overflow traps as a
+deterministic SIGSEGV instead of clobbering arbitrary memory.
 
 **Argument discipline.** `go` captures values by GC reference the same
 way an ordinary closure does. `Copy` types (primitive numerics, `bool`,
@@ -1174,12 +1175,18 @@ communicating through channels rather than sharing state.
 The scheduler is an M:N work-stealing scheduler:
 
 - **M** = OS thread (one per core by default, configurable via
-  `GOMAXPROCS`).
-- **P** = processor (logical context, fixed count = `GOMAXPROCS`).
+  `GOSSAMER_MAX_PROCS` or `runtime::set_max_procs(n)`).
+- **P** = processor (logical context, fixed count = max-procs).
 - **G** = goroutine.
 
-The network poller (epoll/kqueue/IOCP) parks goroutines blocked on
-I/O without blocking the underlying OS thread.
+The network poller (epoll on Linux, kqueue on macOS/BSD, IOCP on
+Windows) parks goroutines blocked on I/O without holding the
+underlying OS thread. Same path covers `time::sleep` (timer wheel),
+`channel.recv` / `channel.send` on a full or empty channel,
+`sync::Mutex` contention, `sync::WaitGroup::wait`, and any
+`std::fs` / `std::os::exec` syscall (which routes through a
+shared blocking-syscall pool that parks the goroutine while a
+real OS thread runs the syscall).
 
 ### 8.2 Channels
 

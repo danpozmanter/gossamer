@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 use crossbeam_deque::{Injector, Steal, Stealer, Worker as Deque};
 use parking_lot::{Condvar, Mutex};
 
-use crate::task::{Gid, Step, Task};
+use super::task::{Gid, Step, Task};
 
 /// Task stored in the multi-M scheduler. Requires `Send` so workers
 /// on different threads can pull from a shared queue.
@@ -118,7 +118,15 @@ impl AtomicStats {
 struct WorkerSlot {
     /// Steal half of this worker's deque. Used by other workers when
     /// their local deque is empty.
+    #[allow(dead_code)]
     stealer: Stealer<SendTask>,
+    /// Per-worker incoming queue. `unpark(gid)` pushes the
+    /// resurrected task onto the home worker's `inbox` so the
+    /// goroutine resumes on the same OS thread it parked on.
+    /// Required because stackful coroutines from `gossamer-coro`
+    /// (corosensei) are not safe to migrate across OS threads
+    /// while suspended.
+    inbox: Injector<SendTask>,
     /// `true` while the OS thread for this worker is parked on the
     /// `cv` waiting for new work.
     parked: AtomicBool,
@@ -133,7 +141,7 @@ struct WorkerSlot {
     /// Opaque OS-thread handle (Unix: `pthread_t` cast to `u64`,
     /// other platforms: 0). Captured by `worker_loop` on entry; the
     /// watchdog uses it to send a targeted SIGURG via
-    /// [`gossamer_runtime::preempt::signal_thread_sigurg`] when this
+    /// [`crate::preempt::signal_thread_sigurg`] when this
     /// worker's task overstays its budget.
     thread_handle: AtomicU64,
 }
@@ -154,6 +162,12 @@ struct Shared {
     injector: Injector<SendTask>,
     workers: Mutex<Vec<Arc<WorkerSlot>>>,
     parked: Mutex<HashMap<Gid, ParkedEntry>>,
+    /// Gids whose `unpark(gid)` arrived *before* the suspending
+    /// worker had a chance to insert them into `parked`. The
+    /// worker's Yield→park path checks this set and, if the gid
+    /// is present, immediately re-ejects the task to the
+    /// injector. Closes the wake-before-park race window.
+    pre_unpark: Mutex<std::collections::HashSet<Gid>>,
     next_gid: AtomicU64,
     /// Live (spawned but not yet finished) goroutine count. The
     /// scheduler refuses new spawns above `max_live`.
@@ -238,6 +252,7 @@ impl MultiScheduler {
             injector: Injector::new(),
             workers: Mutex::new(Vec::new()),
             parked: Mutex::new(HashMap::new()),
+            pre_unpark: Mutex::new(std::collections::HashSet::new()),
             next_gid: AtomicU64::new(0),
             live_goroutines: AtomicUsize::new(0),
             max_live: AtomicUsize::new(default_max_live()),
@@ -270,7 +285,7 @@ impl MultiScheduler {
         }
         let raw = self.inner.next_gid.fetch_add(1, Ordering::Relaxed);
         let gid = Gid(u32::try_from(raw & 0xFFFF_FFFF).unwrap_or(u32::MAX));
-        gossamer_runtime::sigquit::register(gid.as_u32(), std::any::type_name::<T>());
+        crate::sigquit::register(gid.as_u32(), std::any::type_name::<T>());
         // Wrap the task with a `GidStamped` adapter so the worker
         // publishes the goroutine's `gid` into the race-detector
         // thread-local before each `step` and clears it after. This
@@ -353,8 +368,8 @@ impl MultiScheduler {
     #[must_use]
     pub fn run(&self) -> MultiStats {
         self.inner.stopping.store(false, Ordering::Release);
-        gossamer_runtime::preempt::init();
-        gossamer_runtime::sigquit::install_handler();
+        crate::preempt::init();
+        crate::sigquit::install_handler();
         self.start_watchdog();
         self.reconcile_pool();
         self.wait_until_idle();
@@ -367,8 +382,8 @@ impl MultiScheduler {
     /// to drain workers when done.
     pub fn start(&self) {
         self.inner.stopping.store(false, Ordering::Release);
-        gossamer_runtime::preempt::init();
-        gossamer_runtime::sigquit::install_handler();
+        crate::preempt::init();
+        crate::sigquit::install_handler();
         self.start_watchdog();
         self.reconcile_pool();
     }
@@ -414,18 +429,38 @@ impl MultiScheduler {
 
     /// Resurrects a previously parked goroutine. Returns `true` when a
     /// parked entry was found and re-enqueued.
+    ///
+    /// If the gid is not yet in `parked` — because the goroutine has
+    /// armed its wakeup source but hasn't suspended yet — the gid is
+    /// recorded in `pre_unpark`. The worker that's about to park the
+    /// task checks this set and, if the gid is present, re-ejects
+    /// the task to the injector instead of leaving it parked.
     pub fn unpark(&self, gid: Gid) -> bool {
         let entry = self.inner.parked.lock().remove(&gid);
-        let Some(entry) = entry else { return false };
+        let Some(entry) = entry else {
+            // Park hasn't landed yet. Record so the worker's
+            // `pre_unpark` check sees it.
+            self.inner.pre_unpark.lock().insert(gid);
+            return false;
+        };
         let home = entry.home;
         let preferred = {
             let workers = self.inner.workers.lock();
             workers.get(home).map(Arc::clone)
         };
-        self.inner.injector.push(entry.task);
         if let Some(slot) = preferred {
+            // Pin the resumed goroutine to the home worker —
+            // stackful coroutines are not safe to migrate across
+            // OS threads while suspended. Push onto the worker's
+            // private inbox; the worker drains it before its main
+            // deque on the next iteration.
+            slot.inbox.push(entry.task);
             slot.wake();
         } else {
+            // Home worker retired; fall back to the global
+            // injector. (This only happens during shutdown or a
+            // shrinking pool resize.)
+            self.inner.injector.push(entry.task);
             self.wake_any();
         }
         self.inner.stats.unparks.fetch_add(1, Ordering::Relaxed);
@@ -443,49 +478,12 @@ impl MultiScheduler {
     /// poll. Used by the GC before the concurrent mark phase.
     pub fn request_safepoint(&self) {
         self.inner.request_safepoint.store(true, Ordering::Release);
-        gossamer_runtime::preempt::request_yield_all();
+        crate::preempt::request_yield_all();
     }
 
     /// Clears the safepoint request once the caller is done.
     pub fn clear_safepoint(&self) {
         self.inner.request_safepoint.store(false, Ordering::Release);
-    }
-
-    /// Informs the scheduler that the caller is about to enter a
-    /// blocking syscall (file read, DNS lookup, FFI call into a
-    /// non-poller-friendly C library, etc.). The scheduler may
-    /// spin up a fresh M so other goroutines on this worker keep
-    /// running while the original M is parked in the syscall.
-    ///
-    /// The current implementation:
-    ///
-    /// 1. Takes a snapshot of `live_workers` vs `target_workers`.
-    /// 2. If they are equal (i.e. every M is busy), bumps
-    ///    `target_workers` by one and reconciles, so a fresh M
-    ///    becomes available.
-    /// 3. The original M is expected to call
-    ///    [`Self::resume_from_blocking_syscall`] when it returns
-    ///    from the syscall so the temporary headroom is released.
-    pub fn enter_blocking_syscall(&self) {
-        let live = self.inner.live_workers.load(Ordering::Acquire);
-        let target = self.inner.target_workers.load(Ordering::Acquire);
-        let cap = Self::worker_count_cap();
-        if live >= target && target < cap {
-            self.inner.target_workers.fetch_add(1, Ordering::AcqRel);
-            self.reconcile_pool();
-        }
-    }
-
-    /// Pair to [`Self::enter_blocking_syscall`]. Releases the
-    /// temporary headroom by retiring one surplus worker.
-    pub fn resume_from_blocking_syscall(&self) {
-        let target = self.inner.target_workers.load(Ordering::Acquire);
-        if target > 1 {
-            // Decrement target; reconcile retires the highest-index
-            // worker on its next park.
-            self.inner.target_workers.fetch_sub(1, Ordering::AcqRel);
-            self.reconcile_pool();
-        }
     }
 
     fn reconcile_pool(&self) {
@@ -510,6 +508,7 @@ impl MultiScheduler {
         let stealer = deque.stealer();
         let slot = Arc::new(WorkerSlot {
             stealer,
+            inbox: Injector::new(),
             parked: AtomicBool::new(false),
             cv: Condvar::new(),
             cv_mu: Mutex::new(()),
@@ -528,6 +527,7 @@ impl MultiScheduler {
                     // order, fill with retired placeholders.
                     let placeholder = Arc::new(WorkerSlot {
                         stealer: Deque::<SendTask>::new_fifo().stealer(),
+                        inbox: Injector::new(),
                         parked: AtomicBool::new(false),
                         cv: Condvar::new(),
                         cv_mu: Mutex::new(()),
@@ -595,10 +595,8 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
     // Publish this thread's pthread_t so the watchdog can pthread_kill
     // a stuck worker (Defense #2). Released so the watchdog observes
     // the value before it tries to use it.
-    slot.thread_handle.store(
-        gossamer_runtime::preempt::current_thread_handle(),
-        Ordering::Release,
-    );
+    slot.thread_handle
+        .store(crate::preempt::current_thread_handle(), Ordering::Release);
     {
         let mut last = shared.last_yield.lock();
         while last.len() <= index {
@@ -633,9 +631,54 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
         match step {
             Step::Yield => {
                 shared.stats.yields.fetch_add(1, Ordering::Relaxed);
-                deque.push(task);
                 if let Some(slot) = shared.last_yield.lock().get_mut(index) {
                     *slot = Instant::now();
+                }
+                // The goroutine may have requested a park via
+                // `sched_global::park`. The park helper writes
+                // `(gid, reason)` into a thread-local slot before
+                // suspending; we honour it here so the suspended
+                // goroutine sits in the parked map until its
+                // wakeup source unparks it, instead of busy-
+                // looping back through the run queue.
+                if let Some((gid, reason)) = crate::sched_global::take_pending_park() {
+                    let mut parked = shared.parked.lock();
+                    parked.insert(
+                        gid,
+                        ParkedEntry {
+                            task,
+                            reason,
+                            home: index,
+                        },
+                    );
+                    shared.stats.parks.fetch_add(1, Ordering::Relaxed);
+                    // Race-window protection: if `unpark(gid)`
+                    // already fired (poller delivery between
+                    // `arm()` and the park insertion), the gid is
+                    // queued in `pre_unpark`. Drain that and, if
+                    // our gid is in it, immediately re-eject the
+                    // task back onto the injector.
+                    let mut pre = shared.pre_unpark.lock();
+                    if pre.remove(&gid) {
+                        if let Some(entry) = parked.remove(&gid) {
+                            drop(pre);
+                            drop(parked);
+                            shared.injector.push(entry.task);
+                            shared.stats.unparks.fetch_add(1, Ordering::Relaxed);
+                            // Wake any worker that may have parked
+                            // while there was no work — we just
+                            // produced some.
+                            let workers = shared.workers.lock();
+                            for slot in workers.iter() {
+                                if slot.parked.load(Ordering::Acquire) {
+                                    slot.wake();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    deque.push(task);
                 }
             }
             Step::Done => {
@@ -650,10 +693,17 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
 }
 
 /// Default `MultiScheduler::max_live` — 1M live goroutines, or
-/// `GOSSAMER_MAX_PROCS` if set. Surfaces a `for _ in 0.. { go work() }`
-/// runaway as a refused spawn rather than a kernel-thread OOM.
+/// `GOSSAMER_MAX_GOROUTINES` if set. Surfaces a
+/// `for _ in 0.. { go work() }` runaway as a refused spawn rather
+/// than a kernel-thread OOM.
+///
+/// `GOSSAMER_MAX_PROCS` controls the worker (P) count, not the
+/// live-goroutine cap; the two were previously conflated, which
+/// surprised callers that wanted "use 4 cores" but inadvertently
+/// limited themselves to 4 live goroutines. Use
+/// `GOSSAMER_MAX_GOROUTINES` to cap the goroutine count.
 fn default_max_live() -> usize {
-    if let Ok(s) = std::env::var("GOSSAMER_MAX_PROCS") {
+    if let Ok(s) = std::env::var("GOSSAMER_MAX_GOROUTINES") {
         if let Ok(n) = s.parse::<usize>() {
             if n > 0 {
                 return n;
@@ -667,7 +717,7 @@ fn default_max_live() -> usize {
 /// timestamps and bumps the global preempt phase for any worker
 /// that has been running without yielding for more than 10 ms.
 /// Compiled / interpreter code is expected to call into
-/// [`gossamer_runtime::preempt::should_yield`] at safepoints and
+/// [`crate::preempt::should_yield`] at safepoints and
 /// honour the request.
 ///
 /// Defense #2: when a worker has been running for more than
@@ -682,7 +732,7 @@ fn watchdog_loop(shared: Arc<Shared>) {
         if shared.stopping.load(Ordering::Acquire) {
             // One last bump so any spinning thread observes the
             // shutdown and reaches a safepoint.
-            gossamer_runtime::preempt::request_yield_all();
+            crate::preempt::request_yield_all();
             return;
         }
         thread::sleep(Duration::from_millis(5));
@@ -700,15 +750,15 @@ fn watchdog_loop(shared: Arc<Shared>) {
             }
         }
         if needs_preempt || shared.request_safepoint.load(Ordering::Acquire) {
-            gossamer_runtime::preempt::request_yield_all();
-            gossamer_runtime::preempt::bump_pressure();
+            crate::preempt::request_yield_all();
+            crate::preempt::bump_pressure();
         }
         if !kill_indices.is_empty() {
             let workers = shared.workers.lock();
             for i in kill_indices {
                 if let Some(slot) = workers.get(i) {
                     let handle = slot.thread_handle.load(Ordering::Acquire);
-                    let _ = gossamer_runtime::preempt::signal_thread_sigurg(handle);
+                    let _ = crate::preempt::signal_thread_sigurg(handle);
                 }
             }
         }
@@ -725,7 +775,19 @@ fn next_task(
     if let Some(task) = deque.pop() {
         return Some(task);
     }
-    // 1) global injector
+    // 1) own inbox — unparked goroutines pinned to this worker
+    loop {
+        match self_slot.inbox.steal_batch_and_pop(deque) {
+            Steal::Success(task) => {
+                shared.stats.unparks.fetch_add(1, Ordering::Relaxed);
+                return Some(task);
+            }
+            Steal::Empty => break,
+            Steal::Retry => {}
+        }
+    }
+    // 2) global injector (new spawns from the main thread or from
+    //    other non-worker contexts)
     loop {
         match shared.injector.steal_batch_and_pop(deque) {
             Steal::Success(task) => {
@@ -736,28 +798,19 @@ fn next_task(
             Steal::Retry => {}
         }
     }
-    // 2) peers
-    let workers = shared.workers.lock();
-    let n = workers.len();
-    if n == 0 {
-        return None;
-    }
-    let start = *steal_cursor % n;
-    for offset in 0..n {
-        let idx = (start + offset) % n;
-        if Arc::ptr_eq(&workers[idx], self_slot) {
-            continue;
-        }
-        match workers[idx].stealer.steal_batch_and_pop(deque) {
-            Steal::Success(task) => {
-                *steal_cursor = idx.wrapping_add(1);
-                shared.stats.steals.fetch_add(1, Ordering::Relaxed);
-                return Some(task);
-            }
-            Steal::Empty | Steal::Retry => {}
-        }
-    }
-    drop(workers);
+    // Peer-stealing is disabled: stackful coroutines from
+    // [`gossamer_coro::Goroutine`] (built on `corosensei`) are not
+    // safe to migrate across OS worker threads while suspended.
+    // Once a goroutine lands on a worker (via the global injector
+    // on first spawn, or on its `home` worker after unpark), it
+    // stays there for its lifetime. The trade-off: load imbalance
+    // under non-uniform per-goroutine work; for the dominant
+    // HTTP keep-alive shape (each connection = one goroutine,
+    // uniform per-request work), all workers stay busy because
+    // the injector hands out new connections one by one.
+    let _ = self_slot;
+    let _ = steal_cursor;
+    let _ = shared;
     None
 }
 
@@ -783,7 +836,7 @@ fn since_ms(t: Instant) -> u64 {
 
 /// Task adapter that publishes the goroutine's `gid` into the
 /// race-detector thread-local for the duration of each `step`,
-/// so `gossamer_runtime::race::current_gid` returns the right
+/// so `crate::race::current_gid` returns the right
 /// value when the task touches a sync primitive. Cleared after
 /// the step so the host thread's gid does not pollute work the
 /// scheduler queue runs between tasks.
@@ -794,9 +847,11 @@ struct GidStamped<T> {
 
 impl<T: Task> Task for GidStamped<T> {
     fn step(&mut self) -> Step {
-        gossamer_runtime::race::set_current_gid(self.gid.as_u32());
+        crate::race::set_current_gid(self.gid.as_u32());
+        crate::sched_global::set_current_gid(self.gid);
         let result = self.inner.step();
-        gossamer_runtime::race::set_current_gid(0);
+        crate::sched_global::clear_current_gid();
+        crate::race::set_current_gid(0);
         result
     }
 }

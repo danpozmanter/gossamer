@@ -69,6 +69,7 @@ http-client = ["tls", "dep:ureq"]
 gossamer-pkg = { workspace = true }
 gossamer-runtime = { workspace = true }
 gossamer-sched = { workspace = true }
+gossamer-coro = { workspace = true }
 gossamer-gc = { workspace = true }
 getrandom = { version = "0.2", optional = true }
 regex = { version = "1", default-features = false, features = ["std", "unicode"], optional = true }

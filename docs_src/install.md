@@ -37,22 +37,35 @@ gos run src/main.gos
 
 You should see `hello from hello`.
 
+## Supported platforms
+
+Gossamer goroutines are stackful coroutines (corosensei).
+Switching contexts requires a per-architecture inline-assembly
+implementation, so the supported platform matrix is narrower than
+"anything Rust can build":
+
+| OS       | Architecture                  | Status |
+| -------- | ----------------------------- | ------ |
+| Linux    | x86_64                        | First-class |
+| Linux    | aarch64                       | First-class |
+| Linux    | armv7 (32-bit ARM)            | Supported |
+| macOS    | x86_64 (Intel)                | Supported |
+| macOS    | aarch64 (Apple Silicon)       | First-class |
+| Windows  | x86_64 (MSVC ABI)             | Supported |
+
+Other targets compile but the goroutine scheduler refuses to start
+because corosensei has no context-switch backend for them.
+
 ## Target toolchains
 
 `gos build --target <triple>` enables cross-compilation. The
-default registered set includes:
+default registered set covers the supported platforms above plus
+the `riscv64gc-unknown-linux-gnu`, `wasm32-unknown-unknown`, and
+`wasm32-wasi` targets — which build but do not run goroutines.
 
-- `x86_64-unknown-linux-gnu`
-- `aarch64-unknown-linux-gnu`
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-- `x86_64-pc-windows-msvc`
-- `riscv64gc-unknown-linux-gnu`
-- `wasm32-unknown-unknown`
-- `wasm32-wasi`
-
-Musl targets (`*-unknown-linux-musl`) are gated behind the
-`musl` Cargo feature. Rebuild with:
+Musl targets (`x86_64-unknown-linux-musl`,
+`aarch64-unknown-linux-musl`) are gated behind the `musl` Cargo
+feature. Rebuild with:
 
 ```sh
 cargo build --workspace --release -p gossamer-driver --features musl

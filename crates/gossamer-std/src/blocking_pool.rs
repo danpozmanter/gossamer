@@ -64,14 +64,55 @@ fn worker_loop(rx: Receiver<Job>) {
 }
 
 /// Runs `f` on the blocking thread pool and waits for the result.
-/// The calling thread blocks on a one-shot channel; in the
-/// goroutine model this is equivalent to a park.
+///
+/// Goroutine-aware: when called from a goroutine, the calling
+/// goroutine parks (its worker thread is freed for other goroutines)
+/// until the pool worker finishes the job and unparks it. When
+/// called from a non-goroutine OS thread, falls back to a
+/// `mpsc::Receiver::recv` blocking wait.
 pub fn run<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    if gossamer_coro::in_goroutine() {
+        let result_slot: Arc<Mutex<Option<R>>> = Arc::new(Mutex::new(None));
+        let result_slot_for_pool = Arc::clone(&result_slot);
+        let waiter_gid_slot: Arc<Mutex<Option<gossamer_runtime::sched::Gid>>> =
+            Arc::new(Mutex::new(None));
+        let waiter_gid_slot_for_pool = Arc::clone(&waiter_gid_slot);
+        let job: Job = Box::new(move || {
+            let result = f();
+            *result_slot_for_pool.lock() = Some(result);
+            // Wake the parked goroutine. The waiter has already
+            // published its gid before suspending; if for some
+            // reason it hasn't yet (race on the lock), `unpark`
+            // routes through `pre_unpark` and the upcoming park
+            // exits immediately.
+            if let Some(gid) = *waiter_gid_slot_for_pool.lock() {
+                gossamer_runtime::sched_global::scheduler().unpark(gid);
+            }
+        });
+        pool()
+            .submit
+            .send(job)
+            .expect("blocking pool sender disconnected");
+        gossamer_runtime::sched_global::park(gossamer_runtime::sched::ParkReason::Sync, |parker| {
+            *waiter_gid_slot.lock() = Some(parker.gid);
+            // Race protection: if the pool job already
+            // published its result before we got here, wake
+            // ourselves so suspend exits immediately.
+            if result_slot.lock().is_some() {
+                gossamer_runtime::sched_global::scheduler().unpark(parker.gid);
+            }
+        });
+        return result_slot
+            .lock()
+            .take()
+            .expect("blocking pool result missing after unpark");
+    }
     let (tx, rx) = std::sync::mpsc::channel::<R>();
     let job: Job = Box::new(move || {
         let result = f();
-        // Send may fail if the caller dropped its receiver; either
-        // way the result is no longer needed.
         let _ = tx.send(result);
     });
     pool()

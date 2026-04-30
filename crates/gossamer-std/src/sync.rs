@@ -31,9 +31,18 @@ use gossamer_runtime::race;
 use parking_lot::{Condvar, Mutex as PMutex, Once as POnce, RwLock as PRwLock};
 
 /// Mutual-exclusion lock.
+///
+/// On contention from a goroutine, parks the calling goroutine on
+/// the lock's wait queue and lets the worker thread run other
+/// goroutines. From a non-goroutine OS thread the lock falls back
+/// to `parking_lot::Mutex::lock`. Acquisition is unfair — no
+/// queue ordering guarantee.
 #[derive(Debug, Default)]
 pub struct Mutex<T: ?Sized> {
     last_unlocker: StdAtomicI64,
+    /// Parked goroutine ids waiting to acquire. The releaser pops
+    /// the head and unparks it.
+    waiters: PMutex<std::collections::VecDeque<gossamer_runtime::sched::Gid>>,
     inner: PMutex<T>,
 }
 
@@ -43,28 +52,68 @@ impl<T> Mutex<T> {
     pub const fn new(value: T) -> Self {
         Self {
             last_unlocker: StdAtomicI64::new(-1),
+            waiters: PMutex::new(std::collections::VecDeque::new()),
             inner: PMutex::new(value),
         }
     }
 
-    /// Acquires the lock for the duration of `f`. Unlike the host
-    /// `std::sync::Mutex` this never panics on poisoning — `parking_lot`
-    /// does not propagate panics through the lock.
+    /// Acquires the lock for the duration of `f`. Goroutines park
+    /// on contention; OS threads fall back to `parking_lot`'s OS
+    /// park. Never panics on poisoning.
     ///
     /// Bookends `f` with `race::record_sync` calls so the race
     /// detector observes the happens-before edge from the previous
     /// unlocker to the current acquirer; on exit it publishes the
     /// current goroutine as the new unlocker.
     pub fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        let mut guard = self.inner.lock();
-        let from = self.last_unlocker.load(Ordering::Acquire);
-        if from >= 0 {
-            race::record_sync(u32::try_from(from).unwrap_or(0), race::current_gid());
+        loop {
+            if let Some(mut guard) = self.inner.try_lock() {
+                let from = self.last_unlocker.load(Ordering::Acquire);
+                if from >= 0 {
+                    race::record_sync(u32::try_from(from).unwrap_or(0), race::current_gid());
+                }
+                let result = f(&mut guard);
+                self.last_unlocker
+                    .store(i64::from(race::current_gid()), Ordering::Release);
+                drop(guard);
+                if let Some(gid) = self.waiters.lock().pop_front() {
+                    gossamer_runtime::sched_global::scheduler().unpark(gid);
+                }
+                return result;
+            }
+            if !gossamer_coro::in_goroutine() {
+                // OS-thread fallback. Block on the inner mutex —
+                // no goroutine concurrency to preserve here.
+                let mut guard = self.inner.lock();
+                let from = self.last_unlocker.load(Ordering::Acquire);
+                if from >= 0 {
+                    race::record_sync(u32::try_from(from).unwrap_or(0), race::current_gid());
+                }
+                let result = f(&mut guard);
+                self.last_unlocker
+                    .store(i64::from(race::current_gid()), Ordering::Release);
+                drop(guard);
+                if let Some(gid) = self.waiters.lock().pop_front() {
+                    gossamer_runtime::sched_global::scheduler().unpark(gid);
+                }
+                return result;
+            }
+            gossamer_runtime::sched_global::park(
+                gossamer_runtime::sched::ParkReason::Sync,
+                |parker| {
+                    self.waiters.lock().push_back(parker.gid);
+                    // Wake-before-park race close: re-check inside
+                    // arm. If the lock is now free, self-unpark via
+                    // pre_unpark.
+                    if !self.inner.is_locked() {
+                        gossamer_runtime::sched_global::scheduler().unpark(parker.gid);
+                    }
+                },
+            );
+            if let Some(gid) = gossamer_runtime::sched_global::current_gid() {
+                self.waiters.lock().retain(|g| *g != gid);
+            }
         }
-        let result = f(&mut guard);
-        self.last_unlocker
-            .store(i64::from(race::current_gid()), Ordering::Release);
-        result
     }
 
     /// Attempts to acquire the lock without blocking. Returns
@@ -82,95 +131,14 @@ impl<T> Mutex<T> {
     }
 }
 
-/// Goroutine-aware mutex.
+/// Backwards-compatible alias for [`Mutex<T>`].
 ///
-/// `Mutex<T>` blocks the underlying OS worker thread on contention,
-/// which strands every other goroutine that worker would have run.
-/// `GoMutex<T>` instead spins briefly, then **cooperatively yields**
-/// — letting the M:N scheduler reschedule sibling goroutines before
-/// the next acquisition attempt. The cooperative-yield path calls
-/// [`gossamer_runtime::preempt::request_yield_self`] (which the
-/// next safepoint poll observes) and then `std::thread::yield_now`,
-/// so on a single-OS-thread setup it still releases the CPU
-/// promptly.
-///
-/// Cost relative to [`Mutex`]:
-///
-/// - Uncontended: same — a single `try_lock` on the inner
-///   `parking_lot::Mutex`.
-/// - Contended: a brief spin (16 iterations of `spin_loop`)
-///   followed by `yield_now` until the lock becomes free, instead
-///   of `parking_lot`'s OS-thread park. Overall throughput is
-///   *better* in the typical "many goroutines, one OS thread per
-///   GOMAXPROCS" shape because no OS-thread park ever happens.
-#[derive(Debug, Default)]
-pub struct GoMutex<T: ?Sized> {
-    last_unlocker: StdAtomicI64,
-    inner: PMutex<T>,
-}
-
-impl<T> GoMutex<T> {
-    /// Creates a fresh goroutine-aware mutex protecting `value`.
-    #[must_use]
-    pub const fn new(value: T) -> Self {
-        Self {
-            last_unlocker: StdAtomicI64::new(-1),
-            inner: PMutex::new(value),
-        }
-    }
-
-    /// Acquires the lock, spinning then cooperatively yielding on
-    /// contention. Records the sender->receiver happens-before
-    /// edge into the race detector.
-    pub fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        // Spin path: try-lock briefly without giving up the CPU.
-        for _ in 0..16 {
-            if let Some(mut guard) = self.inner.try_lock() {
-                let from = self.last_unlocker.load(Ordering::Acquire);
-                if from >= 0 {
-                    race::record_sync(u32::try_from(from).unwrap_or(0), race::current_gid());
-                }
-                let result = f(&mut guard);
-                self.last_unlocker
-                    .store(i64::from(race::current_gid()), Ordering::Release);
-                return result;
-            }
-            std::hint::spin_loop();
-        }
-        // Cooperative-yield path: every retry asks the scheduler
-        // to consider running another goroutine before the next
-        // try_lock attempt. This is how Go's `sync.Mutex` keeps
-        // M:N alive under contention.
-        loop {
-            if let Some(mut guard) = self.inner.try_lock() {
-                let from = self.last_unlocker.load(Ordering::Acquire);
-                if from >= 0 {
-                    race::record_sync(u32::try_from(from).unwrap_or(0), race::current_gid());
-                }
-                let result = f(&mut guard);
-                self.last_unlocker
-                    .store(i64::from(race::current_gid()), Ordering::Release);
-                return result;
-            }
-            gossamer_runtime::preempt::request_yield_self();
-            std::thread::yield_now();
-        }
-    }
-
-    /// Non-blocking attempt. Same semantics as
-    /// [`Mutex::try_with`] — returns `None` when the lock is held.
-    pub fn try_with<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
-        let mut guard = self.inner.try_lock()?;
-        let from = self.last_unlocker.load(Ordering::Acquire);
-        if from >= 0 {
-            race::record_sync(u32::try_from(from).unwrap_or(0), race::current_gid());
-        }
-        let result = f(&mut guard);
-        self.last_unlocker
-            .store(i64::from(race::current_gid()), Ordering::Release);
-        Some(result)
-    }
-}
+/// Earlier releases shipped a separate "goroutine-aware" mutex that
+/// spin-then-`yield_now`'d on contention. With true goroutines, the
+/// regular [`Mutex<T>`] now parks the calling coroutine on
+/// contention via the M:N scheduler — exactly the semantics
+/// `GoMutex<T>` was approximating. The two types are identical.
+pub type GoMutex<T> = Mutex<T>;
 
 /// Reader-writer lock.
 #[derive(Debug, Default)]
@@ -423,6 +391,10 @@ impl AtomicBool {
 pub struct WaitGroup {
     state: PMutex<i64>,
     cv: Condvar,
+    /// Goroutines parked on `wait()` for the counter to reach zero.
+    /// `add(n)` unparks every gid in this list when the counter
+    /// transitions to zero; OS-thread waiters use the condvar.
+    waiters: PMutex<Vec<gossamer_runtime::sched::Gid>>,
 }
 
 /// Misuse outcome reported by [`WaitGroup::try_add`] /
@@ -459,6 +431,7 @@ impl WaitGroup {
         Self {
             state: PMutex::new(0),
             cv: Condvar::new(),
+            waiters: PMutex::new(Vec::new()),
         }
     }
 
@@ -475,6 +448,15 @@ impl WaitGroup {
         let reached_zero = next == 0;
         drop(count);
         if reached_zero {
+            // Unpark every parked goroutine waiter, then notify
+            // any condvar-blocked OS thread waiter.
+            let parked: Vec<_> = self.waiters.lock().drain(..).collect();
+            if !parked.is_empty() {
+                let sched = gossamer_runtime::sched_global::scheduler();
+                for gid in parked {
+                    sched.unpark(gid);
+                }
+            }
             self.cv.notify_all();
         }
         Ok(next)
@@ -502,11 +484,46 @@ impl WaitGroup {
         self.add(-1);
     }
 
-    /// Blocks until the pending count reaches zero. No spinning.
+    /// Blocks until the pending count reaches zero. Goroutines park
+    /// (their worker thread is freed for other goroutines); OS-thread
+    /// callers fall back to a condvar wait. No spinning.
     pub fn wait(&self) {
-        let mut count = self.state.lock();
-        while *count > 0 {
-            self.cv.wait(&mut count);
+        loop {
+            {
+                let count = self.state.lock();
+                if *count == 0 {
+                    return;
+                }
+            }
+            if gossamer_coro::in_goroutine() {
+                gossamer_runtime::sched_global::park(
+                    gossamer_runtime::sched::ParkReason::Sync,
+                    |parker| {
+                        // Push our gid first, then re-check the
+                        // counter under the same lock to close the
+                        // wake-before-park race window.
+                        self.waiters.lock().push(parker.gid);
+                        let count = self.state.lock();
+                        if *count == 0 {
+                            // The notifier ran in the gap between
+                            // our last check and waiter
+                            // registration. Self-unpark via
+                            // pre_unpark so the suspend exits
+                            // immediately.
+                            gossamer_runtime::sched_global::scheduler().unpark(parker.gid);
+                        }
+                    },
+                );
+                if let Some(gid) = gossamer_runtime::sched_global::current_gid() {
+                    self.waiters.lock().retain(|g| *g != gid);
+                }
+            } else {
+                let mut count = self.state.lock();
+                while *count > 0 {
+                    self.cv.wait(&mut count);
+                }
+                return;
+            }
         }
     }
 

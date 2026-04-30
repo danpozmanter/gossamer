@@ -130,9 +130,11 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#scheduler">Scheduler</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#http-server">HTTP server</a>
-    </li>
     <li class="toctree-l2"><a class="reference internal" href="#goroutines">Goroutines</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#netpoller">Netpoller</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#http-server">HTTP server</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#panic-recovery">Panic recovery</a>
     </li>
@@ -241,39 +243,91 @@ and weak references. The tree-walker currently piggy-backs on Rust's
 <code>Rc</code> / <code>Arc</code> reference counting; the concurrent GC comes online once
 the Arc-based interpreter lands.</p>
 <h2 id="scheduler">Scheduler<a class="headerlink" href="#scheduler" title="Permanent link">&para;</a></h2>
-<p><code>gossamer-sched</code> holds the scheduler skeleton. Today <code>go expr</code> in
-the tree-walker is inlined (the body runs on the calling stack);
-real parallelism arrives with the Arc-based <code>Interpreter: Send</code>
-transition that lets the scheduler own a real
-worker pool.</p>
+<p><code>gossamer-runtime::sched</code> is the work-stealing M:N scheduler.
+Every Gossamer binary links it through <code>libgossamer_runtime.a</code>, so
+<code>go expr</code> in compiled code (and the bytecode VM) lands on the same
+shared pool. The pool size defaults to <code>num_cpus()</code>, overridable
+via <code>GOSSAMER_MAX_PROCS=N</code> or <code>runtime::set_max_procs(n)</code> from
+user code.</p>
+<p>A <code>MultiScheduler</code> owns:</p>
+<ul>
+<li>one work-stealing deque per worker M (a <code>crossbeam_deque::Worker</code>),</li>
+<li>a global injector (<code>crossbeam_deque::Injector</code>) for cross-thread
+  pushes and the netpoller's wakeup path,</li>
+<li>a <code>parked</code> map keyed by <code>Gid</code> for goroutines suspended on I/O,
+  channels, mutexes, sleeps, or the blocking-syscall pool,</li>
+<li>a watchdog thread that bumps the cooperative preempt phase
+  every 5 ms and signals SIGURG to a worker that's been running
+  more than 100 ms.</li>
+</ul>
+<h2 id="goroutines">Goroutines<a class="headerlink" href="#goroutines" title="Permanent link">&para;</a></h2>
+<p><code>go expr(args)</code> is a real stackful coroutine. Construction:</p>
+<ol>
+<li><code>gossamer_runtime::sched_global::spawn(closure)</code> allocates a
+   16 KiB <code>corosensei::Coroutine</code> stack (override:
+   <code>GOSSAMER_GOROUTINE_STACK=N</code>).</li>
+<li>The coroutine's entry shim publishes its <code>Yielder</code> pointer to a
+   shared slot, sets the worker's TLS yielder, then runs <code>closure</code>.</li>
+<li>The scheduler wraps the coroutine in a <code>GoroutineTask</code> whose
+   <code>step()</code> calls <code>coroutine.resume()</code>. Result <code>Yield</code> →
+   <code>Step::Yield</code>; result <code>Return</code> → <code>Step::Done</code>.</li>
+</ol>
+<p>When user code blocks (channel recv on empty, mutex contention,
+<code>time::sleep</code>, <code>net::TcpStream::read</code> returning <code>WouldBlock</code>,
+filesystem syscall via <code>blocking_pool::run</code>), the helper calls
+<code>sched_global::park(reason, |parker| { register parker.gid with
+the wakeup source })</code> and then <code>gossamer_coro::suspend()</code>. The
+worker M sees <code>Step::Yield</code> plus a pending-park flag and moves
+the task into <code>MultiScheduler::parked</code> keyed by gid. The wakeup
+source (poller readiness, channel send, mutex unlock, blocking-pool
+worker, ...) calls <code>MultiScheduler::unpark(gid)</code> which pushes the
+task back onto the injector. Any free worker picks it up and
+resumes the coroutine — possibly on a different OS thread than the
+one it suspended on.</p>
+<p>A blocked goroutine costs ~16 KiB of mmap'd stack, not an OS
+thread. 10 000 idle goroutines fit on a 4-worker scheduler in
+roughly 160 MiB of address space.</p>
+<p>The wake-before-park race window (where <code>unpark(gid)</code> arrives
+before the goroutine has actually been moved into <code>parked</code>) is
+closed by a <code>pre_unpark</code> set: if <code>unpark(gid)</code> finds the gid not
+yet parked, it records the gid; the worker about to park the
+task observes the pre-unpark and immediately re-ejects the task
+to the injector instead of leaving it parked.</p>
+<h2 id="netpoller">Netpoller<a class="headerlink" href="#netpoller" title="Permanent link">&para;</a></h2>
+<p><code>gossamer-runtime::sched::poller::OsPoller</code> wraps <code>mio</code> (epoll on
+Linux, kqueue on macOS / BSD, IOCP on Windows). One dedicated
+<code>gos-netpoller</code> OS thread blocks on <code>OsPoller::poll(50 ms)</code> and
+dispatches each readiness event to the goroutine that registered
+for it via <code>register_waker(gid, closure)</code>. Default closure: just
+<code>scheduler().unpark(gid)</code>. Timers (<code>time::sleep</code>,
+<code>http::Client::do_request</code> deadlines) ride the same wheel.</p>
 <h2 id="http-server">HTTP server<a class="headerlink" href="#http-server" title="Permanent link">&para;</a></h2>
-<p><code>gossamer-std::http::server::bind_and_run</code> runs an accept-loop on
-the main thread and spawns one OS thread per accepted connection.
-Each worker parses the request, sends the parsed form over an
-<code>mpsc::channel</code> back to the interpreter thread, and awaits a
-response on a return channel.</p>
+<p><code>gossamer-std::http::server::run</code> and the compiled-tier
+<code>gos_rt_http_serve</code> both:</p>
+<ul>
+<li>bind a non-blocking <code>TcpListener</code>,</li>
+<li>park on the netpoller for accept readiness,</li>
+<li>spawn each accepted connection as a goroutine via
+  <code>sched_global::spawn</code>,</li>
+<li>read / write under the netpoller — <code>WouldBlock</code> parks the
+  goroutine; the worker thread immediately picks up another
+  connection.</li>
+</ul>
 <p>Graceful shutdown is driven by:</p>
 <ul>
 <li><code>GOSSAMER_HTTP_MAX_REQUESTS=N</code> — env var, stop after N requests.</li>
 <li><code>gossamer_interp::set_http_max_requests(N)</code> — safe-Rust test hook.</li>
 <li><code>config.shutdown: Arc&lt;AtomicBool&gt;</code> — for in-process callers.</li>
 </ul>
-<h2 id="goroutines">Goroutines<a class="headerlink" href="#goroutines" title="Permanent link">&para;</a></h2>
-<p>Today <code>go expr</code> evaluates <code>expr</code> inline — the body runs to
-completion on the caller's stack before the <code>go</code> expression
-finishes. A real scheduler-backed implementation depends on two
-prior pieces:</p>
-<ol>
-<li><code>Value: Send</code> (the Arc-based interpreter).</li>
-<li>A multi-worker dispatch in <code>gossamer-sched</code>.</li>
-</ol>
-<p>Both land together under the risks backlog.</p>
 <h2 id="panic-recovery">Panic recovery<a class="headerlink" href="#panic-recovery" title="Permanent link">&para;</a></h2>
 <p><code>panic(msg)</code> in user code returns <code>RuntimeError::Panic(msg)</code> from
 the evaluator. The native HTTP server catches that per-request,
-logs it, and returns a 500. A panic inside a <code>go expr</code> body crashes
-the process today because the tree-walker runs the body inline —
-proper goroutine panic isolation lands with the scheduler (§1.6).</p>
+logs it, and returns a 500. A panic inside a goroutine body
+unwinds the coroutine's stack and propagates to the worker M's
+resume site — the worker exits with the panic, but other
+goroutines on other workers continue running. A program-wide
+panic handler can be installed via <code>panic::set_hook</code> from user
+code.</p>
 <h2 id="where-each-stage-is-tested">Where each stage is tested<a class="headerlink" href="#where-each-stage-is-tested" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
