@@ -359,6 +359,7 @@ pub(crate) fn run() -> ExitCode {
 /// Routes the parsed [`Command`] to the matching `cmd::*` module.
 /// Kept as a flat match so each new subcommand is one line — the
 /// place to look when a flag stops landing where you expect.
+#[allow(clippy::too_many_lines)] // Intentional flat dispatch: one arm per subcommand.
 fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
     match command {
         None | Some(Command::Repl) => repl::cmd_repl(),

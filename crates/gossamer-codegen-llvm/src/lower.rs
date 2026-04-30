@@ -2866,8 +2866,6 @@ impl<'a> Lowerer<'a> {
         let saved_tmp = if scope_arena {
             let s = self.fresh();
             writeln!(self.out, "  {s} = call i64 @gos_rt_arena_save()").unwrap();
-            self.runtime_refs.insert("gos_rt_arena_save".to_string());
-            self.runtime_refs.insert("gos_rt_arena_restore".to_string());
             Some(s)
         } else {
             None

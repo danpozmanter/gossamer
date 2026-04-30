@@ -51,7 +51,7 @@
     <ul class="current">
     <li class="toctree-l2"><a class="reference internal" href="#hello-gossamer">Hello, Gossamer</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#a-taste-of-gossamer">A taste of Gossamer</a>
+    <li class="toctree-l2"><a class="reference internal" href="#hello-goroutines-and-channels">Hello, Goroutines and Channels</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#why-gossamer">Why Gossamer</a>
     </li>
@@ -185,45 +185,12 @@ language with Rust-flavoured syntax and Go-shaped runtime.</p>
 policy that takes effect at the first stable tag is drafted at
 <a href="stability/"><code>stability.md</code></a>; until then, the public API may
 change with notice in release notes.</p>
-<p>The runtime now provides Go-shape M:N scheduling with work
-stealing, an <code>epoll</code>/<code>kqueue</code>/<code>IOCP</code> netpoller wired through
-<code>net::TcpStream</code> / <code>net::TcpListener</code> / <code>time::sleep</code> / <code>http</code>,
-async preemption with GC safepoints, write barriers integrated
-with the concurrent collector, and goroutine-aware <code>Mutex</code>,
-<code>RwLock</code>, <code>Once</code>, <code>Barrier</code>, <code>WaitGroup</code>. <code>runtime.NumGoroutine()</code>
-equivalent (<code>runtime::num_goroutines</code>), <code>runtime.MemStats</code> shape
-(<code>runtime::mem_stats</code>), SIGQUIT goroutine dump, and a pprof
-endpoint compatible with <code>go tool pprof</code> ship in the stdlib.</p>
 <h2 id="hello-gossamer">Hello, Gossamer<a class="headerlink" href="#hello-gossamer" title="Permanent link">&para;</a></h2>
 <pre><code class="language-gossamer">fn main() {
     println(&quot;hello, world&quot;)
 }
 </code></pre>
-<h2 id="a-taste-of-gossamer">A taste of Gossamer<a class="headerlink" href="#a-taste-of-gossamer" title="Permanent link">&para;</a></h2>
-<p>The forward-pipe operator (<code>|&gt;</code>) threads a value through successive
-calls left-to-right. <code>x |&gt; f(a, b)</code> desugars to <code>f(a, b, x)</code>,
-placing the piped value in the trailing positional slot. It
-composes uniformly across functions, methods, and closures:</p>
-<pre><code class="language-gossamer">fn double(x: i64) -&gt; i64 { x * 2 }
-fn add(a: i64, b: i64) -&gt; i64 { a + b }
-fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
-    if x &lt; lo { lo } else if x &gt; hi { hi } else { x }
-}
-
-fn main() {
-    let n = 3 |&gt; double |&gt; add(10) |&gt; clamp(0, 100)
-    println(&quot;arithmetic:&quot;, n)
-
-    let words = &quot;  Hello  World  &quot;
-        |&gt; str::trim
-        |&gt; str::to_lowercase
-        |&gt; str::split(&quot; &quot;)
-        |&gt; iter::count
-
-    println(&quot;words:&quot;, words)
-}
-</code></pre>
-<p>Goroutines and channels use the same syntax:</p>
+<h2 id="hello-goroutines-and-channels">Hello, Goroutines and Channels<a class="headerlink" href="#hello-goroutines-and-channels" title="Permanent link">&para;</a></h2>
 <pre><code class="language-gossamer">fn main() {
     let (tx, rx) = channel::&lt;i64&gt;()
     go fn() { tx.send(40 |&gt; add(2)) }()
@@ -232,34 +199,15 @@ fn main() {
 </code></pre>
 <h2 id="why-gossamer">Why Gossamer<a class="headerlink" href="#why-gossamer" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Fast compile times.</strong> <code>gos check</code> and <code>gos build</code> (Cranelift
-  debug) finish in single-digit milliseconds on small-to-medium
-  projects — meaningfully faster than <code>go build</code> and an order of
-  magnitude faster than warm <code>cargo build</code> for an equivalent
-  source tree. <code>gos build --release</code> (LLVM, full optimisation)
-  still beats warm <code>cargo build --release</code> on the same workload.
-  <code>gos check</code> is comparable to <code>cargo check</code> on incremental
-  edits and far ahead from a cold start, because the front-end
-  is built around an incremental cache and the runtime ships as
-  a pre-built static library — no per-build dependency-graph
-  compile.</li>
-<li><strong>Two execution tiers from one binary.</strong> The same source runs
-  unchanged through <code>gos run</code> (interpreter + bytecode VM with
-  optional Cranelift JIT) and <code>gos build</code> (native AOT — Cranelift
-  for debug, LLVM <code>-O3</code> for release with per-function fallback to
-  Cranelift). Iterate with the interpreter for instant feedback,
-  ship the native binary for production performance — no
-  separate toolchains, no dialect drift.</li>
-<li><strong>Go-style goroutines</strong> (<code>go expr</code>) with typed channels and a
-  cooperative scheduler.</li>
+<li><strong>Ergnomic</strong> Forward pipes, Rust like error handling, minimal magic.</li>
+<li><strong>Efficient</strong> Gossamer runs with minimal impact on memory, and it runs fast.</li>
+<li><strong>Interpreted and Compiled</strong> Develop code quickly with a bytecode vm powered
+interpreter and a REPL. Ship an optimized compiled single binary.</li>
+<li><strong>Go-style goroutines</strong> (<code>go expr</code>) with typed channels.</li>
+<li><strong>Go-style async</strong> Colorless functions and stackful coroutines.</li>
 <li><strong>Rust-style type system</strong> — statically-typed, generics with
   trait bounds, pattern-matching, <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code>.</li>
-<li><strong>Garbage-collected</strong> — no lifetimes, no borrow checker surface.
-  <code>&amp;</code> and <code>&amp;mut</code> still express aliasing intent. Capturing closures
-  flow through <code>Fn(args) -&gt; ret</code> parameters without <code>move</code> /
-  trait-bound ceremony.</li>
-<li><strong>Safe Rust</strong> implementation — no <code>unsafe</code> in the compiler or
-  runtime. Every crate carries <code>#![forbid(unsafe_code)]</code>.</li>
+<li><strong>Garbage-collected</strong> — no lifetimes, no borrow checker surface.</li>
 <li><strong>Batteries-included stdlib</strong> — <code>fmt</code>, <code>io</code>, <code>os</code>, <code>http</code>,
   <code>encoding::json</code>, <code>sync</code>, <code>time</code>, plus a growing list of
   libraries for context, path/fs, bytes/bufio, URL, logging,
@@ -333,5 +281,5 @@ fn main() {
 
 <!--
 MkDocs version : 1.6.1
-Build Date UTC : 2026-04-30 04:29:50.053462+00:00
+Build Date UTC : 2026-04-30 20:24:26.636478+00:00
 -->
