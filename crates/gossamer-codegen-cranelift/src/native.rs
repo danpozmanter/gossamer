@@ -6663,7 +6663,14 @@ fn lower_intrinsic_call(
             Ok(true)
         }
         // ---- Atomic<i64> primitive ----
-        "Atomic::new" | "sync::Atomic::new" | "atomic::new" | "gos_rt_atomic_i64_new" => {
+        "Atomic::new"
+        | "sync::Atomic::new"
+        | "atomic::new"
+        | "AtomicI64::new"
+        | "sync::AtomicI64::new"
+        | "AtomicU64::new"
+        | "sync::AtomicU64::new"
+        | "gos_rt_atomic_i64_new" => {
             let initial = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -8133,7 +8140,13 @@ fn emit_c_main_shim(module: &mut dyn Module, gos_main: FuncId) -> Result<()> {
         let _ = builder.ins().call(set_args_ref, &[argc, argv]);
         let gos_main_ref = module.declare_func_in_func(gos_main, builder.func);
         let call = builder.ins().call(gos_main_ref, &[]);
-        let result64 = builder.inst_results(call)[0];
+        let result_raw = builder.inst_results(call)[0];
+        // The body-wide type inferer can narrow `Local::RETURN` to a
+        // sub-i64 type (e.g. `i8` when the body's last RETURN store
+        // came from a comparison). Coerce up to `exit_code`'s declared
+        // i64 parameter so cranelift's verifier is happy regardless.
+        let result64 = coerce_arg_to(&mut builder, result_raw, types::I64)
+            .unwrap_or_else(|_| builder.ins().iconst(types::I64, 0));
         // Drain the runtime's line-buffered stdout cache so any
         // trailing output (no final `println!`) reaches the
         // terminal before the process exits.

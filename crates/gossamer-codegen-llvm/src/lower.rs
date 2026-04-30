@@ -3175,7 +3175,13 @@ fn map_prelude_symbol(name: &str) -> &str {
         "Mutex::new" | "sync::Mutex::new" | "mutex::new" => "gos_rt_mutex_new",
         "WaitGroup::new" | "sync::WaitGroup::new" | "wg::new" => "gos_rt_wg_new",
         "I64Vec::new" | "heap_i64::new" => "gos_rt_heap_i64_new",
-        "Atomic::new" | "sync::Atomic::new" | "atomic::new" => "gos_rt_atomic_i64_new",
+        "Atomic::new"
+        | "sync::Atomic::new"
+        | "atomic::new"
+        | "AtomicI64::new"
+        | "sync::AtomicI64::new"
+        | "AtomicU64::new"
+        | "sync::AtomicU64::new" => "gos_rt_atomic_i64_new",
         "lcg::jump" | "lcg_jump" => "gos_rt_lcg_jump",
         other => other,
     }

@@ -74,11 +74,7 @@ fn build_release(name: &str, body: &str) -> Program {
         String::from_utf8_lossy(&out.stderr),
     );
     let bin = dir.join("target").join("release").join(name);
-    assert!(
-        bin.exists(),
-        "release binary missing at {}",
-        bin.display()
-    );
+    assert!(bin.exists(), "release binary missing at {}", bin.display());
     Program { dir, bin }
 }
 
@@ -541,14 +537,13 @@ fn main() {
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore = "release-tier wiring gap: AtomicI64::fetch_add lowers to a no-op (counter stays 0)"]
 fn release_atomic_fetch_add_persists_across_goroutines() {
     // 100 goroutines each `fetch_add(1)` on a shared AtomicI64.
-    // Today: the binary exits 0 with `counter=0` — `fetch_add` is
-    // wired through `gos_rt_atomic_i64_fetch_add` in MIR but the
-    // value either never reaches the runtime helper or the
-    // helper writes through a stale pointer. Either way, atomics
-    // are silently broken in release.
+    // The constructor rename map gained `AtomicI64::new` /
+    // `sync::AtomicI64::new` so the receiver is a real
+    // `*mut GosAtomicI64` instead of null; without that the
+    // helper silently saw `a.is_null()` and returned 0 every
+    // time.
     assert_release_stdout_eq(
         "atomic_inc",
         r#"
@@ -575,13 +570,13 @@ fn main() {
 }
 
 #[test]
-#[ignore = "release-tier wiring gap: owned String push_str silently produces empty buffer"]
 fn release_owned_string_push_str_holds_value() {
-    // `String::new()` plus `b.push_str("hi")` — release prints
-    // an empty `b=`. The `String` aggregate is constructed but
-    // `push_str` writes into the wrong buffer (likely a
-    // by-value receiver copy rather than the heap-rooted
-    // backing storage).
+    // `String::new()` lowers to an empty-string literal and
+    // `b.push_str(s)` is rewritten to `b = __concat(b, s)`
+    // (gossamer-mir/src/lower.rs::lower_method_call). Owned
+    // `String` is the runtime's `*const c_char` representation
+    // — concat-and-reassign keeps the receiver local rooted to
+    // the new bytes pointer.
     assert_release_stdout_eq(
         "owned_str",
         r#"
@@ -596,13 +591,14 @@ fn main() {
 }
 
 #[test]
-#[ignore = "release-tier wiring gap: Result::map_err callback dropped (and segfault on owned strings)"]
 fn release_result_map_err_replaces_error() {
-    // `parse().map_err(|_| errors::new("custom"))` — release
-    // either propagates the original error message verbatim
-    // (closure ignored) or segfaults when the closure builds
-    // an owned String. Both shapes are wedged on the same
-    // closure-erased-into-Result-Adt path.
+    // The HIR lift pass turns non-capturing closures into a
+    // bare-name path that lowers to a string-literal pointer.
+    // `gos_rt_result_map_err` reads the first 8 bytes of its
+    // closure arg as a function address, so the raw pointer
+    // segfaulted. The MIR lower for `map_err` / `map` now wraps
+    // bare-name closure args into a heap blob `[fn_addr, _]`
+    // (gossamer-mir/src/lower.rs::lower_method_call).
     assert_release_stdout_eq(
         "map_err",
         r#"
@@ -623,12 +619,12 @@ fn main() {
 }
 
 #[test]
-#[ignore = "release-tier wiring gap: Iterator::enumerate yields no items"]
 fn release_iter_enumerate_yields_index_value_pairs() {
-    // `v.iter().enumerate()` — today the for-loop body never
-    // runs in release. The `enumerate()` adapter is recognised
-    // by the parser/typeck but no MIR lowering produces the
-    // index counter pair, so the loop is empty.
+    // `v.iter().enumerate()` lowering is now in
+    // `gossamer-mir/src/lower.rs::lower_for_enumerate`. Strips
+    // the `enumerate()` and an inner wrapping `iter()`, then
+    // drives the standard array / vec counter loop while binding
+    // the per-iteration counter to the tuple's first slot.
     assert_release_stdout_eq(
         "enumerate",
         r#"

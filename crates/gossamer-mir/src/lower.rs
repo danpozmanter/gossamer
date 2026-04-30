@@ -3358,6 +3358,25 @@ impl<'a> Builder<'a> {
             if matches!(joined.as_str(), "Box::new" | "Arc::new" | "Rc::new") && args.len() == 1 {
                 return self.lower_expr(&args[0]);
             }
+            // `String::new()` / `String::with_capacity(_)` materialise
+            // an empty owned String. Gos `String` is the runtime's
+            // C-string representation, and the empty literal is the
+            // canonical zero value. Without this passthrough the
+            // call ends up as a typed-zero stub at codegen and any
+            // downstream `push_str` (rewritten to `__concat`) sees
+            // a null/garbage receiver instead of a real empty bytes
+            // pointer.
+            if matches!(joined.as_str(), "String::new" | "String::with_capacity") && args.len() <= 1
+            {
+                let str_ty = self.tcx.string_ty();
+                let dest = self.fresh(str_ty);
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::Use(Operand::Const(ConstValue::Str(String::new()))),
+                    span,
+                );
+                return Some(dest);
+            }
         }
         // Variant constructor shortcut for `Result<T, E>` and
         // `Option<T>`: `Ok(v)` / `Err(v)` / `Some(v)` lower to
@@ -5506,6 +5525,47 @@ impl<'a> Builder<'a> {
                 return Some(dest);
             }
         }
+        // `b.push_str(s)` on an owned `String` receiver. The runtime
+        // models gos `String` as `*const c_char` (immutable
+        // nul-terminated bytes), so true in-place mutation isn't
+        // representable. Rewrite as `b = __concat(b, s)`: build a new
+        // string into the runtime's concat buffer and update the
+        // receiver local in place. Without this rewrite the call
+        // landed on a typed-zero stub and the receiver kept its
+        // original empty bytes (the `release_owned_string_push_str`
+        // gauge entry).
+        if method.name.as_str() == "push_str"
+            && args.len() == 1
+            && let Some(recv_local) = self.receiver_local_from_path(receiver)
+        {
+            let recv_ty = self.locals[recv_local.0 as usize].ty;
+            let mut peeled = recv_ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+                peeled = *inner;
+            }
+            if matches!(self.tcx.kind_of(peeled), TyKind::String) {
+                let arg_local = self.lower_expr(&args[0])?;
+                let concat_dest = self.fresh(recv_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("__concat".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(recv_local)),
+                        Operand::Copy(Place::local(arg_local)),
+                    ],
+                    destination: Place::local(concat_dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                self.emit_assign(
+                    Place::local(recv_local),
+                    Rvalue::Use(Operand::Copy(Place::local(concat_dest))),
+                    span,
+                );
+                return Some(self.lower_unit(span));
+            }
+        }
+
         // Prefer the MIR local's pinned type over the HIR receiver
         // type when the receiver is a Path bound to a local — the
         // type checker may have left the HIR type as an inference
@@ -6153,6 +6213,76 @@ impl<'a> Builder<'a> {
         for arg in args {
             let a = self.lower_expr(arg)?;
             arg_operands.push(Operand::Copy(Place::local(a)));
+        }
+
+        // `gos_rt_result_map_err` / `gos_rt_result_map` expect a
+        // closure handle whose first 8 bytes hold the lifted
+        // function's address. The HIR lift pass turns
+        // non-capturing closures into a bare-name path
+        // (`__closure_N`) which lowers to a string-literal pointer
+        // — passing that to the helper segfaults the moment it
+        // transmutes the first 8 ASCII bytes into a function
+        // pointer. Wrap the arg as a 16-byte heap blob
+        // `[fn_addr, _]` so the helper's first-word load resolves
+        // to the actual lifted function.
+        if matches!(
+            runtime_symbol,
+            Some("gos_rt_result_map_err" | "gos_rt_result_map")
+        ) && arg_operands.len() == 2
+        {
+            let closure_local = match &arg_operands[1] {
+                Operand::Copy(p) if p.projection.is_empty() => Some(p.local),
+                _ => None,
+            };
+            if let Some(local) = closure_local
+                && let Some(fn_name) = self.local_fn_name.get(&local).cloned()
+            {
+                let env_ty = self.locals[local.0 as usize].ty;
+                let size_local = self.fresh(env_ty);
+                self.emit_assign(
+                    Place::local(size_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(16))),
+                    span,
+                );
+                let env_local = self.fresh(env_ty);
+                self.emit_assign(
+                    Place::local(env_local),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_alloc",
+                        args: vec![Operand::Copy(Place::local(size_local))],
+                    },
+                    span,
+                );
+                let fn_addr_local = self.fresh(env_ty);
+                self.emit_assign(
+                    Place::local(fn_addr_local),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_fn_addr",
+                        args: vec![Operand::Const(ConstValue::Str(fn_name))],
+                    },
+                    span,
+                );
+                let zero_offset_local = self.fresh(env_ty);
+                self.emit_assign(
+                    Place::local(zero_offset_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    span,
+                );
+                let sink = self.fresh(env_ty);
+                self.emit_assign(
+                    Place::local(sink),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_store",
+                        args: vec![
+                            Operand::Copy(Place::local(env_local)),
+                            Operand::Copy(Place::local(zero_offset_local)),
+                            Operand::Copy(Place::local(fn_addr_local)),
+                        ],
+                    },
+                    span,
+                );
+                arg_operands[1] = Operand::Copy(Place::local(env_local));
+            }
         }
 
         // Re-check the dispatch for Result/Option methods now that
@@ -7287,6 +7417,26 @@ impl<'a> Builder<'a> {
         if let Some(local) = self.try_lower_for_hashmap_iter(for_loop, span) {
             return Some(local);
         }
+        // `for (idx, x) in v.iter().enumerate()` / `for (idx, x) in
+        // v.enumerate()`. Strip `.enumerate()` (and a wrapping
+        // `.iter()` if present), then drive the standard array /
+        // vec loop while binding `idx` to the per-iteration counter
+        // and `x` to the element. Without this, the for-loop falls
+        // through to the array/vec dispatch with a 2-tuple loop_pat
+        // and the body never runs (no fields on a scalar element).
+        if let Some(inner) = enumerate_inner_expr(for_loop.iter_expr) {
+            if let HirPatKind::Tuple(sub_pats) = &for_loop.loop_pat.kind {
+                if sub_pats.len() == 2 {
+                    return self.lower_for_enumerate(
+                        inner,
+                        &sub_pats[0],
+                        &sub_pats[1],
+                        for_loop.body,
+                        span,
+                    );
+                }
+            }
+        }
         // `for entry in v.iter()` / `for entry in v` where v is a
         // `json::Value` array — synthesise the loop with
         // `gos_rt_json_len` + `gos_rt_json_at`.
@@ -8027,6 +8177,218 @@ impl<'a> Builder<'a> {
         Some(self.lower_unit(span))
     }
 
+    /// `for (idx, x) in <inner>.enumerate()` (and the
+    /// `<inner>.iter().enumerate()` shape, after the wrapping
+    /// `.iter()` is peeled by `enumerate_inner_expr`).
+    ///
+    /// Drives the same counter loop the array / vec lowering uses,
+    /// but binds the counter directly to `idx_pat` and the element
+    /// to `val_pat`. Detects whether `inner` is a literal-length
+    /// array (uses array indexing) or a runtime `Vec` (uses
+    /// `gos_rt_vec_len` + `gos_rt_vec_get_ptr` + `gos_load`).
+    #[allow(clippy::too_many_lines)]
+    fn lower_for_enumerate(
+        &mut self,
+        inner: &HirExpr,
+        idx_pat: &HirPat,
+        val_pat: &HirPat,
+        body: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+
+        let inner_local = self.lower_expr(inner)?;
+
+        // Detect literal-length array vs runtime vec, and recover
+        // the element type from whichever side has it concrete.
+        let mut arr_len: Option<i64> = None;
+        let mut found_elem: Option<Ty> = None;
+        let mut peeled = self.locals[inner_local.0 as usize].ty;
+        loop {
+            match self.tcx.kind_of(peeled) {
+                TyKind::Array { len, elem } => {
+                    arr_len = i64::try_from(*len).ok();
+                    found_elem = Some(*elem);
+                    break;
+                }
+                TyKind::Vec(elem) | TyKind::Slice(elem) => {
+                    found_elem = Some(*elem);
+                    break;
+                }
+                TyKind::Ref { inner, .. } => peeled = *inner,
+                _ => break,
+            }
+        }
+        if arr_len.is_none() {
+            if let HirExprKind::Array(arr) = &inner.kind {
+                arr_len = match arr {
+                    gossamer_hir::HirArrayExpr::List(elems) => Some(elems.len() as i64),
+                    gossamer_hir::HirArrayExpr::Repeat { count, .. } => {
+                        literal_u64(count).and_then(|c| i64::try_from(c).ok())
+                    }
+                };
+            }
+        }
+        let mut elem_ty = found_elem.unwrap_or(val_pat.ty);
+        if matches!(self.tcx.kind_of(elem_ty), TyKind::Var(_) | TyKind::Error) {
+            elem_ty = i64_ty;
+        }
+        let array_mode = arr_len.is_some();
+
+        let len_local = if array_mode {
+            let l = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(l),
+                Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                    arr_len.unwrap_or(0),
+                )))),
+                span,
+            );
+            l
+        } else {
+            let l = self.fresh(i64_ty);
+            let after = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+                args: vec![Operand::Copy(Place::local(inner_local))],
+                destination: Place::local(l),
+                target: Some(after),
+            });
+            self.set_current(after);
+            l
+        };
+
+        let counter = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+
+        let header = self.new_block(span);
+        let body_block = self.new_block(span);
+        let step_block = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let bool_ty = self.tcx.bool_ty();
+        let cmp = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(cmp),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(len_local)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(cmp)),
+            arms: vec![(0, exit)],
+            default: body_block,
+        });
+
+        self.set_current(body_block);
+        self.push_scope();
+
+        // Bind idx_pat to a copy of the counter — the binding is a
+        // separate slot so the body can shadow / reassign without
+        // perturbing the loop counter.
+        if let HirPatKind::Binding { name, mutable } = &idx_pat.kind {
+            let bind_local = self.push_local(i64_ty, Some(name.clone()), *mutable);
+            self.bind_local(&name.name, bind_local);
+            self.emit_assign(
+                Place::local(bind_local),
+                Rvalue::Use(Operand::Copy(Place::local(counter))),
+                span,
+            );
+        }
+
+        // Bind val_pat to the current element. Two shapes: literal
+        // array (Index projection) vs runtime vec (get_ptr + load).
+        if array_mode {
+            if let HirPatKind::Binding { name, mutable } = &val_pat.kind {
+                let bind_local = self.push_local(elem_ty, Some(name.clone()), *mutable);
+                self.bind_local(&name.name, bind_local);
+                let indexed = Place {
+                    local: inner_local,
+                    projection: vec![crate::ir::Projection::Index(counter)],
+                };
+                self.emit_assign(
+                    Place::local(bind_local),
+                    Rvalue::Use(Operand::Copy(indexed)),
+                    span,
+                );
+            }
+        } else {
+            let ptr_local = self.fresh(i64_ty);
+            let after_ptr = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(inner_local)),
+                    Operand::Copy(Place::local(counter)),
+                ],
+                destination: Place::local(ptr_local),
+                target: Some(after_ptr),
+            });
+            self.set_current(after_ptr);
+            if let HirPatKind::Binding { name, mutable } = &val_pat.kind {
+                let bind_local = self.push_local(elem_ty, Some(name.clone()), *mutable);
+                self.bind_local(&name.name, bind_local);
+                let zero_off = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(zero_off),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    span,
+                );
+                let after_load = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(ptr_local)),
+                        Operand::Copy(Place::local(zero_off)),
+                    ],
+                    destination: Place::local(bind_local),
+                    target: Some(after_load),
+                });
+                self.set_current(after_load);
+            }
+        }
+
+        self.loop_stack.push(LoopContext {
+            continue_to: step_block,
+            break_to: exit,
+        });
+        let _ = self.lower_expr(body);
+        self.loop_stack.pop();
+        self.pop_scope();
+        self.terminate(Terminator::Goto { target: step_block });
+
+        self.set_current(step_block);
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        Some(self.lower_unit(span))
+    }
+
     fn lower_for_vec(
         &mut self,
         iter_expr: &HirExpr,
@@ -8688,6 +9050,30 @@ fn detect_for_loop(body: &HirExpr) -> Option<ForLoopShape<'_>> {
         loop_pat: &some_fields[0],
         body: &some_arm.body,
     })
+}
+
+/// Strip an outer `.enumerate()` (and an inner wrapping `.iter()`
+/// if present) from a for-loop iterator expression. Returns the
+/// underlying iterable, or `None` if the expression is not shaped
+/// as `<x>.enumerate()` / `<x>.iter().enumerate()`.
+fn enumerate_inner_expr(expr: &HirExpr) -> Option<&HirExpr> {
+    let HirExprKind::MethodCall { receiver, name, .. } = &expr.kind else {
+        return None;
+    };
+    if name.name != "enumerate" {
+        return None;
+    }
+    let inner: &HirExpr = receiver;
+    if let HirExprKind::MethodCall {
+        receiver: inner_recv,
+        name: inner_name,
+        ..
+    } = &inner.kind
+        && inner_name.name == "iter"
+    {
+        return Some(inner_recv);
+    }
+    Some(inner)
 }
 
 /// Extracts a `u64` count from a HIR integer-literal expression used
