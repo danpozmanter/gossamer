@@ -57,7 +57,7 @@ pub use gossamer_interp::value;
 #[doc(hidden)]
 pub use linkme;
 #[doc(hidden)]
-pub use paste as __paste;
+pub use pastey as __paste;
 
 /// Returns every module registered via [`register_module!`].
 ///

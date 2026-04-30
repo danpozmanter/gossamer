@@ -30,7 +30,7 @@ missing_safety_doc = "allow"
 gossamer-interp = { workspace = true }
 gossamer-resolve = { workspace = true }
 linkme = "0.3"
-paste = "1"
+pastey = "0.1"
 parking_lot = "0.12"
 rustc-hash = "2"
 

@@ -701,8 +701,19 @@ fn cache_root() -> io::Result<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         return Ok(PathBuf::from(home).join(".cache").join("gossamer"));
     }
+    // Windows fallback: %LOCALAPPDATA% is the per-user cache root,
+    // %USERPROFILE%\AppData\Local is its long form.
+    if let Some(s) = std::env::var_os("LOCALAPPDATA") {
+        return Ok(PathBuf::from(s).join("gossamer"));
+    }
+    if let Some(s) = std::env::var_os("USERPROFILE") {
+        return Ok(PathBuf::from(s)
+            .join("AppData")
+            .join("Local")
+            .join("gossamer"));
+    }
     Err(io::Error::other(
-        "cannot determine cache directory: set HOME or XDG_CACHE_HOME",
+        "cannot determine cache directory: set GOSSAMER_CACHE, XDG_CACHE_HOME, HOME, LOCALAPPDATA, or USERPROFILE",
     ))
 }
 
