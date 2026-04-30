@@ -2658,6 +2658,12 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_result_new" => Some("gos_rt_result_new"),
         "gos_rt_result_disc" => Some("gos_rt_result_disc"),
         "gos_rt_result_payload" => Some("gos_rt_result_payload"),
+        "gos_rt_result_unwrap" => Some("gos_rt_result_unwrap"),
+        "gos_rt_result_unwrap_or" => Some("gos_rt_result_unwrap_or"),
+        "gos_rt_result_ok" => Some("gos_rt_result_ok"),
+        "gos_rt_result_err" => Some("gos_rt_result_err"),
+        "gos_rt_result_is_ok" => Some("gos_rt_result_is_ok"),
+        "gos_rt_result_is_err" => Some("gos_rt_result_is_err"),
         "gos_rt_set_new" => Some("gos_rt_set_new"),
         "gos_rt_set_insert" => Some("gos_rt_set_insert"),
         "gos_rt_set_contains" => Some("gos_rt_set_contains"),
@@ -2751,6 +2757,12 @@ fn lower_generic_rt_call(
         "gos_rt_result_new" => (&[types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_result_disc" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_result_payload" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_result_unwrap" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_result_unwrap_or" => (&[ptr_ty, types::I64], Some(types::I64)),
+        "gos_rt_result_ok" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_result_err" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_result_is_ok" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_result_is_err" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_set_new" => (&[], Some(ptr_ty)),
         "gos_rt_set_insert" => (&[ptr_ty, ptr_ty], Some(types::I8)),
         "gos_rt_set_contains" => (&[ptr_ty, ptr_ty], Some(types::I8)),
@@ -3057,11 +3069,11 @@ fn lower_intrinsic_call(
         // return an opaque pointer to a static `GosStream`.
         // Method dispatch on the returned value routes to the
         // `gos_rt_stream_*` helpers below.
-        "io::stdout" | "io::stderr" | "io::stdin" => {
+        "io::stdout" | "io::stderr" | "io::stdin" | "os::stdout" | "os::stderr" | "os::stdin" => {
             let rt_name = match name {
-                "io::stdout" => "gos_rt_io_stdout",
-                "io::stderr" => "gos_rt_io_stderr",
-                "io::stdin" => "gos_rt_io_stdin",
+                "io::stdout" | "os::stdout" => "gos_rt_io_stdout",
+                "io::stderr" | "os::stderr" => "gos_rt_io_stderr",
+                "io::stdin" | "os::stdin" => "gos_rt_io_stdin",
                 _ => unreachable!(),
             };
             let rt_fn = intrinsics.extern_fn(module, rt_name, &[], &[ptr_ty])?;

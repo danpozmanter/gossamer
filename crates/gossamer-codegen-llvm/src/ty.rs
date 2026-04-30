@@ -163,6 +163,20 @@ pub(crate) fn elem_slots(tcx: &TyCtxt, ty: Ty) -> u32 {
 /// choice between a scalar `alloca <ty>` and an aggregate
 /// `alloca [N x i64]`.
 pub(crate) fn is_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
+    if let Some(TyKind::Adt { def, .. }) = tcx.kind(ty) {
+        // Result/Option sentinel Adts (DefId::local == u32::MAX or
+        // u32::MAX - 1) are heap-allocated `*mut GosResult` values
+        // returned from runtime helpers. Treating them as flat-slot
+        // aggregates here makes `emit_named_call` memcpy the first
+        // 8 bytes of the runtime's 16-byte struct into a
+        // `[1 x i64]` alloca and then pass `ptr %alloca` to the
+        // next helper — which reads stack garbage as the payload.
+        // Treat them as scalar `ptr`s so the caller stores the
+        // returned pointer directly into the local slot.
+        if def.local == u32::MAX || def.local == u32::MAX - 1 {
+            return false;
+        }
+    }
     matches!(
         tcx.kind(ty),
         Some(TyKind::Array { .. } | TyKind::Tuple(_) | TyKind::Adt { .. })

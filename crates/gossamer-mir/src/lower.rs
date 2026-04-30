@@ -66,25 +66,36 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
 /// otherwise emit zero/garbage in compiled mode.
 fn collect_const_values(program: &HirProgram) -> HashMap<gossamer_resolve::DefId, ConstValue> {
     let mut out = HashMap::new();
+    // One forward pass per item: consts written as `4.0 * PI * PI`
+    // resolve their `PI` reference against the partial map of
+    // already-folded entries, so item-order matters. The frontend
+    // emits `const` items in source order, which is what we want
+    // here. Without this, downstream expressions silently default
+    // to 0 (the zero-value for their declared type) and benchmarks
+    // like nbody print NaN because `4.0 * PI * PI` → 0.
     for item in &program.items {
         let HirItemKind::Const(decl) = &item.kind else {
             continue;
         };
         let Some(def) = item.def else { continue };
-        if let Some(value) = const_value_of_expr(&decl.value) {
+        if let Some(value) = const_value_of_expr(&decl.value, &out) {
             out.insert(def, value);
         }
     }
     out
 }
 
-fn const_value_of_expr(expr: &HirExpr) -> Option<ConstValue> {
+fn const_value_of_expr(
+    expr: &HirExpr,
+    known: &HashMap<gossamer_resolve::DefId, ConstValue>,
+) -> Option<ConstValue> {
     match &expr.kind {
         HirExprKind::Literal(lit) => Some(literal_to_const(lit)),
+        HirExprKind::Path { def: Some(def), .. } => known.get(def).cloned(),
         HirExprKind::Unary {
             op: HirUnaryOp::Neg,
             operand,
-        } => match const_value_of_expr(operand)? {
+        } => match const_value_of_expr(operand, known)? {
             ConstValue::Int(n) => Some(ConstValue::Int(-n)),
             ConstValue::Float(bits) => {
                 let f = f64::from_bits(bits);
@@ -92,6 +103,45 @@ fn const_value_of_expr(expr: &HirExpr) -> Option<ConstValue> {
             }
             _ => None,
         },
+        HirExprKind::Binary { op, lhs, rhs } => {
+            let l = const_value_of_expr(lhs, known)?;
+            let r = const_value_of_expr(rhs, known)?;
+            fold_binary_const(*op, &l, &r)
+        }
+        _ => None,
+    }
+}
+
+fn fold_binary_const(
+    op: gossamer_hir::HirBinaryOp,
+    lhs: &ConstValue,
+    rhs: &ConstValue,
+) -> Option<ConstValue> {
+    use gossamer_hir::HirBinaryOp as Op;
+    match (lhs, rhs) {
+        (ConstValue::Int(a), ConstValue::Int(b)) => match op {
+            Op::Add => Some(ConstValue::Int(a.checked_add(*b)?)),
+            Op::Sub => Some(ConstValue::Int(a.checked_sub(*b)?)),
+            Op::Mul => Some(ConstValue::Int(a.checked_mul(*b)?)),
+            Op::Div if *b != 0 => Some(ConstValue::Int(a.checked_div(*b)?)),
+            Op::Rem if *b != 0 => Some(ConstValue::Int(a.checked_rem(*b)?)),
+            Op::BitAnd => Some(ConstValue::Int(a & b)),
+            Op::BitOr => Some(ConstValue::Int(a | b)),
+            Op::BitXor => Some(ConstValue::Int(a ^ b)),
+            _ => None,
+        },
+        (ConstValue::Float(a), ConstValue::Float(b)) => {
+            let af = f64::from_bits(*a);
+            let bf = f64::from_bits(*b);
+            let result = match op {
+                Op::Add => af + bf,
+                Op::Sub => af - bf,
+                Op::Mul => af * bf,
+                Op::Div => af / bf,
+                _ => return None,
+            };
+            Some(ConstValue::Float(result.to_bits()))
+        }
         _ => None,
     }
 }
@@ -5380,16 +5430,56 @@ impl<'a> Builder<'a> {
                 }
             }
             "clone" => Some(""),
-            // Option / Result methods. Today the compiled tier
-            // represents `Option<T>` and `Result<T, E>` as the
-            // inner value with a null/zero sentinel for the
-            // missing case (see the `lower_match` happy-path
-            // routing). `.unwrap()` / `.ok()` / `.err()` are
-            // identity copies; `.unwrap_or(d)` returns the
-            // receiver as-is. `is_some` / `is_ok` evaluate to
-            // `receiver != 0` (handled below as a synthesised
-            // compare). `is_none` / `is_err` are the inverse.
-            "unwrap" | "unwrap_or" | "ok" | "err" | "expect" => Some(""),
+            // Option / Result methods. Result/Option now live as
+            // `*mut GosResult { disc, payload }` heap aggregates
+            // (see `gos_rt_result_new`), so `.unwrap()` /
+            // `.unwrap_or()` / `.ok()` / `.err()` route through
+            // runtime helpers that read the disc and return the
+            // payload (or default) as a raw 64-bit slot. The
+            // older identity-copy path was a leftover from the
+            // pre-discriminator layout and silently returned the
+            // aggregate pointer for callers expecting an i64 —
+            // see e.g. fasta's `args[0].parse().unwrap_or(1000)`,
+            // which yielded an arena address instead of 10. Fall
+            // back to identity for non-Result receivers (e.g.
+            // stdlib helpers that still return raw inner values
+            // tagged with a Result-shaped HIR type).
+            "unwrap" | "expect" => {
+                if matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                    && self.is_result_or_option_adt(receiver_ty)
+                {
+                    Some("gos_rt_result_unwrap")
+                } else {
+                    Some("")
+                }
+            }
+            "unwrap_or" => {
+                if matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                    && self.is_result_or_option_adt(receiver_ty)
+                {
+                    Some("gos_rt_result_unwrap_or")
+                } else {
+                    Some("")
+                }
+            }
+            "ok" => {
+                if matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                    && self.is_result_or_option_adt(receiver_ty)
+                {
+                    Some("gos_rt_result_ok")
+                } else {
+                    Some("")
+                }
+            }
+            "err" => {
+                if matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                    && self.is_result_or_option_adt(receiver_ty)
+                {
+                    Some("gos_rt_result_err")
+                } else {
+                    Some("")
+                }
+            }
             "len" => match &receiver_kind_flat {
                 TyKind::String => Some("gos_rt_str_len"),
                 TyKind::HashMap { .. } => Some("gos_rt_map_len"),
@@ -5806,34 +5896,48 @@ impl<'a> Builder<'a> {
             self.set_current(next);
             return Some(dest);
         }
-        // Synthesise `is_some`/`is_ok`/`is_none`/`is_err` directly
-        // as bool constants. The happy-path Option/Result encoding
-        // means `Some`/`Ok` always; `unwrap` then returns the
-        // receiver. Mirrors the assumption baked into `lower_match`.
-        match method.name.as_str() {
-            "is_some" | "is_ok" => {
-                let _ = self.lower_expr(receiver)?;
-                let bool_ty = self.tcx.bool_ty();
+        // `is_some` / `is_ok` / `is_none` / `is_err`. When the
+        // receiver is a `*mut GosResult` Result/Option Adt,
+        // dispatch through the runtime helper that reads `disc`.
+        // For non-Result receivers (legacy intrinsics that still
+        // return raw inner values tagged Result-shaped) fall back
+        // to the constant-true/false synthesis so the previous
+        // lowering shape is preserved — those call sites assume
+        // the happy path is always taken.
+        if let name @ ("is_some" | "is_ok" | "is_none" | "is_err") = method.name.as_str() {
+            let receiver_local = self.lower_expr(receiver)?;
+            let lowered_ty = self.locals[receiver_local.0 as usize].ty;
+            let lowered_is_result = matches!(self.tcx.kind_of(lowered_ty), TyKind::Adt { .. })
+                && self.is_result_or_option_adt(lowered_ty);
+            let recv_is_result = matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                && self.is_result_or_option_adt(receiver_ty);
+            let bool_ty = self.tcx.bool_ty();
+            if lowered_is_result || recv_is_result {
+                let helper = match name {
+                    "is_some" | "is_ok" => "gos_rt_result_is_ok",
+                    _ => "gos_rt_result_is_err",
+                };
                 let dest = self.fresh(bool_ty);
-                self.emit_assign(
-                    Place::local(dest),
-                    Rvalue::Use(Operand::Const(ConstValue::Bool(true))),
-                    span,
-                );
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
+                    args: vec![Operand::Copy(Place::local(receiver_local))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
                 return Some(dest);
             }
-            "is_none" | "is_err" => {
-                let _ = self.lower_expr(receiver)?;
-                let bool_ty = self.tcx.bool_ty();
-                let dest = self.fresh(bool_ty);
-                self.emit_assign(
-                    Place::local(dest),
-                    Rvalue::Use(Operand::Const(ConstValue::Bool(false))),
-                    span,
-                );
-                return Some(dest);
-            }
-            _ => {}
+            // Legacy: receiver is the inner value with a
+            // null/zero sentinel for the missing case.
+            let constant = matches!(name, "is_some" | "is_ok");
+            let dest = self.fresh(bool_ty);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::Use(Operand::Const(ConstValue::Bool(constant))),
+                span,
+            );
+            return Some(dest);
         }
 
         let receiver_local = self.lower_expr(receiver)?;
@@ -5842,6 +5946,28 @@ impl<'a> Builder<'a> {
         for arg in args {
             let a = self.lower_expr(arg)?;
             arg_operands.push(Operand::Copy(Place::local(a)));
+        }
+
+        // Re-check the dispatch for Result/Option methods now that
+        // the receiver has been lowered. The HIR-side `receiver_ty`
+        // is often a `Var` for chained method calls (e.g.
+        // `s.parse().unwrap_or(...)`), so the table at the top
+        // selected `Some("")` (identity) without seeing that the
+        // pinned local type is in fact a Result/Option Adt. Without
+        // this fix-up `.unwrap_or(default)` returns the aggregate
+        // pointer instead of the inner payload.
+        let lowered_recv_ty = self.locals[receiver_local.0 as usize].ty;
+        let lowered_is_result = matches!(self.tcx.kind_of(lowered_recv_ty), TyKind::Adt { .. })
+            && self.is_result_or_option_adt(lowered_recv_ty);
+        let mut runtime_symbol = runtime_symbol;
+        if lowered_is_result {
+            match method.name.as_str() {
+                "unwrap" | "expect" => runtime_symbol = Some("gos_rt_result_unwrap"),
+                "unwrap_or" => runtime_symbol = Some("gos_rt_result_unwrap_or"),
+                "ok" => runtime_symbol = Some("gos_rt_result_ok"),
+                "err" => runtime_symbol = Some("gos_rt_result_err"),
+                _ => {}
+            }
         }
 
         if let Some(sym) = runtime_symbol {
@@ -6062,6 +6188,23 @@ impl<'a> Builder<'a> {
                         self.result_i64_error_adt_ty()
                     }
                 }
+                // Result/Option unwrap helpers return the inner
+                // T as a raw 64-bit slot. Pin to the wrapper's
+                // first generic arg so downstream codegen sees a
+                // concrete int / string / etc. instead of the
+                // sentinel Adt. The HIR `receiver_ty` is often a
+                // Var for chained calls; consult the lowered
+                // local's MIR type as a fallback before defaulting
+                // to i64.
+                "gos_rt_result_unwrap" | "gos_rt_result_unwrap_or" | "gos_rt_result_ok" => self
+                    .first_generic_of(receiver_ty)
+                    .or_else(|| self.first_generic_of(lowered_recv_ty))
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64)),
+                "gos_rt_result_err" => self
+                    .second_generic_of(receiver_ty)
+                    .or_else(|| self.second_generic_of(lowered_recv_ty))
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64)),
+                "gos_rt_result_is_ok" | "gos_rt_result_is_err" => self.tcx.bool_ty(),
                 "gos_rt_json_as_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
                 "gos_rt_chan_try_send"
                 | "gos_rt_map_remove"
@@ -7774,8 +7917,63 @@ impl<'a> Builder<'a> {
             self.set_current(after_load);
             l
         };
-        if let HirPatKind::Binding { name, .. } = &loop_pat.kind {
-            self.bind_local(&name.name, elem_local);
+        match &loop_pat.kind {
+            HirPatKind::Binding { name, .. } => {
+                self.bind_local(&name.name, elem_local);
+            }
+            HirPatKind::Tuple(sub_pats) => {
+                // Destructure the tuple element: load each field
+                // through `gos_load(ptr_local, i*8)`. Without this,
+                // sub-bindings fall back to string literals at
+                // resolve-time and `actual == expected` reaches
+                // codegen as `bool(i8) == str(ptr)`.
+                let elem_kinds: Vec<Ty> = match self.tcx.kind_of(elem_ty) {
+                    gossamer_types::TyKind::Tuple(elems) => elems.clone(),
+                    _ => Vec::new(),
+                };
+                for (i, sub_pat) in sub_pats.iter().enumerate() {
+                    let HirPatKind::Binding { name, mutable } = &sub_pat.kind else {
+                        continue;
+                    };
+                    let field_ty = if matches!(
+                        self.tcx.kind_of(sub_pat.ty),
+                        gossamer_types::TyKind::Var(_) | gossamer_types::TyKind::Error
+                    ) {
+                        elem_kinds
+                            .get(i)
+                            .copied()
+                            .filter(|t| {
+                                !matches!(
+                                    self.tcx.kind_of(*t),
+                                    gossamer_types::TyKind::Var(_) | gossamer_types::TyKind::Error
+                                )
+                            })
+                            .unwrap_or(i64_ty)
+                    } else {
+                        sub_pat.ty
+                    };
+                    let bind_local = self.push_local(field_ty, Some(name.clone()), *mutable);
+                    self.bind_local(&name.name, bind_local);
+                    let off_local = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(off_local),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(i as i64) * 8))),
+                        span,
+                    );
+                    let after_load = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
+                        args: vec![
+                            Operand::Copy(Place::local(ptr_local)),
+                            Operand::Copy(Place::local(off_local)),
+                        ],
+                        destination: Place::local(bind_local),
+                        target: Some(after_load),
+                    });
+                    self.set_current(after_load);
+                }
+            }
+            _ => {}
         }
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
@@ -7921,6 +8119,7 @@ impl<'a> Builder<'a> {
         array_len: i64,
         span: Span,
     ) -> Option<Local> {
+        use gossamer_types::TyKind;
         let array_local = self.lower_expr(iter_expr)?;
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let counter = self.push_local(i64_ty, None, true);
@@ -7962,56 +8161,97 @@ impl<'a> Builder<'a> {
 
         self.set_current(body_block);
         self.push_scope();
-        if let HirPatKind::Binding { name, mutable } = &loop_pat.kind {
-            // Derive the binding's type from the array element when
-            // the HIR-side `loop_pat.ty` is unresolved (a leaked
-            // `Var(...)`). Without this, `render_ty(Var) = "ptr"`
-            // and the codegen emits `load ptr` against an i64 array
-            // element + `store i64 <ptr>` — a type mismatch that
-            // makes opt complain and silently misroutes through the
-            // Cranelift fallback path.
-            use gossamer_types::TyKind;
-            let mut elem_ty = loop_pat.ty;
-            let needs_pin = matches!(self.tcx.kind_of(elem_ty), TyKind::Var(_) | TyKind::Error);
-            if needs_pin {
-                // Try the array_local's MIR type, then the iter
-                // expression's HIR type, peeling `&` references
-                // along the way.
-                let mut candidates = vec![self.locals[array_local.0 as usize].ty, iter_expr.ty];
-                while let Some(cand) = candidates.pop() {
-                    let mut peeled = cand;
-                    loop {
-                        match self.tcx.kind_of(peeled) {
-                            TyKind::Array { elem, .. }
-                            | TyKind::Slice(elem)
-                            | TyKind::Vec(elem) => {
-                                elem_ty = *elem;
-                                candidates.clear();
-                                break;
-                            }
-                            TyKind::Ref { inner, .. } => peeled = *inner,
-                            _ => break,
+        // Derive the element type from the array when the HIR-side
+        // `loop_pat.ty` is unresolved (a leaked `Var(...)`). Without
+        // this, `render_ty(Var) = "ptr"` and the codegen emits
+        // `load ptr` against an i64 array element + `store i64 <ptr>`
+        // — a type mismatch that makes opt complain and silently
+        // misroutes through the Cranelift fallback path.
+        let mut elem_ty = loop_pat.ty;
+        let needs_pin = matches!(self.tcx.kind_of(elem_ty), TyKind::Var(_) | TyKind::Error);
+        if needs_pin {
+            let mut candidates = vec![self.locals[array_local.0 as usize].ty, iter_expr.ty];
+            while let Some(cand) = candidates.pop() {
+                let mut peeled = cand;
+                loop {
+                    match self.tcx.kind_of(peeled) {
+                        TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                            elem_ty = *elem;
+                            candidates.clear();
+                            break;
                         }
+                        TyKind::Ref { inner, .. } => peeled = *inner,
+                        _ => break,
                     }
                 }
-                // Last-resort fallback: assume `i64` so the codegen
-                // at least picks a 64-bit load that matches the
-                // array's slot width, instead of the `ptr` default.
-                if matches!(self.tcx.kind_of(elem_ty), TyKind::Var(_) | TyKind::Error) {
-                    elem_ty = i64_ty;
+            }
+            if matches!(self.tcx.kind_of(elem_ty), TyKind::Var(_) | TyKind::Error) {
+                elem_ty = i64_ty;
+            }
+        }
+        match &loop_pat.kind {
+            HirPatKind::Binding { name, mutable } => {
+                let bind_local = self.push_local(elem_ty, Some(name.clone()), *mutable);
+                self.bind_local(&name.name, bind_local);
+                let indexed_place = Place {
+                    local: array_local,
+                    projection: vec![crate::ir::Projection::Index(counter)],
+                };
+                self.emit_assign(
+                    Place::local(bind_local),
+                    Rvalue::Use(Operand::Copy(indexed_place)),
+                    span,
+                );
+            }
+            HirPatKind::Tuple(sub_pats) => {
+                // Bind each tuple sub-pattern to its own local that
+                // reads `array[counter].i`. Avoids materialising the
+                // whole tuple into a scalar local — `cl_type_of` of a
+                // tuple is `ptr_ty`, so the existing single-binding
+                // path would only copy the first 8-byte slot.
+                let elem_kinds: Vec<Ty> = match self.tcx.kind_of(elem_ty) {
+                    TyKind::Tuple(elems) => elems.clone(),
+                    _ => Vec::new(),
+                };
+                for (i, sub_pat) in sub_pats.iter().enumerate() {
+                    let HirPatKind::Binding { name, mutable } = &sub_pat.kind else {
+                        continue;
+                    };
+                    // Pick the most concrete field type available:
+                    // sub_pat.ty (HIR-typeck output) → tuple element
+                    // type from elem_kinds → i64 fallback. Either of
+                    // the first two can leak `Var(...)` if inference
+                    // didn't propagate through the array literal,
+                    // so resolve them in turn.
+                    let field_ty =
+                        if matches!(self.tcx.kind_of(sub_pat.ty), TyKind::Var(_) | TyKind::Error) {
+                            elem_kinds
+                                .get(i)
+                                .copied()
+                                .filter(|t| {
+                                    !matches!(self.tcx.kind_of(*t), TyKind::Var(_) | TyKind::Error)
+                                })
+                                .unwrap_or(i64_ty)
+                        } else {
+                            sub_pat.ty
+                        };
+                    let bind_local = self.push_local(field_ty, Some(name.clone()), *mutable);
+                    self.bind_local(&name.name, bind_local);
+                    let projected = Place {
+                        local: array_local,
+                        projection: vec![
+                            crate::ir::Projection::Index(counter),
+                            crate::ir::Projection::Field(i as u32),
+                        ],
+                    };
+                    self.emit_assign(
+                        Place::local(bind_local),
+                        Rvalue::Use(Operand::Copy(projected)),
+                        span,
+                    );
                 }
             }
-            let bind_local = self.push_local(elem_ty, Some(name.clone()), *mutable);
-            self.bind_local(&name.name, bind_local);
-            let indexed_place = Place {
-                local: array_local,
-                projection: vec![crate::ir::Projection::Index(counter)],
-            };
-            self.emit_assign(
-                Place::local(bind_local),
-                Rvalue::Use(Operand::Copy(indexed_place)),
-                span,
-            );
+            _ => {}
         }
         self.loop_stack.push(LoopContext {
             continue_to: step_block,

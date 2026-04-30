@@ -1521,6 +1521,82 @@ pub unsafe extern "C" fn gos_rt_result_payload(p: *const GosResult) -> i64 {
     unsafe { (*p).payload }
 }
 
+/// `result.unwrap()` / `option.unwrap()`. Returns the wrapped
+/// payload on the happy path; panics on Err / None.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_unwrap(p: *const GosResult) -> i64 {
+    if p.is_null() {
+        let cs = std::ffi::CString::new("called `Result::unwrap()` on an `Err` value").unwrap();
+        unsafe { gos_rt_panic(cs.as_ptr()) };
+        return 0;
+    }
+    let r = unsafe { &*p };
+    if r.disc != 0 {
+        let cs = std::ffi::CString::new("called `Result::unwrap()` on an `Err` value").unwrap();
+        unsafe { gos_rt_panic(cs.as_ptr()) };
+        return 0;
+    }
+    r.payload
+}
+
+/// `result.unwrap_or(default)` / `option.unwrap_or(default)`.
+/// Returns the payload on the happy path, else the supplied
+/// default. Both inputs flow through as raw 64-bit slots so the
+/// helper works for any inner type that fits in a single word.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_unwrap_or(p: *const GosResult, default: i64) -> i64 {
+    if p.is_null() {
+        return default;
+    }
+    let r = unsafe { &*p };
+    if r.disc == 0 { r.payload } else { default }
+}
+
+/// `result.ok()` / `option.ok()`. Returns the payload on Ok/Some,
+/// else 0. Mirrors the conventional "missing returns the zero
+/// value of the wrapped type" semantics used elsewhere in the
+/// compiled tier.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_ok(p: *const GosResult) -> i64 {
+    if p.is_null() {
+        return 0;
+    }
+    let r = unsafe { &*p };
+    if r.disc == 0 { r.payload } else { 0 }
+}
+
+/// `result.err()`. Returns the error payload on Err, else 0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_err(p: *const GosResult) -> i64 {
+    if p.is_null() {
+        return 0;
+    }
+    let r = unsafe { &*p };
+    if r.disc == 1 { r.payload } else { 0 }
+}
+
+/// `result.is_ok()` / `option.is_some()`. Returns 1 on Ok/Some,
+/// 0 on Err/None or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_is_ok(p: *const GosResult) -> i64 {
+    if p.is_null() {
+        return 0;
+    }
+    let r = unsafe { &*p };
+    i64::from(r.disc == 0)
+}
+
+/// `result.is_err()` / `option.is_none()`. Returns 1 on Err/None
+/// or null, 0 on Ok/Some.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_is_err(p: *const GosResult) -> i64 {
+    if p.is_null() {
+        return 1;
+    }
+    let r = unsafe { &*p };
+    i64::from(r.disc != 0)
+}
+
 /// Maps a `gos_main` return value to a process exit code.
 /// Treats a heap-shaped pointer as a `*mut GosResult` and reads
 /// its `disc`; falls back to the raw value (truncated) for
