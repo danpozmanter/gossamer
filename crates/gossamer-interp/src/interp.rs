@@ -195,6 +195,9 @@ impl Interpreter {
         for (name, value) in builtins::cached() {
             globals.insert((*name).to_string(), value.clone());
         }
+        for (name, value) in crate::external_natives::external_natives_snapshot() {
+            globals.insert(name.to_string(), value);
+        }
         Self {
             globals,
             call_stack: Vec::new(),
@@ -272,14 +275,33 @@ impl Interpreter {
         expr: &gossamer_hir::HirExpr,
         bindings: &[(String, Value)],
     ) -> RuntimeResult<(Value, Vec<Value>)> {
+        let (result, _is_return, updated) = self.eval_standalone_with_flow(expr, bindings)?;
+        Ok((result, updated))
+    }
+
+    /// Like `eval_standalone` but also reports whether the walker
+    /// hit a `return`. The VM's `Op::EvalDeferred` handler uses the
+    /// flag to surface a Result from `?` (which desugars to a match
+    /// whose Err arm `return Err(_)`s) as the chunk's return value.
+    /// Without this, the Return collapses into a regular value that
+    /// gets stored into an i64 register, tripping a runtime type
+    /// error.
+    pub fn eval_standalone_with_flow(
+        &mut self,
+        expr: &gossamer_hir::HirExpr,
+        bindings: &[(String, Value)],
+    ) -> RuntimeResult<(Value, bool, Vec<Value>)> {
         let mut env = Env::new();
         for (name, value) in bindings {
             env.bind(name.clone(), value.clone());
         }
-        let result = self.eval_expr_to_value(expr, &mut env)?;
-        // Read back each binding — the walker may have mutated
-        // them in place (e.g. `bodies[0].vx = x`). The caller
-        // uses the returned vec to sync the VM's registers.
+        let flow = self.eval_expr(expr, &mut env)?;
+        let (value, is_return) = match flow {
+            Flow::Value(v) => (v, false),
+            Flow::Return(v) => (v, true),
+            Flow::Break(v) => (v, false),
+            Flow::Continue => (Value::Unit, false),
+        };
         let updated: Vec<Value> = bindings
             .iter()
             .map(|(name, original)| {
@@ -288,7 +310,7 @@ impl Interpreter {
                     .unwrap_or_else(|| original.clone())
             })
             .collect();
-        Ok((result, updated))
+        Ok((value, is_return, updated))
     }
 
     fn load_item(&mut self, item: &HirItem) {

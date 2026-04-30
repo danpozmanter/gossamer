@@ -516,28 +516,182 @@ fn collect_enum_variants(program: &HirProgram) -> EnumIndex {
     let mut by_enum: HashMap<String, Vec<String>> = HashMap::new();
     let mut variant_index: HashMap<String, (String, usize)> = HashMap::new();
     let mut variant_fields: HashMap<String, Vec<String>> = HashMap::new();
+    let mut variant_field_tys: HashMap<String, Vec<Ty>> = HashMap::new();
+    let mut variant_has_payload: HashMap<String, bool> = HashMap::new();
     for item in &program.items {
         if let HirItemKind::Adt(adt) = &item.kind {
             if let HirAdtKind::Enum(variants) = &adt.kind {
                 let names: Vec<String> = variants.iter().map(|v| v.name.name.clone()).collect();
                 for (idx, vname) in names.iter().enumerate() {
                     variant_index.insert(vname.clone(), (adt.name.name.clone(), idx));
+                    variant_has_payload.entry(vname.clone()).or_insert(false);
                 }
                 for v in variants {
                     if let Some(fields) = &v.struct_fields {
                         let field_names: Vec<String> =
                             fields.iter().map(|f| f.name.clone()).collect();
+                        if !field_names.is_empty() {
+                            variant_has_payload.insert(v.name.name.clone(), true);
+                        }
                         variant_fields.insert(v.name.name.clone(), field_names);
+                    }
+                    if let Some(tys) = &v.struct_field_tys {
+                        variant_field_tys.insert(v.name.name.clone(), tys.clone());
                     }
                 }
                 by_enum.insert(adt.name.name.clone(), names);
             }
         }
     }
+    // Walk every fn body to discover tuple-payload variants. The
+    // HIR strips tuple arity from `HirEnumVariant`, so we infer
+    // it by counting args at every variant-constructor call site.
+    #[allow(clippy::items_after_statements)]
+    fn scan_expr(
+        e: &gossamer_hir::HirExpr,
+        idx: &HashMap<String, (String, usize)>,
+        has_payload: &mut HashMap<String, bool>,
+    ) {
+        use gossamer_hir::{HirExpr, HirExprKind};
+        let recurse = |e: &HirExpr, hp: &mut HashMap<String, bool>| {
+            scan_expr(e, idx, hp);
+        };
+        match &e.kind {
+            HirExprKind::Call { callee, args } => {
+                recurse(callee, has_payload);
+                for a in args {
+                    recurse(a, has_payload);
+                }
+                if let HirExprKind::Path { segments, .. } = &callee.kind {
+                    let last = segments.last().map(|s| s.name.as_str());
+                    if let Some(name) = last {
+                        if idx.contains_key(name) && !args.is_empty() {
+                            has_payload.insert(name.to_string(), true);
+                        }
+                    }
+                }
+            }
+            HirExprKind::Block(b) => {
+                for s in &b.stmts {
+                    if let gossamer_hir::HirStmtKind::Let { init: Some(i), .. } = &s.kind {
+                        recurse(i, has_payload);
+                    }
+                    if let gossamer_hir::HirStmtKind::Expr { expr, .. } = &s.kind {
+                        recurse(expr, has_payload);
+                    }
+                }
+                if let Some(t) = &b.tail {
+                    recurse(t, has_payload);
+                }
+            }
+            HirExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                recurse(condition, has_payload);
+                recurse(then_branch, has_payload);
+                if let Some(e) = else_branch {
+                    recurse(e, has_payload);
+                }
+            }
+            HirExprKind::Match { scrutinee, arms } => {
+                recurse(scrutinee, has_payload);
+                for a in arms {
+                    recurse(&a.body, has_payload);
+                }
+            }
+            HirExprKind::Loop { body } => recurse(body, has_payload),
+            HirExprKind::While { condition, body } => {
+                recurse(condition, has_payload);
+                recurse(body, has_payload);
+            }
+            HirExprKind::Binary { lhs, rhs, .. } => {
+                recurse(lhs, has_payload);
+                recurse(rhs, has_payload);
+            }
+            HirExprKind::Unary { operand, .. } => recurse(operand, has_payload),
+            HirExprKind::Assign { place, value } => {
+                recurse(place, has_payload);
+                recurse(value, has_payload);
+            }
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                recurse(receiver, has_payload);
+                for a in args {
+                    recurse(a, has_payload);
+                }
+            }
+            HirExprKind::Field { receiver, .. } => recurse(receiver, has_payload),
+            HirExprKind::Index { base, index } => {
+                recurse(base, has_payload);
+                recurse(index, has_payload);
+            }
+            HirExprKind::TupleIndex { receiver, .. } => recurse(receiver, has_payload),
+            HirExprKind::Tuple(elems) => {
+                for e in elems {
+                    recurse(e, has_payload);
+                }
+            }
+            HirExprKind::Array(arr) => {
+                use gossamer_hir::HirArrayExpr;
+                match arr {
+                    HirArrayExpr::List(elems) => {
+                        for e in elems {
+                            recurse(e, has_payload);
+                        }
+                    }
+                    HirArrayExpr::Repeat { value, count } => {
+                        recurse(value, has_payload);
+                        recurse(count, has_payload);
+                    }
+                }
+            }
+            HirExprKind::Cast { value, .. } => recurse(value, has_payload),
+            HirExprKind::Return(Some(v)) | HirExprKind::Break(Some(v)) => recurse(v, has_payload),
+            _ => {}
+        }
+    }
+    #[allow(clippy::items_after_statements)]
+    fn scan_block(
+        b: &gossamer_hir::HirBlock,
+        idx: &HashMap<String, (String, usize)>,
+        hp: &mut HashMap<String, bool>,
+    ) {
+        for s in &b.stmts {
+            if let gossamer_hir::HirStmtKind::Let { init: Some(i), .. } = &s.kind {
+                scan_expr(i, idx, hp);
+            }
+            if let gossamer_hir::HirStmtKind::Expr { expr, .. } = &s.kind {
+                scan_expr(expr, idx, hp);
+            }
+        }
+        if let Some(t) = &b.tail {
+            scan_expr(t, idx, hp);
+        }
+    }
+    for item in &program.items {
+        match &item.kind {
+            HirItemKind::Fn(decl) => {
+                if let Some(body) = &decl.body {
+                    scan_block(&body.block, &variant_index, &mut variant_has_payload);
+                }
+            }
+            HirItemKind::Impl(impl_decl) => {
+                for m in &impl_decl.methods {
+                    if let Some(body) = &m.body {
+                        scan_block(&body.block, &variant_index, &mut variant_has_payload);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     EnumIndex {
         by_enum,
         variant_index,
         variant_fields,
+        variant_field_tys,
+        variant_has_payload,
     }
 }
 
@@ -591,6 +745,18 @@ struct EnumIndex {
     /// declaration order even when `Rect` is an enum variant rather
     /// than a free struct.
     variant_fields: HashMap<String, Vec<String>>,
+    /// `variant_name -> [field_ty]`, parallel to `variant_fields`.
+    /// Used by struct-pattern matching so `Shape::Rect { w, h }`
+    /// declares `w` / `h` MIR locals at the right MIR type — the
+    /// generic `gos_load` helper returns i64 and a missing
+    /// f64-typed binding made the cranelift codegen skip the
+    /// I64→F64 bitcast in `define_var_to_with`.
+    variant_field_tys: HashMap<String, Vec<Ty>>,
+    /// `variant_name -> bool` — true when the variant carries any
+    /// payload (struct fields OR tuple-payload constructor calls
+    /// observed elsewhere in the program). Match dispatch keys off
+    /// this to decide whether the scrutinee is a heap pointer.
+    variant_has_payload: HashMap<String, bool>,
 }
 
 impl EnumIndex {
@@ -608,6 +774,22 @@ impl EnumIndex {
             }
             _ => None,
         }
+    }
+
+    /// Returns true when ANY variant of the enum that contains
+    /// `segments` carries fields. Used by match dispatch to decide
+    /// whether the scrutinee is a heap pointer (load disc from
+    /// offset 0) or a flat i64 (variant index inline).
+    fn has_any_payload(&self, segments: &[Ident]) -> bool {
+        let Some((enum_name, _)) = self.lookup(segments) else {
+            return false;
+        };
+        let Some(variants) = self.by_enum.get(&enum_name) else {
+            return false;
+        };
+        variants
+            .iter()
+            .any(|v| self.variant_has_payload.get(v).copied().unwrap_or(false))
     }
 }
 
@@ -1089,21 +1271,84 @@ impl<'a> Builder<'a> {
         let recv_place = self.lower_place_expr(receiver)?;
         let i_local = self.lower_expr(i_expr)?;
         let j_local = self.lower_expr(j_expr)?;
-        let elem_ty = match self
+        let recv_kind = self
             .tcx
-            .kind_of(self.locals[recv_place.local.0 as usize].ty)
-        {
+            .kind_of(self.locals[recv_place.local.0 as usize].ty);
+        let inner_kind = match recv_kind {
+            gossamer_types::TyKind::Ref { inner, .. } => self.tcx.kind_of(*inner).clone(),
+            other => other.clone(),
+        };
+        let is_vec_or_slice = matches!(
+            inner_kind,
+            gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
+        );
+        let elem_ty = match &inner_kind {
             gossamer_types::TyKind::Array { elem, .. } => *elem,
             gossamer_types::TyKind::Slice(elem) => *elem,
             gossamer_types::TyKind::Vec(elem) => *elem,
-            gossamer_types::TyKind::Ref { inner, .. } => match self.tcx.kind_of(*inner) {
-                gossamer_types::TyKind::Array { elem, .. } => *elem,
-                gossamer_types::TyKind::Slice(elem) => *elem,
-                gossamer_types::TyKind::Vec(elem) => *elem,
-                _ => return None,
-            },
             _ => return None,
         };
+        if is_vec_or_slice && recv_place.projection.is_empty() {
+            // Vec/Slice swap goes through the runtime helpers so
+            // the GosVec header isn't mis-treated as a flat
+            // element buffer. The previous inline 4-op store
+            // wrote into the GosVec header (offset 0 = len) and
+            // bubble_sort silently no-op'd or corrupted state.
+            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+            let elem_at_i = self.fresh(i64_ty);
+            let next1 = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(recv_place.local)),
+                    Operand::Copy(Place::local(i_local)),
+                ],
+                destination: Place::local(elem_at_i),
+                target: Some(next1),
+            });
+            self.set_current(next1);
+            let elem_at_j = self.fresh(i64_ty);
+            let next2 = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(recv_place.local)),
+                    Operand::Copy(Place::local(j_local)),
+                ],
+                destination: Place::local(elem_at_j),
+                target: Some(next2),
+            });
+            self.set_current(next2);
+            let unit_ty = self.tcx.unit();
+            let set1 = self.fresh(unit_ty);
+            let next3 = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_set_i64".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(recv_place.local)),
+                    Operand::Copy(Place::local(i_local)),
+                    Operand::Copy(Place::local(elem_at_j)),
+                ],
+                destination: Place::local(set1),
+                target: Some(next3),
+            });
+            self.set_current(next3);
+            let set2 = self.fresh(unit_ty);
+            let next4 = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_set_i64".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(recv_place.local)),
+                    Operand::Copy(Place::local(j_local)),
+                    Operand::Copy(Place::local(elem_at_i)),
+                ],
+                destination: Place::local(set2),
+                target: Some(next4),
+            });
+            self.set_current(next4);
+            let unit_local = self.lower_unit(span);
+            return Some(unit_local);
+        }
         let mut at_i = recv_place.clone();
         at_i.projection.push(crate::ir::Projection::Index(i_local));
         let mut at_j = recv_place.clone();
@@ -1212,6 +1457,16 @@ impl<'a> Builder<'a> {
         self.tcx.intern(gossamer_types::TyKind::Adt {
             def: gossamer_resolve::DefId::local(u32::MAX - 1),
             substs: gossamer_types::Substs::new(),
+        })
+    }
+
+    fn result_i64_error_adt_ty(&mut self) -> Ty {
+        let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let s = self.tcx.string_ty();
+        let substs = gossamer_types::Substs::from_types([i, s]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
         })
     }
 
@@ -1363,12 +1618,14 @@ impl<'a> Builder<'a> {
                 ("gos_rt_regex_find_all", v)
             }
             "regex::captures_all" => {
-                // No real captures support yet — return an empty
-                // vec so the program runs and any iteration is a
-                // no-op.
+                // Returns `Vec<Vec<String>>` — outer per-match,
+                // inner per-group. Missing optional groups are
+                // null pointers (rendered as empty strings on
+                // print, decoded as `Option::None` by `match`).
                 let s = self.tcx.string_ty();
-                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
-                ("gos_rt_regex_find_all", v)
+                let inner = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                let outer = self.tcx.intern(gossamer_types::TyKind::Vec(inner));
+                ("gos_rt_regex_captures_all", outer)
             }
             "regex::replace_all" => ("gos_rt_regex_replace_all", self.tcx.string_ty()),
             "regex::split" => {
@@ -1507,8 +1764,146 @@ impl<'a> Builder<'a> {
             module_chain,
             ["json"] | ["encoding", "json"] | ["std", "encoding", "json"]
         );
-        if !module_ok {
+        let value_ctor_ok = matches!(
+            module_chain,
+            ["json", "Value"]
+                | ["encoding", "json", "Value"]
+                | ["std", "encoding", "json", "Value"]
+        );
+        if !module_ok && !value_ctor_ok {
             return None;
+        }
+        if value_ctor_ok {
+            // `json::Value::object([(k, v), …])`: when the arg is
+            // an array literal of pairs, build a flat
+            // `[k0, v0, k1, v1, …]` arena buffer and call the
+            // variadic-style helper. The previous path passed the
+            // array's stack-slot address as a `*mut GosVec`, and
+            // the helper read garbage out of the missing header.
+            if (last == "object" || last == "Object")
+                && let Some(first_arg) = args.first()
+                && let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(pairs)) = &first_arg.kind
+            {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let unit_ty = self.tcx.unit();
+                let total_slots = (pairs.len() * 2) as i128;
+                // gos_alloc N*16 bytes for the flat pairs buffer.
+                let bytes_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(bytes_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(total_slots * 8))),
+                    span,
+                );
+                let buf_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(buf_local),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_alloc",
+                        args: vec![Operand::Copy(Place::local(bytes_local))],
+                    },
+                    span,
+                );
+                // For each pair `(k, v)` (a HirExprKind::Tuple),
+                // lower k and v separately and gos_store at the
+                // right offsets.
+                for (i, pair) in pairs.iter().enumerate() {
+                    let HirExprKind::Tuple(fields) = &pair.kind else {
+                        return None;
+                    };
+                    if fields.len() != 2 {
+                        return None;
+                    }
+                    let key_local = self.lower_expr(&fields[0])?;
+                    let val_local = self.lower_expr(&fields[1])?;
+                    let key_off = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(key_off),
+                        Rvalue::Use(Operand::Const(ConstValue::Int((i * 2 * 8) as i128))),
+                        span,
+                    );
+                    let val_off = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(val_off),
+                        Rvalue::Use(Operand::Const(ConstValue::Int((i * 2 * 8 + 8) as i128))),
+                        span,
+                    );
+                    let store_k = self.fresh(unit_ty);
+                    self.emit_assign(
+                        Place::local(store_k),
+                        Rvalue::CallIntrinsic {
+                            name: "gos_store",
+                            args: vec![
+                                Operand::Copy(Place::local(buf_local)),
+                                Operand::Copy(Place::local(key_off)),
+                                Operand::Copy(Place::local(key_local)),
+                            ],
+                        },
+                        span,
+                    );
+                    let store_v = self.fresh(unit_ty);
+                    self.emit_assign(
+                        Place::local(store_v),
+                        Rvalue::CallIntrinsic {
+                            name: "gos_store",
+                            args: vec![
+                                Operand::Copy(Place::local(buf_local)),
+                                Operand::Copy(Place::local(val_off)),
+                                Operand::Copy(Place::local(val_local)),
+                            ],
+                        },
+                        span,
+                    );
+                }
+                let count_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(count_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(pairs.len() as i128))),
+                    span,
+                );
+                let ret_ty = self.tcx.json_value_ty();
+                let dest = self.fresh(ret_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "gos_rt_json_value_object_n".to_string(),
+                    )),
+                    args: vec![
+                        Operand::Copy(Place::local(count_local)),
+                        Operand::Copy(Place::local(buf_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
+            let rt_name = match last {
+                "String" => "gos_rt_json_value_string",
+                "Int" => "gos_rt_json_value_int",
+                "Bool" => "gos_rt_json_value_bool",
+                "Null" => "gos_rt_json_value_null",
+                "Array" => "gos_rt_json_value_array",
+                "object" | "Object" => "gos_rt_json_value_object",
+                _ => return None,
+            };
+            let mut arg_locals = Vec::with_capacity(args.len());
+            for arg in args {
+                arg_locals.push(self.lower_expr(arg)?);
+            }
+            let ret_ty = self.tcx.json_value_ty();
+            let dest = self.fresh(ret_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(rt_name.to_string())),
+                args: arg_locals
+                    .into_iter()
+                    .map(|l| Operand::Copy(Place::local(l)))
+                    .collect(),
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
         }
         let (rt_name, ret_ty) = match last {
             "parse" => ("gos_rt_json_parse", self.tcx.json_value_ty()),
@@ -1849,6 +2244,34 @@ impl<'a> Builder<'a> {
                                         | TyKind::Float(_)
                                         | TyKind::String
                                 );
+                            // The initialiser's runtime kind tells us
+                            // when the binding is a runtime handle
+                            // (flag cell, http response, regex
+                            // pattern, …) that the typechecker has
+                            // collapsed to a primitive. The cell
+                            // value is pointer-shaped at runtime, so
+                            // the binding's MIR type must be widened
+                            // to i64 — keeping it as bool/i8 makes
+                            // cranelift store the byte-truncated
+                            // pointer value, and later loads return
+                            // garbage. This is the cli_args / flag
+                            // bool reproducer the test suite caught.
+                            let init_rk = self.local_runtime_kind.get(&value).copied();
+                            let promote_handle = init_rk.is_some_and(|rk| {
+                                rk.starts_with("flag::Cell::")
+                                    || rk.starts_with("http::")
+                                    || rk.starts_with("regex::")
+                                    || rk.starts_with("bufio::")
+                                    || rk == "errors::Error"
+                                    || rk == "flag::Set"
+                            }) && matches!(
+                                binding_kind,
+                                TyKind::Bool
+                                    | TyKind::Char
+                                    | TyKind::Int(_)
+                                    | TyKind::Float(_)
+                                    | TyKind::String
+                            );
                             if !matches!(
                                 binding_kind,
                                 TyKind::Bool
@@ -1863,6 +2286,7 @@ impl<'a> Builder<'a> {
                                     | TyKind::Tuple(_)
                                     | TyKind::Ref { .. }
                             ) || promote_inner
+                                || promote_handle
                             {
                                 self.locals[local.0 as usize].ty = init_ty;
                             }
@@ -2398,11 +2822,14 @@ impl<'a> Builder<'a> {
             }
         }
         // Enum variant constructor (no-payload form): `Color::Green`
-        // and the bare-name `Green` lower to an integer constant
-        // holding the variant's declaration index. Match-arm
-        // discriminants use the same indexing so the SwitchInt
-        // dispatch lands on the right arm.
+        // / `List::Nil`. When the enum has any payload-bearing
+        // sibling, allocate a one-word `[disc]` heap aggregate so
+        // match dispatch can uniformly load disc from offset 0.
+        // Otherwise emit the variant index directly as i64.
         if let Some((_enum_name, idx)) = self.enums.lookup(segments) {
+            if self.enums.has_any_payload(segments) {
+                return self.lower_user_enum_ctor(u32::try_from(idx).unwrap_or(0), &[], ty, span);
+            }
             let int_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
             let local = self.push_local(int_ty, None, false);
             self.emit_assign(
@@ -2465,20 +2892,36 @@ impl<'a> Builder<'a> {
         let mir_op = match op {
             HirUnaryOp::Neg => UnOp::Neg,
             HirUnaryOp::Not => UnOp::Not,
-            HirUnaryOp::RefShared | HirUnaryOp::RefMut | HirUnaryOp::Deref => {
-                // Ref / deref are no-ops at the MIR layer (the
-                // pointer ABI is a flat i64 throughout). Reuse the
-                // operand's lowered local directly instead of
-                // copying through a fresh local typed to the HIR
-                // expression's `ty`. Pre-fix, the HIR type of
-                // `*byte` (where byte is the loop variable from
-                // `for byte in s.as_bytes().iter()`) was the
-                // narrow byte type; copying an i64 register into
-                // a u8-sized slot left the surrounding stack
-                // bytes touched, and any subsequent `if !flag`
-                // saw a corrupted `flag` slot. Returning the
-                // operand local untouched keeps the slot type
-                // consistent with what the operand really holds.
+            HirUnaryOp::RefShared | HirUnaryOp::RefMut => {
+                return Some(inner);
+            }
+            HirUnaryOp::Deref => {
+                let cell_kind = self.local_runtime_kind.get(&inner).copied();
+                let (helper, dest_ty): (Option<&'static str>, Ty) = match cell_kind {
+                    Some("flag::Cell::String") => {
+                        (Some("gos_rt_flag_cell_load_str"), self.tcx.string_ty())
+                    }
+                    Some("flag::Cell::Uint") => (
+                        Some("gos_rt_flag_cell_load_i64"),
+                        self.tcx.int_ty(gossamer_types::IntTy::I64),
+                    ),
+                    Some("flag::Cell::Bool") => {
+                        (Some("gos_rt_flag_cell_load_bool"), self.tcx.bool_ty())
+                    }
+                    _ => (None, ty),
+                };
+                if let Some(helper_name) = helper {
+                    let dest = self.fresh(dest_ty);
+                    self.emit_assign(
+                        Place::local(dest),
+                        Rvalue::CallIntrinsic {
+                            name: helper_name,
+                            args: vec![Operand::Copy(Place::local(inner))],
+                        },
+                        span,
+                    );
+                    return Some(dest);
+                }
                 return Some(inner);
             }
         };
@@ -2654,6 +3097,17 @@ impl<'a> Builder<'a> {
                     return Some(local);
                 }
             }
+            // `Box::new(x)` / `Arc::new(x)` / `Rc::new(x)` are
+            // identity wrappers in a fully GC'd language — every
+            // value already lives on the GC heap. Without this
+            // identity passthrough the call lands on a generic
+            // dispatch that returns a typed-zero stub, which then
+            // landed as the `rest` payload of a `Cons(_, rest)`
+            // and segfaulted the next match arm reading disc off
+            // a null pointer (the linked_list reproducer).
+            if matches!(joined.as_str(), "Box::new" | "Arc::new" | "Rc::new") && args.len() == 1 {
+                return self.lower_expr(&args[0]);
+            }
         }
         // Variant constructor shortcut for `Result<T, E>` and
         // `Option<T>`: `Ok(v)` / `Err(v)` / `Some(v)` lower to
@@ -2672,6 +3126,15 @@ impl<'a> Builder<'a> {
                 if args.len() == 1 {
                     return self.lower_result_ctor(disc, &args[0], ty, span);
                 }
+            }
+            // User-defined enum variants with payloads: `List::Cons
+            // (v, rest)`. Allocate `[disc, p0, p1, ...]` on the heap
+            // and return the pointer. Match dispatch reads disc from
+            // offset 0 via `gos_rt_enum_disc`.
+            if !args.is_empty()
+                && let Some((_, idx)) = self.enums.lookup(segments)
+            {
+                return self.lower_user_enum_ctor(u32::try_from(idx).unwrap_or(0), args, ty, span);
             }
         }
         // When the callee's `DefId` is known and its declared
@@ -3884,14 +4347,59 @@ impl<'a> Builder<'a> {
                     .enums
                     .lookup(std::slice::from_ref(name))
                     .map(|(_, i)| i);
+                // Whether ANY sibling variant of this enum carries
+                // a payload — controls whether the runtime layout
+                // is `[disc, p0, ...]` (heap aggregate) or just an
+                // i64 disc value.
+                let any_variant_has_payload =
+                    self.enums.has_any_payload(std::slice::from_ref(name));
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let scrut_is_real_struct = self
+                    .struct_name_of(self.locals[scrutinee.0 as usize].ty)
+                    .is_some_and(|sn| self.structs.contains_key(&sn));
+                let scrut_is_payload_enum =
+                    variant_idx.is_some() && (any_variant_has_payload || !fields.is_empty());
                 // Predicate seed: for an enum variant, compare the
                 // scrutinee's discriminant to the variant index;
                 // for a free struct, every value of the scrutinee
-                // type matches.
+                // type matches. For payload-bearing enums the
+                // scrutinee is a *ptr* to `[disc, p0, p1, ...]`,
+                // so we must load disc from offset 0 first —
+                // comparing the bare scrutinee (a heap address) to
+                // a small variant index always returns false and
+                // the arm body never runs (the cli_args /
+                // control_flow / data_structures bug).
                 let acc = self.fresh(bool_ty);
                 if let Some(idx) = variant_idx {
-                    let scrut_ty = self.locals[scrutinee.0 as usize].ty;
-                    let lit_local = self.fresh(scrut_ty);
+                    let scrut_for_cmp = if scrut_is_payload_enum {
+                        let zero_off = self.fresh(i64_ty);
+                        self.emit_assign(
+                            Place::local(zero_off),
+                            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                            span,
+                        );
+                        let disc_load = self.fresh(i64_ty);
+                        self.emit_assign(
+                            Place::local(disc_load),
+                            Rvalue::CallIntrinsic {
+                                name: "gos_load",
+                                args: vec![
+                                    Operand::Copy(Place::local(scrutinee)),
+                                    Operand::Copy(Place::local(zero_off)),
+                                ],
+                            },
+                            span,
+                        );
+                        disc_load
+                    } else {
+                        scrutinee
+                    };
+                    let cmp_ty = if scrut_is_payload_enum {
+                        i64_ty
+                    } else {
+                        self.locals[scrutinee.0 as usize].ty
+                    };
+                    let lit_local = self.fresh(cmp_ty);
                     self.emit_assign(
                         Place::local(lit_local),
                         Rvalue::Use(Operand::Const(ConstValue::Int(idx as i128))),
@@ -3901,7 +4409,7 @@ impl<'a> Builder<'a> {
                         Place::local(acc),
                         Rvalue::BinaryOp {
                             op: BinOp::Eq,
-                            lhs: Operand::Copy(Place::local(scrutinee)),
+                            lhs: Operand::Copy(Place::local(scrut_for_cmp)),
                             rhs: Operand::Copy(Place::local(lit_local)),
                         },
                         span,
@@ -3913,20 +4421,27 @@ impl<'a> Builder<'a> {
                         span,
                     );
                 }
-                let scrut_is_real_struct = self
-                    .struct_name_of(self.locals[scrutinee.0 as usize].ty)
-                    .is_some_and(|sn| self.structs.contains_key(&sn));
                 if let Some(order) = order {
+                    let declared_tys = self.enums.variant_field_tys.get(&name.name).cloned();
                     for f in fields {
                         let pos = order.iter().position(|n| n == &f.name.name);
                         let Some(pos) = pos else { continue };
                         let field_idx = u32::try_from(pos).ok()?;
                         // The field's HIR-recorded type lives on
                         // the sub-pattern (or, for shorthand, on
-                        // the field-pattern itself).
+                        // the field-pattern itself); fall back to
+                        // the enum decl's recorded field type for
+                        // shorthand bindings whose `f.pattern` is
+                        // `None`. Without the decl-typed fallback
+                        // an `f64` field decoded as the I64 load
+                        // result, and printing/arithmetic saw the
+                        // bit pattern of the float as an integer.
                         let field_ty = match &f.pattern {
                             Some(sub) => sub.ty,
-                            None => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                            None => declared_tys
+                                .as_ref()
+                                .and_then(|tys| tys.get(pos).copied())
+                                .unwrap_or(i64_ty),
                         };
                         let elem = self.fresh(field_ty);
                         if scrut_is_real_struct {
@@ -3940,16 +4455,36 @@ impl<'a> Builder<'a> {
                                 Rvalue::Use(Operand::Copy(field_place)),
                                 span,
                             );
+                        } else if scrut_is_payload_enum {
+                            // Enum-variant struct payload: the
+                            // scrutinee is a pointer to a heap
+                            // aggregate `[disc, p0, p1, …]`.
+                            // Load this field from offset
+                            // (field_idx + 1) * 8.
+                            let off_local = self.fresh(i64_ty);
+                            self.emit_assign(
+                                Place::local(off_local),
+                                Rvalue::Use(Operand::Const(ConstValue::Int(
+                                    (i128::from(field_idx) + 1) * 8,
+                                ))),
+                                span,
+                            );
+                            self.emit_assign(
+                                Place::local(elem),
+                                Rvalue::CallIntrinsic {
+                                    name: "gos_load",
+                                    args: vec![
+                                        Operand::Copy(Place::local(scrutinee)),
+                                        Operand::Copy(Place::local(off_local)),
+                                    ],
+                                },
+                                span,
+                            );
                         } else {
-                            // Enum-variant struct payload — the
-                            // compiled tier's flat i64-per-slot
-                            // ABI does not preserve multi-field
-                            // enum payloads (a `Shape` local is
-                            // 8 bytes; `Rect { w, h }` is 16).
-                            // Bind every field to a default 0 so
-                            // the body compiles; programs that
-                            // depend on these fields produce the
-                            // happy-path Ok/Some encoding only.
+                            // Bare-disc enum variant or unknown
+                            // shape: bind to zero so the body
+                            // compiles. The exhaustiveness
+                            // checker is supposed to gate this.
                             self.emit_assign(
                                 Place::local(elem),
                                 Rvalue::Use(Operand::Const(ConstValue::Int(0))),
@@ -4011,6 +4546,41 @@ impl<'a> Builder<'a> {
                 //      working under `gos run`.
                 if let Some((_, idx)) = self.enums.lookup(std::slice::from_ref(name)) {
                     let scrut_ty = self.locals[scrutinee.0 as usize].ty;
+                    let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    // For payload-bearing variants the scrutinee is a
+                    // ptr to `[disc, p0, p1, ...]`; for no-payload
+                    // enums the scrutinee IS the variant index. The
+                    // ctor at lower_user_enum_ctor only allocates
+                    // when args.len() > 0, so we must distinguish at
+                    // match time: if the variant has fields OR any
+                    // sibling variant has fields, treat scrutinee as
+                    // ptr and load disc from offset 0. Otherwise the
+                    // scrutinee is the i64 index directly.
+                    let any_variant_has_payload =
+                        self.enums.has_any_payload(std::slice::from_ref(name));
+                    let scrut_for_cmp = if any_variant_has_payload || !fields.is_empty() {
+                        let zero_off = self.fresh(i64_ty);
+                        self.emit_assign(
+                            Place::local(zero_off),
+                            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                            span,
+                        );
+                        let disc_load = self.fresh(i64_ty);
+                        self.emit_assign(
+                            Place::local(disc_load),
+                            Rvalue::CallIntrinsic {
+                                name: "gos_load",
+                                args: vec![
+                                    Operand::Copy(Place::local(scrutinee)),
+                                    Operand::Copy(Place::local(zero_off)),
+                                ],
+                            },
+                            span,
+                        );
+                        disc_load
+                    } else {
+                        scrutinee
+                    };
                     let lit_local = self.fresh(scrut_ty);
                     self.emit_assign(
                         Place::local(lit_local),
@@ -4022,14 +4592,41 @@ impl<'a> Builder<'a> {
                         Place::local(cmp),
                         Rvalue::BinaryOp {
                             op: BinOp::Eq,
-                            lhs: Operand::Copy(Place::local(scrutinee)),
+                            lhs: Operand::Copy(Place::local(scrut_for_cmp)),
                             rhs: Operand::Copy(Place::local(lit_local)),
                         },
                         span,
                     );
-                    if let Some(first) = fields.first() {
-                        if let HirPatKind::Binding { name: bname, .. } = &first.kind {
-                            self.bind_local(&bname.name, scrutinee);
+                    // Bind payload fields by loading from offsets
+                    // (i+1)*8 of the scrutinee pointer.
+                    let any_payload = self.enums.has_any_payload(std::slice::from_ref(name));
+                    for (i, field) in fields.iter().enumerate() {
+                        if let HirPatKind::Binding { name: bname, .. } = &field.kind {
+                            if any_payload || !fields.is_empty() {
+                                let off_local = self.fresh(i64_ty);
+                                self.emit_assign(
+                                    Place::local(off_local),
+                                    Rvalue::Use(Operand::Const(ConstValue::Int(
+                                        ((i + 1) * 8) as i128,
+                                    ))),
+                                    span,
+                                );
+                                let payload_local = self.fresh(i64_ty);
+                                self.emit_assign(
+                                    Place::local(payload_local),
+                                    Rvalue::CallIntrinsic {
+                                        name: "gos_load",
+                                        args: vec![
+                                            Operand::Copy(Place::local(scrutinee)),
+                                            Operand::Copy(Place::local(off_local)),
+                                        ],
+                                    },
+                                    span,
+                                );
+                                self.bind_local(&bname.name, payload_local);
+                            } else {
+                                self.bind_local(&bname.name, scrutinee);
+                            }
                         }
                     }
                     return Some(cmp);
@@ -4125,28 +4722,46 @@ impl<'a> Builder<'a> {
                             p
                         } else {
                             // Happy-path: alias the scrutinee.
-                            // Only repin the scrutinee's MIR type
-                            // when the substs gave a concrete
-                            // payload type AND the scrutinee
-                            // currently has no concrete type
-                            // either. Without this guard, a
-                            // concrete tagged scrutinee
-                            // (`http::Response` / json::Value /
-                            // …) would have its type field
-                            // overwritten by `i64` (the
-                            // unwrap-fallback default), losing
-                            // the runtime-kind tag downstream
-                            // method dispatch needs.
+                            // Repin the scrutinee's MIR type when
+                            // the substs gave a concrete payload
+                            // type AND the scrutinee's current
+                            // type is less specific (unresolved
+                            // OR a generic i64 fallback that the
+                            // dispatch left behind for a
+                            // `Vec<Option<String>>`-style index).
+                            // Without this `let row[i] : i64;
+                            // match row[i] { Some(k: String) ... }`
+                            // would print `k` through the integer
+                            // formatter — the regex captures_all
+                            // case where strings rendered as raw
+                            // pointer ints. The original guard
+                            // also kept tagged structs
+                            // (`http::Response`/json::Value) safe
+                            // by refusing to overwrite — preserve
+                            // that by only repinning when the
+                            // payload is a *non-Int* concrete
+                            // type (String / Bool / Char / Float)
+                            // OR the scrutinee is genuinely
+                            // unresolved.
                             let payload_kind = self.tcx.kind_of(payload_ty).clone();
-                            let scrut_concrete = !matches!(
-                                self.tcx.kind_of(self.locals[scrutinee.0 as usize].ty),
+                            let scrut_kind_now = self
+                                .tcx
+                                .kind_of(self.locals[scrutinee.0 as usize].ty)
+                                .clone();
+                            let scrut_unresolved = matches!(
+                                scrut_kind_now,
                                 TyKind::Var(_) | TyKind::Error | TyKind::Never,
                             );
                             let payload_concrete = !matches!(
                                 payload_kind,
                                 TyKind::Var(_) | TyKind::Error | TyKind::Never,
                             );
-                            if payload_concrete && !scrut_concrete {
+                            let payload_overrides_int =
+                                matches!(
+                                    payload_kind,
+                                    TyKind::String | TyKind::Bool | TyKind::Char | TyKind::Float(_)
+                                ) && matches!(scrut_kind_now, TyKind::Int(_));
+                            if payload_concrete && (scrut_unresolved || payload_overrides_int) {
                                 self.locals[scrutinee.0 as usize].ty = payload_ty;
                             }
                             scrutinee
@@ -4261,10 +4876,26 @@ impl<'a> Builder<'a> {
         if pairs.len() % 2 != 0 {
             return None;
         }
-        // Try the free-struct table first, then fall back to the
-        // enum's variant-fields map so `Shape::Rect { w, h }` (where
-        // `Rect` is a struct-payload variant of an enum) lowers
-        // without needing a free `struct Rect` to exist.
+        // Try the free-struct table first. Then check whether the
+        // name is a struct-payload enum variant (`Shape::Rect { w,
+        // h }`); if so, route through `lower_user_enum_ctor` so
+        // the runtime layout matches what the variant-pattern
+        // match expects (`[disc, p0, p1, …]` heap aggregate).
+        // Mixing the flat-tuple lowering with the disc-prefixed
+        // match was the root cause of the
+        // control_flow / data_structures crash — the match read
+        // disc from offset 0 of a value that didn't have one.
+        let is_free_struct = self.structs.contains_key(struct_name);
+        let mut variant_idx: Option<usize> = None;
+        if !is_free_struct {
+            // The variant-fields map is keyed by the bare variant
+            // name; look up its declaration index in the parent
+            // enum so the constructor writes the right disc.
+            let variant_ident = Ident::new(struct_name.clone());
+            if let Some((_, idx)) = self.enums.lookup(std::slice::from_ref(&variant_ident)) {
+                variant_idx = Some(idx);
+            }
+        }
         let order = self
             .structs
             .get(struct_name)
@@ -4277,6 +4908,22 @@ impl<'a> Builder<'a> {
                 return None;
             };
             provided.insert(field_name.clone(), &chunk[1]);
+        }
+        if let Some(idx) = variant_idx {
+            // Enum struct-variant: build a `[disc, w, h, …]` heap
+            // aggregate. Args are HirExpr in field-declaration
+            // order so the load offsets in
+            // `lower_pattern_predicate`'s Struct arm line up.
+            let arg_exprs: Vec<HirExpr> = order
+                .iter()
+                .filter_map(|f| provided.get(f.as_str()).map(|e| (*e).clone()))
+                .collect();
+            return self.lower_user_enum_ctor(
+                u32::try_from(idx).unwrap_or(0),
+                &arg_exprs,
+                ty,
+                span,
+            );
         }
         let mut operands = Vec::with_capacity(order.len());
         for field in &order {
@@ -4559,6 +5206,49 @@ impl<'a> Builder<'a> {
                 return Some(local);
             }
         }
+        // `m.inc(key)` / `m.inc(key, by)` for `HashMap<String, i64>`.
+        // The interpreter ships a dedicated counter idiom; the
+        // compiled tier needs a matching dispatch or values stay
+        // at zero. Default `by` to 1 when only the key is given.
+        if method.name.as_str() == "inc" && (args.len() == 1 || args.len() == 2) {
+            let recv_ty_local = self
+                .receiver_local_from_path(receiver)
+                .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
+            let val_kind = self.hash_map_value_kind(recv_ty_local);
+            let key_kind = self.hash_map_key_kind(recv_ty_local);
+            if matches!(val_kind, Some(MapValueKind::I64))
+                && matches!(key_kind, Some(MapKeyKind::String))
+            {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let recv_local = self.lower_expr(receiver)?;
+                let key_local = self.lower_expr(&args[0])?;
+                let by_local = if args.len() == 2 {
+                    self.lower_expr(&args[1])?
+                } else {
+                    let l = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(l),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+                        span,
+                    );
+                    l
+                };
+                let dest = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_map_inc_str_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(recv_local)),
+                        Operand::Copy(Place::local(key_local)),
+                        Operand::Copy(Place::local(by_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
+        }
         // Prefer the MIR local's pinned type over the HIR receiver
         // type when the receiver is a Path bound to a local — the
         // type checker may have left the HIR type as an inference
@@ -4743,7 +5433,6 @@ impl<'a> Builder<'a> {
                 TyKind::String => Some("gos_rt_str_is_empty"),
                 _ => Some("gos_rt_len_is_zero"),
             },
-            "to_vec" => Some(""),
             // errors::Error methods. `is` here routes
             // unconditionally to the runtime helper because no
             // other type in the stdlib defines a `.is(...)`
@@ -4771,18 +5460,61 @@ impl<'a> Builder<'a> {
             // routes to gos_rt_parse_i64 with a discarded ok flag.
             // Pin return to i64 for the common case; users with
             // f64 / float must annotate explicitly today.
-            "parse" => Some("gos_rt_parse_i64"),
+            "parse" => Some("gos_rt_parse_i64_result"),
             // Result/Option chained helpers map to identity on
             // the happy path. The user passes in a closure; we
             // discard it (the compiled tier doesn't run the
             // error-mapping closure today).
-            "map_err" | "map" => Some(""),
+            // map_err / map only dispatch when the receiver's
+            // MIR-pinned type is a real Result Adt. Stdlib helpers
+            // like `fs::write` return a bool today; routing
+            // `.map_err(...)` on a bool through the result-helper
+            // would feed an i8 to a `*mut GosResult` parameter and
+            // trip the cranelift verifier.
+            "map_err" => {
+                if matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                    && self.is_result_or_option_adt(receiver_ty)
+                {
+                    Some("gos_rt_result_map_err")
+                } else {
+                    Some("")
+                }
+            }
+            "map" => {
+                if matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                    && self.is_result_or_option_adt(receiver_ty)
+                {
+                    Some("gos_rt_result_map")
+                } else {
+                    Some("")
+                }
+            }
             "to_lowercase" => Some("gos_rt_str_to_lower"),
             "to_uppercase" => Some("gos_rt_str_to_upper"),
             "push" => Some("gos_rt_vec_push"),
             "pop" => Some("gos_rt_vec_pop"),
             "iter" => Some("gos_rt_arr_iter"),
-            "as_bytes" => Some(""),
+            "to_vec" => match &receiver_kind_flat {
+                // Vec/Slice/Array `.to_vec()` must produce an
+                // independent copy — bubble_sort's `out.swap(...)`
+                // was mutating the caller's slice through the
+                // aliased pointer. Other types fall through to
+                // the identity copy.
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
+                    Some("gos_rt_vec_clone")
+                }
+                _ => Some(""),
+            },
+            "as_bytes" => match &receiver_kind_flat {
+                // String-receiver `.as_bytes()` materialises a real
+                // length-prefixed arena buffer. The previous identity
+                // lowering returned the raw c_char ptr; passing that
+                // to a callee with `&[u8]` parameter and calling
+                // `.len()` on it inside the callee read the first
+                // 8 string bytes as a length, crashing on dereference.
+                TyKind::String => Some("gos_rt_str_as_bytes"),
+                _ => Some(""),
+            },
             "as_str" => match &receiver_kind_flat {
                 TyKind::JsonValue => Some("gos_rt_json_as_str"),
                 _ => Some(""),
@@ -5026,7 +5758,7 @@ impl<'a> Builder<'a> {
                 | "gos_rt_btmap_len"
                 | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                 "gos_rt_btmap_insert" => self.tcx.unit(),
-                "gos_rt_regex_find_all" | "gos_rt_regex_split" => {
+                "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
                     let s = self.tcx.string_ty();
                     self.tcx.intern(gossamer_types::TyKind::Vec(s))
                 }
@@ -5041,6 +5773,24 @@ impl<'a> Builder<'a> {
                 "gos_rt_http_client_get" | "gos_rt_http_client_post" => Some("http::Request"),
                 "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
                 "gos_rt_http_request_send" => Some("http::Response"),
+                "gos_rt_flag_set_string" => {
+                    if std::env::var("GOS_MIR_TRACE").is_ok() {
+                        eprintln!("[tag] set_string dest");
+                    }
+                    Some("flag::Cell::String")
+                }
+                "gos_rt_flag_set_uint" => {
+                    if std::env::var("GOS_MIR_TRACE").is_ok() {
+                        eprintln!("[tag] set_uint dest");
+                    }
+                    Some("flag::Cell::Uint")
+                }
+                "gos_rt_flag_set_bool" => {
+                    if std::env::var("GOS_MIR_TRACE").is_ok() {
+                        eprintln!("[tag] set_bool dest");
+                    }
+                    Some("flag::Cell::Bool")
+                }
                 _ => None,
             };
             if let Some(k) = dest_kind {
@@ -5193,7 +5943,24 @@ impl<'a> Builder<'a> {
                         | TyKind::Slice(_)
                         | TyKind::Adt { .. }
                         | TyKind::Tuple(_) => ty,
-                        _ => receiver_ty,
+                        _ => {
+                            let mir_recv_ty = self.locals[receiver_local.0 as usize].ty;
+                            let mir_recv_kind = self.tcx.kind_of(mir_recv_ty);
+                            if matches!(
+                                mir_recv_kind,
+                                TyKind::Adt { .. }
+                                    | TyKind::Vec(_)
+                                    | TyKind::String
+                                    | TyKind::Int(_)
+                                    | TyKind::Float(_)
+                                    | TyKind::Bool
+                                    | TyKind::Tuple(_)
+                            ) {
+                                mir_recv_ty
+                            } else {
+                                receiver_ty
+                            }
+                        }
                     }
                 };
                 let dest = self.fresh(dest_ty);
@@ -5279,6 +6046,22 @@ impl<'a> Builder<'a> {
                 | "gos_rt_json_len"
                 | "gos_rt_http_response_status"
                 | "gos_rt_parse_i64" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                "gos_rt_parse_i64_result" => self.result_i64_error_adt_ty(),
+                "gos_rt_flag_cell_load_str" => self.tcx.string_ty(),
+                "gos_rt_flag_cell_load_i64" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                "gos_rt_flag_cell_load_bool" => self.tcx.bool_ty(),
+                "gos_rt_result_map_err" | "gos_rt_result_map" => {
+                    use gossamer_types::TyKind;
+                    let mut t = receiver_ty;
+                    while let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
+                        t = *inner;
+                    }
+                    if matches!(self.tcx.kind_of(t), TyKind::Adt { .. }) {
+                        t
+                    } else {
+                        self.result_i64_error_adt_ty()
+                    }
+                }
                 "gos_rt_json_as_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
                 "gos_rt_chan_try_send"
                 | "gos_rt_map_remove"
@@ -5523,6 +6306,88 @@ impl<'a> Builder<'a> {
     /// stays in the same basic block as the subsequent
     /// `let res = …` Assign statement that copies it to the
     /// binding's local.
+    /// `List::Cons(v, rest)` for user-defined enum variants. Heap-
+    /// allocates `[disc: i64, p0, p1, ...]` and returns the
+    /// pointer. Match dispatch reads disc via the runtime
+    /// helper `gos_rt_enum_disc` (just a load from offset 0).
+    fn lower_user_enum_ctor(
+        &mut self,
+        variant_idx: u32,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let n_args = args.len();
+        let bytes = ((n_args + 1) * 8) as i128;
+        let size_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(size_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(bytes))),
+            span,
+        );
+        let dest = self.fresh(ty);
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::CallIntrinsic {
+                name: "gos_alloc",
+                args: vec![Operand::Copy(Place::local(size_local))],
+            },
+            span,
+        );
+        // Write disc at offset 0
+        let disc_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(disc_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(variant_idx)))),
+            span,
+        );
+        let zero_off = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(zero_off),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let unit_ty = self.tcx.unit();
+        let store_dest = self.fresh(unit_ty);
+        self.emit_assign(
+            Place::local(store_dest),
+            Rvalue::CallIntrinsic {
+                name: "gos_store",
+                args: vec![
+                    Operand::Copy(Place::local(dest)),
+                    Operand::Copy(Place::local(zero_off)),
+                    Operand::Copy(Place::local(disc_local)),
+                ],
+            },
+            span,
+        );
+        // Write each payload at offset (i+1)*8
+        for (i, arg) in args.iter().enumerate() {
+            let payload_local = self.lower_expr(arg)?;
+            let off_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(off_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(((i + 1) * 8) as i128))),
+                span,
+            );
+            let payload_dest = self.fresh(unit_ty);
+            self.emit_assign(
+                Place::local(payload_dest),
+                Rvalue::CallIntrinsic {
+                    name: "gos_store",
+                    args: vec![
+                        Operand::Copy(Place::local(dest)),
+                        Operand::Copy(Place::local(off_local)),
+                        Operand::Copy(Place::local(payload_local)),
+                    ],
+                },
+                span,
+            );
+        }
+        Some(dest)
+    }
+
     fn lower_result_ctor(
         &mut self,
         disc: i64,
@@ -5530,6 +6395,9 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        if std::env::var("GOS_MIR_TRACE").is_ok() {
+            eprintln!("[lower_result_ctor] disc={disc}");
+        }
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let disc_local = self.fresh(i64_ty);
         self.emit_assign(
@@ -5948,10 +6816,35 @@ impl<'a> Builder<'a> {
             TyKind::Ref { inner, .. } => self.tcx.kind_of(inner).clone(),
             other => other,
         };
-        if matches!(actual_base_kind, TyKind::Vec(_) | TyKind::Slice(_)) {
-            let dest_ty = match self.tcx.kind_of(ty) {
-                TyKind::Int(_) => ty,
-                _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+        if let TyKind::Vec(elem) | TyKind::Slice(elem) = actual_base_kind {
+            // Pin the destination's MIR type to the element type
+            // recorded on the base. The HIR-side `ty` is sometimes
+            // an inference variable that lost contact with the
+            // concrete element kind by the time we get here (e.g.
+            // for the result of `flag::Set::parse`'s `Vec<String>`
+            // routed through a `?` Try), and printing/formatting
+            // dispatch then routes the i64 ptr through the integer
+            // helper instead of the string helper.
+            //
+            // For `Vec<Option<T>>` / `Vec<Result<T, _>>` the
+            // happy-path encoding makes each element value the
+            // unwrapped `T`. Peel one wrapper so `match v[i] {
+            // Some(k) => println!("{k}") }` sees `k: T` and
+            // dispatches to the right print helper.
+            let elem_unwrapped = match self.tcx.kind_of(elem) {
+                TyKind::Adt { .. } if self.is_result_or_option_adt(elem) => {
+                    self.first_generic_of(elem).unwrap_or(elem)
+                }
+                _ => elem,
+            };
+            let elem_kind_now = self.tcx.kind_of(elem_unwrapped);
+            let dest_ty = match elem_kind_now {
+                TyKind::String | TyKind::Bool | TyKind::Char | TyKind::Float(_) => elem_unwrapped,
+                TyKind::Int(_) => elem_unwrapped,
+                _ => match self.tcx.kind_of(ty) {
+                    TyKind::Int(_) | TyKind::String | TyKind::Bool | TyKind::Float(_) => ty,
+                    _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                },
             };
             let dest = self.fresh(dest_ty);
             let next = self.new_block(span);
@@ -6264,17 +7157,35 @@ impl<'a> Builder<'a> {
                                 .map(|s| s.name.as_str())
                                 .collect::<Vec<_>>()
                                 .join("::");
-                            if matches!(
-                                joined.as_str(),
-                                "regex::find_all"
-                                    | "regex::split"
-                                    | "regex::captures_all"
-                                    | "std::regex::find_all"
-                                    | "std::regex::split"
-                                    | "std::regex::captures_all"
-                            ) {
-                                for_vec_elem = Some(self.tcx.string_ty());
-                            }
+                            // `regex::find_all` returns `Vec<(i64,
+                            // i64, String)>` per the public API.
+                            // The runtime stores 24-byte tuples, so
+                            // pin the element type to a 3-tuple here
+                            // — without this the loop body treats
+                            // each element as a single i64/String,
+                            // crashing on `hit.2` past the end of
+                            // a wrongly-strided buffer.
+                            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                            let str_ty = self.tcx.string_ty();
+                            let tup_ty = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![
+                                i64_ty, i64_ty, str_ty,
+                            ]));
+                            // `captures_all` returns Vec<Vec<String>>;
+                            // iterating it gives a `Vec<String>` per
+                            // match. Without this row would be typed
+                            // as String, then `row[i]` indexing
+                            // fell through to byte-at-string and the
+                            // `match row[i] { Some(k) => ... }` arm
+                            // saw raw integers.
+                            let str_vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(str_ty));
+                            for_vec_elem = match joined.as_str() {
+                                "regex::find_all" | "std::regex::find_all" => Some(tup_ty),
+                                "regex::split" | "std::regex::split" => Some(str_ty),
+                                "regex::captures_all" | "std::regex::captures_all" => {
+                                    Some(str_vec_ty)
+                                }
+                                _ => None,
+                            };
                         }
                     }
                 }
@@ -6353,7 +7264,12 @@ impl<'a> Builder<'a> {
         let recv_ty = self
             .receiver_local_from_path(receiver)
             .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
-        if !matches!(self.tcx.kind_of(recv_ty), TyKind::HashMap { .. }) {
+        let recv_runtime_kind = self
+            .receiver_local_from_path(receiver)
+            .and_then(|l| self.local_runtime_kind.get(&l).copied());
+        let is_hashmap = matches!(self.tcx.kind_of(recv_ty), TyKind::HashMap { .. });
+        let is_btmap = recv_runtime_kind == Some("collections::BTreeMap");
+        if !is_hashmap && !is_btmap {
             return None;
         }
         let HirPatKind::Tuple(elems) = &for_loop.loop_pat.kind else {
@@ -6376,27 +7292,40 @@ impl<'a> Builder<'a> {
         else {
             return None;
         };
-        let key_kind = self.hash_map_key_kind(recv_ty);
-        let value_kind = self.hash_map_value_kind(recv_ty);
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let str_ty = self.tcx.string_ty();
-        let key_ty = match key_kind {
-            Some(MapKeyKind::String) => str_ty,
-            _ => i64_ty,
-        };
-        let val_ty = match value_kind {
-            Some(MapValueKind::String) => str_ty,
-            _ => i64_ty,
-        };
-        let keys_helper = match key_kind {
-            Some(MapKeyKind::String) => "gos_rt_map_keys_str",
-            _ => "gos_rt_map_keys_i64",
-        };
-        let get_or_helper = match (key_kind, value_kind) {
-            (Some(MapKeyKind::String), Some(MapValueKind::String)) => "gos_rt_map_get_or_str_str",
-            (Some(MapKeyKind::String), _) => "gos_rt_map_get_or_str_i64",
-            (_, Some(MapValueKind::String)) => "gos_rt_map_get_or_i64_str",
-            _ => "gos_rt_map_get_or_i64",
+        let (key_ty, val_ty, keys_helper, get_or_helper) = if is_btmap {
+            // BTreeMap is hard-coded to `<String, i64>` in the
+            // runtime today (see `GosBtMap`). Mirror that shape
+            // here so the iter loop reads keys as strings and
+            // values as i64. The runtime helper
+            // `gos_rt_btmap_keys` returns a fresh `Vec<*c_char>`
+            // in sorted key order.
+            (str_ty, i64_ty, "gos_rt_btmap_keys", "gos_rt_btmap_get_or")
+        } else {
+            let key_kind = self.hash_map_key_kind(recv_ty);
+            let value_kind = self.hash_map_value_kind(recv_ty);
+            let key_ty = match key_kind {
+                Some(MapKeyKind::String) => str_ty,
+                _ => i64_ty,
+            };
+            let val_ty = match value_kind {
+                Some(MapValueKind::String) => str_ty,
+                _ => i64_ty,
+            };
+            let keys_helper = match key_kind {
+                Some(MapKeyKind::String) => "gos_rt_map_keys_str",
+                _ => "gos_rt_map_keys_i64",
+            };
+            let get_or_helper = match (key_kind, value_kind) {
+                (Some(MapKeyKind::String), Some(MapValueKind::String)) => {
+                    "gos_rt_map_get_or_str_str"
+                }
+                (Some(MapKeyKind::String), _) => "gos_rt_map_get_or_str_i64",
+                (_, Some(MapValueKind::String)) => "gos_rt_map_get_or_i64_str",
+                _ => "gos_rt_map_get_or_i64",
+            };
+            (key_ty, val_ty, keys_helper, get_or_helper)
         };
 
         let recv_local = self.lower_expr(receiver)?;
@@ -6488,7 +7417,7 @@ impl<'a> Builder<'a> {
 
         // v = m.get_or(k, default). Default-by-value-type: 0 for
         // i64-valued maps, an empty string for string-valued maps.
-        let default_local = if matches!(value_kind, Some(MapValueKind::String)) {
+        let default_local = if val_ty == str_ty {
             let l = self.fresh(str_ty);
             self.emit_assign(
                 Place::local(l),
@@ -6802,24 +7731,49 @@ impl<'a> Builder<'a> {
             target: Some(after_ptr),
         });
         self.set_current(after_ptr);
-        let elem_local = self.fresh(elem_ty);
-        let after_load = self.new_block(span);
-        let zero_off = self.fresh(i64_ty);
-        self.emit_assign(
-            Place::local(zero_off),
-            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-            span,
+        // For scalar element types (i64, String, bool, …), load the
+        // single 8-byte slot off the head of the element. For
+        // multi-slot aggregates (Tuple, Adt, …) the loop body
+        // walks the element through Field/TupleIndex projections,
+        // so binding the *pointer* directly is what the projection
+        // path expects (`hit.2` on a `(i64,i64,String)` tuple
+        // becomes `gos_load(ptr, 16)`).
+        let elem_kind = self.tcx.kind_of(elem_ty);
+        let elem_is_aggregate = matches!(
+            elem_kind,
+            gossamer_types::TyKind::Tuple(_) | gossamer_types::TyKind::Adt { .. }
         );
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
-            args: vec![
-                Operand::Copy(Place::local(ptr_local)),
-                Operand::Copy(Place::local(zero_off)),
-            ],
-            destination: Place::local(elem_local),
-            target: Some(after_load),
-        });
-        self.set_current(after_load);
+        let elem_local = if elem_is_aggregate {
+            // Pin the loop var's MIR type so downstream field
+            // reads see the right tuple layout.
+            let l = self.fresh(elem_ty);
+            self.emit_assign(
+                Place::local(l),
+                Rvalue::Use(Operand::Copy(Place::local(ptr_local))),
+                span,
+            );
+            l
+        } else {
+            let l = self.fresh(elem_ty);
+            let after_load = self.new_block(span);
+            let zero_off = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(zero_off),
+                Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                span,
+            );
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(ptr_local)),
+                    Operand::Copy(Place::local(zero_off)),
+                ],
+                destination: Place::local(l),
+                target: Some(after_load),
+            });
+            self.set_current(after_load);
+            l
+        };
         if let HirPatKind::Binding { name, .. } = &loop_pat.kind {
             self.bind_local(&name.name, elem_local);
         }
@@ -7023,8 +7977,7 @@ impl<'a> Builder<'a> {
                 // Try the array_local's MIR type, then the iter
                 // expression's HIR type, peeling `&` references
                 // along the way.
-                let mut candidates =
-                    vec![self.locals[array_local.0 as usize].ty, iter_expr.ty];
+                let mut candidates = vec![self.locals[array_local.0 as usize].ty, iter_expr.ty];
                 while let Some(cand) = candidates.pop() {
                     let mut peeled = cand;
                     loop {

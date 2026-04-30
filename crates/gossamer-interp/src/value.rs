@@ -692,7 +692,7 @@ pub trait NativeDispatch {
 }
 
 /// Function pointer for [`Value::Native`] builtins.
-pub(crate) type NativeCall = fn(&mut dyn NativeDispatch, &[Value]) -> RuntimeResult<Value>;
+pub type NativeCall = fn(&mut dyn NativeDispatch, &[Value]) -> RuntimeResult<Value>;
 
 impl Value {
     /// Returns the unit value.

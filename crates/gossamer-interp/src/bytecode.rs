@@ -39,6 +39,10 @@ pub enum Op {
     LoadGlobal { dst: Reg, idx: GlobalIdx },
     /// `dst = src`.
     Move { dst: Reg, src: Reg },
+    /// `dst = *src`. Resolves a `__Cell` flag handle to its
+    /// current value via the per-thread `CELL_REGISTRY`; passes
+    /// other shapes through unchanged.
+    Deref { dst: Reg, src: Reg },
     /// Generic boxed-`Value` addition: `dst = lhs + rhs`. Carries
     /// an inline-cache slot index that the runtime fills on first
     /// execution with the observed `(lhs, rhs)` shape (see
@@ -831,7 +835,6 @@ pub enum Op {
         /// Source float register.
         value_f: Reg,
     },
-
     // BuildFloatArray (assembles `Value::FloatArray` from a
     // contiguous block of float registers for `[S; N]` literals
     // where `S` has all-f64 fields) lives in the `wide_ops`

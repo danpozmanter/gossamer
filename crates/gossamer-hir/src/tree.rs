@@ -140,6 +140,13 @@ pub struct HirEnumVariant {
     /// Ordered field names for struct-payload variants. `None`
     /// for unit and tuple-struct variants.
     pub struct_fields: Option<Vec<Ident>>,
+    /// Ordered field types matching `struct_fields`, parallel
+    /// vector. Filled by [`crate::lower`] from the AST so the MIR
+    /// lowerer can emit typed loads for `Shape::Rect { w, h }`
+    /// match arms (without this the loaded i64 was printed verbatim
+    /// for f64 fields). Length matches `struct_fields`'s when
+    /// present.
+    pub struct_field_tys: Option<Vec<crate::tree::Ty>>,
 }
 
 /// Lowered `impl` block.

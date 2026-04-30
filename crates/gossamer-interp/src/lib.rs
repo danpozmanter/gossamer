@@ -19,12 +19,13 @@ mod builtins;
 mod bytecode;
 mod compile;
 mod env;
+pub mod external_natives;
 mod flag_set_builtins;
 mod http_client_builtins;
 mod interp;
 mod jit_call;
 mod regex_builtins;
-mod value;
+pub mod value;
 mod vm;
 
 pub use builtins::{
@@ -113,6 +114,9 @@ pub fn flush_runtime_stdout() {
 pub use bytecode::{FnChunk, Op};
 pub use compile::compile_fn;
 pub use env::Env;
+pub use external_natives::{
+    clear_external_natives_for_test, external_natives_snapshot, register_external_native,
+};
 pub use interp::{Interpreter, join_outstanding_goroutines};
 pub use value::{
     Channel, Closure, RuntimeError, RuntimeResult, SmolStr, Value, registry_stats_for_test,

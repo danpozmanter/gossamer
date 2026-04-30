@@ -1353,12 +1353,24 @@ fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
         TyKind::Array { elem, len } => u32::try_from(len)
             .unwrap_or(1)
             .saturating_mul(type_slot_count(tcx, elem)),
-        TyKind::Adt { def, .. } => tcx.struct_field_tys(def).map_or(1, |tys| {
-            tys.iter()
-                .map(|t| type_slot_count(tcx, *t))
-                .sum::<u32>()
-                .max(1)
-        }),
+        TyKind::Adt { def, .. } => {
+            // Result<T, E> and Option<T> use sentinel DefIds
+            // (u32::MAX, u32::MAX-1) that don't appear in
+            // `struct_field_tys`. Both have a 2-slot heap layout:
+            // `[disc: i64, payload: i64]`. Without this special
+            // case the by-value-aggregate return path copies only
+            // the disc word and zeroes the payload — corrupting
+            // every `Ok(v)` returned across a function boundary.
+            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                return 2;
+            }
+            tcx.struct_field_tys(def).map_or(1, |tys| {
+                tys.iter()
+                    .map(|t| type_slot_count(tcx, *t))
+                    .sum::<u32>()
+                    .max(1)
+            })
+        }
         _ => 1,
     }
 }
@@ -1784,8 +1796,19 @@ fn lower_terminator(
                 tcx.kind_of(ret_ty_mir),
                 TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
             );
+            let ret_slots = type_slot_count(tcx, ret_ty_mir).max(1);
+            // 1-slot values are themselves the value (an i64
+            // / pointer / scalar). Copying through them by
+            // dereferencing the local would treat the value as
+            // a *pointer to data* and load 8 bytes from the
+            // pointee — corrupting any function returning a
+            // user-defined enum (heap pointer to a `[disc, ...]`
+            // aggregate). Only the multi-slot aggregate cases
+            // (real Tuple, Array, struct Adt) need the heap
+            // copy that escapes the stack frame.
+            let ret_is_aggregate = ret_is_aggregate && ret_slots > 1;
             if ret_is_aggregate {
-                let bytes = u64::from(type_slot_count(tcx, ret_ty_mir).max(1)) * 8;
+                let bytes = u64::from(ret_slots) * 8;
                 let ptr_ty = module.target_config().pointer_type();
                 let alloc_sig = {
                     let mut s = module.make_signature();
@@ -2606,6 +2629,7 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_regex_is_match" => Some("gos_rt_regex_is_match"),
         "gos_rt_regex_find" => Some("gos_rt_regex_find"),
         "gos_rt_regex_find_all" => Some("gos_rt_regex_find_all"),
+        "gos_rt_regex_captures_all" => Some("gos_rt_regex_captures_all"),
         "gos_rt_regex_replace_all" => Some("gos_rt_regex_replace_all"),
         "gos_rt_regex_split" => Some("gos_rt_regex_split"),
         "gos_rt_fs_read_to_string" => Some("gos_rt_fs_read_to_string"),
@@ -2643,6 +2667,11 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_btmap_insert" => Some("gos_rt_btmap_insert"),
         "gos_rt_btmap_get_or" => Some("gos_rt_btmap_get_or"),
         "gos_rt_btmap_len" => Some("gos_rt_btmap_len"),
+        "gos_rt_btmap_keys" => Some("gos_rt_btmap_keys"),
+        "gos_rt_str_as_bytes" => Some("gos_rt_str_as_bytes"),
+        "gos_rt_vec_clone" => Some("gos_rt_vec_clone"),
+        "gos_rt_map_inc_str_i64" => Some("gos_rt_map_inc_str_i64"),
+        "gos_rt_json_value_object_n" => Some("gos_rt_json_value_object_n"),
         "gos_rt_http_response_set_header" => Some("gos_rt_http_response_set_header"),
         "gos_rt_http_response_get_header" => Some("gos_rt_http_response_get_header"),
         "gos_rt_http_request_set_header" => Some("gos_rt_http_request_set_header"),
@@ -2655,6 +2684,12 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_slog_debug" => Some("gos_rt_slog_debug"),
         "gos_rt_testing_check" => Some("gos_rt_testing_check"),
         "gos_rt_testing_check_eq_i64" => Some("gos_rt_testing_check_eq_i64"),
+        "gos_rt_parse_i64_result" => Some("gos_rt_parse_i64_result"),
+        "gos_rt_result_map_err" => Some("gos_rt_result_map_err"),
+        "gos_rt_result_map" => Some("gos_rt_result_map"),
+        "gos_rt_flag_cell_load_str" => Some("gos_rt_flag_cell_load_str"),
+        "gos_rt_flag_cell_load_i64" => Some("gos_rt_flag_cell_load_i64"),
+        "gos_rt_flag_cell_load_bool" => Some("gos_rt_flag_cell_load_bool"),
         _ => None,
     }
 }
@@ -2687,6 +2722,7 @@ fn lower_generic_rt_call(
         "gos_rt_regex_is_match" => (&[ptr_ty, ptr_ty], Some(types::I8)),
         "gos_rt_regex_find" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_regex_find_all" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_regex_captures_all" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_regex_replace_all" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_regex_split" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_fs_read_to_string" => (&[ptr_ty], Some(ptr_ty)),
@@ -2724,6 +2760,11 @@ fn lower_generic_rt_call(
         "gos_rt_btmap_insert" => (&[ptr_ty, ptr_ty, types::I64], None),
         "gos_rt_btmap_get_or" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I64)),
         "gos_rt_btmap_len" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_btmap_keys" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_str_as_bytes" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_vec_clone" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_map_inc_str_i64" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I64)),
+        "gos_rt_json_value_object_n" => (&[types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_http_response_set_header" => (&[ptr_ty, ptr_ty, ptr_ty], None),
         "gos_rt_http_response_get_header" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_http_request_set_header" => (&[ptr_ty, ptr_ty, ptr_ty], None),
@@ -2740,6 +2781,12 @@ fn lower_generic_rt_call(
         }
         "gos_rt_testing_check" => (&[types::I8, ptr_ty], Some(types::I8)),
         "gos_rt_testing_check_eq_i64" => (&[types::I64, types::I64, ptr_ty], Some(types::I8)),
+        "gos_rt_parse_i64_result" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_result_map_err" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_result_map" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_flag_cell_load_str" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_flag_cell_load_i64" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_flag_cell_load_bool" => (&[ptr_ty], Some(types::I64)),
         _ => unreachable!("unhandled rt name {name}"),
     };
     let returns = ret.map(|t| vec![t]).unwrap_or_default();
@@ -4024,6 +4071,109 @@ fn lower_intrinsic_call(
             define_var_to(builder, locals, body, tcx, module, destination.local, n);
             Ok(true)
         }
+        "gos_rt_parse_i64_result" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_parse_i64_result", &[ptr_ty], &[ptr_ty])?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let s = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let call = builder.ins().call(fref, &[s]);
+            let r = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, r);
+            Ok(true)
+        }
+        "gos_rt_result_map_err" | "gos_rt_result_map" => {
+            let helper_name: &'static str = if name == "gos_rt_result_map_err" {
+                "gos_rt_result_map_err"
+            } else {
+                "gos_rt_result_map"
+            };
+            let rt_fn = intrinsics.extern_fn(module, helper_name, &[ptr_ty, ptr_ty], &[ptr_ty])?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let recv = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let clos = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let call = builder.ins().call(fref, &[recv, clos]);
+            let r = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, r);
+            Ok(true)
+        }
+        "gos_rt_flag_cell_load_str"
+        | "gos_rt_flag_cell_load_i64"
+        | "gos_rt_flag_cell_load_bool" => {
+            let helper_name: &'static str = match name {
+                "gos_rt_flag_cell_load_str" => "gos_rt_flag_cell_load_str",
+                "gos_rt_flag_cell_load_i64" => "gos_rt_flag_cell_load_i64",
+                _ => "gos_rt_flag_cell_load_bool",
+            };
+            let ret_ty = if helper_name == "gos_rt_flag_cell_load_i64"
+                || helper_name == "gos_rt_flag_cell_load_bool"
+            {
+                types::I64
+            } else {
+                ptr_ty
+            };
+            let rt_fn = intrinsics.extern_fn(module, helper_name, &[ptr_ty], &[ret_ty])?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let raw_cell = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let cell = coerce_arg_to(builder, raw_cell, ptr_ty)?;
+            let call = builder.ins().call(fref, &[cell]);
+            let mut r = builder.inst_results(call)[0];
+            // Bool destination is declared as i8 in cranelift (MIR
+            // bool_ty maps to I8). The helper returns i64 so the
+            // result needs an ireduce to fit the destination Variable.
+            if helper_name == "gos_rt_flag_cell_load_bool" {
+                r = builder.ins().ireduce(types::I8, r);
+            }
+            define_var_to(builder, locals, body, tcx, module, destination.local, r);
+            Ok(true)
+        }
         "strconv::parse_f64" => {
             let rt_fn = intrinsics.extern_fn(
                 module,
@@ -4710,15 +4860,21 @@ fn lower_intrinsic_call(
         // HashMap iteration helpers — each returns a *mut GosVec
         // snapshot of the requested column so the for-loop lowerer
         // can iterate it through the regular gos_rt_vec_* helpers.
+        // The btmap_keys helper is the BTreeMap equivalent and
+        // shares the same dispatch shape (`m: *mut Tagged → *mut
+        // GosVec`), enabling `for (k, v) in btmap.iter()` to work
+        // in compiled mode (was infinite-looping before).
         "gos_rt_map_keys_i64"
         | "gos_rt_map_values_i64"
         | "gos_rt_map_keys_str"
-        | "gos_rt_map_values_str" => {
+        | "gos_rt_map_values_str"
+        | "gos_rt_btmap_keys" => {
             let static_name: &'static str = match name {
                 "gos_rt_map_keys_i64" => "gos_rt_map_keys_i64",
                 "gos_rt_map_values_i64" => "gos_rt_map_values_i64",
                 "gos_rt_map_keys_str" => "gos_rt_map_keys_str",
                 "gos_rt_map_values_str" => "gos_rt_map_values_str",
+                "gos_rt_btmap_keys" => "gos_rt_btmap_keys",
                 _ => unreachable!(),
             };
             let rt_fn = intrinsics.extern_fn(module, static_name, &[ptr_ty], &[ptr_ty])?;
@@ -4761,6 +4917,51 @@ fn lower_intrinsic_call(
             let by64 = coerce_arg_to(builder, by_val, types::I64)?;
             let fref = module.declare_func_in_func(inc_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k64, by64]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_map_inc_str_i64" => {
+            let inc_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_inc_str_i64",
+                &[ptr_ty, ptr_ty, types::I64],
+                &[types::I64],
+            )?;
+            let m = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let k = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let by_val = match args.get(2) {
+                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
+                None => builder.ins().iconst(types::I64, 1),
+            };
+            let k_ptr = coerce_arg_to(builder, k, ptr_ty)?;
+            let by64 = coerce_arg_to(builder, by_val, types::I64)?;
+            let fref = module.declare_func_in_func(inc_fn, builder.func);
+            let call = builder.ins().call(fref, &[m, k_ptr, by64]);
             let v = builder.inst_results(call)[0];
             define_var_to(builder, locals, body, tcx, module, destination.local, v);
             Ok(true)
@@ -5013,6 +5214,115 @@ fn lower_intrinsic_call(
             let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_value_string" | "gos_rt_json_value_array" | "gos_rt_json_value_object" => {
+            let helper: &'static str = match name {
+                "gos_rt_json_value_string" => "gos_rt_json_value_string",
+                "gos_rt_json_value_array" => "gos_rt_json_value_array",
+                _ => "gos_rt_json_value_object",
+            };
+            let rt_fn = intrinsics.extern_fn(module, helper, &[ptr_ty], &[ptr_ty])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_value_object_n" => {
+            let rt_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_json_value_object_n",
+                &[types::I64, ptr_ty],
+                &[ptr_ty],
+            )?;
+            let n = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let pairs = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let n64 = coerce_arg_to(builder, n, types::I64)?;
+            let pairs_ptr = coerce_arg_to(builder, pairs, ptr_ty)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[n64, pairs_ptr]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_value_int" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_value_int", &[types::I64], &[ptr_ty])?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let n = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let n = coerce_arg_to(builder, n, types::I64)?;
+            let call = builder.ins().call(fref, &[n]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_value_bool" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_value_bool", &[types::I32], &[ptr_ty])?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let b = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I8),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I8, 0),
+            };
+            let b = coerce_arg_to(builder, b, types::I32)?;
+            let call = builder.ins().call(fref, &[b]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_value_null" => {
+            let rt_fn = intrinsics.extern_fn(module, "gos_rt_json_value_null", &[], &[ptr_ty])?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[]);
             let v = builder.inst_results(call)[0];
             define_var_to(builder, locals, body, tcx, module, destination.local, v);
             Ok(true)
@@ -6346,13 +6656,19 @@ fn lower_intrinsic_call(
         }
         // Unary string helpers that return a fresh String
         // (allocated by the runtime). Signatures are `(ptr) -> ptr`.
-        "gos_rt_str_trim" | "gos_rt_str_to_lower" | "gos_rt_str_to_upper" => {
+        "gos_rt_str_trim"
+        | "gos_rt_str_to_lower"
+        | "gos_rt_str_to_upper"
+        | "gos_rt_str_as_bytes"
+        | "gos_rt_vec_clone" => {
             let rt_fn = intrinsics.extern_fn(
                 module,
                 match name {
                     "gos_rt_str_trim" => "gos_rt_str_trim",
                     "gos_rt_str_to_lower" => "gos_rt_str_to_lower",
                     "gos_rt_str_to_upper" => "gos_rt_str_to_upper",
+                    "gos_rt_str_as_bytes" => "gos_rt_str_as_bytes",
+                    "gos_rt_vec_clone" => "gos_rt_vec_clone",
                     _ => unreachable!(),
                 },
                 &[ptr_ty],
@@ -7001,7 +7317,23 @@ fn lower_rvalue(
                         builder.ins().ineg(v)
                     }
                 }
-                UnOp::Not => builder.ins().bnot(v),
+                UnOp::Not => {
+                    // For booleans (cranelift `I8`) `!` is *logical*
+                    // negation — flip bit 0 only. `bnot` flips
+                    // every bit (1 → 0xfe), which the downstream
+                    // `if !flag` non-zero test then misreads as
+                    // true and the user code's `if !first` arm
+                    // always fires. For wider integer types the
+                    // user wrote bitwise NOT (Rust convention),
+                    // so keep `bnot` there.
+                    let vt = value_type(v, builder);
+                    if vt == types::I8 {
+                        let one = builder.ins().iconst(types::I8, 1);
+                        builder.ins().bxor(v, one)
+                    } else {
+                        builder.ins().bnot(v)
+                    }
+                }
             }
         }
         Rvalue::Cast { operand, target } => {

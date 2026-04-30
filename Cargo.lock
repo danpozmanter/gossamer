@@ -1329,6 +1329,7 @@ dependencies = [
  "gossamer-diagnostics",
  "gossamer-lex",
  "gossamer-parse",
+ "parking_lot",
  "thiserror 2.0.18",
 ]
 

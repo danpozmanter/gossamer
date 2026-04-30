@@ -356,10 +356,43 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         &[
             ("walk_dir", builtin_fs_walk_dir),
             ("list_dir", builtin_fs_list_dir),
+            ("read_to_string", builtin_os_read_file_to_string),
+            ("read_file", builtin_os_read_file),
+            ("write", builtin_os_write_file),
+            ("create_dir_all", builtin_os_mkdir_all),
+            ("create_dir", builtin_os_mkdir),
+            ("mkdir", builtin_os_mkdir),
+            ("mkdir_all", builtin_os_mkdir_all),
+            ("remove_file", builtin_os_remove_file),
+            ("remove_dir_all", builtin_fs_remove_dir_all),
+            ("remove_all", builtin_fs_remove_dir_all),
+            ("rename", builtin_os_rename),
+            ("exists", builtin_os_exists),
         ],
         globals,
     );
-    install_module("path", &[("walk", builtin_fs_walk_dir)], globals);
+    install_module(
+        "path",
+        &[("walk", builtin_fs_walk_dir), ("join", builtin_path_join_v)],
+        globals,
+    );
+    install_module("BTreeMap", &[("new", builtin_btmap_new)], globals);
+    install_module(
+        "collections::BTreeMap",
+        &[("new", builtin_btmap_new)],
+        globals,
+    );
+    install_module("HashSet", &[("new", builtin_set_new)], globals);
+    install_module("collections::HashSet", &[("new", builtin_set_new)], globals);
+    install_module(
+        "time::Duration",
+        &[
+            ("from_millis", builtin_duration_passthrough),
+            ("from_secs", builtin_duration_secs_to_ms),
+        ],
+        globals,
+    );
+    globals.push(("to_vec", builtin("to_vec", builtin_to_vec_v)));
     install_module(
         "gzip",
         &[
@@ -484,6 +517,40 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    // `json::Value::*` enum constructors used by user code that
+    // builds a payload before serialising.
+    globals.push((
+        "json::Value::String",
+        builtin("json::Value::String", builtin_json_value_passthrough),
+    ));
+    globals.push((
+        "json::Value::Int",
+        builtin("json::Value::Int", builtin_json_value_passthrough),
+    ));
+    globals.push((
+        "json::Value::Float",
+        builtin("json::Value::Float", builtin_json_value_passthrough),
+    ));
+    globals.push((
+        "json::Value::Bool",
+        builtin("json::Value::Bool", builtin_json_value_passthrough),
+    ));
+    globals.push((
+        "json::Value::Array",
+        builtin("json::Value::Array", builtin_json_value_passthrough),
+    ));
+    globals.push((
+        "json::Value::Null",
+        builtin("json::Value::Null", builtin_json_value_null),
+    ));
+    globals.push((
+        "json::Value::object",
+        builtin("json::Value::object", builtin_json_value_object),
+    ));
+    globals.push((
+        "json::Value::Object",
+        builtin("json::Value::Object", builtin_json_value_object),
+    ));
     install_module(
         "testing",
         &[
@@ -816,6 +883,177 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("err", builtin("err", builtin_variant_err)));
     globals.push(("map", native("map", native_variant_map)));
     globals.push(("map_or", native("map_or", native_variant_map_or)));
+    globals.push(("map_err", native("map_err", native_variant_map_err)));
+    globals.push(("parse", builtin("parse", builtin_str_parse_result)));
+    globals.push(("errors::new", builtin("errors::new", builtin_errors_new)));
+    globals.push(("errors::wrap", builtin("errors::wrap", builtin_errors_wrap)));
+    globals.push((
+        "errors::is",
+        builtin("errors::is", builtin_errors_is_freefn),
+    ));
+    globals.push((
+        "errors::Error::message",
+        builtin("errors::Error::message", builtin_errors_message),
+    ));
+    globals.push((
+        "errors::Error::cause",
+        builtin("errors::Error::cause", builtin_errors_cause),
+    ));
+    globals.push((
+        "errors::Error::is",
+        builtin("errors::Error::is", builtin_errors_is_method),
+    ));
+    globals.push(("message", builtin("message", builtin_errors_message)));
+    globals.push(("cause", builtin("cause", builtin_errors_cause)));
+    globals.push(("to_vec", builtin("to_vec", builtin_clone)));
+    globals.push((
+        "std::sync::channel",
+        builtin("std::sync::channel", builtin_channel_new),
+    ));
+}
+
+fn native_variant_map_err(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let transform = args.get(1).cloned().unwrap_or(Value::Unit);
+    if let Value::Variant(inner) = &receiver
+        && inner.name == "Err"
+        && !inner.fields.is_empty()
+    {
+        let mapped = dispatch.call_value(&transform, vec![inner.fields[0].clone()])?;
+        return Ok(Value::variant("Err", Arc::new(vec![mapped])));
+    }
+    Ok(receiver)
+}
+
+fn errors_struct(message: String, cause: Value) -> Value {
+    let fields = vec![
+        (Ident::new("message"), Value::String(SmolStr::from(message))),
+        (Ident::new("cause"), cause),
+    ];
+    Value::struct_("errors::Error", Arc::new(fields))
+}
+
+fn errors_message_of(v: &Value) -> Option<String> {
+    if let Value::Struct(inner) = v
+        && inner.name == "errors::Error"
+    {
+        for (name, value) in inner.fields.iter() {
+            if name.name == "message"
+                && let Value::String(s) = value
+            {
+                return Some(s.as_str().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn errors_cause_of(v: &Value) -> Option<Value> {
+    if let Value::Struct(inner) = v
+        && inner.name == "errors::Error"
+    {
+        for (name, value) in inner.fields.iter() {
+            if name.name == "cause" {
+                return Some(value.clone());
+            }
+        }
+    }
+    None
+}
+
+fn builtin_errors_new(args: &[Value]) -> RuntimeResult<Value> {
+    let msg = match args.first() {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        Some(other) => format!("{other:?}"),
+        None => String::new(),
+    };
+    Ok(errors_struct(msg, Value::variant("None", Arc::new(vec![]))))
+}
+
+fn builtin_errors_wrap(args: &[Value]) -> RuntimeResult<Value> {
+    let cause = args.first().cloned().unwrap_or(Value::Unit);
+    let msg = match args.get(1) {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        Some(other) => format!("{other:?}"),
+        None => String::new(),
+    };
+    let cause_some = Value::variant("Some", Arc::new(vec![cause]));
+    Ok(errors_struct(msg, cause_some))
+}
+
+fn builtin_errors_message(args: &[Value]) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    Ok(Value::String(SmolStr::from(
+        errors_message_of(&receiver).unwrap_or_default(),
+    )))
+}
+
+fn builtin_errors_cause(args: &[Value]) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    Ok(errors_cause_of(&receiver).unwrap_or_else(|| Value::variant("None", Arc::new(vec![]))))
+}
+
+fn errors_chain_contains(err: &Value, needle: &str) -> bool {
+    let mut cursor = Some(err.clone());
+    while let Some(cur) = cursor {
+        match errors_message_of(&cur) {
+            Some(m) if m == needle => return true,
+            Some(_) => {}
+            None => return false,
+        }
+        cursor = match errors_cause_of(&cur) {
+            Some(Value::Variant(inner)) if inner.name == "Some" && !inner.fields.is_empty() => {
+                Some(inner.fields[0].clone())
+            }
+            _ => None,
+        };
+    }
+    false
+}
+
+fn builtin_errors_is_method(args: &[Value]) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let needle = match args.get(1) {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => return Ok(Value::Bool(false)),
+    };
+    Ok(Value::Bool(errors_chain_contains(&receiver, &needle)))
+}
+
+fn builtin_errors_is_freefn(args: &[Value]) -> RuntimeResult<Value> {
+    let err = args.first().cloned().unwrap_or(Value::Unit);
+    let needle = match args.get(1) {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => return Ok(Value::Bool(false)),
+    };
+    Ok(Value::Bool(errors_chain_contains(&err, &needle)))
+}
+
+fn builtin_str_parse_result(args: &[Value]) -> RuntimeResult<Value> {
+    let s = match args.first() {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => {
+            return Ok(Value::variant(
+                "Err",
+                Arc::new(vec![errors_struct(
+                    "parse: not a string".to_string(),
+                    Value::variant("None", Arc::new(vec![])),
+                )]),
+            ));
+        }
+    };
+    if let Ok(n) = s.trim().parse::<i64>() {
+        return Ok(Value::variant("Ok", Arc::new(vec![Value::Int(n)])));
+    }
+    let msg = format!(
+        "unexpected byte 0x{:x} at 1:1",
+        s.as_bytes().first().copied().unwrap_or(0)
+    );
+    let err = errors_struct(msg, Value::variant("None", Arc::new(vec![])));
+    Ok(Value::variant("Err", Arc::new(vec![err])))
 }
 
 // Pure registration list — splitting it would obscure the
@@ -1003,7 +1241,34 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
 }
 
 fn install_regex_builtins(globals: &mut Vec<(&'static str, Value)>) {
-    install_module("regex", crate::regex_builtins::ENTRIES, globals);
+    // Register regex helpers only under their qualified key plus
+    // a `regex::Pattern::*` shape (used by qualified-method
+    // dispatch on `Value::Struct` regex handles). The bare names
+    // (`split`, `find`, `replace`, …) collide with the string
+    // method-call dispatch — bare-registering would route a
+    // `s.split(" ")` call to the regex helper, which would then
+    // bail with "expected Pattern handle".
+    let qualified_only = [
+        "compile",
+        "is_match",
+        "find",
+        "find_all",
+        "captures",
+        "captures_all",
+        "replace",
+        "replace_all",
+        "split",
+    ];
+    for (short, call) in crate::regex_builtins::ENTRIES {
+        let joined: &'static str = Box::leak(format!("regex::{short}").into_boxed_str());
+        globals.push((joined, builtin(joined, *call)));
+        let pattern_key: &'static str =
+            Box::leak(format!("regex::Pattern::{short}").into_boxed_str());
+        globals.push((pattern_key, builtin(pattern_key, *call)));
+        if !qualified_only.contains(short) {
+            globals.push((*short, builtin(short, *call)));
+        }
+    }
 }
 
 /// Pointer-sized function type used by the builtin installer.
@@ -1816,6 +2081,18 @@ fn builtin_os_remove_file(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(err_variant("remove_file: path argument must be a string"));
     };
     match os_std::remove_file(path) {
+        Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_fs_remove_dir_all(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(path) = args.first().and_then(as_str) else {
+        return Ok(err_variant(
+            "remove_dir_all: path argument must be a string",
+        ));
+    };
+    match std::fs::remove_dir_all(path) {
         Ok(()) => Ok(ok_variant(Value::Unit)),
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
@@ -3003,19 +3280,31 @@ fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
 /// returns the receiver unchanged so `arr.iter()` continues to work
 /// as a no-op pass-through to the for-loop.
 fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
+    // Sort by key on every call so `BTreeMap` users get deterministic
+    // iteration order. The interp uses `FxHashMap` for both `HashMap`
+    // and `BTreeMap` internally, so we can't tell them apart at the
+    // value level — sorting unifies observed order across the two.
     match args.first() {
         Some(Value::Map(map)) => {
-            let mut out: Vec<Value> = Vec::new();
-            for (k, v) in map.lock().iter() {
-                out.push(Value::Tuple(Arc::new(vec![k.to_value(), v.clone()])));
-            }
+            let mut entries: Vec<(MapKey, Value)> = map
+                .lock()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let out: Vec<Value> = entries
+                .into_iter()
+                .map(|(k, v)| Value::Tuple(Arc::new(vec![k.to_value(), v])))
+                .collect();
             Ok(Value::Array(Arc::new(out)))
         }
         Some(Value::IntMap(map)) => {
-            let mut out: Vec<Value> = Vec::new();
-            for (k, v) in map.lock().iter() {
-                out.push(Value::Tuple(Arc::new(vec![Value::Int(*k), Value::Int(*v)])));
-            }
+            let mut entries: Vec<(i64, i64)> = map.lock().iter().map(|(k, v)| (*k, *v)).collect();
+            entries.sort_by_key(|(k, _)| *k);
+            let out: Vec<Value> = entries
+                .into_iter()
+                .map(|(k, v)| Value::Tuple(Arc::new(vec![Value::Int(k), Value::Int(v)])))
+                .collect();
             Ok(Value::Array(Arc::new(out)))
         }
         Some(other) => Ok(other.clone()),
@@ -3235,6 +3524,72 @@ fn builtin_swap(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_clone(args: &[Value]) -> RuntimeResult<Value> {
     Ok(args.first().cloned().unwrap_or(Value::Unit))
+}
+
+fn builtin_path_join_v(args: &[Value]) -> RuntimeResult<Value> {
+    let mut parts: Vec<String> = Vec::with_capacity(args.len());
+    for a in args {
+        if let Value::String(s) = a {
+            parts.push(s.as_str().to_string());
+        }
+    }
+    let mut p = std::path::PathBuf::new();
+    for part in &parts {
+        p.push(part);
+    }
+    Ok(Value::String(SmolStr::from(
+        p.to_string_lossy().into_owned(),
+    )))
+}
+
+fn builtin_btmap_new(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_map_new(args)
+}
+
+fn builtin_set_new(args: &[Value]) -> RuntimeResult<Value> {
+    builtin_map_new(args)
+}
+
+fn builtin_duration_passthrough(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(args.first().cloned().unwrap_or(Value::Int(0)))
+}
+
+fn builtin_duration_secs_to_ms(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first() {
+        Some(Value::Int(n)) => Ok(Value::Int(n.saturating_mul(1000))),
+        _ => Ok(Value::Int(0)),
+    }
+}
+
+fn builtin_to_vec_v(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(args.first().cloned().unwrap_or(Value::Unit))
+}
+
+fn builtin_json_value_passthrough(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(args.first().cloned().unwrap_or(Value::Unit))
+}
+
+fn builtin_json_value_null(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Unit)
+}
+
+fn builtin_json_value_object(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Array(parts)) = args.first() else {
+        return Ok(Value::struct_("json::Object", Arc::new(Vec::new())));
+    };
+    let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(parts.len());
+    for entry in parts.iter() {
+        let Value::Tuple(pair) = entry else { continue };
+        if pair.len() < 2 {
+            continue;
+        }
+        let key = match &pair[0] {
+            Value::String(s) => s.as_str().to_string(),
+            other => format!("{other:?}"),
+        };
+        fields.push((Ident::new(key), pair[1].clone()));
+    }
+    Ok(Value::struct_("json::Object", Arc::new(fields)))
 }
 
 fn builtin_variant_unwrap(args: &[Value]) -> RuntimeResult<Value> {

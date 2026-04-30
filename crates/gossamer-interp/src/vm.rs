@@ -131,6 +131,10 @@ pub struct Vm {
     /// target. Per-`Vm`: spawned goroutines start at 1 and climb
     /// independently, mirroring the per-`Vm` `ChunkState` ownership.
     globals_generation: Cell<u32>,
+    /// Call-stack snapshot for runtime-error diagnostics. Push on
+    /// chunk entry, pop on success — on error the frame stays so
+    /// `call_stack_snapshot` reports the failing chain.
+    call_stack: RefCell<Vec<String>>,
 }
 
 /// Per-`Vm` per-chunk dispatch caches. Pinned inside
@@ -549,10 +553,14 @@ impl Vm {
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
             globals_generation: Cell::new(1),
+            call_stack: RefCell::new(Vec::new()),
         };
         let globals = Arc::get_mut(&mut vm.globals).expect("fresh Vm globals are uniquely owned");
         for (name, value) in builtins::cached() {
             globals.insert((*name).to_string(), Global::Value(value.clone()));
+        }
+        for (name, value) in crate::external_natives::external_natives_snapshot() {
+            globals.insert(name.to_string(), Global::Value(value));
         }
         vm
     }
@@ -581,6 +589,7 @@ impl Vm {
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
             globals_generation: Cell::new(1),
+            call_stack: RefCell::new(Vec::new()),
         }
     }
 
@@ -896,7 +905,22 @@ impl Vm {
                     globals.insert(decl.name.name.clone(), Global::Value(value));
                 }
             }
-            HirItemKind::Adt(_) => {}
+            HirItemKind::Adt(decl) => {
+                // Register enum variant constructors so user code
+                // like `List::Nil` and bare `Cons(v, rest)` resolves
+                // through the same dispatch as a builtin call.
+                if let gossamer_hir::HirAdtKind::Enum(variants) = &decl.kind {
+                    let type_name = decl.name.name.clone();
+                    for variant in variants {
+                        let variant_name = variant.name.name.clone();
+                        let qualified = format!("{type_name}::{variant_name}");
+                        let sentinel =
+                            Value::variant(variant_name.clone(), crate::value::empty_value_arc());
+                        globals.insert(variant_name, Global::Value(sentinel.clone()));
+                        globals.insert(qualified, Global::Value(sentinel));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -908,14 +932,39 @@ impl Vm {
             .get(name)
             .cloned()
             .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
-        self.apply(callee, args)
+        self.call_stack.borrow_mut().clear();
+        self.call_stack.borrow_mut().push(name.to_string());
+        let result = self.apply(callee, args);
+        if result.is_ok() {
+            self.call_stack.borrow_mut().pop();
+        }
+        result
+    }
+
+    /// Snapshot of the in-flight (or last failing) call stack.
+    /// Outermost frame first.
+    #[must_use]
+    pub fn call_stack_snapshot(&self) -> Vec<String> {
+        self.call_stack.borrow().clone()
     }
 
     fn apply(&self, global: Global, args: Vec<Value>) -> RuntimeResult<Value> {
         match global {
             Global::Fn(chunk) => {
-                // Look up the per-`Vm` cache state for this chunk
-                // (creates a fresh `ChunkState` on first call).
+                // Push a frame on the call stack so a runtime error
+                // mid-body reports the chain. Pop on success only;
+                // a propagating error keeps the frame so callers
+                // can read it via `call_stack_snapshot`.
+                let pushed_frame = self
+                    .call_stack
+                    .borrow()
+                    .last()
+                    .is_none_or(|top| top != chunk.name.as_str());
+                if pushed_frame {
+                    self.call_stack
+                        .borrow_mut()
+                        .push(chunk.name.as_str().to_string());
+                }
                 let state = self.chunk_state_for(&chunk);
                 // Tier D2 — decrement the per-`Vm` hot counter and
                 // trigger a deferred JIT compile when the budget is
@@ -962,13 +1011,25 @@ impl Vm {
                         }
                     }
                 }
-                self.run(&chunk, state, args)
+                let result = self.run(&chunk, state, args);
+                if result.is_ok() && pushed_frame {
+                    self.call_stack.borrow_mut().pop();
+                }
+                result
             }
             Global::Value(value) => match value {
                 Value::Builtin(inner) => (inner.call)(&args),
-                Value::Closure(_) => Err(RuntimeError::Unsupported(
-                    "tree-walker closures invoked from the VM",
-                )),
+                Value::Native(inner) => {
+                    let mut walker = self.walker.borrow_mut();
+                    (inner.call)(&mut *walker, &args)
+                }
+                Value::Closure(closure) => self
+                    .walker
+                    .borrow_mut()
+                    .invoke_callable_value(Value::Closure(closure), args),
+                Value::Variant(inner) if inner.fields.is_empty() => {
+                    Ok(Value::variant(inner.name, std::sync::Arc::new(args)))
+                }
                 _ => Err(RuntimeError::Type(
                     "global is not callable at this call site".to_string(),
                 )),
@@ -1120,6 +1181,34 @@ impl Vm {
                 }
                 Op::Move { dst, src } => {
                     registers[dst as usize] = registers[src as usize].clone();
+                }
+                Op::Deref { dst, src } => {
+                    let v = registers[src as usize].clone();
+                    let resolved = if let Value::Struct(inner) = &v {
+                        if inner.name == "__Cell" {
+                            let mut set_id: u64 = 0;
+                            let mut flag_name = String::new();
+                            for (ident, val) in inner.fields.iter() {
+                                if ident.name == "__set_id"
+                                    && let Value::Int(n) = val
+                                {
+                                    set_id = *n as u64;
+                                }
+                                if ident.name == "__flag_name"
+                                    && let Value::String(s) = val
+                                {
+                                    flag_name = s.as_str().to_string();
+                                }
+                            }
+                            crate::builtins::resolve_cell(set_id, &flag_name)
+                                .unwrap_or_else(|| v.clone())
+                        } else {
+                            v
+                        }
+                    } else {
+                        v
+                    };
+                    registers[dst as usize] = resolved;
                 }
                 Op::AddInt {
                     dst,
@@ -1694,50 +1783,49 @@ impl Vm {
                             let by_reg = *by_reg;
                             // Zero-copy slice-hash counter that mirrors
                             // `*m.entry(&seq[start..start+len]).or_insert(0) += by`.
-                            let result_int: i64 = if let Value::Map(map) =
-                                &registers[map_reg as usize]
-                            {
-                                let seq_bytes: &[u8] = match &registers[seq_reg as usize] {
-                                    Value::String(s) => s.as_bytes(),
-                                    _ => &[],
-                                };
-                                let start = match &registers[start_reg as usize] {
-                                    Value::Int(n) if *n >= 0 => *n as usize,
-                                    _ => 0,
-                                };
-                                let len = match &registers[len_reg as usize] {
-                                    Value::Int(n) if *n >= 0 => *n as usize,
-                                    _ => 0,
-                                };
-                                let by = match &registers[by_reg as usize] {
-                                    Value::Int(n) => *n,
-                                    _ => 1,
-                                };
-                                if len == 0 || start + len > seq_bytes.len() {
-                                    0
-                                } else {
-                                    let key_bytes = &seq_bytes[start..start + len];
-                                    // SAFETY: `seq_bytes` came from a
-                                    // UTF-8 `String`, so any sub-slice
-                                    // on a char boundary is also UTF-8.
-                                    // ASCII inputs are always safe.
-                                    let key_str =
-                                        unsafe { std::str::from_utf8_unchecked(key_bytes) };
-                                    let key = MapKey::Str(
-                                        crate::value::SmolStr::from(key_str.to_string()),
-                                    );
-                                    let mut guard = map.lock();
-                                    let entry = guard.entry(key).or_insert(Value::Int(0));
-                                    let new_val = match entry {
-                                        Value::Int(cur) => *cur + by,
-                                        _ => by,
+                            let result_int: i64 =
+                                if let Value::Map(map) = &registers[map_reg as usize] {
+                                    let seq_bytes: &[u8] = match &registers[seq_reg as usize] {
+                                        Value::String(s) => s.as_bytes(),
+                                        _ => &[],
                                     };
-                                    *entry = Value::Int(new_val);
-                                    new_val
-                                }
-                            } else {
-                                0
-                            };
+                                    let start = match &registers[start_reg as usize] {
+                                        Value::Int(n) if *n >= 0 => *n as usize,
+                                        _ => 0,
+                                    };
+                                    let len = match &registers[len_reg as usize] {
+                                        Value::Int(n) if *n >= 0 => *n as usize,
+                                        _ => 0,
+                                    };
+                                    let by = match &registers[by_reg as usize] {
+                                        Value::Int(n) => *n,
+                                        _ => 1,
+                                    };
+                                    if len == 0 || start + len > seq_bytes.len() {
+                                        0
+                                    } else {
+                                        let key_bytes = &seq_bytes[start..start + len];
+                                        // SAFETY: `seq_bytes` came from a
+                                        // UTF-8 `String`, so any sub-slice
+                                        // on a char boundary is also UTF-8.
+                                        // ASCII inputs are always safe.
+                                        let key_str =
+                                            unsafe { std::str::from_utf8_unchecked(key_bytes) };
+                                        let key = MapKey::Str(crate::value::SmolStr::from(
+                                            key_str.to_string(),
+                                        ));
+                                        let mut guard = map.lock();
+                                        let entry = guard.entry(key).or_insert(Value::Int(0));
+                                        let new_val = match entry {
+                                            Value::Int(cur) => *cur + by,
+                                            _ => by,
+                                        };
+                                        *entry = Value::Int(new_val);
+                                        new_val
+                                    }
+                                } else {
+                                    0
+                                };
                             registers[dst as usize] = Value::Int(result_int);
                         }
                         crate::bytecode::WideOp::BuildFloatArray {
@@ -1760,12 +1848,10 @@ impl Vm {
                                 ));
                             };
                             let name = name_arc.as_str().to_string();
-                            let Value::Array(field_names_arr) =
-                                &chunk.consts[fields_idx as usize]
+                            let Value::Array(field_names_arr) = &chunk.consts[fields_idx as usize]
                             else {
                                 return Err(RuntimeError::Panic(
-                                    "BuildFloatArray: fields must be array of strings"
-                                        .to_string(),
+                                    "BuildFloatArray: fields must be array of strings".to_string(),
                                 ));
                             };
                             let field_names: Vec<String> = field_names_arr
@@ -2059,16 +2145,20 @@ impl Vm {
                         let name = names.get(i).cloned().unwrap_or_default();
                         env_values.push((name, value));
                     }
-                    let (result, updated) = self
+                    let (result, is_return, updated) = self
                         .walker
                         .borrow_mut()
-                        .eval_standalone(expr, &env_values)?;
-                    // Sync mutations back into the original
-                    // register slots so `bodies[i].vx = x` in a
-                    // delegated expression persists across the
-                    // rest of the VM's execution.
+                        .eval_standalone_with_flow(expr, &env_values)?;
                     for (reg, value) in regs.iter().zip(updated) {
                         registers[*reg as usize] = value;
+                    }
+                    if is_return {
+                        // Walker took an early-return path (e.g. the
+                        // `?` desugar's `Err(_) => return Err(_)`
+                        // arm). Surface as the chunk's return so
+                        // the caller sees a real unwind, not a
+                        // value collapsed into the next register.
+                        return Ok(result);
                     }
                     registers[dst as usize] = result;
                 }

@@ -632,6 +632,37 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(result)
     }
 
+    fn bind_pattern_locals(&mut self, pattern: &HirPat, init_reg: Reg) -> RuntimeResult<()> {
+        match &pattern.kind {
+            HirPatKind::Binding { name, .. } => {
+                self.bind_local(
+                    &name.name,
+                    TypedReg {
+                        reg: init_reg,
+                        kind: RegKind::Value,
+                    },
+                );
+                Ok(())
+            }
+            HirPatKind::Tuple(elems) => {
+                for (i, sub) in elems.iter().enumerate() {
+                    let dst = self.alloc_reg();
+                    self.emit(Op::TupleIndex {
+                        dst,
+                        receiver: init_reg,
+                        index: i as u32,
+                    });
+                    self.bind_pattern_locals(sub, dst)?;
+                }
+                Ok(())
+            }
+            HirPatKind::Wildcard | HirPatKind::Literal(_) => Ok(()),
+            other => Err(RuntimeError::Type(format!(
+                "let-pattern shape {other:?} is not yet handled by the VM compiler"
+            ))),
+        }
+    }
+
     /// Returns `true` when the statement diverges (return/break/continue).
     fn compile_stmt(&mut self, stmt: &HirStmt) -> RuntimeResult<bool> {
         match &stmt.kind {
@@ -664,10 +695,13 @@ impl<'tcx> FnBuilder<'tcx> {
                         );
                     }
                 } else if let Some(init) = init {
-                    // Destructuring — fall back to Value and
-                    // delegate the pattern match to the walker
-                    // (kept on the generic path).
-                    let _ = self.compile_expr(init)?;
+                    // Destructuring — compile init to a Value reg,
+                    // then bind sub-patterns via TupleIndex. Only
+                    // tuple/wildcard/binding shapes are handled
+                    // here; complex patterns error out instead of
+                    // silently dropping the bindings.
+                    let init_reg = self.compile_expr(init)?;
+                    self.bind_pattern_locals(pattern, init_reg)?;
                 }
                 Ok(false)
             }
@@ -1344,7 +1378,11 @@ impl<'tcx> FnBuilder<'tcx> {
                 dst,
                 operand: operand_reg,
             },
-            HirUnaryOp::RefShared | HirUnaryOp::RefMut | HirUnaryOp::Deref => Op::Move {
+            HirUnaryOp::RefShared | HirUnaryOp::RefMut => Op::Move {
+                dst,
+                src: operand_reg,
+            },
+            HirUnaryOp::Deref => Op::Deref {
                 dst,
                 src: operand_reg,
             },
@@ -2143,8 +2181,7 @@ impl<'tcx> FnBuilder<'tcx> {
         ));
         let fields_idx = self.const_idx(ConstKey::String(fields_key), fields_value);
         let dst = self.alloc_reg();
-        let wide_idx = u16::try_from(self.wide_ops.len())
-            .expect("wide_ops index overflow");
+        let wide_idx = u16::try_from(self.wide_ops.len()).expect("wide_ops index overflow");
         self.wide_ops
             .push(crate::bytecode::WideOp::BuildFloatArray {
                 dst_v: dst,
@@ -2856,8 +2893,7 @@ impl<'tcx> FnBuilder<'tcx> {
             let len_reg = self.compile_expr(&args[2])?;
             let by_reg = self.compile_expr(&args[3])?;
             let dst = self.alloc_reg();
-            let wide_idx = u16::try_from(self.wide_ops.len())
-                .expect("wide_ops index overflow");
+            let wide_idx = u16::try_from(self.wide_ops.len()).expect("wide_ops index overflow");
             self.wide_ops.push(crate::bytecode::WideOp::MapIncAt {
                 dst,
                 map_reg,

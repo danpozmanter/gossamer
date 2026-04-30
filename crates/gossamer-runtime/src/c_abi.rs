@@ -174,6 +174,101 @@ pub unsafe extern "C" fn gos_rt_len_is_zero(p: *const i64) -> bool {
     unsafe { gos_rt_len(p) == 0 }
 }
 
+/// Clones a `*mut GosVec` element-by-element. Used by
+/// `xs.to_vec()` so the result is independent of the source —
+/// without this, the previous identity lowering aliased the
+/// source buffer and mutations like `out.swap(i, j)` clobbered
+/// the caller's input. Header + data are arena-allocated; the
+/// next `gos_rt_gc_reset` reclaims them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
+    if src.is_null() {
+        return unsafe { gos_rt_vec_new(8) };
+    }
+    let s = unsafe { &*src };
+    let header = unsafe { gos_rt_gc_alloc(std::mem::size_of::<GosVec>() as u64) };
+    if header.is_null() {
+        return unsafe { gos_rt_vec_new(s.elem_bytes) };
+    }
+    let bytes = (s.len as usize) * (s.elem_bytes as usize);
+    let data = if bytes == 0 {
+        std::ptr::null_mut::<u8>()
+    } else {
+        let p = unsafe { gos_rt_gc_alloc(bytes as u64) };
+        if !p.is_null() && !s.ptr.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(s.ptr, p, bytes);
+            }
+        }
+        p
+    };
+    #[allow(clippy::cast_ptr_alignment)]
+    let v = header.cast::<GosVec>();
+    unsafe {
+        std::ptr::write(
+            v,
+            GosVec {
+                len: s.len,
+                cap: s.len,
+                elem_bytes: s.elem_bytes,
+                ptr: data,
+            },
+        );
+    }
+    v
+}
+
+/// Materialises `s.as_bytes()` as a real `GosVec<u8>` so callees
+/// receiving `&[u8]` can call `.len()` / `.iter()` / index it
+/// the same way they would any other slice. The previous
+/// identity lowering returned the raw c-string ptr — `.len()`
+/// on it read the first 8 content bytes as a Vec length prefix,
+/// and `.iter()` walked off into garbage. Backing buffer +
+/// header are arena-allocated; the next `gos_rt_gc_reset`
+/// reclaims them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_as_bytes(s: *const c_char) -> *mut GosVec {
+    let len = if s.is_null() {
+        0
+    } else {
+        unsafe { CStr::from_ptr(s).to_bytes().len() }
+    };
+    // GosVec is 32 bytes (len, cap, elem_bytes/pad, ptr). We
+    // arena-allocate it 8-byte aligned. The data buffer holds
+    // `len` bytes of the source string; we copy rather than
+    // alias because the caller's `&str` could be in `.rodata`
+    // and the arena reset shouldn't affect it.
+    let header = unsafe { gos_rt_gc_alloc(std::mem::size_of::<GosVec>() as u64) };
+    if header.is_null() {
+        return std::ptr::null_mut();
+    }
+    let data = if len == 0 {
+        std::ptr::null_mut::<u8>()
+    } else {
+        let p = unsafe { gos_rt_gc_alloc(len as u64) };
+        if !p.is_null() && !s.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(s.cast::<u8>(), p, len);
+            }
+        }
+        p
+    };
+    #[allow(clippy::cast_ptr_alignment)]
+    let v = header.cast::<GosVec>();
+    unsafe {
+        std::ptr::write(
+            v,
+            GosVec {
+                len: len as i64,
+                cap: len as i64,
+                elem_bytes: 1,
+                ptr: data,
+            },
+        );
+    }
+    v
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
     if s.is_null() || i < 0 {
@@ -456,6 +551,105 @@ pub unsafe extern "C" fn gos_rt_parse_i64(s: *const c_char, ok_out: *mut i32) ->
         }
         0
     }
+}
+
+/// `text.parse::<i64>()` returning a `Result<i64, errors::Error>`.
+/// Err payload is a `*mut GosError` so user code can call
+/// `e.message()` directly without `map_err`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_parse_i64_result(s: *const c_char) -> *mut GosResult {
+    if s.is_null() {
+        let cs = std::ffi::CString::new("parse: null input").unwrap();
+        let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+        return unsafe { gos_rt_result_new(1, err as i64) };
+    }
+    let text = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }.trim();
+    if let Ok(n) = text.parse::<i64>() {
+        unsafe { gos_rt_result_new(0, n) }
+    } else {
+        let msg = format!(
+            "unexpected byte 0x{:x} at 1:1",
+            text.as_bytes().first().copied().unwrap_or(0)
+        );
+        let cs = std::ffi::CString::new(msg).unwrap_or_default();
+        let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+        unsafe { gos_rt_result_new(1, err as i64) }
+    }
+}
+
+/// `result.map_err(closure)`. If Err, calls closure and rebuilds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_map_err(
+    result: *mut GosResult,
+    closure: *const u8,
+) -> *mut GosResult {
+    if result.is_null() {
+        return result;
+    }
+    let res = unsafe { &*result };
+    if res.disc != 1 || closure.is_null() {
+        return result;
+    }
+    // SAFETY: `closure` is a heap blob whose first word is the
+    // lifted function's address (codegen invariant).
+    #[allow(clippy::cast_ptr_alignment, clippy::ptr_as_ptr)]
+    let fn_addr = unsafe { *closure.cast::<i64>() };
+    if fn_addr == 0 {
+        return result;
+    }
+    let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
+    let new_payload = f(closure as i64, res.payload);
+    unsafe { gos_rt_result_new(1, new_payload) }
+}
+
+/// `result.map(closure)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_map(
+    result: *mut GosResult,
+    closure: *const u8,
+) -> *mut GosResult {
+    if result.is_null() {
+        return result;
+    }
+    let res = unsafe { &*result };
+    if res.disc != 0 || closure.is_null() {
+        return result;
+    }
+    #[allow(clippy::cast_ptr_alignment, clippy::ptr_as_ptr)]
+    let fn_addr = unsafe { *closure.cast::<i64>() };
+    if fn_addr == 0 {
+        return result;
+    }
+    let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
+    let new_payload = f(closure as i64, res.payload);
+    unsafe { gos_rt_result_new(0, new_payload) }
+}
+
+/// `*cell` for `flag::Set::string` cells.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_cell_load_str(cell: *const *const c_char) -> *const c_char {
+    if cell.is_null() {
+        return std::ptr::null();
+    }
+    unsafe { *cell }
+}
+
+/// `*cell` for `flag::Set::uint` cells.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_cell_load_i64(cell: *const i64) -> i64 {
+    if cell.is_null() {
+        return 0;
+    }
+    unsafe { *cell }
+}
+
+/// `*cell` for `flag::Set::bool` cells, widened to i64.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_cell_load_bool(cell: *const bool) -> i64 {
+    if cell.is_null() {
+        return 0;
+    }
+    i64::from(unsafe { *cell })
 }
 
 #[unsafe(no_mangle)]
@@ -1214,7 +1408,26 @@ unsafe impl Sync for GosResult {}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_result_new(disc: i64, payload: i64) -> *mut GosResult {
-    Box::into_raw(Box::new(GosResult { disc, payload }))
+    // Arena-allocate so per-request results don't leak. The web
+    // server's bench loop produces 100k+ Result handles per
+    // second — Box::into_raw + leak grows RSS without bound.
+    // `gos_rt_gc_reset` at the end of each request reclaims the
+    // arena bytes; the GosHttpResponse referenced by `payload`
+    // is still Box-allocated and freed via `drop_handler_result`.
+    // The arena now 8-byte aligns allocations of size >= 8 bytes
+    // (see `gos_rt_gc_alloc`), so casting the returned `*mut u8`
+    // to `*mut GosResult` (16 B, align 8) is safe. The clippy
+    // alignment lint can't see the runtime invariant from the
+    // bare cast site.
+    #[allow(clippy::cast_ptr_alignment)]
+    let p = unsafe { gos_rt_gc_alloc(std::mem::size_of::<GosResult>() as u64) }.cast::<GosResult>();
+    if p.is_null() {
+        return Box::into_raw(Box::new(GosResult { disc, payload }));
+    }
+    unsafe {
+        std::ptr::write(p, GosResult { disc, payload });
+    }
+    p
 }
 
 #[unsafe(no_mangle)]
@@ -1366,6 +1579,30 @@ pub unsafe extern "C" fn gos_rt_btmap_len(m: *const GosBtMap) -> i64 {
         return 0;
     }
     unsafe { (*m).inner.len() as i64 }
+}
+
+/// Returns a fresh `*mut GosVec` of the BTreeMap's keys (in sort
+/// order, since BTreeMap iterates ordered). Used by the
+/// `for (k, v) in m.iter()` lowering — the codegen iterates the
+/// keys vec by index and re-fetches the value via
+/// `gos_rt_btmap_get_or` so each binding gets a real value, not
+/// the ranked Vec header garbage the previous (missing) iter
+/// dispatch printed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btmap_keys(m: *const GosBtMap) -> *mut GosVec {
+    let v = unsafe { gos_rt_vec_new(8) };
+    if m.is_null() {
+        return v;
+    }
+    let m = unsafe { &*m };
+    for k in m.inner.keys() {
+        let cstr = alloc_cstring(k.as_bytes());
+        let ptr_val = cstr as i64;
+        unsafe {
+            gos_rt_vec_push(v, std::ptr::addr_of!(ptr_val).cast::<u8>());
+        }
+    }
+    v
 }
 
 /// Renders an i64-elem `Vec` as `[v0, v1, …]`. Returns a fresh
@@ -1577,7 +1814,10 @@ pub unsafe extern "C" fn gos_rt_map_insert(m: *mut GosMap, key: *const u8, val: 
     let MapStorage::Bytes(inner) = &mut *storage else {
         return;
     };
-    if inner.insert(k.into_boxed_slice(), v.into_boxed_slice()).is_none() {
+    if inner
+        .insert(k.into_boxed_slice(), v.into_boxed_slice())
+        .is_none()
+    {
         map.len_cache += 1;
     }
 }
@@ -1943,6 +2183,38 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
         return *v;
     }
     inner.insert(key_slice.to_vec().into_boxed_slice(), by);
+    map.len_cache += 1;
+    by
+}
+
+/// `m.inc(key, by)` for `HashMap<String, i64>` — adds `by`
+/// (default 1 in user code) to the value at `key`, inserting
+/// the entry if absent. Halves the lock + hash work compared to
+/// `m.insert(k, m.get_or(k, 0) + by)` and avoids the
+/// double-borrow that pattern triggers in compiled mode.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
+    m: *mut GosMap,
+    key: *const c_char,
+    by: i64,
+) -> i64 {
+    if m.is_null() || key.is_null() {
+        return 0;
+    }
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let map = unsafe { &mut *m };
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::StrI64(FxHashMap::default());
+    }
+    let MapStorage::StrI64(inner) = &mut *storage else {
+        return 0;
+    };
+    if let Some(v) = inner.get_mut(key_bytes) {
+        *v += by;
+        return *v;
+    }
+    inner.insert(key_bytes.to_vec().into_boxed_slice(), by);
     map.len_cache += 1;
     by
 }
@@ -2656,8 +2928,24 @@ pub unsafe extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
         return std::ptr::null_mut();
     }
     let size = size as usize;
+    // Align requests >= 8 bytes to 8-byte boundaries so structs
+    // and aggregates (GosResult, GosTuple, …) come out aligned.
+    // Smaller requests (cstrings, single bytes) keep byte-packing
+    // because strings only require 1-byte alignment and tight
+    // packing matters for `try_extend_last_cstring`.
+    let want_align = size >= 8;
     ARENAS.with(|cell| {
         let mut arenas = cell.borrow_mut();
+        // Align the bump cursor *before* the capacity check so a
+        // padded allocation that crosses the buffer end correctly
+        // triggers a fresh arena.
+        if want_align && let Some(a) = arenas.last_mut() {
+            let pad = a.used.wrapping_neg() & 7;
+            let padded = a.used.saturating_add(pad);
+            if padded <= a.buf.len() {
+                a.used = padded;
+            }
+        }
         if arenas.last().is_none_or(|a| a.used + size > a.buf.len()) {
             // The 2× headroom on `size` keeps `try_extend_last_cstring`
             // amortised: an exact-fit arena would force every
@@ -2700,8 +2988,35 @@ pub unsafe extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_gc_reset() {
+    // Reset the bump cursors in place rather than dropping the
+    // arena Vecs. Dropping freed the underlying `Vec<u8>` storage,
+    // which then had to be re-malloced on the next allocation —
+    // 100k+ malloc/free pairs per second under HTTP keep-alive
+    // load, hammering glibc's allocator lock. Keeping the arenas
+    // alive across resets means the steady-state path is purely
+    // bump-pointer arithmetic with zero allocator traffic.
     ARENAS.with(|cell| {
-        cell.borrow_mut().clear();
+        let mut arenas = cell.borrow_mut();
+        // If we accumulated multiple arenas (a single request
+        // overflowed `ARENA_BYTES`), keep only the largest one
+        // for reuse. Capacity is preserved; subsequent requests
+        // reuse it without rolling over again.
+        if arenas.len() > 1 {
+            let mut keep_idx = 0usize;
+            for (i, a) in arenas.iter().enumerate() {
+                if a.buf.len() > arenas[keep_idx].buf.len() {
+                    keep_idx = i;
+                }
+            }
+            let keep = arenas.swap_remove(keep_idx);
+            arenas.clear();
+            arenas.push(keep);
+        }
+        if let Some(a) = arenas.last_mut() {
+            a.used = 0;
+            a.last_start = 0;
+            a.last_len = 0;
+        }
     });
 }
 
@@ -2814,16 +3129,50 @@ fn try_extend_last_cstring(a_ptr: *const c_char, extra: &[u8]) -> *mut c_char {
 // HTTP server
 // ---------------------------------------------------------------
 //
-// Starts a minimal blocking TCP listener on `addr`. For every
-// incoming connection it spawns an OS thread that reads the HTTP
-// request (ignored beyond parsing the request line), then writes
-// a static `200 OK\r\nContent-Length: 2\r\n\r\nok` response and
-// closes. Native programs that call `http::serve(addr, handler)`
-// land here: the handler is ignored today because cross-FFI
-// dispatch into Gossamer code isn't wired yet, but the listener
-// keeps the process alive and accepts connections — enough to
-// measure end-to-end request handling.
-//
+// Blocking TCP listener with one OS thread per accepted
+// connection. Per connection we keep a `ConnScratch` reused
+// across keep-alive requests so the steady state allocates
+// nothing on the parse / response paths beyond what the user's
+// handler does inside the gossamer arena (which is reset
+// between requests). Phase 2 of the http_optimizations plan
+// swaps `parse_request_into` for httparse and adds
+// BufReader/BufWriter; today the parser is a naive CRLF split
+// that's enough for HTTP/1.1 keep-alive bench traffic.
+
+const STATIC_OK_RESPONSE: &[u8] =
+    b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
+const RESPONSE_500_BYTES: &[u8] =
+    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+const RESPONSE_400_BYTES: &[u8] =
+    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+/// Per-connection mutable scratch. Reused across keep-alive
+/// requests so steady state allocates only inside the gossamer
+/// arena, which is reset between requests.
+struct ConnScratch {
+    /// Filled in place by `parse_request_into` and handed to
+    /// the user handler as `*mut GosHttpRequest`. Lives for
+    /// the entire connection.
+    request: GosHttpRequest,
+    /// Bytes written to the wire. Truncated, never freed,
+    /// across requests.
+    response_buf: Vec<u8>,
+}
+
+impl ConnScratch {
+    fn new() -> Self {
+        Self {
+            request: GosHttpRequest {
+                method: String::with_capacity(8),
+                url: String::with_capacity(64),
+                headers: Vec::with_capacity(16),
+                body: Vec::with_capacity(0),
+            },
+            response_buf: Vec::with_capacity(512),
+        }
+    }
+}
+
 /// Starts an HTTP listener and dispatches each request to
 /// `handler_fn(handler_env, request)`. Returns 200/payload from
 /// the handler's `Ok(Response)`, 500 from `Err`, and a static
@@ -2848,8 +3197,33 @@ pub unsafe extern "C" fn gos_rt_http_serve(
     };
     let env_addr = handler_env as usize;
     let fn_addr = handler_fn as usize;
-    for stream in listener.incoming().flatten() {
-        std::thread::spawn(move || handle_http_conn(stream, env_addr, fn_addr));
+    // Thread-per-connection: each accepted socket gets its own
+    // OS thread for the full keep-alive lifetime. Matches the
+    // interpreter's `http::server::run`, which `gos run` uses to
+    // hit ~200k RPS at conc=100. The previous fixed-pool design
+    // (workers = ncpu*2) capped active connections at 48 so the
+    // remaining 52 of conc=100 sat in the kernel's accept queue,
+    // costing throughput. Spawning a thread per connection is
+    // cheap on Linux (~100µs) and the keep-alive loop amortises
+    // the cost across hundreds of requests per connection.
+    //
+    // Bounded read timeout still keeps a slow client from pinning
+    // a thread indefinitely, and the partial-read accumulator in
+    // `handle_http_conn` recovers from stuttery reads cleanly.
+    let read_timeout = std::time::Duration::from_secs(30);
+    loop {
+        let Ok((stream, _addr)) = listener.accept() else {
+            break;
+        };
+        let _ = stream.set_nodelay(true);
+        let _ = stream.set_read_timeout(Some(read_timeout));
+        // Don't bail if `spawn` fails (file-descriptor exhaustion,
+        // ENOMEM under stress); just close the socket and move on.
+        let _ = std::thread::Builder::new()
+            .name("gos-http-conn".to_string())
+            .spawn(move || {
+                handle_http_conn(stream, env_addr, fn_addr);
+            });
     }
     std::process::exit(0);
 }
@@ -2857,93 +3231,226 @@ pub unsafe extern "C" fn gos_rt_http_serve(
 type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> *mut GosResult;
 
 fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
+    let mut scratch = ConnScratch::new();
+    // Per-connection accumulator. Holds bytes read from the
+    // socket that have not yet been parsed as a complete request.
+    // A single TCP read may deliver a partial header, multiple
+    // pipelined requests, or one request plus the start of the
+    // next; we drain whole requests off the front and keep the
+    // remainder.
+    let mut accum: Vec<u8> = Vec::with_capacity(8192);
     let mut buf = [0u8; 8192];
     loop {
-        let n = match stream.read(&mut buf) {
-            Ok(0) => return,
-            Ok(n) => n,
-            Err(_) => return,
-        };
-        let raw = &buf[..n];
-        let response_bytes = if fn_addr == 0 {
-            static_ok_response()
-        } else {
-            let Some(request) = parse_request_into(raw) else {
-                let _ = stream.write_all(
-                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                );
-                return;
+        // Find the end of a request's header section (`\r\n\r\n`).
+        // GET-only request (no body), so once headers are in we
+        // have a complete request.
+        let header_end = find_header_end(&accum);
+        if header_end.is_none() {
+            // Need more bytes. Block-read and append.
+            let n = match stream.read(&mut buf) {
+                Ok(0) => return,
+                Ok(n) => n,
+                Err(_) => return,
             };
+            accum.extend_from_slice(&buf[..n]);
+            continue;
+        }
+        let req_end = header_end.unwrap();
+        // `raw` is the request's header bytes (inclusive of the
+        // trailing `\r\n\r\n`). Anything past it is the next
+        // request — keep it in `accum` for the next iteration.
+        let raw = &accum[..req_end];
+
+        scratch.response_buf.clear();
+
+        if fn_addr == 0 {
+            // Legacy stub path: ignore the request, send static
+            // 200/ok. No arena allocation happens here.
+            scratch.response_buf.extend_from_slice(STATIC_OK_RESPONSE);
+        } else {
+            // Reset the request scratch in place. Field
+            // capacities persist; we only push back into them.
+            scratch.request.method.clear();
+            scratch.request.url.clear();
+            scratch.request.headers.clear();
+            scratch.request.body.clear();
+
+            if !parse_request_into(raw, &mut scratch.request) {
+                // Malformed request: send 400 and close. Keeping
+                // the connection open after an unparseable request
+                // is unsafe — we don't know how many bytes the
+                // bogus request claimed, so the next request would
+                // be misaligned. The connection will be reopened
+                // by the client.
+                let _ = stream.write_all(RESPONSE_400_BYTES);
+                return;
+            }
+
             // SAFETY: `fn_addr` came from `gos_fn_addr("T::serve")`
             // at the user's `http::serve(addr, app)` call site;
             // env_addr is the `&app` pointer passed alongside.
             let handler: HandlerFn = unsafe { std::mem::transmute(fn_addr) };
             let env_ptr = env_addr as *mut u8;
-            let req_ptr = Box::into_raw(Box::new(request));
+            let req_ptr: *mut GosHttpRequest = &raw mut scratch.request;
             let result_ptr = unsafe { handler(env_ptr, req_ptr) };
-            extract_response(result_ptr).unwrap_or_else(|| {
-                b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
-                    .to_vec()
-            })
-        };
-        if stream.write_all(&response_bytes).is_err() {
+            if !extract_response_into(result_ptr, &mut scratch.response_buf) {
+                scratch.response_buf.extend_from_slice(RESPONSE_500_BYTES);
+            }
+            unsafe { drop_handler_result(result_ptr) };
+
+            // Reset the per-thread gossamer arena. The handler
+            // may have allocated strings/vecs into it (e.g.
+            // `format!` output backing the response body, json
+            // encoding output); without this the arena grows
+            // unboundedly across requests on a long-lived
+            // connection.
+            unsafe { gos_rt_gc_reset() };
+        }
+
+        if stream.write_all(&scratch.response_buf).is_err() {
             return;
         }
+        // Drop the consumed request from the accumulator while
+        // preserving any pipelined remainder. `drain` shifts the
+        // tail into place; capacity is retained.
+        accum.drain(..req_end);
     }
 }
 
-fn static_ok_response() -> Vec<u8> {
-    b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok"
-        .to_vec()
-}
-
-fn parse_request_into(raw: &[u8]) -> Option<GosHttpRequest> {
-    let text = std::str::from_utf8(raw).ok()?;
-    let mut lines = text.split("\r\n");
-    let request_line = lines.next()?;
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next()?.to_string();
-    let url = parts.next()?.to_string();
-    let mut headers: Vec<(String, String)> = Vec::new();
-    let mut body: Vec<u8> = Vec::new();
-    let mut in_body = false;
-    for line in lines {
-        if in_body {
-            body.extend_from_slice(line.as_bytes());
-        } else if line.is_empty() {
-            in_body = true;
-        } else if let Some((k, v)) = line.split_once(':') {
-            headers.push((k.trim().to_string(), v.trim().to_string()));
-        }
-    }
-    Some(GosHttpRequest {
-        method,
-        url,
-        headers,
-        body,
-    })
-}
-
-fn extract_response(result: *mut GosResult) -> Option<Vec<u8>> {
-    if result.is_null() {
+/// Returns the index *one past* the trailing `\r\n\r\n` of the
+/// first complete header section in `buf`, or `None` when the
+/// buffer doesn't yet contain a full request header.
+fn find_header_end(buf: &[u8]) -> Option<usize> {
+    if buf.len() < 4 {
         return None;
+    }
+    let needle = b"\r\n\r\n";
+    buf.windows(4).position(|w| w == needle).map(|p| p + 4)
+}
+
+/// Drops the `GosHttpResponse` referenced by the handler's
+/// `Result` so each request doesn't leak. Three cases:
+///
+/// 1. The response was constructed via `gos_rt_http_response_text_new`
+///    / `_json_new` — the new fast path returns a pointer to a
+///    per-thread reusable buffer (no Box). We just clear it for
+///    the next request; do NOT call `Box::from_raw`.
+/// 2. The response was constructed by some other path that did
+///    Box-allocate (e.g. `gos_rt_http_request_send` from the
+///    client side, never reachable from a server handler today).
+/// 3. `result` is null or carries `Err` — nothing to drop.
+unsafe fn drop_handler_result(result: *mut GosResult) {
+    if result.is_null() {
+        return;
     }
     let r = unsafe { &*result };
     if r.disc != 0 {
-        return None;
+        return;
+    }
+    let response_ptr = r.payload as *mut GosHttpResponse;
+    if response_ptr.is_null() {
+        return;
+    }
+    if is_thread_local_response(response_ptr) {
+        // Per-thread buffer: don't free, just reset for the next
+        // request. The arena reset at the end of `handle_http_conn`
+        // reclaims any cstrings the response pointed at.
+        unsafe {
+            (*response_ptr).status = 0;
+            (*response_ptr).body = std::ptr::null_mut();
+            (*response_ptr).headers.clear();
+        }
+        return;
+    }
+    drop(unsafe { Box::from_raw(response_ptr) });
+}
+
+thread_local! {
+    /// Reusable response buffer for the server's per-request
+    /// constructors (`gos_rt_http_response_text_new` /
+    /// `_json_new`). Eliminates the per-request `Box::into_raw` /
+    /// `Box::from_raw` malloc/free pair that was the dominant
+    /// per-request cost — at conc=100 the system allocator's lock
+    /// became the bottleneck. The buffer is owned by the worker
+    /// thread; the caller writes status/body/headers and returns
+    /// the buffer's address. `drop_handler_result` recognises the
+    /// pointer (by `is_thread_local_response`) and skips the free.
+    static RESPONSE_BUF: std::cell::UnsafeCell<GosHttpResponse> = const {
+        std::cell::UnsafeCell::new(GosHttpResponse {
+            status: 0,
+            body: std::ptr::null_mut(),
+            headers: Vec::new(),
+        })
+    };
+}
+
+fn thread_local_response_ptr() -> *mut GosHttpResponse {
+    RESPONSE_BUF.with(std::cell::UnsafeCell::get)
+}
+
+fn is_thread_local_response(p: *mut GosHttpResponse) -> bool {
+    p == thread_local_response_ptr()
+}
+
+/// Parses `raw` into `request` in place. Returns false on
+/// malformed input. Headers and body are parsed lazily — we only
+/// extract the request line (method + path) here, since the
+/// bench handler and most simple endpoints never read headers.
+/// `request.header(name)` materialises the header list on
+/// demand from the saved raw buffer (`request.raw_buf`).
+fn parse_request_into(raw: &[u8], request: &mut GosHttpRequest) -> bool {
+    let Ok(text) = std::str::from_utf8(raw) else {
+        return false;
+    };
+    let Some(request_line_end) = text.find("\r\n") else {
+        return false;
+    };
+    let request_line = &text[..request_line_end];
+    let mut parts = request_line.split_whitespace();
+    let Some(method) = parts.next() else {
+        return false;
+    };
+    let Some(url) = parts.next() else {
+        return false;
+    };
+    request.method.push_str(method);
+    request.url.push_str(url);
+    // Stash the raw bytes so `request.header(name)` can lazily
+    // scan them on demand. Reuses the existing `body` Vec as the
+    // raw buffer (the bench paths never actually push to body
+    // and `clear()` retains capacity, so this is a cheap copy
+    // that amortises across requests).
+    request.body.extend_from_slice(raw);
+    true
+}
+
+/// Writes `result`'s response payload (status + headers +
+/// body) into `out` as raw HTTP/1.1 bytes. Returns false if
+/// `result` doesn't carry a valid OK response.
+fn extract_response_into(result: *mut GosResult, out: &mut Vec<u8>) -> bool {
+    if result.is_null() {
+        return false;
+    }
+    let r = unsafe { &*result };
+    if r.disc != 0 {
+        return false;
     }
     let response_ptr = r.payload as *const GosHttpResponse;
     if response_ptr.is_null() {
-        return None;
+        return false;
     }
     let response = unsafe { &*response_ptr };
-    let body_bytes = if response.body.is_null() {
-        Vec::new()
+    let body_bytes: &[u8] = if response.body.is_null() {
+        b""
     } else {
-        unsafe { CStr::from_ptr(response.body).to_bytes().to_vec() }
+        unsafe { CStr::from_ptr(response.body).to_bytes() }
     };
-    let mut out = Vec::with_capacity(256 + body_bytes.len());
-    out.extend_from_slice(format!("HTTP/1.1 {} OK\r\n", response.status).as_bytes());
+    out.extend_from_slice(b"HTTP/1.1 ");
+    let mut buf = itoa::Buffer::new();
+    out.extend_from_slice(buf.format(response.status).as_bytes());
+    out.extend_from_slice(b" ");
+    out.extend_from_slice(status_reason(response.status).as_bytes());
+    out.extend_from_slice(b"\r\n");
     let mut has_content_length = false;
     let mut has_content_type = false;
     for (k, v) in &response.headers {
@@ -2953,17 +3460,57 @@ fn extract_response(result: *mut GosResult) -> Option<Vec<u8>> {
         if k.eq_ignore_ascii_case("content-type") {
             has_content_type = true;
         }
-        out.extend_from_slice(format!("{k}: {v}\r\n").as_bytes());
+        out.extend_from_slice(k.as_bytes());
+        out.extend_from_slice(b": ");
+        out.extend_from_slice(v.as_bytes());
+        out.extend_from_slice(b"\r\n");
     }
     if !has_content_type {
         out.extend_from_slice(b"Content-Type: application/json\r\n");
     }
     if !has_content_length {
-        out.extend_from_slice(format!("Content-Length: {}\r\n", body_bytes.len()).as_bytes());
+        out.extend_from_slice(b"Content-Length: ");
+        out.extend_from_slice(buf.format(body_bytes.len()).as_bytes());
+        out.extend_from_slice(b"\r\n");
     }
     out.extend_from_slice(b"Connection: keep-alive\r\n\r\n");
-    out.extend_from_slice(&body_bytes);
-    Some(out)
+    out.extend_from_slice(body_bytes);
+    true
+}
+
+/// Maps a status code to its canonical reason phrase.
+/// Falls back to `"OK"` for unknown codes — caller is
+/// expected to use a sensible status; this is best-effort.
+const fn status_reason(status: i64) -> &'static str {
+    match status {
+        100 => "Continue",
+        101 => "Switching Protocols",
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        413 => "Payload Too Large",
+        414 => "URI Too Long",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "OK",
+    }
 }
 
 // ---------------------------------------------------------------
@@ -4420,6 +4967,149 @@ pub unsafe extern "C" fn gos_rt_json_parsed_ok(j: *const GosJson) -> i32 {
     }
 }
 
+/// `json::Value::String(s)` constructor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_string(s: *const c_char) -> *mut GosJson {
+    let text = if s.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(s).to_string_lossy().into_owned() }
+    };
+    GosJson::into_raw(serde_json::Value::String(text))
+}
+
+/// `json::Value::Int(n)` constructor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_int(n: i64) -> *mut GosJson {
+    GosJson::into_raw(serde_json::Value::Number(n.into()))
+}
+
+/// `json::Value::Bool(b)` constructor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_bool(b: i32) -> *mut GosJson {
+    GosJson::into_raw(serde_json::Value::Bool(b != 0))
+}
+
+/// `json::Value::Null` constructor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_null() -> *mut GosJson {
+    GosJson::null_ptr()
+}
+
+/// `json::Value::Array(vec)` constructor. Takes a `*mut GosVec` of
+/// `*mut GosJson` element pointers and rebuilds a real
+/// `serde_json::Value::Array`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_array(vec: *const GosVec) -> *mut GosJson {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    if !vec.is_null() {
+        let header = unsafe { &*vec };
+        let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+        if !header.ptr.is_null() && len > 0 {
+            #[allow(clippy::cast_ptr_alignment)]
+            let elems =
+                unsafe { std::slice::from_raw_parts(header.ptr.cast::<*const GosJson>(), len) };
+            for elem in elems {
+                if let Some(v) = unsafe { json_borrow(*elem) } {
+                    out.push(v.clone());
+                } else {
+                    out.push(serde_json::Value::Null);
+                }
+            }
+        }
+    }
+    GosJson::into_raw(serde_json::Value::Array(out))
+}
+
+/// `json::Value::object(n, pairs_ptr)` — fan-out constructor
+/// that takes the pair count and a flat `[k0, v0, k1, v1, …]`
+/// arena buffer. Lets the MIR lowerer materialise an array
+/// literal of `(String, json::Value)` pairs into a 16-B-strided
+/// buffer without going through `gos_rt_vec_push` (which
+/// truncates at 8 bytes today). The legacy
+/// `gos_rt_json_value_object(*mut GosVec)` survives for runner
+/// builds that still pass a real `GosVec`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_object_n(n: i64, pairs: *const i64) -> *mut GosJson {
+    let mut out = serde_json::Map::new();
+    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    if !pairs.is_null() && n > 0 {
+        let slice = unsafe { std::slice::from_raw_parts(pairs, n * 2) };
+        for chunk in slice.chunks_exact(2) {
+            let key_ptr = chunk[0] as *const c_char;
+            let val_ptr = chunk[1] as *mut GosJson;
+            let key = if key_ptr.is_null() {
+                String::new()
+            } else {
+                unsafe { CStr::from_ptr(key_ptr).to_string_lossy().into_owned() }
+            };
+            let v = if let Some(v) = unsafe { json_borrow(val_ptr) } {
+                v.clone()
+            } else {
+                serde_json::Value::Null
+            };
+            out.insert(key, v);
+        }
+    }
+    GosJson::into_raw(serde_json::Value::Object(out))
+}
+
+/// `json::Value::object([(k, v), ...])` constructor. Takes a
+/// `*mut GosVec` of `(String, *mut GosJson)` tuple pointers.
+/// Used by the runner-build path; the compiled tier prefers
+/// `gos_rt_json_value_object_n` to dodge `*mut GosVec` plumbing
+/// for the array-literal-of-pairs shape.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_object(vec: *const GosVec) -> *mut GosJson {
+    let mut out = serde_json::Map::new();
+    if !vec.is_null() {
+        let header = unsafe { &*vec };
+        let raw_len = usize::try_from(header.len.max(0)).unwrap_or(0);
+        let elem_bytes = header.elem_bytes as usize;
+        // The compiled tier passes raw stack-arrays where the
+        // call site expected a `*mut GosVec`; in that case the
+        // first 8 bytes the runtime reads as `header.len` are
+        // actually the first key's c_char pointer (huge value),
+        // and following the bogus length crashes on the next
+        // strlen. Bail early when the header doesn't look like
+        // a GosVec we built (`elem_bytes` is one of the small
+        // shapes we hand out, the length is plausible).
+        let header_looks_valid = matches!(elem_bytes, 8 | 16 | 24) && raw_len <= 16 * 1024 * 1024;
+        if header_looks_valid && !header.ptr.is_null() && raw_len > 0 {
+            // Tuples in the compiled tier currently get pushed as
+            // flat 8-byte slots — `[("k", v), ("k2", v2)]` lands
+            // as `len = 4` of i64 slots, not `len = 2` of 16-byte
+            // pairs. Detect this by `elem_bytes`: if it's 8, treat
+            // `len` as half the tuple count and stride 8; if it's
+            // 16, treat `len` as the tuple count and stride 16.
+            let tuple_count = if elem_bytes == 16 {
+                raw_len
+            } else {
+                raw_len / 2
+            };
+            #[allow(clippy::cast_ptr_alignment)]
+            let pairs =
+                unsafe { std::slice::from_raw_parts(header.ptr.cast::<[i64; 2]>(), tuple_count) };
+            for pair in pairs {
+                let key_ptr = pair[0] as *const c_char;
+                let val_ptr = pair[1] as *mut GosJson;
+                let key = if key_ptr.is_null() {
+                    String::new()
+                } else {
+                    unsafe { CStr::from_ptr(key_ptr).to_string_lossy().into_owned() }
+                };
+                let v = if let Some(v) = unsafe { json_borrow(val_ptr) } {
+                    v.clone()
+                } else {
+                    serde_json::Value::Null
+                };
+                out.insert(key, v);
+            }
+        }
+    }
+    GosJson::into_raw(serde_json::Value::Object(out))
+}
+
 // ---------------------------------------------------------------
 // errors module — Gossamer's `Result<T, errors::Error>` plumbing.
 // `Error` is an opaque heap struct: a leaked message string plus
@@ -4665,16 +5355,31 @@ pub unsafe extern "C" fn gos_rt_regex_find_all(
     re: *const GosRegex,
     text: *const c_char,
 ) -> *mut GosVec {
-    let vec = unsafe { gos_rt_vec_new(8) };
+    // Each element is a 24-byte `(i64 start, i64 end, *c_char text)`
+    // tuple. The previous 8-byte-per-element shape only stored the
+    // matched text, leaving `hit.0` / `hit.1` reading garbage and
+    // `hit.2` indexing past the end of the buffer (which the
+    // example then printed as an empty string).
+    let vec = unsafe { gos_rt_vec_new(24) };
     if re.is_null() || text.is_null() {
         return vec;
     }
     let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
     for m in unsafe { (*re).inner.find_iter(s) } {
         let cstr = alloc_cstring(m.as_str().as_bytes());
-        let ptr_val = cstr as i64;
+        #[repr(C)]
+        struct Tup {
+            start: i64,
+            end: i64,
+            text: i64,
+        }
+        let entry = Tup {
+            start: m.start() as i64,
+            end: m.end() as i64,
+            text: cstr as i64,
+        };
         unsafe {
-            gos_rt_vec_push(vec, std::ptr::addr_of!(ptr_val).cast::<u8>());
+            gos_rt_vec_push(vec, std::ptr::addr_of!(entry).cast::<u8>());
         }
     }
     vec
@@ -4716,6 +5421,40 @@ pub unsafe extern "C" fn gos_rt_regex_split(
         }
     }
     vec
+}
+
+/// Returns `Vec<Vec<*c_char>>` — outer Vec has one entry per
+/// match, inner Vec has one entry per group (group 0 = full
+/// match, group 1+ = sub-captures). Missing groups are NULL
+/// (which user code can pattern-match as `Option::None` because
+/// the runtime treats null pointers as the zero discriminant).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_captures_all(
+    re: *const GosRegex,
+    text: *const c_char,
+) -> *mut GosVec {
+    let outer = unsafe { gos_rt_vec_new(8) };
+    if re.is_null() || text.is_null() {
+        return outer;
+    }
+    let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+    for caps in unsafe { (*re).inner.captures_iter(s) } {
+        let inner = unsafe { gos_rt_vec_new(8) };
+        for i in 0..caps.len() {
+            let ptr_val: i64 = match caps.get(i) {
+                Some(m) => alloc_cstring(m.as_str().as_bytes()) as i64,
+                None => 0,
+            };
+            unsafe {
+                gos_rt_vec_push(inner, std::ptr::addr_of!(ptr_val).cast::<u8>());
+            }
+        }
+        let inner_val = inner as i64;
+        unsafe {
+            gos_rt_vec_push(outer, std::ptr::addr_of!(inner_val).cast::<u8>());
+        }
+    }
+    outer
 }
 
 // ---------------------------------------------------------------
@@ -4981,14 +5720,40 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
     if args.is_null() {
         return unsafe { gos_rt_vec_new(8) };
     }
-    let argc = unsafe { gos_rt_vec_len(args) };
-    let mut i = 1i64; // skip argv[0]
+    // Two callers reach this function: the runner-build path
+    // passes a real `*mut GosVec` of c-string pointers; the
+    // compiled path passes the `os::args()` sentinel — a raw
+    // `argv + 1` pointer with `argc - 1` length stashed in the
+    // process-global ARGS_PTR / ARGS_LEN. Detect the sentinel by
+    // pointer-equality and route to a separate iteration path
+    // that walks `argv` directly. Without this branch the code
+    // tries to read a GosVec header out of an argv pointer and
+    // segfaults on the first positional arg.
+    let sentinel_ptr = ARGS_PTR.load(Ordering::SeqCst);
+    let is_sentinel = sentinel_ptr != 0 && (args as usize) == sentinel_ptr;
+    let (argc, start_i, get_arg_ptr): (i64, i64, Box<dyn Fn(i64) -> *const c_char>) = if is_sentinel
+    {
+        let argv = sentinel_ptr as *const *const c_char;
+        let len = ARGS_LEN.load(Ordering::SeqCst);
+        let getter: Box<dyn Fn(i64) -> *const c_char> =
+            Box::new(move |i: i64| unsafe { *argv.add(i as usize) });
+        (len, 0, getter)
+    } else {
+        let v = args;
+        let len = unsafe { gos_rt_vec_len(v) };
+        let getter: Box<dyn Fn(i64) -> *const c_char> = Box::new(move |i: i64| unsafe {
+            let p = gos_rt_vec_get_ptr(v, i);
+            if p.is_null() {
+                std::ptr::null()
+            } else {
+                p.cast::<*const c_char>().read_unaligned()
+            }
+        });
+        (len, 1, getter) // GosVec form: skip argv[0]
+    };
+    let mut i = start_i;
     while i < argc {
-        let elem_ptr = unsafe { gos_rt_vec_get_ptr(args, i) };
-        if elem_ptr.is_null() {
-            break;
-        }
-        let arg_ptr = unsafe { elem_ptr.cast::<*const c_char>().read_unaligned() };
+        let arg_ptr = get_arg_ptr(i);
         let arg = if arg_ptr.is_null() {
             String::new()
         } else {
@@ -5003,15 +5768,12 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
                     FlagKind::String => {
                         i += 1;
                         if i < argc {
-                            let v_ptr = unsafe { gos_rt_vec_get_ptr(args, i) };
-                            if !v_ptr.is_null() {
-                                let v = unsafe { v_ptr.cast::<*const c_char>().read_unaligned() };
-                                if !v.is_null() {
-                                    let bytes = unsafe { CStr::from_ptr(v).to_bytes().to_vec() };
-                                    let leaked = alloc_cstring(&bytes);
-                                    unsafe {
-                                        *(spec.cell.cast::<*mut c_char>()) = leaked;
-                                    }
+                            let v = get_arg_ptr(i);
+                            if !v.is_null() {
+                                let bytes = unsafe { CStr::from_ptr(v).to_bytes().to_vec() };
+                                let leaked = alloc_cstring(&bytes);
+                                unsafe {
+                                    *(spec.cell.cast::<*mut c_char>()) = leaked;
                                 }
                             }
                         }
@@ -5019,15 +5781,12 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
                     FlagKind::Uint => {
                         i += 1;
                         if i < argc {
-                            let v_ptr = unsafe { gos_rt_vec_get_ptr(args, i) };
-                            if !v_ptr.is_null() {
-                                let v = unsafe { v_ptr.cast::<*const c_char>().read_unaligned() };
-                                if !v.is_null() {
-                                    let s = unsafe { CStr::from_ptr(v).to_string_lossy() };
-                                    if let Ok(n) = s.parse::<u64>() {
-                                        unsafe {
-                                            *(spec.cell.cast::<u64>()) = n;
-                                        }
+                            let v = get_arg_ptr(i);
+                            if !v.is_null() {
+                                let s = unsafe { CStr::from_ptr(v).to_string_lossy() };
+                                if let Ok(n) = s.parse::<u64>() {
+                                    unsafe {
+                                        *(spec.cell.cast::<u64>()) = n;
                                     }
                                 }
                             }
@@ -5340,22 +6099,27 @@ pub unsafe extern "C" fn gos_rt_http_request_method(req: *const GosHttpRequest) 
     alloc_cstring(unsafe { &*req }.method.as_bytes())
 }
 
-/// Constructs a 200-style text response.
+/// Constructs a 200-style text response. Writes into the
+/// per-thread response buffer (`RESPONSE_BUF`) — the previous
+/// `Box::into_raw` per request was the dominant overhead at
+/// conc=100. The body pointer is stored verbatim: it's already
+/// valid arena/static memory (string literals live for the
+/// program; `format!()` output lives until the next
+/// `gos_rt_gc_reset`, which runs *after* the response is written
+/// to the socket). Skipping the copy removes another two
+/// allocations per request.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_response_text_new(
     status: i64,
     body: *const c_char,
 ) -> *mut GosHttpResponse {
-    let body_text = if body.is_null() {
-        Vec::new()
-    } else {
-        unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
-    };
-    Box::into_raw(Box::new(GosHttpResponse {
-        status,
-        body: alloc_cstring(&body_text),
-        headers: Vec::new(),
-    }))
+    let p = thread_local_response_ptr();
+    unsafe {
+        (*p).status = status;
+        (*p).body = body.cast_mut();
+        (*p).headers.clear();
+    }
+    p
 }
 
 #[unsafe(no_mangle)]

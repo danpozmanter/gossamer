@@ -17,6 +17,7 @@
 mod cfg;
 mod def_id;
 mod diagnostic;
+mod external;
 mod resolutions;
 mod resolver;
 mod scope;
@@ -27,3 +28,8 @@ pub use def_id::{CrateId, DefId, DefIdGenerator, DefKind, ModId};
 pub use diagnostic::{ResolveDiagnostic, ResolveError};
 pub use resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions};
 pub use resolver::resolve_source_file;
+
+pub use external::{
+    BindingType, ExternalItem, ExternalModule, all_external_module_paths, all_external_modules,
+    clear_for_test, lookup_external_item, lookup_external_module, set_external_modules,
+};

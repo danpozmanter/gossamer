@@ -198,15 +198,20 @@ impl Lowerer<'_> {
             .variants
             .iter()
             .map(|variant| {
-                let struct_fields = match &variant.body {
+                let (struct_fields, struct_field_tys) = match &variant.body {
                     gossamer_ast::StructBody::Named(fields) => {
-                        Some(fields.iter().map(|f| f.name.clone()).collect())
+                        let names: Vec<_> = fields.iter().map(|f| f.name.clone()).collect();
+                        let tys: Vec<_> = fields.iter().map(|f| self.ty_of(f.ty.id)).collect();
+                        (Some(names), Some(tys))
                     }
-                    gossamer_ast::StructBody::Tuple(_) | gossamer_ast::StructBody::Unit => None,
+                    gossamer_ast::StructBody::Tuple(_) | gossamer_ast::StructBody::Unit => {
+                        (None, None)
+                    }
                 };
                 crate::tree::HirEnumVariant {
                     name: variant.name.clone(),
                     struct_fields,
+                    struct_field_tys,
                 }
             })
             .collect();
@@ -278,10 +283,7 @@ impl Lowerer<'_> {
             if let HirExprKind::Match { arms, .. } = &kind {
                 if let Some(first) = arms.first() {
                     let arm_ty = first.body.ty;
-                    if !matches!(
-                        self.tcx.kind(arm_ty),
-                        Some(TyKind::Error | TyKind::Var(_))
-                    ) {
+                    if !matches!(self.tcx.kind(arm_ty), Some(TyKind::Error | TyKind::Var(_))) {
                         ty = arm_ty;
                     }
                 }
@@ -655,18 +657,12 @@ impl Lowerer<'_> {
     /// truth; this list mirrors its String entries so the HIR layer
     /// can ground a `let s = ...?` binding even when the
     /// typechecker leaks a Var through `?`.
-    fn try_ok_payload_ty_heuristic(
-        &mut self,
-        inner: &AstExpr,
-    ) -> Option<gossamer_types::Ty> {
+    fn try_ok_payload_ty_heuristic(&mut self, inner: &AstExpr) -> Option<gossamer_types::Ty> {
         let mut cur = inner;
         loop {
             match &cur.kind {
                 AstExprKind::MethodCall { receiver, name, .. }
-                    if matches!(
-                        name.name.as_str(),
-                        "map_err" | "map" | "ok" | "err"
-                    ) =>
+                    if matches!(name.name.as_str(), "map_err" | "map" | "ok" | "err") =>
                 {
                     cur = receiver;
                 }

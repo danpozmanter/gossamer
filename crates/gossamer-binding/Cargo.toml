@@ -1,0 +1,38 @@
+[package]
+name = "gossamer-binding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Stable Rust-binding system for Gossamer libraries."
+
+[lints.rust]
+# Override the workspace `unsafe_code = "forbid"` because the
+# `native` module marshalling needs raw-pointer ABI work for the
+# compiled-mode export path. Stays `deny` so all other modules
+# still reject unsafe.
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cognitive_complexity = "deny"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+missing_safety_doc = "allow"
+
+[dependencies]
+gossamer-interp = { workspace = true }
+gossamer-resolve = { workspace = true }
+linkme = "0.3"
+paste = "1"
+parking_lot = "0.12"
+rustc-hash = "2"
+
+[dev-dependencies]
+gossamer-interp = { workspace = true }

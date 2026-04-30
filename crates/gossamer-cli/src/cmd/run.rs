@@ -63,15 +63,25 @@ fn run(file: &PathBuf, mode: RunMode, forwarded: &[String]) -> Result<()> {
             gossamer_interp::flush_runtime_stdout();
             match r {
                 Ok(()) => Ok(()),
-                Err(_) => {
-                    // VM hit a runtime error (panic, type
-                    // mismatch, etc.). The VM doesn't carry a
-                    // call-stack trace today, so re-run via the
-                    // tree-walker — same program, same outcome,
-                    // but the tree-walker reports the function
-                    // chain leading up to the failure (the
-                    // diagnostic the user actually wants).
-                    run_tree_walker(&program)
+                Err(err) => {
+                    // VM runtime error must NOT silently re-run via
+                    // the tree-walker — the program has already
+                    // emitted side effects (println, file I/O); a
+                    // re-run would duplicate them. Surface the
+                    // error with whatever call-stack snapshot the
+                    // VM has tracked.
+                    let stack = vm.call_stack_snapshot();
+                    let trace = if stack.is_empty() {
+                        String::new()
+                    } else {
+                        let mut rendered = String::from("\n  call stack (outermost first):");
+                        for name in &stack {
+                            rendered.push_str("\n    at ");
+                            rendered.push_str(name);
+                        }
+                        rendered
+                    };
+                    Err(anyhow!("runtime error: {err}{trace}"))
                 }
             }
         }
