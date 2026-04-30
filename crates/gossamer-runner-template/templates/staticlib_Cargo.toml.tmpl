@@ -22,7 +22,7 @@ debug = true
 panic = "abort"
 
 [dependencies]
-gossamer-binding = { path = "{{ gossamer_root }}/crates/gossamer-binding" }
+gossamer-binding = { path = '{{ gossamer_root }}/crates/gossamer-binding' }
 {{#each bindings}}
 {{ this.cargo_dep_line }}
 {{/each}}

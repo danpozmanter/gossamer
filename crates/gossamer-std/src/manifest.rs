@@ -56,7 +56,6 @@ pub const ALL_MODULES: &[StdModule] = &[
     CRYPTO_AEAD,
     CRYPTO_ED25519,
     CRYPTO_ECDSA,
-    CRYPTO_RSA,
     CRYPTO_X509,
     CRYPTO_KDF,
     ENCODING_YAML,
@@ -741,28 +740,6 @@ const CRYPTO_ECDSA: StdModule = StdModule {
             name: "verify_pem",
             kind: StdItemKind::Function,
             doc: "Verifies a DER-encoded signature against an SPKI-PEM public key.",
-        },
-    ],
-};
-
-const CRYPTO_RSA: StdModule = StdModule {
-    path: "std::crypto::rsa",
-    summary: "RSA-PKCS#1 v1.5 digital signatures.",
-    items: &[
-        StdItem {
-            name: "keypair_pem",
-            kind: StdItemKind::Function,
-            doc: "Generates (secret_pem, public_pem) for a fresh RSA-2048 keypair.",
-        },
-        StdItem {
-            name: "sign_pkcs1_sha256",
-            kind: StdItemKind::Function,
-            doc: "PKCS#1 v1.5 SHA-256 signature.",
-        },
-        StdItem {
-            name: "verify_pkcs1_sha256",
-            kind: StdItemKind::Function,
-            doc: "PKCS#1 v1.5 SHA-256 verification.",
         },
     ],
 };

@@ -1,0 +1,5 @@
+16 -> hit at index 3
+17 -> insert at index 4
+0 -> insert at index 0
+100 -> hit at index 9
+101 -> insert at index 10

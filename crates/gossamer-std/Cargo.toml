@@ -22,16 +22,20 @@ default = []
 # Regular-expression engine behind `std::regex`.
 regex = ["dep:regex"]
 
-# Rustls-backed TLS behind `std::tls`. Pulls in `ring`, `webpki-roots`,
-# `rustls-pemfile`.
-tls = ["dep:rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
+# Rustls-backed TLS behind `std::tls`. PEM parsing routes through
+# `rustls-pki-types::pem::PemObject` (already a transitive dep
+# of `rustls`), so no separate `rustls-pemfile` is needed.
+tls = ["dep:rustls", "dep:webpki-roots"]
 
 # Crypto primitives behind `std::crypto`: AEAD, signatures, KDFs, hashes.
+# RSA is intentionally excluded — the `rsa 0.9.x` crate is the only
+# pure-Rust option and carries RUSTSEC-2023-0071 (Marvin Attack
+# timing sidechannel, no upstream fix). Re-enable once a constant-time
+# replacement lands or the upstream advisory is closed.
 crypto = [
     "dep:getrandom",
     "dep:aes-gcm",
     "dep:chacha20poly1305",
-    "dep:rsa",
     "dep:p256",
     "dep:ed25519-dalek",
     "dep:x509-parser",
@@ -74,7 +78,6 @@ gossamer-gc = { workspace = true }
 getrandom = { version = "0.2", optional = true }
 regex = { version = "1", default-features = false, features = ["std", "unicode"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
-rustls-pemfile = { version = "2", optional = true }
 webpki-roots = { version = "1", optional = true }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
 thiserror = { workspace = true }
@@ -84,7 +87,6 @@ signal-hook = { workspace = true }
 crossbeam-channel = { workspace = true }
 aes-gcm = { version = "0.10", optional = true }
 chacha20poly1305 = { version = "0.10", optional = true }
-rsa = { version = "0.9", default-features = false, features = ["std", "sha2", "pem"], optional = true }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pem"], optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "pkcs8", "pem", "rand_core"], optional = true }
 x509-parser = { version = "0.16", optional = true }

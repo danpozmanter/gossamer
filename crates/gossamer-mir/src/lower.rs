@@ -1068,6 +1068,23 @@ fn param_mutable(pattern: &HirPat) -> bool {
     matches!(&pattern.kind, HirPatKind::Binding { mutable: true, .. })
 }
 
+/// Human-readable label for a pattern shape — used in lowering
+/// diagnostics to name what was unsupported.
+fn pattern_kind_label(pattern: &HirPat) -> &'static str {
+    match &pattern.kind {
+        HirPatKind::Wildcard => "wildcard",
+        HirPatKind::Binding { .. } => "binding",
+        HirPatKind::Literal(_) => "literal",
+        HirPatKind::Tuple(_) => "tuple",
+        HirPatKind::Or(_) => "or-pattern",
+        HirPatKind::Range { .. } => "range",
+        HirPatKind::Struct { .. } => "struct",
+        HirPatKind::Variant { .. } => "variant",
+        HirPatKind::Ref { .. } => "reference",
+        HirPatKind::Rest => "rest",
+    }
+}
+
 struct Builder<'a> {
     tcx: &'a mut TyCtxt,
     locals: Vec<LocalDecl>,
@@ -4230,21 +4247,45 @@ impl<'a> Builder<'a> {
             // When `lower_pattern_predicate` doesn't decode the
             // pattern shape (tuple/struct/range/or-patterns that
             // need richer destructuring than the SwitchInt path
-            // covers), treat the arm as always-matching by
-            // synthesising a `true` predicate. The arm body still
-            // lowers, the guard (if any) still gates entry, and
-            // later arms remain reachable through the join.
-            let pat_match_local = self
-                .lower_pattern_predicate(scrutinee_local, &arm.pattern, span)
-                .unwrap_or_else(|| {
-                    let always = self.fresh(bool_ty);
-                    self.emit_assign(
-                        Place::local(always),
-                        Rvalue::Use(Operand::Const(ConstValue::Bool(true))),
-                        span,
+            // covers), the conservative path falls back to an
+            // "always matches" predicate. That keeps the program
+            // compiling, but later arms become unreachable —
+            // a real miscompile risk.
+            //
+            // `GOSSAMER_STRICT_LOWER=1` turns the fallback into a
+            // panic so CI can gate against new instances.
+            // Without the env var we still fall back, but a one-line
+            // warning is written to stderr so users see the arm got
+            // treated as always-match instead of silently miscompiling.
+            let pat_match_local = if let Some(local) =
+                self.lower_pattern_predicate(scrutinee_local, &arm.pattern, span)
+            {
+                local
+            } else {
+                let kind = pattern_kind_label(&arm.pattern);
+                if std::env::var("GOSSAMER_STRICT_LOWER")
+                    .ok()
+                    .is_some_and(|v| !v.is_empty() && v != "0")
+                {
+                    panic!(
+                        "MIR lower: match-guard arm has unsupported pattern shape \
+                         ({kind}); GOSSAMER_STRICT_LOWER refuses to silently treat \
+                         this arm as always-matching"
                     );
-                    always
-                });
+                }
+                eprintln!(
+                    "warning: MIR lower: match-guard arm pattern shape ({kind}) \
+                     not yet decoded — arm treated as always-matching, later arms \
+                     in the same match may become unreachable"
+                );
+                let always = self.fresh(bool_ty);
+                self.emit_assign(
+                    Place::local(always),
+                    Rvalue::Use(Operand::Const(ConstValue::Bool(true))),
+                    span,
+                );
+                always
+            };
 
             // Combine the pattern predicate with the guard (if any).
             let predicate = if let Some(guard_expr) = &arm.guard {

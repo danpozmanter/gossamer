@@ -630,7 +630,7 @@ fn render_one(
             if let Some(v) = version {
                 parts.push(format!("version = \"{}\"", v.minimum));
             }
-            parts.push(format!("path = \"{}\"", abs.display()));
+            parts.push(toml_path_kv("path", &abs));
             push_cargo_features(&mut parts, features, *default_features);
             (
                 format!("{name} = {{ {} }}", parts.join(", ")),
@@ -678,6 +678,23 @@ fn render_one(
                 None,
             )
         }
+    }
+}
+
+/// Renders a `key = '...'` TOML pair using a single-quoted literal
+/// string so backslashes (Windows `D:\a\...`), quotes, and other
+/// escape-prone bytes round-trip unchanged. TOML literal strings
+/// disallow `'` and ASCII control chars; if the path contains
+/// either we fall back to a basic string with `\\` doubling, which
+/// covers every realistic filesystem path on the platforms we
+/// support without sacrificing correctness.
+fn toml_path_kv(key: &str, path: &Path) -> String {
+    let display = path.display().to_string();
+    if !display.contains('\'') && !display.chars().any(char::is_control) {
+        format!("{key} = '{display}'")
+    } else {
+        let escaped = display.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("{key} = \"{escaped}\"")
     }
 }
 
@@ -997,6 +1014,35 @@ mod tests {
                 .ends_with("echo")
         );
         assert!(runner.workdir.starts_with(&cache));
+    }
+
+    #[test]
+    fn toml_path_kv_uses_literal_string_for_backslash_paths() {
+        // Mimics a Windows GitHub runner path. TOML basic strings
+        // would interpret `\a`/`\g` as escape sequences and fail
+        // to parse — single-quoted literal strings preserve the
+        // bytes verbatim. This is the regression gate for the
+        // Windows CI failure observed 2026-04-30.
+        let p = PathBuf::from("D:\\a\\gossamer\\gossamer/crates/gossamer-binding");
+        let kv = toml_path_kv("path", &p);
+        assert!(kv.starts_with("path = '"), "expected literal string, got: {kv}");
+        // The whole expression must round-trip through cargo's
+        // strict TOML parser inside a `{ ... }` inline table.
+        let snippet = format!("[deps]\nfoo = {{ {kv} }}\n");
+        let _: toml::Value = toml::from_str(&snippet)
+            .expect("toml_path_kv output round-trips through strict TOML parser");
+    }
+
+    #[test]
+    fn toml_path_kv_falls_back_to_basic_string_when_path_has_apostrophe() {
+        // Single-quoted TOML literal strings disallow `'`; the
+        // helper must fall back to a basic string with `\\` doubling.
+        let p = PathBuf::from("/tmp/it's a path/echo");
+        let kv = toml_path_kv("path", &p);
+        assert!(kv.starts_with("path = \""), "expected basic string, got: {kv}");
+        let snippet = format!("[deps]\nfoo = {{ {kv} }}\n");
+        let _: toml::Value = toml::from_str(&snippet)
+            .expect("apostrophe-path renders as escaped basic string");
     }
 
     #[test]

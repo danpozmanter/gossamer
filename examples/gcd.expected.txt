@@ -1,0 +1,6 @@
+gcd(12, 18) = 6, lcm = 36
+gcd(100, 75) = 25, lcm = 300
+gcd(17, 13) = 1, lcm = 221
+gcd(0, 7) = 7, lcm = 0
+gcd(1071, 462) = 21, lcm = 23562
+recursive and iterative agree: ok

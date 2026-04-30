@@ -619,6 +619,88 @@ fn main() {
 }
 
 #[test]
+fn release_eprintln_goes_to_stderr() {
+    // Until 2026-04-30 the cranelift + LLVM lowering of
+    // `eprint`/`eprintln` shared the buffered stdout writer —
+    // the comment at native.rs:3541 acknowledged the gap. This
+    // test gates the fix: stderr-bound output must not appear
+    // on stdout, and stdout output must still flush before
+    // any stderr output (so user-visible diagnostic order is
+    // preserved).
+    let prog = build_release(
+        "eprintln_to_stderr",
+        r#"
+fn main() {
+    println!("on-stdout")
+    eprintln!("on-stderr-{}", 42)
+}
+"#,
+    );
+    let (code, stdout, stderr) = run(&prog);
+    assert_eq!(code, 0, "exit {code}\nstderr: {stderr}");
+    assert_eq!(stdout, "on-stdout\n", "stdout drift: {stdout:?}");
+    assert_eq!(stderr, "on-stderr-42\n", "stderr drift: {stderr:?}");
+}
+
+#[test]
+fn release_u64_max_prints_unsigned() {
+    // Until 2026-04-30 the print path always sign-extended to
+    // i64 and called `gos_rt_print_i64`, so a `u64` value
+    // >= 2^63 printed with a leading `-`. The fix routes
+    // unsigned ints through `gos_rt_print_u64` /
+    // `gos_rt_concat_u64` / `gos_rt_u64_to_str`. This test
+    // gates against re-collapsing the dispatch.
+    assert_release_stdout_eq(
+        "u64_max",
+        r#"
+fn main() {
+    let n: u64 = 18446744073709551615u64
+    println!("{}", n)
+}
+"#,
+        "18446744073709551615\n",
+    );
+}
+
+#[test]
+fn release_match_guard_dispatches_through_chain() {
+    // Catches the silent always-match miscompile in
+    // `lower_match_with_guards`. Each arm uses a different
+    // pattern + guard shape; if `lower_pattern_predicate`
+    // returns None for any shape and the lowerer falls back
+    // to "always matches", later arms become unreachable
+    // and the test fails loudly.
+    //
+    // Uses bare-int scrutinee (not `Result<_, _>` payload
+    // peeking) so the test isolates *guard* dispatch rather
+    // than variant-payload destructuring — the latter is a
+    // known limitation of the compiled tier (`Ok(1)` and
+    // `Ok(2)` lower to the same disc-only predicate, so
+    // this suite would conflate them).
+    assert_release_stdout_eq(
+        "match_guard_chain",
+        r#"
+fn classify(x: i64) -> &str {
+    match x {
+        1 | 2 => "small",
+        n if n > 5 => "big",
+        _ => "mid",
+    }
+}
+
+fn main() {
+    println!("{}", classify(1))
+    println!("{}", classify(2))
+    println!("{}", classify(3))
+    println!("{}", classify(10))
+    println!("{}", classify(0))
+}
+"#,
+        "small\nsmall\nmid\nbig\nmid\n",
+    );
+}
+
+#[test]
 fn release_iter_enumerate_yields_index_value_pairs() {
     // `v.iter().enumerate()` lowering is now in
     // `gossamer-mir/src/lower.rs::lower_for_enumerate`. Strips

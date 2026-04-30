@@ -137,6 +137,67 @@ fn minimal_parity_native_matches_interpreter_for_hello_world() {
     assert_eq!(interp.code, native.code, "exit code diverged");
 }
 
+/// Curated list of small, terminating, no-arg examples that the
+/// always-on parity gate runs both tiers against. Each program
+/// is short, runs in well under a second under both tiers, and
+/// exercises a meaningfully distinct lowering path (recursion,
+/// iteration, arrays, integer arithmetic, control flow, string
+/// formatting). Together with `hello_world` the default
+/// `cargo test` parity gate covers eight examples at a
+/// wall-time cost of around twelve seconds — small enough that
+/// a regression in the compiled tier surfaces in CI without
+/// requiring `--features exhaustive_tests`.
+const DEFAULT_PARITY_EXAMPLES: &[&str] = &[
+    "factorial.gos",
+    "fibonacci.gos",
+    "fizz_buzz.gos",
+    "gcd.gos",
+    "range_sum.gos",
+    "prime_check.gos",
+    "binary_search.gos",
+    // `control_flow.gos` is intentionally NOT here — it carries a
+    // known native-tier divergence on `first square > 100` (loop
+    // returns 0 instead of 121). The full exhaustive walk catches
+    // it; gating the always-on suite on the divergence would block
+    // unrelated work. Re-enable once the loop-break-value lowering
+    // lands in the native tier.
+];
+
+#[test]
+fn default_parity_native_matches_interpreter_on_curated_examples() {
+    // Bumps the default parity matrix beyond `hello_world` — the
+    // single-program smoke test (above) was missing regressions
+    // in lowering paths used by mainstream user code (recursion,
+    // arrays, integer arithmetic). 7 + 1 examples keep CI under
+    // ~12 s while exercising the dominant compiled-tier shapes.
+    let mut failures = Vec::new();
+    for name in DEFAULT_PARITY_EXAMPLES {
+        let path = examples_dir().join(name);
+        let key = rel_to_workspace(&path);
+        let interp = run_interpreter(&path);
+        let Some(native) = run_native(&path) else {
+            failures.push(format!("{key}: native build failed"));
+            continue;
+        };
+        if interp.stdout != native.stdout
+            || interp.stderr != native.stderr
+            || interp.code != native.code
+        {
+            failures.push(format!(
+                "{key}:\n  interp stdout: {:?}\n  native stdout: {:?}\n  \
+                 interp code: {:?} native code: {:?}",
+                interp.stdout, native.stdout, interp.code, native.code
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} example(s) diverged between interpreter and native:\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
 #[test]
 fn every_example_with_committed_expected_matches_interpreter_stdout() {
     // Run-and-diff CI gate. For each `examples/<name>.gos` whose

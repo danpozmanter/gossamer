@@ -53,3 +53,14 @@ pub use emit::{
     BuildError, CompileOutcome, NativeObject, compile_to_object, compile_with_fallback,
     set_debug_info, set_reproducible,
 };
+
+/// Read-only view of the LLVM backend's runtime-symbol declaration
+/// table. Each entry is a single LLVM IR `declare ...` line for a
+/// `gos_rt_*` extern. Exposed for cross-crate consistency tests
+/// (e.g. asserting every helper named in `gossamer-runtime::c_abi`
+/// also has a declaration here, so the cranelift dispatch table,
+/// the LLVM declaration table, and the c_abi exports never drift).
+#[must_use]
+pub fn runtime_declarations() -> &'static [&'static str] {
+    emit::RUNTIME_DECLARATIONS
+}

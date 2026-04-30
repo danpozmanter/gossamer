@@ -1,0 +1,7 @@
+fib(0) = recursive 0, iterative 0
+fib(1) = recursive 1, iterative 1
+fib(5) = recursive 5, iterative 5
+fib(10) = recursive 55, iterative 55
+fib(20) = recursive 6765, iterative 6765
+fib(40) = 102334155
+fib(60) = 1548008755920

@@ -1,0 +1,8 @@
+primes ≤ 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47
+is_prime(2) = true (expected true): ok
+is_prime(3) = true (expected true): ok
+is_prime(4) = false (expected false): ok
+is_prime(97) = true (expected true): ok
+is_prime(100) = false (expected false): ok
+is_prime(7919) = true (expected true): ok
+is_prime(7920) = false (expected false): ok

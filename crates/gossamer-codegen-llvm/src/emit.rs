@@ -180,6 +180,24 @@ fn render_module_inner(
                 globals.extend(lowerer.take_module_globals());
             }
             Err(BuildError::Unsupported(msg)) => {
+                // `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1` turns the
+                // silent per-fn Cranelift fallback into a hard
+                // error. Used in CI to gate "must stay on the
+                // LLVM backend" programs against silent
+                // regressions like the 2026-04-28 / 2026-04-30
+                // spectral-norm slowdowns where a malformed
+                // `runtime_refs` entry kicked the body off LLVM
+                // without surfacing in any human-readable signal.
+                let fail_on_fallback = std::env::var("GOSSAMER_FAIL_ON_LLVM_FALLBACK")
+                    .ok()
+                    .is_some_and(|v| !v.is_empty() && v != "0");
+                if fail_on_fallback {
+                    return Err(anyhow!(
+                        "llvm backend: `{fn_name}` would fall back to Cranelift ({msg}) but \
+                         GOSSAMER_FAIL_ON_LLVM_FALLBACK is set",
+                        fn_name = body.name,
+                    ));
+                }
                 if allow_fallback {
                     if std::env::var("GOS_LLVM_TRACE").is_ok() {
                         eprintln!(
@@ -205,7 +223,18 @@ fn render_module_inner(
     }
     globals.sort();
     globals.dedup();
+    // Shape-validate every accumulated module global. The
+    // `runtime_refs` BTreeSet inside `Lowerer` accepts arbitrary
+    // strings; two real regressions (`spectral_norm_regression_fix.md`
+    // 2026-04-30 and `llvm_release_silent_fallback.md` 2026-04-28)
+    // shipped because a malformed entry corrupted the IR string
+    // and silently flipped affected bodies to the Cranelift
+    // fallback — costing 18-21x perf with no diagnostic. Each entry
+    // must be either an `@symbol = ... constant ...` definition or
+    // an `@symbol = ... global ...` definition or a `declare ...`
+    // function declaration. Anything else is a programmer error.
     for g in &globals {
+        validate_global_decl_shape(g)?;
         writeln!(out, "{g}").unwrap();
     }
     if !globals.is_empty() {
@@ -394,6 +423,34 @@ fn emit_dwarf_metadata(out: &mut String, bodies: &[Body]) {
 /// to the Cranelift fallback. The signature must match what
 /// the Cranelift backend will emit for the same MIR body so the
 /// linker can hook them up.
+/// Verifies a single module-level global declaration string has
+/// the structural shape LLVM IR expects. We don't parse the full
+/// grammar — we only check the prefix tokens an entry must lead
+/// with. The check is cheap (string scan, no allocation) and
+/// catches the realistic regression mode: a *bare* identifier
+/// (e.g. `"my_const"` instead of `"@my_const = constant ..."`)
+/// being inserted via `runtime_refs.insert(...)`. That class of
+/// bug previously corrupted the IR module silently and forced
+/// `llc` to error which then triggered the per-fn Cranelift
+/// fallback for unrelated bodies.
+fn validate_global_decl_shape(g: &str) -> Result<()> {
+    let trimmed = g.trim_start();
+    let valid = trimmed.starts_with('@') || trimmed.starts_with("declare ");
+    if !valid {
+        return Err(anyhow!(
+            "llvm backend: malformed module-level entry (expected `@symbol = ...` or \
+             `declare ...`, got: {snippet:?}). This is the same shape regression that \
+             caused the 2026-04-28 / 2026-04-30 silent Cranelift-fallback incidents.",
+            snippet = if trimmed.len() > 80 {
+                &trimmed[..80]
+            } else {
+                trimmed
+            }
+        ));
+    }
+    Ok(())
+}
+
 fn extern_declare(body: &Body, tcx: &TyCtxt) -> String {
     let ret_ty = crate::ty::render_ty(tcx, body.local_ty(gossamer_mir::Local::RETURN));
     let mut params = String::new();
@@ -682,7 +739,7 @@ fn host_triple() -> String {
 /// Redundant declarations are harmless; missing ones surface
 /// as `llc: error: use of undefined value`. Kept in loose
 /// sync with the exported symbols in `gossamer-runtime::c_abi`.
-const RUNTIME_DECLARATIONS: &[&str] = &[
+pub(crate) const RUNTIME_DECLARATIONS: &[&str] = &[
     // Program entry / control.
     "declare void @gos_rt_set_args(i32, ptr)",
     "declare void @gos_rt_flush_stdout()",
@@ -697,6 +754,9 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare void @gos_rt_print_str(ptr)",
     "declare void @gos_rt_println()",
     "declare void @gos_rt_print_i64(i64)",
+    "declare void @gos_rt_print_u64(i64)",
+    "declare void @gos_rt_eprint_str(ptr)",
+    "declare void @gos_rt_eprintln()",
     "declare void @gos_rt_print_f64(double)",
     "declare void @gos_rt_print_bool(i32)",
     "declare void @gos_rt_print_char(i32)",
@@ -704,10 +764,10 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare ptr @gos_rt_os_args()",
     // Time / runtime cooperation.
     "declare double @gos_rt_time_now()",
-    "declare i64 @gos_rt_time_now_ns()",
+    "declare i64 @gos_rt_now_ns()",
     "declare i64 @gos_rt_time_now_ms()",
-    "declare void @gos_rt_time_sleep(double)",
-    "declare void @gos_rt_yield_now()",
+    "declare void @gos_rt_sleep_ns(i64)",
+    "declare void @gos_rt_go_yield()",
     // Math (f64 -> f64) — preferred for cross-backend parity;
     // the LLVM frontend may also emit `llvm.sqrt.f64` etc.
     // directly through the math-intrinsic short-path.
@@ -788,6 +848,7 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare void @gos_rt_concat_init()",
     "declare void @gos_rt_concat_str(ptr)",
     "declare void @gos_rt_concat_i64(i64)",
+    "declare void @gos_rt_concat_u64(i64)",
     "declare void @gos_rt_concat_f64(double)",
     "declare void @gos_rt_concat_f64_prec(double, i64)",
     "declare void @gos_rt_concat_bool(i32)",
@@ -858,6 +919,7 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare ptr @gos_rt_json_value_object_n(i64, ptr)",
     "declare double @gos_rt_parse_f64(ptr, ptr)",
     "declare ptr @gos_rt_i64_to_str(i64)",
+    "declare ptr @gos_rt_u64_to_str(i64)",
     "declare ptr @gos_rt_f64_to_str(double)",
     "declare ptr @gos_rt_bool_to_str(i32)",
     "declare ptr @gos_rt_char_to_str(i32)",
@@ -1002,3 +1064,45 @@ const RUNTIME_DECLARATIONS: &[&str] = &[
     "@GOS_RT_STDOUT_BYTES = external local_unnamed_addr global [8192 x i8]",
     "@GOS_RT_STDOUT_LEN = external local_unnamed_addr global i64",
 ];
+
+#[cfg(test)]
+mod shape_validation_tests {
+    use super::validate_global_decl_shape;
+
+    #[test]
+    fn accepts_constant_definition() {
+        let g = "@.str_0 = private unnamed_addr constant [6 x i8] c\"hello\\00\"";
+        assert!(validate_global_decl_shape(g).is_ok());
+    }
+
+    #[test]
+    fn accepts_extern_global() {
+        let g = "@GOS_RT_STDOUT_LEN = external local_unnamed_addr global i64";
+        assert!(validate_global_decl_shape(g).is_ok());
+    }
+
+    #[test]
+    fn accepts_function_declaration() {
+        let g = "declare void @gos_rt_print_str(ptr)";
+        assert!(validate_global_decl_shape(g).is_ok());
+    }
+
+    #[test]
+    fn rejects_bare_identifier() {
+        // The exact regression shape: a runtime symbol name
+        // accidentally inserted as a bare string instead of a
+        // full `@name = constant ...` declaration.
+        let g = "gos_rt_arena_save";
+        let err = validate_global_decl_shape(g).unwrap_err();
+        assert!(
+            err.to_string().contains("malformed module-level entry"),
+            "expected shape diagnostic, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_random_text() {
+        let g = "this is not LLVM IR";
+        assert!(validate_global_decl_shape(g).is_err());
+    }
+}

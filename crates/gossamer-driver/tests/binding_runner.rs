@@ -46,9 +46,16 @@ fn fresh_cache() -> PathBuf {
 }
 
 fn write_manifest_with_echo(dir: &Path, fixture: &Path) -> Manifest {
+    // Use a TOML basic string with the path's forward-slash form so
+    // the snippet is identical on every platform. Native Windows
+    // separators (`D:\a\...`) parse fine through Manifest::parse
+    // (it strips the outer `"` and keeps inner content verbatim),
+    // but Cargo's strict TOML parser later rejects unescaped `\`,
+    // so we render the same path style the production code does
+    // — see `BindingRunner::cargo_dep_line` / `toml_path_kv`.
     let body = format!(
         "{HEADER}\n[rust-bindings]\necho-binding = {{ path = \"{}\" }}\n",
-        fixture.display()
+        fixture.display().to_string().replace('\\', "/")
     );
     fs::write(dir.join("project.toml"), &body).unwrap();
     Manifest::parse(&body).unwrap()

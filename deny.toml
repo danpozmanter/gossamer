@@ -47,6 +47,12 @@ skip-tree = [
     { name = "libc" },
     { name = "windows-sys" },
 ]
+# `webpki-roots` 0.26 reaches the workspace via `ureq 2.x`, while
+# the directly-named version is 1.x. This is a benign duplicate;
+# clears once `ureq 3.x` ships (which moved to `webpki-roots 1.x`).
+skip = [
+    { name = "webpki-roots", version = "0.26" },
+]
 
 [sources]
 unknown-registry = "deny"

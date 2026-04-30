@@ -20,9 +20,9 @@
 
 #![forbid(unsafe_code)]
 
-use std::io::BufReader;
 use std::sync::Arc;
 
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{
@@ -234,21 +234,16 @@ fn wrap_err(context: &str, error: impl std::fmt::Display) -> Error {
 }
 
 fn read_certs(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, std::io::Error> {
-    let mut reader = BufReader::new(pem);
-    rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>()
+    CertificateDer::pem_slice_iter(pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(std::io::Error::other)
 }
 
 fn read_private_key(pem: &[u8]) -> Result<PrivateKeyDer<'static>, std::io::Error> {
-    let mut reader = BufReader::new(pem);
-    for item in rustls_pemfile::read_all(&mut reader) {
-        match item? {
-            rustls_pemfile::Item::Pkcs1Key(k) => return Ok(PrivateKeyDer::Pkcs1(k)),
-            rustls_pemfile::Item::Pkcs8Key(k) => return Ok(PrivateKeyDer::Pkcs8(k)),
-            rustls_pemfile::Item::Sec1Key(k) => return Ok(PrivateKeyDer::Sec1(k)),
-            _ => {}
-        }
-    }
-    Err(std::io::Error::other("no private key found in PEM"))
+    PrivateKeyDer::pem_slice_iter(pem)
+        .next()
+        .ok_or_else(|| std::io::Error::other("no private key found in PEM"))?
+        .map_err(std::io::Error::other)
 }
 
 #[cfg(test)]

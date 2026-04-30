@@ -13,7 +13,7 @@ use gossamer_mir::{
     BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement, StatementKind,
     Terminator, UnOp,
 };
-use gossamer_types::{FloatTy, Ty, TyCtxt, TyKind};
+use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
 use crate::emit::BuildError;
 use crate::ty::{
@@ -108,10 +108,24 @@ impl StringPool {
 enum ConcatKind {
     StrPtr,
     Int,
+    /// Unsigned integer (u8/u16/u32/u64/u128/usize). Routed to
+    /// `gos_rt_print_u64` / `gos_rt_concat_u64` so values
+    /// `>= 2^63` print without a leading `-`.
+    Uint,
     Float,
     Bool,
     Char,
     Unsupported,
+}
+
+/// `true` if `t` is one of `u8 / u16 / u32 / u64 / u128 / usize`.
+/// Mirror of cranelift's `int_ty_is_unsigned`; kept here so the
+/// LLVM module doesn't need to depend on the cranelift crate.
+fn int_ty_is_unsigned_llvm(t: IntTy) -> bool {
+    matches!(
+        t,
+        IntTy::U8 | IntTy::U16 | IntTy::U32 | IntTy::U64 | IntTy::U128 | IntTy::Usize
+    )
 }
 
 impl<'a> Lowerer<'a> {
@@ -1513,24 +1527,38 @@ impl<'a> Lowerer<'a> {
                 "println destination cannot have projections",
             ));
         }
-        // Hold the stdout lock for the whole sequence — every
-        // per-arg print + the trailing newline is one atomic
-        // unit so concurrent goroutines on other OS threads
-        // can't interleave their output mid-line. The lock is
-        // reentrant, so the inner runtime helpers (which also
-        // acquire) coexist with this outer acquire on the same
-        // thread. On `Unsupported` we abandon the whole build
-        // and fall back to Cranelift, so the dangling acquire
-        // is harmless — the LLVM module itself is dropped.
-        writeln!(self.out, "  call void @gos_rt_stdout_acquire()").unwrap();
-        // Spec: each arg is space-separated. Mirrors the
-        // interpreter's `render_args` (which inserts a `' '`
-        // between each pair).
-        self.emit_per_arg_print(args, " ")?;
-        if matches!(name, "println" | "eprintln") {
-            writeln!(self.out, "  call void @gos_rt_println()").unwrap();
+        if matches!(name, "eprint" | "eprintln") {
+            // Build the message via the same per-arg concat
+            // machinery `panic` uses, then route it through the
+            // stderr writer (which flushes stdout first so
+            // diagnostic order is preserved). Keeps eprint output
+            // off stdout without parallel `_err` versions of
+            // every per-type helper.
+            let s = self.emit_args_to_concat_string(args, " ")?;
+            writeln!(self.out, "  call void @gos_rt_eprint_str(ptr {s})").unwrap();
+            if name == "eprintln" {
+                writeln!(self.out, "  call void @gos_rt_eprintln()").unwrap();
+            }
+        } else {
+            // Hold the stdout lock for the whole sequence — every
+            // per-arg print + the trailing newline is one atomic
+            // unit so concurrent goroutines on other OS threads
+            // can't interleave their output mid-line. The lock is
+            // reentrant, so the inner runtime helpers (which also
+            // acquire) coexist with this outer acquire on the same
+            // thread. On `Unsupported` we abandon the whole build
+            // and fall back to Cranelift, so the dangling acquire
+            // is harmless — the LLVM module itself is dropped.
+            writeln!(self.out, "  call void @gos_rt_stdout_acquire()").unwrap();
+            // Spec: each arg is space-separated. Mirrors the
+            // interpreter's `render_args` (which inserts a `' '`
+            // between each pair).
+            self.emit_per_arg_print(args, " ")?;
+            if name == "println" {
+                writeln!(self.out, "  call void @gos_rt_println()").unwrap();
+            }
+            writeln!(self.out, "  call void @gos_rt_stdout_release()").unwrap();
         }
-        writeln!(self.out, "  call void @gos_rt_stdout_release()").unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let dest_llvm = render_ty(self.tcx, self.body.local_ty(destination.local));
             let slot = local_slot(destination.local);
@@ -1591,6 +1619,10 @@ impl<'a> Lowerer<'a> {
                 ConcatKind::Int => {
                     let widened = self.widen_to_i64(arg, &value);
                     writeln!(self.out, "  call void @gos_rt_print_i64(i64 {widened})").unwrap();
+                }
+                ConcatKind::Uint => {
+                    let widened = self.widen_to_u64(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_print_u64(i64 {widened})").unwrap();
                 }
                 ConcatKind::Float => {
                     let widened = self.widen_to_f64(arg, &value);
@@ -1676,6 +1708,15 @@ impl<'a> Lowerer<'a> {
                 .unwrap();
                 Ok(dest)
             }
+            ConcatKind::Uint => {
+                let widened = self.widen_to_u64(arg, &value);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_u64_to_str(i64 {widened})"
+                )
+                .unwrap();
+                Ok(dest)
+            }
             ConcatKind::Float => {
                 let widened = self.widen_to_f64(arg, &value);
                 writeln!(
@@ -1741,6 +1782,10 @@ impl<'a> Lowerer<'a> {
                 ConcatKind::Int => {
                     let widened = self.widen_to_i64(arg, &value);
                     writeln!(self.out, "  call void @gos_rt_concat_i64(i64 {widened})").unwrap();
+                }
+                ConcatKind::Uint => {
+                    let widened = self.widen_to_u64(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_concat_u64(i64 {widened})").unwrap();
                 }
                 ConcatKind::Float => {
                     let widened = self.widen_to_f64(arg, &value);
@@ -1836,7 +1881,14 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::Char) => ConcatKind::Char,
                     Some(TyKind::Float(_)) => ConcatKind::Float,
                     Some(TyKind::String | TyKind::Ref { .. }) => ConcatKind::StrPtr,
-                    Some(TyKind::Int(_) | TyKind::Unit | TyKind::Never) => ConcatKind::Int,
+                    Some(TyKind::Int(int_ty)) => {
+                        if int_ty_is_unsigned_llvm(*int_ty) {
+                            ConcatKind::Uint
+                        } else {
+                            ConcatKind::Int
+                        }
+                    }
+                    Some(TyKind::Unit | TyKind::Never) => ConcatKind::Int,
                     // Unresolved inference variable: the dominant
                     // producer that flows into println is
                     // `__concat`, which returns a String pointer
@@ -1892,6 +1944,20 @@ impl<'a> Lowerer<'a> {
         let tmp = self.fresh();
         let instr = if signed { "sext" } else { "zext" };
         writeln!(self.out, "  {tmp} = {instr} {src_llvm} {v} to i64").unwrap();
+        tmp
+    }
+
+    /// Zero-extend an unsigned operand to `i64`. Distinct from
+    /// `widen_to_i64` (which sign-extends) so values >= 2^63 don't
+    /// flip sign on the way to the runtime printer. Used by the
+    /// `Uint` arms of `concat_print_kind`.
+    fn widen_to_u64(&mut self, op: &Operand, v: &str) -> String {
+        let src_llvm = self.operand_llvm_ty(op);
+        if src_llvm == "i64" {
+            return v.to_string();
+        }
+        let tmp = self.fresh();
+        writeln!(self.out, "  {tmp} = zext {src_llvm} {v} to i64").unwrap();
         tmp
     }
 
@@ -3160,8 +3226,8 @@ fn map_prelude_symbol(name: &str) -> &str {
         "io::stdin" | "os::stdin" => "gos_rt_io_stdin",
         "time::now" => "gos_rt_time_now",
         "time::now_ms" => "gos_rt_time_now_ms",
-        "time::now_ns" => "gos_rt_time_now_ns",
-        "time::sleep" => "gos_rt_time_sleep",
+        "time::now_ns" => "gos_rt_now_ns",
+        "time::sleep" => "gos_rt_sleep_ns",
         "math::pow" => "gos_rt_math_pow",
         "math::abs" => "gos_rt_math_abs",
         "math::sqrt" => "gos_rt_math_sqrt",
@@ -3171,7 +3237,7 @@ fn map_prelude_symbol(name: &str) -> &str {
         "math::exp" => "gos_rt_math_exp",
         "math::floor" => "gos_rt_math_floor",
         "math::ceil" => "gos_rt_math_ceil",
-        "sync::yield_now" | "runtime::yield_now" => "gos_rt_yield_now",
+        "sync::yield_now" | "runtime::yield_now" => "gos_rt_go_yield",
         "Mutex::new" | "sync::Mutex::new" | "mutex::new" => "gos_rt_mutex_new",
         "WaitGroup::new" | "sync::WaitGroup::new" | "wg::new" => "gos_rt_wg_new",
         "I64Vec::new" | "heap_i64::new" => "gos_rt_heap_i64_new",

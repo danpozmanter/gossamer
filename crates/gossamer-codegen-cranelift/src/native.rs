@@ -1192,6 +1192,10 @@ fn value_type(value: ir::Value, builder: &FunctionBuilder<'_>) -> ir::Type {
 enum PrintKind {
     StrPtr,
     Int,
+    /// Unsigned integer (any width). Routed through
+    /// `gos_rt_print_u64` so values >= 2^63 print without a
+    /// leading `-` (the bug `Int` would have).
+    Uint,
     Float,
     Bool,
     Char,
@@ -1239,6 +1243,16 @@ fn operand_cl_type(
     }
 }
 
+/// `true` if `t` is one of `u8 / u16 / u32 / u64 / u128 / usize`.
+/// Unsigned scalars route to a separate print path so values
+/// >= 2^63 don't appear with a leading `-` (the bug `Int` had).
+fn int_ty_is_unsigned(t: IntTy) -> bool {
+    matches!(
+        t,
+        IntTy::U8 | IntTy::U16 | IntTy::U32 | IntTy::U64 | IntTy::U128 | IntTy::Usize
+    )
+}
+
 fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -> PrintKind {
     match operand {
         Operand::Const(ConstValue::Str(_)) => PrintKind::StrPtr,
@@ -1252,7 +1266,14 @@ fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -> PrintKind
             match tcx.kind_of(ty) {
                 TyKind::Bool => PrintKind::Bool,
                 TyKind::Char => PrintKind::Char,
-                TyKind::Int(_) | TyKind::Unit | TyKind::Never => PrintKind::Int,
+                TyKind::Int(int_ty) => {
+                    if int_ty_is_unsigned(*int_ty) {
+                        PrintKind::Uint
+                    } else {
+                        PrintKind::Int
+                    }
+                }
+                TyKind::Unit | TyKind::Never => PrintKind::Int,
                 TyKind::Float(_) => PrintKind::Float,
                 TyKind::String | TyKind::Ref { .. } => PrintKind::StrPtr,
                 // `Var(_)` means the typechecker did not resolve
@@ -2400,6 +2421,24 @@ fn emit_per_arg_print(
                 let fref = module.declare_func_in_func(print_i64, builder.func);
                 builder.ins().call(fref, &[n]);
             }
+            PrintKind::Uint => {
+                // Zero-extend to 64 bits so we don't sign-extend
+                // a sub-i64 unsigned value into a giant negative
+                // number. Then route to `gos_rt_print_u64`.
+                let n = if ty.bits() < 64 {
+                    builder.ins().uextend(types::I64, value)
+                } else {
+                    value
+                };
+                let print_u64 = intrinsics.extern_fn(
+                    module,
+                    "gos_rt_print_u64",
+                    &[types::I64],
+                    &[],
+                )?;
+                let fref = module.declare_func_in_func(print_u64, builder.func);
+                builder.ins().call(fref, &[n]);
+            }
             PrintKind::Float => {
                 let d = if ty == types::F32 {
                     builder.ins().fpromote(types::F64, value)
@@ -2518,6 +2557,7 @@ fn emit_args_to_concat_string(
 ) -> Result<ir::Value> {
     let ptr_ty = module.target_config().pointer_type();
     let i64_to_str = intrinsics.extern_fn(module, "gos_rt_i64_to_str", &[types::I64], &[ptr_ty])?;
+    let u64_to_str = intrinsics.extern_fn(module, "gos_rt_u64_to_str", &[types::I64], &[ptr_ty])?;
     let f64_to_str = intrinsics.extern_fn(module, "gos_rt_f64_to_str", &[types::F64], &[ptr_ty])?;
     let bool_to_str =
         intrinsics.extern_fn(module, "gos_rt_bool_to_str", &[types::I32], &[ptr_ty])?;
@@ -2532,6 +2572,7 @@ fn emit_args_to_concat_string(
     };
     let empty_data = intrinsics.intern_string(module, "")?;
 
+    #[allow(clippy::too_many_arguments)]
     fn arg_to_str_ptr(
         module: &mut dyn Module,
         builder: &mut FunctionBuilder<'_>,
@@ -2541,6 +2582,7 @@ fn emit_args_to_concat_string(
         arg: &Operand,
         intrinsics: &mut IntrinsicContext,
         i64_to_str: cranelift_module::FuncId,
+        u64_to_str: cranelift_module::FuncId,
         f64_to_str: cranelift_module::FuncId,
         bool_to_str: cranelift_module::FuncId,
         char_to_str: cranelift_module::FuncId,
@@ -2563,6 +2605,16 @@ fn emit_args_to_concat_string(
                     value
                 };
                 let fref = module.declare_func_in_func(i64_to_str, builder.func);
+                let call = builder.ins().call(fref, &[n]);
+                builder.inst_results(call)[0]
+            }
+            PrintKind::Uint => {
+                let n = if ty.bits() < 64 {
+                    builder.ins().uextend(types::I64, value)
+                } else {
+                    value
+                };
+                let fref = module.declare_func_in_func(u64_to_str, builder.func);
                 let call = builder.ins().call(fref, &[n]);
                 builder.inst_results(call)[0]
             }
@@ -2623,6 +2675,7 @@ fn emit_args_to_concat_string(
         &args[0],
         intrinsics,
         i64_to_str,
+        u64_to_str,
         f64_to_str,
         bool_to_str,
         char_to_str,
@@ -2644,6 +2697,7 @@ fn emit_args_to_concat_string(
             arg,
             intrinsics,
             i64_to_str,
+            u64_to_str,
             f64_to_str,
             bool_to_str,
             char_to_str,
@@ -3111,6 +3165,23 @@ fn lower_intrinsic_call(
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[n]);
                     }
+                    PrintKind::Uint => {
+                        // Zero-extend so values >= 2^63 don't get
+                        // sign-flipped on the way to the i64 helper.
+                        let n = if ty.bits() < 64 {
+                            builder.ins().uextend(types::I64, value)
+                        } else {
+                            value
+                        };
+                        let f = intrinsics.extern_fn(
+                            module,
+                            "gos_rt_concat_u64",
+                            &[types::I64],
+                            &[],
+                        )?;
+                        let fref = module.declare_func_in_func(f, builder.func);
+                        builder.ins().call(fref, &[n]);
+                    }
                     PrintKind::Float => {
                         let d = if ty == types::F32 {
                             builder.ins().fpromote(types::F64, value)
@@ -3458,7 +3529,7 @@ fn lower_intrinsic_call(
             define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
             Ok(true)
         }
-        "println" | "print" | "eprintln" | "eprint" => {
+        "println" | "print" => {
             // Per-arg dispatch: each operand is printed through
             // the runtime helper matching its MIR type
             // (`gos_rt_print_str` for strings, `_i64` for
@@ -3466,17 +3537,6 @@ fn lower_intrinsic_call(
             // This is the same machinery `__concat` uses; bare
             // `println(5i64)` and interpolated `println!("{n}")`
             // therefore share one code path.
-            //
-            // (The runtime doesn't yet split stderr, so `eprint*`
-            // currently shares the stdout writer; that's a
-            // separate gap, not this one.)
-            //
-            // Only `println` / `eprintln` append the trailing
-            // newline + flush via `gos_rt_println()`.
-            //
-            // Spec: each arg is space-separated. Mirror the
-            // interpreter's `render_args` (which inserts a `' '`
-            // between each pair).
             //
             // The whole sequence runs under the process-global
             // stdout lock so concurrent goroutines on other OS
@@ -3490,12 +3550,38 @@ fn lower_intrinsic_call(
             let release_ref = module.declare_func_in_func(release_fn, builder.func);
             let _ = builder.ins().call(acquire_ref, &[]);
             emit_per_arg_print(module, builder, locals, body, tcx, args, intrinsics, " ")?;
-            if matches!(name, "println" | "eprintln") {
+            if name == "println" {
                 let println_fn = intrinsics.extern_fn(module, "gos_rt_println", &[], &[])?;
                 let pl_ref = module.declare_func_in_func(println_fn, builder.func);
                 let _ = builder.ins().call(pl_ref, &[]);
             }
             let _ = builder.ins().call(release_ref, &[]);
+            if !destination.projection.is_empty() {
+                bail!("native codegen: intrinsic destination cannot have projections");
+            }
+            let zero = builder.ins().iconst(types::I64, 0);
+            define_var_to(builder, locals, body, tcx, module, destination.local, zero);
+            Ok(true)
+        }
+        "eprintln" | "eprint" => {
+            // Build the formatted message via the same per-arg
+            // concat machinery `panic` uses, then drain it through
+            // the stderr writer (which flushes stdout first so
+            // diagnostic order is preserved). Keeps eprint output
+            // off stdout without parallel `_err` versions of every
+            // per-type print helper.
+            let s = emit_args_to_concat_string(
+                module, builder, locals, body, tcx, args, intrinsics, " ",
+            )?;
+            let eprint_fn =
+                intrinsics.extern_fn(module, "gos_rt_eprint_str", &[ptr_ty], &[])?;
+            let eprint_ref = module.declare_func_in_func(eprint_fn, builder.func);
+            builder.ins().call(eprint_ref, &[s]);
+            if name == "eprintln" {
+                let nl_fn = intrinsics.extern_fn(module, "gos_rt_eprintln", &[], &[])?;
+                let nl_ref = module.declare_func_in_func(nl_fn, builder.func);
+                let _ = builder.ins().call(nl_ref, &[]);
+            }
             if !destination.projection.is_empty() {
                 bail!("native codegen: intrinsic destination cannot have projections");
             }

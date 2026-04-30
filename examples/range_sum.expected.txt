@@ -1,0 +1,4 @@
+sum     = 45
+product = 362880
+maximum = 9
+maximum of empty: undefined (None)

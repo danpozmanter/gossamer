@@ -1,10 +1,17 @@
 //! Runtime support for `std::crypto`.
 //! Phase-1 primitives plus AEAD (AES-GCM, ChaCha20-Poly1305), digital
-//! signatures (RSA, ECDSA P-256, Ed25519), X.509 certificate parsing,
+//! signatures (ECDSA P-256, Ed25519), X.509 certificate parsing,
 //! key-derivation functions (PBKDF2, scrypt, Argon2), and the wider
 //! hash family (SHA-256, SHA-512, BLAKE3). All FFI is contained inside
 //! the upstream RustCrypto crates so this crate keeps
 //! `#![forbid(unsafe_code)]`.
+//!
+//! RSA-PKCS#1 v1.5 was previously offered through `crypto::rsa`. It
+//! was removed because the only viable pure-Rust implementation
+//! (`rsa 0.9.x`) is affected by RUSTSEC-2023-0071 (Marvin Attack
+//! timing sidechannel) with no upstream fix available. Use
+//! `crypto::ed25519` or `crypto::ecdsa` for new code; the surface
+//! returns when a constant-time RSA replacement lands.
 
 #![forbid(unsafe_code)]
 #![allow(clippy::doc_markdown)]
@@ -428,59 +435,6 @@ pub mod ecdsa {
             .map_err(|e| Error::new(format!("ecdsa: signature: {e}")))?;
         key.verify(message, &sig)
             .map_err(|e| Error::new(format!("ecdsa: verify: {e}")))
-    }
-}
-
-pub mod rsa {
-    //! RSA-PKCS#1 v1.5 signatures with SHA-256.
-
-    use ::rsa::pkcs1v15::{SigningKey, VerifyingKey};
-    use ::rsa::pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey};
-    use ::rsa::sha2::Sha256;
-    use ::rsa::signature::{SignatureEncoding, Signer, Verifier};
-    use ::rsa::{RsaPrivateKey, RsaPublicKey};
-
-    use crate::errors::Error;
-
-    /// Generates a fresh RSA-2048 keypair.
-    pub fn keypair_pem() -> Result<(String, String), Error> {
-        let mut rng = super::rand::OsRng;
-        let private = RsaPrivateKey::new(&mut rng, 2048)
-            .map_err(|e| Error::new(format!("rsa: keygen: {e}")))?;
-        let public = RsaPublicKey::from(&private);
-        let secret_pem = private
-            .to_pkcs8_pem(::rsa::pkcs8::LineEnding::LF)
-            .map_err(|e| Error::new(format!("rsa: encode secret: {e}")))?
-            .to_string();
-        let public_pem = public
-            .to_public_key_pem(::rsa::pkcs8::LineEnding::LF)
-            .map_err(|e| Error::new(format!("rsa: encode public: {e}")))?;
-        Ok((secret_pem, public_pem))
-    }
-
-    /// PKCS#1 v1.5 SHA-256 sign with a PKCS#8-PEM secret.
-    pub fn sign_pkcs1_sha256(secret_pem: &str, message: &[u8]) -> Result<Vec<u8>, Error> {
-        let key = RsaPrivateKey::from_pkcs8_pem(secret_pem)
-            .map_err(|e| Error::new(format!("rsa: secret pem: {e}")))?;
-        let signing = SigningKey::<Sha256>::new(key);
-        let sig = signing.sign(message);
-        Ok(sig.to_bytes().to_vec())
-    }
-
-    /// PKCS#1 v1.5 SHA-256 verify against an SPKI-PEM public key.
-    pub fn verify_pkcs1_sha256(
-        public_pem: &str,
-        message: &[u8],
-        signature: &[u8],
-    ) -> Result<(), Error> {
-        let key = RsaPublicKey::from_public_key_pem(public_pem)
-            .map_err(|e| Error::new(format!("rsa: public pem: {e}")))?;
-        let verifying = VerifyingKey::<Sha256>::new(key);
-        let sig = ::rsa::pkcs1v15::Signature::try_from(signature)
-            .map_err(|e| Error::new(format!("rsa: signature: {e}")))?;
-        verifying
-            .verify(message, &sig)
-            .map_err(|e| Error::new(format!("rsa: verify: {e}")))
     }
 }
 

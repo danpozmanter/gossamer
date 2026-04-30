@@ -748,6 +748,16 @@ pub unsafe extern "C" fn gos_rt_i64_to_str(n: i64) -> *mut c_char {
     alloc_cstring(n.to_string().as_bytes())
 }
 
+/// Stringifies an *unsigned* 64-bit integer. Distinct from
+/// `gos_rt_i64_to_str` so values `>= 2^63` print as their true
+/// magnitude rather than a leading-`-` two's-complement view.
+/// Used by the cranelift + LLVM lowerers when the source TyKind
+/// resolves to `u8/u16/u32/u64/u128/usize`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_u64_to_str(n: u64) -> *mut c_char {
+    alloc_cstring(n.to_string().as_bytes())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_f64_to_str(x: f64) -> *mut c_char {
     alloc_cstring(format!("{x}").as_bytes())
@@ -1045,6 +1055,17 @@ pub unsafe extern "C" fn gos_rt_print_i64(n: i64) {
     unsafe { write_stdout(text.as_bytes()) };
 }
 
+/// Prints an unsigned 64-bit integer through the buffered
+/// stdout path. Distinct from `gos_rt_print_i64` so values
+/// `>= 2^63` print without a leading `-` (the sign-extension
+/// bug a single shared printer would have).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_print_u64(n: u64) {
+    let mut buf = itoa::Buffer::new();
+    let text = buf.format(n);
+    unsafe { write_stdout(text.as_bytes()) };
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_print_f64(x: f64) {
     // Match the interpreter's `{}` Display output.
@@ -1064,6 +1085,33 @@ pub unsafe extern "C" fn gos_rt_print_char(c: i32) {
         let s = ch.encode_utf8(&mut buf);
         unsafe { write_stdout(s.as_bytes()) };
     }
+}
+
+/// Direct stderr writer used by `eprint`/`eprintln` lowering.
+/// Bypasses the stdout buffer. Flushes stdout first so prior
+/// `println` output isn't reordered with diagnostic output —
+/// matches the language semantics where stderr appears in the
+/// expected place relative to stdout.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_eprint_str(s: *const c_char) {
+    let bytes = if s.is_null() {
+        b"" as &[u8]
+    } else {
+        unsafe { CStr::from_ptr(s).to_bytes() }
+    };
+    unsafe { gos_rt_flush_stdout() };
+    use std::io::Write;
+    let stderr = std::io::stderr();
+    let _ = stderr.lock().write_all(bytes);
+}
+
+/// `eprint_str` followed by a newline. Mirrors `gos_rt_println`
+/// for the stderr path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_eprintln() {
+    use std::io::Write;
+    let stderr = std::io::stderr();
+    let _ = stderr.lock().write_all(b"\n");
 }
 
 // ---------------------------------------------------------------
@@ -5630,6 +5678,17 @@ pub unsafe extern "C" fn gos_rt_concat_str(s: *const c_char) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_concat_i64(n: i64) {
+    let s = format!("{n}");
+    CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
+}
+
+/// Appends an *unsigned* 64-bit integer to the concat buffer.
+/// Used when the source TyKind is `u8/u16/u32/u64/u128/usize` so
+/// values `>= 2^63` print as their true magnitude rather than the
+/// sign-flipped two's-complement view a single `i64` printer would
+/// produce.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_u64(n: u64) {
     let s = format!("{n}");
     CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
 }

@@ -1,0 +1,6 @@
+0! = recursive 1, iterative 1
+1! = recursive 1, iterative 1
+5! = recursive 120, iterative 120
+10! = recursive 3628800, iterative 3628800
+12! = recursive 479001600, iterative 479001600
+20! = recursive 2432902008176640000, iterative 2432902008176640000
