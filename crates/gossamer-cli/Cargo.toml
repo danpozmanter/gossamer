@@ -31,21 +31,13 @@ ships the parser, type-checker, interpreter, linter, formatter,
 LSP adapter, doc generator, and test/bench harness as one binary."""
 section = "devel"
 priority = "optional"
+# Use the literal `target/release/` prefix even for cross-compile.
+# cargo-deb / cargo-generate-rpm rewrite this prefix to
+# `target/<triple>/release/` automatically when `--target` is
+# passed; cargo-deb actively rejects hardcoded cross-compile paths
+# (`Please only use target/release path prefix...`).
 assets = [
     ["target/release/gos", "usr/bin/", "755"],
-    ["../../README.md", "usr/share/doc/gossamer/README.md", "644"],
-]
-
-# Cross-compile variant: assets resolve under
-# `target/aarch64-unknown-linux-gnu/release/` because that is where
-# `cargo build --target aarch64-unknown-linux-gnu` lands the binary.
-# Activated in CI with `cargo deb --variant=aarch64`. `name` is
-# repeated so the resulting filename stays `gossamer_*.deb` and does
-# not pick up the variant suffix cargo-deb appends by default.
-[package.metadata.deb.variants.aarch64]
-name = "gossamer"
-assets = [
-    ["target/aarch64-unknown-linux-gnu/release/gos", "usr/bin/", "755"],
     ["../../README.md", "usr/share/doc/gossamer/README.md", "644"],
 ]
 
@@ -55,16 +47,6 @@ license = "Apache-2.0"
 summary = "Gossamer toolchain — parser, checker, interpreter, and tooling"
 assets = [
     { source = "target/release/gos", dest = "/usr/bin/gos", mode = "755" },
-    { source = "../../README.md", dest = "/usr/share/doc/gossamer/README.md", mode = "644" },
-]
-
-# Cross-compile variant — see the matching `[package.metadata.deb...]`
-# block for rationale. Activated in CI with
-# `cargo generate-rpm --variant=aarch64`.
-[package.metadata.generate-rpm.variants.aarch64]
-name = "gossamer"
-assets = [
-    { source = "target/aarch64-unknown-linux-gnu/release/gos", dest = "/usr/bin/gos", mode = "755" },
     { source = "../../README.md", dest = "/usr/share/doc/gossamer/README.md", mode = "644" },
 ]
 

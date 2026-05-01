@@ -115,14 +115,12 @@ jobs:
 
       - name: Build .deb
         run: |
-          cargo deb --no-build --target aarch64-unknown-linux-gnu \
-            --variant=aarch64 -p gossamer-cli
+          cargo deb --no-build --target aarch64-unknown-linux-gnu -p gossamer-cli
           mv target/aarch64-unknown-linux-gnu/debian/*.deb .
 
       - name: Build .rpm
         run: |
-          cargo generate-rpm --target aarch64-unknown-linux-gnu \
-            --variant=aarch64 -p crates/gossamer-cli
+          cargo generate-rpm --target aarch64-unknown-linux-gnu -p crates/gossamer-cli
           mv target/aarch64-unknown-linux-gnu/generate-rpm/*.rpm .
 
       - name: Upload artifacts
