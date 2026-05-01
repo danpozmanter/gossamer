@@ -198,8 +198,20 @@ macro_rules! __rm_munch {
             /// __bindings_force_link()` at its crate root that
             /// chains into this; see
             /// [`crate::register_module!`] for the convention.
+            ///
+            /// Also publishes each item's `gos_binding_<...>` C-ABI
+            /// thunk address into the codegen's native-symbol
+            /// registry so the cranelift JIT can resolve calls into
+            /// this module from JIT-compiled bodies.
             pub fn force_link() {
                 let _: &'static $crate::Module = &MODULE;
+                $crate::__paste::paste! {
+                    $(
+                        $crate::__rm_register_native_export! {
+                            $sym, $sn
+                        }
+                    )*
+                }
             }
         }
     };
@@ -253,8 +265,11 @@ macro_rules! __rm_munch {
 }
 
 /// Internal: emits the `extern "C"` thunk for one plain binding
-/// fn. Skipped when `$sym` is the `__nosym` sentinel (the
-/// legacy `register_module!` form without `symbol_prefix:`).
+/// fn, plus a [`crate::NativeSymbolEntry`] entry into the
+/// link-time `NATIVE_SYMBOLS` slice so the cranelift JIT can
+/// resolve calls into the binding without a runtime registration
+/// hop. Skipped when `$sym` is the `__nosym` sentinel (the legacy
+/// `register_module!` form without `symbol_prefix:`).
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __rm_emit_native_export {
@@ -281,6 +296,52 @@ macro_rules! __rm_emit_native_export {
                     <<$ret as $crate::native::BindingAbi>::Output as ::core::default::Default>::default()
                 })
             }
+
+            #[allow(non_snake_case)]
+            fn [< __addr_ $sym __ $name >]() -> *const u8 {
+                [< gos_binding_ $sym __ $name >] as *const u8
+            }
+
+            #[$crate::linkme::distributed_slice($crate::NATIVE_SYMBOLS)]
+            #[linkme(crate = $crate::linkme)]
+            #[allow(non_upper_case_globals)]
+            static [< __NATIVE_SYM_ $sym __ $name >]: $crate::NativeSymbolEntry =
+                $crate::NativeSymbolEntry {
+                    name: concat!(
+                        "gos_binding_",
+                        stringify!($sym),
+                        "__",
+                        stringify!($name),
+                    ),
+                    addr_fn: [< __addr_ $sym __ $name >],
+                };
+        }
+    };
+}
+
+/// Internal: at `force_link()` time, registers one binding's C-ABI
+/// thunk address with the codegen's native-symbol registry so the
+/// cranelift JIT can resolve calls into the binding from
+/// JIT-compiled bodies.
+///
+/// Skipped (no-op) when `$sym` is the `__nosym` sentinel — that
+/// form of `register_module!` doesn't emit a C-ABI thunk to begin
+/// with, so there's nothing to publish.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __rm_register_native_export {
+    (__nosym, $name:ident) => {};
+    ($sym:ident, $name:ident) => {
+        $crate::__paste::paste! {
+            $crate::__register_native_symbol(
+                concat!(
+                    "gos_binding_",
+                    stringify!($sym),
+                    "__",
+                    stringify!($name),
+                ),
+                [< gos_binding_ $sym __ $name >] as *const u8,
+            );
         }
     };
 }

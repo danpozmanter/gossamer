@@ -1126,6 +1126,7 @@ dependencies = [
 name = "gossamer-binding"
 version = "0.0.0"
 dependencies = [
+ "gossamer-codegen-cranelift",
  "gossamer-interp",
  "gossamer-resolve",
  "linkme",
@@ -1179,6 +1180,7 @@ dependencies = [
  "gossamer-resolve",
  "gossamer-runtime",
  "gossamer-types",
+ "linkme",
 ]
 
 [[package]]

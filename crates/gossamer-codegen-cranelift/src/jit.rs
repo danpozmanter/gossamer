@@ -111,7 +111,15 @@ impl Drop for JitArtifact {
 pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
     let isa = build_native_isa(false)?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
-    let runtime_symbol_set = register_runtime_symbols(&mut builder);
+    let mut runtime_symbol_set = register_runtime_symbols(&mut builder);
+    // Register every `gos_binding_<...>` C-ABI thunk advertised by
+    // the binding crates. Without these, `JITModule::finalize_definitions`
+    // panics with `can't resolve symbol gos_binding_<...>` because
+    // the default libloading-based resolver only sees the dynamic
+    // symbol table, and Cargo binaries don't expose statically-linked
+    // `pub extern "C"` symbols there.
+    let leaked_binding_names = register_binding_symbols(&mut builder);
+    runtime_symbol_set.extend(leaked_binding_names);
     let mut module = JITModule::new(builder);
 
     // Rename the user's `main` to `gos_main` in the JIT's symbol
@@ -606,6 +614,48 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_go_spawn_call_4"     => rt::gos_rt_go_spawn_call_4,
         "gos_rt_go_spawn_call_5"     => rt::gos_rt_go_spawn_call_5,
         "gos_rt_go_spawn_call_6"     => rt::gos_rt_go_spawn_call_6,
+    }
+    names
+}
+
+/// Walks both binding-symbol registration paths and registers each
+/// `(name, addr)` with the JIT builder.
+///
+/// - [`crate::native_symbols::NATIVE_SYMBOLS`] — the link-time
+///   `linkme::distributed_slice` populated by
+///   `gossamer_binding::register_module!` for every binding item.
+/// - [`crate::native_symbols::native_symbols_snapshot`] — the
+///   runtime `Mutex<Vec>` registry populated by the legacy
+///   `force_link()` path. Kept for backward compatibility with
+///   bindings that publish from a runtime hook.
+///
+/// Returns the leaked `&'static str` names so the caller can fold
+/// them into the runtime-symbol set used by [`body_calls_jit_unsafe`]
+/// — that keeps bodies that call bindings eligible for JIT
+/// promotion (the `body_kinds` primitive-only filter still vetoes
+/// anything the dispatch trampoline can't marshal).
+fn register_binding_symbols(builder: &mut JITBuilder) -> Vec<&'static str> {
+    use std::collections::HashSet;
+
+    let mut names: Vec<&'static str> = Vec::new();
+    let mut seen: HashSet<&'static str> = HashSet::new();
+    // `linkme::DistributedSlice` doesn't impl `IntoIterator` for
+    // `&Self`; the explicit `.iter()` is the only way in.
+    #[allow(
+        clippy::explicit_iter_loop,
+        reason = "DistributedSlice has no &Self IntoIterator impl"
+    )]
+    for entry in crate::native_symbols::NATIVE_SYMBOLS.iter() {
+        if seen.insert(entry.name) {
+            builder.symbol(entry.name, (entry.addr_fn)());
+            names.push(entry.name);
+        }
+    }
+    for sym in crate::native_symbols::native_symbols_snapshot() {
+        if seen.insert(sym.name) {
+            builder.symbol(sym.name, sym.addr);
+            names.push(sym.name);
+        }
     }
     names
 }

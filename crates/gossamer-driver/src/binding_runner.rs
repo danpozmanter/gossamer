@@ -358,7 +358,7 @@ impl BindingRunner {
             return Ok(false);
         }
         let artifact_mtime = artifact.metadata()?.modified()?;
-        let max_dep_mtime = max_path_dep_mtime(&self.bindings)?;
+        let max_dep_mtime = max_path_dep_mtime(&self.bindings, &self.gossamer_root)?;
         if let Some(dep_mtime) = max_dep_mtime
             && dep_mtime > artifact_mtime
         {
@@ -495,7 +495,7 @@ impl StaticBindingsLib {
             return Ok(false);
         }
         let artifact_mtime = artifact.metadata()?.modified()?;
-        let max_dep_mtime = max_path_dep_mtime(&self.bindings)?;
+        let max_dep_mtime = max_path_dep_mtime(&self.bindings, &self.gossamer_root)?;
         if let Some(dep_mtime) = max_dep_mtime
             && dep_mtime > artifact_mtime
         {
@@ -840,7 +840,10 @@ fn collect_stream<R: Read + Send + 'static>(stream: Option<R>) -> std::sync::Arc
     acc
 }
 
-fn max_path_dep_mtime(bindings: &[RenderedBinding]) -> io::Result<Option<SystemTime>> {
+fn max_path_dep_mtime(
+    bindings: &[RenderedBinding],
+    gossamer_root: &Path,
+) -> io::Result<Option<SystemTime>> {
     let mut best: Option<SystemTime> = None;
     for b in bindings {
         let Some(root) = &b.local_root else {
@@ -850,6 +853,16 @@ fn max_path_dep_mtime(bindings: &[RenderedBinding]) -> io::Result<Option<SystemT
             continue;
         }
         walk_max_mtime(root, &mut best)?;
+    }
+    // Track the gossamer source tree alongside the binding crates:
+    // changes to gossamer-binding / gossamer-codegen-cranelift /
+    // the runtime affect what the runner needs to do at startup
+    // (e.g. registering binding C-ABI thunks with the JIT). Without
+    // this, an upgrade of `gos` reuses a stale runner compiled
+    // against the previous gossamer-binding ABI.
+    let crates_dir = gossamer_root.join("crates");
+    if crates_dir.exists() {
+        walk_max_mtime(&crates_dir, &mut best)?;
     }
     Ok(best)
 }

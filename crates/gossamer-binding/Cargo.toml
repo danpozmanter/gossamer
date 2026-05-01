@@ -39,6 +39,7 @@ format_push_string = "allow"
 collapsible_if = "allow"
 
 [dependencies]
+gossamer-codegen-cranelift = { workspace = true }
 gossamer-interp = { workspace = true }
 gossamer-resolve = { workspace = true }
 linkme = "0.3"

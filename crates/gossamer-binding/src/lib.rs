@@ -59,6 +59,29 @@ pub use linkme;
 #[doc(hidden)]
 pub use pastey as __paste;
 
+/// Internal: registers a binding's `gos_binding_<...>` C-ABI thunk
+/// address with the cranelift JIT's native-symbol table.
+///
+/// Called from the `force_link()` shim emitted by
+/// [`register_module!`] so JIT-compiled bodies can resolve calls
+/// into bindings without relying on the dynamic symbol table.
+///
+/// `addr` must point at the matching `extern "C"` thunk; the macro
+/// stamps out `[< gos_binding_ $sym __ $name >] as *const u8` to
+/// satisfy this contract. Bindings should not call this directly.
+#[doc(hidden)]
+pub fn __register_native_symbol(name: &'static str, addr: *const u8) {
+    gossamer_codegen_cranelift::register_native_symbol(name, addr);
+}
+
+/// Re-export of the cranelift-side link-time symbol registry. The
+/// `register_module!` macro lands one [`NativeSymbolEntry`] per
+/// binding item into this slice via `linkme::distributed_slice`,
+/// so the JIT can resolve calls into bindings without any runtime
+/// registration call.
+#[doc(hidden)]
+pub use gossamer_codegen_cranelift::{NATIVE_SYMBOLS, NativeSymbolEntry};
+
 /// Returns every module registered via [`register_module!`].
 ///
 /// The slice is populated at link time by `linkme`; it is empty
