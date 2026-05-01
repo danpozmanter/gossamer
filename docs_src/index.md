@@ -8,10 +8,7 @@ language with Rust-flavoured syntax and Go-shaped runtime.
 - Project style guide: [`GUIDELINES.md`](https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md)
 - Security policy: [`SECURITY.md`](https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md)
 
-**Status**: pre-stable (version 0.0.0). The compatibility
-policy that takes effect at the first stable tag is drafted at
-[`stability.md`](stability.md); until then, the public API may
-change with notice in release notes.
+**Status**: pre-stable (version 0.0.0). The public API may change.
 
 ## Hello, Gossamer
 

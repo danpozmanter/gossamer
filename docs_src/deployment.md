@@ -352,4 +352,3 @@ and ship alongside a CycloneDX SBOM.
 - [`perf_characteristics.md`](perf_characteristics.md) — GC,
   goroutine memory, scheduler under load.
 - [`stdlib.md`](stdlib.md) — `slog`, `http`, `os`.
-- [`stability.md`](stability.md) — versioning + deprecation policy.

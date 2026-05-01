@@ -512,6 +512,41 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
         // benchmarks (the §5 release-perf investigation
         // found this on fannkuch).
         .arg(format!("-mcpu={mcpu}"))
+        // Cap vectoriser width at 256 bits. Without this,
+        // LLVM-O3 + `-mcpu=native` on AVX-512 hosts (Zen 5,
+        // Sapphire Rapids, etc.) eagerly widens hot inner loops
+        // to ZMM, then has to save/restore them around runtime
+        // calls (`gos_rt_*`) — costing more than it saves on
+        // small-trip-count loops like fannkuch's `perm.swap`.
+        // YMM (256-bit) is the sweet spot: AVX2 and FMA still
+        // fire on workloads that genuinely benefit (nbody,
+        // spectral-norm), but the ZMM dirty-state churn around
+        // runtime calls disappears. Matches the upstream
+        // recommendation for AVX-512 codegen on cores where
+        // 512-bit ops down-clock or share execution-port budget
+        // with scalar work.
+        .arg("-mattr=+prefer-256-bit")
+        // Block `LoopIdiomRecognize` from rewriting trivial
+        // copy / shift loops into `llvm.memcpy` / `llvm.memmove`
+        // calls. Once a memcpy/memmove appears with a runtime
+        // size, `llc` has no choice but to emit a libc PLT call
+        // (musl's `memcpy`), and on small `n` (< ~16) the call
+        // overhead — argument setup, PLT trampoline, and YMM
+        // save/restore around it — dwarfs the actual work, so
+        // the "compiled" Cranelift tier (which inlines the loop
+        // verbatim) ends up faster than `--release` LLVM-O3.
+        // Keeping idiom-recognise off matches the inline-loop
+        // shape that beats Cranelift on fannkuch, and leaves
+        // genuinely large copies (compiler-emitted aggregate
+        // moves via explicit `llvm.memcpy` intrinsics) untouched
+        // because those go through a different lowering path
+        // that this flag does not gate.
+        //
+        // The narrower `disable-memcpy-idiom` /
+        // `disable-memmove-idiom` flags exist but no longer take
+        // effect under LLVM 18's new pass manager — see the §5
+        // release-perf investigation in the bench-game audit.
+        .arg("--disable-loop-idiom-all")
         .arg(&ll_path)
         .arg("-o")
         .arg(&opt_path);
@@ -547,6 +582,11 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
         .arg(format!("-mtriple={triple}"))
         .arg("-relocation-model=pic")
         .arg(format!("-mcpu={mcpu}", mcpu = mcpu_target()))
+        // See the matching note on the `opt` invocation: cap
+        // the late-stage vectoriser at 256-bit too so any
+        // remaining post-`opt` codegen (slow-path lowering,
+        // memcpy/memset expansion) doesn't reach for ZMM.
+        .arg("-mattr=+prefer-256-bit")
         .arg(&opt_path)
         .arg("-o")
         .arg(&obj_path);

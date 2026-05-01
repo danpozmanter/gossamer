@@ -461,5 +461,4 @@ logger.info("started", &[slog::field("port", 8080)])
 - [`../non_goals_v1.md`](../non_goals_v1.md) — deferred features.
 - [`../stdlib_coverage.md`](../stdlib_coverage.md) — every
   stdlib item, support state.
-- [`../debugging.md`](../debugging.md) — gdb / SIGQUIT / pprof
   / `--race` recipes.
