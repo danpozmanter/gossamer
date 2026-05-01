@@ -438,13 +438,23 @@ impl MultiScheduler {
     /// task checks this set and, if the gid is present, re-ejects
     /// the task to the injector instead of leaving it parked.
     pub fn unpark(&self, gid: Gid) -> bool {
-        let entry = self.inner.parked.lock().remove(&gid);
+        // Hold the `parked` guard across the `pre_unpark.insert()`
+        // below so the worker's symmetric "insert into parked, then
+        // check pre_unpark" sequence (in `worker_loop`) cannot
+        // complete between our miss and our pre_unpark write. If we
+        // released `parked` first, a worker could insert + check +
+        // proceed before our pre_unpark.insert landed — leaving the
+        // gid parked indefinitely. (Windows surfaces the race more
+        // often because of the coarser timer-wake granularity that
+        // widens the netpoller's deliver→worker park interleaving.)
+        let mut parked = self.inner.parked.lock();
+        let entry = parked.remove(&gid);
         let Some(entry) = entry else {
-            // Park hasn't landed yet. Record so the worker's
-            // `pre_unpark` check sees it.
             self.inner.pre_unpark.lock().insert(gid);
+            drop(parked);
             return false;
         };
+        drop(parked);
         let home = entry.home;
         let preferred = {
             let workers = self.inner.workers.lock();

@@ -329,6 +329,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # `docker/build-push-action@v6` with `provenance: true` /
+      # `sbom: true` requires the `docker-container` builder driver;
+      # the runner's default `docker` driver fails finalisation with
+      # "Attestation is not supported for the docker driver". The
+      # setup-buildx-action installs and selects `docker-container`.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build + push distroless Docker image
         uses: docker/build-push-action@v6
         with:
