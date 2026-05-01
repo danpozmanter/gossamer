@@ -244,17 +244,15 @@ pub(crate) fn fetch(manifest: Option<PathBuf>, offline: bool) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let m = gossamer_pkg::Manifest::parse(&source)?;
-    let resolver = gossamer_pkg::Resolver::new(gossamer_pkg::VersionCatalogue::new());
-    let resolved = resolver
+    let plan = gossamer_pkg::Resolver::new(gossamer_pkg::VersionCatalogue::new())
         .resolve(&m)
         .map_err(|e| anyhow!("resolve failed: {e}"))?;
     let mut cache = gossamer_pkg::Cache::new();
-    let fetcher = gossamer_pkg::Fetcher::new(gossamer_pkg::FetchOptions { offline });
-    let fetched = fetcher
-        .fetch_all(&resolved, &mut cache)
+    let pkgs = gossamer_pkg::Fetcher::new(gossamer_pkg::FetchOptions { offline })
+        .fetch_all(&plan, &mut cache)
         .map_err(|e| anyhow!("fetch failed: {e}"))?;
-    println!("fetch: {} project(s) cached", fetched.len());
-    for entry in &fetched {
+    println!("fetch: {} project(s) cached", pkgs.len());
+    for entry in &pkgs {
         println!("  {} → {}", entry.resolved.id, entry.source.digest);
     }
     Ok(())
@@ -267,17 +265,15 @@ pub(crate) fn vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let m = gossamer_pkg::Manifest::parse(&source)?;
-    let resolver = gossamer_pkg::Resolver::new(gossamer_pkg::VersionCatalogue::new());
-    let resolved = resolver
+    let plan = gossamer_pkg::Resolver::new(gossamer_pkg::VersionCatalogue::new())
         .resolve(&m)
         .map_err(|e| anyhow!("resolve failed: {e}"))?;
     let mut cache = gossamer_pkg::Cache::new();
-    let fetcher = gossamer_pkg::Fetcher::new(gossamer_pkg::FetchOptions::default());
-    let fetched = fetcher
-        .fetch_all(&resolved, &mut cache)
+    let pkgs = gossamer_pkg::Fetcher::new(gossamer_pkg::FetchOptions::default())
+        .fetch_all(&plan, &mut cache)
         .map_err(|e| anyhow!("fetch failed: {e}"))?;
     let dest = out.unwrap_or_else(|| PathBuf::from("vendor"));
-    let written = gossamer_pkg::vendor(&fetched, &dest)
+    let written = gossamer_pkg::vendor(&pkgs, &dest)
         .with_context(|| format!("writing vendor dir {}", dest.display()))?;
     let total: usize = written.values().map(Vec::len).sum();
     println!(

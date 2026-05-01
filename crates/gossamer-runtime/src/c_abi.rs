@@ -8,37 +8,40 @@
 
 #![allow(clippy::missing_safety_doc)]
 #![allow(missing_docs)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_possible_wrap)]
-#![allow(clippy::cast_sign_loss)]
-#![allow(clippy::cast_precision_loss)]
 #![allow(clippy::must_use_candidate)]
 // FFI signatures must match the Cranelift / LLVM call sites
-// exactly. The remaining pedantic lints either flag patterns we
-// deliberately keep (similar `argc`/`argv` parameter names match
-// the Unix convention; `cast_lossless` would make the
-// hot-path runtime arithmetic harder to read; nested `unsafe
-// extern` blocks are a localisation choice for fns we only
-// reference once) or are already worked around in the source
-// (`Vec::from_raw_parts(p, n, n)` reconstructs an exact
-// allocation we hand-built). Allow them at file scope rather
-// than dotting per-call-site annotations across 2k lines.
+// exactly. Keep these allows at file scope rather than dotting
+// per-call-site annotations across the C-ABI surface:
+// `similar_names` covers `argc`/`argv` Unix convention;
+// `many_single_char_names` covers `p`/`n`/`k` in tight memory
+// helpers; `items_after_statements` permits inner helper fns
+// alongside the call site they document; `same_length_and_capacity`
+// fires on `Vec::from_raw_parts(p, n, n)` reconstructing exact
+// allocations; `cast_lossless` would force `i64::from(x)` shapes
+// that obscure hot-path arithmetic; `doc_markdown` would force
+// backticks around every C-ABI symbol name in summary lines.
 #![allow(clippy::similar_names)]
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::items_after_statements)]
 #![allow(clippy::same_length_and_capacity)]
 #![allow(clippy::cast_lossless)]
 #![allow(clippy::doc_markdown)]
-#![allow(clippy::match_same_arms)]
-// `out.push_str(&format!(…))` reads more naturally in the few
-// hot-path string builders below than threading `std::fmt::Write`
-// through a file that already imports `std::io::Write` for socket
-// I/O. The allocation cost is irrelevant relative to the syscalls
-// these helpers are formatting headers for.
-#![allow(clippy::format_push_string)]
+// Pointer casts in this file all reinterpret memory the runtime
+// allocates through `gos_rt_gc_alloc`, which is 8-byte aligned, or
+// `Vec`-backed buffers (whose alignment matches the elem type). The
+// linter cannot see the upstream alignment guarantee and would fire
+// on every cast; concentrating the allow at file scope keeps the
+// individual sites readable.
+#![allow(clippy::cast_ptr_alignment)]
+#![allow(clippy::ptr_as_ptr)]
+// Mutable statics back the C-ABI / LLVM-inlined surface (`STDOUT_BUF`,
+// `STDOUT_LEN`, etc. — see `stdout_buffer_globals.md`). The lowerer
+// emits load/store directly against these symbols, so they have to
+// remain `static mut`; the lint flags every read but the contract
+// is documented at each declaration.
+#![allow(static_mut_refs)]
 
 use std::ffi::CStr;
 use std::io::{BufRead, Read, Write};
@@ -271,7 +274,6 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
         }
         p
     };
-    #[allow(clippy::cast_ptr_alignment)]
     let v = header.cast::<GosVec>();
     unsafe {
         std::ptr::write(
@@ -322,7 +324,6 @@ pub unsafe extern "C" fn gos_rt_str_as_bytes(s: *const c_char) -> *mut GosVec {
         }
         p
     };
-    #[allow(clippy::cast_ptr_alignment)]
     let v = header.cast::<GosVec>();
     unsafe {
         std::ptr::write(
@@ -661,7 +662,6 @@ pub unsafe extern "C" fn gos_rt_result_map_err(
     }
     // SAFETY: `closure` is a heap blob whose first word is the
     // lifted function's address (codegen invariant).
-    #[allow(clippy::cast_ptr_alignment, clippy::ptr_as_ptr)]
     let fn_addr = unsafe { *closure.cast::<i64>() };
     if fn_addr == 0 {
         return result;
@@ -684,7 +684,6 @@ pub unsafe extern "C" fn gos_rt_result_map(
     if res.disc != 0 || closure.is_null() {
         return result;
     }
-    #[allow(clippy::cast_ptr_alignment, clippy::ptr_as_ptr)]
     let fn_addr = unsafe { *closure.cast::<i64>() };
     if fn_addr == 0 {
         return result;
@@ -866,7 +865,6 @@ thread_local! {
 /// Internal entry point: increments the per-thread reentrancy
 /// counter, taking the mutex on the outermost acquire. Called by
 /// every code path that touches the stdout buffer.
-#[allow(dead_code)]
 fn stdout_lock_acquire() {
     STDOUT_LOCK_DEPTH.with(|depth| {
         let n = depth.get();
@@ -882,7 +880,6 @@ fn stdout_lock_acquire() {
 /// counter, releasing the mutex when the counter returns to zero.
 /// Calling this without a matching `stdout_lock_acquire` is a
 /// programming error; debug builds assert.
-#[allow(dead_code)]
 fn stdout_lock_release() {
     STDOUT_LOCK_DEPTH.with(|depth| {
         let n = depth.get();
@@ -971,7 +968,6 @@ fn raw_write_stdout(bytes: &[u8]) {
 /// acquisition from the buffer manipulation lets us avoid
 /// re-entering the (non-recursive) `RawMutex` from helpers that
 /// already entered through the safe guard.
-#[allow(static_mut_refs)]
 unsafe fn write_stdout_locked(bytes: &[u8]) {
     if bytes.is_empty() {
         return;
@@ -1022,7 +1018,6 @@ unsafe fn write_stdout(bytes: &[u8]) {
 /// `println`-family intrinsic and on process exit via
 /// `gos_rt_flush_stdout`.
 #[unsafe(no_mangle)]
-#[allow(static_mut_refs)]
 pub unsafe extern "C" fn gos_rt_flush_stdout() {
     let _guard = StdoutGuard::acquire();
     let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
@@ -1210,7 +1205,6 @@ fn raw_write_fd(fd: i32, bytes: &[u8]) {
 /// (large) flush helper. Stderr and other fds go straight to
 /// `write(2)` since they're rare.
 #[unsafe(no_mangle)]
-#[allow(static_mut_refs)]
 pub unsafe extern "C" fn gos_rt_stream_write_byte(stream: *const GosStream, b: i64) {
     let fd = unsafe { stream_fd(stream) };
     if fd == 1 {
@@ -1260,7 +1254,6 @@ pub unsafe extern "C" fn gos_rt_stream_write_str(stream: *const GosStream, s: *c
 /// each i64 and writes its low 8 bits. Batches the whole
 /// block into a single `write_stdout` (or syscall) call.
 #[unsafe(no_mangle)]
-#[allow(static_mut_refs)]
 pub unsafe extern "C" fn gos_rt_stream_write_byte_array(
     stream: *const GosStream,
     arr: *const i64,
@@ -1386,7 +1379,6 @@ pub unsafe extern "C" fn gos_rt_stream_read_to_string(stream: *const GosStream) 
 }
 
 #[unsafe(no_mangle)]
-#[allow(static_mut_refs)]
 pub unsafe extern "C" fn gos_rt_println() {
     unsafe { write_stdout(b"\n") };
     // Line-flush so interactive output appears promptly.
@@ -1571,7 +1563,6 @@ pub unsafe extern "C" fn gos_rt_result_new(disc: i64, payload: i64) -> *mut GosR
     // to `*mut GosResult` (16 B, align 8) is safe. The clippy
     // alignment lint can't see the runtime invariant from the
     // bare cast site.
-    #[allow(clippy::cast_ptr_alignment)]
     let p = unsafe { gos_rt_gc_alloc(std::mem::size_of::<GosResult>() as u64) }.cast::<GosResult>();
     if p.is_null() {
         return Box::into_raw(Box::new(GosResult { disc, payload }));
@@ -4346,7 +4337,6 @@ pub unsafe extern "C" fn gos_rt_heap_i64_len(v: *const GosI64Vec) -> i64 {
 /// with line breaks. Single FFI call instead of one per
 /// line.
 #[unsafe(no_mangle)]
-#[allow(static_mut_refs)]
 pub unsafe extern "C" fn gos_rt_heap_i64_write_lines_to_stdout(
     v: *const GosI64Vec,
     start: i64,
@@ -4432,7 +4422,6 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_lines_to_stdout(
 /// of a shared heap vec; main writes ranges out in order
 /// without per-byte FFI cost.
 #[unsafe(no_mangle)]
-#[allow(static_mut_refs)]
 pub unsafe extern "C" fn gos_rt_heap_i64_write_bytes_to_stdout(
     v: *const GosI64Vec,
     start: i64,
@@ -4587,7 +4576,6 @@ pub unsafe extern "C" fn gos_rt_heap_u8_to_string(v: *const GosU8Vec, len: i64) 
 /// newline after every `line_width` bytes. Single FFI call so
 /// fasta-shape programs don't pay one `gos_rt_print_*` per byte.
 #[unsafe(no_mangle)]
-#[allow(static_mut_refs)]
 pub unsafe extern "C" fn gos_rt_heap_u8_write_lines_to_stdout(
     v: *const GosU8Vec,
     start: i64,
@@ -4668,7 +4656,6 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_lines_to_stdout(
 /// "phase" fills the buffer with whole 60-byte lines (newlines
 /// already in the buffer) and then dumps it.
 #[unsafe(no_mangle)]
-#[allow(static_mut_refs)]
 pub unsafe extern "C" fn gos_rt_heap_u8_write_bytes_to_stdout(
     v: *const GosU8Vec,
     start: i64,
@@ -5471,7 +5458,6 @@ pub unsafe extern "C" fn gos_rt_json_value_array(vec: *const GosVec) -> *mut Gos
         let header = unsafe { &*vec };
         let len = usize::try_from(header.len.max(0)).unwrap_or(0);
         if !header.ptr.is_null() && len > 0 {
-            #[allow(clippy::cast_ptr_alignment)]
             let elems =
                 unsafe { std::slice::from_raw_parts(header.ptr.cast::<*const GosJson>(), len) };
             for elem in elems {
@@ -5552,7 +5538,6 @@ pub unsafe extern "C" fn gos_rt_json_value_object(vec: *const GosVec) -> *mut Go
             } else {
                 raw_len / 2
             };
-            #[allow(clippy::cast_ptr_alignment)]
             let pairs =
                 unsafe { std::slice::from_raw_parts(header.ptr.cast::<[i64; 2]>(), tuple_count) };
             for pair in pairs {
@@ -6066,7 +6051,10 @@ pub unsafe extern "C" fn gos_rt_bufio_scanner_text(s: *const GosScanner) -> *mut
 // ---------------------------------------------------------------
 
 pub struct GosFlagSet {
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "captured for diagnostics; readers will land alongside flag-set error messages"
+    )]
     name: String,
     specs: Vec<FlagSpec>,
     /// After `.parse()` runs, these hold the positional args left

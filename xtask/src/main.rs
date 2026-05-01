@@ -33,6 +33,8 @@ fn main() -> Result<()> {
             println!("  docs-diagnostics    regenerate docs_src/toolchain/diagnostics.md");
             println!("  stdlib-coverage     regenerate docs_src/stdlib_coverage.md");
             println!("  docs-all            run every docs generator");
+            println!("  lint-budget         tally #[allow(...)] sites per crate");
+            println!("  audit-allows        list every #[allow(...)] with surrounding context");
             Ok(())
         }
         Some("docs-stdlib") => regenerate_stdlib_docs(),
@@ -45,6 +47,8 @@ fn main() -> Result<()> {
             regenerate_diagnostic_docs()?;
             regenerate_stdlib_coverage()
         }
+        Some("lint-budget") => report_lint_budget(),
+        Some("audit-allows") => audit_allows(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand {other:?}");
             std::process::exit(2);
@@ -85,6 +89,127 @@ fn locate_workspace_root() -> Result<PathBuf> {
             }
         }
     }
+}
+
+/// Tallies `#[allow(...)]` and `#![allow(...)]` sites across the
+/// workspace by crate. Prints a one-line-per-crate summary plus a
+/// total. Used as a regression gauge: every PR that adds an `allow`
+/// owes a reason comment, and the total should not climb.
+fn report_lint_budget() -> Result<()> {
+    let workspace_root = locate_workspace_root()?;
+    let crates_dir = workspace_root.join("crates");
+    let mut crate_dirs: Vec<PathBuf> = fs::read_dir(&crates_dir)
+        .with_context(|| format!("read {}", crates_dir.display()))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    crate_dirs.push(workspace_root.join("xtask"));
+    crate_dirs.sort();
+    let mut grand_total = 0usize;
+    let mut rows: Vec<(String, usize)> = Vec::new();
+    for dir in &crate_dirs {
+        let count = count_allows_in(dir)?;
+        let name = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?")
+            .to_string();
+        rows.push((name, count));
+        grand_total += count;
+    }
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let pad = rows.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
+    println!("crate{:width$}  allows", "", width = pad.saturating_sub(5));
+    for (name, count) in &rows {
+        if *count == 0 {
+            continue;
+        }
+        println!("{name:<pad$}  {count:>5}");
+    }
+    println!("{:-<width$}", "", width = pad + 9);
+    println!("{:<pad$}  {grand_total:>5}", "total");
+    Ok(())
+}
+
+/// Walks every `*.rs` file under `dir` and counts attribute `#[allow(`
+/// occurrences (item- and crate-level). Approximates the real total —
+/// macros may expand into more — but is the right surface to track at
+/// the source level.
+fn count_allows_in(dir: &Path) -> Result<usize> {
+    let mut total = 0usize;
+    for entry in walk_rs_files(dir) {
+        let body =
+            fs::read_to_string(&entry).with_context(|| format!("read {}", entry.display()))?;
+        for line in body.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("#[allow(") || trimmed.starts_with("#![allow(") {
+                total += 1;
+            }
+        }
+    }
+    Ok(total)
+}
+
+/// Prints every `#[allow(...)]` / `#![allow(...)]` site in the
+/// workspace with a few lines of context, so reviewers can verify
+/// each one carries a `reason = "..."` justification or a comment.
+fn audit_allows() -> Result<()> {
+    let workspace_root = locate_workspace_root()?;
+    let mut targets: Vec<PathBuf> =
+        vec![workspace_root.join("crates"), workspace_root.join("xtask")];
+    targets.sort();
+    for root in &targets {
+        for entry in walk_rs_files(root) {
+            let rel = entry
+                .strip_prefix(&workspace_root)
+                .unwrap_or(entry.as_path());
+            let Ok(body) = fs::read_to_string(&entry) else {
+                continue;
+            };
+            let lines: Vec<&str> = body.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("#[allow(") || trimmed.starts_with("#![allow(") {
+                    println!("--- {}:{} ---", rel.display(), i + 1);
+                    let from = i.saturating_sub(2);
+                    let to = (i + 4).min(lines.len());
+                    for (j, src) in lines[from..to].iter().enumerate() {
+                        let marker = if from + j == i { ">>" } else { "  " };
+                        println!("{marker} {:>4}  {src}", from + j + 1);
+                    }
+                    println!();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Yields every `*.rs` path under `root`, skipping `target/` and any
+/// dot-prefixed directory.
+fn walk_rs_files(root: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if path.is_dir() {
+                if name == "target" || name.starts_with('.') {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Renders the stdlib reference page as Markdown.

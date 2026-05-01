@@ -2,8 +2,6 @@
 //! Mirrors the interpreter run-pass corpus against the register-based
 //! bytecode VM so the two implementations are observed to agree.
 
-#![allow(clippy::needless_raw_string_hashes)]
-
 use std::cell::RefCell;
 
 use gossamer_hir::lower_source_file;
@@ -66,11 +64,11 @@ fn vm_evaluates_arithmetic_expression() {
 
 #[test]
 fn vm_if_else_picks_correct_branch() {
-    let source = r#"
+    let source = r"
 fn pick(n: i64) -> i64 {
     if n > 0i64 { n } else { -n }
 }
-"#;
+";
     let vm = build_vm(source);
     match vm.call("pick", vec![Value::Int(-5)]).unwrap() {
         Value::Int(v) => assert_eq!(v, 5),
@@ -84,7 +82,7 @@ fn pick(n: i64) -> i64 {
 
 #[test]
 fn vm_while_loop_counts_down() {
-    let source = r#"
+    let source = r"
 fn main() {
     let mut n = 3i64
     while n > 0i64 {
@@ -92,13 +90,13 @@ fn main() {
         n = n - 1i64
     }
 }
-"#;
+";
     assert_eq!(run_vm_main(source), "3\n2\n1\n");
 }
 
 #[test]
 fn vm_loop_with_break_returns_value() {
-    let source = r#"
+    let source = r"
 fn main() {
     let mut n = 0i64
     let r = loop {
@@ -107,17 +105,17 @@ fn main() {
     }
     println(r)
 }
-"#;
+";
     assert_eq!(run_vm_main(source), "6\n");
 }
 
 #[test]
 fn vm_handles_recursive_call() {
-    let source = r#"
+    let source = r"
 fn factorial(n: i64) -> i64 {
     if n <= 1i64 { 1i64 } else { n * factorial(n - 1i64) }
 }
-"#;
+";
     let vm = build_vm(source);
     let result = vm.call("factorial", vec![Value::Int(6)]).unwrap();
     match result {
@@ -128,7 +126,7 @@ fn factorial(n: i64) -> i64 {
 
 #[test]
 fn vm_short_circuits_logical_operators() {
-    let source = r#"
+    let source = r"
 fn main() {
     let f = false
     let t = true
@@ -136,18 +134,18 @@ fn main() {
     println(t && t)
     println(f || t)
 }
-"#;
+";
     assert_eq!(run_vm_main(source), "false\ntrue\ntrue\n");
 }
 
 #[test]
 fn vm_arithmetic_agrees_with_tree_walker() {
     use gossamer_interp::Interpreter;
-    let source = r#"
+    let source = r"
 fn compute(a: i64, b: i64) -> i64 {
     (a + b) * (a - b) + a * b
 }
-"#;
+";
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
     let (sf, _) = parse_source_file(source, file);

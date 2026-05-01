@@ -1068,13 +1068,11 @@ pub(crate) const HOT_DISABLED: i32 = i32::MAX;
 
 impl FnChunk {
     /// Produces a `Arc<Self>` so multiple callers share the same chunk.
-    /// `FnChunk` carries `RefCell` and `Cell` interior mutability that
-    /// makes it `!Sync`; the VM is single-threaded today and an `Arc`
-    /// is the right shape for shared-ownership semantics, so the
-    /// `arc_with_non_send_sync` lint is suppressed at this single
-    /// construction site.
     #[must_use]
-    #[allow(clippy::arc_with_non_send_sync)]
+    #[allow(
+        clippy::arc_with_non_send_sync,
+        reason = "FnChunk holds RefCell/Cell interior mutability; Arc shape is needed for goroutine-pool shared ownership even though the chunk itself is !Sync"
+    )]
     pub fn into_shared(self) -> Arc<Self> {
         Arc::new(self)
     }

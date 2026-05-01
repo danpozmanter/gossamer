@@ -6,12 +6,7 @@
 //! enough that hand parsing stays manageable.
 
 #![forbid(unsafe_code)]
-#![allow(
-    clippy::too_many_lines,
-    clippy::format_push_string,
-    clippy::needless_pass_by_value,
-    clippy::implicit_clone
-)]
+#![allow(clippy::too_many_lines, clippy::implicit_clone)]
 
 use std::collections::BTreeMap;
 

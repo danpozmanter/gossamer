@@ -44,7 +44,10 @@ pub use jit_call::force_jit_disabled as set_jit_disabled;
 /// Called by [`builtins::set_program_args`] which is the only
 /// public entry point for both the bytecode and JIT arg lists.
 #[doc(hidden)]
-#[allow(clippy::similar_names)]
+#[allow(
+    clippy::similar_names,
+    reason = "argc/argv are the Unix-standard names for the C main signature"
+)]
 pub(crate) fn set_runtime_args(args: &[String]) {
     use std::ffi::CString;
     use std::os::raw::c_char;

@@ -4,18 +4,6 @@
 //! compiled code, or FFI) is encoded as a single `u64` word.  The low
 //! three bits hold a tag; the remaining 61 bits hold the payload.
 //!
-//! Pedantic lints disabled for the bit-twiddling here: the
-//! sign-loss and possible-wrap on `i64`↔`u64` casts are exactly
-//! what NaN-boxing needs (we *want* the bit pattern to round-trip
-//! through both interpretations), and the `float_cmp` in tests
-//! checks an exact bit-level roundtrip (not an approximate
-//! equality).
-#![allow(
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::float_cmp,
-    reason = "value packing relies on bit-level i64/u64/f64 reinterpretation"
-)]
 //! Tag schema (stable as of Phase P1):
 //! | tag bits | meaning | payload interpretation |
 //! |----------|---------|------------------------|

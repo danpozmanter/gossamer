@@ -636,7 +636,6 @@ impl Resolver {
         }
     }
 
-    #[allow(clippy::unused_self)]
     fn resolve_literal(&self, _lit: &Literal) {}
 
     fn resolve_value_path(&mut self, path: &PathExpr, anchor: NodeId, span: Span) {

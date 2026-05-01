@@ -45,6 +45,10 @@ pub(crate) const TOKEN_TYPES: &[&str] = &[
 pub(crate) const TOKEN_MODIFIERS: &[&str] = &["declaration", "definition", "readonly", "static"];
 
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    dead_code,
+    reason = "indices match the LSP TOKEN_TYPES table; unused variants reserve their slot"
+)]
 enum TokenKind {
     Namespace = 0,
     Type = 1,
@@ -340,7 +344,10 @@ fn visit_pattern(pattern: &Pattern, kind: TokenKind, out: &mut Vec<RawToken>) {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+)]
 fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
     match &expr.kind {
         ExprKind::Block(block) | ExprKind::Unsafe(block) => visit_block(block, out),
@@ -601,19 +608,3 @@ fn push(out: &mut Vec<RawToken>, span: Span, kind: TokenKind, modifiers: u32) {
         modifiers,
     });
 }
-
-#[allow(dead_code)]
-const _ALL_KINDS_USED: [TokenKind; 12] = [
-    TokenKind::Namespace,
-    TokenKind::Type,
-    TokenKind::Struct,
-    TokenKind::Enum,
-    TokenKind::Interface,
-    TokenKind::TypeParameter,
-    TokenKind::Function,
-    TokenKind::Method,
-    TokenKind::Property,
-    TokenKind::Variable,
-    TokenKind::Parameter,
-    TokenKind::EnumMember,
-];

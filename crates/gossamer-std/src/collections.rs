@@ -7,7 +7,6 @@
 //! the observable semantics.
 
 #![forbid(unsafe_code)]
-#![allow(clippy::iter_without_into_iter)]
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -81,6 +80,15 @@ impl<T> Default for Vector<T> {
 impl<T> From<Vec<T>> for Vector<T> {
     fn from(inner: Vec<T>) -> Self {
         Self { inner }
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Vector<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.iter()
     }
 }
 

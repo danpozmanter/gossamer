@@ -60,9 +60,8 @@ fn strconv_parse_i64_rejects_bad_inputs() {
 }
 
 #[test]
-#[allow(clippy::approx_constant)]
 fn strconv_parse_f64_and_bool() {
-    assert!((parse_f64("3.14").unwrap() - 3.14).abs() < 1e-9);
+    assert!((parse_f64("3.25").unwrap() - 3.25).abs() < 1e-9);
     assert!(parse_bool("true").unwrap());
     assert!(!parse_bool("false").unwrap());
     assert!(parse_bool("Maybe").is_err());

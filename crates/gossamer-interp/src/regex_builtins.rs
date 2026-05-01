@@ -34,6 +34,9 @@ pub(crate) const ENTRIES: &[(&str, Entry)] = &[
 
 thread_local! {
     static NEXT_REGEX_ID: RefCell<u64> = const { RefCell::new(1) };
+    // HashMap::new with the default RandomState hasher is not yet
+    // const-callable on our MSRV; the HashMap is allocated lazily
+    // on first thread-local access regardless.
     #[allow(clippy::missing_const_for_thread_local)]
     static REGEX_REGISTRY: RefCell<std::collections::HashMap<u64, regex_std::Pattern>> =
         RefCell::new(std::collections::HashMap::new());

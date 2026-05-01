@@ -25,7 +25,10 @@ pub(crate) fn run(code: &str) -> Result<()> {
     ))
 }
 
-#[allow(clippy::too_many_lines)] // long flat lookup table; splitting it harms grep-ability
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat lookup table; splitting hurts grep-ability"
+)]
 fn diagnostic_explanation(code: &str) -> Option<&'static str> {
     Some(match code {
         "GP0001" => {

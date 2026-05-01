@@ -13,7 +13,6 @@
 //! responses but not a substitute for a content-security policy.
 
 #![forbid(unsafe_code)]
-#![allow(clippy::used_underscore_binding)]
 
 pub use crate::text::template::{Error, Value};
 
@@ -232,7 +231,6 @@ fn render_html(source: &str, data: &Value) -> Result<String, Error> {
     let mut cursor = 0;
     let mut prefix = String::new();
     let mut output = String::new();
-    let mut stack: Vec<(BlockKind, Vec<Value>, usize)> = Vec::new();
     while cursor < bytes.len() {
         if cursor + 1 < bytes.len() && bytes[cursor] == b'{' && bytes[cursor + 1] == b'{' {
             // Action begin.
@@ -289,14 +287,7 @@ fn render_html(source: &str, data: &Value) -> Result<String, Error> {
             let body = String::from_utf8_lossy(&bytes[body_start..body_end])
                 .trim()
                 .to_string();
-            handle_action(
-                &body,
-                data,
-                &mut stack,
-                &mut output,
-                &mut prefix,
-                &source[after..],
-            )?;
+            handle_action(&body, data, &mut output, &mut prefix)?;
             cursor = after;
             if trim_right {
                 while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
@@ -309,26 +300,14 @@ fn render_html(source: &str, data: &Value) -> Result<String, Error> {
             cursor += 1;
         }
     }
-    if !stack.is_empty() {
-        return Err(Error::Unbalanced("missing end".into()));
-    }
     Ok(output)
-}
-
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
-enum BlockKind {
-    If,
-    Range,
 }
 
 fn handle_action(
     body: &str,
-    _data: &Value,
-    _stack: &mut Vec<(BlockKind, Vec<Value>, usize)>,
+    data: &Value,
     output: &mut String,
     prefix: &mut String,
-    _rest: &str,
 ) -> Result<(), Error> {
     // For the HTML pass we keep things simpler: delegate non-body
     // actions to the text engine, then escape its output by context.
@@ -356,9 +335,9 @@ fn handle_action(
     } else if let Ok(n) = expr.parse::<i64>() {
         Value::Int(n)
     } else if expr == "." {
-        _data.clone()
+        data.clone()
     } else if let Some(field) = expr.strip_prefix('.') {
-        _data.lookup(field)
+        data.lookup(field)
     } else {
         Value::Null
     };

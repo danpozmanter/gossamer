@@ -208,7 +208,10 @@ pub(crate) struct LoweredProgram {
     /// `DefId` rather than name. The JIT only needs name lookup
     /// today; the field stays in the API so the LLVM backend
     /// landing in parallel can drop in without an extra pass.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "exposed for the LLVM backend to populate without an extra pass"
+    )]
     pub function_ids_by_def: HashMap<u32, FuncId>,
 }
 
@@ -262,7 +265,10 @@ pub(crate) fn lower_program(
 /// for user-defined functions. The fallback companion path
 /// uses `Linkage::Export` so the LLVM-emitted primary object
 /// can resolve user-function calls across the object boundary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "exposed for the LLVM fallback companion to opt into Export linkage"
+)]
 pub(crate) fn lower_program_with_linkage(
     module: &mut dyn Module,
     bodies: &[Body],
@@ -1423,7 +1429,10 @@ fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
 /// `load` / `store`. Works for `Field(i)` (offset `i*8`) and
 /// `Index(local)` (offset `idx*8`). Deref/Downcast/Discriminant
 /// remain unimplemented.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn lower_place_address(
     module: &dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -1513,7 +1522,10 @@ fn lower_place_address(
 
 /// Emits a store of `value` through `place`'s projection chain.
 /// The leaf type chooses the store width (F64/I64/I32/I16/I8).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn lower_place_store(
     module: &dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -1539,7 +1551,10 @@ fn lower_place_store(
 /// projection chain (`s.field = f()`, `a[i] = f()`), runs the
 /// existing place-store path: pick the leaf cl type from the
 /// projection, then emit a `store` through it.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn store_call_result(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -1583,7 +1598,10 @@ fn store_call_result(
 /// the null pointer when the operand is missing. Used by the
 /// single-arg JSON intrinsics so the per-call boilerplate stays
 /// readable.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn lower_first_ptr_arg(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -1735,22 +1753,11 @@ fn coerce_store_value(
     bail!("native codegen: cannot coerce store {src:?} -> {leaf_ty:?}");
 }
 
-/// Emits a call to `gos_rt_preempt_check_and_yield` at the
-/// current builder position. Used by the back-edge safepoint
-/// path so the scheduler can interrupt tight loops (H11).
-#[allow(dead_code)]
-fn emit_preempt_check(
-    module: &mut dyn Module,
-    builder: &mut FunctionBuilder<'_>,
-    intrinsics: &mut IntrinsicContext,
-) -> Result<()> {
-    let f = intrinsics.extern_fn(module, "gos_rt_preempt_check_and_yield", &[], &[types::I32])?;
-    let fref = module.declare_func_in_func(f, builder.func);
-    builder.ins().call(fref, &[]);
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "intrinsic dispatch / arg-marshal sequence — flat-table shape preserved for grep-ability"
+)]
 fn lower_terminator(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -2361,7 +2368,10 @@ struct IntrinsicOutcome {
 /// emits a `gos_rt_print_str(separator)` call between each pair of
 /// args (used by `println(a, b, c)` for space separation; empty
 /// for `__concat`'s direct concatenation).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn emit_per_arg_print(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -2430,12 +2440,8 @@ fn emit_per_arg_print(
                 } else {
                     value
                 };
-                let print_u64 = intrinsics.extern_fn(
-                    module,
-                    "gos_rt_print_u64",
-                    &[types::I64],
-                    &[],
-                )?;
+                let print_u64 =
+                    intrinsics.extern_fn(module, "gos_rt_print_u64", &[types::I64], &[])?;
                 let fref = module.declare_func_in_func(print_u64, builder.func);
                 builder.ins().call(fref, &[n]);
             }
@@ -2544,7 +2550,10 @@ fn emit_vec_print(
 /// bools through `gos_rt_bool_to_str`, chars through
 /// `gos_rt_char_to_str`. Pieces are joined with `separator`
 /// (empty for tight concat, " " for println-shaped joining).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn emit_args_to_concat_string(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -2572,7 +2581,10 @@ fn emit_args_to_concat_string(
     };
     let empty_data = intrinsics.intern_string(module, "")?;
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+    )]
     fn arg_to_str_ptr(
         module: &mut dyn Module,
         builder: &mut FunctionBuilder<'_>,
@@ -2833,7 +2845,11 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
 /// Generic wrapper for the round-3 stdlib helpers. Each helper has
 /// a fixed signature derived from its name; declaring the extern
 /// once per call site is fine because cranelift dedups by symbol.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "intrinsic dispatch / arg-marshal sequence — flat-table shape preserved for grep-ability"
+)]
 fn lower_generic_rt_call(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -2985,7 +3001,10 @@ fn lower_generic_rt_call(
 /// | `Vec<T>`        | `*mut GosVec`       | `ptr_ty`       |
 /// | other (handle / | ptr-sized opaque    | `ptr_ty`       |
 /// | option / result)|                     |                |
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn lower_external_binding_call(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -3076,7 +3095,10 @@ fn mir_ty_to_cabi(tcx: &TyCtxt, ty: gossamer_types::Ty, ptr_ty: ir::Type) -> Opt
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn lower_intrinsic_outcome(
     name: &str,
     module: &mut dyn Module,
@@ -3573,8 +3595,7 @@ fn lower_intrinsic_call(
             let s = emit_args_to_concat_string(
                 module, builder, locals, body, tcx, args, intrinsics, " ",
             )?;
-            let eprint_fn =
-                intrinsics.extern_fn(module, "gos_rt_eprint_str", &[ptr_ty], &[])?;
+            let eprint_fn = intrinsics.extern_fn(module, "gos_rt_eprint_str", &[ptr_ty], &[])?;
             let eprint_ref = module.declare_func_in_func(eprint_fn, builder.func);
             builder.ins().call(eprint_ref, &[s]);
             if name == "eprintln" {
@@ -7618,7 +7639,10 @@ fn resolve_callee(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn lower_rvalue(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -7942,7 +7966,10 @@ fn lower_rvalue(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn lower_operand(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -7998,7 +8025,10 @@ fn lower_operand(
 /// carries a `Projection::Field(i)` or `Projection::Index(local)`
 /// chain it walks through each projection, picking the leaf's
 /// cranelift type for the final load.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
+)]
 fn lower_place_read(
     module: &dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -8070,14 +8100,19 @@ fn lower_const(
     })
 }
 
+/// Reinterprets the low 64 bits of an i128 const as i64.
+///
+/// Cranelift's `iconst` only accepts an `i64`. The MIR const layer
+/// stores integer literals as `i128` so values outside i64's range
+/// (e.g. `u64::MAX`) survive type-check, but at codegen time both
+/// the i64 and u64 paths read the same 64-bit machine register —
+/// the `gos_rt_print_i64` / `gos_rt_print_u64` dispatch in
+/// `operand_print_kind` is what decides how the bit pattern is
+/// formatted. Saturating here would silently corrupt unsigned
+/// values >= 2^63 (collapsing `u64::MAX` to `i64::MAX`); wrapping
+/// preserves the bit pattern so the print path can interpret it.
 fn i64_truncate(n: i128) -> i64 {
-    if n > i128::from(i64::MAX) {
-        i64::MAX
-    } else if n < i128::from(i64::MIN) {
-        i64::MIN
-    } else {
-        n as i64
-    }
+    n as i64
 }
 
 /// Dispatches a binary op based on the operand type. Integer ops

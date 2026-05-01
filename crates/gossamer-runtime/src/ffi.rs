@@ -11,11 +11,7 @@
 //! or invokes a fixed-shape `extern "C"` function pointer that the
 //! caller has audited at the type-system level.
 
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::items_after_statements,
-    clippy::missing_safety_doc
-)]
+#![allow(clippy::items_after_statements, clippy::missing_safety_doc)]
 
 use std::ffi::{CStr, CString};
 use std::path::Path;

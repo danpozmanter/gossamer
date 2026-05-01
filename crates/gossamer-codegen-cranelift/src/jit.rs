@@ -256,7 +256,10 @@ fn ty_to_kind(tcx: &TyCtxt, ty: Ty) -> Option<JitKind> {
 /// Returns the set of registered symbol names so the JIT-eligibility
 /// check can identify bodies that call something cranelift can't
 /// resolve (and would silently lower to a typed-zero stub).
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+)]
 fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashSet<&'static str> {
     use gossamer_runtime::c_abi as rt;
     use gossamer_runtime::gc;
@@ -329,6 +332,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_concat_init"         => rt::gos_rt_concat_init,
         "gos_rt_concat_str"          => rt::gos_rt_concat_str,
         "gos_rt_concat_i64"          => rt::gos_rt_concat_i64,
+        "gos_rt_concat_u64"          => rt::gos_rt_concat_u64,
         "gos_rt_concat_f64"          => rt::gos_rt_concat_f64,
         "gos_rt_concat_f64_prec"     => rt::gos_rt_concat_f64_prec,
         "gos_rt_concat_bool"         => rt::gos_rt_concat_bool,
@@ -392,11 +396,13 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_json_value_object"   => rt::gos_rt_json_value_object,
         "gos_rt_parse_f64"           => rt::gos_rt_parse_f64,
         "gos_rt_i64_to_str"          => rt::gos_rt_i64_to_str,
+        "gos_rt_u64_to_str"          => rt::gos_rt_u64_to_str,
         "gos_rt_f64_to_str"          => rt::gos_rt_f64_to_str,
         "gos_rt_f64_prec_to_str"     => rt::gos_rt_f64_prec_to_str,
         "gos_rt_flush_stdout"        => rt::gos_rt_flush_stdout,
         "gos_rt_print_str"           => rt::gos_rt_print_str,
         "gos_rt_print_i64"           => rt::gos_rt_print_i64,
+        "gos_rt_print_u64"           => rt::gos_rt_print_u64,
         "gos_rt_print_f64"           => rt::gos_rt_print_f64,
         "gos_rt_print_bool"          => rt::gos_rt_print_bool,
         "gos_rt_print_char"          => rt::gos_rt_print_char,

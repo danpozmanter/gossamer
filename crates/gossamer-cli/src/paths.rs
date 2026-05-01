@@ -176,11 +176,7 @@ pub(crate) fn default_unit_name(file: &Path) -> String {
 /// 2. `<project-root>/target/{debug,release}/<unit>`.
 /// 3. `<source-dir>/target/{debug,release}/<unit>` for loose-file
 ///    builds with no manifest.
-pub(crate) fn resolve_output_path(
-    file: &PathBuf,
-    unit_name: &str,
-    release: bool,
-) -> Result<PathBuf> {
+pub(crate) fn resolve_output_path(file: &Path, unit_name: &str, release: bool) -> Result<PathBuf> {
     if let Some(manifest_path) = gossamer_pkg::find_manifest(file) {
         let manifest_text =
             fs::read_to_string(&manifest_path).map_err(|e| friendly_io_error(e, &manifest_path))?;

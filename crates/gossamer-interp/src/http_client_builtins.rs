@@ -5,6 +5,8 @@
 //! Kept in its own module so the main `builtins.rs` file stays
 //! under the 2000-line hard limit defined in `GUIDELINES.md`.
 
+// Builtins return `RuntimeResult<Value>` to match the dispatcher's
+// expected signature even when they never fail.
 #![allow(clippy::unnecessary_wraps)]
 use gossamer_pkg::transport::{HttpsTransport, Transport};
 use std::sync::Arc;

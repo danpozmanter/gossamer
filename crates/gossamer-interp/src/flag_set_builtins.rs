@@ -6,6 +6,8 @@
 //! Kept as its own module so `builtins.rs` stays under the
 //! 2000-line hard limit defined in `GUIDELINES.md`.
 
+// Builtins return `RuntimeResult<Value>` to match the dispatcher's
+// expected signature even when they never fail.
 #![allow(clippy::unnecessary_wraps)]
 use std::sync::Arc;
 

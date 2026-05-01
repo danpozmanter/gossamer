@@ -9,14 +9,7 @@
 //! bounds checks is the difference between ~60-second nbody
 //! and "slower than the VM was before typed opcodes landed".
 #![allow(unsafe_code)]
-#![allow(
-    clippy::cast_sign_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::float_cmp,
-    clippy::too_many_lines,
-    clippy::many_single_char_names
-)]
+#![allow(clippy::too_many_lines, clippy::many_single_char_names)]
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -106,7 +99,10 @@ pub struct Vm {
     /// reallocations, which only the `Box` indirection survives
     /// (a bare `Vec<ChunkState>` would move its elements on grow
     /// and invalidate every reference).
-    #[allow(clippy::vec_box)]
+    #[allow(
+        clippy::vec_box,
+        reason = "Box keeps each ChunkState pinned; Vec<ChunkState> would invalidate stored &ChunkState references on grow"
+    )]
     chunk_state_arena: RefCell<Vec<Box<ChunkState>>>,
     /// Side index into [`Self::chunk_state_arena`] keyed by
     /// `Arc::as_ptr(chunk) as usize`. The map's `&'static` lifetime
@@ -255,10 +251,8 @@ enum JitCompileState {
     /// `compile_to_jit` is mid-flight on this thread. Other
     /// hot-counter trips on the same `Vm` skip; child VMs in
     /// other goroutines run their own per-`Vm` compile.
-    #[allow(dead_code)]
     InProgress,
     /// JIT artefact installed on this `Vm`.
-    #[allow(dead_code)]
     Done,
     /// `compile_to_jit` returned `Err`, or the JIT is disabled
     /// outright. Future hot-counter trips short-circuit.
@@ -835,13 +829,17 @@ impl Vm {
             // shared ownership semantics — a `Rc` would prevent
             // the artifact's `Drop` from waiting for outstanding
             // override references on shutdown.
-            #[allow(clippy::arc_with_non_send_sync)]
+            #[allow(
+                clippy::arc_with_non_send_sync,
+                reason = "JitFn carries non-Sync raw fn ptrs; Arc shape needed for shared-ownership across the override map"
+            )]
             let jit_arc = Arc::new(jit_fn.clone());
             state.insert_override(name.clone(), jit_arc);
         }
         self.jit_override_count
             .store(state.overrides.len(), Ordering::Release);
         state.artifact = Some(artifact);
+        state.compiled = JitCompileState::Done;
     }
 
     fn load_item(
@@ -1003,7 +1001,6 @@ impl Vm {
                 if let Some(jit) = jit_opt {
                     match jit_call::invoke(&jit, &args) {
                         jit_call::Dispatch::Ok(value) => return Ok(value),
-                        jit_call::Dispatch::Err(err) => return Err(err),
                         jit_call::Dispatch::Fallback => {
                             if jit_call::jit_trace() {
                                 eprintln!("jit: fallback to bytecode for {}", jit.name);
@@ -1118,7 +1115,11 @@ impl Vm {
     }
 
     // arm scope would obscure the dispatch shape.
-    #[allow(clippy::cognitive_complexity, clippy::items_after_statements)]
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::items_after_statements,
+        reason = "VM dispatch loop — match-with-helper-fns shape kept inline"
+    )]
     fn run(&self, chunk: &FnChunk, state: &ChunkState, args: Vec<Value>) -> RuntimeResult<Value> {
         if chunk.arity as usize != args.len() {
             return Err(RuntimeError::Arity {
@@ -3655,7 +3656,10 @@ fn adaptive_add(
 /// Mul share the shape of binary numeric ops, so the helper
 /// takes the int/float operations and a label for the polymorphic
 /// fallback path's error message.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "lowering plumbing — every parameter is needed by the surrounding pipeline"
+)]
 fn adaptive_arith(
     state: &ChunkState,
     cache_idx: u16,

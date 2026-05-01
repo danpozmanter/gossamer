@@ -30,7 +30,10 @@ impl HirIdGenerator {
     }
 
     /// Produces the next fresh identifier.
-    #[allow(clippy::should_implement_trait)]
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "infallible generator; Iterator::next would force Option<HirId>"
+    )]
     pub fn next(&mut self) -> HirId {
         let id = HirId(self.next);
         self.next = self.next.saturating_add(1);

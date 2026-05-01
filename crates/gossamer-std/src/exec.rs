@@ -23,7 +23,6 @@
 //! while waiting. `spawn()` does not block.
 
 #![forbid(unsafe_code)]
-#![allow(clippy::needless_pass_by_value)]
 
 use std::collections::HashMap;
 use std::path::PathBuf;

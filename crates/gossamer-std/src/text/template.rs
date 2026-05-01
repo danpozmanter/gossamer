@@ -18,6 +18,9 @@
 //! [`crate::html::template`] when emitting HTML).
 
 #![forbid(unsafe_code)]
+// The render loop walks one byte at a time over the template body,
+// branching per `{{ }}` action shape; the flat match-on-action keeps
+// the parser's intent in a single readable scan.
 #![allow(clippy::too_many_lines)]
 
 use std::collections::BTreeMap;

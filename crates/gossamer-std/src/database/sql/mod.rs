@@ -2,13 +2,12 @@
 //! `database/sql`.
 //!
 //! Programs work against this façade and bring in the appropriate
-//! driver crate; today the bundled driver is SQLite (gated on the
+//! driver crate; today the bundled driver is `SQLite` (gated on the
 //! `ffi-sqlite` feature). The driver registers itself via [`register`]
 //! at start-up; user code calls [`open`] with a name + url and gets
 //! back a [`Conn`].
 
 #![forbid(unsafe_code)]
-#![allow(clippy::doc_markdown, clippy::missing_errors_doc)]
 
 use std::sync::Arc;
 

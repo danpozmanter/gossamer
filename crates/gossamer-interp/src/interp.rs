@@ -3,11 +3,6 @@
 #![forbid(unsafe_code)]
 #![allow(
     clippy::unnecessary_wraps,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::float_cmp,
-    clippy::match_same_arms,
     clippy::if_same_then_else,
     clippy::map_unwrap_or,
     clippy::too_many_lines
@@ -140,11 +135,6 @@ impl GoroutinePool {
         while self.outstanding.load(Ordering::Acquire) > 0 {
             self.drain_cv.wait(&mut inner);
         }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn worker_count(&self) -> usize {
-        self.workers.load(Ordering::Relaxed)
     }
 }
 
@@ -801,31 +791,6 @@ impl Interpreter {
         // Unknown field access — degrade to unit rather than crash so
         // partially-typed programs keep running.
         Ok(Flow::Value(Value::Unit))
-    }
-
-    #[allow(dead_code)]
-    fn eval_field_strict(
-        &mut self,
-        receiver: &HirExpr,
-        name: &Ident,
-        env: &mut Env,
-    ) -> RuntimeResult<Flow> {
-        let value = self.eval_expr_to_value(receiver, env)?;
-        match value {
-            Value::Struct(inner) => {
-                let found = inner
-                    .fields
-                    .iter()
-                    .find(|(ident, _)| ident.name == name.name)
-                    .map(|(_, v)| v.clone())
-                    .ok_or_else(|| RuntimeError::Type(format!("no field `{}`", name.name)))?;
-                Ok(Flow::Value(found))
-            }
-            other => Err(RuntimeError::Type(format!(
-                "field access on non-struct `{:?}`",
-                classify(&other)
-            ))),
-        }
     }
 
     fn eval_tuple_index(

@@ -8,11 +8,7 @@
 //! [`Terminator::SwitchInt`].
 
 #![forbid(unsafe_code)]
-#![allow(
-    clippy::too_many_lines,
-    clippy::unnecessary_wraps,
-    clippy::match_same_arms
-)]
+#![allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 
 use std::collections::HashMap;
 
@@ -21,12 +17,12 @@ use gossamer_hir::{
     HirAdtKind, HirBinaryOp, HirBlock, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind,
     HirLiteral, HirMatchArm, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind, HirUnaryOp,
 };
-use gossamer_lex::{FileId, Span};
+use gossamer_lex::Span;
 use gossamer_types::{Ty, TyCtxt};
 
 use crate::ir::{
-    AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place,
-    Rvalue, Statement, StatementKind, Terminator, UnOp,
+    BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
+    Statement, StatementKind, Terminator, UnOp,
 };
 
 /// Lowers every function in `program` to a MIR [`Body`].
@@ -843,7 +839,10 @@ impl EnumIndex {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "lowering plumbing — every parameter is needed by the surrounding pipeline"
+)]
 fn collect_item(
     item: &HirItem,
     tcx: &mut TyCtxt,
@@ -930,7 +929,10 @@ fn collect_item(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "lowering plumbing — every parameter is needed by the surrounding pipeline"
+)]
 fn lower_fn(
     decl: &HirFn,
     def: Option<gossamer_resolve::DefId>,
@@ -1137,7 +1139,10 @@ struct LoopContext {
 }
 
 impl<'a> Builder<'a> {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "lowering plumbing — every parameter is needed by the surrounding pipeline"
+    )]
     fn new(
         _name: String,
         span: Span,
@@ -2392,7 +2397,10 @@ impl<'a> Builder<'a> {
         if self.current.is_none() { None } else { result }
     }
 
-    #[allow(clippy::cognitive_complexity)]
+    #[allow(
+        clippy::cognitive_complexity,
+        reason = "linear walk over a closed pattern set; splitting hides the per-shape branching"
+    )]
     fn lower_stmt(&mut self, stmt: &HirStmt) {
         match &stmt.kind {
             HirStmtKind::Let { pattern, ty, init } => {
@@ -3342,7 +3350,10 @@ impl<'a> Builder<'a> {
         }
     }
 
-    #[allow(clippy::cognitive_complexity)]
+    #[allow(
+        clippy::cognitive_complexity,
+        reason = "linear walk over a closed pattern set; splitting hides the per-shape branching"
+    )]
     fn lower_call(
         &mut self,
         callee: &HirExpr,
@@ -4367,7 +4378,10 @@ impl<'a> Builder<'a> {
     /// the arm body can read them. Returns `None` when a
     /// sub-pattern shape is not yet handled (caller surfaces a
     /// clean unsupported-placeholder diagnostic).
-    #[allow(clippy::cognitive_complexity)]
+    #[allow(
+        clippy::cognitive_complexity,
+        reason = "linear walk over a closed pattern set; splitting hides the per-shape branching"
+    )]
     fn lower_pattern_predicate(
         &mut self,
         scrutinee: Local,
@@ -5489,7 +5503,10 @@ impl<'a> Builder<'a> {
     /// semantics the native runtime implements as a C-ABI helper);
     /// falls back to the `unsupported` placeholder if the receiver
     /// shape isn't recognised.
-    #[allow(clippy::cognitive_complexity)]
+    #[allow(
+        clippy::cognitive_complexity,
+        reason = "linear walk over a closed pattern set; splitting hides the per-shape branching"
+    )]
     fn lower_method_call(
         &mut self,
         receiver: &HirExpr,
@@ -7448,7 +7465,10 @@ impl<'a> Builder<'a> {
     /// a counter-driven CFG when `iter` is a range or an array-shaped
     /// expression. Returns `None` when the iterator's shape is not
     /// recognised so the generic `loop` fallback handles it.
-    #[allow(clippy::cognitive_complexity)]
+    #[allow(
+        clippy::cognitive_complexity,
+        reason = "linear walk over a closed pattern set; splitting hides the per-shape branching"
+    )]
     fn try_lower_for_loop(&mut self, for_loop: &ForLoopShape<'_>, span: Span) -> Option<Local> {
         use gossamer_types::TyKind;
         // `for (k, v) in m.iter()` on a HashMap. Snapshot the keys
@@ -8227,7 +8247,10 @@ impl<'a> Builder<'a> {
     /// to `val_pat`. Detects whether `inner` is a literal-length
     /// array (uses array indexing) or a runtime `Vec` (uses
     /// `gos_rt_vec_len` + `gos_rt_vec_get_ptr` + `gos_load`).
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    )]
     fn lower_for_enumerate(
         &mut self,
         inner: &HirExpr,
@@ -9255,6 +9278,3 @@ fn exprs_match(a: &HirExpr, b: &HirExpr) -> bool {
         _ => false,
     }
 }
-
-#[allow(dead_code)]
-fn _used_imports(_: AssertMessage, _: FileId) {}

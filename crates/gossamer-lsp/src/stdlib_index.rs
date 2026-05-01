@@ -208,7 +208,10 @@ impl StdlibIndex {
 
     /// Returns every fully-qualified path matching the bare item name
     /// `name`. Used by import-assist to suggest auto-`use` edits.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "tested API; consumed by import-assist once the code-action lands"
+    )]
     pub(crate) fn fuzzy_paths_for(&self, name: &str) -> Vec<String> {
         if name.is_empty() {
             return Vec::new();

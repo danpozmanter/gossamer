@@ -1025,7 +1025,10 @@ mod tests {
         // Windows CI failure observed 2026-04-30.
         let p = PathBuf::from("D:\\a\\gossamer\\gossamer/crates/gossamer-binding");
         let kv = toml_path_kv("path", &p);
-        assert!(kv.starts_with("path = '"), "expected literal string, got: {kv}");
+        assert!(
+            kv.starts_with("path = '"),
+            "expected literal string, got: {kv}"
+        );
         // The whole expression must round-trip through cargo's
         // strict TOML parser inside a `{ ... }` inline table.
         let snippet = format!("[deps]\nfoo = {{ {kv} }}\n");
@@ -1039,10 +1042,13 @@ mod tests {
         // helper must fall back to a basic string with `\\` doubling.
         let p = PathBuf::from("/tmp/it's a path/echo");
         let kv = toml_path_kv("path", &p);
-        assert!(kv.starts_with("path = \""), "expected basic string, got: {kv}");
+        assert!(
+            kv.starts_with("path = \""),
+            "expected basic string, got: {kv}"
+        );
         let snippet = format!("[deps]\nfoo = {{ {kv} }}\n");
-        let _: toml::Value = toml::from_str(&snippet)
-            .expect("apostrophe-path renders as escaped basic string");
+        let _: toml::Value =
+            toml::from_str(&snippet).expect("apostrophe-path renders as escaped basic string");
     }
 
     #[test]

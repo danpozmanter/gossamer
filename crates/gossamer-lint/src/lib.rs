@@ -9,6 +9,8 @@
 //! silently drops a `Result`.
 
 #![forbid(unsafe_code)]
+// Each lint is a flat dispatch over AST kinds; collapsing them into
+// helpers obscures the per-lint shape that makes the file readable.
 #![allow(clippy::too_many_lines)]
 
 use std::collections::BTreeMap;

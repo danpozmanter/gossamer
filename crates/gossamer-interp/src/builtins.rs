@@ -59,28 +59,37 @@ pub fn set_program_args(args: &[String]) {
 pub(crate) type CellMap =
     std::collections::HashMap<(u64, String), std::sync::Arc<parking_lot::Mutex<Value>>>;
 
-thread_local! {
-    pub(crate) static NEXT_SET_ID: RefCell<u64> = const { RefCell::new(1) };
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static SET_REGISTRY: RefCell<std::collections::HashMap<u64, SetState>> =
-        RefCell::new(std::collections::HashMap::new());
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static CELL_REGISTRY: RefCell<CellMap> = RefCell::new(std::collections::HashMap::new());
-    /// Canonical field orderings for every struct type in the
-    /// loaded program. `Vm::load` populates this from the
-    /// `HirAdt` items so `__struct` can place fields in
-    /// declaration order regardless of source-literal spelling;
-    /// that lets the VM compiler emit compile-time offset-based
-    /// reads.
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static STRUCT_LAYOUTS: RefCell<std::collections::HashMap<String, Vec<String>>> =
-        RefCell::new(std::collections::HashMap::new());
+// HashMap::new is not const-callable on our MSRV; these
+// thread-locals construct on first access and stay registry-style
+// for the life of the thread.
+#[allow(
+    clippy::missing_const_for_thread_local,
+    reason = "HashMap::new with default RandomState is not const on MSRV"
+)]
+mod thread_local_registries {
+    use super::{CellMap, RefCell, SetState};
+
+    thread_local! {
+        pub(crate) static NEXT_SET_ID: RefCell<u64> = const { RefCell::new(1) };
+        pub(crate) static SET_REGISTRY: RefCell<std::collections::HashMap<u64, SetState>> =
+            RefCell::new(std::collections::HashMap::new());
+        pub(crate) static CELL_REGISTRY: RefCell<CellMap> = RefCell::new(std::collections::HashMap::new());
+        pub(crate) static STRUCT_LAYOUTS: RefCell<std::collections::HashMap<String, Vec<String>>> =
+            RefCell::new(std::collections::HashMap::new());
+    }
 }
+
+pub(crate) use thread_local_registries::{
+    CELL_REGISTRY, NEXT_SET_ID, SET_REGISTRY, STRUCT_LAYOUTS,
+};
 
 /// Installs the struct-field declaration-order table that
 /// `__struct` consults when assembling a new `Value::Struct`.
 /// Invoked by [`crate::Vm::load`] before any program code runs.
-#[allow(clippy::implicit_hasher)]
+#[allow(
+    clippy::implicit_hasher,
+    reason = "stored verbatim in a RandomState-typed thread-local; generic hasher would force the thread-local to be generic too"
+)]
 pub fn set_struct_layouts(layouts: std::collections::HashMap<String, Vec<String>>) {
     STRUCT_LAYOUTS.with(|cell| *cell.borrow_mut() = layouts);
 }
@@ -314,7 +323,10 @@ fn install_variant_builtins(globals: &mut Vec<(&'static str, Value)>) {
 
 // Pure registration list — splitting it would just split the
 // install across files without making any function shorter.
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+)]
 fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     install_module(
         "os",
@@ -1058,7 +1070,10 @@ fn builtin_str_parse_result(args: &[Value]) -> RuntimeResult<Value> {
 
 // Pure registration list — splitting it would obscure the
 // concurrency surface area without making any function shorter.
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+)]
 fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("spawn", native("spawn", native_spawn)));
     globals.push(("channel", builtin("channel", builtin_channel_new)));

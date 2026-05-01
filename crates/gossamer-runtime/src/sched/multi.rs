@@ -118,7 +118,6 @@ impl AtomicStats {
 struct WorkerSlot {
     /// Steal half of this worker's deque. Used by other workers when
     /// their local deque is empty.
-    #[allow(dead_code)]
     stealer: Stealer<SendTask>,
     /// Per-worker incoming queue. `unpark(gid)` pushes the
     /// resurrected task onto the home worker's `inbox` so the
@@ -205,7 +204,10 @@ struct Shared {
 
 struct ParkedEntry {
     task: SendTask,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "captured for introspection / scheduler debugging; readers will land alongside diagnostic surface"
+    )]
     reason: ParkReason,
     /// Hint indicating which worker this task previously ran on, used
     /// to maintain locality on resume.
@@ -826,12 +828,6 @@ fn park_worker(slot: &Arc<WorkerSlot>, shared: &Arc<Shared>) {
     // Brief timeout so a missed wake doesn't strand the worker forever.
     let _ = slot.cv.wait_for(&mut g, Duration::from_millis(50));
     slot.parked.store(false, Ordering::Release);
-}
-
-#[allow(dead_code)]
-fn since_ms(t: Instant) -> u64 {
-    let ms = t.elapsed().as_millis().min(u128::from(u64::MAX));
-    u64::try_from(ms).unwrap_or(u64::MAX)
 }
 
 /// Task adapter that publishes the goroutine's `gid` into the

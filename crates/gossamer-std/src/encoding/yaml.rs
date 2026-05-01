@@ -7,7 +7,6 @@
 //! are supported via [`parse_all`] / [`encode_all`].
 
 #![forbid(unsafe_code)]
-#![allow(clippy::cast_possible_wrap)]
 
 use std::collections::BTreeMap;
 

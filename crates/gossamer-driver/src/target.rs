@@ -6,7 +6,6 @@
 //! threads yet).
 
 #![forbid(unsafe_code)]
-#![allow(clippy::doc_markdown)]
 
 use crate::link::TargetTriple;
 
@@ -17,7 +16,7 @@ pub struct TargetInfo {
     pub triple: TargetTriple,
     /// Operating-system family (linux, macos, windows, freebsd, wasi).
     pub os: &'static str,
-    /// CPU architecture family (x86_64, aarch64, riscv64, wasm32).
+    /// CPU architecture family (`x86_64`, `aarch64`, `riscv64`, `wasm32`).
     pub arch: &'static str,
     /// Pointer width in bytes.
     pub pointer_width: u32,

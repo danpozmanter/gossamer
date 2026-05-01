@@ -103,7 +103,10 @@ impl Walker<'_> {
 
     // One arm per ExprKind variant — splitting it would split the
     // single match in half without making any branch shorter.
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    )]
     fn walk_expr(&mut self, expr: &Expr) {
         match &expr.kind {
             ExprKind::Block(block) | ExprKind::Unsafe(block) => self.walk_block(block),

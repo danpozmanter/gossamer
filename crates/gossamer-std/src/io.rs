@@ -1,7 +1,6 @@
 //! Runtime support for `std::io`.
 
 #![forbid(unsafe_code)]
-#![allow(clippy::needless_pass_by_value)]
 
 use thiserror::Error;
 

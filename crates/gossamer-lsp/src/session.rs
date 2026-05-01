@@ -52,7 +52,10 @@ impl<'a> CursorContext<'a> {
 /// `top_level_span` / `index.def_iter()` instead of being mirrored
 /// in a parallel `Vec<(Ident, Span)>`. Both changes shave per-file
 /// LSP residency on workspaces with many open documents.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "fields are reads from the LSP request handlers populated lazily as capabilities expand"
+)]
 pub(crate) struct DocumentAnalysis {
     pub(crate) uri: String,
     pub(crate) file: FileId,

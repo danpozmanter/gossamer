@@ -54,7 +54,10 @@ impl NodeIdGenerator {
     /// The method is named `next` to read naturally at call sites; it is not a
     /// `std::iter::Iterator::next` implementation because the generator has
     /// no exhaustion condition.
-    #[allow(clippy::should_implement_trait)]
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "infallible generator; Iterator::next would force Option<NodeId>"
+    )]
     pub fn next(&mut self) -> NodeId {
         let id = NodeId(self.next);
         self.next = self.next.saturating_add(1);

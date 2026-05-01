@@ -4,7 +4,6 @@
 //! line-oriented TOML with one entry per dependency.
 
 #![forbid(unsafe_code)]
-#![allow(clippy::needless_pass_by_value)]
 
 use std::collections::BTreeMap;
 use std::fmt::Write;

@@ -351,7 +351,13 @@ pub fn try_spawn(task: Box<dyn FnOnce() + Send + 'static>) -> Option<Gid> {
 
 /// Spawns `task` on the M:N pool. Panics if the live-goroutine cap
 /// would be exceeded. Use [`try_spawn`] for graceful refusal.
-#[allow(clippy::must_use_candidate)]
+///
+/// The returned [`Gid`] is informational; fire-and-forget is the
+/// common shape, so the result is intentionally not `#[must_use]`.
+#[allow(
+    clippy::must_use_candidate,
+    reason = "fire-and-forget spawn is the common shape; Gid is informational"
+)]
 pub fn spawn(task: Box<dyn FnOnce() + Send + 'static>) -> Gid {
     let coro = gossamer_coro::Goroutine::new(task);
     scheduler().spawn(GoroutineTask { coro })

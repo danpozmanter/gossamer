@@ -13,8 +13,7 @@
 use std::fmt::Write;
 
 use gossamer_mir::{
-    BinOp, BlockId, Body, ConstValue, Local, Operand, Place, Rvalue, StatementKind, Terminator,
-    UnOp,
+    BinOp, Body, ConstValue, Operand, Place, Rvalue, StatementKind, Terminator, UnOp,
 };
 
 /// Output of the text backend: one CLIF-like module per input MIR.
@@ -335,6 +334,3 @@ fn unop_mnemonic(op: UnOp) -> &'static str {
         UnOp::Not => "bnot",
     }
 }
-
-#[allow(dead_code)]
-fn _exercise_locals(_: Local, _: BlockId) {}

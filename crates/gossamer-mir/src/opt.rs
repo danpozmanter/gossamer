@@ -4,15 +4,13 @@
 //! idempotent so callers can run them in any order.
 
 #![forbid(unsafe_code)]
-#![allow(clippy::match_same_arms)]
 
 use std::collections::HashMap;
 
 use gossamer_types::{TyCtxt, TyKind};
 
 use crate::ir::{
-    BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement, StatementKind,
-    Terminator,
+    BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, StatementKind, Terminator,
 };
 
 /// Runs the full optimisation pipeline on `body`. Copy propagation
@@ -451,6 +449,3 @@ pub fn const_value_of(body: &Body, local: Local) -> Option<ConstValue> {
     }
     None
 }
-
-#[allow(dead_code)]
-fn _used_in_phase_20(_: Statement) {}

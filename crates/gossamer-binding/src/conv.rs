@@ -154,7 +154,6 @@ impl FromGos for f64 {
             // Lossy for |i| > 2^53; user code that passes such an
             // i64 to an f64 binding param has accepted that, the
             // explicit conversion just makes it visible.
-            #[allow(clippy::cast_precision_loss)]
             Value::Int(i) => Ok(*i as f64),
             other => type_err("f64", other),
         }

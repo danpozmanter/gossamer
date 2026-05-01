@@ -36,7 +36,10 @@ use crate::workspace_index::{WorkspaceIndex, WorkspaceItem};
 
 /// Runs the server over the supplied reader/writer streams. Returns
 /// `Ok(())` when the client sends `exit` after `shutdown`.
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+)]
 fn run<R: Read, W: Write>(reader: R, writer: W) -> std::io::Result<()> {
     let mut transport = Transport::new(BufReader::new(reader), BufWriter::new(writer));
     let mut state = ServerState::new();
@@ -933,7 +936,10 @@ fn empty_semantic_tokens() -> Value {
     Value::Object(out)
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+)]
 fn render_hover(doc: &DocumentAnalysis, loc: &Locate) -> String {
     match loc {
         Locate::PathExpr {

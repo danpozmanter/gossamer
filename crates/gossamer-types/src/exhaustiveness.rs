@@ -226,9 +226,7 @@ impl Checker<'_> {
         let scrutinee_ty = self.table.get(scrutinee.id);
         let rows: Vec<Row> = arms
             .iter()
-            .enumerate()
-            .map(|(index, arm)| Row {
-                index,
+            .map(|arm| Row {
                 pat: lower_pattern(&arm.pattern),
                 has_guard: arm.guard.is_some(),
                 span: arm.pattern.span,
@@ -468,7 +466,6 @@ enum Pat {
 
 #[derive(Debug)]
 struct Row {
-    index: usize,
     pat: Pat,
     has_guard: bool,
     span: Span,
@@ -528,11 +525,4 @@ fn format_missing(missing: &[String]) -> String {
         .map(|item| format!("`{item}`"))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-impl Row {
-    #[allow(dead_code)]
-    fn arm_index(&self) -> usize {
-        self.index
-    }
 }

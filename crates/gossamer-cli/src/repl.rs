@@ -6,10 +6,11 @@
 use anyhow::{Result, anyhow};
 
 use crate::paths::repl_history_path;
-#[allow(unused_imports)]
-use crate::repl_helper::GosReplHelper;
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "REPL loop bundles input, completion, history, and graceful-exit handling"
+)]
 pub(crate) fn cmd_repl() -> Result<()> {
     use rustyline::error::ReadlineError;
     use rustyline::history::FileHistory;

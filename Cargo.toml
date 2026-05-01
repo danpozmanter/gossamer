@@ -47,7 +47,7 @@ rust_2024_compatibility = { level = "warn", priority = -1 }
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
 cognitive_complexity = "deny"
 too_many_lines = "warn"
 module_name_repetitions = "allow"
@@ -123,7 +123,7 @@ sha2 = "0.10"
 signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
 thiserror = "2"
 toml = "0.8"
-which = "6"
+which = "8"
 
 [profile.release]
 lto = "fat"

@@ -15,12 +15,8 @@
 // without copying. Alignment is enforced upstream by the GC's
 // 8-byte allocator, so the cast-ptr-alignment lint is wrong here.
 #![allow(clippy::cast_ptr_alignment)]
-// `make_variant` and friends consume their `Vec<GosVariantValue>`
-// into `Box`/raw pointers — the pass-by-value is intentional.
-#![allow(clippy::needless_pass_by_value)]
-// Float comparisons in tests are exact-bit-pattern checks for
-// round-trip values, not numerical "approximately equal" checks.
-#![allow(clippy::float_cmp)]
+// `unsafe extern "C"` thunks: every call comes from generated code
+// over a contract documented at the call site (see ffi_compiled.md).
 #![allow(
     unsafe_code,
     clippy::missing_safety_doc,

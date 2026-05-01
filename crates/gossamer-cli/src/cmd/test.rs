@@ -118,22 +118,11 @@ struct DocTest {
     code: String,
 }
 
-/// Convenience entry point used by the dispatch in `main`. Threads
-/// the supplied path through default-arguments for the other knobs.
-#[allow(dead_code)]
-pub(crate) fn run(path: Option<&Path>) -> Result<()> {
-    run_with_opts(TestOpts {
-        path: path.map(Path::to_path_buf),
-        run_filter: None,
-        parallel: 1,
-        format: "human".to_string(),
-        junit_out: None,
-        race: false,
-        coverage: None,
-    })
-}
-
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "test runner orchestrates discovery, parallel exec, junit output, coverage end-to-end"
+)]
 pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
     gossamer_resolve::set_test_cfg(true);
     if opts.race {

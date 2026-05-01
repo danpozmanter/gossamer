@@ -82,7 +82,10 @@ impl DefIdGenerator {
     }
 
     /// Produces the next fresh [`DefId`] and advances the counter.
-    #[allow(clippy::should_implement_trait)]
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "infallible generator; Iterator::next would force Option<DefId>"
+    )]
     pub fn next(&mut self) -> DefId {
         let id = DefId {
             krate: self.krate,

@@ -20,11 +20,22 @@ use gossamer_std::json::Value;
 
 use crate::session::DocumentAnalysis;
 
+// LSP wire numbers for the SymbolKind enum. Kept verbatim from the
+// LSP spec so the table is self-documenting; the unused entries
+// (`FILE`, `CONSTRUCTOR`) round out the kind set.
+#[allow(
+    dead_code,
+    reason = "wire-number table mirroring the LSP SymbolKind spec"
+)]
 const SYMBOL_FILE: f64 = 1.0;
 const SYMBOL_MODULE: f64 = 2.0;
 const SYMBOL_CLASS: f64 = 5.0;
 const SYMBOL_METHOD: f64 = 6.0;
 const SYMBOL_FIELD: f64 = 8.0;
+#[allow(
+    dead_code,
+    reason = "wire-number table mirroring the LSP SymbolKind spec"
+)]
 const SYMBOL_CONSTRUCTOR: f64 = 9.0;
 const SYMBOL_ENUM: f64 = 10.0;
 const SYMBOL_INTERFACE: f64 = 11.0;
@@ -261,7 +272,10 @@ fn emit_impl(doc: &DocumentAnalysis, item: &Item, decl: &ImplDecl, out: &mut Vec
     ));
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+)]
 fn collect_workspace_symbols(
     doc: &DocumentAnalysis,
     item: &Item,
@@ -396,7 +410,10 @@ fn workspace_symbol_entry(
     Value::Object(entry)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "lowering plumbing — every parameter is needed by the surrounding pipeline"
+)]
 fn symbol(
     doc: &DocumentAnalysis,
     name: &str,
@@ -478,11 +495,3 @@ fn push_folding(doc: &DocumentAnalysis, item: &Item, out: &mut Vec<Value>) {
         }
     }
 }
-
-/// Suppresses the unused-constant warning in builds that omit the
-/// folding-range handler. `SYMBOL_FILE` and `SYMBOL_CONSTRUCTOR` are
-/// kept even though no AST kind currently maps onto them: they round
-/// out the symbol-kind table and document the LSP wire numbers in one
-/// place.
-#[allow(dead_code)]
-const _USED_BY_DOC: (f64, f64) = (SYMBOL_FILE, SYMBOL_CONSTRUCTOR);

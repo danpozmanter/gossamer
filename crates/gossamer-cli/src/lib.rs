@@ -7,7 +7,6 @@
 //! same subcommand surface as the on-PATH `gos` binary.
 
 #![forbid(unsafe_code)]
-#![allow(clippy::similar_names, clippy::ptr_arg)]
 
 pub mod binding_dispatch;
 pub mod cli;

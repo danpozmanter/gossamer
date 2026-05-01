@@ -29,13 +29,15 @@
 //! so the caller can retry through the bytecode interpreter.
 
 #![allow(unsafe_code)]
+// Trampoline expands one arity-shape stub per `JitKind` permutation;
+// the macro-generated dispatch keeps each shape in one place.
 #![allow(clippy::too_many_lines)]
 
 use std::mem;
 
 use gossamer_codegen_cranelift::{JitFn, JitKind};
 
-use crate::value::{RuntimeError, Value};
+use crate::value::Value;
 
 /// Result of attempting to dispatch through the JIT trampoline.
 pub(crate) enum Dispatch {
@@ -45,14 +47,6 @@ pub(crate) enum Dispatch {
     /// unsupported, or a runtime arg's type didn't match the JIT
     /// signature). The caller falls back to the bytecode chunk.
     Fallback,
-    /// The JIT body called the runtime in a way that surfaced an
-    /// error the VM should propagate as a `RuntimeError`. Reserved
-    /// for runtime-side panics; the trampoline doesn't construct
-    /// this variant today but the call site is structured to honour
-    /// it as soon as the JIT learns to surface `gos_rt_panic` as a
-    /// recoverable Rust error rather than a process abort.
-    #[allow(dead_code)]
-    Err(RuntimeError),
 }
 
 /// Calls into a JIT-compiled body. Returns `Dispatch::Fallback` if

@@ -266,7 +266,10 @@ impl SmolStr {
     /// this conversion is infallible. Implementing the trait
     /// would force callers to `.unwrap()` an `Ok`-only path.
     #[must_use]
-    #[allow(clippy::should_implement_trait)]
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "infallible conversion; FromStr would force callers to .unwrap()"
+    )]
     pub fn from_str(s: &str) -> Self {
         if s.len() <= SMOL_INLINE_MAX {
             Self::new_inline(s.as_bytes())

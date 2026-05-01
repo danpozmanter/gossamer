@@ -1,13 +1,11 @@
-//! SQLite driver. Wraps `rusqlite` (which links to the bundled
+//! `SQLite` driver. Wraps `rusqlite` (which links to the bundled
 //! `libsqlite3` C library — the FFI seam this driver demonstrates).
 //! Registered automatically when the `ffi-sqlite` feature is on.
 
 #![forbid(unsafe_code)]
 #![allow(
-    clippy::doc_markdown,
     clippy::must_use_candidate,
     clippy::elidable_lifetime_names,
-    clippy::needless_pass_by_value,
     clippy::let_underscore_untyped,
     clippy::ref_option,
     clippy::trivially_copy_pass_by_ref
@@ -16,12 +14,12 @@
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+use rusqlite::Connection;
 use rusqlite::types::{Value as SqlValue, ValueRef};
-use rusqlite::{Connection, Statement, ToSql, Transaction};
 
 use super::{ConnectionImpl, Driver, Error, RowsImpl, StatementImpl, TransactionImpl, Value};
 
-/// SQLite driver entry. Pass `:memory:` for an in-memory database, or
+/// `SQLite` driver entry. Pass `:memory:` for an in-memory database, or
 /// a filesystem path for a persistent one.
 #[derive(Debug, Default)]
 pub struct SqliteDriver;
@@ -218,12 +216,6 @@ fn value_from_ref(value: ValueRef<'_>) -> Value {
         ValueRef::Blob(bytes) => Value::Blob(bytes.to_vec()),
     }
 }
-
-#[allow(dead_code)]
-fn _to_sql_marker<T: ToSql>(_: T) {}
-
-#[allow(dead_code)]
-fn _statement_marker(_: &mut Statement<'_>, _: Option<&Transaction<'_>>) {}
 
 #[cfg(test)]
 mod tests {

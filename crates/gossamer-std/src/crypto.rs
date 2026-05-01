@@ -3,7 +3,7 @@
 //! signatures (ECDSA P-256, Ed25519), X.509 certificate parsing,
 //! key-derivation functions (PBKDF2, scrypt, Argon2), and the wider
 //! hash family (SHA-256, SHA-512, BLAKE3). All FFI is contained inside
-//! the upstream RustCrypto crates so this crate keeps
+//! the upstream `RustCrypto` crates so this crate keeps
 //! `#![forbid(unsafe_code)]`.
 //!
 //! RSA-PKCS#1 v1.5 was previously offered through `crypto::rsa`. It
@@ -14,7 +14,6 @@
 //! returns when a constant-time RSA replacement lands.
 
 #![forbid(unsafe_code)]
-#![allow(clippy::doc_markdown)]
 
 pub mod rand {
     //! OS-backed secure random bytes.
@@ -457,7 +456,7 @@ pub mod x509 {
         pub not_before_unix: i64,
         /// Validity end (`Not After`) as a Unix timestamp.
         pub not_after_unix: i64,
-        /// SubjectAltName DNS names (empty when the SAN extension
+        /// `SubjectAltName` DNS names (empty when the SAN extension
         /// is missing).
         pub san_dns: Vec<String>,
         /// SHA-256 of the DER-encoded certificate.

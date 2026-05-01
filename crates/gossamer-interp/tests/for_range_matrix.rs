@@ -5,8 +5,6 @@
 //! the `for-range` / inclusive-range / `vec.iter()` / `enumerate()`
 //! lowering paths added under H3.
 
-#![allow(clippy::needless_raw_string_hashes)]
-
 use std::cell::RefCell;
 
 use gossamer_hir::lower_source_file;
@@ -68,7 +66,7 @@ fn assert_parity(source: &str) {
 
 #[test]
 fn exclusive_for_range_sums_to_expected_total() {
-    let source = r#"
+    let source = r"
 fn main() {
     let mut total = 0i64;
     for i in 0i64..5i64 {
@@ -76,14 +74,14 @@ fn main() {
     }
     println(total);
 }
-"#;
+";
     assert_parity(source);
     assert_eq!(run_vm(source), "10\n");
 }
 
 #[test]
 fn inclusive_for_range_includes_endpoint() {
-    let source = r#"
+    let source = r"
 fn main() {
     let mut total = 0i64;
     for i in 0i64..=5i64 {
@@ -91,14 +89,14 @@ fn main() {
     }
     println(total);
 }
-"#;
+";
     assert_parity(source);
     assert_eq!(run_vm(source), "15\n");
 }
 
 #[test]
 fn inclusive_range_with_negative_start_works() {
-    let source = r#"
+    let source = r"
 fn main() {
     let mut total = 0i64;
     for i in (-2i64)..=2i64 {
@@ -106,14 +104,14 @@ fn main() {
     }
     println(total);
 }
-"#;
+";
     assert_parity(source);
     assert_eq!(run_vm(source), "0\n");
 }
 
 #[test]
 fn empty_inclusive_range_runs_zero_iterations() {
-    let source = r#"
+    let source = r"
 fn main() {
     let mut count = 0i64;
     for _ in 5i64..=4i64 {
@@ -121,14 +119,14 @@ fn main() {
     }
     println(count);
 }
-"#;
+";
     assert_parity(source);
     assert_eq!(run_vm(source), "0\n");
 }
 
 #[test]
 fn for_range_break_exits_loop_at_first_match() {
-    let source = r#"
+    let source = r"
 fn main() {
     let mut found = -1i64;
     for i in 0i64..100i64 {
@@ -139,7 +137,7 @@ fn main() {
     }
     println(found);
 }
-"#;
+";
     assert_parity(source);
     assert_eq!(run_vm(source), "7\n");
 }

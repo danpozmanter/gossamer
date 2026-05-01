@@ -69,7 +69,10 @@ pub(crate) enum Locate {
         /// Receiver `NodeId` (Expr or Pattern) the field belongs to.
         /// Reserved for future field-resolution work (looking up the
         /// struct definition to surface the field's declared type).
-        #[allow(dead_code)]
+        #[allow(
+            dead_code,
+            reason = "owner anchors the type lookup once field-resolution lands"
+        )]
         owner_id: NodeId,
         /// Source range of the field name.
         name_span: Span,
@@ -267,7 +270,10 @@ impl Walker {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    )]
     fn visit_expr(&mut self, expr: &Expr) {
         match &expr.kind {
             ExprKind::Block(block) | ExprKind::Unsafe(block) => self.visit_block(block),
@@ -563,7 +569,10 @@ pub(crate) struct PathOccurrence {
     pub span: Span,
     /// Head identifier text. Used for fallback whole-word matching
     /// when the resolver couldn't tag the occurrence.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "consumed by request-handler fallback when the resolver-tagged path is empty"
+    )]
     pub name: String,
     /// Resolution recorded for this occurrence, if any.
     pub resolution: Option<Resolution>,
@@ -574,7 +583,10 @@ pub(crate) struct PathOccurrence {
 pub(crate) struct DefinitionInfo {
     /// Source span covering the whole item. Reserved for code-action /
     /// peek-definition surfaces that want the whole declaration body.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "exposed for code-action / peek-definition surfaces"
+    )]
     pub item_span: Span,
     /// Source span covering just the declaring identifier.
     pub name_span: Span,
@@ -597,7 +609,10 @@ pub(crate) struct BindingInfo {
     /// Source span of the binding pattern as a whole. Reserved for
     /// future hover surfaces that want to outline the entire `(a, b)`
     /// or `Some(x)` shape rather than just the name.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "exposed for hover surfaces that outline the full binding pattern"
+    )]
     pub pattern_span: Span,
     /// Span of just the bound identifier.
     pub name_span: Span,
@@ -659,7 +674,10 @@ impl DefinitionIndex {
         self.by_local.iter().map(|(k, v)| (*k, v))
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    )]
     fn visit_item(&mut self, item: &Item, source: &str, resolutions: &Resolutions) {
         let docs = doc_block_above(source, item.span.start);
         match &item.kind {
@@ -852,7 +870,10 @@ impl DefinitionIndex {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    )]
     fn collect_expr_locals(&mut self, expr: &Expr) {
         match &expr.kind {
             ExprKind::Block(block) | ExprKind::Unsafe(block) => self.collect_block_locals(block),

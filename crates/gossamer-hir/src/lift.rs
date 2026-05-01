@@ -7,6 +7,8 @@
 //! Closures that genuinely capture variables are left alone and
 //! continue to route through the tree-walker.
 
+// HIR rewriter walks every expression kind; the per-kind match arms
+// stay inline so the closure-classification logic is in one place.
 #![allow(clippy::too_many_lines)]
 
 use std::collections::HashSet;
