@@ -80,6 +80,17 @@ install_file() {
         echo "gossamer-install: cannot write to $dest and sudo not available" >&2
         exit 1
     fi
+    # macOS Gatekeeper quarantines binaries unzipped from a browser
+    # download (com.apple.quarantine xattr). The CI ad-hoc-codesigns
+    # `gos`, but Gatekeeper still blocks until the attribute is
+    # removed. Strip it best-effort; harmless on Linux / when absent.
+    if [ "$os" = "macos" ] && command -v xattr >/dev/null 2>&1; then
+        if [ -w "$dest" ]; then
+            xattr -d com.apple.quarantine "$dest" 2>/dev/null || true
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo xattr -d com.apple.quarantine "$dest" 2>/dev/null || true
+        fi
+    fi
 }
 
 ensure_dir() {

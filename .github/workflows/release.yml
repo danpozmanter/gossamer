@@ -120,7 +120,7 @@ jobs:
 
       - name: Build .rpm
         run: |
-          cargo generate-rpm --target aarch64-unknown-linux-gnu -p gossamer-cli
+          cargo generate-rpm --target aarch64-unknown-linux-gnu -p crates/gossamer-cli
           mv target/aarch64-unknown-linux-gnu/generate-rpm/*.rpm .
 
       - name: Upload artifacts
