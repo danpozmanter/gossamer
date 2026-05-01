@@ -140,10 +140,10 @@ jobs:
       matrix:
         include:
           - arch: aarch64
-            runner: macos-14
+            runner: macos-latest
             target: aarch64-apple-darwin
           - arch: x86_64
-            runner: macos-13
+            runner: macos-latest
             target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v6
