@@ -33,19 +33,16 @@ fn main() {
 
 ## Why Gossamer
 
-- **Ergnomic** Forward pipes, Rust like error handling, minimal magic.
-- **Efficient** Gossamer runs with minimal impact on memory, and it runs fast.
-- **Interpreted and Compiled** Develop code quickly with a bytecode vm powered
+- **Ergnomic** - Forward pipes, Rust like error handling, minimal magic.
+- **Efficient** - Gossamer runs with minimal impact on memory, and it runs fast.
+- **Interpreted and Compiled** - Develop code quickly with a bytecode vm powered
 interpreter and a REPL. Ship an optimized compiled single binary.
-- **Go-style goroutines** (`go expr`) with typed channels.
-- **Go-style async** Colorless functions and stackful coroutines.
-- **Rust-style type system** — statically-typed, generics with
+- **Go-style goroutines** - (`go expr`) with typed channels.
+- **Go-style async** - Colorless functions and stackful coroutines.
+- **Rust-style type system** - statically-typed, generics with
   trait bounds, pattern-matching, `Option<T>` / `Result<T, E>`.
-- **Garbage-collected** — no lifetimes, no borrow checker surface.
-  - **Batteries-included stdlib** — `fmt`, `io`, `os`, `http`,
-  `encoding::json`, `sync`, `time`, plus a growing list of
-  libraries for context, path/fs, bytes/bufio, URL, logging,
-  encoding, crypto, regex, sort, CLI flags.
+- **Garbage-collected** - no lifetimes, no borrow checker surface.
+- **Estensible in Rust** - Write libraries in a safe systems language
 
 ## Where to go next
 

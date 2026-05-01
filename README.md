@@ -7,6 +7,21 @@
 A garbage-collected, goroutine-powered, fast-compiling systems
 language with Rust's surface syntax, Go's runtime, and the forward pipe operator.
 
+## Why Gossamer
+
+- **Ergnomic** - Forward pipes, Rust like error handling, minimal magic.
+- **Efficient** - Gossamer runs with minimal impact on memory, and it runs fast.
+- **Interpreted and Compiled** - Develop code quickly with a bytecode vm powered
+interpreter and a REPL. Ship an optimized compiled single binary.
+- **Go-style goroutines** - (`go expr`) with typed channels.
+- **Go-style async** - Colorless functions and stackful coroutines.
+- **Rust-style type system** - statically-typed, generics with
+  trait bounds, pattern-matching, `Option<T>` / `Result<T, E>`.
+- **Garbage-collected** - no lifetimes, no borrow checker surface.
+- **Estensible in Rust** - Write libraries in a safe systems language
+
+## Details
+
 - Language spec: [`SPEC.md`](SPEC.md)
 - Project style guide: [`GUIDELINES.md`](GUIDELINES.md)
 - AI skill card: [`SKILL.md`](SKILL.md) — drop this file into a model's context to teach it how to write idiomatic Gossamer (also embedded in `gos skill-prompt`).

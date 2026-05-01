@@ -10,7 +10,8 @@
 //! Three artefacts can be materialised under the same workdir:
 //!
 //! - `runner/` — the executable runner used by `gos run`.
-//! - `staticlib/` — `libgos_static_bindings.a` used by the
+//! - `staticlib/` — `libgos_static_bindings.a` (or
+//!   `gos_static_bindings.lib` on Windows MSVC) used by the
 //!   compiled-mode link step.
 //! - `sigs/signatures.json` — JSON dump of every binding's module
 //!   + item signature, fed to the resolver / typechecker.
@@ -39,6 +40,17 @@ const SUBDIR_RUNNER: &str = "runner";
 const SUBDIR_STATICLIB: &str = "staticlib";
 /// Cache subdirectory of the signatures dump.
 const SUBDIR_SIGS: &str = "sigs";
+
+/// Filename Cargo lands the bindings staticlib at, matching the
+/// `[lib] name = "gos_static_bindings"` entry of the generated
+/// `Cargo.toml`.
+fn staticlib_archive_filename() -> &'static str {
+    if cfg!(all(windows, target_env = "msvc")) {
+        "gos_static_bindings.lib"
+    } else {
+        "libgos_static_bindings.a"
+    }
+}
 
 /// Errors raised by [`BindingRunner`] / [`StaticBindingsLib`].
 #[derive(Debug, Error)]
@@ -420,16 +432,22 @@ impl StaticBindingsLib {
     }
 
     /// Path the staticlib lands at after `ensure_built`.
+    ///
+    /// Cargo names a `crate-type = ["staticlib"]` artifact
+    /// `lib<name>.a` on every platform *except* Windows MSVC, where
+    /// it lands as `<name>.lib`. The lib name in the staticlib
+    /// `Cargo.toml` is `gos_static_bindings`.
     #[must_use]
     pub fn archive_path(&self) -> PathBuf {
         self.workdir
             .join("target")
             .join(self.profile.dir())
-            .join("libgos_static_bindings.a")
+            .join(staticlib_archive_filename())
     }
 
     /// Idempotently builds the staticlib. Returns the path to the
-    /// produced `.a` archive.
+    /// produced archive (`.a` on Unix / Windows-GNU, `.lib` on
+    /// Windows MSVC).
     pub fn ensure_built(&self) -> Result<PathBuf, BindingRunnerError> {
         fs::create_dir_all(&self.workdir)?;
         let _lock = AdvisoryLock::acquire(&self.workdir.join(".gos-build.lock"))?;

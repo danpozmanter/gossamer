@@ -117,7 +117,15 @@ fn staticlib_builds_and_archive_is_present() {
 
     let archive = staticlib.ensure_built().expect("staticlib build succeeded");
     assert!(archive.is_file(), "archive must exist");
-    assert!(archive.extension().and_then(|s| s.to_str()) == Some("a"));
+    let expected_ext = if cfg!(all(windows, target_env = "msvc")) {
+        "lib"
+    } else {
+        "a"
+    };
+    assert_eq!(
+        archive.extension().and_then(|s| s.to_str()),
+        Some(expected_ext),
+    );
 
     let bytes = fs::read(&archive).unwrap();
     let needle = b"gos_static_install_bindings";
