@@ -282,9 +282,23 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
+      # Mint the GitHub Actions OIDC token explicitly and feed it to
+      # cosign via COSIGN_IDENTITY_TOKEN. Cosign's "ambient" OIDC
+      # detection has been observed to fail on hosted runners with
+      # `fetching ambient OIDC credentials: invalid character 'u'
+      # looking for beginning of value` — the provider is fetching
+      # the token URL and getting a plain-text error body. Going
+      # through `actions/github-script` skips the ambient probe.
+      - name: Mint OIDC token for cosign
+        id: oidc
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.setOutput('token', await core.getIDToken('sigstore'));
+
       - name: Sign every artifact (keyless / OIDC)
         env:
-          COSIGN_EXPERIMENTAL: "1"
+          COSIGN_IDENTITY_TOKEN: ${{ steps.oidc.outputs.token }}
         run: |
           set -euo pipefail
           cd release
