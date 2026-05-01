@@ -13,7 +13,7 @@
 
 #![allow(clippy::items_after_statements, clippy::missing_safety_doc)]
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -122,12 +122,15 @@ impl Symbol {
     /// copies the NUL-terminated C string into an owned [`String`].
     #[must_use]
     pub fn call_no_args_cstring(&self) -> String {
-        type Fn0Ptr = unsafe extern "C" fn() -> *const i8;
+        // `c_char` aliases `i8` on x86_64 Linux but `u8` on
+        // aarch64 Linux; use the alias rather than hard-coding so
+        // both platforms agree with `CStr::from_ptr`.
+        type Fn0Ptr = unsafe extern "C" fn() -> *const c_char;
         // SAFETY: as call_no_args_i32; we additionally trust the
         // returned pointer is NUL-terminated and statically owned by
         // the library (the typical contract for `*_libversion`-style
         // C accessors).
-        let ptr: *const i8 = unsafe { std::mem::transmute::<usize, Fn0Ptr>(self.raw)() };
+        let ptr: *const c_char = unsafe { std::mem::transmute::<usize, Fn0Ptr>(self.raw)() };
         if ptr.is_null() {
             return String::new();
         }
@@ -147,7 +150,7 @@ impl Symbol {
     /// Calls the symbol as `extern "C" fn(*const c_char) -> c_int`.
     pub fn call_cstr_to_i32(&self, arg: &str) -> Result<i32, FfiError> {
         let arg = CString::new(arg).map_err(|e| FfiError::BadString(e.to_string()))?;
-        type Fn1Cstr = unsafe extern "C" fn(*const i8) -> i32;
+        type Fn1Cstr = unsafe extern "C" fn(*const c_char) -> i32;
         // SAFETY: as call_no_args_i32; the CString lives until the
         // call returns.
         Ok(unsafe { std::mem::transmute::<usize, Fn1Cstr>(self.raw)(arg.as_ptr()) })
