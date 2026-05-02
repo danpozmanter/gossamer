@@ -230,6 +230,12 @@ pub enum TyKind {
     /// receiver is rewritten by MIR lowering into a runtime
     /// `gos_rt_json_get(receiver, "field")` call.
     JsonValue,
+    /// `errors::Error` — opaque heap error value with a message
+    /// string and optional cause chain. Used as the default Err
+    /// type for `Result<T>` so the `?` operator and error
+    /// propagation work across the standard library without
+    /// explicit `map_err` calls.
+    DynError,
     /// GC reference type `&T` or `&mut T`.
     Ref {
         /// Mutability of the reference.

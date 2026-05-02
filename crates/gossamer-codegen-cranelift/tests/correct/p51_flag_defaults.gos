@@ -1,0 +1,21 @@
+use std::flag
+use std::os
+use std::time
+
+fn main() -> Result<(), flag::Error> {
+    let mut fs = flag::Set::new("p51")
+    let s = fs.string("s", "hi", "string")
+    let i = fs.int("i", -7, "int")
+    let u = fs.uint("u", 42, "uint")
+    let f = fs.float("f", 1.5, "float")
+    let b = fs.bool("b", true, "bool")
+    let d = fs.duration("d", time::Duration::from_secs(3), "duration")
+    let _ = fs.parse(os::args())?
+    println!("s={}", *s)
+    println!("i={}", *i)
+    println!("u={}", *u)
+    println!("f={}", *f)
+    println!("b={}", *b)
+    println!("d={}", *d)
+    Ok(())
+}

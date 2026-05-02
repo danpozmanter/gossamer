@@ -17,6 +17,10 @@ pub struct TyCtxt {
     index: HashMap<TyKind, Ty>,
     primitives: Primitives,
     struct_fields: HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+    /// Human-readable names for ADT / alias / fn `DefId`s, indexed by
+    /// the local component. Populated by the type checker for user
+    /// structs and by sentinel registrations for `Result`/`Option`.
+    def_names: HashMap<gossamer_resolve::DefId, String>,
 }
 
 /// Cached handles for the primitive types that every program uses. The
@@ -31,6 +35,7 @@ struct Primitives {
     string_: Option<Ty>,
     error: Option<Ty>,
     json_value: Option<Ty>,
+    dyn_error: Option<Ty>,
 }
 
 impl TyCtxt {
@@ -155,6 +160,16 @@ impl TyCtxt {
         ty
     }
 
+    /// Interns the opaque dynamic `errors::Error` type.
+    pub fn dyn_error_ty(&mut self) -> Ty {
+        if let Some(ty) = self.primitives.dyn_error {
+            return ty;
+        }
+        let ty = self.intern(TyKind::DynError);
+        self.primitives.dyn_error = Some(ty);
+        ty
+    }
+
     /// Interns an integer primitive.
     pub fn int_ty(&mut self, int: IntTy) -> Ty {
         self.intern(TyKind::Int(int))
@@ -176,5 +191,17 @@ impl TyCtxt {
     #[must_use]
     pub fn struct_field_tys(&self, def: gossamer_resolve::DefId) -> Option<&[Ty]> {
         self.struct_fields.get(&def).map(Vec::as_slice)
+    }
+
+    /// Records a human-readable name for the given `DefId`.
+    /// Overwrites any previous registration.
+    pub fn register_def_name(&mut self, def: gossamer_resolve::DefId, name: impl Into<String>) {
+        self.def_names.insert(def, name.into());
+    }
+
+    /// Returns the registered name for `def`, or `None`.
+    #[must_use]
+    pub fn def_name(&self, def: gossamer_resolve::DefId) -> Option<&str> {
+        self.def_names.get(&def).map(String::as_str)
     }
 }

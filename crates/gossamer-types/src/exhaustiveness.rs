@@ -486,6 +486,16 @@ impl ExhaustivenessDiagnostic {
     pub const fn new(error: ExhaustivenessError, span: Span) -> Self {
         Self { error, span }
     }
+
+    /// Renders this diagnostic as a structured
+    /// [`gossamer_diagnostics::Diagnostic`].
+    #[must_use]
+    pub fn to_diagnostic(&self) -> gossamer_diagnostics::Diagnostic {
+        use gossamer_diagnostics::{Code, Diagnostic, Location};
+        let location = Location::new(self.span.file, self.span);
+        let title = format!("{}", self.error);
+        Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title)
+    }
 }
 
 impl fmt::Display for ExhaustivenessDiagnostic {
@@ -515,6 +525,15 @@ impl ExhaustivenessError {
         match self {
             Self::NonExhaustive { .. } => "non-exhaustive",
             Self::UnreachableArm => "unreachable-arm",
+        }
+    }
+
+    /// Stable error code used by the diagnostics framework.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::NonExhaustive { .. } => "GM0001",
+            Self::UnreachableArm => "GM0002",
         }
     }
 }

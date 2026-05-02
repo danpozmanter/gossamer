@@ -158,6 +158,105 @@ pub unsafe extern "C" fn gos_rt_os_args() -> *const c_char {
     ARGS_PTR.load(Ordering::SeqCst) as *const c_char
 }
 
+/// `os::env(name) -> Option<String>`. Compiled tier returns a
+/// `*mut GosResult` shaped as Option (disc 0 = Some, 1 = None).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_env(name: *const c_char) -> *mut GosResult {
+    if name.is_null() {
+        return unsafe { gos_rt_result_new(1, 0) };
+    }
+    let key = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+    match std::env::var(&key) {
+        Ok(value) => {
+            let cs = alloc_cstring(value.as_bytes());
+            unsafe { gos_rt_result_new(0, cs as i64) }
+        }
+        Err(_) => unsafe { gos_rt_result_new(1, 0) },
+    }
+}
+
+/// `os::cwd() -> Result<String, errors::Error>`. Compiled tier
+/// returns a `*mut GosResult` (disc 0 = Ok, 1 = Err).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_cwd() -> *mut GosResult {
+    match std::env::current_dir() {
+        Ok(path) => {
+            let cs = alloc_cstring(path.to_string_lossy().as_bytes());
+            unsafe { gos_rt_result_new(0, cs as i64) }
+        }
+        Err(e) => {
+            let msg = format!("cwd: {e}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            unsafe { gos_rt_result_new(1, err as i64) }
+        }
+    }
+}
+
+/// `fs::list_dir(path) -> Result<[DirInfo], errors::Error>`.
+/// Each `DirInfo` is a 7-slot heap aggregate matching the
+/// interpreter's struct field order:
+/// `[name: *c_char, path: *c_char, is_file: i64, is_dir: i64,
+/// is_symlink: i64, size: i64, modified_ms: i64]`. Field
+/// indices match the MIR projections emitted for
+/// `entry.<field>` access.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> *mut GosResult {
+    let p = if path.is_null() {
+        ".".to_string()
+    } else {
+        unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+    };
+    let mut entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(&p) {
+        Ok(it) => it.flatten().collect(),
+        Err(e) => {
+            let msg = format!("list_dir: {e}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+    };
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    let out = unsafe { gos_rt_vec_new(8) };
+    for entry in entries {
+        let Ok(meta) = entry.metadata() else { continue };
+        let Ok(ft) = entry.file_type() else { continue };
+        let name_str = entry.file_name().to_string_lossy().into_owned();
+        let path_str = entry.path().to_string_lossy().into_owned();
+        let name_cs = alloc_cstring(name_str.as_bytes()) as i64;
+        let path_cs = alloc_cstring(path_str.as_bytes()) as i64;
+        let is_file = i64::from(ft.is_file());
+        let is_dir = i64::from(ft.is_dir());
+        let is_symlink = i64::from(ft.is_symlink());
+        let size = i64::try_from(meta.len()).unwrap_or(0);
+        let modified_ms = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|d| i64::try_from(d.as_millis()).ok())
+            .unwrap_or(0);
+        // 7 fields * 8 bytes = 56 bytes.
+        let blob = unsafe { libc::malloc(56) as *mut i64 };
+        if blob.is_null() {
+            continue;
+        }
+        unsafe {
+            *blob.add(0) = name_cs;
+            *blob.add(1) = path_cs;
+            *blob.add(2) = is_file;
+            *blob.add(3) = is_dir;
+            *blob.add(4) = is_symlink;
+            *blob.add(5) = size;
+            *blob.add(6) = modified_ms;
+        }
+        let entry_val = blob as i64;
+        unsafe {
+            gos_rt_vec_push(out, std::ptr::addr_of!(entry_val).cast::<u8>());
+        }
+    }
+    unsafe { gos_rt_result_new(0, out as i64) }
+}
+
 // ---------------------------------------------------------------
 // Array/Vec/Generic len — first i64 of the passed buffer is len
 // ---------------------------------------------------------------
@@ -304,37 +403,29 @@ pub unsafe extern "C" fn gos_rt_str_as_bytes(s: *const c_char) -> *mut GosVec {
     } else {
         unsafe { CStr::from_ptr(s).to_bytes().len() }
     };
-    // GosVec is 32 bytes (len, cap, elem_bytes/pad, ptr). We
-    // arena-allocate it 8-byte aligned. The data buffer holds
-    // `len` bytes of the source string; we copy rather than
-    // alias because the caller's `&str` could be in `.rodata`
-    // and the arena reset shouldn't affect it.
-    let header = unsafe { gos_rt_gc_alloc(std::mem::size_of::<GosVec>() as u64) };
-    if header.is_null() {
-        return std::ptr::null_mut();
+    // The returned Vec is consumed by `bytes[i]` indexing in
+    // user code, which the codegen lowers via the Vec/Slice
+    // dispatch (`gos_rt_vec_get_i64`) — every slot is i64-shaped.
+    // Materialise each byte as a zero-extended i64 so the load
+    // returns the byte's value rather than 8 packed buffer
+    // bytes. Use `gos_rt_vec_with_capacity` so the resulting
+    // header is `Box::from_raw`-compatible — the auto-emitted
+    // `gos_rt_vec_free` at scope-end relies on that
+    // provenance.
+    let v = unsafe { gos_rt_vec_with_capacity(8, len as i64) };
+    if v.is_null() {
+        return v;
     }
-    let data = if len == 0 {
-        std::ptr::null_mut::<u8>()
-    } else {
-        let p = unsafe { gos_rt_gc_alloc(len as u64) };
-        if !p.is_null() && !s.is_null() {
-            unsafe {
-                std::ptr::copy_nonoverlapping(s.cast::<u8>(), p, len);
+    if len > 0 && !s.is_null() {
+        unsafe {
+            let src = s.cast::<u8>();
+            let header = &mut *v;
+            let dst = header.ptr.cast::<i64>();
+            for i in 0..len {
+                *dst.add(i) = i64::from(*src.add(i));
             }
+            header.len = len as i64;
         }
-        p
-    };
-    let v = header.cast::<GosVec>();
-    unsafe {
-        std::ptr::write(
-            v,
-            GosVec {
-                len: len as i64,
-                cap: len as i64,
-                elem_bytes: 1,
-                ptr: data,
-            },
-        );
     }
     v
 }
@@ -718,6 +809,300 @@ pub unsafe extern "C" fn gos_rt_flag_cell_load_bool(cell: *const bool) -> i64 {
         return 0;
     }
     i64::from(unsafe { *cell })
+}
+
+/// `time::Duration::from_secs(n)` lowering — returns `n * 1000` as
+/// the i64-millisecond Duration the compiled tier carries.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_duration_from_secs(secs: i64) -> i64 {
+    secs.saturating_mul(1_000)
+}
+
+// `flag::parse([decls])` declarative parser — takes an array of
+// `FlagDecl`-shaped blobs and returns a `FlagMap` handle.
+// Layout per blob: `[name_cs, short_char, kind_tag, int_val,
+// str_cs]` (5 * 8 = 40 bytes). `kind_tag` is 0=Int, 1=Str, 2=Bool.
+// Mirrors the interpreter's `builtin_flag_parse`.
+
+#[derive(Debug, Clone)]
+struct GosFlagMapEntry {
+    name: String,
+    short: Option<char>,
+    kind: FlagKind,
+    str_val: Option<Vec<u8>>,
+    int_val: i64,
+}
+
+pub struct GosFlagMap {
+    entries: Vec<GosFlagMapEntry>,
+    positional: Vec<String>,
+}
+
+unsafe impl Send for GosFlagMap {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_parse(decls: *mut GosVec) -> *mut GosFlagMap {
+    let mut entries: Vec<GosFlagMapEntry> = Vec::new();
+    if !decls.is_null() {
+        let len = unsafe { gos_rt_vec_len(decls) };
+        for i in 0..len {
+            let raw = unsafe { gos_rt_vec_get_i64(decls, i) };
+            if raw == 0 {
+                continue;
+            }
+            let blob = raw as *const i64;
+            let name_cs = unsafe { *blob.add(0) } as *const c_char;
+            let short_raw = unsafe { *blob.add(1) };
+            let kind_tag = unsafe { *blob.add(2) };
+            let int_val = unsafe { *blob.add(3) };
+            let str_cs = unsafe { *blob.add(4) } as *const c_char;
+            let name = if name_cs.is_null() {
+                String::new()
+            } else {
+                unsafe { CStr::from_ptr(name_cs).to_string_lossy().into_owned() }
+            };
+            let short = u32::try_from(short_raw).ok().and_then(char::from_u32);
+            let kind = match kind_tag {
+                0 => FlagKind::Int,
+                1 => FlagKind::String,
+                2 => FlagKind::Bool,
+                _ => FlagKind::String,
+            };
+            let str_val = if matches!(kind, FlagKind::String) && !str_cs.is_null() {
+                Some(unsafe { CStr::from_ptr(str_cs).to_bytes().to_vec() })
+            } else {
+                None
+            };
+            entries.push(GosFlagMapEntry {
+                name,
+                short,
+                kind,
+                str_val,
+                int_val,
+            });
+        }
+    }
+    let positional = parse_argv_flag_values(
+        &mut entries,
+        ARGS_PTR.load(Ordering::SeqCst),
+        ARGS_LEN.load(Ordering::SeqCst),
+    );
+    Box::into_raw(Box::new(GosFlagMap {
+        entries,
+        positional,
+    }))
+}
+
+/// Parse `argv`/`argc` into positional strings, applying flag values
+/// to `entries` in place.
+fn parse_argv_flag_values(entries: &mut [GosFlagMapEntry], argv: usize, argc: i64) -> Vec<String> {
+    let argv = argv as *const *const c_char;
+    let mut idx: i64 = 0;
+    let mut positional: Vec<String> = Vec::new();
+    while idx < argc {
+        let p = unsafe { *argv.offset(idx as isize) };
+        if p.is_null() {
+            idx += 1;
+            continue;
+        }
+        let arg = unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() };
+        if arg == "--" {
+            idx += 1;
+            while idx < argc {
+                let q = unsafe { *argv.offset(idx as isize) };
+                if !q.is_null() {
+                    let s = unsafe { CStr::from_ptr(q).to_string_lossy().into_owned() };
+                    positional.push(s);
+                }
+                idx += 1;
+            }
+            break;
+        }
+        if let Some(rest) = arg.strip_prefix("--") {
+            let (name, explicit) = match rest.split_once('=') {
+                Some((n, v)) => (n.to_string(), Some(v.to_string())),
+                None => (rest.to_string(), None),
+            };
+            if let Some(entry) = entries.iter_mut().find(|e| e.name == name) {
+                let value = if let Some(v) = explicit {
+                    v
+                } else if matches!(entry.kind, FlagKind::Bool) {
+                    "true".to_string()
+                } else if idx + 1 < argc {
+                    idx += 1;
+                    let q = unsafe { *argv.offset(idx as isize) };
+                    if q.is_null() {
+                        String::new()
+                    } else {
+                        unsafe { CStr::from_ptr(q).to_string_lossy().into_owned() }
+                    }
+                } else {
+                    String::new()
+                };
+                apply_decl_value(entry, &value);
+                idx += 1;
+                continue;
+            }
+            positional.push(arg);
+            idx += 1;
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix('-')
+            && !rest.is_empty()
+        {
+            let mut chars = rest.chars();
+            let first = chars.next().unwrap();
+            let remainder: String = chars.collect();
+            if let Some(entry) = entries.iter_mut().find(|e| e.short == Some(first)) {
+                let value = if !remainder.is_empty() {
+                    remainder
+                } else if matches!(entry.kind, FlagKind::Bool) {
+                    "true".to_string()
+                } else if idx + 1 < argc {
+                    idx += 1;
+                    let q = unsafe { *argv.offset(idx as isize) };
+                    if q.is_null() {
+                        String::new()
+                    } else {
+                        unsafe { CStr::from_ptr(q).to_string_lossy().into_owned() }
+                    }
+                } else {
+                    String::new()
+                };
+                apply_decl_value(entry, &value);
+                idx += 1;
+                continue;
+            }
+        }
+        positional.push(arg);
+        idx += 1;
+    }
+    positional
+}
+
+fn apply_decl_value(entry: &mut GosFlagMapEntry, raw: &str) {
+    match entry.kind {
+        FlagKind::Int | FlagKind::Uint | FlagKind::Duration => {
+            entry.int_val = raw.parse::<i64>().unwrap_or(entry.int_val);
+        }
+        FlagKind::Float => {
+            entry.int_val = raw.parse::<f64>().unwrap_or(0.0).to_bits() as i64;
+        }
+        FlagKind::Bool => {
+            entry.int_val = i64::from(matches!(raw, "true" | "1" | "yes" | "on"));
+        }
+        FlagKind::String | FlagKind::StringList => {
+            entry.str_val = Some(raw.as_bytes().to_vec());
+        }
+    }
+}
+
+/// `FlagMap::get(map, key) -> Option<i64-or-string>`. Returns
+/// `Result<int_or_str_ptr, ()>` (Result-as-Option in the
+/// compiled tier) carrying either the i64 slot for numeric /
+/// bool flags or the c-string pointer for string flags.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_map_get(
+    map: *const GosFlagMap,
+    key: *const c_char,
+) -> *mut GosResult {
+    if map.is_null() || key.is_null() {
+        return unsafe { gos_rt_result_new(1, 0) };
+    }
+    let m = unsafe { &*map };
+    let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+    if let Some(entry) = m.entries.iter().find(|e| e.name == k) {
+        let payload = match entry.kind {
+            FlagKind::String | FlagKind::StringList => {
+                let bytes = entry.str_val.as_deref().unwrap_or(&[]);
+                alloc_cstring(bytes) as i64
+            }
+            _ => entry.int_val,
+        };
+        return unsafe { gos_rt_result_new(0, payload) };
+    }
+    // Suppress unused-field warning on positional (kept for
+    // future surface — `flag::parse(...)?.positional`).
+    let _ = &m.positional;
+    unsafe { gos_rt_result_new(1, 0) }
+}
+
+/// `time::format_rfc3339(unix_ms) -> Result<String, errors::Error>`.
+/// Renders a UTC RFC 3339 timestamp from a unix-milliseconds
+/// instant. Mirrors the interpreter builtin.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_format_rfc3339(unix_ms: i64) -> *mut GosResult {
+    let secs = unix_ms.div_euclid(1_000);
+    let nanos = (unix_ms.rem_euclid(1_000) * 1_000_000) as u32;
+    let _ = nanos;
+    let mut y: i64 = 1970;
+    let mut remain = secs.div_euclid(86_400);
+    let is_leap = |yr: i64| (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
+    let dy = |yr: i64| if is_leap(yr) { 366 } else { 365 };
+    if remain < 0 {
+        while remain < 0 {
+            y -= 1;
+            remain += dy(y);
+        }
+    } else {
+        while remain >= dy(y) {
+            remain -= dy(y);
+            y += 1;
+        }
+    }
+    let dim = |m: i64, yr: i64| -> i64 {
+        match m {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if is_leap(yr) {
+                    29
+                } else {
+                    28
+                }
+            }
+            _ => 30,
+        }
+    };
+    let mut m = 1_i64;
+    while remain >= dim(m, y) {
+        remain -= dim(m, y);
+        m += 1;
+    }
+    let day = remain + 1;
+    let s = secs.rem_euclid(86_400);
+    let h = s / 3600;
+    let mi = (s % 3600) / 60;
+    let se = s % 60;
+    let s_str = format!("{y:04}-{m:02}-{day:02}T{h:02}:{mi:02}:{se:02}Z");
+    let cs = alloc_cstring(s_str.as_bytes());
+    unsafe { gos_rt_result_new(0, cs as i64) }
+}
+
+/// `time::Duration::from_millis(n)` lowering — Duration is already
+/// stored as i64 ms in the compiled tier, so this is the identity.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_duration_from_millis(ms: i64) -> i64 {
+    ms
+}
+
+/// `*cell` for `flag::Set::float` cells.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_cell_load_f64(cell: *const f64) -> f64 {
+    if cell.is_null() {
+        return 0.0;
+    }
+    unsafe { *cell }
+}
+
+/// `*cell` for `flag::Set::string_list` cells. The cell stores a
+/// `*mut GosVec` that the runtime owns; reads return a borrow.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_cell_load_vec(cell: *const *mut GosVec) -> *mut GosVec {
+    if cell.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { *cell }
 }
 
 #[unsafe(no_mangle)]
@@ -1674,9 +2059,49 @@ pub unsafe extern "C" fn gos_rt_result_is_err(p: *const GosResult) -> i64 {
 /// Maps a `gos_main` return value to a process exit code.
 /// Treats a heap-shaped pointer as a `*mut GosResult` and reads
 /// its `disc`; falls back to the raw value (truncated) for
-/// non-pointer returns.
+/// non-pointer returns. Also blocks until every outstanding
+/// goroutine has settled so their stdout reaches the user
+/// before the process exits.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_main_exit_code(raw: i64) -> i32 {
+    // Wait for every goroutine spawned via `go expr` to finish.
+    // Without this the M:N pool keeps workers alive on a Condvar
+    // while the main thread races straight to `_exit`, dropping
+    // unflushed stdout and any worker output that hadn't yet
+    // reached the underlying file descriptor.
+    // Wait for outstanding goroutines so their stdout reaches
+    // the user before the process exits. The M:N pool's worker
+    // threads boot lazily on first `spawn`, so a fast main
+    // (`go expr; return`) can race the worker start-up. Two
+    // guards: (1) seed wait so the worker pool has time to
+    // dequeue the first task, and (2) settle wait so a
+    // task that just decremented `live` has time to actually
+    // emit its stdout before the next sample.
+    let sched = crate::sched_global::scheduler();
+    let start = std::time::Instant::now();
+    let deadline = start + std::time::Duration::from_secs(5);
+    let mut consecutive_settled = 0_u32;
+    let mut iters = 0_u64;
+    while std::time::Instant::now() < deadline {
+        let live = sched.live_goroutines();
+        let stats = sched.stats();
+        let settled =
+            live == 0 && stats.spawned == stats.finished && start.elapsed().as_millis() >= 100;
+        if settled {
+            consecutive_settled += 1;
+            if consecutive_settled >= 5 {
+                break;
+            }
+        } else {
+            consecutive_settled = 0;
+        }
+        iters += 1;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let _ = iters;
+    // Flush any buffered stdout that workers wrote so it
+    // reaches the user before the process exits.
+    unsafe { gos_rt_flush_stdout() };
     if raw == 0 {
         return 0;
     }
@@ -3698,12 +4123,14 @@ fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
 /// interest with [`crate::sched_global`] and park the calling
 /// goroutine on a Condvar; the netpoller wakes the waker when the
 /// kernel reports readiness.
+#[allow(dead_code)]
 struct HttpConn {
     stream: TcpStream,
     mio_stream: mio::net::TcpStream,
     last_source: Option<crate::sched::PollSource>,
 }
 
+#[allow(dead_code)]
 impl HttpConn {
     fn wrap(stream: TcpStream) -> Option<Self> {
         let cloned = stream.try_clone().ok()?;
@@ -5241,21 +5668,27 @@ unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
     }
 }
 
-/// `json::parse(text) -> Result<json::Value, _>` runtime entry
-/// point. Returns a fresh `GosJson*`; on parse failure the
-/// returned node is JSON `null` so callers can still treat it as a
-/// valid handle (the typed `Result` shape is reconstructed at
-/// MIR-lowering time).
+/// `json::parse(text) -> Result<json::Value, String>` runtime
+/// entry point. Returns a real `GosResult` so `match` and `?`
+/// work across function boundaries in compiled code.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> *mut GosJson {
+pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> *mut GosResult {
     let bytes: &[u8] = if text.is_null() {
         b""
     } else {
         unsafe { CStr::from_ptr(text).to_bytes() }
     };
     match std::str::from_utf8(bytes).map(serde_json::from_str::<serde_json::Value>) {
-        Ok(Ok(v)) => GosJson::into_raw(v),
-        _ => GosJson::null_ptr(),
+        Ok(Ok(v)) => {
+            let ptr = GosJson::into_raw(v);
+            unsafe { gos_rt_result_new(0, ptr as i64) }
+        }
+        Ok(Err(e)) => {
+            let msg = format!("{e}");
+            let cs = alloc_cstring(msg.as_bytes());
+            unsafe { gos_rt_result_new(1, cs as i64) }
+        }
+        Err(_) => unsafe { gos_rt_result_new(1, alloc_cstring(b"invalid UTF-8") as i64) },
     }
 }
 
@@ -5400,23 +5833,6 @@ pub unsafe extern "C" fn gos_rt_json_as_bool(j: *const GosJson) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_identity(j: *mut GosJson) -> *mut GosJson {
     j
-}
-
-/// Returns true when `gos_rt_json_parse` succeeded — the MIR
-/// lowerer pairs this with the parse result so user code shaped
-/// like `match json::parse(s) { Ok(v) => …, Err(_) => … }` can
-/// decide based on a flat boolean.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_json_parsed_ok(j: *const GosJson) -> i32 {
-    // A real parse always produces a node — even a `null` doc — so
-    // the only "not parsed" case is when the helper returned the
-    // null sentinel from a malformed input. `serde_json::Value::Null`
-    // is therefore treated as parse failure here. Callers that need
-    // to distinguish a literal `null` use `is_null` directly.
-    match unsafe { json_borrow(j) } {
-        Some(serde_json::Value::Null) | None => 0,
-        Some(_) => 1,
-    }
 }
 
 /// `json::Value::String(s)` constructor.
@@ -6051,10 +6467,6 @@ pub unsafe extern "C" fn gos_rt_bufio_scanner_text(s: *const GosScanner) -> *mut
 // ---------------------------------------------------------------
 
 pub struct GosFlagSet {
-    #[allow(
-        dead_code,
-        reason = "captured for diagnostics; readers will land alongside flag-set error messages"
-    )]
     name: String,
     specs: Vec<FlagSpec>,
     /// After `.parse()` runs, these hold the positional args left
@@ -6065,14 +6477,24 @@ pub struct GosFlagSet {
 
 struct FlagSpec {
     long_name: String,
+    short: Option<char>,
+    summary: String,
     kind: FlagKind,
     cell: *mut std::ffi::c_void,
 }
 
+#[derive(Debug, Clone)]
 enum FlagKind {
     String,
+    Int,
     Uint,
+    Float,
     Bool,
+    /// Duration cell stores `i64` milliseconds — same wire shape as
+    /// `time::Duration` in the compiled tier.
+    Duration,
+    /// String-list cell stores `*mut GosVec` of c-string pointers.
+    StringList,
 }
 
 unsafe impl Send for GosFlagSet {}
@@ -6091,23 +6513,28 @@ pub unsafe extern "C" fn gos_rt_flag_set_new(name: *const c_char) -> *mut GosFla
     }))
 }
 
+fn read_cstr(p: *const c_char) -> String {
+    if p.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_flag_set_string(
     set: *mut GosFlagSet,
     name: *const c_char,
     default_v: *const c_char,
-    _help: *const c_char,
+    help: *const c_char,
 ) -> *mut *mut c_char {
     if set.is_null() {
         return std::ptr::null_mut();
     }
-    let n = if name.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
-    };
+    let n = read_cstr(name);
+    let h = read_cstr(help);
     let dv = if default_v.is_null() {
-        std::ptr::null_mut()
+        alloc_cstring(b"")
     } else {
         let bytes = unsafe { CStr::from_ptr(default_v).to_bytes().to_vec() };
         alloc_cstring(&bytes)
@@ -6116,7 +6543,33 @@ pub unsafe extern "C" fn gos_rt_flag_set_string(
     let set = unsafe { &mut *set };
     set.specs.push(FlagSpec {
         long_name: n,
+        short: None,
+        summary: h,
         kind: FlagKind::String,
+        cell: cell.cast::<std::ffi::c_void>(),
+    });
+    cell
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_int(
+    set: *mut GosFlagSet,
+    name: *const c_char,
+    default_v: i64,
+    help: *const c_char,
+) -> *mut i64 {
+    if set.is_null() {
+        return std::ptr::null_mut();
+    }
+    let n = read_cstr(name);
+    let h = read_cstr(help);
+    let cell = Box::into_raw(Box::new(default_v));
+    let set = unsafe { &mut *set };
+    set.specs.push(FlagSpec {
+        long_name: n,
+        short: None,
+        summary: h,
+        kind: FlagKind::Int,
         cell: cell.cast::<std::ffi::c_void>(),
     });
     cell
@@ -6127,21 +6580,44 @@ pub unsafe extern "C" fn gos_rt_flag_set_uint(
     set: *mut GosFlagSet,
     name: *const c_char,
     default_v: u64,
-    _help: *const c_char,
+    help: *const c_char,
 ) -> *mut u64 {
     if set.is_null() {
         return std::ptr::null_mut();
     }
-    let n = if name.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
-    };
+    let n = read_cstr(name);
+    let h = read_cstr(help);
     let cell = Box::into_raw(Box::new(default_v));
     let set = unsafe { &mut *set };
     set.specs.push(FlagSpec {
         long_name: n,
+        short: None,
+        summary: h,
         kind: FlagKind::Uint,
+        cell: cell.cast::<std::ffi::c_void>(),
+    });
+    cell
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_float(
+    set: *mut GosFlagSet,
+    name: *const c_char,
+    default_v: f64,
+    help: *const c_char,
+) -> *mut f64 {
+    if set.is_null() {
+        return std::ptr::null_mut();
+    }
+    let n = read_cstr(name);
+    let h = read_cstr(help);
+    let cell = Box::into_raw(Box::new(default_v));
+    let set = unsafe { &mut *set };
+    set.specs.push(FlagSpec {
+        long_name: n,
+        short: None,
+        summary: h,
+        kind: FlagKind::Float,
         cell: cell.cast::<std::ffi::c_void>(),
     });
     cell
@@ -6152,24 +6628,240 @@ pub unsafe extern "C" fn gos_rt_flag_set_bool(
     set: *mut GosFlagSet,
     name: *const c_char,
     default_v: bool,
-    _help: *const c_char,
+    help: *const c_char,
 ) -> *mut bool {
     if set.is_null() {
         return std::ptr::null_mut();
     }
-    let n = if name.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
-    };
+    let n = read_cstr(name);
+    let h = read_cstr(help);
     let cell = Box::into_raw(Box::new(default_v));
     let set = unsafe { &mut *set };
     set.specs.push(FlagSpec {
         long_name: n,
+        short: None,
+        summary: h,
         kind: FlagKind::Bool,
         cell: cell.cast::<std::ffi::c_void>(),
     });
     cell
+}
+
+/// Duration cell. `default_v` is interpreted as milliseconds (same
+/// wire shape used by `time::Duration` in the compiled tier).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_duration(
+    set: *mut GosFlagSet,
+    name: *const c_char,
+    default_ms: i64,
+    help: *const c_char,
+) -> *mut i64 {
+    if set.is_null() {
+        return std::ptr::null_mut();
+    }
+    let n = read_cstr(name);
+    let h = read_cstr(help);
+    let cell = Box::into_raw(Box::new(default_ms));
+    let set = unsafe { &mut *set };
+    set.specs.push(FlagSpec {
+        long_name: n,
+        short: None,
+        summary: h,
+        kind: FlagKind::Duration,
+        cell: cell.cast::<std::ffi::c_void>(),
+    });
+    cell
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_string_list(
+    set: *mut GosFlagSet,
+    name: *const c_char,
+    help: *const c_char,
+) -> *mut *mut GosVec {
+    if set.is_null() {
+        return std::ptr::null_mut();
+    }
+    let n = read_cstr(name);
+    let h = read_cstr(help);
+    let backing = unsafe { gos_rt_vec_new(8) };
+    let cell = Box::into_raw(Box::new(backing));
+    let set = unsafe { &mut *set };
+    set.specs.push(FlagSpec {
+        long_name: n,
+        short: None,
+        summary: h,
+        kind: FlagKind::StringList,
+        cell: cell.cast::<std::ffi::c_void>(),
+    });
+    cell
+}
+
+/// Attaches a one-character short alias to the most recently
+/// registered flag — mirrors `Set::short` in `gossamer-std`.
+/// `letter` is passed as i64 to match how single-char literals
+/// flow through the compiled-tier C ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_short(set: *mut GosFlagSet, letter: i64) {
+    if set.is_null() {
+        return;
+    }
+    let set = unsafe { &mut *set };
+    let Some(ch) = u32::try_from(letter).ok().and_then(char::from_u32) else {
+        return;
+    };
+    if let Some(last) = set.specs.last_mut() {
+        last.short = Some(ch);
+    }
+}
+
+/// Returns the auto-generated usage string as a heap-allocated
+/// c-string. Matches `gossamer-std::flag::Set::usage`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_flag_set_usage(set: *const GosFlagSet) -> *mut c_char {
+    if set.is_null() {
+        return alloc_cstring(b"");
+    }
+    let set = unsafe { &*set };
+    let bytes = render_flag_usage(set).into_bytes();
+    alloc_cstring(&bytes)
+}
+
+fn render_flag_usage(set: &GosFlagSet) -> String {
+    let program = if set.name.is_empty() {
+        "program"
+    } else {
+        &set.name
+    };
+    let mut out = format!("usage: {program} [FLAGS] [POSITIONAL]\n\nflags:\n");
+    for def in &set.specs {
+        let label = match def.short {
+            Some(ch) => format!("  -{ch}, --{}", def.long_name),
+            None => format!("      --{}", def.long_name),
+        };
+        out.push_str(&format!("{label:<30} {}\n", def.summary));
+    }
+    out
+}
+
+fn parse_duration_text(text: &str) -> Option<i64> {
+    let text = text.trim();
+    if let Some(rest) = text.strip_suffix("ms") {
+        return rest.parse::<i64>().ok();
+    }
+    if let Some(rest) = text.strip_suffix("us") {
+        return rest.parse::<i64>().ok().map(|n| n / 1_000);
+    }
+    if let Some(rest) = text.strip_suffix("ns") {
+        return rest.parse::<i64>().ok().map(|n| n / 1_000_000);
+    }
+    if let Some(rest) = text.strip_suffix("s") {
+        return rest.parse::<i64>().ok().map(|n| n * 1_000);
+    }
+    if let Some(rest) = text.strip_suffix("m") {
+        return rest.parse::<i64>().ok().map(|n| n * 60_000);
+    }
+    if let Some(rest) = text.strip_suffix("h") {
+        return rest.parse::<i64>().ok().map(|n| n * 3_600_000);
+    }
+    text.parse::<i64>().ok().map(|n| n * 1_000)
+}
+
+fn parse_bool_text(text: &str) -> Option<bool> {
+    match text {
+        "true" | "1" | "yes" | "on" => Some(true),
+        "false" | "0" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Resolves an explicit-or-following value for `spec` and writes
+/// it into the spec's cell. Returns the number of argv tokens
+/// consumed (1 for `--name=value`, `--bool`, `-v`; 2 for
+/// `--name value`).
+fn apply_flag_value(
+    spec: &mut FlagSpec,
+    explicit: Option<String>,
+    get_arg_ptr: &dyn Fn(i64) -> *const c_char,
+    idx: i64,
+    argc: i64,
+) -> i64 {
+    // Bool with no explicit value is a "set true" form.
+    if matches!(spec.kind, FlagKind::Bool) && explicit.is_none() {
+        unsafe {
+            *(spec.cell.cast::<bool>()) = true;
+        }
+        return 1;
+    }
+    let (raw, consumed) = if let Some(v) = explicit {
+        (v, 1)
+    } else {
+        if idx + 1 >= argc {
+            return 1;
+        }
+        let p = get_arg_ptr(idx + 1);
+        if p.is_null() {
+            return 1;
+        }
+        let s = unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() };
+        (s, 2)
+    };
+    match spec.kind {
+        FlagKind::String => {
+            let bytes = raw.as_bytes().to_vec();
+            let leaked = alloc_cstring(&bytes);
+            unsafe {
+                *(spec.cell.cast::<*mut c_char>()) = leaked;
+            }
+        }
+        FlagKind::Int => {
+            if let Ok(n) = raw.parse::<i64>() {
+                unsafe {
+                    *(spec.cell.cast::<i64>()) = n;
+                }
+            }
+        }
+        FlagKind::Uint => {
+            if let Ok(n) = raw.parse::<u64>() {
+                unsafe {
+                    *(spec.cell.cast::<u64>()) = n;
+                }
+            }
+        }
+        FlagKind::Float => {
+            if let Ok(x) = raw.parse::<f64>() {
+                unsafe {
+                    *(spec.cell.cast::<f64>()) = x;
+                }
+            }
+        }
+        FlagKind::Bool => {
+            if let Some(b) = parse_bool_text(&raw) {
+                unsafe {
+                    *(spec.cell.cast::<bool>()) = b;
+                }
+            }
+        }
+        FlagKind::Duration => {
+            if let Some(ms) = parse_duration_text(&raw) {
+                unsafe {
+                    *(spec.cell.cast::<i64>()) = ms;
+                }
+            }
+        }
+        FlagKind::StringList => {
+            let bytes = raw.as_bytes().to_vec();
+            let cstr = alloc_cstring(&bytes);
+            let ptr_val = cstr as i64;
+            let backing = unsafe { *(spec.cell.cast::<*mut GosVec>()) };
+            if !backing.is_null() {
+                unsafe {
+                    gos_rt_vec_push(backing, std::ptr::addr_of!(ptr_val).cast::<u8>());
+                }
+            }
+        }
+    }
+    consumed
 }
 
 /// Parses GNU-style `--name value` and `--bool` flags out of
@@ -6228,44 +6920,56 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
         } else {
             unsafe { CStr::from_ptr(arg_ptr).to_string_lossy().into_owned() }
         };
-        if let Some(name) = arg.strip_prefix("--") {
-            if let Some(spec) = set.specs.iter_mut().find(|s| s.long_name == name) {
-                match spec.kind {
-                    FlagKind::Bool => unsafe {
-                        *(spec.cell.cast::<bool>()) = true;
-                    },
-                    FlagKind::String => {
-                        i += 1;
-                        if i < argc {
-                            let v = get_arg_ptr(i);
-                            if !v.is_null() {
-                                let bytes = unsafe { CStr::from_ptr(v).to_bytes().to_vec() };
-                                let leaked = alloc_cstring(&bytes);
-                                unsafe {
-                                    *(spec.cell.cast::<*mut c_char>()) = leaked;
-                                }
-                            }
-                        }
-                    }
-                    FlagKind::Uint => {
-                        i += 1;
-                        if i < argc {
-                            let v = get_arg_ptr(i);
-                            if !v.is_null() {
-                                let s = unsafe { CStr::from_ptr(v).to_string_lossy() };
-                                if let Ok(n) = s.parse::<u64>() {
-                                    unsafe {
-                                        *(spec.cell.cast::<u64>()) = n;
-                                    }
-                                }
-                            }
-                        }
-                    }
+        if arg == "--" {
+            i += 1;
+            while i < argc {
+                let p = get_arg_ptr(i);
+                if !p.is_null() {
+                    let s = unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() };
+                    set.positional.push(s);
                 }
+                i += 1;
             }
-        } else {
-            set.positional.push(arg);
+            break;
         }
+        if arg == "--help" || arg == "-h" {
+            print!("{}", render_flag_usage(set));
+            std::process::exit(0);
+        }
+        if let Some(rest) = arg.strip_prefix("--") {
+            let (name, explicit) = match rest.split_once('=') {
+                Some((n, v)) => (n.to_string(), Some(v.to_string())),
+                None => (rest.to_string(), None),
+            };
+            if let Some(spec) = set.specs.iter_mut().find(|s| s.long_name == name) {
+                let consumed = apply_flag_value(spec, explicit, &get_arg_ptr, i, argc);
+                i += consumed;
+                continue;
+            }
+            set.positional.push(arg);
+            i += 1;
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix('-')
+            && !rest.is_empty()
+        {
+            let mut chars = rest.chars();
+            let first = chars.next().unwrap();
+            let remainder: String = chars.collect();
+            if let Some(spec) = set.specs.iter_mut().find(|s| s.short == Some(first)) {
+                let explicit = if remainder.is_empty() {
+                    None
+                } else if let Some(stripped) = remainder.strip_prefix('=') {
+                    Some(stripped.to_string())
+                } else {
+                    Some(remainder.clone())
+                };
+                let consumed = apply_flag_value(spec, explicit, &get_arg_ptr, i, argc);
+                i += consumed;
+                continue;
+            }
+        }
+        set.positional.push(arg);
         i += 1;
     }
     let out = unsafe { gos_rt_vec_with_capacity(8, set.positional.len() as i64) };
@@ -6445,18 +7149,7 @@ pub unsafe extern "C" fn gos_rt_http_request_send(
         }));
     }
     let req = unsafe { Box::from_raw(req) };
-    // Synchronous HTTP/1.1 over plain TCP. Skips TLS entirely; an
-    // `https://` URL is rejected with status 0 so the error path
-    // is reachable. URL parser is intentionally tiny.
-    let url = req.url.clone();
-    let parsed = parse_http_url(&url);
-    let response = match parsed {
-        Some((host, port, path)) => {
-            http_request(&req.method, &host, port, &path, &req.headers, &req.body)
-        }
-        None => None,
-    };
-    let (status, body_bytes) = response.unwrap_or((0, Vec::new()));
+    let (status, body_bytes) = http_request_ureq(&req).unwrap_or((0, Vec::new()));
     let body = alloc_cstring(&body_bytes);
     Box::into_raw(Box::new(GosHttpResponse {
         status,
@@ -6465,77 +7158,178 @@ pub unsafe extern "C" fn gos_rt_http_request_send(
     }))
 }
 
-fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
-    let s = url.strip_prefix("http://")?;
-    let (host_part, path) = match s.find('/') {
-        Some(i) => (&s[..i], &s[i..]),
-        None => (s, "/"),
-    };
-    let (host, port) = match host_part.find(':') {
-        Some(i) => (
-            host_part[..i].to_string(),
-            host_part[i + 1..].parse::<u16>().ok()?,
-        ),
-        None => (host_part.to_string(), 80),
-    };
-    Some((host, port, path.to_string()))
+fn http_request_ureq(req: &GosHttpRequest) -> Option<(i64, Vec<u8>)> {
+    if req.method.eq_ignore_ascii_case("GET") && req.headers.is_empty() && req.body.is_empty() {
+        return http_get_follow_redirects(&req.url).ok();
+    }
+    None
 }
 
-fn http_request(
-    method: &str,
-    host: &str,
-    port: u16,
-    path: &str,
-    headers: &[(String, String)],
-    body: &[u8],
-) -> Option<(i64, Vec<u8>)> {
-    use std::net::TcpStream;
-    use std::time::Duration;
+fn http_get_follow_redirects(url: &str) -> Result<(i64, Vec<u8>), String> {
+    let mut current = url.to_string();
+    for _ in 0..6 {
+        let (status, body, location) = if current.starts_with("https://") {
+            http_get_tls(&current)?
+        } else {
+            http_get_plain(&current)?
+        };
+        if !(300..=399).contains(&status) || location.is_empty() {
+            return Ok((status, body));
+        }
+        current = absolute_redirect(&current, &location);
+    }
+    Err(format!("too many redirects fetching `{url}`"))
+}
 
-    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
-    let mut have_content_length = false;
-    for (k, v) in headers {
-        if k.eq_ignore_ascii_case("content-length") {
-            have_content_length = true;
+fn absolute_redirect(from: &str, location: &str) -> String {
+    if location.starts_with("http://") || location.starts_with("https://") {
+        return location.to_string();
+    }
+    let scheme_end = from.find("://").map_or(0, |i| i + 3);
+    let host_end = from[scheme_end..]
+        .find('/')
+        .map_or(from.len(), |i| scheme_end + i);
+    if location.starts_with('/') {
+        format!("{}{}", &from[..host_end], location)
+    } else {
+        format!("{}/{}", &from[..host_end], location)
+    }
+}
+
+fn http_get_tls(url: &str) -> Result<(i64, Vec<u8>, String), String> {
+    use gossamer_pkg::transport::{HttpsTransport, Transport};
+
+    let transport = HttpsTransport::new_mozilla_roots();
+    let body = transport.get(url).map_err(|e| format!("{e}"))?;
+    Ok((200, body, String::new()))
+}
+
+fn http_get_plain(url: &str) -> Result<(i64, Vec<u8>, String), String> {
+    let (host, path) = parse_http_get_url(url).ok_or_else(|| format!("unsupported URL: {url}"))?;
+    let (host_part, port) = match host.split_once(':') {
+        Some((h, p)) => (h, p),
+        None => (host.as_str(), "80"),
+    };
+    let port_num = port
+        .parse::<u16>()
+        .map_err(|_| format!("bad port in URL: {url}"))?;
+    let mut stream = connect_host_port(host_part, port_num)
+        .map_err(|e| format!("connect {host_part}:{port}: {e}"))?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .ok();
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host_part}\r\nUser-Agent: gos/{version}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+        version = env!("CARGO_PKG_VERSION"),
+    );
+    std::io::Write::write_all(&mut stream, request.as_bytes())
+        .map_err(|e| format!("write: {e}"))?;
+    let mut response = Vec::new();
+    std::io::Read::read_to_end(&mut stream, &mut response).map_err(|e| format!("read: {e}"))?;
+    let response_str = String::from_utf8_lossy(&response);
+    let Some((header_block, body)) = response_str.split_once("\r\n\r\n") else {
+        return Err("invalid HTTP response".to_string());
+    };
+    let status_line = header_block.lines().next().unwrap_or("");
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    let mut location = String::new();
+    for hline in header_block.lines().skip(1) {
+        if let Some((name, value)) = hline.split_once(':')
+            && name.trim().eq_ignore_ascii_case("location")
+        {
+            location = value.trim().to_string();
+            break;
         }
-        req.push_str(&format!("{k}: {v}\r\n"));
     }
-    if !body.is_empty() && !have_content_length {
-        req.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    Ok((status, body.as_bytes().to_vec(), location))
+}
+
+fn parse_http_get_url(url: &str) -> Option<(String, String)> {
+    let rest = url.strip_prefix("http://")?;
+    let (host, path) = match rest.split_once('/') {
+        Some((h, p)) => (h.to_string(), format!("/{p}")),
+        None => (rest.to_string(), "/".to_string()),
+    };
+    Some((host, path))
+}
+
+#[cfg(unix)]
+fn connect_host_port(host: &str, port: u16) -> std::io::Result<std::net::TcpStream> {
+    use std::mem::MaybeUninit;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    let host_c = std::ffi::CString::new(host)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "host contains NUL"))?;
+    let port_c = std::ffi::CString::new(port.to_string())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "port contains NUL"))?;
+    let hints = MaybeUninit::<libc::addrinfo>::zeroed();
+    // SAFETY: zeroed `addrinfo` is a valid base to fill selected fields.
+    let mut hints = unsafe { hints.assume_init() };
+    hints.ai_family = libc::AF_UNSPEC;
+    hints.ai_socktype = libc::SOCK_STREAM;
+    let mut out: *mut libc::addrinfo = std::ptr::null_mut();
+    // SAFETY: pointers stay valid for the call; `out` is written by libc.
+    let rc = unsafe {
+        libc::getaddrinfo(
+            host_c.as_ptr(),
+            port_c.as_ptr(),
+            &raw const hints,
+            &raw mut out,
+        )
+    };
+    if rc != 0 {
+        let msg = unsafe { CStr::from_ptr(libc::gai_strerror(rc)) }
+            .to_string_lossy()
+            .into_owned();
+        return Err(std::io::Error::other(msg));
     }
-    req.push_str("\r\n");
-    // Connect under a 10-second deadline. The connect itself
-    // blocks the OS thread while the kernel completes the TCP
-    // handshake; once the socket is open, the rest of the
-    // request runs through the non-blocking netpoller path.
-    let sock = TcpStream::connect_timeout(
-        &format!("{host}:{port}").parse().ok()?,
-        Duration::from_secs(10),
-    )
-    .ok()?;
-    sock.set_nodelay(true).ok();
-    sock.set_nonblocking(true).ok();
-    let mut conn = HttpConn::wrap(sock)?;
-    conn.write_all(req.as_bytes()).ok()?;
-    if !body.is_empty() {
-        conn.write_all(body).ok()?;
-    }
-    let mut raw = Vec::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        match conn.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => raw.extend_from_slice(&buf[..n]),
-            Err(_) => return None,
+    let mut cursor = out;
+    let mut last_err = None;
+    while !cursor.is_null() {
+        // SAFETY: `cursor` comes from the valid `addrinfo` chain returned by libc.
+        let ai = unsafe { &*cursor };
+        let addr = match ai.ai_family {
+            libc::AF_INET => {
+                // SAFETY: ai_family says this is `sockaddr_in`.
+                let sin = unsafe { &*(ai.ai_addr.cast::<libc::sockaddr_in>()) };
+                let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                Some(SocketAddr::new(IpAddr::V4(ip), u16::from_be(sin.sin_port)))
+            }
+            libc::AF_INET6 => {
+                // SAFETY: ai_family says this is `sockaddr_in6`.
+                let sin6 = unsafe { &*(ai.ai_addr.cast::<libc::sockaddr_in6>()) };
+                let ip = Ipv6Addr::from(sin6.sin6_addr.s6_addr);
+                Some(SocketAddr::new(
+                    IpAddr::V6(ip),
+                    u16::from_be(sin6.sin6_port),
+                ))
+            }
+            _ => None,
+        };
+        if let Some(addr) = addr {
+            match std::net::TcpStream::connect(addr) {
+                Ok(stream) => {
+                    // SAFETY: `out` was allocated by libc on successful `getaddrinfo`.
+                    unsafe { libc::freeaddrinfo(out) };
+                    return Ok(stream);
+                }
+                Err(err) => last_err = Some(err),
+            }
         }
+        cursor = ai.ai_next;
     }
-    let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
-    let head = &raw[..header_end];
-    let head_str = std::str::from_utf8(head).ok()?;
-    let status_line = head_str.lines().next()?;
-    let status_code = status_line.split_whitespace().nth(1)?.parse::<i64>().ok()?;
-    let resp_body = raw[header_end + 4..].to_vec();
-    Some((status_code, resp_body))
+    // SAFETY: `out` was allocated by libc on successful `getaddrinfo`.
+    unsafe { libc::freeaddrinfo(out) };
+    Err(last_err.unwrap_or_else(|| std::io::Error::other("no socket addresses resolved")))
+}
+
+#[cfg(not(unix))]
+fn connect_host_port(host: &str, port: u16) -> std::io::Result<std::net::TcpStream> {
+    std::net::TcpStream::connect((host, port))
 }
 
 #[unsafe(no_mangle)]
@@ -6568,11 +7362,19 @@ pub unsafe extern "C" fn gos_rt_http_request_path(req: *const GosHttpRequest) ->
         return alloc_cstring(b"");
     }
     let r = unsafe { &*req };
-    if let Some((_, _, path)) = parse_http_url(&r.url) {
-        alloc_cstring(path.as_bytes())
+    let path = if let Some(rest) = r
+        .url
+        .strip_prefix("http://")
+        .or_else(|| r.url.strip_prefix("https://"))
+    {
+        match rest.find('/') {
+            Some(i) => &rest[i..],
+            None => "/",
+        }
     } else {
-        alloc_cstring(r.url.as_bytes())
-    }
+        r.url.as_str()
+    };
+    alloc_cstring(path.as_bytes())
 }
 
 #[unsafe(no_mangle)]

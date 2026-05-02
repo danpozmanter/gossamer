@@ -55,6 +55,13 @@ fn run(file: &PathBuf, mode: RunMode, forwarded: &[String]) -> Result<()> {
     match vm.load(&program, &mut tcx) {
         Ok(()) => {
             let r = vm.call("main", Vec::new()).map(|_| ());
+            // Wait for any outstanding goroutines (pool-backed
+            // `Op::Spawn` tasks + tree-walker join handles)
+            // before exiting so their stdout has a chance to
+            // land. Without this, `go expr; println!("...")`
+            // would race the process exit and silently drop
+            // worker output.
+            gossamer_interp::join_outstanding_goroutines();
             // JIT-promoted bodies print through the runtime's
             // thread-local `STDOUT_BUF` rather than the bytecode
             // VM's writer. Drain the buffer so any output that

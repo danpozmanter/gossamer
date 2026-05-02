@@ -15,8 +15,15 @@ pub(crate) fn cmd_doc(file: &PathBuf, html_out: Option<&std::path::Path>) -> Res
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     let (sf, diags) = gossamer_parse::parse_source_file(&source, file_id);
     if !diags.is_empty() {
+        let render_opts = gossamer_diagnostics::RenderOptions {
+            colour: crate::paths::stderr_supports_colour(),
+        };
         for diag in &diags {
-            eprintln!("{diag}");
+            let structured = diag.to_diagnostic();
+            eprintln!(
+                "{}",
+                gossamer_diagnostics::render(&structured, &map, render_opts)
+            );
         }
         return Err(anyhow!("parse errors"));
     }

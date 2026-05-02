@@ -1909,6 +1909,7 @@ impl<'a> Lowerer<'a> {
                         | TyKind::Sender(_)
                         | TyKind::Receiver(_)
                         | TyKind::JsonValue
+                        | TyKind::DynError
                         | TyKind::Adt { .. }
                         | TyKind::Closure { .. }
                         | TyKind::FnDef { .. }

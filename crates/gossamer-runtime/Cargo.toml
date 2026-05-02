@@ -55,6 +55,7 @@ crossbeam-deque = { workspace = true }
 crossbeam-utils = { workspace = true }
 mio = { workspace = true }
 gossamer-coro = { workspace = true }
+gossamer-pkg = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

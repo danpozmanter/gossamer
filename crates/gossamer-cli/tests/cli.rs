@@ -4,6 +4,8 @@
 //! cross-compilation via `--target`.
 
 use std::env;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -168,6 +170,96 @@ fn build_subcommand_produces_runnable_output() {
     // Either path prints a single build: line to stdout.
     assert!(String::from_utf8_lossy(&out.stdout).contains("build:"));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn build_output_handles_empty_argv_for_flag_define_programs() {
+    let dir = env::temp_dir().join(format!("gos-build-argv-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source_path = dir.join("argv_ok.gos");
+    std::fs::write(
+        &source_path,
+        "use std::flag\n\
+         fn main() {\n\
+             let flags = flag::define(\"argv-ok\", [\n\
+                 flag::int(\"port\", 8080, \"port\", 'p'),\n\
+                 flag::bool(\"verbose\", false, \"verbose\", 'v'),\n\
+             ])\n\
+             if *flags.verbose {\n\
+                 println(\"verbose\")\n\
+             } else {\n\
+                 println((*flags.port).to_string())\n\
+             }\n\
+         }\n",
+    )
+    .unwrap();
+    let build = Command::new(gos_bin())
+        .arg("build")
+        .arg(&source_path)
+        .output()
+        .expect("spawn build");
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let binary = dir.join("target").join("debug").join("argv_ok");
+    let run = Command::new(&binary).output().expect("run built artifact");
+    assert!(
+        run.status.success(),
+        "native run failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "8080\n");
+}
+
+#[test]
+fn build_output_preserves_http_method_chain_through_send_and_field_access() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback server");
+    let addr = listener.local_addr().expect("loopback addr");
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept client");
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
+            .expect("write response");
+    });
+
+    let dir = env::temp_dir().join(format!("gos-build-http-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source_path = dir.join("http_chain.gos");
+    std::fs::write(
+        &source_path,
+        format!(
+            "use std::http\n\
+             fn main() {{\n\
+                 let url = \"http://{addr}/\".to_string()\n\
+                 let resp = http::Client::new().get(&url).send()\n\
+                 println(resp.status.to_string() + \":\" + resp.body)\n\
+             }}\n"
+        ),
+    )
+    .unwrap();
+    let build = Command::new(gos_bin())
+        .arg("build")
+        .arg(&source_path)
+        .output()
+        .expect("spawn build");
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let binary = dir.join("target").join("debug").join("http_chain");
+    let run = Command::new(&binary).output().expect("run built artifact");
+    assert!(
+        run.status.success(),
+        "native run failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "200:hello\n");
+    server.join().expect("join server");
 }
 
 #[test]

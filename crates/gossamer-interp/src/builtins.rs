@@ -115,7 +115,10 @@ pub(crate) enum FlagKind {
     String,
     Int,
     Uint,
+    Float,
     Bool,
+    Duration,
+    StringList,
 }
 
 pub(crate) fn make_cell(set_id: u64, flag_name: &str, default: Value) -> Value {
@@ -333,6 +336,8 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         &[
             ("args", builtin_os_args),
             ("env", builtin_os_env),
+            ("cwd", builtin_os_cwd),
+            ("list_dir", builtin_os_list_dir),
             ("exit", builtin_os_exit),
             ("read_file", builtin_os_read_file),
             ("read_file_to_string", builtin_os_read_file_to_string),
@@ -617,6 +622,34 @@ fn install_flag_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push((
         "Set::bool",
         builtin("Set::bool", crate::flag_set_builtins::builtin_flag_set_bool),
+    ));
+    globals.push((
+        "Set::float",
+        builtin(
+            "Set::float",
+            crate::flag_set_builtins::builtin_flag_set_float,
+        ),
+    ));
+    globals.push((
+        "Set::duration",
+        builtin(
+            "Set::duration",
+            crate::flag_set_builtins::builtin_flag_set_duration,
+        ),
+    ));
+    globals.push((
+        "Set::string_list",
+        builtin(
+            "Set::string_list",
+            crate::flag_set_builtins::builtin_flag_set_string_list,
+        ),
+    ));
+    globals.push((
+        "Set::usage",
+        builtin(
+            "Set::usage",
+            crate::flag_set_builtins::builtin_flag_set_usage,
+        ),
     ));
     globals.push((
         "Set::short",
@@ -2149,6 +2182,89 @@ fn builtin_os_mkdir_all(args: &[Value]) -> RuntimeResult<Value> {
         Ok(()) => Ok(ok_variant(Value::Unit)),
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
+}
+
+fn builtin_os_cwd(_args: &[Value]) -> RuntimeResult<Value> {
+    match std::env::current_dir() {
+        Ok(p) => Ok(ok_variant(Value::String(SmolStr::from(
+            p.to_string_lossy().into_owned(),
+        )))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_os_list_dir(args: &[Value]) -> RuntimeResult<Value> {
+    use gossamer_ast::Ident;
+    let path = args.first().and_then(as_str).unwrap_or(".");
+    let iter = match std::fs::read_dir(path) {
+        Ok(it) => it,
+        Err(e) => return Ok(err_variant(format!("list_dir: {e}"))),
+    };
+    let mut entries: Vec<Value> = Vec::new();
+    for entry in iter.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let kind = if meta.is_dir() {
+            "d"
+        } else if meta.is_file() {
+            "f"
+        } else {
+            "?"
+        };
+        let size = i64::try_from(meta.len()).unwrap_or(0);
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or_else(String::new, |d| {
+                let secs = d.as_secs() as i64;
+                let days = secs / 86_400;
+                let mut y = 1970_i64;
+                let mut remain = days;
+                let is_leap = |yr: i64| (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
+                let dy = |yr: i64| if is_leap(yr) { 366 } else { 365 };
+                while remain >= dy(y) {
+                    remain -= dy(y);
+                    y += 1;
+                }
+                let dim = |m: i64, yr: i64| -> i64 {
+                    match m {
+                        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                        4 | 6 | 9 | 11 => 30,
+                        2 => {
+                            if is_leap(yr) {
+                                29
+                            } else {
+                                28
+                            }
+                        }
+                        _ => 30,
+                    }
+                };
+                let mut m = 1_i64;
+                while remain >= dim(m, y) {
+                    remain -= dim(m, y);
+                    m += 1;
+                }
+                let day = remain + 1;
+                let s = secs % 86_400;
+                let h = s / 3600;
+                let mi = (s % 3600) / 60;
+                let se = s % 60;
+                format!("{y:04}-{m:02}-{day:02}T{h:02}:{mi:02}:{se:02}Z")
+            });
+        let entry_struct = Value::struct_(
+            "DirEntry",
+            Arc::new(vec![
+                (Ident::new("name"), Value::String(SmolStr::from(name))),
+                (Ident::new("kind"), Value::String(SmolStr::from(kind))),
+                (Ident::new("size"), Value::Int(size)),
+                (Ident::new("mtime"), Value::String(SmolStr::from(mtime))),
+            ]),
+        );
+        entries.push(entry_struct);
+    }
+    Ok(ok_variant(Value::Array(Arc::new(entries))))
 }
 
 fn builtin_os_read_dir(args: &[Value]) -> RuntimeResult<Value> {

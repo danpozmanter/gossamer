@@ -44,6 +44,7 @@ fn write_kind(tcx: &TyCtxt, kind: &TyKind, out: &mut String) {
         TyKind::Sender(elem) => write_named(tcx, "Sender", &[*elem], out),
         TyKind::Receiver(elem) => write_named(tcx, "Receiver", &[*elem], out),
         TyKind::JsonValue => out.push_str("json::Value"),
+        TyKind::DynError => out.push_str("errors::Error"),
         TyKind::Ref { mutability, inner } => {
             out.push_str(mutability.prefix());
             write_ty(tcx, *inner, out);
@@ -120,7 +121,12 @@ fn write_fn_ptr(tcx: &TyCtxt, sig: &FnSig, prefix: &str, out: &mut String) {
 }
 
 fn write_def(prefix: &str, tcx: &TyCtxt, local: u32, substs: &Substs, out: &mut String) {
-    let _ = write!(out, "{prefix}#{local}");
+    let def = gossamer_resolve::DefId::local(local);
+    if let Some(name) = tcx.def_name(def) {
+        out.push_str(name);
+    } else {
+        let _ = write!(out, "{prefix}#{local}");
+    }
     if !substs.is_empty() {
         write_substs(tcx, substs, out);
     }

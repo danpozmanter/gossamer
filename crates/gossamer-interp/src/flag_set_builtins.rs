@@ -150,6 +150,132 @@ pub(crate) fn builtin_flag_set_uint(args: &[Value]) -> RuntimeResult<Value> {
     Ok(make_cell(id, flag_name, Value::Int(default as i64)))
 }
 
+pub(crate) fn builtin_flag_set_float(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(set) = args.first() else {
+        return Ok(Value::Unit);
+    };
+    let Some(id) = set_id_from_value(set) else {
+        return Ok(Value::Unit);
+    };
+    let flag_name = args.get(1).and_then(as_str).unwrap_or("");
+    let default = match args.get(2) {
+        Some(Value::Float(f)) => *f,
+        Some(Value::Int(n)) => *n as f64,
+        _ => 0.0,
+    };
+    let help_text = args.get(3).and_then(as_str).unwrap_or("");
+    SET_REGISTRY.with(|reg| {
+        if let Some(state) = reg.borrow_mut().get_mut(&id) {
+            state.last_flag = Some(flag_name.to_string());
+            state.flag_order.retain(|n| n != flag_name);
+            state.flag_order.push(flag_name.to_string());
+            state.flags.insert(
+                flag_name.to_string(),
+                FlagDef {
+                    short: None,
+                    kind: FlagKind::Float,
+                    help: help_text.to_string(),
+                    default: Value::Float(default),
+                },
+            );
+        }
+    });
+    Ok(make_cell(id, flag_name, Value::Float(default)))
+}
+
+/// Duration cell — interp stores durations as i64 milliseconds, so
+/// the default is whatever `time::Duration::from_secs(n)` /
+/// `from_millis(n)` produced.
+pub(crate) fn builtin_flag_set_duration(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(set) = args.first() else {
+        return Ok(Value::Unit);
+    };
+    let Some(id) = set_id_from_value(set) else {
+        return Ok(Value::Unit);
+    };
+    let flag_name = args.get(1).and_then(as_str).unwrap_or("");
+    let default = args.get(2).and_then(value_to_int).unwrap_or(0);
+    let help_text = args.get(3).and_then(as_str).unwrap_or("");
+    SET_REGISTRY.with(|reg| {
+        if let Some(state) = reg.borrow_mut().get_mut(&id) {
+            state.last_flag = Some(flag_name.to_string());
+            state.flag_order.retain(|n| n != flag_name);
+            state.flag_order.push(flag_name.to_string());
+            state.flags.insert(
+                flag_name.to_string(),
+                FlagDef {
+                    short: None,
+                    kind: FlagKind::Duration,
+                    help: help_text.to_string(),
+                    default: Value::Int(default),
+                },
+            );
+        }
+    });
+    Ok(make_cell(id, flag_name, Value::Int(default)))
+}
+
+pub(crate) fn builtin_flag_set_string_list(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(set) = args.first() else {
+        return Ok(Value::Unit);
+    };
+    let Some(id) = set_id_from_value(set) else {
+        return Ok(Value::Unit);
+    };
+    let flag_name = args.get(1).and_then(as_str).unwrap_or("");
+    let help_text = args.get(2).and_then(as_str).unwrap_or("");
+    SET_REGISTRY.with(|reg| {
+        if let Some(state) = reg.borrow_mut().get_mut(&id) {
+            state.last_flag = Some(flag_name.to_string());
+            state.flag_order.retain(|n| n != flag_name);
+            state.flag_order.push(flag_name.to_string());
+            state.flags.insert(
+                flag_name.to_string(),
+                FlagDef {
+                    short: None,
+                    kind: FlagKind::StringList,
+                    help: help_text.to_string(),
+                    default: Value::Array(Arc::new(Vec::new())),
+                },
+            );
+        }
+    });
+    Ok(make_cell(id, flag_name, Value::Array(Arc::new(Vec::new()))))
+}
+
+pub(crate) fn builtin_flag_set_usage(args: &[Value]) -> RuntimeResult<Value> {
+    use std::fmt::Write as _;
+    let Some(set) = args.first() else {
+        return Ok(Value::String(SmolStr::from(String::new())));
+    };
+    let Some(id) = set_id_from_value(set) else {
+        return Ok(Value::String(SmolStr::from(String::new())));
+    };
+    let state = SET_REGISTRY.with(|reg| reg.borrow().get(&id).cloned());
+    let Some(state) = state else {
+        return Ok(Value::String(SmolStr::from(String::new())));
+    };
+    let mut out = format!(
+        "usage: {} [FLAGS] [POSITIONAL]\n\nflags:\n",
+        if state.name.is_empty() {
+            "program"
+        } else {
+            &state.name
+        }
+    );
+    for name in &state.flag_order {
+        let Some(def) = state.flags.get(name) else {
+            continue;
+        };
+        let label = match def.short {
+            Some(ch) => format!("  -{ch}, --{name}"),
+            None => format!("      --{name}"),
+        };
+        let _ = writeln!(out, "{label:<30} {}", def.help);
+    }
+    Ok(Value::String(SmolStr::from(out)))
+}
+
 pub(crate) fn builtin_flag_set_bool(args: &[Value]) -> RuntimeResult<Value> {
     let Some(set) = args.first() else {
         return Ok(Value::Unit);
@@ -293,6 +419,9 @@ fn print_flag_help(state: &SetState) {
             FlagKind::String => " <STRING>".to_string(),
             FlagKind::Int => " <INT>".to_string(),
             FlagKind::Uint => " <UINT>".to_string(),
+            FlagKind::Float => " <FLOAT>".to_string(),
+            FlagKind::Duration => " <DURATION>".to_string(),
+            FlagKind::StringList => " <STRING>".to_string(),
         };
         let flag_col = format!("  {short}--{name}{value_hint}");
         col.push((flag_col, def));
@@ -345,7 +474,7 @@ fn parse_long_flag(
     };
     CELL_REGISTRY.with(|reg| {
         if let Some(cell) = reg.borrow().get(&(set_id, name.clone())) {
-            *cell.lock() = parsed;
+            store_or_append_cell(cell, &def.kind, parsed);
         }
     });
     1 + consumed
@@ -382,20 +511,78 @@ fn parse_short_flag(
     };
     CELL_REGISTRY.with(|reg| {
         if let Some(cell) = reg.borrow().get(&(set_id, flag_name.clone())) {
-            *cell.lock() = parsed;
+            store_or_append_cell(cell, &def.kind, parsed);
         }
     });
     1 + consumed
 }
 
-fn set_parse_value(def: &FlagDef, raw: &str) -> Value {
-    match def.kind {
-        FlagKind::String => Value::String(SmolStr::from(raw.to_string())),
-        FlagKind::Int => Value::Int(raw.parse::<i64>().unwrap_or(0)),
-        FlagKind::Uint => Value::Int(raw.parse::<u64>().unwrap_or(0) as i64),
-        FlagKind::Bool => {
-            let b = matches!(raw, "true" | "1" | "yes" | "on");
-            Value::Bool(b)
+fn store_or_append_cell(
+    cell: &std::sync::Arc<parking_lot::Mutex<Value>>,
+    kind: &FlagKind,
+    parsed: Value,
+) {
+    let mut slot = cell.lock();
+    match kind {
+        FlagKind::StringList => {
+            let mut items: Vec<Value> = match &*slot {
+                Value::Array(arr) => arr.iter().cloned().collect(),
+                _ => Vec::new(),
+            };
+            items.push(parsed);
+            *slot = Value::Array(Arc::new(items));
+        }
+        _ => {
+            *slot = parsed;
         }
     }
+}
+
+fn set_parse_value(def: &FlagDef, raw: &str) -> Value {
+    match def.kind {
+        FlagKind::String | FlagKind::StringList => Value::String(SmolStr::from(raw.to_string())),
+        FlagKind::Int => Value::Int(raw.parse::<i64>().unwrap_or(0)),
+        FlagKind::Uint => Value::Int(raw.parse::<u64>().unwrap_or(0) as i64),
+        FlagKind::Float => Value::Float(raw.parse::<f64>().unwrap_or(0.0)),
+        FlagKind::Bool => {
+            let b = matches!(
+                raw,
+                "true" | "1" | "yes" | "on" | "false" | "0" | "no" | "off"
+            );
+            // Reject anything that wasn't on the recognized list.
+            if matches!(raw, "true" | "1" | "yes" | "on") {
+                Value::Bool(true)
+            } else if matches!(raw, "false" | "0" | "no" | "off") {
+                Value::Bool(false)
+            } else if b {
+                Value::Bool(true)
+            } else {
+                Value::Bool(false)
+            }
+        }
+        FlagKind::Duration => Value::Int(parse_duration_ms(raw).unwrap_or(0)),
+    }
+}
+
+fn parse_duration_ms(text: &str) -> Option<i64> {
+    let text = text.trim();
+    if let Some(rest) = text.strip_suffix("ms") {
+        return rest.parse::<i64>().ok();
+    }
+    if let Some(rest) = text.strip_suffix("us") {
+        return rest.parse::<i64>().ok().map(|n| n / 1_000);
+    }
+    if let Some(rest) = text.strip_suffix("ns") {
+        return rest.parse::<i64>().ok().map(|n| n / 1_000_000);
+    }
+    if let Some(rest) = text.strip_suffix("s") {
+        return rest.parse::<i64>().ok().map(|n| n * 1_000);
+    }
+    if let Some(rest) = text.strip_suffix("m") {
+        return rest.parse::<i64>().ok().map(|n| n * 60_000);
+    }
+    if let Some(rest) = text.strip_suffix("h") {
+        return rest.parse::<i64>().ok().map(|n| n * 3_600_000);
+    }
+    text.parse::<i64>().ok().map(|n| n * 1_000)
 }

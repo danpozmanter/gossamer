@@ -281,6 +281,14 @@ mod full {
         "grep.gos",        // requires CLI args (PATTERN [FILE...])
     ];
 
+    /// Examples whose stdout is fundamentally non-deterministic
+    /// in both tiers (goroutine scheduling races, the example's
+    /// own doc-comment says "output order is not guaranteed").
+    /// We compare the stdout line-set as a multiset instead of
+    /// byte-equal so the test still asserts both tiers run the
+    /// same units of work — just not in the same order.
+    const NON_DETERMINISTIC_STDOUT: &[&str] = &["go_spawn.gos"];
+
     fn gos_examples() -> Vec<PathBuf> {
         let mut out: Vec<PathBuf> = std::fs::read_dir(examples_dir())
             .expect("read examples dir")
@@ -323,15 +331,27 @@ mod full {
         let mut build_failures = Vec::new();
         for path in gos_examples() {
             let key = rel_to_workspace(&path);
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             let interp = run_interpreter(&path);
             let Some(native) = run_native(&path) else {
                 build_failures.push(key);
                 continue;
             };
-            if interp.stdout != native.stdout
-                || interp.stderr != native.stderr
-                || interp.code != native.code
-            {
+            let stdout_match = if NON_DETERMINISTIC_STDOUT.contains(&name) {
+                // Goroutines race: same units of work, any
+                // order. Compare line multisets so both tiers
+                // are still verified to execute the same
+                // computation, without depending on the
+                // scheduler's interleaving.
+                let mut a: Vec<&str> = interp.stdout.lines().collect();
+                let mut b: Vec<&str> = native.stdout.lines().collect();
+                a.sort_unstable();
+                b.sort_unstable();
+                a == b
+            } else {
+                interp.stdout == native.stdout
+            };
+            if !stdout_match || interp.stderr != native.stderr || interp.code != native.code {
                 divergences.push(format!(
                     "{key}:\n  interp stdout: {:?}\n  native stdout: {:?}\n  interp code: {:?}\n  native code: {:?}",
                     interp.stdout, native.stdout, interp.code, native.code

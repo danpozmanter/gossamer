@@ -92,10 +92,17 @@ fn run(
     // panics at runtime.
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
+    let render_opts = gossamer_diagnostics::RenderOptions {
+        colour: crate::paths::stderr_supports_colour(),
+    };
     let (sf, parse_diags) = gossamer_parse::parse_source_file(&source, file_id);
     if !parse_diags.is_empty() {
         for diag in &parse_diags {
-            eprintln!("{diag}");
+            let structured = diag.to_diagnostic();
+            eprintln!(
+                "{}",
+                gossamer_diagnostics::render(&structured, &map, render_opts)
+            );
         }
         return Err(anyhow!(
             "{} parse error(s); refusing to build",
@@ -103,20 +110,39 @@ fn run(
         ));
     }
     let (resolutions, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
-    if !resolve_diags.is_empty() {
-        for diag in &resolve_diags {
-            eprintln!("{diag}");
+    let in_scope: Vec<&str> = crate::loaders::collect_top_level_names(&sf);
+    let unresolved: Vec<_> = resolve_diags
+        .iter()
+        .filter(|d| {
+            matches!(
+                d.error,
+                gossamer_resolve::ResolveError::UnresolvedName { .. }
+                    | gossamer_resolve::ResolveError::DuplicateItem { .. }
+            )
+        })
+        .collect();
+    if !unresolved.is_empty() {
+        for diag in &unresolved {
+            let structured = diag.to_diagnostic(&in_scope);
+            eprintln!(
+                "{}",
+                gossamer_diagnostics::render(&structured, &map, render_opts)
+            );
         }
         return Err(anyhow!(
             "{} resolve error(s); refusing to build",
-            resolve_diags.len()
+            unresolved.len()
         ));
     }
     let mut tcx = gossamer_types::TyCtxt::new();
     let (_table, type_diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
     if !type_diags.is_empty() {
         for diag in &type_diags {
-            eprintln!("{diag}");
+            let structured = diag.to_diagnostic();
+            eprintln!(
+                "{}",
+                gossamer_diagnostics::render(&structured, &map, render_opts)
+            );
         }
         return Err(anyhow!(
             "{} type error(s); refusing to build",

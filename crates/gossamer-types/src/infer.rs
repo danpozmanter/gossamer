@@ -453,6 +453,7 @@ fn occurs_in_kind(infer: &InferCtxt, tcx: &TyCtxt, vid: TyVid, kind: &TyKind) ->
         | TyKind::Unit
         | TyKind::Never
         | TyKind::JsonValue
+        | TyKind::DynError
         | TyKind::Var(_)
         | TyKind::Param { .. }
         | TyKind::Error => false,

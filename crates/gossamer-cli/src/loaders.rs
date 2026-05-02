@@ -169,7 +169,11 @@ pub(crate) fn load_and_check_with_sf(
         .collect();
     if !nonexhaustive.is_empty() {
         for diag in nonexhaustive {
-            eprintln!("{diag}");
+            let structured = diag.to_diagnostic();
+            eprintln!(
+                "{}",
+                gossamer_diagnostics::render(&structured, map, render_opts)
+            );
         }
         return Err(anyhow!("non-exhaustive match; refusing to execute"));
     }

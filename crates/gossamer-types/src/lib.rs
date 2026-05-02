@@ -18,7 +18,7 @@ mod context;
 mod error;
 mod exhaustiveness;
 mod infer;
-mod printer;
+pub mod printer;
 mod subst;
 mod table;
 mod trait_index;

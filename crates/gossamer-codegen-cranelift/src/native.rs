@@ -1339,6 +1339,7 @@ fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -> PrintKind
                     PrintKind::Unsupported("function")
                 }
                 TyKind::Dyn(_) => PrintKind::Unsupported("dyn Trait"),
+                TyKind::DynError => PrintKind::Unsupported("errors::Error (call .message() first)"),
                 TyKind::Param { .. } | TyKind::Alias { .. } | TyKind::Error => {
                     PrintKind::Unsupported("opaque type")
                 }
@@ -2780,9 +2781,23 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_path_join" => Some("gos_rt_path_join"),
         "gos_rt_flag_set_new" => Some("gos_rt_flag_set_new"),
         "gos_rt_flag_set_string" => Some("gos_rt_flag_set_string"),
+        "gos_rt_flag_set_int" => Some("gos_rt_flag_set_int"),
         "gos_rt_flag_set_uint" => Some("gos_rt_flag_set_uint"),
+        "gos_rt_flag_set_float" => Some("gos_rt_flag_set_float"),
         "gos_rt_flag_set_bool" => Some("gos_rt_flag_set_bool"),
+        "gos_rt_flag_set_duration" => Some("gos_rt_flag_set_duration"),
+        "gos_rt_flag_set_string_list" => Some("gos_rt_flag_set_string_list"),
+        "gos_rt_flag_set_short" => Some("gos_rt_flag_set_short"),
+        "gos_rt_flag_set_usage" => Some("gos_rt_flag_set_usage"),
         "gos_rt_flag_set_parse" => Some("gos_rt_flag_set_parse"),
+        "gos_rt_duration_from_secs" => Some("gos_rt_duration_from_secs"),
+        "gos_rt_duration_from_millis" => Some("gos_rt_duration_from_millis"),
+        "gos_rt_time_format_rfc3339" => Some("gos_rt_time_format_rfc3339"),
+        "gos_rt_flag_parse" => Some("gos_rt_flag_parse"),
+        "gos_rt_flag_map_get" => Some("gos_rt_flag_map_get"),
+        "gos_rt_os_env" => Some("gos_rt_os_env"),
+        "gos_rt_os_cwd" => Some("gos_rt_os_cwd"),
+        "gos_rt_fs_list_dir" => Some("gos_rt_fs_list_dir"),
         "gos_rt_bufio_scanner_new" => Some("gos_rt_bufio_scanner_new"),
         "gos_rt_bufio_scanner_scan" => Some("gos_rt_bufio_scanner_scan"),
         "gos_rt_bufio_scanner_text" => Some("gos_rt_bufio_scanner_text"),
@@ -2838,6 +2853,8 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_flag_cell_load_str" => Some("gos_rt_flag_cell_load_str"),
         "gos_rt_flag_cell_load_i64" => Some("gos_rt_flag_cell_load_i64"),
         "gos_rt_flag_cell_load_bool" => Some("gos_rt_flag_cell_load_bool"),
+        "gos_rt_flag_cell_load_f64" => Some("gos_rt_flag_cell_load_f64"),
+        "gos_rt_flag_cell_load_vec" => Some("gos_rt_flag_cell_load_vec"),
         _ => None,
     }
 }
@@ -2883,9 +2900,23 @@ fn lower_generic_rt_call(
         "gos_rt_path_join" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_set_new" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_set_string" => (&[ptr_ty, ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_flag_set_int" => (&[ptr_ty, ptr_ty, types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_set_uint" => (&[ptr_ty, ptr_ty, types::I64, ptr_ty], Some(ptr_ty)),
+        "gos_rt_flag_set_float" => (&[ptr_ty, ptr_ty, types::F64, ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_set_bool" => (&[ptr_ty, ptr_ty, types::I8, ptr_ty], Some(ptr_ty)),
+        "gos_rt_flag_set_duration" => (&[ptr_ty, ptr_ty, types::I64, ptr_ty], Some(ptr_ty)),
+        "gos_rt_flag_set_string_list" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_flag_set_short" => (&[ptr_ty, types::I64], None),
+        "gos_rt_flag_set_usage" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_set_parse" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_duration_from_secs" => (&[types::I64], Some(types::I64)),
+        "gos_rt_duration_from_millis" => (&[types::I64], Some(types::I64)),
+        "gos_rt_time_format_rfc3339" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_flag_parse" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_flag_map_get" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_os_env" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_os_cwd" => (&[], Some(ptr_ty)),
+        "gos_rt_fs_list_dir" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_bufio_scanner_new" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_bufio_scanner_scan" => (&[ptr_ty], Some(types::I8)),
         "gos_rt_bufio_scanner_text" => (&[ptr_ty], Some(ptr_ty)),
@@ -2945,6 +2976,8 @@ fn lower_generic_rt_call(
         "gos_rt_flag_cell_load_str" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_cell_load_i64" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_flag_cell_load_bool" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_flag_cell_load_f64" => (&[ptr_ty], Some(types::F64)),
+        "gos_rt_flag_cell_load_vec" => (&[ptr_ty], Some(ptr_ty)),
         _ => unreachable!("unhandled rt name {name}"),
     };
     let returns = ret.map(|t| vec![t]).unwrap_or_default();
@@ -4446,18 +4479,20 @@ fn lower_intrinsic_call(
         }
         "gos_rt_flag_cell_load_str"
         | "gos_rt_flag_cell_load_i64"
-        | "gos_rt_flag_cell_load_bool" => {
+        | "gos_rt_flag_cell_load_bool"
+        | "gos_rt_flag_cell_load_f64"
+        | "gos_rt_flag_cell_load_vec" => {
             let helper_name: &'static str = match name {
                 "gos_rt_flag_cell_load_str" => "gos_rt_flag_cell_load_str",
                 "gos_rt_flag_cell_load_i64" => "gos_rt_flag_cell_load_i64",
+                "gos_rt_flag_cell_load_f64" => "gos_rt_flag_cell_load_f64",
+                "gos_rt_flag_cell_load_vec" => "gos_rt_flag_cell_load_vec",
                 _ => "gos_rt_flag_cell_load_bool",
             };
-            let ret_ty = if helper_name == "gos_rt_flag_cell_load_i64"
-                || helper_name == "gos_rt_flag_cell_load_bool"
-            {
-                types::I64
-            } else {
-                ptr_ty
+            let ret_ty = match helper_name {
+                "gos_rt_flag_cell_load_i64" | "gos_rt_flag_cell_load_bool" => types::I64,
+                "gos_rt_flag_cell_load_f64" => types::F64,
+                _ => ptr_ty,
             };
             let rt_fn = intrinsics.extern_fn(module, helper_name, &[ptr_ty], &[ret_ty])?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
@@ -5799,16 +5834,6 @@ fn lower_intrinsic_call(
         "gos_rt_json_as_bool" => {
             let rt_fn =
                 intrinsics.extern_fn(module, "gos_rt_json_as_bool", &[ptr_ty], &[types::I32])?;
-            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let call = builder.ins().call(fref, &[arg]);
-            let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
-            Ok(true)
-        }
-        "gos_rt_json_parsed_ok" => {
-            let rt_fn =
-                intrinsics.extern_fn(module, "gos_rt_json_parsed_ok", &[ptr_ty], &[types::I32])?;
             let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
@@ -7807,14 +7832,24 @@ fn lower_rvalue(
                 _ => operands.len() as u32,
             };
             let size = total_slots * 8;
-            let align_log2 = 3; // 8-byte alignment.
-            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                size.max(8),
-                align_log2,
-            ));
             let ptr_ty = module.target_config().pointer_type();
-            let base = builder.ins().stack_addr(ptr_ty, slot, 0);
+            // Heap-allocate (zeroed) via `calloc`. Stack-slot
+            // allocation breaks the moment the aggregate address
+            // escapes the constructing frame (returning a struct
+            // from a method, storing it in a vec, …) — the slot
+            // dies on epilogue and the next call overwrites it.
+            // We need zero-init to match the old stack-slot
+            // semantics for empty-aggregate / partial-init cases
+            // where the runtime later reads slots the codegen
+            // never wrote (e.g. `gos_rt_arr_len` reads the first
+            // i64 of an empty aggregate and expects 0, not heap
+            // garbage).
+            let calloc_fn = intrinsics.extern_fn(module, "calloc", &[ptr_ty, ptr_ty], &[ptr_ty])?;
+            let calloc_ref = module.declare_func_in_func(calloc_fn, builder.func);
+            let count = builder.ins().iconst(ptr_ty, 1);
+            let size_val = builder.ins().iconst(ptr_ty, i64::from(size.max(8)));
+            let alloc_call = builder.ins().call(calloc_ref, &[count, size_val]);
+            let base = builder.inst_results(alloc_call)[0];
             for (i, operand) in operands.iter().enumerate() {
                 // A `Copy(local)` operand whose source local is a
                 // pointer-to-aggregate (has `local_slots` metadata)
@@ -7890,13 +7925,14 @@ fn lower_rvalue(
                 .map_err(|_| anyhow!("native codegen: repeat count too large"))?
                 .saturating_mul(elem_slots);
             let size = total_slots.saturating_mul(8);
-            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                size.max(8),
-                3,
-            ));
             let ptr_ty = module.target_config().pointer_type();
-            let base = builder.ins().stack_addr(ptr_ty, slot, 0);
+            // Heap-allocate (zeroed; see Aggregate path above).
+            let calloc_fn = intrinsics.extern_fn(module, "calloc", &[ptr_ty, ptr_ty], &[ptr_ty])?;
+            let calloc_ref = module.declare_func_in_func(calloc_fn, builder.func);
+            let calloc_count = builder.ins().iconst(ptr_ty, 1);
+            let size_val = builder.ins().iconst(ptr_ty, i64::from(size.max(8)));
+            let alloc_call = builder.ins().call(calloc_ref, &[calloc_count, size_val]);
+            let base = builder.inst_results(alloc_call)[0];
             if elem_slots > 1 {
                 if let Operand::Copy(place) = value {
                     let src = lower_place_read(

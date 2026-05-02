@@ -515,7 +515,25 @@ fn collect_struct_fields(
             .entry((*name).to_string())
             .or_insert_with(|| fields.iter().map(|f| (*f).to_string()).collect());
     }
+    // Mirror the typechecker's sentinel-DefId minting for stdlib
+    // structs (see `gossamer-types::checker::stdlib_struct_layout`).
+    // Keeps `Adt { def, .. }`-shaped receivers from stdlib paths
+    // (e.g. `&fs::DirInfo`) routable through `struct_defs[def] →
+    // struct_name → field-name table`.
+    for (name, offset) in stdlib_struct_def_offsets() {
+        by_def.insert(
+            gossamer_resolve::DefId::local(u32::MAX - offset),
+            (*name).to_string(),
+        );
+    }
     (by_name, by_def)
+}
+
+/// Mirror of the typechecker's sentinel-`DefId` table for stdlib
+/// structs. Keep entries in lock-step with
+/// `gossamer-types::checker::stdlib_struct_layout`.
+fn stdlib_struct_def_offsets() -> &'static [(&'static str, u32)] {
+    &[("DirInfo", 2)]
 }
 
 /// Field orders for stdlib struct types user source can name.
@@ -528,6 +546,21 @@ fn stdlib_struct_shapes() -> &'static [(&'static str, &'static [&'static str])] 
         (
             "DirEntry",
             &["path", "name", "is_dir", "is_file", "is_symlink"],
+        ),
+        // `fs::list_dir` returns these — same field order as the
+        // interp builtin's `Value::struct_("DirInfo", ...)` and
+        // the runtime's `gos_rt_fs_list_dir` blob layout.
+        (
+            "DirInfo",
+            &[
+                "name",
+                "path",
+                "is_file",
+                "is_dir",
+                "is_symlink",
+                "size",
+                "modified_ms",
+            ],
         ),
         (
             "Civil",
@@ -1120,6 +1153,13 @@ struct Builder<'a> {
     /// this tag to pick the right runtime helper for `fs.string(...)`,
     /// `client.get(...)`, `req.send()`, etc.
     local_runtime_kind: HashMap<Local, &'static str>,
+    /// Per-local field layout for synthesised aggregates produced by
+    /// the declarative `flag::define(...)` lowering. Maps the result
+    /// local to a `Vec<(long_name, cell_kind)>` indexed by field
+    /// position. Field access `flags.<long>` consults this table to
+    /// emit the right `Field(idx)` projection plus the corresponding
+    /// `flag::Cell::*` runtime kind tag.
+    local_define_layout: HashMap<Local, Vec<(String, &'static str)>>,
     param_locals: std::collections::HashSet<Local>,
     /// Loop contexts visible at the current lowering point. The
     /// innermost loop is at the back. Each entry pairs the
@@ -1131,11 +1171,19 @@ struct Builder<'a> {
     loop_stack: Vec<LoopContext>,
 }
 
-/// A live loop context: where to jump on `break` vs. `continue`.
+/// A live loop context: where to jump on `break` vs. `continue`,
+/// plus the optional result local that `break <expr>` writes into
+/// before jumping. `None` for loops whose result is unused.
 #[derive(Debug, Clone, Copy)]
 struct LoopContext {
     continue_to: BlockId,
     break_to: BlockId,
+    result: Option<Local>,
+    /// Set to `true` when a `break` targeting this loop is lowered.
+    /// Used so `lower_loop` can return `None` for purely divergent
+    /// loops (no `break` at all), preventing a spurious `RETURN`
+    /// assign at function-tail positions.
+    break_used: bool,
 }
 
 impl<'a> Builder<'a> {
@@ -1174,6 +1222,7 @@ impl<'a> Builder<'a> {
             local_closure: HashMap::new(),
             local_fn_name: HashMap::new(),
             local_runtime_kind: HashMap::new(),
+            local_define_layout: HashMap::new(),
             param_locals: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
         }
@@ -1188,12 +1237,71 @@ impl<'a> Builder<'a> {
         loop {
             match self.tcx.kind_of(cur) {
                 TyKind::Adt { def, .. } => {
-                    return self.struct_defs.get(def).cloned();
+                    if let Some(name) = self.struct_defs.get(def).cloned() {
+                        return Some(name);
+                    }
+                    // Fallback: stdlib structs aren't user-
+                    // declared so they don't appear in
+                    // `struct_defs`, but their field layout
+                    // lives in `stdlib_struct_shapes`. Match on
+                    // the rendered type name (last `::`-segment).
+                    let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
+                    let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
+                    if self.structs.contains_key(bare) {
+                        return Some(bare.to_string());
+                    }
+                    return None;
                 }
                 TyKind::Ref { inner, .. } => cur = *inner,
+                // The typechecker resolves stdlib types whose path
+                // isn't declared in the resolver (e.g.
+                // `&fs::DirInfo`) to `JsonValue` as a default. The
+                // path information is lost in the typed `Ty`, but
+                // the rendered form still reports the original
+                // segment when the path matched a stdlib module
+                // directly. Probe `stdlib_struct_shapes` against
+                // the bare last segment to recover the layout.
+                TyKind::JsonValue => {
+                    let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
+                    let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
+                    if self.structs.contains_key(bare) {
+                        return Some(bare.to_string());
+                    }
+                    return None;
+                }
                 _ => return None,
             }
         }
+    }
+
+    /// Resolves a `flags.<long>` field access against the
+    /// `flag::define(...)` synthesised aggregate. Returns a fresh
+    /// local pinned to i64 (the cell pointer) and tagged with the
+    /// matching `flag::Cell::*` kind, or `None` when the receiver
+    /// is not a define-result.
+    fn lookup_define_field(
+        &mut self,
+        receiver_local: Local,
+        long_name: &str,
+        span: Span,
+    ) -> Option<Local> {
+        let layout = self.local_define_layout.get(&receiver_local)?.clone();
+        let (idx, &(_, cell_kind)) = layout
+            .iter()
+            .enumerate()
+            .find(|(_, (n, _))| n == long_name)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let dest = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::Use(Operand::Copy(Place {
+                local: receiver_local,
+                projection: vec![crate::Projection::Field(idx as u32)],
+            })),
+            span,
+        );
+        self.local_runtime_kind.insert(dest, cell_kind);
+        Some(dest)
     }
 
     /// Returns true when `ty` (or anything it references through `&`)
@@ -1294,24 +1402,6 @@ impl<'a> Builder<'a> {
                     return types.get(1).copied();
                 }
                 _ => return None,
-            }
-        }
-    }
-
-    fn adt_first_generic_is_json(&self, ty: Ty) -> bool {
-        use gossamer_types::{GenericArg, TyKind};
-        let mut cur = ty;
-        loop {
-            match self.tcx.kind_of(cur) {
-                TyKind::Ref { inner, .. } => cur = *inner,
-                TyKind::JsonValue => return true,
-                TyKind::Adt { substs, .. } => {
-                    return substs.as_slice().iter().any(|arg| match arg {
-                        GenericArg::Type(t) => self.is_json_value_ty(*t),
-                        GenericArg::Const(_) => false,
-                    });
-                }
-                _ => return false,
             }
         }
     }
@@ -1532,10 +1622,39 @@ impl<'a> Builder<'a> {
         })
     }
 
+    fn option_string_adt_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let substs = gossamer_types::Substs::from_types([s]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    fn result_string_error_adt_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([s, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
     fn result_i64_error_adt_ty(&mut self) -> Ty {
         let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-        let s = self.tcx.string_ty();
-        let substs = gossamer_types::Substs::from_types([i, s]);
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([i, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    fn result_json_value_error_adt_ty(&mut self) -> Ty {
+        let j = self.tcx.json_value_ty();
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([j, e]);
         self.tcx.intern(gossamer_types::TyKind::Adt {
             def: gossamer_resolve::DefId::local(u32::MAX),
             substs,
@@ -1709,6 +1828,46 @@ impl<'a> Builder<'a> {
             "fs::write" => ("gos_rt_fs_write", self.tcx.bool_ty()),
             "fs::create_dir_all" => ("gos_rt_fs_create_dir_all", self.tcx.bool_ty()),
             "path::join" => ("gos_rt_path_join", self.tcx.string_ty()),
+            "time::Duration::from_secs" => (
+                "gos_rt_duration_from_secs",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::Duration::from_millis" => (
+                "gos_rt_duration_from_millis",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::format_rfc3339" => {
+                let s = self.tcx.string_ty();
+                let substs = gossamer_types::Substs::from_types([s, s]);
+                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_time_format_rfc3339", result_ty)
+            }
+            "os::env" => ("gos_rt_os_env", self.option_string_adt_ty()),
+            "os::cwd" => ("gos_rt_os_cwd", self.result_string_error_adt_ty()),
+            "fs::list_dir" => {
+                // Return type is `Result<Vec<DirInfo>, errors::Error>`.
+                // Pin the dest as a Result Adt whose first generic
+                // is `Vec<DirInfo>` so `.map_err(...)?` unwraps to a
+                // properly-typed Vec (driving `entries[i]` through
+                // the Vec dispatch with `DirInfo` element-struct
+                // tag) instead of a bare i64 pointer.
+                let dir_info_def = gossamer_resolve::DefId::local(u32::MAX - 2);
+                let dir_info_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: dir_info_def,
+                    substs: gossamer_types::Substs::new(),
+                });
+                let vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(dir_info_ty));
+                let err_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let substs = gossamer_types::Substs::from_types([vec_ty, err_ty]);
+                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_fs_list_dir", result_ty)
+            }
             "flag::Set::new" => (
                 "gos_rt_flag_set_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -1802,6 +1961,15 @@ impl<'a> Builder<'a> {
         };
         if let Some(rk) = runtime_kind {
             self.local_runtime_kind.insert(dest, rk);
+        }
+        // Pin element-struct tags so `xs[i].<field>` resolves
+        // positionally even when the typechecker leaves the
+        // element type as `Var(_)`.
+        if rt_name == "gos_rt_fs_list_dir" {
+            // Match the registered name in `stdlib_struct_shapes`
+            // so `entries[i].<field>` resolves to a positional
+            // `Field(idx)` projection.
+            self.local_elem_struct.insert(dest, "DirInfo".to_string());
         }
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
@@ -2170,9 +2338,8 @@ impl<'a> Builder<'a> {
             return Some(dest);
         }
         let (rt_name, ret_ty) = match last {
-            "parse" => ("gos_rt_json_parse", self.tcx.json_value_ty()),
+            "parse" | "decode" => ("gos_rt_json_parse", self.result_json_value_error_adt_ty()),
             "render" | "encode" => ("gos_rt_json_render", self.tcx.string_ty()),
-            "decode" => ("gos_rt_json_parse", self.tcx.json_value_ty()),
             "get" => ("gos_rt_json_get", self.tcx.json_value_ty()),
             "at" => ("gos_rt_json_at", self.tcx.json_value_ty()),
             "as_i64" => (
@@ -2574,6 +2741,9 @@ impl<'a> Builder<'a> {
                         if let Some(rk) = self.local_runtime_kind.get(&value).copied() {
                             self.local_runtime_kind.insert(local, rk);
                         }
+                        if let Some(layout) = self.local_define_layout.get(&value).cloned() {
+                            self.local_define_layout.insert(local, layout);
+                        }
                         self.emit_assign(
                             Place::local(local),
                             Rvalue::Use(Operand::Copy(Place::local(value))),
@@ -2729,18 +2899,28 @@ impl<'a> Builder<'a> {
                 self.terminate(Terminator::Return);
                 None
             }
-            HirExprKind::Break(_) => {
+            HirExprKind::Break(payload) => {
                 // Jump to the innermost loop's break target. Outside
                 // a loop the resolver/typechecker is supposed to
                 // reject this; if it slips through, fall back to
                 // `Unreachable` rather than emit a dangling jump.
-                if let Some(ctx) = self.loop_stack.last().copied() {
-                    self.terminate(Terminator::Goto {
-                        target: ctx.break_to,
-                    });
+                let (break_to, result_local) = if let Some(ctx) = self.loop_stack.last_mut() {
+                    ctx.break_used = true;
+                    (ctx.break_to, ctx.result)
                 } else {
                     self.terminate(Terminator::Unreachable);
+                    return None;
+                };
+                if let (Some(value), Some(result)) = (payload, result_local) {
+                    if let Some(value_local) = self.lower_expr(value) {
+                        self.emit_assign(
+                            Place::local(result),
+                            Rvalue::Use(Operand::Copy(Place::local(value_local))),
+                            expr.span,
+                        );
+                    }
                 }
+                self.terminate(Terminator::Goto { target: break_to });
                 None
             }
             HirExprKind::Continue => {
@@ -3176,12 +3356,23 @@ impl<'a> Builder<'a> {
                     Some("flag::Cell::String") => {
                         (Some("gos_rt_flag_cell_load_str"), self.tcx.string_ty())
                     }
-                    Some("flag::Cell::Uint") => (
+                    Some("flag::Cell::Int" | "flag::Cell::Uint" | "flag::Cell::Duration") => (
                         Some("gos_rt_flag_cell_load_i64"),
                         self.tcx.int_ty(gossamer_types::IntTy::I64),
                     ),
                     Some("flag::Cell::Bool") => {
                         (Some("gos_rt_flag_cell_load_bool"), self.tcx.bool_ty())
+                    }
+                    Some("flag::Cell::Float") => (
+                        Some("gos_rt_flag_cell_load_f64"),
+                        self.tcx.float_ty(gossamer_types::FloatTy::F64),
+                    ),
+                    Some("flag::Cell::StringList") => {
+                        let s = self.tcx.string_ty();
+                        (
+                            Some("gos_rt_flag_cell_load_vec"),
+                            self.tcx.intern(gossamer_types::TyKind::Vec(s)),
+                        )
                     }
                     _ => (None, ty),
                 };
@@ -3196,6 +3387,50 @@ impl<'a> Builder<'a> {
                         span,
                     );
                     return Some(dest);
+                }
+                // Real reference deref: when the inner local has
+                // type `&T` (taken via `&x` or yielded by an
+                // iterator like `vec.iter()`), `*p` must load from
+                // the address rather than yield the pointer.
+                // Without this load, `for x in v.iter() { *x }`
+                // prints the iterator's slot pointer, not the
+                // element. Apply only to scalar inner types
+                // (i64/f64/bool/char) — aggregate refs are passed
+                // by pointer in this codegen and have their own
+                // projection paths.
+                let inner_ty = self.locals[inner.0 as usize].ty;
+                if let gossamer_types::TyKind::Ref { inner: pointee, .. } =
+                    self.tcx.kind_of(inner_ty)
+                {
+                    let pointee = *pointee;
+                    if matches!(
+                        self.tcx.kind_of(pointee),
+                        gossamer_types::TyKind::Int(_)
+                            | gossamer_types::TyKind::Float(_)
+                            | gossamer_types::TyKind::Bool
+                            | gossamer_types::TyKind::Char
+                    ) {
+                        let zero_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                        let zero = self.fresh(zero_ty);
+                        self.emit_assign(
+                            Place::local(zero),
+                            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                            span,
+                        );
+                        let dest = self.fresh(pointee);
+                        self.emit_assign(
+                            Place::local(dest),
+                            Rvalue::CallIntrinsic {
+                                name: "gos_load",
+                                args: vec![
+                                    Operand::Copy(Place::local(inner)),
+                                    Operand::Copy(Place::local(zero)),
+                                ],
+                            },
+                            span,
+                        );
+                        return Some(dest);
+                    }
                 }
                 return Some(inner);
             }
@@ -3229,22 +3464,22 @@ impl<'a> Builder<'a> {
         // integer `+`. HIR types may still carry unresolved
         // inference variables here, so we inspect the lowered
         // MIR locals' concrete types too.
-        if matches!(op, HirBinaryOp::Add) {
-            let is_string = |t: Ty| -> bool {
-                let mut cur = t;
-                loop {
-                    match self.tcx.kind_of(cur) {
-                        TyKind::String => return true,
-                        TyKind::Ref { inner, .. } => cur = *inner,
-                        _ => return false,
-                    }
+        let is_string_ty = |this: &Self, t: Ty| -> bool {
+            let mut cur = t;
+            loop {
+                match this.tcx.kind_of(cur) {
+                    TyKind::String => return true,
+                    TyKind::Ref { inner, .. } => cur = *inner,
+                    _ => return false,
                 }
-            };
-            if is_string(ty)
-                || is_string(lhs.ty)
-                || is_string(rhs.ty)
-                || is_string(self.locals[lhs_local.0 as usize].ty)
-                || is_string(self.locals[rhs_local.0 as usize].ty)
+            }
+        };
+        if matches!(op, HirBinaryOp::Add) {
+            if is_string_ty(self, ty)
+                || is_string_ty(self, lhs.ty)
+                || is_string_ty(self, rhs.ty)
+                || is_string_ty(self, self.locals[lhs_local.0 as usize].ty)
+                || is_string_ty(self, self.locals[rhs_local.0 as usize].ty)
             {
                 let dest_ty = self.tcx.string_ty();
                 let dest = self.fresh(dest_ty);
@@ -3261,6 +3496,44 @@ impl<'a> Builder<'a> {
                 self.set_current(next);
                 return Some(dest);
             }
+        }
+        // String equality / inequality. Pointer-compare miscompares
+        // because two byte-equal strings often have distinct
+        // backing buffers (cell-loaded values, format!-built
+        // strings, etc.). Route through the runtime's byte-level
+        // helper.
+        if matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne)
+            && (is_string_ty(self, lhs.ty)
+                || is_string_ty(self, rhs.ty)
+                || is_string_ty(self, self.locals[lhs_local.0 as usize].ty)
+                || is_string_ty(self, self.locals[rhs_local.0 as usize].ty))
+        {
+            let bool_ty = self.tcx.bool_ty();
+            let cmp = self.fresh(bool_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_str_eq".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(lhs_local)),
+                    Operand::Copy(Place::local(rhs_local)),
+                ],
+                destination: Place::local(cmp),
+                target: Some(next),
+            });
+            self.set_current(next);
+            if matches!(op, HirBinaryOp::Ne) {
+                let dest = self.fresh(bool_ty);
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::UnaryOp {
+                        op: UnOp::Not,
+                        operand: Operand::Copy(Place::local(cmp)),
+                    },
+                    span,
+                );
+                return Some(dest);
+            }
+            return Some(cmp);
         }
         let local = self.fresh(ty);
         let bin_op = lower_binop(op);
@@ -3372,6 +3645,16 @@ impl<'a> Builder<'a> {
                 .join("::");
             if joined == "http::serve" && args.len() == 2 {
                 if let Some(local) = self.lower_http_serve(&args[0], &args[1], ty, span) {
+                    return Some(local);
+                }
+            }
+            // `flag::define(name, [flag::int(...), flag::string(...),
+            // flag::bool(...)])` — declarative one-shot construction.
+            // Expand to the imperative `flag::Set` builder pattern at
+            // MIR level so the compiled tier reuses the now-working
+            // cell-load helpers.
+            if joined == "flag::define" && args.len() == 2 {
+                if let Some(local) = self.lower_flag_define(&args[0], &args[1], ty, span) {
                     return Some(local);
                 }
             }
@@ -4135,32 +4418,11 @@ impl<'a> Builder<'a> {
         if let Some(block) = dispatch_block {
             self.set_current(block);
         }
-        // When the scrutinee is a `json::Value` (or a Result /
-        // Option carrying one), the runtime helpers always
-        // produce a non-null sentinel handle, so the natural
-        // "match the discriminant" lowering would fall through
-        // to the unreachable arm and trap. Approximate the
-        // happy-path by routing directly to the `Ok` / `Some`
-        // arm — its inner binding aliases the scrutinee local
-        // (see the binding-loop above), which is exactly the
-        // shape `gos_rt_json_*` helpers expect downstream.
-        let scrut_ty = self.locals[scrutinee_local.0 as usize].ty;
-        let json_shaped =
-            self.is_json_value_ty(scrut_ty) || self.adt_first_generic_is_json(scrut_ty);
-        let ok_block = switch_arms.iter().find(|(v, _)| *v == 0).map(|(_, b)| *b);
-        let routed = if json_shaped && let Some(ok) = ok_block {
-            self.terminate(Terminator::Goto { target: ok });
-            true
-        } else {
-            false
-        };
-        if !routed {
-            self.terminate(Terminator::SwitchInt {
-                discriminant: Operand::Copy(Place::local(scrutinee_local)),
-                arms: switch_arms,
-                default,
-            });
-        }
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(scrutinee_local)),
+            arms: switch_arms,
+            default,
+        });
         for ((arm_block, body), binding) in arm_bodies.into_iter().zip(arm_bindings) {
             self.set_current(arm_block);
             // When the arm pattern was `Ok(v)` / `Some(v)` /
@@ -4173,10 +4435,7 @@ impl<'a> Builder<'a> {
             // through the json runtime helpers.
             if let Some((bname, _mutable, variant_name)) = binding {
                 let scrut_ty = self.locals[scrutinee_local.0 as usize].ty;
-                if self.adt_first_generic_is_json(scrut_ty) {
-                    let json_ty = self.tcx.json_value_ty();
-                    self.locals[scrutinee_local.0 as usize].ty = json_ty;
-                } else if let Some(name) = variant_name.as_deref() {
+                if let Some(name) = variant_name.as_deref() {
                     // Generalised happy-path payload pin: for
                     // `Ok(x)` / `Some(x)` the payload is the
                     // wrapper's first generic arg; for `Err(e)`
@@ -5131,6 +5390,9 @@ impl<'a> Builder<'a> {
                                 }
                             }
                         }
+                        if let Some(rk) = self.local_runtime_kind.get(&scrutinee).copied() {
+                            self.local_runtime_kind.entry(payload_local).or_insert(rk);
+                        }
                     }
                 }
                 Some(const_pred)
@@ -5297,6 +5559,49 @@ impl<'a> Builder<'a> {
         // instead of `tmp = a[i]; tmp.x` (and the latter's
         // lost-struct-name fallback to the unsupported placeholder).
         if let Some(mut place) = self.lower_place_expr(receiver) {
+            if let Some(rk) = self.local_runtime_kind.get(&place.local).copied() {
+                let helper: Option<(&'static str, Ty)> = match (rk, name.name.as_str()) {
+                    ("http::Response", "status") => Some((
+                        "gos_rt_http_response_status",
+                        self.tcx.int_ty(gossamer_types::IntTy::I64),
+                    )),
+                    ("http::Response", "body") => {
+                        Some(("gos_rt_http_response_body", self.tcx.string_ty()))
+                    }
+                    ("http::Request", "method") => {
+                        Some(("gos_rt_http_request_method", self.tcx.string_ty()))
+                    }
+                    ("http::Request", "path") => {
+                        Some(("gos_rt_http_request_path", self.tcx.string_ty()))
+                    }
+                    ("http::Request", "query") => {
+                        Some(("gos_rt_http_request_query", self.tcx.string_ty()))
+                    }
+                    ("http::Request", "body") => {
+                        Some(("gos_rt_http_request_body_str", self.tcx.string_ty()))
+                    }
+                    ("errors::Error", "message") => {
+                        Some(("gos_rt_error_message", self.tcx.string_ty()))
+                    }
+                    ("errors::Error", "cause") => Some((
+                        "gos_rt_error_cause",
+                        self.tcx.int_ty(gossamer_types::IntTy::I64),
+                    )),
+                    _ => None,
+                };
+                if let Some((rt_name, ret_ty)) = helper {
+                    let dest = self.fresh(ret_ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(rt_name.to_string())),
+                        args: vec![Operand::Copy(Place::local(place.local))],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
+            }
             let struct_name = self
                 .local_struct
                 .get(&place.local)
@@ -5361,6 +5666,42 @@ impl<'a> Builder<'a> {
         // where the receiver is an expression rather than a place
         // — e.g. a call that returns a struct).
         let receiver_local = self.lower_expr(receiver)?;
+
+        // `flags.<long>` for the synthesised `flag::define(...)`
+        // aggregate. The per-local layout table records each spec's
+        // field index + cell kind, so dispatch lowers to a plain
+        // `Field(idx)` projection plus a `flag::Cell::*` runtime tag
+        // that the deref `*` later picks up.
+        if let Some(field_local) = self.lookup_define_field(receiver_local, &name.name, span) {
+            return Some(field_local);
+        }
+
+        // Stdlib struct via `local_struct` tag (e.g. `fs::DirInfo`
+        // returned from `fs::list_dir`). The receiver was tagged
+        // when its element-struct propagated through the
+        // `entries[i]` index. Resolve the field name to a
+        // positional `Field(idx)` against the registered shape
+        // BEFORE the JsonValue fallback fires — otherwise a
+        // typechecker-opaque ADT routes through `gos_rt_json_get`
+        // and crashes inside serde_json.
+        if let Some(struct_name) = self.local_struct.get(&receiver_local).cloned() {
+            if let Some(order) = self.structs.get(&struct_name).cloned() {
+                if let Some(idx) = order.iter().position(|f| f == name.name.as_str()) {
+                    let dest = self.fresh(ty);
+                    self.emit_assign(
+                        Place::local(dest),
+                        Rvalue::Use(Operand::Copy(Place {
+                            local: receiver_local,
+                            projection: vec![crate::ir::Projection::Field(
+                                u32::try_from(idx).unwrap_or(0),
+                            )],
+                        })),
+                        span,
+                    );
+                    return Some(dest);
+                }
+            }
+        }
 
         // `value.field` on a `json::Value` receiver — rewrite to a
         // runtime `gos_rt_json_get(value, "field")` call. The
@@ -5516,6 +5857,25 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
+        // `result.map_err(closure)` / `result.map(closure)` when the
+        // HIR receiver type is unresolved but its lowered MIR type
+        // turns out to be a Result Adt. Without this short-circuit
+        // the generic dispatch sees the unresolved kind, falls
+        // through to the identity-copy arm, and silently drops the
+        // mapping (errors.gos `text.parse().map_err(|_| …)?`
+        // reproducer).
+        if matches!(method.name.as_str(), "map_err" | "map") && args.len() == 1 {
+            let receiver_ty_for_kind = self
+                .receiver_local_from_path(receiver)
+                .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
+            if matches!(self.tcx.kind_of(receiver_ty_for_kind), TyKind::Var(_)) {
+                if let Some(local) =
+                    self.try_lower_result_map_with_eager_recv(receiver, method, &args[0], ty, span)
+                {
+                    return Some(local);
+                }
+            }
+        }
         // `arr.swap(i, j)` super-instruction. The generic Call
         // fallback at the end of this function would lower this as
         // `Call(Const(Str("swap")), …)` which the cranelift backend
@@ -5640,10 +6000,31 @@ impl<'a> Builder<'a> {
         let receiver_kind = self.tcx.kind_of(receiver_ty).clone();
         // Unwrap a leading `&T` so `s.len()` on a `&String`
         // parameter lowers the same as on an owned `String`.
-        let receiver_kind_flat = match &receiver_kind {
+        let mut receiver_kind_flat = match &receiver_kind {
             TyKind::Ref { inner, .. } => self.tcx.kind_of(*inner).clone(),
             other => other.clone(),
         };
+        // `(*flags.<long>).method(...)` — the HIR receiver type is
+        // an unresolved inference variable, but the underlying cell
+        // kind is known statically from `local_define_layout`.
+        // Promote the receiver kind so method dispatch (`to_string`,
+        // `len`, …) picks the right runtime helper.
+        if matches!(receiver_kind_flat, TyKind::Var(_)) {
+            if let Some(kind) = self.peek_define_deref_kind(receiver) {
+                receiver_kind_flat = kind;
+            }
+        }
+        // `<chain>.method().to_string()` — when the chain ends in
+        // a call whose return shape is pinned (`len`, `parse`,
+        // `to_string`, integer-yielding helpers), surface that
+        // shape so downstream `.to_string()` dispatches through
+        // the i64/f64 runtime formatter instead of the
+        // identity-copy arm. Expression-only walk; emits no MIR.
+        if matches!(receiver_kind_flat, TyKind::Var(_)) {
+            if let Some(kind) = self.peek_method_chain_kind(receiver) {
+                receiver_kind_flat = kind;
+            }
+        }
 
         // Detect `recv.headers.<insert|get>(name[, value])` where
         // `recv` is an `http::Response`/`http::Request`. Fold the
@@ -6112,8 +6493,14 @@ impl<'a> Builder<'a> {
         let kind_dispatch: Option<&'static str> =
             match (receiver_runtime_kind, method.name.as_str()) {
                 (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
+                (Some("flag::Set"), "int") => Some("gos_rt_flag_set_int"),
                 (Some("flag::Set"), "uint") => Some("gos_rt_flag_set_uint"),
+                (Some("flag::Set"), "float") => Some("gos_rt_flag_set_float"),
                 (Some("flag::Set"), "bool") => Some("gos_rt_flag_set_bool"),
+                (Some("flag::Set"), "duration") => Some("gos_rt_flag_set_duration"),
+                (Some("flag::Set"), "string_list") => Some("gos_rt_flag_set_string_list"),
+                (Some("flag::Set"), "short") => Some("gos_rt_flag_set_short"),
+                (Some("flag::Set"), "usage") => Some("gos_rt_flag_set_usage"),
                 (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
                 (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
                 (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
@@ -6161,7 +6548,8 @@ impl<'a> Builder<'a> {
                 | "gos_rt_http_request_path"
                 | "gos_rt_http_request_method"
                 | "gos_rt_regex_find"
-                | "gos_rt_regex_replace_all" => self.tcx.string_ty(),
+                | "gos_rt_regex_replace_all"
+                | "gos_rt_flag_set_usage" => self.tcx.string_ty(),
                 "gos_rt_error_is"
                 | "gos_rt_regex_is_match"
                 | "gos_rt_bufio_scanner_scan"
@@ -6172,7 +6560,7 @@ impl<'a> Builder<'a> {
                 | "gos_rt_set_len"
                 | "gos_rt_btmap_len"
                 | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                "gos_rt_btmap_insert" => self.tcx.unit(),
+                "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
                 "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
                     let s = self.tcx.string_ty();
                     self.tcx.intern(gossamer_types::TyKind::Vec(s))
@@ -6188,24 +6576,13 @@ impl<'a> Builder<'a> {
                 "gos_rt_http_client_get" | "gos_rt_http_client_post" => Some("http::Request"),
                 "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
                 "gos_rt_http_request_send" => Some("http::Response"),
-                "gos_rt_flag_set_string" => {
-                    if std::env::var("GOS_MIR_TRACE").is_ok() {
-                        eprintln!("[tag] set_string dest");
-                    }
-                    Some("flag::Cell::String")
-                }
-                "gos_rt_flag_set_uint" => {
-                    if std::env::var("GOS_MIR_TRACE").is_ok() {
-                        eprintln!("[tag] set_uint dest");
-                    }
-                    Some("flag::Cell::Uint")
-                }
-                "gos_rt_flag_set_bool" => {
-                    if std::env::var("GOS_MIR_TRACE").is_ok() {
-                        eprintln!("[tag] set_bool dest");
-                    }
-                    Some("flag::Cell::Bool")
-                }
+                "gos_rt_flag_set_string" => Some("flag::Cell::String"),
+                "gos_rt_flag_set_int" => Some("flag::Cell::Int"),
+                "gos_rt_flag_set_uint" => Some("flag::Cell::Uint"),
+                "gos_rt_flag_set_float" => Some("flag::Cell::Float"),
+                "gos_rt_flag_set_bool" => Some("flag::Cell::Bool"),
+                "gos_rt_flag_set_duration" => Some("flag::Cell::Duration"),
+                "gos_rt_flag_set_string_list" => Some("flag::Cell::StringList"),
                 _ => None,
             };
             if let Some(k) = dest_kind {
@@ -6266,6 +6643,109 @@ impl<'a> Builder<'a> {
         }
 
         let receiver_local = self.lower_expr(receiver)?;
+        let lowered_kind_dispatch: Option<&'static str> = match (
+            self.local_runtime_kind.get(&receiver_local).copied(),
+            method.name.as_str(),
+        ) {
+            (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
+            (Some("flag::Set"), "int") => Some("gos_rt_flag_set_int"),
+            (Some("flag::Set"), "uint") => Some("gos_rt_flag_set_uint"),
+            (Some("flag::Set"), "float") => Some("gos_rt_flag_set_float"),
+            (Some("flag::Set"), "bool") => Some("gos_rt_flag_set_bool"),
+            (Some("flag::Set"), "duration") => Some("gos_rt_flag_set_duration"),
+            (Some("flag::Set"), "string_list") => Some("gos_rt_flag_set_string_list"),
+            (Some("flag::Set"), "short") => Some("gos_rt_flag_set_short"),
+            (Some("flag::Set"), "usage") => Some("gos_rt_flag_set_usage"),
+            (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
+            (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
+            (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
+            (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
+            (Some("http::Request"), "body") => Some("gos_rt_http_request_body"),
+            (Some("http::Request"), "send") => Some("gos_rt_http_request_send"),
+            (Some("http::Request"), "path") => Some("gos_rt_http_request_path"),
+            (Some("http::Request"), "method") => Some("gos_rt_http_request_method"),
+            (Some("http::Response"), "status") => Some("gos_rt_http_response_status"),
+            (Some("http::Response"), "body") => Some("gos_rt_http_response_body"),
+            (Some("bufio::Scanner"), "scan") => Some("gos_rt_bufio_scanner_scan"),
+            (Some("bufio::Scanner"), "text") => Some("gos_rt_bufio_scanner_text"),
+            (Some("errors::Error"), "message") => Some("gos_rt_error_message"),
+            (Some("errors::Error"), "cause") => Some("gos_rt_error_cause"),
+            (Some("errors::Error"), "is") => Some("gos_rt_error_is"),
+            (Some("regex::Pattern"), "is_match") => Some("gos_rt_regex_is_match"),
+            (Some("regex::Pattern"), "find") => Some("gos_rt_regex_find"),
+            (Some("regex::Pattern"), "find_all") => Some("gos_rt_regex_find_all"),
+            (Some("regex::Pattern"), "replace_all") => Some("gos_rt_regex_replace_all"),
+            (Some("regex::Pattern"), "split") => Some("gos_rt_regex_split"),
+            (Some("collections::HashSet"), "insert") => Some("gos_rt_set_insert"),
+            (Some("collections::HashSet"), "contains") => Some("gos_rt_set_contains"),
+            (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
+            (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
+            (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
+            (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
+            (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
+            _ => None,
+        };
+        if let Some(rt) = lowered_kind_dispatch {
+            let mut arg_operands = Vec::with_capacity(args.len() + 1);
+            arg_operands.push(Operand::Copy(Place::local(receiver_local)));
+            for arg in args {
+                let a = self.lower_expr(arg)?;
+                arg_operands.push(Operand::Copy(Place::local(a)));
+            }
+            let pinned: Ty = match rt {
+                "gos_rt_error_message"
+                | "gos_rt_bufio_scanner_text"
+                | "gos_rt_http_response_body"
+                | "gos_rt_http_request_path"
+                | "gos_rt_http_request_method"
+                | "gos_rt_regex_find"
+                | "gos_rt_regex_replace_all"
+                | "gos_rt_flag_set_usage" => self.tcx.string_ty(),
+                "gos_rt_error_is"
+                | "gos_rt_regex_is_match"
+                | "gos_rt_bufio_scanner_scan"
+                | "gos_rt_set_insert"
+                | "gos_rt_set_contains"
+                | "gos_rt_set_remove" => self.tcx.bool_ty(),
+                "gos_rt_http_response_status"
+                | "gos_rt_set_len"
+                | "gos_rt_btmap_len"
+                | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
+                "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
+                    let s = self.tcx.string_ty();
+                    self.tcx.intern(gossamer_types::TyKind::Vec(s))
+                }
+                "gos_rt_error_cause" => self.option_adt_ty(),
+                _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            };
+            let dest = self.fresh(pinned);
+            let dest_kind: Option<&'static str> = match rt {
+                "gos_rt_http_client_get" | "gos_rt_http_client_post" => Some("http::Request"),
+                "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
+                "gos_rt_http_request_send" => Some("http::Response"),
+                "gos_rt_flag_set_string" => Some("flag::Cell::String"),
+                "gos_rt_flag_set_int" => Some("flag::Cell::Int"),
+                "gos_rt_flag_set_uint" => Some("flag::Cell::Uint"),
+                "gos_rt_flag_set_float" => Some("flag::Cell::Float"),
+                "gos_rt_flag_set_bool" => Some("flag::Cell::Bool"),
+                "gos_rt_flag_set_duration" => Some("flag::Cell::Duration"),
+                "gos_rt_flag_set_string_list" => Some("flag::Cell::StringList"),
+                _ => None,
+            };
+            if let Some(k) = dest_kind {
+                self.local_runtime_kind.insert(dest, k);
+            }
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(rt.to_string())),
+                args: arg_operands,
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
+        }
         let mut arg_operands = Vec::with_capacity(args.len() + 1);
         arg_operands.push(Operand::Copy(Place::local(receiver_local)));
         for arg in args {
@@ -6355,6 +6835,13 @@ impl<'a> Builder<'a> {
         let lowered_is_result = matches!(self.tcx.kind_of(lowered_recv_ty), TyKind::Adt { .. })
             && self.is_result_or_option_adt(lowered_recv_ty);
         let mut runtime_symbol = runtime_symbol;
+        if matches!(runtime_symbol, Some("")) {
+            runtime_symbol = match self.tcx.kind_of(lowered_recv_ty) {
+                TyKind::Int(_) => Some("gos_rt_i64_to_str"),
+                TyKind::Float(_) => Some("gos_rt_f64_to_str"),
+                _ => runtime_symbol,
+            };
+        }
         if lowered_is_result {
             match method.name.as_str() {
                 "unwrap" | "expect" => runtime_symbol = Some("gos_rt_result_unwrap"),
@@ -6492,6 +6979,23 @@ impl<'a> Builder<'a> {
                 if let Some(rk) = self.local_runtime_kind.get(&receiver_local).copied() {
                     self.local_runtime_kind.insert(dest, rk);
                 }
+                if let Some(inner) = unwrap_inner.or(err_inner)
+                    && let Some(sname) = self.struct_name_of(inner)
+                {
+                    let runtime_kind: Option<&'static str> = match sname.as_str() {
+                        "Error" => Some("errors::Error"),
+                        "Response" => Some("http::Response"),
+                        "Request" => Some("http::Request"),
+                        "Client" => Some("http::Client"),
+                        "Scanner" => Some("bufio::Scanner"),
+                        "Pattern" => Some("regex::Pattern"),
+                        _ => None,
+                    };
+                    self.local_struct.insert(dest, sname);
+                    if let Some(rk) = runtime_kind {
+                        self.local_runtime_kind.insert(dest, rk);
+                    }
+                }
                 if let Some(sn) = self.local_struct.get(&receiver_local).cloned() {
                     self.local_struct.insert(dest, sn);
                 }
@@ -6538,6 +7042,17 @@ impl<'a> Builder<'a> {
                 "gos_rt_str_split" | "gos_rt_str_lines" => {
                     let s = self.tcx.string_ty();
                     self.tcx.intern(gossamer_types::TyKind::Vec(s))
+                }
+                "gos_rt_str_as_bytes" => {
+                    // Return shape is `Vec<i64>` — the runtime
+                    // helper materialises one i64 slot per byte
+                    // (zero-extended) so downstream `bytes[i]`
+                    // indexing dispatches through the Slice/Vec
+                    // path (`gos_rt_vec_get_ptr` + `gos_load`)
+                    // instead of the flat-stride Place::Index
+                    // walk that reads into the GosVec header.
+                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    self.tcx.intern(gossamer_types::TyKind::Vec(i))
                 }
                 "gos_rt_map_keys_i64" | "gos_rt_map_values_i64" => {
                     let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -6733,6 +7248,203 @@ impl<'a> Builder<'a> {
         None
     }
 
+    /// Eagerly lowers the receiver of `result.map_err(closure)` /
+    /// `result.map(closure)` and emits the corresponding runtime
+    /// call when the lowered MIR type is a Result/Option Adt. The
+    /// closure is wrapped in the standard 16-byte `[fn_addr, _]`
+    /// env so the runtime helper can call it via the raw pointer
+    /// fast path.
+    fn try_lower_result_map_with_eager_recv(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        closure_arg: &HirExpr,
+        _ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let recv_local = self.lower_expr(receiver)?;
+        let recv_ty = self.locals[recv_local.0 as usize].ty;
+        if !matches!(self.tcx.kind_of(recv_ty), TyKind::Adt { .. })
+            || !self.is_result_or_option_adt(recv_ty)
+        {
+            return None;
+        }
+        let closure_local = self.lower_expr(closure_arg)?;
+        // Wrap a bare `__closure_N` fn-name local into a 16-byte
+        // env blob `[fn_addr, _]` so the helper's first-word load
+        // resolves to the lifted body. Mirrors the wrap that the
+        // generic call dispatch performs.
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let env_local = if let Some(fn_name) = self.local_fn_name.get(&closure_local).cloned() {
+            let size_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(size_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(16))),
+                span,
+            );
+            let env = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(env),
+                Rvalue::CallIntrinsic {
+                    name: "gos_alloc",
+                    args: vec![Operand::Copy(Place::local(size_local))],
+                },
+                span,
+            );
+            let fn_addr = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(fn_addr),
+                Rvalue::CallIntrinsic {
+                    name: "gos_fn_addr",
+                    args: vec![Operand::Const(ConstValue::Str(fn_name))],
+                },
+                span,
+            );
+            let zero_off = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(zero_off),
+                Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                span,
+            );
+            let store_dest = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(store_dest),
+                Rvalue::CallIntrinsic {
+                    name: "gos_store",
+                    args: vec![
+                        Operand::Copy(Place::local(env)),
+                        Operand::Copy(Place::local(zero_off)),
+                        Operand::Copy(Place::local(fn_addr)),
+                    ],
+                },
+                span,
+            );
+            env
+        } else {
+            closure_local
+        };
+        let helper = match method.name.as_str() {
+            "map_err" => "gos_rt_result_map_err",
+            "map" => "gos_rt_result_map",
+            _ => return None,
+        };
+        let dest = self.fresh(recv_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args: vec![
+                Operand::Copy(Place::local(recv_local)),
+                Operand::Copy(Place::local(env_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Peeks the result `TyKind` of a method-call expression
+    /// whose return type is well-known by name (`len`, `parse`,
+    /// `to_string`, …). Used to seed `receiver_kind_flat` when
+    /// the typechecker left the chain's HIR type as a `Var`.
+    /// Emits no MIR.
+    fn peek_method_chain_kind(&self, expr: &HirExpr) -> Option<gossamer_types::TyKind> {
+        use gossamer_types::TyKind;
+        match &expr.kind {
+            HirExprKind::MethodCall { name, .. } => match name.name.as_str() {
+                "len" | "count" | "find" | "byte_at" | "as_i64" | "to_int" | "abs" | "pow"
+                | "signum" => Some(TyKind::Int(gossamer_types::IntTy::I64)),
+                "to_string" | "trim" | "to_lowercase" | "to_uppercase" | "replace" | "repeat"
+                | "as_str" | "clone_str" | "message" => Some(TyKind::String),
+                "is_empty" | "contains" | "starts_with" | "ends_with" | "is_some" | "is_none"
+                | "is_ok" | "is_err" => Some(TyKind::Bool),
+                _ => None,
+            },
+            // `<receiver>.<field>.method()` — the field's type is
+            // resolvable from the receiver's local_struct (a known
+            // stdlib or user struct registered in `self.structs`).
+            // The HIR-level type on the field expression itself is
+            // often a `Var` that lost contact with the field
+            // declaration, so the typechecker route is
+            // insufficient — but the structural lookup is.
+            HirExprKind::Field { receiver, name } => {
+                let recv_local = self.receiver_local_from_path(receiver)?;
+                let struct_name = self.local_struct.get(&recv_local).cloned()?;
+                let order = self.structs.get(&struct_name)?;
+                let idx = order.iter().position(|f| f == name.name.as_str())?;
+                // `stdlib_struct_shapes` only ships field names
+                // today; tag the i-th field's `TyKind` from the
+                // typechecker's struct-fields registry. Without
+                // a typed registry we fall back to a default
+                // i64 for the well-known counter / size fields
+                // and String for the rest. Good enough for the
+                // method-chain dispatch (`.to_string()` /
+                // `.is_empty()` decisions).
+                let bool_fields: &[&str] = &["is_dir", "is_file", "is_symlink", "is_empty"];
+                let int_fields: &[&str] = &[
+                    "size",
+                    "modified_ms",
+                    "len",
+                    "code",
+                    "status",
+                    "year",
+                    "month",
+                    "day",
+                    "hour",
+                    "minute",
+                    "second",
+                ];
+                let _ = idx;
+                if bool_fields.contains(&name.name.as_str()) {
+                    Some(TyKind::Bool)
+                } else if int_fields.contains(&name.name.as_str()) {
+                    Some(TyKind::Int(gossamer_types::IntTy::I64))
+                } else {
+                    Some(TyKind::String)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolves a `*flags.<long>` expression's post-deref `TyKind`
+    /// by consulting `local_define_layout` without emitting any
+    /// MIR. Returns `None` for any expression that isn't
+    /// `Unary(Deref, Field { receiver: Path, name })` over a
+    /// `flag::define(...)` aggregate.
+    fn peek_define_deref_kind(&self, expr: &HirExpr) -> Option<gossamer_types::TyKind> {
+        use gossamer_types::TyKind;
+        let HirExprKind::Unary {
+            op: HirUnaryOp::Deref,
+            operand,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        let HirExprKind::Field {
+            receiver,
+            name: field_name,
+        } = &operand.kind
+        else {
+            return None;
+        };
+        let receiver_local = self.receiver_local_from_path(receiver)?;
+        let layout = self.local_define_layout.get(&receiver_local)?;
+        let (_, cell_kind) = layout
+            .iter()
+            .find(|(long, _)| long == field_name.name.as_str())?;
+        match *cell_kind {
+            "flag::Cell::Int" | "flag::Cell::Uint" | "flag::Cell::Duration" => {
+                Some(TyKind::Int(gossamer_types::IntTy::I64))
+            }
+            "flag::Cell::Float" => Some(TyKind::Float(gossamer_types::FloatTy::F64)),
+            "flag::Cell::Bool" => Some(TyKind::Bool),
+            "flag::Cell::String" => Some(TyKind::String),
+            _ => None,
+        }
+    }
+
     /// Lowers a tuple literal into an `Rvalue::Aggregate { kind:
     /// Tuple }` stored in a fresh local.
     fn lower_tuple(&mut self, elems: &[HirExpr], ty: Ty, span: Span) -> Option<Local> {
@@ -6796,6 +7508,205 @@ impl<'a> Builder<'a> {
             target: Some(next),
         });
         self.set_current(next);
+        Some(dest)
+    }
+
+    /// Expands `flag::define(name, [flag::int(...), flag::string(...),
+    /// flag::bool(...)])` into the imperative `flag::Set` builder
+    /// chain at MIR level. The result is an aggregate of cell
+    /// pointers; the per-local `local_define_layout` table records
+    /// each spec's `(long_name, cell_kind)` so subsequent
+    /// `flags.<long>` field access can emit a `Field(idx)`
+    /// projection plus the right `flag::Cell::*` runtime kind tag.
+    fn lower_flag_define(
+        &mut self,
+        name_expr: &HirExpr,
+        specs_expr: &HirExpr,
+        _ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        // Only handle the inline-array literal form. Dynamic specs
+        // would need real runtime support — fall through to the
+        // generic call dispatch (which produces a stub) so the rest
+        // of the program still compiles.
+        let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(specs)) = &specs_expr.kind else {
+            return None;
+        };
+
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+
+        // Step 1: `flag::Set::new(name)` -> set_local.
+        let name_local = self.lower_expr(name_expr)?;
+        let set_local = self.fresh(i64_ty);
+        let after_new = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_flag_set_new".to_string())),
+            args: vec![Operand::Copy(Place::local(name_local))],
+            destination: Place::local(set_local),
+            target: Some(after_new),
+        });
+        self.set_current(after_new);
+        self.local_runtime_kind.insert(set_local, "flag::Set");
+
+        // Step 2: walk each spec, register it on the set, and stash
+        // the resulting cell local + kind for the aggregate that
+        // becomes the return value.
+        let mut layout: Vec<(String, &'static str)> = Vec::with_capacity(specs.len());
+        let mut cell_locals: Vec<Local> = Vec::with_capacity(specs.len());
+        for spec in specs {
+            let HirExprKind::Call {
+                callee: spec_callee,
+                args: spec_args,
+            } = &spec.kind
+            else {
+                return None;
+            };
+            let HirExprKind::Path {
+                segments: spec_segs,
+                ..
+            } = &spec_callee.kind
+            else {
+                return None;
+            };
+            let spec_path: String = spec_segs
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            let (rt_helper, cell_kind, default_ty): (&'static str, &'static str, Ty) =
+                match spec_path.as_str() {
+                    "flag::int" => ("gos_rt_flag_set_int", "flag::Cell::Int", i64_ty),
+                    "flag::string" => (
+                        "gos_rt_flag_set_string",
+                        "flag::Cell::String",
+                        self.tcx.string_ty(),
+                    ),
+                    "flag::bool" => (
+                        "gos_rt_flag_set_bool",
+                        "flag::Cell::Bool",
+                        self.tcx.bool_ty(),
+                    ),
+                    _ => return None,
+                };
+            // spec args: (long, default, help, short)
+            if spec_args.len() < 3 {
+                return None;
+            }
+            let long_local = self.lower_expr(&spec_args[0])?;
+            let default_local = self.lower_expr(&spec_args[1])?;
+            let help_local = self.lower_expr(&spec_args[2])?;
+            let short_expr = spec_args.get(3);
+
+            // Recover the long-name string for the layout table. Only
+            // string-literal long names are supported; dynamic names
+            // would have to be looked up at runtime, defeating the
+            // purpose of a static field map.
+            let long_name = match &spec_args[0].kind {
+                HirExprKind::Literal(gossamer_hir::HirLiteral::String(s)) => s.clone(),
+                _ => return None,
+            };
+
+            // Coerce the default operand's type so cranelift's
+            // signature for the runtime helper picks the right ABI
+            // slot (string ptr / i64 / i8). The lowered local already
+            // has the literal's type from `lower_expr`; the helper
+            // still wants its own pinned ABI.
+            let _ = default_ty;
+
+            let cell_local = self.fresh(i64_ty);
+            let after_reg = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(rt_helper.to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(set_local)),
+                    Operand::Copy(Place::local(long_local)),
+                    Operand::Copy(Place::local(default_local)),
+                    Operand::Copy(Place::local(help_local)),
+                ],
+                destination: Place::local(cell_local),
+                target: Some(after_reg),
+            });
+            self.set_current(after_reg);
+            self.local_runtime_kind.insert(cell_local, cell_kind);
+
+            // Optional short alias: `flag::int("count", ..., 'c')`.
+            if let Some(short_arg) = short_expr {
+                if let HirExprKind::Literal(gossamer_hir::HirLiteral::Char(ch)) = &short_arg.kind {
+                    let short_local = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(short_local),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(*ch as u32)))),
+                        span,
+                    );
+                    let unit_ty = self.tcx.unit();
+                    let unit_dest = self.fresh(unit_ty);
+                    let after_short = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_flag_set_short".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(set_local)),
+                            Operand::Copy(Place::local(short_local)),
+                        ],
+                        destination: Place::local(unit_dest),
+                        target: Some(after_short),
+                    });
+                    self.set_current(after_short);
+                }
+            }
+
+            layout.push((long_name, cell_kind));
+            cell_locals.push(cell_local);
+        }
+
+        // Step 3: `set.parse(os::args())`. `gos_rt_os_args` returns
+        // a pointer the parser recognises as the `argv + 1`
+        // sentinel.
+        let args_local = self.fresh(i64_ty);
+        let after_args = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_os_args".to_string())),
+            args: vec![],
+            destination: Place::local(args_local),
+            target: Some(after_args),
+        });
+        self.set_current(after_args);
+        let parse_dest = self.fresh(i64_ty);
+        let after_parse = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_flag_set_parse".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(set_local)),
+                Operand::Copy(Place::local(args_local)),
+            ],
+            destination: Place::local(parse_dest),
+            target: Some(after_parse),
+        });
+        self.set_current(after_parse);
+
+        // Step 4: build an aggregate of cell pointers as the result.
+        // The aggregate's local picks up the layout table so field
+        // access dispatches positionally. Each cell is i64-shaped
+        // (a pointer) for codegen purposes.
+        let agg_ty = self.tcx.intern(gossamer_types::TyKind::Tuple(
+            (0..cell_locals.len()).map(|_| i64_ty).collect(),
+        ));
+        let dest = self.fresh(agg_ty);
+        let operands: Vec<Operand> = cell_locals
+            .iter()
+            .map(|l| Operand::Copy(Place::local(*l)))
+            .collect();
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::Aggregate {
+                kind: crate::AggregateKind::Tuple,
+                operands,
+            },
+            span,
+        );
+        self.local_runtime_kind.insert(dest, "flag::DefineResult");
+        self.local_define_layout.insert(dest, layout);
         Some(dest)
     }
 
@@ -7379,6 +8290,11 @@ impl<'a> Builder<'a> {
             let dest_ty = match elem_kind_now {
                 TyKind::String | TyKind::Bool | TyKind::Char | TyKind::Float(_) => elem_unwrapped,
                 TyKind::Int(_) => elem_unwrapped,
+                // Aggregate elements (struct, tuple) — keep the
+                // pinned element type so subsequent
+                // `Field(idx)` projections find the right field
+                // layout via `local_struct`.
+                TyKind::Adt { .. } | TyKind::Tuple(_) => elem_unwrapped,
                 _ => match self.tcx.kind_of(ty) {
                     TyKind::Int(_) | TyKind::String | TyKind::Bool | TyKind::Float(_) => ty,
                     _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -7396,6 +8312,16 @@ impl<'a> Builder<'a> {
                 target: Some(next),
             });
             self.set_current(next);
+            // Propagate the base's element-struct tag onto the
+            // result so subsequent `entries[i].<field>` access
+            // (or `let entry = entries[i]; entry.<field>`)
+            // resolves through `lookup_place_expr`'s struct-name
+            // path instead of falling through to JsonValue.
+            if let Some(elem_struct) = self.local_elem_struct.get(&base_local).cloned() {
+                self.local_struct.insert(dest, elem_struct);
+            } else if let Some(name) = self.struct_name_of(elem) {
+                self.local_struct.insert(dest, name);
+            }
             return Some(dest);
         }
         let dest = self.fresh(ty);
@@ -7404,6 +8330,9 @@ impl<'a> Builder<'a> {
             projection: vec![crate::ir::Projection::Index(index_local)],
         };
         self.emit_assign(Place::local(dest), Rvalue::Use(Operand::Copy(place)), span);
+        if let Some(elem_struct) = self.local_elem_struct.get(&base_local).cloned() {
+            self.local_struct.insert(dest, elem_struct);
+        }
         Some(dest)
     }
 
@@ -7429,6 +8358,8 @@ impl<'a> Builder<'a> {
         self.loop_stack.push(LoopContext {
             continue_to: header,
             break_to: exit,
+            result: None,
+            break_used: false,
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -7437,7 +8368,7 @@ impl<'a> Builder<'a> {
         self.set_current(exit);
     }
 
-    fn lower_loop(&mut self, body: &HirExpr, _ty: Ty, span: Span) -> Option<Local> {
+    fn lower_loop(&mut self, body: &HirExpr, ty: Ty, span: Span) -> Option<Local> {
         if let Some(for_loop) = detect_for_loop(body) {
             if let Some(result) = self.try_lower_for_loop(&for_loop, span) {
                 return Some(result);
@@ -7445,20 +8376,28 @@ impl<'a> Builder<'a> {
         }
         let header = self.new_block(span);
         let exit = self.new_block(span);
+        // Pre-allocate a result local so `break <expr>` has somewhere
+        // to write its payload. `loop` is an expression in Gossamer
+        // (`let x = loop { ... break v }`), and the typechecker pins
+        // `ty` to the unified break-payload type.
+        let result_local = self.fresh(ty);
         self.terminate(Terminator::Goto { target: header });
         self.set_current(header);
-        // Unconditional `loop`: `continue` and `break` both have
-        // somewhere sensible to land. `break` exits, `continue`
-        // restarts the body.
         self.loop_stack.push(LoopContext {
             continue_to: header,
             break_to: exit,
+            result: Some(result_local),
+            break_used: false,
         });
         let _ = self.lower_expr(body);
-        self.loop_stack.pop();
+        let ctx = self.loop_stack.pop().expect("loop stack underflow");
         self.terminate(Terminator::Goto { target: header });
         self.set_current(exit);
-        None
+        if ctx.break_used {
+            Some(result_local)
+        } else {
+            None
+        }
     }
 
     /// Lowers a detected `for x in iter { body }` loop directly into
@@ -8210,6 +9149,8 @@ impl<'a> Builder<'a> {
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
+            result: None,
+            break_used: false,
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -8425,6 +9366,8 @@ impl<'a> Builder<'a> {
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
+            result: None,
+            break_used: false,
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -8626,6 +9569,8 @@ impl<'a> Builder<'a> {
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
+            result: None,
+            break_used: false,
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -8731,6 +9676,8 @@ impl<'a> Builder<'a> {
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
+            result: None,
+            break_used: false,
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -8904,6 +9851,8 @@ impl<'a> Builder<'a> {
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
+            result: None,
+            break_used: false,
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -9011,6 +9960,8 @@ impl<'a> Builder<'a> {
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
+            result: None,
+            break_used: false,
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();

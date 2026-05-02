@@ -134,7 +134,11 @@ pub(crate) fn run(file: &PathBuf, timings: bool) -> Result<()> {
         .collect();
     total_errors += nonexhaustive.len();
     for diag in nonexhaustive {
-        eprintln!("{diag}");
+        let structured = diag.to_diagnostic();
+        eprintln!(
+            "{}",
+            gossamer_diagnostics::render(&structured, &map, render_opts)
+        );
     }
     if total_errors > 0 {
         return Err(anyhow!("check failed with {total_errors} diagnostic(s)"));

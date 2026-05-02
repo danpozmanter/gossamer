@@ -73,9 +73,15 @@ install_unix() {
     lib_dir="$prefix/lib"
 
     $sudo_cmd mkdir -p "$bin_dir" "$lib_dir"
-    $sudo_cmd cp "$exe" "$bin_dir/$exe_name"
+    # --remove-destination: when `gos` (or any installed binary) is
+    # running, plain `cp` fails with "Text file busy" because the
+    # kernel keeps the executable inode mapped. Removing the
+    # destination first unlinks the inode without disturbing the
+    # running process, then the new binary is written to the same
+    # path.
+    $sudo_cmd cp --remove-destination "$exe" "$bin_dir/$exe_name"
     $sudo_cmd chmod 755 "$bin_dir/$exe_name"
-    $sudo_cmd cp "$lib" "$lib_dir/$lib_name"
+    $sudo_cmd cp --remove-destination "$lib" "$lib_dir/$lib_name"
 
     # macOS only: ad-hoc resign so the freshly-copied binary
     # passes Gatekeeper / SIP for execution outside the build dir.

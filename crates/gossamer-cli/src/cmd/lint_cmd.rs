@@ -50,7 +50,11 @@ fn run(path: &PathBuf, deny_warnings: bool, explain: Option<&str>, fix: bool) ->
         let (sf, parse_diags) = gossamer_parse::parse_source_file(&source, file_id);
         if !parse_diags.is_empty() {
             for diag in &parse_diags {
-                eprintln!("{diag}");
+                let structured = diag.to_diagnostic();
+                eprintln!(
+                    "{}",
+                    gossamer_diagnostics::render(&structured, &map, render_opts)
+                );
             }
             errors += parse_diags.len();
             continue;

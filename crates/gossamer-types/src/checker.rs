@@ -201,7 +201,9 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Fn(decl) => self.register_fn_sig(item.id, decl),
                 ItemKind::Impl(decl) => self.collect_impl_signatures(decl),
                 ItemKind::Trait(decl) => self.collect_trait_signatures(decl),
-                ItemKind::Struct(decl) => self.register_struct(item.id, &decl.body),
+                ItemKind::Struct(decl) => {
+                    self.register_struct(item.id, decl.name.name.as_str(), &decl.body);
+                }
                 ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
                 _ => {}
             }
@@ -216,10 +218,11 @@ impl<'a> TypeChecker<'a> {
         self.const_tys.insert(def, resolved);
     }
 
-    fn register_struct(&mut self, item_id: NodeId, body: &StructBody) {
+    fn register_struct(&mut self, item_id: NodeId, name: &str, body: &StructBody) {
         let Some(def) = self.resolutions.definition_of(item_id) else {
             return;
         };
+        self.tcx.register_def_name(def, name);
         if let StructBody::Named(fields) = body {
             let list: Vec<(String, Ty)> = fields
                 .iter()
@@ -588,7 +591,12 @@ impl<'a> TypeChecker<'a> {
                 }
                 self.fresh()
             }
-            ExprKind::Try(inner) | ExprKind::Go(inner) => {
+            ExprKind::Try(inner) => {
+                let inner_ty = self.check_expr(inner);
+                self.unwrap_result_like(inner_ty)
+                    .unwrap_or_else(|| self.fresh())
+            }
+            ExprKind::Go(inner) => {
                 self.check_expr(inner);
                 self.fresh()
             }
@@ -641,6 +649,48 @@ impl<'a> TypeChecker<'a> {
                 return sig.output;
             }
         }
+        // Fallback: known stdlib free functions whose signatures are
+        // not present in `fn_sigs` (because they live outside user
+        // source). Returning a real type instead of a fresh variable
+        // lets the type checker catch mismatches such as returning
+        // `Result<json::Value, String>` from a function declared
+        // `Result<ComicResponse, String>`.
+        if let ExprKind::Path(path) = &callee.kind {
+            let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+            let (module, last) = names.split_at(names.len().saturating_sub(1));
+            let Some(last) = last.first().copied() else {
+                return self.fresh();
+            };
+            let module_ok = matches!(
+                module,
+                ["json"] | ["encoding", "json"] | ["std", "encoding", "json"]
+            );
+            if module_ok {
+                match last {
+                    "parse" | "decode" => {
+                        let j = self.tcx.json_value_ty();
+                        let e = self.tcx.dyn_error_ty();
+                        return self.result_adt_ty(j, e);
+                    }
+                    "render" | "encode" => return self.tcx.string_ty(),
+                    "get" | "at" | "as_array" | "identity" => {
+                        return self.tcx.json_value_ty();
+                    }
+                    "as_i64" | "len" => return self.tcx.int_ty(IntTy::I64),
+                    "as_f64" => return self.tcx.float_ty(FloatTy::F64),
+                    "as_str" => return self.tcx.string_ty(),
+                    "as_bool" | "is_null" => return self.tcx.bool_ty(),
+                    _ => {}
+                }
+            }
+            let errors_ok = matches!(module, ["errors"] | ["std", "errors"]);
+            if errors_ok {
+                match last {
+                    "new" | "wrap" => return self.tcx.dyn_error_ty(),
+                    _ => {}
+                }
+            }
+        }
         self.fresh()
     }
 
@@ -650,6 +700,26 @@ impl<'a> TypeChecker<'a> {
             self.check_expr(arg);
         }
         self.fresh()
+    }
+
+    fn unwrap_result_like(&mut self, ty: Ty) -> Option<Ty> {
+        let resolved = self.infer.resolve(self.tcx, ty);
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Ref { inner, .. }) => self.unwrap_result_like(*inner),
+            Some(TyKind::Adt { def, substs })
+                if def.local == u32::MAX || def.local == u32::MAX - 1 =>
+            {
+                substs.types().first().copied()
+            }
+            _ => None,
+        }
+    }
+
+    fn result_adt_ty(&mut self, ok: Ty, err: Ty) -> Ty {
+        let substs = crate::Substs::from_types([ok, err]);
+        let def = gossamer_resolve::DefId::local(u32::MAX);
+        self.tcx.register_def_name(def, "Result");
+        self.tcx.intern(TyKind::Adt { def, substs })
     }
 
     fn check_unary(&mut self, op: UnaryOp, operand: &Expr, span: Span) -> Ty {
@@ -1142,6 +1212,9 @@ impl<'a> TypeChecker<'a> {
         if path_matches_json_value(path) {
             return self.tcx.json_value_ty();
         }
+        if path_matches_dyn_error(path) {
+            return self.tcx.dyn_error_ty();
+        }
         if let Some(resolution) = self.resolutions.get(node) {
             match resolution {
                 Resolution::Primitive(prim) => return self.type_from_primitive(prim),
@@ -1162,18 +1235,23 @@ impl<'a> TypeChecker<'a> {
         // never collide with anything the resolver emits.
         match head_name {
             "Result" => {
-                let substs = self.substs_from_ast(path);
-                return self.tcx.intern(TyKind::Adt {
-                    def: gossamer_resolve::DefId::local(u32::MAX),
-                    substs,
-                });
+                let mut substs = self.substs_from_ast(path);
+                // `Result<T>` with a single arg is shorthand for
+                // `Result<T, errors::Error>`, matching Rust's
+                // `anyhow::Result<T>` convention.
+                if substs.types().len() == 1 {
+                    let e = self.tcx.dyn_error_ty();
+                    substs = crate::Substs::from_types([substs.types()[0], e]);
+                }
+                let def = gossamer_resolve::DefId::local(u32::MAX);
+                self.tcx.register_def_name(def, "Result");
+                return self.tcx.intern(TyKind::Adt { def, substs });
             }
             "Option" => {
                 let substs = self.substs_from_ast(path);
-                return self.tcx.intern(TyKind::Adt {
-                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
-                    substs,
-                });
+                let def = gossamer_resolve::DefId::local(u32::MAX - 1);
+                self.tcx.register_def_name(def, "Option");
+                return self.tcx.intern(TyKind::Adt { def, substs });
             }
             "Vec" => {
                 let substs = self.substs_from_ast(path);
@@ -1417,6 +1495,7 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         | TyKind::Unit
         | TyKind::Never
         | TyKind::JsonValue
+        | TyKind::DynError
         | TyKind::Param { .. } => true,
         TyKind::Tuple(parts) => parts.iter().all(|t| checker.is_concrete(*t)),
         TyKind::Array { elem, .. }
@@ -1487,6 +1566,14 @@ fn path_matches_json_value(path: &TypePath) -> bool {
     matches!(
         names.as_slice(),
         ["json", "Value"] | ["encoding", "json", "Value"] | ["std", "encoding", "json", "Value"]
+    )
+}
+
+fn path_matches_dyn_error(path: &TypePath) -> bool {
+    let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+    matches!(
+        names.as_slice(),
+        ["errors" | "error", "Error"] | ["std", "errors" | "error", "Error"]
     )
 }
 
