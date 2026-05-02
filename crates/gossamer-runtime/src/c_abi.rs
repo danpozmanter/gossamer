@@ -236,7 +236,8 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> *mut GosResu
             .and_then(|d| i64::try_from(d.as_millis()).ok())
             .unwrap_or(0);
         // 7 fields * 8 bytes = 56 bytes.
-        let blob = unsafe { libc::malloc(56) as *mut i64 };
+        let layout = std::alloc::Layout::from_size_align(56, 8).unwrap();
+        let blob = unsafe { std::alloc::alloc(layout) as *mut i64 };
         if blob.is_null() {
             continue;
         }
