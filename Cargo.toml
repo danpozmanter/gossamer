@@ -32,7 +32,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -82,28 +82,28 @@ format_push_string = "allow"
 collapsible_if = "allow"
 
 [workspace.dependencies]
-gossamer-ast = { path = "crates/gossamer-ast", version = "0.1.2" }
-gossamer-binding = { path = "crates/gossamer-binding", version = "0.1.2" }
-gossamer-codegen-cranelift = { path = "crates/gossamer-codegen-cranelift", version = "0.1.2" }
-gossamer-codegen-llvm = { path = "crates/gossamer-codegen-llvm", version = "0.1.2" }
-gossamer-coro = { path = "crates/gossamer-coro", version = "0.1.2" }
-gossamer-diagnostics = { path = "crates/gossamer-diagnostics", version = "0.1.2" }
-gossamer-driver = { path = "crates/gossamer-driver", version = "0.1.2" }
-gossamer-gc = { path = "crates/gossamer-gc", version = "0.1.2" }
-gossamer-hir = { path = "crates/gossamer-hir", version = "0.1.2" }
-gossamer-interp = { path = "crates/gossamer-interp", version = "0.1.2" }
-gossamer-lex = { path = "crates/gossamer-lex", version = "0.1.2" }
-gossamer-lint = { path = "crates/gossamer-lint", version = "0.1.2" }
-gossamer-lsp = { path = "crates/gossamer-lsp", version = "0.1.2" }
-gossamer-mir = { path = "crates/gossamer-mir", version = "0.1.2" }
-gossamer-parse = { path = "crates/gossamer-parse", version = "0.1.2" }
-gossamer-pkg = { path = "crates/gossamer-pkg", version = "0.1.2" }
-gossamer-resolve = { path = "crates/gossamer-resolve", version = "0.1.2" }
-gossamer-runner-template = { path = "crates/gossamer-runner-template", version = "0.1.2" }
-gossamer-runtime = { path = "crates/gossamer-runtime", version = "0.1.2" }
-gossamer-sched = { path = "crates/gossamer-sched", version = "0.1.2" }
-gossamer-std = { path = "crates/gossamer-std", version = "0.1.2" }
-gossamer-types = { path = "crates/gossamer-types", version = "0.1.2" }
+gossamer-ast = { path = "crates/gossamer-ast", version = "0.1.3" }
+gossamer-binding = { path = "crates/gossamer-binding", version = "0.1.3" }
+gossamer-codegen-cranelift = { path = "crates/gossamer-codegen-cranelift", version = "0.1.3" }
+gossamer-codegen-llvm = { path = "crates/gossamer-codegen-llvm", version = "0.1.3" }
+gossamer-coro = { path = "crates/gossamer-coro", version = "0.1.3" }
+gossamer-diagnostics = { path = "crates/gossamer-diagnostics", version = "0.1.3" }
+gossamer-driver = { path = "crates/gossamer-driver", version = "0.1.3" }
+gossamer-gc = { path = "crates/gossamer-gc", version = "0.1.3" }
+gossamer-hir = { path = "crates/gossamer-hir", version = "0.1.3" }
+gossamer-interp = { path = "crates/gossamer-interp", version = "0.1.3" }
+gossamer-lex = { path = "crates/gossamer-lex", version = "0.1.3" }
+gossamer-lint = { path = "crates/gossamer-lint", version = "0.1.3" }
+gossamer-lsp = { path = "crates/gossamer-lsp", version = "0.1.3" }
+gossamer-mir = { path = "crates/gossamer-mir", version = "0.1.3" }
+gossamer-parse = { path = "crates/gossamer-parse", version = "0.1.3" }
+gossamer-pkg = { path = "crates/gossamer-pkg", version = "0.1.3" }
+gossamer-resolve = { path = "crates/gossamer-resolve", version = "0.1.3" }
+gossamer-runner-template = { path = "crates/gossamer-runner-template", version = "0.1.3" }
+gossamer-runtime = { path = "crates/gossamer-runtime", version = "0.1.3" }
+gossamer-sched = { path = "crates/gossamer-sched", version = "0.1.3" }
+gossamer-std = { path = "crates/gossamer-std", version = "0.1.3" }
+gossamer-types = { path = "crates/gossamer-types", version = "0.1.3" }
 
 anyhow = "1"
 bincode = { version = "1", default-features = false }
