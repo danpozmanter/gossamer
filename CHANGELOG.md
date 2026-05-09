@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.3
+
+### Fixes
+
+- **`gos build` now produces a `.exe` binary on Windows.**
+  `output_path` and `resolve_output_path` were appending the bare unit name to
+  the output directory on every platform. `rust-lld -flavor link` (unlike
+  classic MSVC `link.exe`) writes the binary at the exact `/OUT:` path given,
+  with no automatic `.exe` suffix. The result was a binary with no extension
+  that `is_executable` on non-Unix (which checks for `.exe`) could not find,
+  causing all `aggregate_abi` (and related) test cases to report
+  "no binary in … \cl" on Windows CI. Fixed by adding a `platform_exe_name`
+  helper in `paths.rs` that appends `.exe` on Windows, used consistently in
+  both the `--out-dir` fast path and the default `target/{debug,release}/`
+  path.
+
 ## 0.1.2
 
 ### Fixes

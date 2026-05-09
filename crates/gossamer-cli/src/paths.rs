@@ -350,7 +350,7 @@ pub(crate) fn resolve_output_path(file: &Path, unit_name: &str, release: bool) -
             let target_dir = root.join("target").join(profile);
             fs::create_dir_all(&target_dir)
                 .map_err(|e| anyhow!("creating {}: {e}", target_dir.display()))?;
-            return Ok(target_dir.join(unit_name));
+            return Ok(target_dir.join(platform_exe_name(unit_name)));
         }
     }
     let parent = file.parent().filter(|p| !p.as_os_str().is_empty());
@@ -359,7 +359,17 @@ pub(crate) fn resolve_output_path(file: &Path, unit_name: &str, release: bool) -
     let target_dir = base.join("target").join(profile);
     fs::create_dir_all(&target_dir)
         .map_err(|e| anyhow!("creating {}: {e}", target_dir.display()))?;
-    Ok(target_dir.join(unit_name))
+    Ok(target_dir.join(platform_exe_name(unit_name)))
+}
+
+/// Binary name with the correct platform extension: `stem.exe` on Windows,
+/// bare `stem` on every other platform.
+pub(crate) fn platform_exe_name(stem: &str) -> String {
+    if cfg!(windows) {
+        format!("{stem}.exe")
+    } else {
+        stem.to_owned()
+    }
 }
 
 /// Returns the path the REPL uses to persist line-edit history

@@ -20,7 +20,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
-use crate::paths::{default_main_entry, default_unit_name, read_entry_source, resolve_output_path};
+use crate::paths::{
+    default_main_entry, default_unit_name, platform_exe_name, read_entry_source,
+    resolve_output_path,
+};
 
 /// `gos build` dispatcher: walks the project root for a default
 /// entry point when no path is supplied.
@@ -96,7 +99,7 @@ fn output_path(
 ) -> Result<PathBuf> {
     if let Some(dir) = out_dir {
         fs::create_dir_all(dir).map_err(|e| anyhow!("creating {}: {e}", dir.display()))?;
-        return Ok(dir.join(unit_name));
+        return Ok(dir.join(platform_exe_name(unit_name)));
     }
     resolve_output_path(file, unit_name, release)
 }
