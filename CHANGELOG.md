@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2
+
+### Fixes
+
+- **`os_env_compiled` test helpers no longer trigger dead-code warnings on Windows.**
+  `os_set_env_round_trips_through_os_env_in_all_tiers` had an unnecessary
+  `#[cfg(unix)]` guard — the test body is pure env-var I/O and runs on all
+  platforms. Windows variant of the child-propagation test added using
+  `cmd /c set`.
+
 ## 0.1.1
 
 ### Fixes

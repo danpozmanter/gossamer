@@ -163,12 +163,12 @@ fn assert_three_tier_stdout(tag: &str, source: &str, expected: &str) {
 }
 
 #[test]
-#[cfg(unix)]
 fn os_set_env_round_trips_through_os_env_in_all_tiers() {
     // Set a unique env var, read it back. The compiled tier
     // must hit the runtime's `safe_env::set_env` path so
     // `os::env` (which also routes through libc / safe_env)
-    // returns the value just written.
+    // returns the value just written. No Unix-specific system
+    // calls involved — runs on all platforms.
     let src = r#"
 use std::os
 fn main() {
@@ -207,6 +207,36 @@ fn main() {
 "#;
     assert_three_tier_stdout(
         "set_env_propagates_to_child",
+        src,
+        "GOS_PROBE_CHILD_2026=propagated",
+    );
+}
+
+#[test]
+#[cfg(windows)]
+fn os_set_env_propagates_to_a_spawned_child_in_all_tiers_windows() {
+    // Windows equivalent: `cmd /c set GOS_PROBE_CHILD_2026` prints
+    // `GOS_PROBE_CHILD_2026=propagated` if the var is in the environment.
+    let src = r#"
+use std::os
+use std::os::exec
+fn main() {
+    os::set_env(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
+    let args: [String] = ["/c", "set", "GOS_PROBE_CHILD_2026"].to_vec()
+    match exec::run(&"cmd".to_string(), &args) {
+        Ok(o) => {
+            for line in o.stdout.lines() {
+                if line.starts_with("GOS_PROBE_CHILD_2026=") {
+                    println!("{}", line)
+                }
+            }
+        }
+        Err(e) => println!("err: {}", e.message()),
+    }
+}
+"#;
+    assert_three_tier_stdout(
+        "set_env_propagates_to_child_win",
         src,
         "GOS_PROBE_CHILD_2026=propagated",
     );

@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ $# -eq 0 ]; then
-  echo "Usage: $0 <commit message>"
+YES=0
+ARGS=()
+for arg in "$@"; do
+  if [ "$arg" = "-y" ]; then
+    YES=1
+  else
+    ARGS+=("$arg")
+  fi
+done
+
+if [ "${#ARGS[@]}" -eq 0 ]; then
+  echo "Usage: $0 [-y] <commit message>"
   exit 1
 fi
 
-MSG="$*"
+MSG="${ARGS[*]}"
 
 VERSION="$(awk -F'"' '
   /^\[workspace\.package\]$/ { in_section = 1; next }
@@ -104,12 +114,20 @@ run git add -A
 run git commit -m "$MSG"
 run git tag "$TAG"
 
-read -r -p "git push? [y/N] " push
+if [ "$YES" -eq 1 ]; then
+  push="y"
+else
+  read -r -p "git push? [y/N] " push
+fi
 if [[ "$push" =~ ^[Yy]$ ]]; then
   run git push
 fi
 
-read -r -p "git push origin $TAG? [y/N] " push_tag
+if [ "$YES" -eq 1 ]; then
+  push_tag="y"
+else
+  read -r -p "git push origin $TAG? [y/N] " push_tag
+fi
 if [[ "$push_tag" =~ ^[Yy]$ ]]; then
   run git push origin "$TAG"
 fi
