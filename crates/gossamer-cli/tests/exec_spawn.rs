@@ -165,6 +165,8 @@ fn assert_three_tier_stdout(tag: &str, source: &str, expected: &str) {
     }
 }
 
+// --- Unix tests -----------------------------------------------------------
+
 #[test]
 #[cfg(unix)]
 fn exec_spawn_returns_positive_pid_for_long_running_sleep() {
@@ -232,4 +234,64 @@ fn main() {
 }
 "#;
     assert_three_tier_stdout("spawn_pid_round_trip", src, "got pid\ndone");
+}
+
+// --- Windows tests --------------------------------------------------------
+
+#[test]
+#[cfg(windows)]
+fn exec_spawn_returns_positive_pid_for_long_running_ping() {
+    // Windows equivalent: `ping 127.0.0.1 -n 31` takes ~30 s.
+    let src = r#"
+use std::os::exec
+fn main() {
+    let args: [String] = ["127.0.0.1", "-n", "31"].to_vec()
+    match exec::spawn(&"ping".to_string(), &args) {
+        Ok(pid) => {
+            if pid > 0 { println!("spawned") } else { println!("zero pid") }
+            let killed = exec::kill(pid)
+            if killed { println!("killed") } else { println!("kill failed") }
+        }
+        Err(e) => println!("error: {}", e.message()),
+    }
+}
+"#;
+    assert_three_tier_stdout("spawn_ping_kill", src, "spawned\nkilled");
+}
+
+#[test]
+#[cfg(windows)]
+fn exec_spawn_returns_error_for_nonexistent_program() {
+    let src = r#"
+use std::os::exec
+fn main() {
+    let args: [String] = [].to_vec()
+    match exec::spawn(&"C:\\this\\does\\not\\exist\\please.exe".to_string(), &args) {
+        Ok(_) => println!("unexpected ok"),
+        Err(_) => println!("err"),
+    }
+}
+"#;
+    assert_three_tier_stdout("spawn_missing_program_win", src, "err");
+}
+
+#[test]
+#[cfg(windows)]
+fn exec_spawn_then_kill_round_trips_through_a_named_var() {
+    let src = r#"
+use std::os::exec
+fn main() {
+    let args: [String] = ["127.0.0.1", "-n", "11"].to_vec()
+    let r = exec::spawn(&"ping".to_string(), &args)
+    match r {
+        Ok(pid) => {
+            println!("got pid")
+            let _ = exec::kill(pid)
+            println!("done")
+        }
+        Err(e) => println!("error: {}", e.message()),
+    }
+}
+"#;
+    assert_three_tier_stdout("spawn_pid_round_trip_win", src, "got pid\ndone");
 }

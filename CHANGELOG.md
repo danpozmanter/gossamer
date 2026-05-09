@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+### Fixes
+
+- **`exec_spawn` test helpers no longer trigger dead-code warnings on Windows.**
+  All helper functions were ungated; Windows-equivalent test variants added
+  (`ping 127.0.0.1` in place of `/bin/sleep`) so `exec::spawn` / `exec::kill`
+  coverage runs on both platforms.
+
 ## 0.1.0
 
 ### Fixes
