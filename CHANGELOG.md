@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.4
+
+### Fixes
+
+- **Test binary paths now include `.exe` on Windows.**
+  Integration tests constructed expected output paths with bare stem names
+  (`"agg"`, `"concurrent"`, etc.) but `gos build` correctly emits `<stem>.exe`
+  via `platform_exe_name`. Fixed by appending `std::env::consts::EXE_SUFFIX`
+  at every call site across seven test files (`aggregate_print_fallback`,
+  `cli`, `format_precision_parity`, `memory_growth_bounded`, `parity`,
+  `release_stability`, `stdout_concurrent_print`).
+
 ## 0.1.3
 
 ### Fixes

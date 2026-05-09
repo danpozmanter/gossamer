@@ -89,7 +89,11 @@ fn native_output_path(source: &Path) -> PathBuf {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    parent.join("target").join("debug").join(stem)
+    let mut path = parent.join("target").join("debug").join(stem);
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        path.set_extension(std::env::consts::EXE_EXTENSION);
+    }
+    path
 }
 
 fn rel_to_workspace(path: &Path) -> String {

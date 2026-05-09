@@ -55,7 +55,10 @@ fn main() {
             String::from_utf8_lossy(&build.stderr)
         );
         let profile = if release { "release" } else { "debug" };
-        let bin = dir.join("target").join(profile).join("concurrent");
+        let bin = dir
+            .join("target")
+            .join(profile)
+            .join(format!("concurrent{}", std::env::consts::EXE_SUFFIX));
         assert!(bin.exists(), "missing {}", bin.display());
 
         let out = Command::new(&bin).output().expect("run concurrent");

@@ -68,7 +68,9 @@ fn run_native(source: &Path) -> Option<String> {
         return None;
     }
     let stem = source.file_stem()?.to_string_lossy().into_owned();
-    let bin = workspace_target().join("debug").join(stem);
+    let bin = workspace_target()
+        .join("debug")
+        .join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
     if !bin.exists() {
         eprintln!(
             "skipping native parity: produced binary not found at {}",

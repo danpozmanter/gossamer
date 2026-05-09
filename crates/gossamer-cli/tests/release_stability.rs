@@ -73,7 +73,10 @@ fn build_release(name: &str, body: &str) -> Program {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );
-    let bin = dir.join("target").join("release").join(name);
+    let bin = dir
+        .join("target")
+        .join("release")
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
     assert!(bin.exists(), "release binary missing at {}", bin.display());
     Program { dir, bin }
 }

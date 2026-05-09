@@ -152,7 +152,10 @@ fn build_subcommand_produces_runnable_output() {
         "build failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let binary = dir.join("target").join("debug").join("build_magic");
+    let binary = dir
+        .join("target")
+        .join("debug")
+        .join(format!("build_magic{}", std::env::consts::EXE_SUFFIX));
     assert!(
         binary.exists(),
         "build output missing at {}",
@@ -203,7 +206,10 @@ fn build_output_handles_empty_argv_for_flag_define_programs() {
         "build failed: {}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let binary = dir.join("target").join("debug").join("argv_ok");
+    let binary = dir
+        .join("target")
+        .join("debug")
+        .join(format!("argv_ok{}", std::env::consts::EXE_SUFFIX));
     let run = Command::new(&binary).output().expect("run built artifact");
     assert!(
         run.status.success(),
@@ -251,7 +257,10 @@ fn build_output_preserves_http_method_chain_through_send_and_field_access() {
         "build failed: {}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let binary = dir.join("target").join("debug").join("http_chain");
+    let binary = dir
+        .join("target")
+        .join("debug")
+        .join(format!("http_chain{}", std::env::consts::EXE_SUFFIX));
     let run = Command::new(&binary).output().expect("run built artifact");
     assert!(
         run.status.success(),
@@ -313,7 +322,10 @@ fn build_defaults_output_to_source_stem_without_extension() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let binary = dir.join("target").join("debug").join("line_count");
+    let binary = dir
+        .join("target")
+        .join("debug")
+        .join(format!("line_count{}", std::env::consts::EXE_SUFFIX));
     assert!(
         binary.exists(),
         "expected build output at {}",
@@ -377,13 +389,19 @@ fn build_inside_project_names_binary_after_project_id_tail() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let expected = dir.join("target").join("debug").join("widget-cli");
+    let expected = dir
+        .join("target")
+        .join("debug")
+        .join(format!("widget-cli{}", std::env::consts::EXE_SUFFIX));
     assert!(
         expected.exists(),
         "expected build output at {}",
         expected.display()
     );
-    let stale = dir.join("target").join("debug").join("main");
+    let stale = dir
+        .join("target")
+        .join("debug")
+        .join(format!("main{}", std::env::consts::EXE_SUFFIX));
     assert!(
         !stale.exists(),
         "binary must not be named after the source file when a manifest exists"

@@ -69,7 +69,10 @@ fn main() {
             String::from_utf8_lossy(&build.stderr)
         );
         let profile = if release { "release" } else { "debug" };
-        let bin = dir.join("target").join(profile).join("agg");
+        let bin = dir
+            .join("target")
+            .join(profile)
+            .join(format!("agg{}", std::env::consts::EXE_SUFFIX));
         assert!(bin.exists(), "missing {}", bin.display());
 
         let out = Command::new(&bin).output().expect("run agg");

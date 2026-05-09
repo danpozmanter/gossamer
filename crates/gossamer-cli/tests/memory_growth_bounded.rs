@@ -65,7 +65,10 @@ fn main() {
         );
 
         let profile = if release { "release" } else { "debug" };
-        let bin = dir.join("target").join(profile).join("mem");
+        let bin = dir
+            .join("target")
+            .join(profile)
+            .join(format!("mem{}", std::env::consts::EXE_SUFFIX));
         assert!(bin.exists(), "missing {}", bin.display());
 
         let out = Command::new("/usr/bin/time")
