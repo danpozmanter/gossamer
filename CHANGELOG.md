@@ -26,6 +26,14 @@
   `c_abi.rs` has a matching `declare` line in the LLVM prelude. Added
   `declare void @gos_rt_arr_iter_free(ptr)` to `gossamer-codegen-llvm/src/emit.rs`.
 
+- **Directory sizes report 0 in native tiers on Windows.**
+  `gos_rt_fs_list_dir` and `gos_rt_fs_walk_dir` used `DirEntry::metadata()`
+  which reads from `WIN32_FIND_DATA` — a cached struct that stores
+  `nFileSize = 0` for directories. The interpreter uses
+  `std::fs::metadata(path)`, which opens a file handle and calls
+  `GetFileInformationByHandle`, returning the real NTFS directory-index
+  size. Both native functions now use `std::fs::metadata` to match.
+
 ## 0.1.7
 
 ### Fixes

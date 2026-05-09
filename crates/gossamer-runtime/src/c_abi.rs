@@ -262,10 +262,17 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> *mut GosResu
     entries.sort_by_key(std::fs::DirEntry::file_name);
     let out = unsafe { gos_rt_vec_new(8) };
     for entry in entries {
-        let Ok(meta) = entry.metadata() else { continue };
+        let entry_path = entry.path();
+        // Use std::fs::metadata (opens a handle) rather than entry.metadata()
+        // (reads from FindFile cache on Windows). The latter returns 0 for
+        // directory sizes on Windows because WIN32_FIND_DATA stores nFileSize=0
+        // for directories; the former calls GetFileInformationByHandle and
+        // returns the real NTFS directory-index allocation, matching what the
+        // interpreter gets via the same syscall path.
+        let Ok(meta) = std::fs::metadata(&entry_path) else { continue };
         let Ok(ft) = entry.file_type() else { continue };
         let name_str = entry.file_name().to_string_lossy().into_owned();
-        let path_str = entry.path().to_string_lossy().into_owned();
+        let path_str = entry_path.to_string_lossy().into_owned();
         let name_cs = alloc_cstring(name_str.as_bytes()) as i64;
         let path_cs = alloc_cstring(path_str.as_bytes()) as i64;
         let is_file = i64::from(ft.is_file());
@@ -319,10 +326,13 @@ pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> *mut GosResu
         let mut entries: Vec<std::fs::DirEntry> = read.flatten().collect();
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries {
-            let Ok(meta) = entry.metadata() else { continue };
+            let path_buf = entry.path();
+            // Same reason as in gos_rt_fs_list_dir: use std::fs::metadata
+            // rather than entry.metadata() so directory sizes agree with
+            // the interpreter on Windows.
+            let Ok(meta) = std::fs::metadata(&path_buf) else { continue };
             let Ok(ft) = entry.file_type() else { continue };
             let name_str = entry.file_name().to_string_lossy().into_owned();
-            let path_buf = entry.path();
             let path_str = path_buf.to_string_lossy().into_owned();
             let name_cs = alloc_cstring(name_str.as_bytes()) as i64;
             let path_cs = alloc_cstring(path_str.as_bytes()) as i64;
