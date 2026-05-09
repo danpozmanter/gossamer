@@ -2611,21 +2611,13 @@ fn builtin_exec_kill(args: &[Value]) -> RuntimeResult<Value> {
     }
     #[cfg(windows)]
     {
-        // SAFETY: Win32 OpenProcess/TerminateProcess/CloseHandle.
-        // CloseHandle is always called to prevent a handle leak.
-        unsafe extern "system" {
-            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> isize;
-            fn TerminateProcess(process: isize, exit_code: u32) -> i32;
-            fn CloseHandle(object: isize) -> i32;
-        }
-        const PROCESS_TERMINATE: u32 = 0x0001;
-        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, *pid as u32) };
-        if handle == 0 {
-            return Ok(Value::Bool(false));
-        }
-        let ok = unsafe { TerminateProcess(handle, 1) };
-        unsafe { CloseHandle(handle) };
-        Ok(Value::Bool(ok != 0))
+        use std::process::{Command as StdCommand, Stdio as StdStdio};
+        let status = StdCommand::new("taskkill")
+            .args(["/F", "/PID", &format!("{pid}")])
+            .stdout(StdStdio::null())
+            .stderr(StdStdio::null())
+            .status();
+        Ok(Value::Bool(matches!(status, Ok(s) if s.success())))
     }
     #[cfg(not(any(unix, windows)))]
     {

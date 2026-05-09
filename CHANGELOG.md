@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.7
+
+### Fixes
+
+- **`exec::kill` interpreter implementation no longer uses unsafe on Windows.**
+  `gossamer-interp` has `#![forbid(unsafe_code)]`, so the Win32 FFI approach
+  from 0.1.6 was rejected at compile time. Replaced with `taskkill /F /PID
+  <pid>` via `std::process::Command` — the same safe shell-out pattern used
+  for `/bin/kill` on Unix. The compiled-tier runtime (`c_abi.rs`) keeps the
+  direct `OpenProcess`/`TerminateProcess` approach, which is correct there
+  since `gossamer-runtime` permits unsafe.
+
 ## 0.1.6
 
 ### Fixes
