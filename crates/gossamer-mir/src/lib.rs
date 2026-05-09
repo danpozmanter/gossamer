@@ -20,7 +20,7 @@ pub use ir::{
     AggregateKind, AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl,
     Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator, UnOp,
 };
-pub use lower::lower_program;
+pub use lower::{lower_program, mangle_callable_shape};
 pub use monomorph::{check_generic_layouts, mangled_name, monomorphise};
 pub use opt::{
     const_branch_elim, const_fold, const_value_of, copy_propagate, dead_store_elim, optimise,

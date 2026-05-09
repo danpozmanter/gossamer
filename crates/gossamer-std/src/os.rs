@@ -104,3 +104,82 @@ pub fn read_dir(path: &str) -> Result<Vec<String>, IoError> {
 pub fn exit(code: i32) -> ! {
     std::process::exit(code);
 }
+
+/// Returns the current working directory.
+pub fn cwd() -> Result<String, IoError> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| IoError::from_std(e, "cwd"))
+}
+
+/// Sets the current working directory.
+pub fn set_cwd(path: &str) -> Result<(), IoError> {
+    std::env::set_current_dir(path).map_err(|e| IoError::from_std(e, path))
+}
+
+/// Returns `true` when `path` exists and is a regular file.
+#[must_use]
+pub fn is_file(path: &str) -> bool {
+    Path::new(path).is_file()
+}
+
+/// Returns `true` when `path` exists and is a directory.
+#[must_use]
+pub fn is_dir(path: &str) -> bool {
+    Path::new(path).is_dir()
+}
+
+/// Returns `true` when `path` is a symbolic link.
+#[must_use]
+pub fn is_symlink(path: &str) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// File-size in bytes, or `0` when the path is missing.
+#[must_use]
+pub fn file_size(path: &str) -> u64 {
+    std::fs::metadata(path).map_or(0, |m| m.len())
+}
+
+/// Removes an empty directory at `path`.
+pub fn remove_dir(path: &str) -> Result<(), IoError> {
+    std::fs::remove_dir(path).map_err(|e| IoError::from_std(e, path))
+}
+
+/// Removes a directory and every file inside it recursively.
+pub fn remove_dir_all(path: &str) -> Result<(), IoError> {
+    std::fs::remove_dir_all(path).map_err(|e| IoError::from_std(e, path))
+}
+
+/// Copies `src` to `dst`, returning the number of bytes copied.
+pub fn copy(src: &str, dst: &str) -> Result<u64, IoError> {
+    std::fs::copy(src, dst).map_err(|e| IoError::from_std(e, &format!("{src} -> {dst}")))
+}
+
+/// Returns the canonical absolute form of `path`.
+pub fn canonicalize(path: &str) -> Result<String, IoError> {
+    std::fs::canonicalize(path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| IoError::from_std(e, path))
+}
+
+/// Returns the value of the `HOME` (or platform equivalent) directory,
+/// when set.
+#[must_use]
+pub fn home() -> Option<String> {
+    if let Some(home) = std::env::var_os("HOME") {
+        return Some(home.to_string_lossy().into_owned());
+    }
+    if cfg!(windows) {
+        if let Some(profile) = std::env::var_os("USERPROFILE") {
+            return Some(profile.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// Returns the platform-canonical temporary directory path.
+#[must_use]
+pub fn temp_dir() -> String {
+    std::env::temp_dir().to_string_lossy().into_owned()
+}

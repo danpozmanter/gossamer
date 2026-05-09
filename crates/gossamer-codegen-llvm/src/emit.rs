@@ -159,10 +159,21 @@ fn render_module_inner(
 
     let mut fn_name_by_def: std::collections::HashMap<u32, String> =
         std::collections::HashMap::new();
+    let mut param_tys_by_name: std::collections::HashMap<String, Vec<gossamer_types::Ty>> =
+        std::collections::HashMap::new();
     for body in bodies {
         if let Some(def) = body.def {
             fn_name_by_def.insert(def.local, body.name.clone());
         }
+        // Per-callee param-type table: `emit_named_call` consults
+        // this to pass `&Adt` arguments as the heap pointer
+        // (loaded from the slot) rather than the slot address.
+        // Without it, `length(&xs)` receives the slot's address
+        // and the disc read at offset 0 misses the heap blob.
+        let param_tys: Vec<gossamer_types::Ty> = (0..body.arity)
+            .map(|i| body.local_ty(gossamer_mir::Local(i + 1)))
+            .collect();
+        param_tys_by_name.insert(body.name.clone(), param_tys);
     }
 
     let mut body_text = String::new();
@@ -172,6 +183,7 @@ fn render_module_inner(
     for body in bodies {
         let mut lowerer = Lowerer::new(body, tcx);
         lowerer.fn_name_by_def.clone_from(&fn_name_by_def);
+        lowerer.param_tys_by_name.clone_from(&param_tys_by_name);
         lowerer.strings = string_pool.clone();
         match lowerer.lower() {
             Ok(text) => {
@@ -246,6 +258,25 @@ fn render_module_inner(
         writeln!(out).unwrap();
     }
     out.push_str(&body_text);
+
+    // Per-shape callable thunks. The MIR emits `gos_fn_addr(
+    // "__fn_thunk_<sig>")` whenever a bare fn item is coerced
+    // to a `Fn(...)` parameter; each unique shape needs one
+    // thunk that loads the real fn pointer from `env+8` and
+    // forwards the typed arguments. Collect the set of
+    // referenced thunk names from MIR and synthesize an LLVM
+    // `define` for each. Mirrors `define_shape_thunk` on the
+    // Cranelift side.
+    let mut thunk_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for body in bodies {
+        collect_thunk_names_in_body(body, &mut thunk_names);
+    }
+    for name in &thunk_names {
+        if let Some(text) = render_shape_thunk(name) {
+            out.push_str(&text);
+            out.push('\n');
+        }
+    }
 
     // The user's `main` function might be in the fallback set.
     // The C-ABI shim must call `gos_main` regardless — if main
@@ -433,6 +464,96 @@ fn emit_dwarf_metadata(out: &mut String, bodies: &[Body]) {
 /// bug previously corrupted the IR module silently and forced
 /// `llc` to error which then triggered the per-fn Cranelift
 /// fallback for unrelated bodies.
+/// Walks `body`'s MIR statements + terminators looking for
+/// `gos_fn_addr("__fn_thunk_*")` references. The names matter
+/// because each unique shape needs a synthesised LLVM thunk;
+/// see [`render_shape_thunk`].
+fn collect_thunk_names_in_body(body: &Body, out: &mut std::collections::BTreeSet<String>) {
+    use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind, Terminator};
+    let mut visit_args = |args: &[Operand], name: &str| {
+        if name == "gos_fn_addr"
+            && let Some(Operand::Const(ConstValue::Str(s))) = args.first()
+            && s.starts_with("__fn_thunk_")
+        {
+            out.insert(s.clone());
+        }
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { rvalue, .. } = &stmt.kind
+                && let Rvalue::CallIntrinsic { name, args } = rvalue
+            {
+                visit_args(args, name);
+            }
+        }
+        if let Terminator::Call { callee, args, .. } = &block.terminator
+            && let Operand::Const(ConstValue::Str(name)) = callee
+        {
+            visit_args(args, name);
+        }
+    }
+}
+
+/// Synthesises an LLVM `define` for a per-shape callable thunk
+/// named `__fn_thunk_<inputs>_<ret>`. The thunk loads the real
+/// fn pointer from `env+8` and forwards the typed arguments
+/// with the matching calling convention. Mirrors the Cranelift
+/// backend's `define_shape_thunk` so capturing closures and
+/// fn-item refs flow through identical lowering.
+fn render_shape_thunk(name: &str) -> Option<String> {
+    let suffix = name.strip_prefix("__fn_thunk_")?;
+    let (inputs_str, ret_str) = suffix.rsplit_once('_')?;
+    let ret_char = ret_str.chars().next()?;
+    let ret_ty = shape_char_to_llvm_ty(ret_char)?;
+    let mut input_tys: Vec<&'static str> = Vec::with_capacity(inputs_str.len());
+    for c in inputs_str.chars() {
+        input_tys.push(shape_char_to_llvm_ty(c)?);
+    }
+    let unit_ret = ret_char == 'u';
+    let mut out = String::new();
+    let header_ret = if unit_ret { "void" } else { ret_ty };
+    let mut params = String::from("ptr %env");
+    for (i, t) in input_tys.iter().enumerate() {
+        let _ = write!(params, ", {t} %a{i}");
+    }
+    let _ = writeln!(out, "define {header_ret} @\"{name}\"({params}) {{");
+    writeln!(out, "entry:").unwrap();
+    writeln!(out, "  %fn_ptr_addr = getelementptr i8, ptr %env, i64 8").unwrap();
+    writeln!(out, "  %fn_ptr = load ptr, ptr %fn_ptr_addr").unwrap();
+    let mut call_args = String::new();
+    for (i, t) in input_tys.iter().enumerate() {
+        if i > 0 {
+            call_args.push_str(", ");
+        }
+        let _ = write!(call_args, "{t} %a{i}");
+    }
+    if unit_ret {
+        let _ = writeln!(out, "  call void %fn_ptr({call_args})");
+        writeln!(out, "  ret void").unwrap();
+    } else {
+        let _ = writeln!(out, "  %r = call {ret_ty} %fn_ptr({call_args})");
+        let _ = writeln!(out, "  ret {ret_ty} %r");
+    }
+    writeln!(out, "}}").unwrap();
+    Some(out)
+}
+
+/// Maps a shape character produced by
+/// `gossamer_mir::mangle_callable_shape` to its LLVM IR type
+/// name. Mirrors `shape_char_to_cl_type` on the Cranelift side.
+fn shape_char_to_llvm_ty(c: char) -> Option<&'static str> {
+    Some(match c {
+        'b' | 'y' => "i8",
+        'k' => "i16",
+        'c' | 'j' => "i32",
+        'i' => "i64",
+        'f' => "double",
+        'g' => "float",
+        'u' => "i64",
+        _ => return None,
+    })
+}
+
 fn validate_global_decl_shape(g: &str) -> Result<()> {
     let trimmed = g.trim_start();
     let valid = trimmed.starts_with('@') || trimmed.starts_with("declare ");
@@ -488,6 +609,13 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
             .with_context(|| format!("writing {}", ll_path.display()))?;
     }
     let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
+    if keep_artifacts {
+        // Emit the canonical dump-path marker the
+        // `llvm_lowering_marker` test (and ad-hoc debug runs)
+        // grep for. Pinning the line shape lets tooling locate
+        // the IR file without guessing a temp-dir layout.
+        eprintln!("llvm backend: IR at {}", ll_path.display());
+    }
     // Mid-end pipeline: `opt -O3` runs `mem2reg`, GVN, instcombine,
     // loop unrolling, the loop vectoriser, the SLP vectoriser, …
     // Critical because `llc` only does codegen / register
@@ -822,9 +950,13 @@ pub(crate) const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare double @gos_rt_math_pow(double, double)",
     // Length / indexing.
     "declare i64 @gos_rt_arr_len(ptr)",
+    "declare ptr @gos_rt_arr_iter(ptr)",
+    "declare ptr @gos_rt_arr_iter_next(ptr)",
     "declare i64 @gos_rt_len(ptr)",
     "declare i64 @gos_rt_str_len(ptr)",
     "declare i64 @gos_rt_str_byte_at(ptr, i64)",
+    "declare ptr @gos_rt_str_substring(ptr, i64, i64)",
+    "declare ptr @gos_rt_os_read_dir(ptr)",
     // String constructors / mutation.
     "declare ptr @gos_rt_str_concat(ptr, ptr)",
     "declare ptr @gos_rt_str_trim(ptr)",
@@ -834,6 +966,7 @@ pub(crate) const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare i32 @gos_rt_str_starts_with(ptr, ptr)",
     "declare i32 @gos_rt_str_ends_with(ptr, ptr)",
     "declare i64 @gos_rt_str_find(ptr, ptr)",
+    "declare ptr @gos_rt_str_find_opt(ptr, ptr)",
     "declare ptr @gos_rt_str_replace(ptr, ptr, ptr)",
     "declare ptr @malloc(i64)",
     "declare ptr @gos_rt_vec_new(i32)",
@@ -850,18 +983,21 @@ pub(crate) const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare ptr @gos_rt_error_message(ptr)",
     "declare ptr @gos_rt_error_cause(ptr)",
     "declare i8 @gos_rt_error_is(ptr, ptr)",
+    "declare ptr @gos_rt_errors_join_vec(ptr)",
     // Regex module.
     "declare ptr @gos_rt_regex_compile(ptr)",
     "declare i8 @gos_rt_regex_is_match(ptr, ptr)",
     "declare ptr @gos_rt_regex_find(ptr, ptr)",
+    "declare ptr @gos_rt_regex_find_opt(ptr, ptr)",
+    "declare ptr @gos_rt_regex_captures(ptr, ptr)",
     "declare ptr @gos_rt_regex_find_all(ptr, ptr)",
     "declare ptr @gos_rt_regex_captures_all(ptr, ptr)",
     "declare ptr @gos_rt_regex_replace_all(ptr, ptr, ptr)",
     "declare ptr @gos_rt_regex_split(ptr, ptr)",
     // fs / path.
     "declare ptr @gos_rt_fs_read_to_string(ptr)",
-    "declare i8 @gos_rt_fs_write(ptr, ptr)",
-    "declare i8 @gos_rt_fs_create_dir_all(ptr)",
+    "declare i64 @gos_rt_fs_write(ptr, ptr)",
+    "declare i64 @gos_rt_fs_create_dir_all(ptr)",
     "declare ptr @gos_rt_path_join(ptr, ptr)",
     // flag::Set.
     "declare ptr @gos_rt_flag_set_new(ptr)",
@@ -883,6 +1019,21 @@ pub(crate) const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare ptr @gos_rt_os_env(ptr)",
     "declare ptr @gos_rt_os_cwd()",
     "declare ptr @gos_rt_fs_list_dir(ptr)",
+    "declare ptr @gos_rt_fs_walk_dir(ptr)",
+    "declare ptr @gos_rt_exec_run(ptr, ptr)",
+    "declare i64 @gos_rt_os_exists(ptr)",
+    "declare i64 @gos_rt_os_is_file(ptr)",
+    "declare i64 @gos_rt_os_is_dir(ptr)",
+    "declare i64 @gos_rt_os_remove_file(ptr)",
+    "declare ptr @gos_rt_result_map_bare(ptr, i64)",
+    "declare ptr @gos_rt_result_map_err_bare(ptr, i64)",
+    "declare ptr @gos_rt_os_write_file_result(ptr, ptr)",
+    "declare ptr @gos_rt_os_mkdir_all_result(ptr)",
+    "declare ptr @gos_rt_os_remove_file_result(ptr)",
+    "declare ptr @gos_rt_os_remove_dir_all_result(ptr)",
+    "declare ptr @gos_rt_http_stream(ptr, ptr, ptr, ptr)",
+    "declare ptr @gos_rt_http_get(ptr, ptr)",
+    "declare ptr @gos_rt_http_stream_next_line(ptr)",
     // bufio::Scanner.
     "declare ptr @gos_rt_bufio_scanner_new(ptr)",
     "declare i8 @gos_rt_bufio_scanner_scan(ptr)",
@@ -917,6 +1068,7 @@ pub(crate) const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare i64 @gos_rt_result_unwrap_or(ptr, i64)",
     "declare i64 @gos_rt_result_ok(ptr)",
     "declare i64 @gos_rt_result_err(ptr)",
+    "declare ptr @gos_rt_result_ok_or(ptr, i64)",
     "declare i64 @gos_rt_result_is_ok(ptr)",
     "declare i64 @gos_rt_result_is_err(ptr)",
     "declare ptr @gos_rt_set_new()",
@@ -1119,6 +1271,91 @@ pub(crate) const RUNTIME_DECLARATIONS: &[&str] = &[
     // investigation produced.
     "@GOS_RT_STDOUT_BYTES = external local_unnamed_addr global [8192 x i8]",
     "@GOS_RT_STDOUT_LEN = external local_unnamed_addr global i64",
+    // Channels — declared so a future direct-LLVM lowering of
+    // `chan` operations can call them without a per-call extern
+    // declaration race. Cranelift currently handles the lowering.
+    "declare ptr @gos_rt_chan_new(i32, i64)",
+    "declare void @gos_rt_chan_close(ptr)",
+    "declare void @gos_rt_chan_send(ptr, ptr)",
+    "declare i32 @gos_rt_chan_try_send(ptr, ptr)",
+    "declare i32 @gos_rt_chan_recv(ptr, ptr)",
+    "declare i32 @gos_rt_chan_try_recv(ptr, ptr)",
+    "declare ptr @gos_rt_chan_recv_option(ptr)",
+    "declare ptr @gos_rt_chan_try_recv_option(ptr)",
+    // Goroutine spawn extras (small-arity variants and the
+    // generic environment-pointer entry point).
+    "declare void @gos_rt_go_spawn(ptr, ptr)",
+    "declare void @gos_rt_go_spawn_call_0(ptr)",
+    "declare void @gos_rt_go_spawn_call_1(ptr, i64)",
+    "declare void @gos_rt_go_spawn_call_2(ptr, i64, i64)",
+    // GC reset for between-run runtime resets.
+    "declare void @gos_rt_gc_reset()",
+    // Heap u8 vector ABI.
+    "declare ptr @gos_rt_heap_u8_new(i64)",
+    "declare i64 @gos_rt_heap_u8_get(ptr, i64)",
+    "declare void @gos_rt_heap_u8_set(ptr, i64, i64)",
+    "declare i64 @gos_rt_heap_u8_len(ptr)",
+    "declare void @gos_rt_heap_u8_write_bytes_to_stdout(ptr, i64, i64)",
+    "declare void @gos_rt_heap_u8_write_lines_to_stdout(ptr, i64, i64, i64)",
+    // Long-running HTTP server entry point.
+    "declare void @gos_rt_http_serve(ptr, ptr, i64)",
+    // JSON value accessors / constructors.
+    "declare ptr @gos_rt_json_parse(ptr)",
+    "declare ptr @gos_rt_json_render(ptr)",
+    "declare ptr @gos_rt_json_display(ptr)",
+    "declare ptr @gos_rt_json_get(ptr, ptr)",
+    "declare ptr @gos_rt_json_get_opt(ptr, ptr)",
+    "declare ptr @gos_rt_json_keys_opt(ptr)",
+    "declare ptr @gos_rt_json_as_array_opt(ptr)",
+    "declare ptr @gos_rt_json_at(ptr, i64)",
+    "declare i64 @gos_rt_json_len(ptr)",
+    "declare i32 @gos_rt_json_is_null(ptr)",
+    "declare i64 @gos_rt_json_as_i64(ptr)",
+    "declare double @gos_rt_json_as_f64(ptr)",
+    "declare ptr @gos_rt_json_as_str(ptr)",
+    "declare i32 @gos_rt_json_as_bool(ptr)",
+    "declare ptr @gos_rt_json_identity(ptr)",
+    "declare ptr @gos_rt_json_set(ptr, ptr, ptr)",
+    // Byte-erased map ABI (cranelift fallback path).
+    "declare i32 @gos_rt_map_get(ptr, ptr, ptr)",
+    "declare i32 @gos_rt_map_remove(ptr, ptr)",
+    // Vec format helpers — emit a pretty-printed string for a
+    // GosVec of the given element shape.
+    "declare ptr @gos_rt_vec_format_f64(ptr)",
+    "declare ptr @gos_rt_vec_format_bool(ptr)",
+    "declare ptr @gos_rt_vec_format_string(ptr)",
+    "declare ptr @gos_rt_vec_format_vec_i64(ptr)",
+    // Construct a GosVec from a flat array slot.
+    "declare ptr @gos_rt_vec_from_arr(i32, ptr, i64)",
+    // Result debug printer (used by panic-traceback paths).
+    "declare i64 @gos_rt_result_dbg(i64)",
+    // Array format / sort helpers.
+    "declare ptr @gos_rt_arr_format_bool(ptr, i64)",
+    "declare ptr @gos_rt_arr_format_f64(ptr, i64)",
+    "declare ptr @gos_rt_arr_format_i64(ptr, i64)",
+    "declare ptr @gos_rt_arr_format_string(ptr, i64)",
+    "declare void @gos_rt_arr_sort_by_i64(ptr, i64, ptr)",
+    // Errors / error-list helpers.
+    "declare ptr @gos_rt_errors_join(ptr, i64)",
+    // Process execution.
+    "declare i64 @gos_rt_exec_kill(i64)",
+    "declare ptr @gos_rt_exec_spawn(ptr, ptr)",
+    // HashMap or-insert variants.
+    "declare i64 @gos_rt_map_or_insert_i64_i64(ptr, i64, i64)",
+    "declare i64 @gos_rt_map_or_insert_str_i64(ptr, ptr, i64)",
+    // Nested-array to Vec helper.
+    "declare ptr @gos_rt_nested_arr_to_vec(i64, i64, ptr, i64)",
+    // Environment variable helpers.
+    "declare ptr @gos_rt_os_set_env(ptr, ptr)",
+    "declare void @gos_rt_os_unset_env(ptr)",
+    // Regex replace (non-all variant).
+    "declare ptr @gos_rt_regex_replace(ptr, ptr, ptr)",
+    // Millisecond-granularity sleep.
+    "declare void @gos_rt_sleep_ms(i64)",
+    // String comparison (returns i32: negative/zero/positive).
+    "declare i32 @gos_rt_str_compare(ptr, ptr)",
+    // Vec sort-by with i64 comparator closure env.
+    "declare void @gos_rt_vec_sort_by_i64(ptr, ptr)",
 ];
 
 #[cfg(test)]

@@ -101,5 +101,5 @@ serde_yaml = { version = "0.9", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
 chrono-tz = { version = "0.10", default-features = false, optional = true }
 rusqlite = { version = "0.32", default-features = false, features = ["bundled"], optional = true }
-ureq = { version = "2", default-features = false, features = ["tls", "json", "cookies", "gzip"], optional = true }
+ureq = { version = "3", features = ["cookies", "json"], optional = true }
 libloading = "0.8"

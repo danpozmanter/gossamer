@@ -1,0 +1,21 @@
+use std::os
+
+fn main() {
+    // After lowering through a runtime helper that pins a typed-i64
+    // result, calling `arg == "literal"` must dispatch through
+    // `gos_rt_str_eq` correctly. This pattern was the original
+    // os::args bug — argv[i] read via stride-8 lands as a real
+    // c-string pointer, but the typechecker had it as i64-pinned
+    // which routed eq to a bogus path.
+    let args = os::args()
+    let mut found_one = false
+    let mut found_two = false
+    let n = args.len() as i64
+    let mut i: i64 = 0
+    while i < n {
+        if args[i] == "one" { found_one = true }
+        if args[i] == "two" { found_two = true }
+        i += 1
+    }
+    println!("found_one={} found_two={}", found_one, found_two)
+}

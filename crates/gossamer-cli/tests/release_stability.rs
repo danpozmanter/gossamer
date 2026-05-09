@@ -671,12 +671,9 @@ fn release_match_guard_dispatches_through_chain() {
     // to "always matches", later arms become unreachable
     // and the test fails loudly.
     //
-    // Uses bare-int scrutinee (not `Result<_, _>` payload
-    // peeking) so the test isolates *guard* dispatch rather
-    // than variant-payload destructuring — the latter is a
-    // known limitation of the compiled tier (`Ok(1)` and
-    // `Ok(2)` lower to the same disc-only predicate, so
-    // this suite would conflate them).
+    // Uses bare-int scrutinee to isolate *guard* dispatch.
+    // Variant-payload literal matching (`Ok(1)` vs `Ok(2)`) is
+    // covered by `release_result_option_payload_literal_match`.
     assert_release_stdout_eq(
         "match_guard_chain",
         r#"
@@ -718,5 +715,43 @@ fn main() {
 }
 "#,
         "idx=0 x=10\nidx=1 x=20\nidx=2 x=30\nidx=3 x=40\n",
+    );
+}
+
+#[test]
+fn release_result_option_payload_literal_match() {
+    // `Ok(1)` / `Ok(2)` / `Some(N)` must route to the correct arm.
+    assert_release_stdout_eq(
+        "payload_literal",
+        r#"
+fn classify(r: Result<i64, i64>) -> &str {
+    match r {
+        Ok(1) => "one",
+        Ok(2) => "two",
+        Ok(_) => "other-ok",
+        Err(_) => "err",
+    }
+}
+
+fn pick(o: Option<i64>) -> &str {
+    match o {
+        Some(10) => "ten",
+        Some(20) => "twenty",
+        None => "none",
+        _ => "other",
+    }
+}
+
+fn main() {
+    println!("{}", classify(Ok(1)))
+    println!("{}", classify(Ok(2)))
+    println!("{}", classify(Ok(99)))
+    println!("{}", classify(Err(0)))
+    println!("{}", pick(Some(10)))
+    println!("{}", pick(Some(20)))
+    println!("{}", pick(None))
+}
+"#,
+        "one\ntwo\nother-ok\nerr\nten\ntwenty\nnone\n",
     );
 }

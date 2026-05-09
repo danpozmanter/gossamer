@@ -1,0 +1,85 @@
+// Pattern Match Exhaustiveness
+// Use nested enums with match, guards, and if let branches to ensure
+// exhaustiveness checks and runtime dispatch agree everywhere.
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+enum Shape {
+    Circle(f64, Color),
+    Rect { w: f64, h: f64, fill: Color },
+    Triangle { base: f64, height: f64 },
+    Point,
+}
+
+fn describe(shape: &Shape) -> String {
+    match shape {
+        Shape::Circle(r, Color::Red) => format!("red circle r={}", r),
+        Shape::Circle(r, Color::Green) => format!("green circle r={}", r),
+        Shape::Circle(r, Color::Blue) => format!("blue circle r={}", r),
+        Shape::Rect { w, h, fill: Color::Red } => format!("red rect {}x{}", w, h),
+        Shape::Rect { w, h, fill: Color::Green } => format!("green rect {}x{}", w, h),
+        Shape::Rect { w, h, fill: Color::Blue } => format!("blue rect {}x{}", w, h),
+        Shape::Triangle { base, height } if *base == *height => format!("iso triangle b=h={}", base),
+        Shape::Triangle { base, height } => format!("triangle {}x{}", base, height),
+        Shape::Point => "point".to_string(),
+    }
+}
+
+fn classify_color(c: &Color) -> String {
+    if let Color::Red = c {
+        "warm".to_string()
+    } else {
+        "cool".to_string()
+    }
+}
+
+fn main() {
+    let shapes = [
+        Shape::Circle(1.0, Color::Red),
+        Shape::Circle(2.0, Color::Green),
+        Shape::Rect { w: 3.0, h: 4.0, fill: Color::Blue },
+        Shape::Triangle { base: 5.0, height: 5.0 },
+        Shape::Triangle { base: 3.0, height: 4.0 },
+        Shape::Point,
+    ]
+
+    for s in shapes {
+        println!("{}", describe(&s))
+    }
+
+    let colors = [Color::Red, Color::Green, Color::Blue]
+    for c in colors {
+        println!("{} is {}", classify_color(&c), if let Color::Red = c { "warm" } else { "cool" })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn describe_point() {
+        let s = super::Shape::Point
+        testing::check_eq(&super::describe(&s), &"point".to_string(), "point")
+    }
+
+    #[test]
+    fn describe_red_circle() {
+        let s = super::Shape::Circle(2.0, super::Color::Red)
+        let d = super::describe(&s)
+        testing::check(d.contains("red circle"), "red circle")
+        testing::check(d.contains("2"), "radius in description")
+    }
+
+    #[test]
+    fn describe_iso_triangle() {
+        let s = super::Shape::Triangle { base: 5.0, height: 5.0 }
+        let d = super::describe(&s)
+        testing::check(d.contains("iso"), "isosceles triangle")
+    }
+
+}

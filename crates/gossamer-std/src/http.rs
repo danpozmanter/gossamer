@@ -1011,6 +1011,39 @@ impl Client {
         )
     }
 
+    /// Issues a PUT request with the supplied body.
+    pub fn put(&self, url: &str, body: &[u8], content_type: &str) -> Result<Response, ClientError> {
+        self.do_request(
+            Method::Put,
+            url,
+            Some(body),
+            &[("Content-Type", content_type)],
+        )
+    }
+
+    /// Issues an OPTIONS request — typically a preflight or
+    /// capability probe with no body.
+    pub fn options(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response, ClientError> {
+        self.do_request(Method::Options, url, None, headers)
+    }
+
+    /// Issues a DELETE request. The optional body matches what some
+    /// REST APIs expect (e.g. bulk delete payloads).
+    pub fn delete(
+        &self,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(&str, &str)],
+    ) -> Result<Response, ClientError> {
+        self.do_request(Method::Delete, url, body, headers)
+    }
+
+    /// Issues a HEAD request. The response carries only headers; the
+    /// body is always empty per RFC 9110.
+    pub fn head(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response, ClientError> {
+        self.do_request(Method::Head, url, None, headers)
+    }
+
     /// Issues a request with the supplied method, body, and extra
     /// headers. Mirrors Go's `Client.Do`.
     pub fn do_request(
@@ -1022,6 +1055,76 @@ impl Client {
     ) -> Result<Response, ClientError> {
         client_pool::run_blocking(move_owned(method, url, body, headers, &self.inner.agent))
     }
+
+    /// Issues a request whose method is given as a string. Accepts
+    /// `"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`, `"HEAD"`,
+    /// and `"OPTIONS"` (case-insensitive). Other names return
+    /// `Err(ClientError::Transport(...))` so callers see a clear
+    /// failure rather than a silent miscompile.
+    pub fn request(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(&str, &str)],
+    ) -> Result<Response, ClientError> {
+        let m = Method::parse(method)
+            .ok_or_else(|| ClientError::Transport(format!("unsupported HTTP method: {method}")))?;
+        self.do_request(m, url, body, headers)
+    }
+}
+
+/// Module-level convenience wrappers. Each builds an ephemeral
+/// [`Client`] with default settings, issues the request, and drops
+/// the client. Use [`Client`] directly when reuse / pooling matters.
+#[cfg(feature = "http-client")]
+pub fn request(
+    method: &str,
+    url: &str,
+    body: Option<&[u8]>,
+    headers: &[(&str, &str)],
+) -> Result<Response, ClientError> {
+    Client::new().request(method, url, body, headers)
+}
+
+/// Convenience GET. See [`Client::get`].
+#[cfg(feature = "http-client")]
+pub fn get(url: &str, headers: &[(&str, &str)]) -> Result<Response, ClientError> {
+    Client::new().do_request(Method::Get, url, None, headers)
+}
+
+/// Convenience POST. See [`Client::post`].
+#[cfg(feature = "http-client")]
+pub fn post(url: &str, body: &[u8], content_type: &str) -> Result<Response, ClientError> {
+    Client::new().post(url, body, content_type)
+}
+
+/// Convenience PUT. See [`Client::put`].
+#[cfg(feature = "http-client")]
+pub fn put(url: &str, body: &[u8], content_type: &str) -> Result<Response, ClientError> {
+    Client::new().put(url, body, content_type)
+}
+
+/// Convenience OPTIONS. See [`Client::options`].
+#[cfg(feature = "http-client")]
+pub fn options(url: &str, headers: &[(&str, &str)]) -> Result<Response, ClientError> {
+    Client::new().options(url, headers)
+}
+
+/// Convenience DELETE. See [`Client::delete`].
+#[cfg(feature = "http-client")]
+pub fn delete(
+    url: &str,
+    body: Option<&[u8]>,
+    headers: &[(&str, &str)],
+) -> Result<Response, ClientError> {
+    Client::new().delete(url, body, headers)
+}
+
+/// Convenience HEAD. See [`Client::head`].
+#[cfg(feature = "http-client")]
+pub fn head(url: &str, headers: &[(&str, &str)]) -> Result<Response, ClientError> {
+    Client::new().head(url, headers)
 }
 
 #[cfg(feature = "http-client")]
@@ -1041,56 +1144,163 @@ fn move_owned(
         .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
         .collect();
     move || {
-        let mut req = agent.request(&method_str, &url);
+        let mut builder = ureq::http::Request::builder()
+            .method(method_str.as_str())
+            .uri(url.as_str());
         for (k, v) in &headers_owned {
-            req = req.set(k, v);
+            builder = builder.header(k.as_str(), v.as_str());
         }
-        let response = match body_owned {
-            Some(bytes) => req.send_bytes(&bytes),
-            None => req.call(),
-        };
-        match response {
-            Ok(resp) => {
-                let status = StatusCode(resp.status());
-                let mut headers = Headers::new();
-                for name in resp.headers_names() {
-                    if let Some(value) = resp.header(&name) {
-                        headers.insert(&name, value);
-                    }
-                }
-                let mut body = Vec::new();
-                resp.into_reader()
-                    .read_to_end(&mut body)
-                    .map_err(|e| ClientError::Io(e.to_string()))?;
-                Ok(Response {
-                    status,
-                    headers,
-                    body,
-                })
+        let request = builder
+            .body(body_owned.unwrap_or_default())
+            .map_err(|e| ClientError::Transport(e.to_string()))?;
+        let resp = agent
+            .run(request)
+            .map_err(|e| ClientError::Transport(e.to_string()))?;
+        let status = StatusCode(resp.status().as_u16());
+        let mut headers = Headers::new();
+        for (name, value) in resp.headers() {
+            if let Ok(v) = value.to_str() {
+                headers.insert(name.as_str(), v);
             }
-            Err(ureq::Error::Status(code, resp)) => {
-                let status = StatusCode(code);
-                let mut headers = Headers::new();
-                for name in resp.headers_names() {
-                    if let Some(value) = resp.header(&name) {
-                        headers.insert(&name, value);
-                    }
-                }
-                let mut body = Vec::new();
-                let _ = resp.into_reader().read_to_end(&mut body);
-                Ok(Response {
-                    status,
-                    headers,
-                    body,
-                })
-            }
-            Err(ureq::Error::Transport(t)) => Err(ClientError::Transport(t.to_string())),
         }
+        let mut body = Vec::new();
+        resp.into_body()
+            .as_reader()
+            .read_to_end(&mut body)
+            .map_err(|e| ClientError::Io(e.to_string()))?;
+        Ok(Response {
+            status,
+            headers,
+            body,
+        })
     }
 }
 
 #[cfg(feature = "http-client")]
 use std::io::Read;
+
+/// Streaming HTTP response. Holds the wire reader open across calls
+/// so callers can pull SSE / chunked bodies one line at a time
+/// without first buffering the entire body into memory.
+///
+/// Construct via [`Client::stream`]. Drop the value to close the
+/// underlying connection.
+#[cfg(feature = "http-client")]
+pub struct StreamResponse {
+    /// HTTP status code.
+    pub status: StatusCode,
+    /// Response headers.
+    pub headers: Headers,
+    reader: std::io::BufReader<Box<dyn Read + Send + Sync + 'static>>,
+}
+
+#[cfg(feature = "http-client")]
+impl std::fmt::Debug for StreamResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamResponse")
+            .field("status", &self.status)
+            .field("headers", &self.headers)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "http-client")]
+impl StreamResponse {
+    /// Reads one line (terminated by `\n`) from the body, blocking
+    /// until a newline arrives or the stream closes. Returns
+    /// `Ok(None)` at EOF, `Err` on I/O failure. The trailing newline
+    /// (and any preceding `\r`) is stripped.
+    pub fn next_line(&mut self) -> Result<Option<String>, ClientError> {
+        use std::io::BufRead;
+        let mut buf = String::new();
+        match self.reader.read_line(&mut buf) {
+            Ok(0) => Ok(None),
+            Ok(_) => {
+                if buf.ends_with('\n') {
+                    buf.pop();
+                    if buf.ends_with('\r') {
+                        buf.pop();
+                    }
+                }
+                Ok(Some(buf))
+            }
+            Err(e) => Err(ClientError::Io(e.to_string())),
+        }
+    }
+}
+
+#[cfg(feature = "http-client")]
+impl Client {
+    /// Issues a request and returns a [`StreamResponse`] whose body
+    /// is read lazily. Mirrors Go's
+    /// `http.NewRequestWithContext + Client.Do + bufio.NewScanner`.
+    ///
+    /// Like [`Self::do_request`], the dial+TLS handshake runs on the
+    /// blocking I/O pool. Subsequent reads through `next_line` are
+    /// blocking on the calling thread — fine for the interpreter's
+    /// goroutine model where each goroutine has its own host worker.
+    pub fn stream(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(&str, &str)],
+    ) -> Result<StreamResponse, ClientError> {
+        let agent = self.inner.agent.clone();
+        let method_str = method.as_str().to_string();
+        let url = url.to_string();
+        let body_owned = body.map(<[u8]>::to_vec);
+        let headers_owned: Vec<(String, String)> = headers
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        client_pool::run_blocking(move || {
+            let mut builder = ureq::http::Request::builder()
+                .method(method_str.as_str())
+                .uri(url.as_str());
+            for (k, v) in &headers_owned {
+                builder = builder.header(k.as_str(), v.as_str());
+            }
+            let request = builder
+                .body(body_owned.unwrap_or_default())
+                .map_err(|e| ClientError::Transport(e.to_string()))?;
+            let resp = agent
+                .run(request)
+                .map_err(|e| ClientError::Transport(e.to_string()))?;
+            let status = StatusCode(resp.status().as_u16());
+            let mut headers = Headers::new();
+            for (name, value) in resp.headers() {
+                if let Ok(v) = value.to_str() {
+                    headers.insert(name.as_str(), v);
+                }
+            }
+            let reader =
+                std::io::BufReader::new(Box::new(resp.into_body().into_reader())
+                    as Box<dyn Read + Send + Sync + 'static>);
+            Ok(StreamResponse {
+                status,
+                headers,
+                reader,
+            })
+        })
+    }
+}
+
+/// Convenience streaming request. See [`Client::stream`]. Accepts
+/// any of `"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`,
+/// `"HEAD"`, `"OPTIONS"` — unknown methods return
+/// `Err(ClientError::Transport(...))`.
+#[cfg(feature = "http-client")]
+pub fn stream(
+    method: &str,
+    url: &str,
+    body: Option<&[u8]>,
+    headers: &[(&str, &str)],
+) -> Result<StreamResponse, ClientError> {
+    let m = Method::parse(method)
+        .ok_or_else(|| ClientError::Transport(format!("unsupported HTTP method: {method}")))?;
+    Client::new().stream(m, url, body, headers)
+}
 
 /// Builder for [`Client`].
 #[cfg(feature = "http-client")]
@@ -1159,22 +1369,20 @@ impl ClientBuilder {
     /// Builds the client.
     #[must_use]
     pub fn build(self) -> Client {
-        let mut builder = ureq::AgentBuilder::new()
-            .timeout(self.timeout)
-            .redirects(self.max_redirects)
-            .user_agent(&self.user_agent);
-        if let Some(tls) = self.tls {
-            builder = builder.tls_config(tls.rustls());
-        }
-        // ureq's cookie jar is enabled by feature; the `cookies`
-        // boolean is preserved for the future when we vend a
-        // poller-aware client, so leave it on the builder for the
-        // documentation surface.
+        // ureq v3 does not expose a way to inject an Arc<rustls::ClientConfig>
+        // directly; the default WebPki roots are used regardless.
+        let _ = self.tls;
+        // The cookies boolean is preserved for documentation surface only.
         let _ = self.cookies;
+        let agent = ureq::config::Config::builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(self.timeout))
+            .max_redirects(self.max_redirects)
+            .user_agent(self.user_agent.as_str())
+            .build()
+            .new_agent();
         Client {
-            inner: std::sync::Arc::new(ClientInner {
-                agent: builder.build(),
-            }),
+            inner: std::sync::Arc::new(ClientInner { agent }),
         }
     }
 }
@@ -1275,5 +1483,94 @@ mod tests {
         assert!(resp.status.is_success(), "status: {:?}", resp.status);
         let body = String::from_utf8_lossy(&resp.body);
         assert!(body.contains("Example Domain"));
+    }
+
+    #[cfg(feature = "http-client")]
+    #[test]
+    fn request_rejects_unknown_method() {
+        let client = Client::new();
+        let err = client
+            .request("FROBNICATE", "https://example.com", None, &[])
+            .unwrap_err();
+        match err {
+            ClientError::Transport(msg) => assert!(msg.contains("FROBNICATE"), "msg: {msg}"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "http-client")]
+    #[test]
+    fn stream_rejects_unknown_method() {
+        let err = super::stream("FROBNICATE", "https://example.com", None, &[]).unwrap_err();
+        match err {
+            ClientError::Transport(msg) => assert!(msg.contains("FROBNICATE"), "msg: {msg}"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "http-client")]
+    #[test]
+    fn httpbin_get_round_trip() {
+        if std::env::var("GOS_HTTP_LIVE").ok().as_deref() != Some("1") {
+            return;
+        }
+        let resp = super::get("https://httpbin.org/get", &[("X-Probe", "1")]).expect("get");
+        assert!(resp.status.is_success(), "status: {:?}", resp.status);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(body.contains("\"X-Probe\""), "body: {body}");
+    }
+
+    #[cfg(feature = "http-client")]
+    #[test]
+    fn httpbin_post_round_trip() {
+        if std::env::var("GOS_HTTP_LIVE").ok().as_deref() != Some("1") {
+            return;
+        }
+        let resp = super::post(
+            "https://httpbin.org/post",
+            br#"{"hello":"world"}"#,
+            "application/json",
+        )
+        .expect("post");
+        assert!(resp.status.is_success(), "status: {:?}", resp.status);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(body.contains("\"hello\""), "body: {body}");
+    }
+
+    #[cfg(feature = "http-client")]
+    #[test]
+    fn httpbin_put_round_trip() {
+        if std::env::var("GOS_HTTP_LIVE").ok().as_deref() != Some("1") {
+            return;
+        }
+        let resp = super::put(
+            "https://httpbin.org/put",
+            br#"{"updated":true}"#,
+            "application/json",
+        )
+        .expect("put");
+        assert!(resp.status.is_success(), "status: {:?}", resp.status);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(body.contains("\"updated\""), "body: {body}");
+    }
+
+    #[cfg(feature = "http-client")]
+    #[test]
+    fn httpbin_options_round_trip() {
+        if std::env::var("GOS_HTTP_LIVE").ok().as_deref() != Some("1") {
+            return;
+        }
+        let resp = super::options("https://httpbin.org/", &[]).expect("options");
+        assert!(
+            resp.status.is_success() || resp.status.as_u16() == 204,
+            "status: {:?}",
+            resp.status
+        );
+        let allow = resp
+            .headers
+            .get("Allow")
+            .or_else(|| resp.headers.get("Access-Control-Allow-Methods"))
+            .unwrap_or("");
+        assert!(!allow.is_empty(), "expected Allow / CORS header");
     }
 }

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 
 use crate::loaders::load_and_check;
-use crate::paths::{default_main_entry, read_source};
+use crate::paths::{default_main_entry, read_entry_source};
 
 /// How `gos run` executes a program.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,7 +36,7 @@ pub(crate) fn dispatch(path: Option<PathBuf>, mode: RunMode, args: &[String]) ->
 }
 
 fn run(file: &PathBuf, mode: RunMode, forwarded: &[String]) -> Result<()> {
-    let source = read_source(file)?;
+    let source = read_entry_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     // Static checks always run first, regardless of execution

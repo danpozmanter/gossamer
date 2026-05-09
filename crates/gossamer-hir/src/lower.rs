@@ -39,26 +39,37 @@ pub fn lower_source_file(
         ids: HirIdGenerator::new(),
     };
     let mut items = Vec::new();
-    lower_items(&mut lowerer, &source.items, &mut items);
+    let mut module_path: Vec<String> = Vec::new();
+    lower_items(&mut lowerer, &source.items, &mut items, &mut module_path);
     HirProgram { items }
 }
 
 /// Flattens items in source order, descending into inline modules so
 /// that `#[test]`-annotated functions inside `mod tests { ... }` reach
 /// HIR (and thus the interpreter + test runner) the same way they
-/// would if declared at the top level.
-fn lower_items(lowerer: &mut Lowerer<'_>, items: &[AstItem], out: &mut Vec<HirItem>) {
+/// would if declared at the top level. `module_path` tracks the
+/// enclosing inline-module names so each lowered item carries the
+/// path it was declared under — loaders use it to register both the
+/// bare name and the `mod1::mod2::item` qualified key.
+fn lower_items(
+    lowerer: &mut Lowerer<'_>,
+    items: &[AstItem],
+    out: &mut Vec<HirItem>,
+    module_path: &mut Vec<String>,
+) {
     for item in items {
         if !gossamer_resolve::item_is_active(&item.attrs) {
             continue;
         }
         if let AstItemKind::Mod(decl) = &item.kind {
             if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
-                lower_items(lowerer, inner, out);
+                module_path.push(decl.name.name.clone());
+                lower_items(lowerer, inner, out, module_path);
+                module_path.pop();
             }
             continue;
         }
-        if let Some(lowered) = lowerer.lower_item(item) {
+        if let Some(lowered) = lowerer.lower_item(item, module_path) {
             out.push(lowered);
         }
     }
@@ -88,7 +99,7 @@ impl Lowerer<'_> {
         self.tcx.error_ty()
     }
 
-    fn lower_item(&mut self, item: &AstItem) -> Option<HirItem> {
+    fn lower_item(&mut self, item: &AstItem, module_path: &[String]) -> Option<HirItem> {
         let def = self.resolutions.definition_of(item.id);
         let kind = match &item.kind {
             AstItemKind::Fn(decl) => HirItemKind::Fn(self.lower_fn(decl, item.span)),
@@ -115,6 +126,7 @@ impl Lowerer<'_> {
             id: self.fresh(),
             span: item.span,
             def,
+            module_path: module_path.to_vec(),
             kind,
         })
     }
@@ -204,9 +216,14 @@ impl Lowerer<'_> {
                         let tys: Vec<_> = fields.iter().map(|f| self.ty_of(f.ty.id)).collect();
                         (Some(names), Some(tys))
                     }
-                    gossamer_ast::StructBody::Tuple(_) | gossamer_ast::StructBody::Unit => {
-                        (None, None)
+                    gossamer_ast::StructBody::Tuple(fields) => {
+                        // Store positional field types so MIR lowering can assign
+                        // the correct type (e.g. f64) to tuple-variant bindings
+                        // instead of always using i64.
+                        let tys: Vec<_> = fields.iter().map(|f| self.ty_of(f.ty.id)).collect();
+                        (None, Some(tys))
                     }
+                    gossamer_ast::StructBody::Unit => (None, None),
                 };
                 crate::tree::HirEnumVariant {
                     name: variant.name.clone(),
@@ -377,8 +394,8 @@ impl Lowerer<'_> {
                 HirExprKind::Tuple(elems.iter().map(|e| self.lower_expr(e)).collect())
             }
             AstExprKind::Select(arms) => self.lower_select(arms),
-            AstExprKind::Struct { path, fields, .. } => {
-                self.lower_struct_literal(path, fields, expr.span)
+            AstExprKind::Struct { path, fields, base } => {
+                self.lower_struct_literal(path, fields, base.as_deref(), expr.span)
             }
             AstExprKind::MacroCall(_) => HirExprKind::Placeholder,
             AstExprKind::Array(arr) => HirExprKind::Array(self.lower_array(arr)),
@@ -817,6 +834,11 @@ impl Lowerer<'_> {
     ///
     /// `Shape::Rect { w: 2.0, h: 4.0 }` → `__struct("Rect", "w", 2.0, "h", 4.0)`.
     ///
+    /// When the literal carries a functional-update base
+    /// (`Outer { n: 99, ..base }`), the lowered call also includes a
+    /// trailing `"__base", base_expr` pair. The MIR layer fills any
+    /// missing fields by reading `base.field` via projection.
+    ///
     /// Interpreter and codegen layers can recognise `__struct` as the
     /// canonical struct-literal constructor without needing a new HIR
     /// node variant.
@@ -824,6 +846,7 @@ impl Lowerer<'_> {
         &mut self,
         path: &gossamer_ast::PathExpr,
         fields: &[gossamer_ast::StructExprField],
+        base: Option<&gossamer_ast::Expr>,
         span: Span,
     ) -> HirExprKind {
         let name = path
@@ -833,7 +856,7 @@ impl Lowerer<'_> {
             .unwrap_or_default();
         let error_ty = self.error_ty();
         let string_ty = self.error_ty();
-        let mut args = Vec::with_capacity(1 + fields.len() * 2);
+        let mut args = Vec::with_capacity(1 + fields.len() * 2 + 2);
         args.push(HirExpr {
             id: self.fresh(),
             span,
@@ -860,6 +883,15 @@ impl Lowerer<'_> {
                 },
             };
             args.push(value);
+        }
+        if let Some(base_expr) = base {
+            args.push(HirExpr {
+                id: self.fresh(),
+                span,
+                ty: string_ty,
+                kind: HirExprKind::Literal(HirLiteral::String("__base".to_string())),
+            });
+            args.push(self.lower_expr(base_expr));
         }
         HirExprKind::Call {
             callee: Box::new(HirExpr {
@@ -893,7 +925,11 @@ impl Lowerer<'_> {
             .map(|param| {
                 let ty = match &param.ty {
                     Some(ast_ty) => self.ty_of(ast_ty.id),
-                    None => self.error_ty(),
+                    // Look up the pattern's resolved type from the checker. If
+                    // the call site unified the param with a concrete type (e.g.
+                    // String when sorting a Vec<String>), this picks it up
+                    // instead of emitting the opaque error sentinel.
+                    None => self.ty_of(param.pattern.id),
                 };
                 let pattern = self.lower_pat_with_ty(&param.pattern, ty);
                 HirParam { pattern, ty }
@@ -903,7 +939,19 @@ impl Lowerer<'_> {
 
     fn lower_path_expr(&mut self, node: NodeId, path: &gossamer_ast::PathExpr) -> HirExprKind {
         let segments: Vec<Ident> = path.segments.iter().map(|s| s.name.clone()).collect();
+        // For a multi-segment path whose head only resolves to a
+        // module (no qualified-name registration), the resolver
+        // leaves the resolution as the `Mod` def. The MIR /
+        // codegen `def`-based dispatch can't use that, so drop
+        // the def and let the joined-name dispatch take over.
         let def = match self.resolutions.get(node) {
+            Some(Resolution::Def {
+                def,
+                kind: gossamer_resolve::DefKind::Mod,
+            }) if segments.len() > 1 => {
+                let _ = def;
+                None
+            }
             Some(Resolution::Def { def, .. }) => Some(def),
             _ => None,
         };
@@ -982,7 +1030,7 @@ impl Lowerer<'_> {
                 has_semi: *has_semi,
             },
             AstStmtKind::Item(item) => {
-                if let Some(lowered) = self.lower_item(item) {
+                if let Some(lowered) = self.lower_item(item, &[]) {
                     HirStmtKind::Item(Box::new(lowered))
                 } else {
                     HirStmtKind::Expr {
@@ -1031,11 +1079,24 @@ impl Lowerer<'_> {
             AstPatKind::Wildcard => HirPatKind::Wildcard,
             AstPatKind::Rest => HirPatKind::Rest,
             AstPatKind::Ident {
-                name, mutability, ..
-            } => HirPatKind::Binding {
-                name: name.clone(),
-                mutable: matches!(mutability, Mutability::Mutable),
-            },
+                name,
+                mutability,
+                subpattern,
+            } => {
+                let mutable = matches!(mutability, Mutability::Mutable);
+                if let Some(sub) = subpattern {
+                    HirPatKind::At {
+                        name: name.clone(),
+                        mutable,
+                        sub: Box::new(self.lower_pat(sub)),
+                    }
+                } else {
+                    HirPatKind::Binding {
+                        name: name.clone(),
+                        mutable,
+                    }
+                }
+            }
             AstPatKind::Literal(lit) => HirPatKind::Literal(lower_literal(lit)),
             AstPatKind::Path(path) => HirPatKind::Variant {
                 name: path

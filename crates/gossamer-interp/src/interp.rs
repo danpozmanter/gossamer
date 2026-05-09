@@ -304,13 +304,22 @@ impl Interpreter {
     }
 
     fn load_item(&mut self, item: &HirItem) {
+        let module_prefix = if item.module_path.is_empty() {
+            None
+        } else {
+            Some(item.module_path.join("::"))
+        };
         match &item.kind {
-            HirItemKind::Fn(decl) => self.load_fn(decl),
+            HirItemKind::Fn(decl) => self.load_fn(decl, module_prefix.as_deref()),
             HirItemKind::Const(decl) => {
                 let value = match self.eval_expr(&decl.value, &mut Env::new()) {
                     Ok(Flow::Value(value)) => value,
                     _ => Value::Void,
                 };
+                if let Some(prefix) = &module_prefix {
+                    self.globals
+                        .insert(format!("{prefix}::{}", decl.name.name), value.clone());
+                }
                 self.globals.insert(decl.name.name.clone(), value);
             }
             HirItemKind::Static(decl) => {
@@ -318,22 +327,26 @@ impl Interpreter {
                     Ok(Flow::Value(value)) => value,
                     _ => Value::Void,
                 };
+                if let Some(prefix) = &module_prefix {
+                    self.globals
+                        .insert(format!("{prefix}::{}", decl.name.name), value.clone());
+                }
                 self.globals.insert(decl.name.name.clone(), value);
             }
             HirItemKind::Impl(decl) => {
                 for fn_decl in &decl.methods {
-                    self.load_fn(fn_decl);
+                    self.load_fn(fn_decl, module_prefix.as_deref());
                     if let Some(type_name) = &decl.self_name {
-                        self.load_impl_fn(type_name, fn_decl);
+                        self.load_impl_fn(type_name, fn_decl, module_prefix.as_deref());
                     }
                 }
             }
             HirItemKind::Trait(decl) => {
                 for fn_decl in &decl.methods {
-                    self.load_fn(fn_decl);
+                    self.load_fn(fn_decl, module_prefix.as_deref());
                 }
             }
-            HirItemKind::Adt(decl) => self.load_adt(decl),
+            HirItemKind::Adt(decl) => self.load_adt(decl, module_prefix.as_deref()),
         }
     }
 
@@ -346,7 +359,7 @@ impl Interpreter {
     /// Variants are keyed under both the unqualified name (`Line`)
     /// and the type-qualified name (`Shape::Line`) so that either
     /// spelling at the call site resolves correctly.
-    fn load_adt(&mut self, decl: &gossamer_hir::HirAdt) {
+    fn load_adt(&mut self, decl: &gossamer_hir::HirAdt, module_prefix: Option<&str>) {
         let gossamer_hir::HirAdtKind::Enum(variants) = &decl.kind else {
             return;
         };
@@ -355,29 +368,42 @@ impl Interpreter {
             let variant_name = variant.name.name.clone();
             let qualified = format!("{type_name}::{variant_name}");
             let sentinel = Value::variant(variant_name.clone(), crate::value::empty_value_arc());
+            if let Some(prefix) = module_prefix {
+                self.globals
+                    .insert(format!("{prefix}::{qualified}"), sentinel.clone());
+            }
             self.globals.insert(variant_name, sentinel.clone());
             self.globals.insert(qualified, sentinel);
         }
     }
 
-    fn load_fn(&mut self, decl: &HirFn) {
+    fn load_fn(&mut self, decl: &HirFn, module_prefix: Option<&str>) {
         let Some(closure) = build_closure(decl) else {
             return;
         };
-        self.globals
-            .insert(decl.name.name.clone(), Value::Closure(Arc::new(closure)));
+        let value = Value::Closure(Arc::new(closure));
+        if let Some(prefix) = module_prefix {
+            self.globals
+                .insert(format!("{prefix}::{}", decl.name.name), value.clone());
+        }
+        self.globals.insert(decl.name.name.clone(), value);
     }
 
     /// Registers `decl` under the fully-qualified key
     /// `TypeName::method_name` so that method dispatch on a
     /// [`Value::Struct`] with that type name can resolve unambiguously
     /// even when another impl defines a same-named method.
-    fn load_impl_fn(&mut self, type_name: &Ident, decl: &HirFn) {
+    fn load_impl_fn(&mut self, type_name: &Ident, decl: &HirFn, module_prefix: Option<&str>) {
         let Some(closure) = build_closure(decl) else {
             return;
         };
         let key = format!("{}::{}", type_name.name, decl.name.name);
-        self.globals.insert(key, Value::Closure(Arc::new(closure)));
+        let value = Value::Closure(Arc::new(closure));
+        if let Some(prefix) = module_prefix {
+            self.globals
+                .insert(format!("{prefix}::{key}"), value.clone());
+        }
+        self.globals.insert(key, value);
     }
 
     /// Invokes a top-level function by name with the given arguments.
@@ -831,6 +857,24 @@ impl Interpreter {
                     .map(Flow::Value)
                     .ok_or(RuntimeError::Type("array index out of bounds".to_string()))
             }
+            (Value::IntArray(parts), Value::Int(idx)) => {
+                let idx = usize::try_from(idx)
+                    .map_err(|_| RuntimeError::Type("negative array index".to_string()))?;
+                parts
+                    .get(idx)
+                    .copied()
+                    .map(|n| Flow::Value(Value::Int(n)))
+                    .ok_or(RuntimeError::Type("array index out of bounds".to_string()))
+            }
+            (Value::FloatVec(parts), Value::Int(idx)) => {
+                let idx = usize::try_from(idx)
+                    .map_err(|_| RuntimeError::Type("negative array index".to_string()))?;
+                parts
+                    .get(idx)
+                    .copied()
+                    .map(|f| Flow::Value(Value::Float(f)))
+                    .ok_or(RuntimeError::Type("array index out of bounds".to_string()))
+            }
             (Value::String(text), Value::Int(idx)) => {
                 let idx = usize::try_from(idx)
                     .map_err(|_| RuntimeError::Type("negative string index".to_string()))?;
@@ -951,10 +995,21 @@ impl Interpreter {
                 let Some(first) = segments.first() else {
                     return Err(RuntimeError::Unsupported("assignment to empty path"));
                 };
-                if !env.assign(&first.name, rhs) {
-                    return Err(RuntimeError::UnresolvedName(first.name.clone()));
+                if env.assign(&first.name, rhs.clone()) {
+                    return Ok(Flow::Value(Value::Unit));
                 }
-                Ok(Flow::Value(Value::Unit))
+                // Top-level mutable statics live in `self.globals`,
+                // not in the goroutine-local `Env`. Without this
+                // fall-through, `static mut COUNTER: i64 = 0;
+                // COUNTER = 100` errored with "name not bound" the
+                // moment the user assigned to it — even though
+                // reads through the same path resolve through the
+                // globals table just fine.
+                if self.globals.contains_key(&first.name) {
+                    self.globals.insert(first.name.clone(), rhs);
+                    return Ok(Flow::Value(Value::Unit));
+                }
+                Err(RuntimeError::UnresolvedName(first.name.clone()))
             }
             HirExprKind::Field { receiver, name } => {
                 let current = self.eval_expr_to_value(receiver, env)?;
@@ -1199,15 +1254,27 @@ impl Interpreter {
     /// expressions.
     fn eval_for_loop(&mut self, for_loop: &ForLoop<'_>, env: &mut Env) -> RuntimeResult<Flow> {
         let iter_value = self.eval_expr_to_value(for_loop.iter_expr, env)?;
-        let Value::Array(items) = iter_value else {
-            return Err(RuntimeError::Type(format!(
-                "`for` loop expected an array or range, got `{}`",
-                classify(&iter_value)
-            )));
+        // Accept every typed array variant the VM materialises as an
+        // iterator source. The interpreter previously only matched
+        // `Value::Array`, which made `for x in xs` reject every flat
+        // scalar storage (`IntArray`, `FloatArray`, `FloatVec`) — so
+        // closures that took `[i64]` / `[f64]` HOF args couldn't
+        // even loop over their input.
+        let items: Vec<Value> = match iter_value {
+            Value::Array(items) => items.as_ref().clone(),
+            Value::IntArray(data) => data.iter().map(|n| Value::Int(*n)).collect(),
+            Value::FloatVec(data) => data.iter().map(|f| Value::Float(*f)).collect(),
+            Value::FloatArray(inner) => inner.data.iter().map(|f| Value::Float(*f)).collect(),
+            other => {
+                return Err(RuntimeError::Type(format!(
+                    "`for` loop expected an array or range, got `{}`",
+                    classify(&other)
+                )));
+            }
         };
-        for item in items.iter() {
+        for item in items {
             env.push();
-            bind_pattern(env, for_loop.loop_pat, item.clone())?;
+            bind_pattern(env, for_loop.loop_pat, item)?;
             let result = self.eval_expr(for_loop.body, env);
             env.pop();
             match result? {
@@ -1492,6 +1559,7 @@ fn qualified_method_key(receiver: &Value, method: &str) -> Option<String> {
         Value::Struct(inner) => Some(format!("{}::{}", inner.name, method)),
         Value::Channel(_) => Some(format!("Channel::{method}")),
         Value::Map(_) => Some(format!("HashMap::{method}")),
+        Value::String(_) => Some(format!("String::{method}")),
         _ => None,
     }
 }
@@ -1741,11 +1809,40 @@ fn bind_pattern(env: &mut Env, pattern: &HirPat, value: Value) -> RuntimeResult<
         }
         HirPatKind::Literal(_) => Ok(()),
         HirPatKind::Tuple(parts) => match value {
-            Value::Tuple(vals) if vals.len() == parts.len() => {
-                for (pat, v) in parts.iter().zip(vals.iter()) {
-                    bind_pattern(env, pat, v.clone())?;
+            Value::Tuple(vals) => {
+                // Find a Rest element so we can handle (a, .., b) patterns
+                // where the pattern length differs from the value length.
+                let rest_pos = parts
+                    .iter()
+                    .position(|p| matches!(p.kind, HirPatKind::Rest));
+                if let Some(rest_idx) = rest_pos {
+                    let n_after = parts.len() - rest_idx - 1;
+                    let val_len = vals.len();
+                    for (i, pat) in parts.iter().enumerate() {
+                        if i == rest_idx {
+                            continue; // Rest itself binds nothing
+                        }
+                        let val_idx = if i < rest_idx {
+                            i
+                        } else {
+                            val_len - n_after + (i - rest_idx - 1)
+                        };
+                        let v = vals.get(val_idx).cloned().unwrap_or(Value::Unit);
+                        bind_pattern(env, pat, v)?;
+                    }
+                    Ok(())
+                } else if vals.len() == parts.len() {
+                    for (pat, v) in parts.iter().zip(vals.iter()) {
+                        bind_pattern(env, pat, v.clone())?;
+                    }
+                    Ok(())
+                } else {
+                    // Shape mismatch without Rest — bind Unit as fallback.
+                    for pat in parts {
+                        bind_pattern(env, pat, Value::Unit)?;
+                    }
+                    Ok(())
                 }
-                Ok(())
             }
             // Shape-mismatched tuple destructuring is common when a
             // stub-shaped call returns Unit or Array in place of the
@@ -1768,8 +1865,8 @@ fn bind_pattern(env: &mut Env, pattern: &HirPat, value: Value) -> RuntimeResult<
             }
             _ => Ok(()),
         },
-        HirPatKind::Struct { fields, .. } => match value {
-            Value::Struct(struct_inner) => {
+        HirPatKind::Struct { name, fields, .. } => match value {
+            Value::Struct(struct_inner) if struct_inner.name == name.name => {
                 for field in fields {
                     let found = struct_inner
                         .fields
@@ -1799,6 +1896,13 @@ fn bind_pattern(env: &mut Env, pattern: &HirPat, value: Value) -> RuntimeResult<
         }
         // Range patterns introduce no new bindings.
         HirPatKind::Range { .. } => Ok(()),
+        HirPatKind::At { name, sub, .. } => {
+            // Bind both the @-name and any inner names from the
+            // subpattern, so an arm body that refers to either
+            // resolves correctly.
+            env.bind(name.name.clone(), value.clone());
+            bind_pattern(env, sub, value)
+        }
     }
 }
 
@@ -1811,10 +1915,39 @@ fn match_pattern(env: &mut Env, pattern: &HirPat, value: &Value) -> bool {
         }
         HirPatKind::Literal(lit) => literal_matches(lit, value),
         HirPatKind::Tuple(parts) => match value {
-            Value::Tuple(vals) if vals.len() == parts.len() => parts
-                .iter()
-                .zip(vals.iter())
-                .all(|(pat, v)| match_pattern(env, pat, v)),
+            Value::Tuple(vals) => {
+                let rest_pos = parts
+                    .iter()
+                    .position(|p| matches!(p.kind, HirPatKind::Rest));
+                if let Some(rest_idx) = rest_pos {
+                    let n_after = parts.len() - rest_idx - 1;
+                    let val_len = vals.len();
+                    if val_len < parts.len() - 1 {
+                        return false;
+                    }
+                    for (i, pat) in parts.iter().enumerate() {
+                        if i == rest_idx {
+                            continue;
+                        }
+                        let val_idx = if i < rest_idx {
+                            i
+                        } else {
+                            val_len - n_after + (i - rest_idx - 1)
+                        };
+                        let v = vals.get(val_idx).unwrap_or(&Value::Unit);
+                        if !match_pattern(env, pat, v) {
+                            return false;
+                        }
+                    }
+                    true
+                } else {
+                    vals.len() == parts.len()
+                        && parts
+                            .iter()
+                            .zip(vals.iter())
+                            .all(|(pat, v)| match_pattern(env, pat, v))
+                }
+            }
             _ => false,
         },
         HirPatKind::Variant { name, fields } => match value {
@@ -1828,8 +1961,8 @@ fn match_pattern(env: &mut Env, pattern: &HirPat, value: &Value) -> bool {
             }
             _ => false,
         },
-        HirPatKind::Struct { fields, .. } => match value {
-            Value::Struct(struct_inner) => {
+        HirPatKind::Struct { name, fields, .. } => match value {
+            Value::Struct(struct_inner) if struct_inner.name == name.name => {
                 for field in fields {
                     let found = struct_inner
                         .fields
@@ -1884,6 +2017,14 @@ fn match_pattern(env: &mut Env, pattern: &HirPat, value: &Value) -> bool {
                 _ => false,
             }
         }
+        HirPatKind::At { name, sub, .. } => {
+            if match_pattern(env, sub, value) {
+                env.bind(name.name.clone(), value.clone());
+                true
+            } else {
+                false
+            }
+        }
     }
 }
 
@@ -1919,6 +2060,7 @@ fn classify(value: &Value) -> &'static str {
         Value::Channel(_) => "channel",
         Value::Map(_) => "map",
         Value::IntMap(_) => "map",
+        Value::Uint(_) => "uint",
         Value::Void => "void",
     }
 }
@@ -1955,16 +2097,15 @@ fn update_struct_field(
     Ok(Value::struct_(inner.name, Arc::new(owned)))
 }
 
-/// Returns a fresh `Value::Array` with `index`-th element replaced by
+/// Returns a fresh array value with `index`-th element replaced by
 /// `new_value`; the remaining elements are cloned from `current`. Any
-/// aliasing array value keeps its old elements.
+/// aliasing array value keeps its old elements. Handles all three
+/// concrete array storages: the boxed [`Value::Array`], the typed
+/// [`Value::IntArray`] (`Vec<i64>`), and [`Value::FloatVec`]
+/// (`Vec<f64>`). The latter two surface in compiled hot loops; the
+/// walker fallback path used to refuse them as "non-array" because
+/// only the boxed shape was handled.
 fn update_array_index(current: &Value, index: &Value, new_value: Value) -> RuntimeResult<Value> {
-    let Value::Array(parts) = current else {
-        return Err(RuntimeError::Type(format!(
-            "cannot index-assign on non-array `{}`",
-            classify(current)
-        )));
-    };
     let Value::Int(idx) = index else {
         return Err(RuntimeError::Type(format!(
             "array index must be integer, got `{}`",
@@ -1973,10 +2114,50 @@ fn update_array_index(current: &Value, index: &Value, new_value: Value) -> Runti
     };
     let idx_usize = usize::try_from(*idx)
         .map_err(|_| RuntimeError::Type("negative array index".to_string()))?;
-    let mut owned = parts.as_ref().clone();
-    if idx_usize >= owned.len() {
-        return Err(RuntimeError::Type("array index out of bounds".to_string()));
+    match current {
+        Value::Array(parts) => {
+            let mut owned = parts.as_ref().clone();
+            if idx_usize >= owned.len() {
+                return Err(RuntimeError::Type("array index out of bounds".to_string()));
+            }
+            owned[idx_usize] = new_value;
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Value::IntArray(parts) => {
+            let mut owned = parts.as_ref().clone();
+            if idx_usize >= owned.len() {
+                return Err(RuntimeError::Type("array index out of bounds".to_string()));
+            }
+            let Value::Int(n) = new_value else {
+                return Err(RuntimeError::Type(format!(
+                    "IntArray index-set expects integer, got `{}`",
+                    classify(&new_value)
+                )));
+            };
+            owned[idx_usize] = n;
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Value::FloatVec(parts) => {
+            let mut owned = parts.as_ref().clone();
+            if idx_usize >= owned.len() {
+                return Err(RuntimeError::Type("array index out of bounds".to_string()));
+            }
+            let n = match new_value {
+                Value::Float(f) => f,
+                Value::Int(i) => i as f64,
+                other => {
+                    return Err(RuntimeError::Type(format!(
+                        "FloatVec index-set expects number, got `{}`",
+                        classify(&other)
+                    )));
+                }
+            };
+            owned[idx_usize] = n;
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        _ => Err(RuntimeError::Type(format!(
+            "cannot index-assign on non-array `{}`",
+            classify(current)
+        ))),
     }
-    owned[idx_usize] = new_value;
-    Ok(Value::Array(Arc::new(owned)))
 }

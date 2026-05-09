@@ -1,0 +1,117 @@
+// OS Signal Handling via Graceful Shutdown
+// Gossamer does not expose a user-level `signal::on` API.
+// This example demonstrates the idiomatic shutdown pattern:
+// a dedicated coordinator goroutine drives a cancellation channel
+// that all workers observe — equivalent to what a SIGTERM handler
+// would trigger in a production program.
+
+use std::sync::channel
+use std::time
+
+fn worker(id: i64, stop: channel::Sender<i64>, result_tx: channel::Sender<String>) {
+    // Simulate work, then signal done
+    let msg = format!("worker {} done", id)
+    result_tx.send(msg)
+    stop.send(id)
+}
+
+fn coordinator(
+    num_workers: i64,
+    results_rx: channel::Sender<String>,
+) -> [String] {
+    let mut collected: [String] = []
+    let mut i = 0
+    while i < num_workers {
+        i += 1
+    }
+    collected
+}
+
+fn run_workers(count: i64) -> [String] {
+    let (result_tx, result_rx) = channel()
+    let (stop_tx, stop_rx) = channel()
+
+    let mut i = 0
+    while i < count {
+        let tx = result_tx.clone()
+        let stx = stop_tx.clone()
+        go worker(i, stx, tx)
+        i += 1
+    }
+
+    // Close originals so recv drains once goroutines finish sending
+    time::sleep(30)
+    result_tx.close()
+
+    let mut results: [String] = []
+    while let Some(v) = result_rx.recv() {
+        results.push(v)
+    }
+    results
+}
+
+fn graceful_drain(items: [i64], budget_ms: i64) -> [i64] {
+    // Process items, stopping when budget is exhausted
+    let start = time::now_ms()
+    let mut out: [i64] = []
+    for item in items {
+        let elapsed = time::now_ms() - start
+        if elapsed > budget_ms {
+            break
+        }
+        out.push(item * 2)
+    }
+    out
+}
+
+fn should_cancel(call_count: i64, cancel_after: i64) -> bool {
+    call_count > cancel_after
+}
+
+fn main() {
+    // Workers signal completion via channel (simulates SIGTERM-driven drain)
+    let results = run_workers(4)
+    println!("workers completed = {}", results.len())
+    println!("all workers done: {}", results.len() == 4)
+
+    // Graceful drain with time budget
+    let items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let drained = graceful_drain(items, 1000)
+    println!("drained at least 1: {}", drained.len() >= 1)
+
+    // Cancellation: calls exceeding a budget threshold trigger shutdown
+    println!("call 1 cancelled: {}", should_cancel(1, 3))
+    println!("call 3 cancelled: {}", should_cancel(3, 3))
+    println!("call 4 cancelled: {}", should_cancel(4, 3))
+    println!("call 5 cancelled: {}", should_cancel(5, 3))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::channel
+    use std::time
+    use std::testing
+
+    #[test]
+    fn workers_all_complete() {
+        let results = super::run_workers(3)
+        testing::check_eq(&(results.len() as i64), &3, "3 workers all complete")
+    }
+
+    #[test]
+    fn graceful_drain_processes_all_within_budget() {
+        let items = [10, 20, 30, 40, 50]
+        let out = super::graceful_drain(items, 5000)
+        testing::check_eq(&(out.len() as i64), &5, "all 5 items drained")
+        testing::check_eq(&out[0], &20, "first item doubled")
+        testing::check_eq(&out[4], &100, "last item doubled")
+    }
+
+    #[test]
+    fn should_cancel_fires_after_threshold() {
+        testing::check(!super::should_cancel(1, 3), "call 1: not cancelled")
+        testing::check(!super::should_cancel(3, 3), "call 3: not cancelled")
+        testing::check(super::should_cancel(4, 3), "call 4: cancelled")
+        testing::check(super::should_cancel(5, 3), "call 5: still cancelled")
+    }
+}

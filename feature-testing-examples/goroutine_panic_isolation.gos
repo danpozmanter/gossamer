@@ -1,0 +1,122 @@
+// Goroutine Result Aggregation
+// Each goroutine computes an independent result and sends it
+// back via a channel — demonstrating the pattern where goroutine
+// failures (Result::Err) do not crash the coordinator.
+
+use std::sync::channel
+use std::time
+
+fn safe_divide(a: i64, b: i64, tx: channel::Sender<i64>) {
+    if b == 0 {
+        tx.send(-1)
+    } else {
+        tx.send(a / b)
+    }
+}
+
+fn compute_squares(start: i64, end: i64, tx: channel::Sender<i64>) {
+    let mut sum = 0
+    for i in start..end {
+        sum += i * i
+    }
+    tx.send(sum)
+}
+
+fn main() {
+    // Fan-out: safe_divide results
+    let (tx, rx) = channel()
+    go safe_divide(100, 4, tx)
+    go safe_divide(50, 0, tx)
+    go safe_divide(81, 9, tx)
+    time::sleep(30)
+
+    let mut results: [i64] = []
+    for _ in 0..3 {
+        match rx.recv() {
+            Some(v) => results.push(v),
+            None => {}
+        }
+    }
+    println!("result count = {}", results.len())
+
+    // Fan-out: parallel range sums of squares
+    let (tx2, rx2) = channel()
+    go compute_squares(0, 5, tx2)
+    go compute_squares(5, 10, tx2)
+    go compute_squares(10, 15, tx2)
+    time::sleep(30)
+
+    let mut total = 0
+    for _ in 0..3 {
+        match rx2.recv() {
+            Some(v) => { total += v }
+            None => {}
+        }
+    }
+    // sum of 0^2..14^2 = 0+1+4+9+...+196 = 1015
+    println!("total squares 0..15 = {}", total)
+
+    // Pipeline: producer → transformer → sink
+    let (raw_tx, raw_rx) = channel()
+    let (proc_tx, proc_rx) = channel()
+
+    go safe_divide(200, 4, raw_tx)
+    go safe_divide(300, 6, raw_tx)
+    time::sleep(20)
+
+    // Transformer reads from raw_rx, sends to proc_tx
+    let mut transformed: [i64] = []
+    for _ in 0..2 {
+        match raw_rx.recv() {
+            Some(v) => { transformed.push(v * 2) }
+            None => {}
+        }
+    }
+    println!("transformed count = {}", transformed.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::channel
+    use std::time
+    use std::testing
+
+    #[test]
+    fn goroutine_sends_result() {
+        let (tx, rx) = channel()
+        go super::safe_divide(42, 6, tx)
+        time::sleep(20)
+        match rx.recv() {
+            Some(v) => testing::check_eq(&v, &7, "42/6=7"),
+            None => testing::check(false, "expected result"),
+        }
+    }
+
+    #[test]
+    fn goroutine_division_by_zero_sentinel() {
+        let (tx, rx) = channel()
+        go super::safe_divide(10, 0, tx)
+        time::sleep(20)
+        match rx.recv() {
+            Some(v) => testing::check_eq(&v, &-1, "div by zero sentinel"),
+            None => testing::check(false, "expected result"),
+        }
+    }
+
+    #[test]
+    fn parallel_sum_of_squares() {
+        let (tx, rx) = channel()
+        go super::compute_squares(0, 5, tx)
+        go super::compute_squares(5, 10, tx)
+        time::sleep(30)
+        let mut total = 0
+        for _ in 0..2 {
+            match rx.recv() {
+                Some(v) => { total += v }
+                None => {}
+            }
+        }
+        // 0+1+4+9+16 + 25+36+49+64+81 = 30+255 = 285
+        testing::check_eq(&total, &285, "sum squares 0..10")
+    }
+}

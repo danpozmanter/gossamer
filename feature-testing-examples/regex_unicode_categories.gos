@@ -1,0 +1,123 @@
+// Regex Pattern Matching
+// Exercise regex::compile, is_match, find, find_all, captures,
+// replace_all, and split across a range of patterns.
+
+use std::regex
+
+fn count_matches(pattern: String, text: String) -> i64 {
+    match regex::compile(pattern) {
+        Ok(p) => regex::find_all(p, text).len() as i64,
+        Err(_) => -1,
+    }
+}
+
+fn main() {
+    // Basic match
+    let digit_pat = match regex::compile("[0-9]+") {
+        Ok(p) => p,
+        Err(e) => { println!("compile error: {}", e); return }
+    }
+    println!("digits in abc123def456: {}", regex::find_all(digit_pat, "abc123def456").len())
+
+    // Named positions via find
+    match regex::find(digit_pat, "offset 42 here") {
+        Some((start, end, text)) => {
+            println!("found '{}' start={} end={}", text, start, end)
+        }
+        None => println!("no match")
+    }
+
+    // Email-like pattern
+    let email_pat = match regex::compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}") {
+        Ok(p) => p,
+        Err(e) => { println!("compile error: {}", e); return }
+    }
+    println!("valid email: {}", regex::is_match(email_pat, "user@example.com"))
+    println!("invalid email: {}", regex::is_match(email_pat, "notanemail"))
+
+    // Capture groups
+    let date_pat = match regex::compile("(\\d{4})-(\\d{2})-(\\d{2})") {
+        Ok(p) => p,
+        Err(e) => { println!("compile error: {}", e); return }
+    }
+    match regex::captures(date_pat, "date: 2024-03-15") {
+        Some(caps) => {
+            println!("capture count = {}", caps.len())
+            // caps[0] is full match, caps[1..] are groups
+        }
+        None => println!("no date found")
+    }
+
+    // Replace all
+    let space_pat = match regex::compile("\\s+") {
+        Ok(p) => p,
+        Err(e) => { println!("compile error: {}", e); return }
+    }
+    let normalized = regex::replace_all(space_pat, "hello   world  foo", " ")
+    println!("normalized: '{}'", normalized)
+
+    // Split
+    let sep_pat = match regex::compile("[,;]+") {
+        Ok(p) => p,
+        Err(e) => { println!("compile error: {}", e); return }
+    }
+    let parts = regex::split(sep_pat, "a,b;;c,d")
+    println!("split count = {}", parts.len())
+    println!("parts[0] = {}", parts[0])
+
+    // Word count via find_all
+    let word_pat = match regex::compile("[A-Za-z]+") {
+        Ok(p) => p,
+        Err(e) => { println!("compile error: {}", e); return }
+    }
+    let words = regex::find_all(word_pat, "the quick brown fox jumps")
+    println!("word count = {}", words.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::regex
+    use std::testing
+
+    #[test]
+    fn is_match_digit_pattern() {
+        let p = match regex::compile("\\d+") {
+            Ok(p) => p,
+            Err(e) => { testing::check(false, e); return }
+        }
+        testing::check(regex::is_match(p, "abc123"), "digit in abc123")
+        testing::check(!regex::is_match(p, "abc"), "no digit in abc")
+    }
+
+    #[test]
+    fn find_all_count() {
+        let p = match regex::compile("[0-9]+") {
+            Ok(p) => p,
+            Err(e) => { testing::check(false, e); return }
+        }
+        let matches = regex::find_all(p, "1 22 333")
+        testing::check_eq(&(matches.len() as i64), &3, "three digit groups")
+    }
+
+    #[test]
+    fn replace_all_whitespace() {
+        let p = match regex::compile("\\s+") {
+            Ok(p) => p,
+            Err(e) => { testing::check(false, e); return }
+        }
+        let r = regex::replace_all(p, "a  b   c", "_")
+        testing::check_eq(&r, &"a_b_c".to_string(), "compressed spaces")
+    }
+
+    #[test]
+    fn captures_date() {
+        let p = match regex::compile("(\\d{4})-(\\d{2})-(\\d{2})") {
+            Ok(p) => p,
+            Err(e) => { testing::check(false, e); return }
+        }
+        match regex::captures(p, "2024-01-15") {
+            Some(caps) => testing::check(caps.len() >= 1, "captures non-empty"),
+            None => testing::check(false, "expected date match"),
+        }
+    }
+}

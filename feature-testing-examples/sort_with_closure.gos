@@ -1,0 +1,62 @@
+// Sort With Closure
+// Use arr.sort_by with a custom closure comparator to surface VM/JIT
+// fallback behavior and ordering consistency.
+
+fn main() {
+    let mut nums: [i64] = [7, 2, 9, 1, 5, 3, 8, 4, 6]
+    nums.sort_by(|a, b| {
+        if a < b { -1 } else if a > b { 1 } else { 0 }
+    })
+    println!("sorted nums = {:?}", nums)
+
+    let mut words = ["banana", "apple", "cherry", "date"]
+    words.sort_by(|a: String, b: String| {
+        if a < b { -1 } else if a > b { 1 } else { 0 }
+    })
+    println!("sorted words = {:?}", words)
+
+    // Reverse order via closure
+    let mut rev: [i64] = [1, 2, 3, 4, 5]
+    rev.sort_by(|a, b| {
+        if a > b { -1 } else if a < b { 1 } else { 0 }
+    })
+    println!("reverse sorted = {:?}", rev)
+
+    // Sort by absolute value
+    let mut signed: [i64] = [-5, 3, -1, 2, -4]
+    signed.sort_by(|a, b| {
+        let abs_a = if *a < 0 { -*a } else { *a }
+        let abs_b = if *b < 0 { -*b } else { *b }
+        if abs_a < abs_b { -1 } else if abs_a > abs_b { 1 } else { 0 }
+    })
+    println!("abs sorted = {:?}", signed)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn sort_ascending() {
+        let mut nums: [i64] = [5, 2, 8, 1, 9]
+        nums.sort_by(|a, b| if a < b { -1 } else if a > b { 1 } else { 0 })
+        testing::check_eq(&nums[0], &1, "smallest first")
+        testing::check_eq(&nums[4], &9, "largest last")
+    }
+
+    #[test]
+    fn sort_descending() {
+        let mut nums: [i64] = [1, 2, 3, 4, 5]
+        nums.sort_by(|a, b| if a > b { -1 } else if a < b { 1 } else { 0 })
+        testing::check_eq(&nums[0], &5, "largest first")
+        testing::check_eq(&nums[4], &1, "smallest last")
+    }
+
+    #[test]
+    fn sort_already_sorted() {
+        let mut nums: [i64] = [1, 2, 3]
+        nums.sort_by(|a, b| if a < b { -1 } else if a > b { 1 } else { 0 })
+        testing::check_eq(&nums[0], &1, "stays sorted")
+        testing::check_eq(&nums[2], &3, "end stays")
+    }
+}

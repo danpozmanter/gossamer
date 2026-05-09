@@ -1,0 +1,8 @@
+use std::regex
+
+fn main() {
+    let pat = regex::compile(&"foo").unwrap()
+    let s = "foo bar foo baz".to_string()
+    println!("{}", pat.replace(&s, &"BAR"))
+    println!("{}", pat.replace_all(&s, &"BAR"))
+}

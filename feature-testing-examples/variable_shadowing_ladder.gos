@@ -1,0 +1,97 @@
+// Variable Shadowing Ladder
+// Rebind the same variable name through nested scopes, if/match
+// expressions, and loops to verify shadowing and lifetime behavior
+// stays identical across interpreter and compiler.
+
+fn main() {
+    let x = 1
+    println!("outer x = {}", x)
+
+    {
+        let x = x + 10
+        println!("block x = {}", x)
+
+        if x > 5 {
+            let x = x * 2
+            println!("if x = {}", x)
+        }
+
+        let x = match x {
+            n if n > 15 => n - 5,
+            n => n + 5,
+        }
+        println!("match x = {}", x)
+
+        let mut x = x
+        for i in 0..3 {
+            let x = x + i
+            println!("loop shadow x = {}", x)
+        }
+        println!("post-loop block x = {}", x)
+    }
+
+    println!("outer x still = {}", x)
+
+    let y = 100
+    let y = if y > 50 {
+        let y = y / 2
+        y + 1
+    } else {
+        y
+    }
+    println!("if-expression y = {}", y)
+
+    let mut z = 0
+    for i in 0..5 {
+        let z = z + i
+        println!("for-shadow z = {}", z)
+    }
+    println!("post-for z = {}", z)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn shadow_basic() {
+        let x = 1
+        let x = x + 10
+        testing::check_eq(&x, &11, "shadow adds 10")
+    }
+
+    #[test]
+    fn shadow_in_if() {
+        let x = 11
+        let doubled = if x > 5 {
+            let x = x * 2
+            x
+        } else {
+            x
+        }
+        testing::check_eq(&doubled, &22, "shadow in if doubles")
+    }
+
+    #[test]
+    fn shadow_loop_preserves_outer() {
+        let x = 16
+        let mut vals: [i64] = []
+        for i in 0..3 {
+            let inner = x + i
+            vals.push(inner)
+        }
+        testing::check_eq(&x, &16, "outer x unchanged")
+        testing::check_eq(&vals[0], &16, "loop i=0")
+        testing::check_eq(&vals[2], &18, "loop i=2")
+    }
+
+    #[test]
+    fn shadow_match_expr() {
+        let x = 11
+        let x = match x {
+            n if n > 15 => n - 5,
+            n => n + 5,
+        }
+        testing::check_eq(&x, &16, "match shadow: 11+5=16")
+    }
+}

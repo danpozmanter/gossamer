@@ -1,0 +1,60 @@
+// Doc Test vs Unit Test Drift
+// Write the same logic once as a doc-test and once as a #[test]
+// function to ensure parsing and execution paths behave identically.
+
+// Compute the nth triangular number.
+// ```text
+// let t = triangular(5)
+// assert(t == 15)
+// ```
+// Note: fenced doc-tests currently cannot resolve the item they
+// document, so these blocks are marked non-runnable.
+fn triangular(n: i64) -> i64 {
+    if n <= 0 { 0 } else { n + triangular(n - 1) }
+}
+
+// Return true if a number is even.
+// ```text
+// assert(is_even(4))
+// assert(!is_even(7))
+// ```
+fn is_even(n: i64) -> bool {
+    n % 2 == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn triangular_doc_test_mirror() {
+        let t = super::triangular(5)
+        testing::check_eq(&t, &15, "triangular(5)")
+    }
+
+    #[test]
+    fn triangular_edge_cases() {
+        testing::check_eq(&super::triangular(0), &0, "triangular(0)")
+        testing::check_eq(&super::triangular(1), &1, "triangular(1)")
+        testing::check_eq(&super::triangular(10), &55, "triangular(10)")
+    }
+
+    #[test]
+    fn is_even_doc_test_mirror() {
+        testing::check(super::is_even(4), "is_even(4)")
+        testing::check(!super::is_even(7), "!is_even(7)")
+    }
+
+    #[test]
+    fn is_even_edge_cases() {
+        testing::check(super::is_even(0), "is_even(0)")
+        testing::check(!super::is_even(-1), "!is_even(-1)")
+        testing::check(super::is_even(-2), "is_even(-2)")
+    }
+}
+
+fn main() {
+    println!("triangular(5) = {}", triangular(5))
+    println!("is_even(4) = {}", is_even(4))
+    println!("is_even(7) = {}", is_even(7))
+}

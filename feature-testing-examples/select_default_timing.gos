@@ -1,0 +1,69 @@
+// Select Default Timing
+// Use multiple channels with staggered goroutine sleeps to check
+// scheduling fairness and recv ordering across runtimes.
+// Note: `select` syntax is not yet wired in the current tier,
+// so this example falls back to separate channel polling.
+
+use std::sync::channel
+use std::time
+
+fn slow_sender(tx: channel::Sender<i64>) {
+    time::sleep(30)
+    tx.send(1)
+}
+
+fn fast_sender(tx: channel::Sender<i64>) {
+    tx.send(2)
+}
+
+fn main() {
+    let (tx1, rx1) = channel()
+    let (tx2, rx2) = channel()
+
+    // One slow producer
+    go slow_sender(tx1)
+
+    // One fast producer
+    go fast_sender(tx2)
+
+    let mut order: [i64] = []
+    let mut attempts = 0
+
+    // Poll both channels until both values arrive
+    while order.len() < 2 {
+        attempts += 1
+        if let Some(v) = rx1.recv() {
+            order.push(v)
+        }
+        if let Some(v) = rx2.recv() {
+            order.push(v)
+        }
+    }
+
+    println!("arrival order: {}", order)
+    println!("poll attempts: {}", attempts)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::channel
+    use std::time
+    use std::testing
+
+    #[test]
+    fn both_values_arrive() {
+        let (tx1, rx1) = channel()
+        let (tx2, rx2) = channel()
+        go super::slow_sender(tx1)
+        go super::fast_sender(tx2)
+        time::sleep(60)
+        let mut total = 0
+        while let Some(v) = rx1.recv() {
+            total += v
+        }
+        while let Some(v) = rx2.recv() {
+            total += v
+        }
+        testing::check_eq(&total, &3, "slow(1) + fast(2) = 3")
+    }
+}

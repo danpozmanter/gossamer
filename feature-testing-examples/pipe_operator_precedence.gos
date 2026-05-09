@@ -1,0 +1,72 @@
+// Pipe Operator Precedence
+// Build long |> chains mixed with arithmetic and closures to confirm
+// parsing precedence and last-argument piping behavior.
+
+fn double(x: i64) -> i64 { x * 2 }
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn sub(a: i64, b: i64) -> i64 { a - b }
+fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+fn main() {
+    // Pure arithmetic chain — piped value lands in last slot:
+    // double(5)=10; add(3,10)=13; sub(1,13)=-12
+    let a = 5 |> double |> add(3) |> sub(1)
+    println!("5*2+3-1 via pipe = {}", a)
+
+    // Mixed with clamp landing in last slot
+    let b = 7 |> double |> add(10) |> clamp(0, 20)
+    println!("clamp(0,20, 7*2+10) = {}", b)
+
+    // Closure inline in pipe
+    let c = 4 |> |x| x * x |> add(1)
+    println!("closure pipe result = {}", c)
+
+    // Nested pipe inside arithmetic
+    let d = 2 |> double |> double |> add(1)
+    println!("2*2*2+1 = {}", d)
+
+    // String pipeline
+    let greeting = "world" |> |s| format!("hello, {s}")
+    println!("{}", greeting)
+
+    // Multi-step numeric pipeline
+    let result = 1
+        |> add(2)
+        |> double
+        |> sub(3)
+        |> clamp(0, 100)
+    println!("multi-step = {}", result)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn double_fn() {
+        testing::check_eq(&super::double(5), &10, "double(5)=10")
+        testing::check_eq(&super::double(0), &0, "double(0)=0")
+    }
+
+    #[test]
+    fn add_fn() {
+        testing::check_eq(&super::add(3, 4), &7, "add(3,4)=7")
+        testing::check_eq(&super::add(0, 0), &0, "add(0,0)=0")
+    }
+
+    #[test]
+    fn clamp_fn() {
+        testing::check_eq(&super::clamp(0, 10, -5), &0, "below lo")
+        testing::check_eq(&super::clamp(0, 10, 15), &10, "above hi")
+        testing::check_eq(&super::clamp(0, 10, 7), &7, "in range")
+    }
+
+    #[test]
+    fn pipe_chain() {
+        // pipe sends value to last arg: double(5)=10; add(3,10)=13; sub(1,13)=-12
+        let a = 5 |> super::double |> super::add(3) |> super::sub(1)
+        testing::check_eq(&a, &-12, "pipe chain = -12")
+    }
+}

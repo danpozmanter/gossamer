@@ -1,0 +1,93 @@
+// Error Chain Inspection
+// Wrap errors multiple levels deep and inspect them with errors.chain
+// and errors.is to validate cause propagation and formatting.
+
+use std::errors
+
+fn low_level() -> Result<i64, errors::Error> {
+    Err(errors::new("disk full"))
+}
+
+fn mid_level() -> Result<i64, errors::Error> {
+    low_level().map_err(|e| errors::wrap(e, "write config"))
+}
+
+fn high_level() -> Result<i64, errors::Error> {
+    mid_level().map_err(|e| errors::wrap(e, "start server"))
+}
+
+fn main() {
+    let result = high_level()
+    match result {
+        Ok(v) => println!("unexpected success: {}", v),
+        Err(e) => {
+            println!("top message: {}", e.message())
+
+            let mut cursor = e.cause()
+            while let Some(inner) = cursor {
+                println!("  caused by: {}", inner.message())
+                cursor = inner.cause()
+            }
+
+            if errors::is(&e, "disk full") {
+                println!("chain contains 'disk full'")
+            }
+
+            if errors::is(&e, "write config") {
+                println!("chain contains 'write config'")
+            }
+
+            if errors::is(&e, "start server") {
+                println!("chain contains 'start server'")
+            }
+        }
+    }
+
+    // Joined errors
+    let e1 = errors::new("first failure")
+    let e2 = errors::new("second failure")
+    let combined = errors::join([e1, e2])
+    match combined {
+        Some(e) => println!("combined message: {}", e.message()),
+        None => println!("no errors to join"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn low_level_is_error() {
+        match super::low_level() {
+            Ok(_) => testing::check(false, "should be Err"),
+            Err(e) => testing::check(e.message().contains("disk full"), "disk full message"),
+        }
+    }
+
+    #[test]
+    fn high_level_message() {
+        match super::high_level() {
+            Ok(_) => testing::check(false, "should be Err"),
+            Err(e) => testing::check(e.message().contains("start server"), "top-level message"),
+        }
+    }
+
+    #[test]
+    fn chain_traversal() {
+        match super::high_level() {
+            Ok(_) => testing::check(false, "should be Err"),
+            Err(e) => {
+                let mut found_disk_full = false
+                let mut cursor = e.cause()
+                while let Some(inner) = cursor {
+                    if inner.message().contains("disk full") {
+                        found_disk_full = true
+                    }
+                    cursor = inner.cause()
+                }
+                testing::check(found_disk_full, "chain contains disk full")
+            }
+        }
+    }
+}

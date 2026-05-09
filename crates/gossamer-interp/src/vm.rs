@@ -165,12 +165,13 @@ impl ChunkState {
         call_cache_count: u16,
         arith_cache_count: u16,
         field_cache_count: u16,
+        instr_count: usize,
         jit_disabled: bool,
     ) -> Self {
         let initial = if jit_disabled {
             crate::bytecode::HOT_DISABLED
         } else {
-            crate::bytecode::HOT_THRESHOLD
+            crate::bytecode::hot_threshold_for(instr_count)
         };
         Self {
             call_caches: RefCell::new(vec![
@@ -690,7 +691,15 @@ impl Vm {
             for item in &program.items {
                 let name = match &item.kind {
                     HirItemKind::Const(decl) => &decl.name.name,
-                    HirItemKind::Static(decl) => &decl.name.name,
+                    // Immutable statics inline as constants. Mutable
+                    // statics (`static mut COUNTER: i64 = 0`) are
+                    // skipped: their reads must continue to flow
+                    // through `LoadGlobal` so writes the tree-walker
+                    // performs against the globals table are visible
+                    // to subsequent reads. Inlining the initial
+                    // value would shadow every store and freeze the
+                    // observed value at the declaration site.
+                    HirItemKind::Static(decl) if !decl.mutable => &decl.name.name,
                     _ => continue,
                 };
                 if let Some(value) = walker.lookup_global(name) {
@@ -859,10 +868,24 @@ impl Vm {
         // run still gets a valid invalidation signal.
         self.bump_globals_generation();
         let globals = Arc::make_mut(&mut self.globals);
+        let module_prefix = if item.module_path.is_empty() {
+            None
+        } else {
+            Some(item.module_path.join("::"))
+        };
         match &item.kind {
             HirItemKind::Fn(decl) => {
                 let chunk = compile_fn(decl, tcx, layouts, wrappers, module_consts)?;
-                globals.insert(decl.name.name.clone(), Global::Fn(chunk.into_shared()));
+                let shared = chunk.into_shared();
+                if let Some(prefix) = &module_prefix {
+                    let qualified = format!("{prefix}::{}", decl.name.name);
+                    globals.insert(qualified, Global::Fn(shared.clone()));
+                }
+                // Bare-name registration last so it wins over the
+                // qualified key on `globals.get(name)` only when the
+                // bare name is unique. The qualified key is the
+                // canonical lookup for cross-module callers.
+                globals.insert(decl.name.name.clone(), Global::Fn(shared));
             }
             HirItemKind::Impl(decl) => {
                 for method in &decl.methods {
@@ -875,7 +898,13 @@ impl Vm {
                     // sees under its short name.
                     if let Some(type_name) = &decl.self_name {
                         let qualified = format!("{}::{}", type_name.name, method.name.name);
-                        globals.insert(qualified, Global::Fn(shared.clone()));
+                        globals.insert(qualified.clone(), Global::Fn(shared.clone()));
+                        if let Some(prefix) = &module_prefix {
+                            globals.insert(
+                                format!("{prefix}::{qualified}"),
+                                Global::Fn(shared.clone()),
+                            );
+                        }
                     }
                     globals.insert(method.name.name.clone(), Global::Fn(shared));
                 }
@@ -884,7 +913,14 @@ impl Vm {
                 for method in &decl.methods {
                     if method.body.is_some() {
                         let chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
-                        globals.insert(method.name.name.clone(), Global::Fn(chunk.into_shared()));
+                        let shared = chunk.into_shared();
+                        if let Some(prefix) = &module_prefix {
+                            globals.insert(
+                                format!("{prefix}::{}", method.name.name),
+                                Global::Fn(shared.clone()),
+                            );
+                        }
+                        globals.insert(method.name.name.clone(), Global::Fn(shared));
                     }
                 }
             }
@@ -895,11 +931,23 @@ impl Vm {
                 // `Op::LoadGlobal` keyed on the const's name finds it
                 // here without falling back to the walker.
                 if let Some(value) = self.walker.borrow().lookup_global(&decl.name.name) {
+                    if let Some(prefix) = &module_prefix {
+                        globals.insert(
+                            format!("{prefix}::{}", decl.name.name),
+                            Global::Value(value.clone()),
+                        );
+                    }
                     globals.insert(decl.name.name.clone(), Global::Value(value));
                 }
             }
             HirItemKind::Static(decl) => {
                 if let Some(value) = self.walker.borrow().lookup_global(&decl.name.name) {
+                    if let Some(prefix) = &module_prefix {
+                        globals.insert(
+                            format!("{prefix}::{}", decl.name.name),
+                            Global::Value(value.clone()),
+                        );
+                    }
                     globals.insert(decl.name.name.clone(), Global::Value(value));
                 }
             }
@@ -914,6 +962,12 @@ impl Vm {
                         let qualified = format!("{type_name}::{variant_name}");
                         let sentinel =
                             Value::variant(variant_name.clone(), crate::value::empty_value_arc());
+                        if let Some(prefix) = &module_prefix {
+                            globals.insert(
+                                format!("{prefix}::{qualified}"),
+                                Global::Value(sentinel.clone()),
+                            );
+                        }
                         globals.insert(variant_name, Global::Value(sentinel.clone()));
                         globals.insert(qualified, Global::Value(sentinel));
                     }
@@ -1100,6 +1154,7 @@ impl Vm {
             chunk.call_cache_count,
             chunk.arith_cache_count,
             chunk.field_cache_count,
+            chunk.instrs.len(),
             jit_disabled,
         ));
         let mut arena = self.chunk_state_arena.borrow_mut();
@@ -1367,7 +1422,12 @@ impl Vm {
                     let token = call_token(callee_val);
                     let live_generation = self.globals_generation();
                     let cached: Option<Global> = if token != 0 {
-                        let cache = state.call_caches.borrow_mut();
+                        // Read-only borrow on the IC hit path; the
+                        // fill (miss) path below takes borrow_mut.
+                        // Splitting avoids serialising every cached
+                        // hit against any concurrent borrow on the
+                        // same RefCell.
+                        let cache = state.call_caches.borrow();
                         let slot = &cache[cache_idx as usize];
                         if slot.type_token == token && slot.generation == live_generation {
                             // Same two-tier shape as MethodCall: fast
@@ -1439,7 +1499,10 @@ impl Vm {
                     type BuiltinFn = fn(&[Value]) -> RuntimeResult<Value>;
                     let (cached_builtin, cached_general): (Option<BuiltinFn>, Option<Global>) =
                         if recv_token != 0 {
-                            let cache = state.call_caches.borrow_mut();
+                            // Read-only borrow on the IC hit path
+                            // (>99 % of calls in steady state).
+                            // Miss-and-fill below takes borrow_mut.
+                            let cache = state.call_caches.borrow();
                             let slot = &cache[cache_idx as usize];
                             if slot.type_token == recv_token && slot.generation == live_generation {
                                 let general =
@@ -2073,6 +2136,29 @@ impl Vm {
                         Value::Tuple(items) | Value::Array(items) => {
                             items.get(idx).cloned().ok_or_else(|| {
                                 RuntimeError::Arithmetic("tuple index out of bounds".to_string())
+                            })?
+                        }
+                        _ => {
+                            return Err(RuntimeError::Type(format!(
+                                "value of kind `{recv}` has no tuple fields"
+                            )));
+                        }
+                    };
+                }
+                Op::TupleTailIndex {
+                    dst,
+                    receiver,
+                    offset_from_end,
+                } => {
+                    let recv = &registers[receiver as usize];
+                    registers[dst as usize] = match recv {
+                        Value::Tuple(items) | Value::Array(items) => {
+                            let len = items.len();
+                            let idx = len.saturating_sub(offset_from_end as usize + 1);
+                            items.get(idx).cloned().ok_or_else(|| {
+                                RuntimeError::Arithmetic(
+                                    "tuple tail index out of bounds".to_string(),
+                                )
                             })?
                         }
                         _ => {
@@ -2883,6 +2969,34 @@ impl Vm {
                         pc = target;
                     }
                 },
+                Op::IncJumpIfLtI64 {
+                    counter_i,
+                    end_i,
+                    target,
+                } => unsafe {
+                    // Bottom-of-loop fused tick for `for i in a..b`.
+                    // SAFETY: counter_i and end_i are typed-i64 regs
+                    // allocated by `try_compile_for_loop_range`; the
+                    // counter_i slot is the same one tracked by the
+                    // pre-loop bounds check, and the int register
+                    // file size is sized to hold both.
+                    let next = (*ints.get_unchecked(counter_i as usize)).wrapping_add(1);
+                    *ints.get_unchecked_mut(counter_i as usize) = next;
+                    if next < *ints.get_unchecked(end_i as usize) {
+                        pc = target;
+                    }
+                },
+                Op::IncJumpIfLeI64 {
+                    counter_i,
+                    end_i,
+                    target,
+                } => unsafe {
+                    let next = (*ints.get_unchecked(counter_i as usize)).wrapping_add(1);
+                    *ints.get_unchecked_mut(counter_i as usize) = next;
+                    if next <= *ints.get_unchecked(end_i as usize) {
+                        pc = target;
+                    }
+                },
 
                 Op::FieldGetF64ByOffset {
                     dst_f,
@@ -2984,6 +3098,30 @@ impl Vm {
                     *ints.get_unchecked_mut(dst_i as usize) =
                         *floats.get_unchecked(src_f as usize) as i64;
                 },
+                Op::TruncCastI64 {
+                    dst_i,
+                    src_i,
+                    shift,
+                    signed,
+                } => unsafe {
+                    let v = *ints.get_unchecked(src_i as usize);
+                    let result = if signed {
+                        // Arithmetic: shift left to fill MSB with sign bit,
+                        // then arithmetic right shift back.
+                        v.wrapping_shl(u32::from(shift))
+                            .wrapping_shr(u32::from(shift))
+                    } else {
+                        // Logical: zero-extend by masking upper bits.
+                        ((v as u64)
+                            .wrapping_shl(u32::from(shift))
+                            .wrapping_shr(u32::from(shift))) as i64
+                    };
+                    *ints.get_unchecked_mut(dst_i as usize) = result;
+                },
+                Op::I64ToUint { dst_v, src_i } => unsafe {
+                    registers[dst_v as usize] =
+                        Value::Uint(*ints.get_unchecked(src_i as usize) as u64);
+                },
                 Op::BuildTuple { dst, first, count } => {
                     // Native counterpart to the deferred-walker
                     // path. Clones each value register into a
@@ -3020,6 +3158,75 @@ impl Vm {
                         return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
                     }
                     *ints.get_unchecked_mut(dst_i as usize) = *data.get_unchecked(i);
+                },
+                Op::IntArraySetI64 {
+                    base,
+                    index_i,
+                    value_i,
+                } => unsafe {
+                    let idx = *ints.get_unchecked(index_i as usize);
+                    if idx < 0 {
+                        return Err(RuntimeError::Arithmetic(
+                            "negative index into sequence".to_string(),
+                        ));
+                    }
+                    let i = idx as usize;
+                    let new_val = *ints.get_unchecked(value_i as usize);
+                    let b = registers.get_unchecked_mut(base as usize);
+                    let Value::IntArray(data) = b else {
+                        return Err(RuntimeError::Type(
+                            "IntArraySetI64: receiver lost flat invariant".to_string(),
+                        ));
+                    };
+                    let v = Arc::make_mut(data);
+                    if i >= v.len() {
+                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                    }
+                    *v.get_unchecked_mut(i) = new_val;
+                },
+                Op::IntArraySwap { base, i_i, j_i } => unsafe {
+                    let i_idx = *ints.get_unchecked(i_i as usize);
+                    let j_idx = *ints.get_unchecked(j_i as usize);
+                    if i_idx < 0 || j_idx < 0 {
+                        return Err(RuntimeError::Arithmetic(
+                            "negative index into sequence".to_string(),
+                        ));
+                    }
+                    let i = i_idx as usize;
+                    let j = j_idx as usize;
+                    let b = registers.get_unchecked_mut(base as usize);
+                    let Value::IntArray(data) = b else {
+                        return Err(RuntimeError::Type(
+                            "IntArraySwap: receiver lost flat invariant".to_string(),
+                        ));
+                    };
+                    let v = Arc::make_mut(data);
+                    if i >= v.len() || j >= v.len() {
+                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                    }
+                    v.swap(i, j);
+                },
+                Op::FloatVecSwap { base, i_i, j_i } => unsafe {
+                    let i_idx = *ints.get_unchecked(i_i as usize);
+                    let j_idx = *ints.get_unchecked(j_i as usize);
+                    if i_idx < 0 || j_idx < 0 {
+                        return Err(RuntimeError::Arithmetic(
+                            "negative index into sequence".to_string(),
+                        ));
+                    }
+                    let i = i_idx as usize;
+                    let j = j_idx as usize;
+                    let b = registers.get_unchecked_mut(base as usize);
+                    let Value::FloatVec(data) = b else {
+                        return Err(RuntimeError::Type(
+                            "FloatVecSwap: receiver lost flat invariant".to_string(),
+                        ));
+                    };
+                    let v = Arc::make_mut(data);
+                    if i >= v.len() || j >= v.len() {
+                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                    }
+                    v.swap(i, j);
                 },
                 Op::BuildFloatVec {
                     dst_v,
@@ -3412,6 +3619,7 @@ fn qualified_key(receiver: &Value, method: &str) -> Option<&'static str> {
     match receiver {
         Value::Struct(inner) => Some(intern_qualified(inner.name, method)),
         Value::Channel(_) => Some(intern_qualified("Channel", method)),
+        Value::String(_) => Some(intern_qualified("String", method)),
         _ => None,
     }
 }

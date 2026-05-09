@@ -63,7 +63,7 @@ use std::collections::HashMap;
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
     AbiParam, Function, InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind,
-    UserFuncName, types,
+    UserFuncName, condcodes::IntCC, types,
 };
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_codegen::{Context, ir};
@@ -315,6 +315,24 @@ pub(crate) fn lower_program_full(
         }
     }
 
+    // Refuse 128-bit integer types up front. Cranelift's pointer
+    // width on x86-64 is 64 bits and the runtime print path only
+    // covers i64/u64; silently truncating to i64 corrupts every
+    // value with the high half set. Surfacing the limit at build
+    // time matches the `i128_use_panics_native_build…` regression
+    // gate.
+    for body in bodies {
+        for (idx, local) in body.locals.iter().enumerate() {
+            if let TyKind::Int(IntTy::I128 | IntTy::U128) = tcx.kind_of(local.ty) {
+                bail!(
+                    "i128 / u128 are not supported by the compiled tier yet (in fn `{}`, local _{}); use the bytecode VM for now",
+                    body.name,
+                    idx
+                );
+            }
+        }
+    }
+
     // Declare every function up-front so call-sites can resolve.
     // We key the map by the resolver-assigned `DefId.local` so
     // `Operand::FnRef(def)` from MIR lowers to the right function
@@ -541,20 +559,13 @@ fn resolve_place_cl_type(
     let mut hit_opaque = false;
     for projection in &place.projection {
         match projection {
-            Projection::Field(idx) => match tcx.kind_of(ty) {
-                TyKind::Tuple(elems) => {
-                    if let Some(next) = elems.get(*idx as usize).copied() {
-                        ty = next;
-                    } else {
-                        hit_opaque = true;
-                    }
-                }
-                _ => {
-                    // ADT fields / anything else — interner doesn't
-                    // surface the leaf type here. Drop to the hint.
+            Projection::Field(idx) => {
+                if let Some(next) = field_ty_at(tcx, ty, *idx) {
+                    ty = next;
+                } else {
                     hit_opaque = true;
                 }
-            },
+            }
             Projection::Index(_) => match tcx.kind_of(ty) {
                 TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
                     ty = *elem;
@@ -1105,6 +1116,21 @@ fn lower_statement(
                 Rvalue::Use(Operand::Copy(p)) if p.projection.is_empty() => Some(p.local),
                 _ => None,
             };
+            // For `Use(Copy(src.field…))` where the leaf type is a
+            // multi-slot aggregate (struct/tuple embedded inline),
+            // the rvalue lowering returns the field's address. Mark
+            // the destination local as holding an aggregate of the
+            // leaf's slot width so subsequent projections off of it
+            // stride correctly instead of treating the address as
+            // a scalar pointer to be dereferenced once.
+            let projected_aggregate_slots: Option<u32> = match rvalue {
+                Rvalue::Use(Operand::Copy(p)) if !p.projection.is_empty() => {
+                    let leaf = resolve_place_ty(tcx, body, p);
+                    let count = type_slot_count(tcx, leaf);
+                    if count > 1 { Some(count) } else { None }
+                }
+                _ => None,
+            };
             let value = lower_rvalue(
                 module,
                 builder,
@@ -1125,6 +1151,9 @@ fn lower_statement(
                 }
                 if let Some(total) = aggregate_total_slots {
                     intrinsics.local_slots.insert(place.local, total);
+                }
+                if let Some(slots) = projected_aggregate_slots {
+                    intrinsics.local_slots.insert(place.local, slots);
                 }
                 if let Some(src) = copy_src_meta {
                     if let Some(et) = intrinsics.elem_cl_ty.get(&src).copied() {
@@ -1216,6 +1245,19 @@ enum PrintKind {
     VecString,
     /// `Vec<Vec<i64>>` formatted via `gos_rt_vec_format_vec_i64`.
     VecVecI64,
+    /// `[i64; N]` flat-buffer literal (no GosVec header). Formatted
+    /// via `gos_rt_arr_format_i64(ptr, len)`.
+    ArrI64(i64),
+    /// `[f64; N]` flat-buffer literal.
+    ArrF64(i64),
+    /// `[bool; N]` flat-buffer literal.
+    ArrBool(i64),
+    /// `[String; N]` flat-buffer literal.
+    ArrString(i64),
+    /// `json::Value` — rendered via `gos_rt_json_render`.
+    JsonValue,
+    /// `errors::Error` — calls `gos_rt_error_message` then prints as string.
+    ErrorMessage,
     Unsupported(&'static str),
 }
 
@@ -1302,7 +1344,26 @@ fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -> PrintKind
                 // `format!("{x:?}")` or write their own
                 // stringification.
                 TyKind::Tuple(_) => PrintKind::Unsupported("tuple"),
-                TyKind::Array { .. } => PrintKind::Unsupported("array"),
+                // Fixed-size arrays: flat slot storage. The runtime
+                // helpers that print `VecI64` / `VecF64` / etc. read
+                // a `*mut GosVec` header, but a fixed array is just
+                // a stack slot of `N * elem_bytes`. Routing fixed
+                // arrays through the same Vec print kind works
+                // because `nums` ends up as a `*mut GosVec` after
+                // the typed-array promotion (`BuildIntArray` etc.)
+                // — without this, `let nums = [1, 2, 3]; println!
+                // ("{:?}", nums)` printed `<value>` even though
+                // the array is fully typed and the helper exists.
+                TyKind::Array { elem, len } => {
+                    let n = i64::try_from(*len).unwrap_or(0);
+                    match tcx.kind_of(*elem) {
+                        TyKind::Int(_) => PrintKind::ArrI64(n),
+                        TyKind::Float(_) => PrintKind::ArrF64(n),
+                        TyKind::Bool => PrintKind::ArrBool(n),
+                        TyKind::String => PrintKind::ArrString(n),
+                        _ => PrintKind::Unsupported("array"),
+                    }
+                }
                 TyKind::Slice(elem) => match tcx.kind_of(*elem) {
                     TyKind::Int(_) => PrintKind::VecI64,
                     TyKind::Float(_) => PrintKind::VecF64,
@@ -1327,19 +1388,14 @@ fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -> PrintKind
                 },
                 TyKind::HashMap { .. } => PrintKind::Unsupported("HashMap"),
                 TyKind::Sender(_) | TyKind::Receiver(_) => PrintKind::Unsupported("channel"),
-                // `json::Value` doesn't have a Display impl in
-                // compiled mode; users wrap with `json::render`
-                // before printing.
-                TyKind::JsonValue => {
-                    PrintKind::Unsupported("json::Value (call json::render first)")
-                }
+                TyKind::JsonValue => PrintKind::JsonValue,
                 TyKind::Adt { .. } => PrintKind::Unsupported("struct or enum"),
                 TyKind::Closure { .. } => PrintKind::Unsupported("closure"),
                 TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::FnTrait(_) => {
                     PrintKind::Unsupported("function")
                 }
                 TyKind::Dyn(_) => PrintKind::Unsupported("dyn Trait"),
-                TyKind::DynError => PrintKind::Unsupported("errors::Error (call .message() first)"),
+                TyKind::DynError => PrintKind::ErrorMessage,
                 TyKind::Param { .. } | TyKind::Alias { .. } | TyKind::Error => {
                     PrintKind::Unsupported("opaque type")
                 }
@@ -1353,10 +1409,7 @@ fn resolve_place_ty(tcx: &TyCtxt, body: &Body, place: &Place) -> Ty {
     let mut ty = body.local_ty(place.local);
     for projection in &place.projection {
         ty = match projection {
-            Projection::Field(idx) => match tcx.kind_of(ty) {
-                TyKind::Tuple(elems) => elems.get(*idx as usize).copied().unwrap_or(ty),
-                _ => ty,
-            },
+            Projection::Field(idx) => field_ty_at(tcx, ty, *idx).unwrap_or(ty),
             Projection::Index(_) => match tcx.kind_of(ty) {
                 TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => *elem,
                 _ => ty,
@@ -1369,6 +1422,26 @@ fn resolve_place_ty(tcx: &TyCtxt, body: &Body, place: &Place) -> Ty {
         };
     }
     ty
+}
+
+/// Returns `true` when the operand has `String` or `&String` type,
+/// indicating that comparison ops must use `gos_rt_str_compare`.
+fn operand_is_string(tcx: &TyCtxt, body: &Body, operand: &Operand) -> bool {
+    match operand {
+        // After copy-propagation, string locals may be substituted with
+        // Const(Str(...)) inline. These are always strings.
+        Operand::Const(gossamer_mir::ConstValue::Str(_)) => return true,
+        Operand::Copy(p) => {
+            let ty = resolve_place_ty(tcx, body, p);
+            return match tcx.kind_of(ty) {
+                TyKind::String => true,
+                TyKind::Ref { inner, .. } => matches!(tcx.kind_of(*inner), TyKind::String),
+                _ => false,
+            };
+        }
+        _ => {}
+    }
+    false
 }
 
 /// Walks a Ty and returns the number of 8-byte slots the underlying
@@ -1425,6 +1498,55 @@ fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
     }
 }
 
+/// Returns the byte offset of field `idx` within `ty`, summing the
+/// slot widths of every preceding field. Falls back to `idx * 8` for
+/// types whose field layout cannot be looked up (opaque ADTs, refs).
+fn field_byte_offset(tcx: &TyCtxt, ty: Ty, idx: u32) -> u32 {
+    let target = idx as usize;
+    match tcx.kind_of(ty).clone() {
+        TyKind::Tuple(elems) => elems
+            .iter()
+            .take(target)
+            .map(|t| type_slot_count(tcx, *t))
+            .sum::<u32>()
+            .saturating_mul(8),
+        TyKind::Adt { def, .. } => {
+            // Sentinels for Result/Option use a flat 2-slot
+            // [disc, payload] layout where each field is one slot.
+            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                return idx * 8;
+            }
+            tcx.struct_field_tys(def).map_or(idx * 8, |tys| {
+                tys.iter()
+                    .take(target)
+                    .map(|t| type_slot_count(tcx, *t))
+                    .sum::<u32>()
+                    .saturating_mul(8)
+            })
+        }
+        TyKind::Ref { inner, .. } => field_byte_offset(tcx, inner, idx),
+        _ => idx * 8,
+    }
+}
+
+/// Returns the type of the `idx`-th field of `ty`, or `None` when
+/// the layout is opaque to the type interner (refs, generics).
+fn field_ty_at(tcx: &TyCtxt, ty: Ty, idx: u32) -> Option<Ty> {
+    let target = idx as usize;
+    match tcx.kind_of(ty).clone() {
+        TyKind::Tuple(elems) => elems.get(target).copied(),
+        TyKind::Adt { def, .. } => {
+            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                return None;
+            }
+            tcx.struct_field_tys(def)
+                .and_then(|tys| tys.get(target).copied())
+        }
+        TyKind::Ref { inner, .. } => field_ty_at(tcx, inner, idx),
+        _ => None,
+    }
+}
+
 /// Computes the byte address of the projected slot within its root
 /// aggregate, returning a pointer-typed value suitable for a
 /// `load` / `store`. Works for `Field(i)` (offset `i*8`) and
@@ -1455,11 +1577,14 @@ fn lower_place_address(
         t if t == types::I32 && ptr_ty == types::I64 => builder.ins().uextend(ptr_ty, root_value),
         _ => root_value,
     };
-    // Track the per-element stride in slots as the projection walks
-    // deeper. The initial stride is the root local's `elem_slots`;
-    // after an `Index(_)` step we're inside an element, whose own
-    // `elem_slots` is `1` unless we later add nested-array
-    // tracking.
+    // Track the type at each step so nested struct/tuple projections
+    // can compute their byte offsets from the actual field layout
+    // (each prior field's slot count) rather than a flat `idx * 8`.
+    let mut current_ty = body.local_ty(place.local);
+    // Track the per-element stride in slots for `Index(_)`. Seeded
+    // from the root local's recorded metadata (or the type's
+    // element type when no metadata exists), then re-derived from
+    // the live `current_ty` after each projection step.
     let mut stride_slots = intrinsics
         .elem_slots
         .get(&place.local)
@@ -1469,8 +1594,15 @@ fn lower_place_address(
     for projection in &place.projection {
         match projection {
             Projection::Field(idx) => {
-                let offset = builder.ins().iconst(ptr_ty, i64::from(*idx) * 8);
+                let off_bytes = field_byte_offset(tcx, current_ty, *idx);
+                let offset = builder.ins().iconst(ptr_ty, i64::from(off_bytes));
                 current = builder.ins().iadd(current, offset);
+                if let Some(ft) = field_ty_at(tcx, current_ty, *idx) {
+                    current_ty = ft;
+                    stride_slots = stride_slots_from_ty(tcx, current_ty).unwrap_or(1);
+                } else {
+                    stride_slots = 1;
+                }
             }
             Projection::Index(index_local) => {
                 let index_var = ensure_var(builder, locals, body, tcx, module, *index_local);
@@ -1488,9 +1620,14 @@ fn lower_place_address(
                 let stride = builder.ins().iconst(ptr_ty, i64::from(stride_slots) * 8);
                 let byte_offset = builder.ins().imul(idx_ptr, stride);
                 current = builder.ins().iadd(current, byte_offset);
-                // After indexing, we're inside a single element;
-                // subsequent Field projections use the base-1
-                // stride already baked into their scalar offsets.
+                // After indexing, the cursor sits inside a single
+                // element; advance `current_ty` to the element type
+                // so subsequent Field projections compute their
+                // offsets relative to that element's layout.
+                current_ty = match tcx.kind_of(current_ty).clone() {
+                    TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => elem,
+                    _ => current_ty,
+                };
                 stride_slots = 1;
             }
             Projection::Deref => {
@@ -1500,7 +1637,10 @@ fn lower_place_address(
                 // compute offsets off of it.
                 let loaded = builder.ins().load(ptr_ty, MemFlags::trusted(), current, 0);
                 current = loaded;
-                stride_slots = 1;
+                if let TyKind::Ref { inner, .. } = tcx.kind_of(current_ty).clone() {
+                    current_ty = inner;
+                }
+                stride_slots = stride_slots_from_ty(tcx, current_ty).unwrap_or(1);
             }
             Projection::Discriminant => {
                 // Discriminant lives at offset 0 of an enum's
@@ -1986,6 +2126,16 @@ fn lower_terminator(
                 // through env[0] and forwarding `(env, args…)` is
                 // the universal dispatch.
                 let is_plain_fn = matches!(tcx.kind_of(callee_ty), TyKind::FnDef { .. });
+                // Pull the FnTrait / FnPtr signature so the
+                // indirect-call dispatch uses real argument and
+                // return types, not flat i64. This is the fix
+                // that lets capturing closures returning bool /
+                // f64 / aggregates flow through Fn(...) params
+                // without calling-convention drift.
+                let fn_sig = match tcx.kind_of(callee_ty).clone() {
+                    TyKind::FnTrait(s) | TyKind::FnPtr(s) => Some(s),
+                    _ => None,
+                };
                 let env_value =
                     lower_place_read(module, builder, locals, body, tcx, place, None, intrinsics)?;
                 let env_ptr = if ptr_ty == types::I64 {
@@ -2007,19 +2157,40 @@ fn lower_terminator(
                 if !is_plain_fn {
                     sig.params.push(AbiParam::new(types::I64));
                 }
-                for _ in args {
-                    sig.params.push(AbiParam::new(types::I64));
+                // Per-arg cranelift types: prefer the FnTrait /
+                // FnPtr sig's input types over flat-i64 so f64 /
+                // bool / aggregate args use the right register.
+                let mut typed_param_tys: Vec<ir::Type> = Vec::with_capacity(args.len());
+                for (i, _) in args.iter().enumerate() {
+                    let want = match &fn_sig {
+                        Some(sig_ref) if i < sig_ref.inputs.len() => {
+                            cl_type_of(tcx, sig_ref.inputs[i], module)
+                        }
+                        _ => types::I64,
+                    };
+                    typed_param_tys.push(want);
+                    sig.params.push(AbiParam::new(want));
                 }
-                sig.returns.push(AbiParam::new(types::I64));
+                let typed_ret_ty = match &fn_sig {
+                    Some(sig_ref) if !matches!(tcx.kind_of(sig_ref.output), TyKind::Unit) => {
+                        Some(cl_type_of(tcx, sig_ref.output, module))
+                    }
+                    _ => Some(types::I64),
+                };
+                if let Some(t) = typed_ret_ty {
+                    sig.returns.push(AbiParam::new(t));
+                }
                 let sig_ref = builder.import_signature(sig);
                 let mut arg_values = Vec::with_capacity(args.len() + 1);
                 if !is_plain_fn {
                     arg_values.push(env_value);
                 }
-                for op in args {
-                    arg_values.push(lower_operand(
-                        module, builder, locals, body, tcx, op, None, intrinsics,
-                    )?);
+                for (i, op) in args.iter().enumerate() {
+                    let v =
+                        lower_operand(module, builder, locals, body, tcx, op, None, intrinsics)?;
+                    let want = typed_param_tys.get(i).copied().unwrap_or(types::I64);
+                    let coerced = coerce_arg_to(builder, v, want).unwrap_or(v);
+                    arg_values.push(coerced);
                 }
                 let call = builder.ins().call_indirect(sig_ref, fn_ptr, &arg_values);
                 let results = builder.inst_results(call).to_vec();
@@ -2234,6 +2405,15 @@ fn lower_terminator(
             for (idx, op) in args.iter().enumerate() {
                 let mut v =
                     lower_operand(module, builder, locals, body, tcx, op, None, intrinsics)?;
+                // Defensive copy of by-value aggregate args: the
+                // local holds a pointer into a heap slot the caller
+                // owns. Forwarding it directly aliases the caller's
+                // struct, so the callee's `mut p; p.x = …` mutates
+                // the caller's value too. Allocate fresh storage,
+                // memcpy the slots over, and pass the new pointer.
+                if let Some(slots) = operand_aggregate_slots(body, tcx, op) {
+                    v = clone_aggregate_value(module, builder, intrinsics, v, slots)?;
+                }
                 if let Some(want) = expected.get(idx).copied() {
                     v = coerce_arg_to(builder, v, want)?;
                 }
@@ -2418,6 +2598,17 @@ fn emit_per_arg_print(
         }
         let value = lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
         let ty = value_type(value, builder);
+        // When Var(_) resolves to StrPtr but the value is a non-pointer int (e.g. `!bool`
+        // returning I8), use the correct formatter rather than passing a narrow int as a ptr.
+        let kind = if matches!(kind, PrintKind::StrPtr) && ty.is_int() && ty != ptr_ty {
+            if ty == types::I8 {
+                PrintKind::Bool
+            } else {
+                PrintKind::Int
+            }
+        } else {
+            kind
+        };
         match kind {
             PrintKind::StrPtr => {
                 let fref = module.declare_func_in_func(print_str, builder.func);
@@ -2517,9 +2708,86 @@ fn emit_per_arg_print(
                 print_str,
                 intrinsics,
             )?,
+            PrintKind::ArrI64(len) => emit_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_i64",
+                value,
+                len,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ArrF64(len) => emit_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_f64",
+                value,
+                len,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ArrBool(len) => emit_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_bool",
+                value,
+                len,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ArrString(len) => emit_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_string",
+                value,
+                len,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::JsonValue => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_json_display",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ErrorMessage => {
+                let error_msg_fn =
+                    intrinsics.extern_fn(module, "gos_rt_error_message", &[ptr_ty], &[ptr_ty])?;
+                let fref = module.declare_func_in_func(error_msg_fn, builder.func);
+                let call = builder.ins().call(fref, &[value]);
+                let msg = builder.inst_results(call)[0];
+                let fref2 = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref2, &[msg]);
+            }
             PrintKind::Unsupported(_) => unreachable!("checked above"),
         }
     }
+    Ok(())
+}
+
+/// Calls a `gos_rt_arr_format_*(ptr, len) -> *mut c_char` runtime
+/// helper for a flat fixed-size array buffer and prints the
+/// resulting string. Mirrors `emit_vec_print` but threads the
+/// compile-time-known length explicitly.
+fn emit_arr_print(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    helper_name: &'static str,
+    value: ir::Value,
+    len: i64,
+    print_str: cranelift_module::FuncId,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<()> {
+    let ptr_ty = module.target_config().pointer_type();
+    let f = intrinsics.extern_fn(module, helper_name, &[ptr_ty, types::I64], &[ptr_ty])?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let len_v = builder.ins().iconst(types::I64, len);
+    let call = builder.ins().call(fref, &[value, len_v]);
+    let result = builder.inst_results(call)[0];
+    let print_ref = module.declare_func_in_func(print_str, builder.func);
+    builder.ins().call(print_ref, &[result]);
     Ok(())
 }
 
@@ -2566,40 +2834,38 @@ fn emit_args_to_concat_string(
     separator: &str,
 ) -> Result<ir::Value> {
     let ptr_ty = module.target_config().pointer_type();
-    let i64_to_str = intrinsics.extern_fn(module, "gos_rt_i64_to_str", &[types::I64], &[ptr_ty])?;
-    let u64_to_str = intrinsics.extern_fn(module, "gos_rt_u64_to_str", &[types::I64], &[ptr_ty])?;
-    let f64_to_str = intrinsics.extern_fn(module, "gos_rt_f64_to_str", &[types::F64], &[ptr_ty])?;
-    let bool_to_str =
-        intrinsics.extern_fn(module, "gos_rt_bool_to_str", &[types::I32], &[ptr_ty])?;
-    let char_to_str =
-        intrinsics.extern_fn(module, "gos_rt_char_to_str", &[types::I32], &[ptr_ty])?;
-    let str_concat =
-        intrinsics.extern_fn(module, "gos_rt_str_concat", &[ptr_ty, ptr_ty], &[ptr_ty])?;
+    let empty_data = intrinsics.intern_string(module, "")?;
+    if args.is_empty() {
+        let data_ref = module.declare_data_in_func(empty_data, builder.func);
+        return Ok(builder.ins().global_value(ptr_ty, data_ref));
+    }
+
+    // Use the runtime's thread-local concat buffer (the same path
+    // `__concat` takes for `format!`) instead of chaining N-1
+    // `gos_rt_str_concat` calls. Each pairwise concat allocates a
+    // throwaway String and then drops the previous accumulator; the
+    // batched buffer appends bytes into one growing buffer and
+    // hands back a single owned String at the end.
+    let init = intrinsics.extern_fn(module, "gos_rt_concat_init", &[], &[])?;
+    let init_ref = module.declare_func_in_func(init, builder.func);
+    builder.ins().call(init_ref, &[]);
+
     let sep_data = if separator.is_empty() {
         None
     } else {
         Some(intrinsics.intern_string(module, separator)?)
     };
-    let empty_data = intrinsics.intern_string(module, "")?;
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
-    )]
-    fn arg_to_str_ptr(
-        module: &mut dyn Module,
-        builder: &mut FunctionBuilder<'_>,
-        locals: &mut HashMap<Local, Variable>,
-        body: &Body,
-        tcx: &TyCtxt,
-        arg: &Operand,
-        intrinsics: &mut IntrinsicContext,
-        i64_to_str: cranelift_module::FuncId,
-        u64_to_str: cranelift_module::FuncId,
-        f64_to_str: cranelift_module::FuncId,
-        bool_to_str: cranelift_module::FuncId,
-        char_to_str: cranelift_module::FuncId,
-    ) -> Result<ir::Value> {
+    for (idx, arg) in args.iter().enumerate() {
+        if idx > 0 {
+            if let Some(data) = sep_data {
+                let data_ref = module.declare_data_in_func(data, builder.func);
+                let sep_ptr = builder.ins().global_value(ptr_ty, data_ref);
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[sep_ptr]);
+            }
+        }
         let kind = operand_print_kind(body, tcx, arg);
         if let PrintKind::Unsupported(label) = kind {
             bail!(
@@ -2609,17 +2875,31 @@ fn emit_args_to_concat_string(
         }
         let value = lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
         let ty = value_type(value, builder);
-        let ptr = match kind {
-            PrintKind::StrPtr => value,
+        // Same guard as in emit_per_arg_print: Var(_) → StrPtr but value is a narrow int.
+        let kind = if matches!(kind, PrintKind::StrPtr) && ty.is_int() && ty != ptr_ty {
+            if ty == types::I8 {
+                PrintKind::Bool
+            } else {
+                PrintKind::Int
+            }
+        } else {
+            kind
+        };
+        match kind {
+            PrintKind::StrPtr => {
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[value]);
+            }
             PrintKind::Int => {
                 let n = if ty.bits() < 64 {
                     builder.ins().sextend(types::I64, value)
                 } else {
                     value
                 };
-                let fref = module.declare_func_in_func(i64_to_str, builder.func);
-                let call = builder.ins().call(fref, &[n]);
-                builder.inst_results(call)[0]
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_i64", &[types::I64], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[n]);
             }
             PrintKind::Uint => {
                 let n = if ty.bits() < 64 {
@@ -2627,9 +2907,9 @@ fn emit_args_to_concat_string(
                 } else {
                     value
                 };
-                let fref = module.declare_func_in_func(u64_to_str, builder.func);
-                let call = builder.ins().call(fref, &[n]);
-                builder.inst_results(call)[0]
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_u64", &[types::I64], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[n]);
             }
             PrintKind::Float => {
                 let d = if ty == types::F32 {
@@ -2637,9 +2917,9 @@ fn emit_args_to_concat_string(
                 } else {
                     value
                 };
-                let fref = module.declare_func_in_func(f64_to_str, builder.func);
-                let call = builder.ins().call(fref, &[d]);
-                builder.inst_results(call)[0]
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_f64", &[types::F64], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[d]);
             }
             PrintKind::Bool => {
                 let b = if ty.bits() < 32 {
@@ -2649,9 +2929,9 @@ fn emit_args_to_concat_string(
                 } else {
                     value
                 };
-                let fref = module.declare_func_in_func(bool_to_str, builder.func);
-                let call = builder.ins().call(fref, &[b]);
-                builder.inst_results(call)[0]
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_bool", &[types::I32], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[b]);
             }
             PrintKind::Char => {
                 let c = if ty.bits() > 32 {
@@ -2661,65 +2941,80 @@ fn emit_args_to_concat_string(
                 } else {
                     value
                 };
-                let fref = module.declare_func_in_func(char_to_str, builder.func);
-                let call = builder.ins().call(fref, &[c]);
-                builder.inst_results(call)[0]
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_char", &[types::I32], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[c]);
             }
             PrintKind::VecI64
             | PrintKind::VecF64
             | PrintKind::VecBool
             | PrintKind::VecString
-            | PrintKind::VecVecI64
-            | PrintKind::Unsupported(_) => unreachable!("handled by caller"),
-        };
-        Ok(ptr)
+            | PrintKind::VecVecI64 => {
+                let helper = match kind {
+                    PrintKind::VecI64 => "gos_rt_vec_format_i64",
+                    PrintKind::VecF64 => "gos_rt_vec_format_f64",
+                    PrintKind::VecBool => "gos_rt_vec_format_bool",
+                    PrintKind::VecString => "gos_rt_vec_format_string",
+                    PrintKind::VecVecI64 => "gos_rt_vec_format_vec_i64",
+                    _ => unreachable!(),
+                };
+                let format_fn = intrinsics.extern_fn(module, helper, &[ptr_ty], &[ptr_ty])?;
+                let format_ref = module.declare_func_in_func(format_fn, builder.func);
+                let call = builder.ins().call(format_ref, &[value]);
+                let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::ArrI64(_)
+            | PrintKind::ArrF64(_)
+            | PrintKind::ArrBool(_)
+            | PrintKind::ArrString(_) => {
+                let (helper, len) = match kind {
+                    PrintKind::ArrI64(n) => ("gos_rt_arr_format_i64", n),
+                    PrintKind::ArrF64(n) => ("gos_rt_arr_format_f64", n),
+                    PrintKind::ArrBool(n) => ("gos_rt_arr_format_bool", n),
+                    PrintKind::ArrString(n) => ("gos_rt_arr_format_string", n),
+                    _ => unreachable!(),
+                };
+                let format_fn =
+                    intrinsics.extern_fn(module, helper, &[ptr_ty, types::I64], &[ptr_ty])?;
+                let format_ref = module.declare_func_in_func(format_fn, builder.func);
+                let len_v = builder.ins().iconst(types::I64, len);
+                let call = builder.ins().call(format_ref, &[value, len_v]);
+                let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::JsonValue => {
+                let render_fn =
+                    intrinsics.extern_fn(module, "gos_rt_json_display", &[ptr_ty], &[ptr_ty])?;
+                let render_ref = module.declare_func_in_func(render_fn, builder.func);
+                let call = builder.ins().call(render_ref, &[value]);
+                let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::ErrorMessage => {
+                let error_msg_fn =
+                    intrinsics.extern_fn(module, "gos_rt_error_message", &[ptr_ty], &[ptr_ty])?;
+                let err_ref = module.declare_func_in_func(error_msg_fn, builder.func);
+                let call = builder.ins().call(err_ref, &[value]);
+                let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::Unsupported(_) => unreachable!("filtered above"),
+        }
     }
 
-    if args.is_empty() {
-        let data_ref = module.declare_data_in_func(empty_data, builder.func);
-        return Ok(builder.ins().global_value(ptr_ty, data_ref));
-    }
-    let mut acc = arg_to_str_ptr(
-        module,
-        builder,
-        locals,
-        body,
-        tcx,
-        &args[0],
-        intrinsics,
-        i64_to_str,
-        u64_to_str,
-        f64_to_str,
-        bool_to_str,
-        char_to_str,
-    )?;
-    for arg in &args[1..] {
-        if let Some(data) = sep_data {
-            let data_ref = module.declare_data_in_func(data, builder.func);
-            let sep_ptr = builder.ins().global_value(ptr_ty, data_ref);
-            let fref = module.declare_func_in_func(str_concat, builder.func);
-            let call = builder.ins().call(fref, &[acc, sep_ptr]);
-            acc = builder.inst_results(call)[0];
-        }
-        let next = arg_to_str_ptr(
-            module,
-            builder,
-            locals,
-            body,
-            tcx,
-            arg,
-            intrinsics,
-            i64_to_str,
-            u64_to_str,
-            f64_to_str,
-            bool_to_str,
-            char_to_str,
-        )?;
-        let fref = module.declare_func_in_func(str_concat, builder.func);
-        let call = builder.ins().call(fref, &[acc, next]);
-        acc = builder.inst_results(call)[0];
-    }
-    Ok(acc)
+    let finish = intrinsics.extern_fn(module, "gos_rt_concat_finish", &[], &[ptr_ty])?;
+    let finish_ref = module.declare_func_in_func(finish, builder.func);
+    let call = builder.ins().call(finish_ref, &[]);
+    Ok(builder.inst_results(call)[0])
 }
 
 /// True when the operand's MIR type / constant value is a `char`
@@ -2731,6 +3026,73 @@ fn operand_is_char(body: &Body, tcx: &TyCtxt, op: &Operand) -> bool {
         Operand::Copy(p) => matches!(tcx.kind_of(body.local_ty(p.local)), TyKind::Char),
         _ => false,
     }
+}
+
+/// Returns true when an operand carries a by-value aggregate worth
+/// defensively copying at a call boundary. Currently restricted to
+/// `Copy(local)` whose root local is a multi-slot aggregate the
+/// caller owns; constants and projected reads route through the
+/// aggregate-aware paths already.
+fn operand_aggregate_slots(body: &Body, tcx: &TyCtxt, op: &Operand) -> Option<u32> {
+    match op {
+        Operand::Copy(place) if place.projection.is_empty() => {
+            let ty = body.local_ty(place.local);
+            if matches!(
+                tcx.kind_of(ty),
+                TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
+            ) {
+                let slots = type_slot_count(tcx, ty);
+                if slots > 1 {
+                    return Some(slots);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Allocates a fresh `slots * 8` heap region via `gos_rt_gc_alloc`
+/// and copies `slots` 8-byte words from `src` into it. Returns the
+/// new heap pointer. Used by call lowering to defensively copy
+/// by-value aggregate args so the callee can mutate its parameter
+/// without aliasing the caller's struct.
+fn clone_aggregate_value(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    src: ir::Value,
+    slots: u32,
+) -> Result<ir::Value> {
+    let ptr_ty = module.target_config().pointer_type();
+    let bytes = u64::from(slots) * 8;
+    let alloc_fn = intrinsics.extern_fn(module, "gos_rt_gc_alloc", &[types::I64], &[ptr_ty])?;
+    let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
+    let bytes_v = builder.ins().iconst(types::I64, bytes as i64);
+    let call = builder.ins().call(alloc_ref, &[bytes_v]);
+    let dst = builder.inst_results(call)[0];
+    let src_ptr = match value_type(src, builder) {
+        t if t == ptr_ty => src,
+        t if t == types::I64 && ptr_ty == types::I32 => builder.ins().ireduce(ptr_ty, src),
+        t if t == types::I32 && ptr_ty == types::I64 => builder.ins().uextend(ptr_ty, src),
+        _ => src,
+    };
+    for slot_idx in 0..slots {
+        let off = (slot_idx as i32) * 8;
+        let word = builder.ins().load(
+            types::I64,
+            MemFlags::trusted(),
+            src_ptr,
+            ir::immediates::Offset32::new(off),
+        );
+        builder.ins().store(
+            MemFlags::trusted(),
+            word,
+            dst,
+            ir::immediates::Offset32::new(off),
+        );
+    }
+    Ok(dst)
 }
 
 /// Generic-helper signature lookup so the new helpers added in
@@ -2771,8 +3133,11 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_regex_compile" => Some("gos_rt_regex_compile"),
         "gos_rt_regex_is_match" => Some("gos_rt_regex_is_match"),
         "gos_rt_regex_find" => Some("gos_rt_regex_find"),
+        "gos_rt_regex_find_opt" => Some("gos_rt_regex_find_opt"),
+        "gos_rt_regex_captures" => Some("gos_rt_regex_captures"),
         "gos_rt_regex_find_all" => Some("gos_rt_regex_find_all"),
         "gos_rt_regex_captures_all" => Some("gos_rt_regex_captures_all"),
+        "gos_rt_regex_replace" => Some("gos_rt_regex_replace"),
         "gos_rt_regex_replace_all" => Some("gos_rt_regex_replace_all"),
         "gos_rt_regex_split" => Some("gos_rt_regex_split"),
         "gos_rt_fs_read_to_string" => Some("gos_rt_fs_read_to_string"),
@@ -2797,7 +3162,26 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_flag_map_get" => Some("gos_rt_flag_map_get"),
         "gos_rt_os_env" => Some("gos_rt_os_env"),
         "gos_rt_os_cwd" => Some("gos_rt_os_cwd"),
+        "gos_rt_os_exists" => Some("gos_rt_os_exists"),
+        "gos_rt_os_is_file" => Some("gos_rt_os_is_file"),
+        "gos_rt_os_is_dir" => Some("gos_rt_os_is_dir"),
+        "gos_rt_os_remove_file" => Some("gos_rt_os_remove_file"),
+        "gos_rt_result_map_bare" => Some("gos_rt_result_map_bare"),
+        "gos_rt_result_map_err_bare" => Some("gos_rt_result_map_err_bare"),
+        "gos_rt_os_write_file_result" => Some("gos_rt_os_write_file_result"),
+        "gos_rt_os_mkdir_all_result" => Some("gos_rt_os_mkdir_all_result"),
+        "gos_rt_os_remove_file_result" => Some("gos_rt_os_remove_file_result"),
+        "gos_rt_os_remove_dir_all_result" => Some("gos_rt_os_remove_dir_all_result"),
+        "gos_rt_http_stream" => Some("gos_rt_http_stream"),
+        "gos_rt_http_get" => Some("gos_rt_http_get"),
+        "gos_rt_http_stream_next_line" => Some("gos_rt_http_stream_next_line"),
         "gos_rt_fs_list_dir" => Some("gos_rt_fs_list_dir"),
+        "gos_rt_fs_walk_dir" => Some("gos_rt_fs_walk_dir"),
+        "gos_rt_exec_run" => Some("gos_rt_exec_run"),
+        "gos_rt_exec_spawn" => Some("gos_rt_exec_spawn"),
+        "gos_rt_exec_kill" => Some("gos_rt_exec_kill"),
+        "gos_rt_os_set_env" => Some("gos_rt_os_set_env"),
+        "gos_rt_os_unset_env" => Some("gos_rt_os_unset_env"),
         "gos_rt_bufio_scanner_new" => Some("gos_rt_bufio_scanner_new"),
         "gos_rt_bufio_scanner_scan" => Some("gos_rt_bufio_scanner_scan"),
         "gos_rt_bufio_scanner_text" => Some("gos_rt_bufio_scanner_text"),
@@ -2812,6 +3196,8 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_vec_get_i64" => Some("gos_rt_vec_get_i64"),
         "gos_rt_vec_set_i64" => Some("gos_rt_vec_set_i64"),
         "gos_rt_vec_format_i64" => Some("gos_rt_vec_format_i64"),
+        "gos_rt_chan_recv_option" => Some("gos_rt_chan_recv_option"),
+        "gos_rt_chan_try_recv_option" => Some("gos_rt_chan_try_recv_option"),
         "gos_rt_result_new" => Some("gos_rt_result_new"),
         "gos_rt_result_disc" => Some("gos_rt_result_disc"),
         "gos_rt_result_payload" => Some("gos_rt_result_payload"),
@@ -2819,6 +3205,7 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_result_unwrap_or" => Some("gos_rt_result_unwrap_or"),
         "gos_rt_result_ok" => Some("gos_rt_result_ok"),
         "gos_rt_result_err" => Some("gos_rt_result_err"),
+        "gos_rt_result_ok_or" => Some("gos_rt_result_ok_or"),
         "gos_rt_result_is_ok" => Some("gos_rt_result_is_ok"),
         "gos_rt_result_is_err" => Some("gos_rt_result_is_err"),
         "gos_rt_set_new" => Some("gos_rt_set_new"),
@@ -2834,6 +3221,10 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_str_as_bytes" => Some("gos_rt_str_as_bytes"),
         "gos_rt_vec_clone" => Some("gos_rt_vec_clone"),
         "gos_rt_map_inc_str_i64" => Some("gos_rt_map_inc_str_i64"),
+        "gos_rt_map_or_insert_str_i64" => Some("gos_rt_map_or_insert_str_i64"),
+        "gos_rt_map_or_insert_i64_i64" => Some("gos_rt_map_or_insert_i64_i64"),
+        "gos_rt_errors_join_vec" => Some("gos_rt_errors_join_vec"),
+        "gos_rt_errors_join" => Some("gos_rt_errors_join"),
         "gos_rt_json_value_object_n" => Some("gos_rt_json_value_object_n"),
         "gos_rt_http_response_set_header" => Some("gos_rt_http_response_set_header"),
         "gos_rt_http_response_get_header" => Some("gos_rt_http_response_get_header"),
@@ -2855,6 +3246,12 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_flag_cell_load_bool" => Some("gos_rt_flag_cell_load_bool"),
         "gos_rt_flag_cell_load_f64" => Some("gos_rt_flag_cell_load_f64"),
         "gos_rt_flag_cell_load_vec" => Some("gos_rt_flag_cell_load_vec"),
+        // Sort-by callbacks for fixed-array / Vec receivers.
+        "gos_rt_arr_sort_by_i64" => Some("gos_rt_arr_sort_by_i64"),
+        "gos_rt_vec_sort_by_i64" => Some("gos_rt_vec_sort_by_i64"),
+        "gos_rt_json_set" => Some("gos_rt_json_set"),
+        "gos_rt_arr_iter" => Some("gos_rt_arr_iter"),
+        "gos_rt_arr_iter_next" => Some("gos_rt_arr_iter_next"),
         _ => None,
     }
 }
@@ -2886,17 +3283,20 @@ fn lower_generic_rt_call(
         "gos_rt_error_wrap" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_error_message" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_error_cause" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_error_is" => (&[ptr_ty, ptr_ty], Some(types::I8)),
+        "gos_rt_error_is" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_regex_compile" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_regex_is_match" => (&[ptr_ty, ptr_ty], Some(types::I8)),
+        "gos_rt_regex_is_match" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_regex_find" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_regex_find_opt" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_regex_captures" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_regex_find_all" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_regex_captures_all" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_regex_replace" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_regex_replace_all" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_regex_split" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_fs_read_to_string" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_fs_write" => (&[ptr_ty, ptr_ty], Some(types::I8)),
-        "gos_rt_fs_create_dir_all" => (&[ptr_ty], Some(types::I8)),
+        "gos_rt_fs_write" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_fs_create_dir_all" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_path_join" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_set_new" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_set_string" => (&[ptr_ty, ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
@@ -2917,8 +3317,27 @@ fn lower_generic_rt_call(
         "gos_rt_os_env" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_os_cwd" => (&[], Some(ptr_ty)),
         "gos_rt_fs_list_dir" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_fs_walk_dir" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_exec_run" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_exec_spawn" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_exec_kill" => (&[types::I64], Some(types::I64)),
+        "gos_rt_os_set_env" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_os_unset_env" => (&[ptr_ty], None),
+        "gos_rt_os_exists" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_os_is_file" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_os_is_dir" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_os_remove_file" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_result_map_bare" => (&[ptr_ty, types::I64], Some(ptr_ty)),
+        "gos_rt_result_map_err_bare" => (&[ptr_ty, types::I64], Some(ptr_ty)),
+        "gos_rt_os_write_file_result" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_os_mkdir_all_result" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_os_remove_file_result" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_os_remove_dir_all_result" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_http_stream" => (&[ptr_ty, ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_http_get" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_http_stream_next_line" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_bufio_scanner_new" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_bufio_scanner_scan" => (&[ptr_ty], Some(types::I8)),
+        "gos_rt_bufio_scanner_scan" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_bufio_scanner_text" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_http_client_new" => (&[], Some(ptr_ty)),
         "gos_rt_http_client_get" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
@@ -2931,6 +3350,8 @@ fn lower_generic_rt_call(
         "gos_rt_vec_get_i64" => (&[ptr_ty, types::I64], Some(types::I64)),
         "gos_rt_vec_set_i64" => (&[ptr_ty, types::I64, types::I64], None),
         "gos_rt_vec_format_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_chan_recv_option" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_chan_try_recv_option" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_result_new" => (&[types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_result_disc" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_result_payload" => (&[ptr_ty], Some(types::I64)),
@@ -2938,12 +3359,13 @@ fn lower_generic_rt_call(
         "gos_rt_result_unwrap_or" => (&[ptr_ty, types::I64], Some(types::I64)),
         "gos_rt_result_ok" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_result_err" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_result_ok_or" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_result_is_ok" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_result_is_err" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_set_new" => (&[], Some(ptr_ty)),
-        "gos_rt_set_insert" => (&[ptr_ty, ptr_ty], Some(types::I8)),
-        "gos_rt_set_contains" => (&[ptr_ty, ptr_ty], Some(types::I8)),
-        "gos_rt_set_remove" => (&[ptr_ty, ptr_ty], Some(types::I8)),
+        "gos_rt_set_insert" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_set_contains" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_set_remove" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_set_len" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_btmap_new" => (&[], Some(ptr_ty)),
         "gos_rt_btmap_insert" => (&[ptr_ty, ptr_ty, types::I64], None),
@@ -2953,6 +3375,10 @@ fn lower_generic_rt_call(
         "gos_rt_str_as_bytes" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_vec_clone" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_map_inc_str_i64" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I64)),
+        "gos_rt_map_or_insert_str_i64" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I64)),
+        "gos_rt_map_or_insert_i64_i64" => (&[ptr_ty, types::I64, types::I64], Some(types::I64)),
+        "gos_rt_errors_join_vec" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_errors_join" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_json_value_object_n" => (&[types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_http_response_set_header" => (&[ptr_ty, ptr_ty, ptr_ty], None),
         "gos_rt_http_response_get_header" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
@@ -2978,6 +3404,11 @@ fn lower_generic_rt_call(
         "gos_rt_flag_cell_load_bool" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_flag_cell_load_f64" => (&[ptr_ty], Some(types::F64)),
         "gos_rt_flag_cell_load_vec" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_arr_sort_by_i64" => (&[ptr_ty, types::I64, ptr_ty], None),
+        "gos_rt_vec_sort_by_i64" => (&[ptr_ty, ptr_ty], None),
+        "gos_rt_json_set" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_arr_iter" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_arr_iter_next" => (&[ptr_ty], Some(ptr_ty)),
         _ => unreachable!("unhandled rt name {name}"),
     };
     let returns = ret.map(|t| vec![t]).unwrap_or_default();
@@ -3198,6 +3629,16 @@ fn lower_intrinsic_call(
                 let value =
                     lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
                 let ty = value_type(value, builder);
+                // Var(_) → StrPtr fallback, but value is a narrow int (e.g. `!bool` → I8).
+                let kind = if matches!(kind, PrintKind::StrPtr) && ty.is_int() && ty != ptr_ty {
+                    if ty == types::I8 {
+                        PrintKind::Bool
+                    } else {
+                        PrintKind::Int
+                    }
+                } else {
+                    kind
+                };
                 match kind {
                     PrintKind::StrPtr => {
                         let f =
@@ -3303,6 +3744,62 @@ fn lower_intrinsic_call(
                             intrinsics.extern_fn(module, helper, &[ptr_ty], &[ptr_ty])?;
                         let format_ref = module.declare_func_in_func(format_fn, builder.func);
                         let call = builder.ins().call(format_ref, &[value]);
+                        let s = builder.inst_results(call)[0];
+                        let f =
+                            intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
+                        let fref = module.declare_func_in_func(f, builder.func);
+                        builder.ins().call(fref, &[s]);
+                    }
+                    PrintKind::ArrI64(_)
+                    | PrintKind::ArrF64(_)
+                    | PrintKind::ArrBool(_)
+                    | PrintKind::ArrString(_) => {
+                        let (helper, len) = match kind {
+                            PrintKind::ArrI64(n) => ("gos_rt_arr_format_i64", n),
+                            PrintKind::ArrF64(n) => ("gos_rt_arr_format_f64", n),
+                            PrintKind::ArrBool(n) => ("gos_rt_arr_format_bool", n),
+                            PrintKind::ArrString(n) => ("gos_rt_arr_format_string", n),
+                            _ => unreachable!(),
+                        };
+                        let format_fn = intrinsics.extern_fn(
+                            module,
+                            helper,
+                            &[ptr_ty, types::I64],
+                            &[ptr_ty],
+                        )?;
+                        let format_ref = module.declare_func_in_func(format_fn, builder.func);
+                        let len_v = builder.ins().iconst(types::I64, len);
+                        let call = builder.ins().call(format_ref, &[value, len_v]);
+                        let s = builder.inst_results(call)[0];
+                        let f =
+                            intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
+                        let fref = module.declare_func_in_func(f, builder.func);
+                        builder.ins().call(fref, &[s]);
+                    }
+                    PrintKind::JsonValue => {
+                        let render_fn = intrinsics.extern_fn(
+                            module,
+                            "gos_rt_json_display",
+                            &[ptr_ty],
+                            &[ptr_ty],
+                        )?;
+                        let render_ref = module.declare_func_in_func(render_fn, builder.func);
+                        let call = builder.ins().call(render_ref, &[value]);
+                        let s = builder.inst_results(call)[0];
+                        let f =
+                            intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
+                        let fref = module.declare_func_in_func(f, builder.func);
+                        builder.ins().call(fref, &[s]);
+                    }
+                    PrintKind::ErrorMessage => {
+                        let error_msg_fn = intrinsics.extern_fn(
+                            module,
+                            "gos_rt_error_message",
+                            &[ptr_ty],
+                            &[ptr_ty],
+                        )?;
+                        let err_ref = module.declare_func_in_func(error_msg_fn, builder.func);
+                        let call = builder.ins().call(err_ref, &[value]);
                         let s = builder.inst_results(call)[0];
                         let f =
                             intrinsics.extern_fn(module, "gos_rt_concat_str", &[ptr_ty], &[])?;
@@ -3659,20 +4156,16 @@ fn lower_intrinsic_call(
             // against `gossamer-runtime`.
             let func_id = if let Some(id) = intrinsics.functions.get(name).copied() {
                 id
-            } else if let Some(arity_str) = name.strip_prefix("gos_rt_fn_tramp_") {
-                let arity: usize = arity_str
-                    .parse()
-                    .map_err(|_| anyhow!("gos_fn_addr: malformed trampoline name `{name}`"))?;
-                let mut params = Vec::with_capacity(arity + 1);
-                params.push(ptr_ty);
-                params.extend(std::iter::repeat_n(types::I64, arity));
-                // Per-arity trampoline names are 1-of-9 fixed
-                // strings; leak each into a `&'static str` so the
-                // intrinsic-extern table (which keys on
-                // `&'static str`) can hold them. Bounded leak —
-                // at most 9 total entries across the program.
-                let static_name: &'static str = Box::leak(name.clone().into_boxed_str());
-                intrinsics.extern_fn(module, static_name, &params, &[types::I64])?
+            } else if name.starts_with("__fn_thunk_") {
+                // Per-shape callable thunk. The name encodes the
+                // typed FnTrait sig (`__fn_thunk_<inputs>_<ret>`);
+                // synthesise a real function in this module that
+                // takes (env, typed_args...) -> typed_ret and
+                // forwards to the real fn at env+8 with the right
+                // calling convention. Replaces the earlier
+                // mono-i64 `gos_rt_fn_tramp_N` family which
+                // silently mangled f64 / bool / aggregate args.
+                define_shape_thunk(module, intrinsics, name)?
             } else {
                 bail!("gos_fn_addr: unknown fn `{name}`")
             };
@@ -3742,15 +4235,23 @@ fn lower_intrinsic_call(
             if args.len() < 3 {
                 bail!("native codegen: gos_store requires (ptr, offset, value)");
             }
-            let ptr_val = lower_operand(
+            let ptr_raw = lower_operand(
                 module, builder, locals, body, tcx, &args[0], None, intrinsics,
             )?;
-            let offset_val = lower_operand(
+            let offset_raw = lower_operand(
                 module, builder, locals, body, tcx, &args[1], None, intrinsics,
             )?;
             let value = lower_operand(
                 module, builder, locals, body, tcx, &args[2], None, intrinsics,
             )?;
+            // Closures pass `__env` as the first param; if its
+            // declared type is the closure's body-return type
+            // (bool/i8/etc), the inferred cl-type can be narrower
+            // than ptr-width. Promote both halves to i64 before
+            // adding so the iadd doesn't trip the verifier.
+            let ptr_val = coerce_arg_to(builder, ptr_raw, types::I64).unwrap_or(ptr_raw);
+            let offset_val = coerce_arg_to(builder, offset_raw, types::I64).unwrap_or(offset_raw);
+            let value = coerce_arg_to(builder, value, types::I64).unwrap_or(value);
             let addr_i64 = builder.ins().iadd(ptr_val, offset_val);
             let addr = if ptr_ty == types::I64 {
                 addr_i64
@@ -3773,12 +4274,17 @@ fn lower_intrinsic_call(
             if args.len() < 2 {
                 bail!("native codegen: gos_load requires (ptr, offset)");
             }
-            let ptr_val = lower_operand(
+            let ptr_raw = lower_operand(
                 module, builder, locals, body, tcx, &args[0], None, intrinsics,
             )?;
-            let offset_val = lower_operand(
+            let offset_raw = lower_operand(
                 module, builder, locals, body, tcx, &args[1], None, intrinsics,
             )?;
+            // See `gos_store` above — coerce both operands to i64
+            // so the env-param's narrower inferred cl-type can't
+            // mismatch the offset constant.
+            let ptr_val = coerce_arg_to(builder, ptr_raw, types::I64).unwrap_or(ptr_raw);
+            let offset_val = coerce_arg_to(builder, offset_raw, types::I64).unwrap_or(offset_raw);
             let addr_i64 = builder.ins().iadd(ptr_val, offset_val);
             let addr = if ptr_ty == types::I64 {
                 addr_i64
@@ -3868,6 +4374,51 @@ fn lower_intrinsic_call(
         // Byte-at: `s[i]` on a `String` loads the `i`-th byte and
         // zero-extends to `i64` (matching the interpreter's
         // convention of returning byte codes as `i64`).
+        "gos_rt_os_read_dir" => {
+            let f = intrinsics.extern_fn(module, "gos_rt_os_read_dir", &[ptr_ty], &[ptr_ty])?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let p = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let call = builder.ins().call(fref, &[p]);
+            let ret = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, ret);
+            Ok(true)
+        }
+        "gos_rt_str_substring" => {
+            let f = intrinsics.extern_fn(
+                module,
+                "gos_rt_str_substring",
+                &[ptr_ty, types::I64, types::I64],
+                &[ptr_ty],
+            )?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let s = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let start = match args.get(1) {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let end = match args.get(2) {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let call = builder.ins().call(fref, &[s, start, end]);
+            let ret = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, ret);
+            Ok(true)
+        }
         "gos_rt_str_byte_at" => {
             let ptr = match args.first() {
                 Some(arg) => {
@@ -3922,12 +4473,10 @@ fn lower_intrinsic_call(
         // lets programs default their args.
         "gos_rt_os_args" | "os::args" => {
             // Forward to the runtime's `gos_rt_os_args`, which
-            // returns a pointer to the first user argument
-            // (`argv + 1`). Downstream `args.len()` routes
-            // through `gos_rt_arr_len`, which short-circuits on
-            // that pointer and returns the stashed `argc - 1`.
-            // `args[i]` is a plain stride-8 Place projection
-            // reading successive `char*` entries.
+            // returns a `*mut GosVec` view over `argv + 1`.
+            // `args.len()` reads `len` at offset 0 (the standard
+            // GosVec layout) and indexing reads the i-th
+            // `*const c_char` through the GosVec `ptr` field.
             let args_fn = intrinsics.extern_fn(module, "gos_rt_os_args", &[], &[ptr_ty])?;
             let fref = module.declare_func_in_func(args_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
@@ -4315,9 +4864,16 @@ fn lower_intrinsic_call(
             Ok(true)
         }
         "time::sleep" => {
-            let rt_fn = intrinsics.extern_fn(module, "gos_rt_sleep_ns", &[types::I64], &[])?;
+            // `time::sleep(ms: i64)` matches the VM and the Go
+            // reference — argument is milliseconds. Routes
+            // through the runtime's `gos_rt_sleep_ms` shim that
+            // multiplies by 1_000_000 internally; before the
+            // shim landed the compiled tier called
+            // `gos_rt_sleep_ns(ms)` directly and slept for
+            // nanoseconds, busy-spinning every poll loop.
+            let rt_fn = intrinsics.extern_fn(module, "gos_rt_sleep_ms", &[types::I64], &[])?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let ns = match args.first() {
+            let ms = match args.first() {
                 Some(a) => lower_operand(
                     module,
                     builder,
@@ -4330,8 +4886,8 @@ fn lower_intrinsic_call(
                 )?,
                 None => builder.ins().iconst(types::I64, 0),
             };
-            let ns = coerce_arg_to(builder, ns, types::I64)?;
-            let _ = builder.ins().call(fref, &[ns]);
+            let ms = coerce_arg_to(builder, ms, types::I64)?;
+            let _ = builder.ins().call(fref, &[ms]);
             let unit = builder.ins().iconst(types::I64, 0);
             define_var_to(builder, locals, body, tcx, module, destination.local, unit);
             Ok(true)
@@ -4727,6 +5283,76 @@ fn lower_intrinsic_call(
             };
             let len64 = coerce_arg_to(builder, len, types::I64)?;
             let call = builder.ins().call(fref, &[eb_i32, data_coerced, len64]);
+            let ptr = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            Ok(true)
+        }
+        "gos_rt_nested_arr_to_vec" => {
+            // Converts `[Array{T,inner_len}; outer_len]` → `Vec<Vec<T>>`.
+            // Args: (inner_elem_bytes: i64, inner_len: i64, raw: ptr, outer_len: i64)
+            let new_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_nested_arr_to_vec",
+                &[types::I64, types::I64, ptr_ty, types::I64],
+                &[ptr_ty],
+            )?;
+            let fref = module.declare_func_in_func(new_fn, builder.func);
+            let inner_eb = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 8),
+            };
+            let inner_len_v = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let raw_ptr = match args.get(2) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let outer_len_v = match args.get(3) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let raw_coerced = coerce_arg_to(builder, raw_ptr, ptr_ty)?;
+            let call = builder
+                .ins()
+                .call(fref, &[inner_eb, inner_len_v, raw_coerced, outer_len_v]);
             let ptr = builder.inst_results(call)[0];
             define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
             Ok(true)
@@ -5776,6 +6402,54 @@ fn lower_intrinsic_call(
             define_var_to(builder, locals, body, tcx, module, destination.local, v);
             Ok(true)
         }
+        "gos_rt_json_get_opt" => {
+            let rt_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_json_get_opt",
+                &[ptr_ty, ptr_ty],
+                &[ptr_ty],
+            )?;
+            let recv = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let key = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let key_ptr = coerce_arg_to(builder, key, ptr_ty)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[recv, key_ptr]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_keys_opt" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_keys_opt", &[ptr_ty], &[ptr_ty])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
+        "gos_rt_json_as_array_opt" => {
+            let rt_fn =
+                intrinsics.extern_fn(module, "gos_rt_json_as_array_opt", &[ptr_ty], &[ptr_ty])?;
+            let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[arg]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            Ok(true)
+        }
         "gos_rt_json_at" => {
             let rt_fn =
                 intrinsics.extern_fn(module, "gos_rt_json_at", &[ptr_ty, types::I64], &[ptr_ty])?;
@@ -5976,7 +6650,7 @@ fn lower_intrinsic_call(
             define_var_to(builder, locals, body, tcx, module, destination.local, ok);
             Ok(true)
         }
-        "gos_rt_chan_try_recv" | "try_recv" => {
+        "gos_rt_chan_try_recv_option" | "gos_rt_chan_try_recv" | "try_recv" => {
             let chan = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -5990,23 +6664,15 @@ fn lower_intrinsic_call(
                 )?,
                 None => bail!("chan_try_recv: missing channel arg"),
             };
-            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
-            let recv_fn = intrinsics.extern_fn(
+            let f = intrinsics.extern_fn(
                 module,
-                "gos_rt_chan_try_recv",
-                &[ptr_ty, ptr_ty],
-                &[types::I32],
+                "gos_rt_chan_try_recv_option",
+                &[ptr_ty],
+                &[ptr_ty],
             )?;
-            let fref = module.declare_func_in_func(recv_fn, builder.func);
-            let _ = builder.ins().call(fref, &[chan, slot_addr]);
-            let loaded = builder
-                .ins()
-                .load(types::I64, MemFlags::trusted(), slot_addr, 0);
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &[chan]);
+            let opt_ptr = builder.inst_results(call)[0];
             define_var_to(
                 builder,
                 locals,
@@ -6014,7 +6680,7 @@ fn lower_intrinsic_call(
                 tcx,
                 module,
                 destination.local,
-                loaded,
+                opt_ptr,
             );
             Ok(true)
         }
@@ -6039,7 +6705,7 @@ fn lower_intrinsic_call(
             define_var_to(builder, locals, body, tcx, module, destination.local, unit);
             Ok(true)
         }
-        "gos_rt_chan_recv" | "recv" => {
+        "gos_rt_chan_recv_option" | "gos_rt_chan_recv" | "recv" => {
             let chan = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -6053,23 +6719,11 @@ fn lower_intrinsic_call(
                 )?,
                 None => bail!("chan_recv: missing channel arg"),
             };
-            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
-            let recv_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_chan_recv",
-                &[ptr_ty, ptr_ty],
-                &[types::I32],
-            )?;
-            let fref = module.declare_func_in_func(recv_fn, builder.func);
-            let _ = builder.ins().call(fref, &[chan, slot_addr]);
-            let loaded = builder
-                .ins()
-                .load(types::I64, MemFlags::trusted(), slot_addr, 0);
+            let f =
+                intrinsics.extern_fn(module, "gos_rt_chan_recv_option", &[ptr_ty], &[ptr_ty])?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &[chan]);
+            let opt_ptr = builder.inst_results(call)[0];
             define_var_to(
                 builder,
                 locals,
@@ -6077,7 +6731,7 @@ fn lower_intrinsic_call(
                 tcx,
                 module,
                 destination.local,
-                loaded,
+                opt_ptr,
             );
             Ok(true)
         }
@@ -6964,15 +7618,15 @@ fn lower_intrinsic_call(
             define_var_to(builder, locals, body, tcx, module, destination.local, val);
             Ok(true)
         }
-        // `Vec<T>::len()` — the runtime exposes `len` as the
-        // first 8 bytes of the `*mut GosVec` struct. Forward to
-        // the dedicated helper so user-Vec receivers (the
-        // result of `gos_rt_vec_new`, `gos_rt_str_split`, …)
-        // produce the right count instead of a hard-coded zero.
+        // `Vec<T>::len()` — the runtime exposes `len` as the first
+        // i64 of the `#[repr(C)] GosVec { len, cap, elem_bytes, ptr }`
+        // header (see runtime/src/c_abi.rs:1791). Inline the read as
+        // a null check + offset-0 load so the for-loop bound check
+        // doesn't pay the C-ABI call cost on every iteration. The
+        // null guard preserves the helper's `null -> 0` semantics
+        // (relied on by the `os::args` placeholder shape and any
+        // uninitialised-Vec carrier in the codegen).
         "gos_rt_vec_len" => {
-            let len_fn =
-                intrinsics.extern_fn(module, "gos_rt_vec_len", &[ptr_ty], &[types::I64])?;
-            let fref = module.declare_func_in_func(len_fn, builder.func);
             let m = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -6986,8 +7640,11 @@ fn lower_intrinsic_call(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
-            let call = builder.ins().call(fref, &[m]);
-            let n = builder.inst_results(call)[0];
+            let zero = builder.ins().iconst(types::I64, 0);
+            let null_ptr = builder.ins().iconst(ptr_ty, 0);
+            let is_null = builder.ins().icmp(ir::condcodes::IntCC::Equal, m, null_ptr);
+            let loaded = builder.ins().load(types::I64, MemFlags::trusted(), m, 0);
+            let n = builder.ins().select(is_null, zero, loaded);
             define_var_to(builder, locals, body, tcx, module, destination.local, n);
             Ok(true)
         }
@@ -7150,13 +7807,17 @@ fn lower_intrinsic_call(
             );
             Ok(true)
         }
-        "gos_rt_str_find" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_str_find",
-                &[ptr_ty, ptr_ty],
-                &[types::I64],
-            )?;
+        "gos_rt_str_find" | "gos_rt_str_find_opt" => {
+            // `find_opt` returns `*mut GosResult` (Option<i64>);
+            // the bare `find` returns raw i64. Both share two
+            // `*const c_char` argument shapes — pick the result
+            // type by the symbol name.
+            let (sym, ret_ty): (&'static str, _) = if name == "gos_rt_str_find_opt" {
+                ("gos_rt_str_find_opt", ptr_ty)
+            } else {
+                ("gos_rt_str_find", types::I64)
+            };
+            let rt_fn = intrinsics.extern_fn(module, sym, &[ptr_ty, ptr_ty], &[ret_ty])?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let a = match args.first() {
                 Some(arg) => lower_operand(
@@ -7599,29 +8260,6 @@ fn lower_intrinsic_call(
             )?;
             Ok(true)
         }
-        // `.iter()` still needs the iterator-object scaffolding
-        // (the runtime-Vec slot already serves as the iterator
-        // for the `for x in v` form, but explicit `v.iter()`
-        // call sites still go through this stub). Returns the
-        // receiver pointer so chained `for ... in v.iter()`
-        // works the same as `for ... in v`.
-        "gos_rt_arr_iter" => {
-            let recv = match args.first() {
-                Some(arg) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    arg,
-                    Some(ptr_ty),
-                    intrinsics,
-                )?,
-                None => builder.ins().iconst(ptr_ty, 0),
-            };
-            define_var_to(builder, locals, body, tcx, module, destination.local, recv);
-            Ok(true)
-        }
         _ => Ok(false),
     }
 }
@@ -7699,10 +8337,46 @@ fn lower_rvalue(
             )?;
             let b_hint = arith_hint.or_else(|| Some(value_type(a, builder)));
             let b = lower_operand(module, builder, locals, body, tcx, rhs, b_hint, intrinsics)?;
+            // String comparisons must go through `gos_rt_str_compare`
+            // rather than comparing pointer addresses (which would
+            // produce random ordering based on heap layout).
+            let is_str_cmp = matches!(
+                op,
+                BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+            ) && operand_is_string(tcx, body, lhs);
+            if is_str_cmp {
+                let ptr_ty = module.target_config().pointer_type();
+                let cmp_fn = intrinsics.extern_fn(
+                    module,
+                    "gos_rt_str_compare",
+                    &[ptr_ty, ptr_ty],
+                    &[types::I32],
+                )?;
+                let cmp_ref = module.declare_func_in_func(cmp_fn, builder.func);
+                let call = builder.ins().call(cmp_ref, &[a, b]);
+                let cmp_result = builder.inst_results(call)[0];
+                let zero = builder.ins().iconst(types::I32, 0);
+                match op {
+                    BinOp::Eq => builder.ins().icmp(IntCC::Equal, cmp_result, zero),
+                    BinOp::Ne => builder.ins().icmp(IntCC::NotEqual, cmp_result, zero),
+                    BinOp::Lt => builder.ins().icmp(IntCC::SignedLessThan, cmp_result, zero),
+                    BinOp::Le => builder
+                        .ins()
+                        .icmp(IntCC::SignedLessThanOrEqual, cmp_result, zero),
+                    BinOp::Gt => builder
+                        .ins()
+                        .icmp(IntCC::SignedGreaterThan, cmp_result, zero),
+                    BinOp::Ge => {
+                        builder
+                            .ins()
+                            .icmp(IntCC::SignedGreaterThanOrEqual, cmp_result, zero)
+                    }
+                    _ => unreachable!(),
+                }
             // Float `%` on f64 → `libc::fmod`. Cranelift has no
             // direct opcode. Intercept before the generic binop
             // dispatch so the rest stays module-free.
-            if matches!(op, BinOp::Rem) && value_type(a, builder).is_float() {
+            } else if matches!(op, BinOp::Rem) && value_type(a, builder).is_float() {
                 let fmod_fn = intrinsics.extern_fn(
                     module,
                     "fmod",
@@ -7782,8 +8456,21 @@ fn lower_rvalue(
                 // Integer width adjustments.
                 (s, d) if s.is_int() && d.is_int() => {
                     if d.bits() > s.bits() {
-                        // Sign-extending widening for signed types.
-                        builder.ins().sextend(d, src_v)
+                        // Use zero-extension for unsigned source types (u8/u16/u32)
+                        // so that e.g. `255u8 as i32` yields 255, not -1.
+                        let src_unsigned = if let Operand::Copy(place) = operand {
+                            matches!(
+                                tcx.kind_of(body.local_ty(place.local)),
+                                TyKind::Int(IntTy::U8 | IntTy::U16 | IntTy::U32)
+                            )
+                        } else {
+                            false
+                        };
+                        if src_unsigned {
+                            builder.ins().uextend(d, src_v)
+                        } else {
+                            builder.ins().sextend(d, src_v)
+                        }
                     } else if d.bits() < s.bits() {
                         builder.ins().ireduce(d, src_v)
                     } else {
@@ -7810,9 +8497,11 @@ fn lower_rvalue(
             // `a[i].f` projects correctly.
             //
             // Structs (`AggregateKind::Adt`) with struct variant
-            // shapes use the same flat layout — the field order
-            // matches the ADT declaration. Enum variant payloads
-            // are not yet distinguished (no discriminant slot).
+            // shapes use the flat-slot layout where every nested
+            // struct/tuple field expands inline — the running byte
+            // offset is summed from `type_slot_count` of each prior
+            // operand's source, so `outer.tag` lands past the
+            // embedded `inner` instead of overlapping it.
             let elem_slots: u32 = match kind {
                 gossamer_mir::AggregateKind::Array => operands.first().map_or(1, |op| {
                     if let Operand::Copy(place) = op {
@@ -7827,9 +8516,74 @@ fn lower_rvalue(
                 }),
                 _ => 1,
             };
+            // Pre-compute per-operand slot widths for ADT/Tuple
+            // aggregates. These drive both the total allocation
+            // size and the running destination offset for each
+            // field's store/memcpy below.
+            let operand_slot_widths: Vec<u32> = match kind {
+                gossamer_mir::AggregateKind::Adt { def, .. } => {
+                    let from_tcx = tcx.struct_field_tys(*def).map(|tys| {
+                        tys.iter()
+                            .map(|t| type_slot_count(tcx, *t))
+                            .collect::<Vec<_>>()
+                    });
+                    if let Some(widths) = from_tcx {
+                        // Pad with 1-slot defaults if MIR provides
+                        // more operands than the registered field
+                        // list (defensive).
+                        let mut widths = widths;
+                        while widths.len() < operands.len() {
+                            widths.push(1);
+                        }
+                        widths
+                    } else {
+                        operands
+                            .iter()
+                            .map(|op| match op {
+                                Operand::Copy(place) if place.projection.is_empty() => intrinsics
+                                    .local_slots
+                                    .get(&place.local)
+                                    .copied()
+                                    .or_else(|| {
+                                        let ty = body.local_ty(place.local);
+                                        let n = type_slot_count(tcx, ty);
+                                        if n > 1 { Some(n) } else { None }
+                                    })
+                                    .unwrap_or(1),
+                                Operand::Copy(place) => {
+                                    let leaf = resolve_place_ty(tcx, body, place);
+                                    type_slot_count(tcx, leaf).max(1)
+                                }
+                                _ => 1,
+                            })
+                            .collect()
+                    }
+                }
+                gossamer_mir::AggregateKind::Tuple => operands
+                    .iter()
+                    .map(|op| match op {
+                        Operand::Copy(place) if place.projection.is_empty() => intrinsics
+                            .local_slots
+                            .get(&place.local)
+                            .copied()
+                            .or_else(|| {
+                                let ty = body.local_ty(place.local);
+                                let n = type_slot_count(tcx, ty);
+                                if n > 1 { Some(n) } else { None }
+                            })
+                            .unwrap_or(1),
+                        Operand::Copy(place) => {
+                            let leaf = resolve_place_ty(tcx, body, place);
+                            type_slot_count(tcx, leaf).max(1)
+                        }
+                        _ => 1,
+                    })
+                    .collect(),
+                gossamer_mir::AggregateKind::Array => Vec::new(),
+            };
             let total_slots: u32 = match kind {
                 gossamer_mir::AggregateKind::Array => (operands.len() as u32) * elem_slots,
-                _ => operands.len() as u32,
+                _ => operand_slot_widths.iter().copied().sum::<u32>().max(1),
             };
             let size = total_slots * 8;
             let ptr_ty = module.target_config().pointer_type();
@@ -7850,6 +8604,10 @@ fn lower_rvalue(
             let size_val = builder.ins().iconst(ptr_ty, i64::from(size.max(8)));
             let alloc_call = builder.ins().call(calloc_ref, &[count, size_val]);
             let base = builder.inst_results(alloc_call)[0];
+            // Running destination offset (in bytes) for ADT/Tuple
+            // aggregates so each prior nested struct's full slot
+            // span shifts subsequent fields past its layout.
+            let mut running_dst_off: u32 = 0;
             for (i, operand) in operands.iter().enumerate() {
                 // A `Copy(local)` operand whose source local is a
                 // pointer-to-aggregate (has `local_slots` metadata)
@@ -7863,12 +8621,25 @@ fn lower_rvalue(
                     Operand::Copy(place) if place.projection.is_empty() => {
                         intrinsics.local_slots.get(&place.local).copied()
                     }
+                    Operand::Copy(place) => {
+                        // Projected read of a multi-slot field
+                        // (`..base` filling): the read returns the
+                        // field's address; copy its slot span into
+                        // the new aggregate's slot.
+                        let leaf = resolve_place_ty(tcx, body, place);
+                        let count = type_slot_count(tcx, leaf);
+                        if count > 1 { Some(count) } else { None }
+                    }
                     _ => None,
                 };
                 let dst_off = match kind {
                     gossamer_mir::AggregateKind::Array => (i as u32) * elem_slots * 8,
-                    _ => (i as u32) * 8,
+                    _ => running_dst_off,
                 };
+                if !matches!(kind, gossamer_mir::AggregateKind::Array) {
+                    let width = operand_slot_widths.get(i).copied().unwrap_or(1).max(1);
+                    running_dst_off = running_dst_off.saturating_add(width * 8);
+                }
                 if let Some(copy_slots) = operand_aggregate_slots {
                     let src = lower_operand(
                         module, builder, locals, body, tcx, operand, None, intrinsics,
@@ -8080,6 +8851,17 @@ fn lower_place_read(
         return Ok(builder.use_var(var));
     }
     let addr = lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?;
+    // When the projected leaf is itself a multi-slot aggregate
+    // (struct/tuple/array embedded inline), return the field's
+    // address rather than reading a single i64 word. The receiving
+    // local treats the value as a pointer-to-aggregate and walks
+    // further projections off of it; loading would collapse the
+    // sub-struct to its first slot and segfault on any subsequent
+    // `Field`/`Index` step.
+    let leaf_ty_mir = resolve_place_ty(tcx, body, place);
+    if type_slot_count(tcx, leaf_ty_mir) > 1 {
+        return Ok(addr);
+    }
     let leaf_ty = resolve_place_cl_type(tcx, body, place, module, hint);
     // Use plain `MemFlags::new()` instead of `trusted()` — without
     // it cranelift's alias analysis was load-CSEing reads across
@@ -8179,6 +8961,19 @@ fn lower_binop(
         } else if a_ty == types::F64 && b_ty == types::I64 {
             b = builder.ins().bitcast(types::F64, ir::MemFlags::new(), b);
             b_ty = types::F64;
+        } else if a_ty.is_int() && b_ty.is_int() {
+            // Integer width mismatch: extend the narrower side up
+            // to the wider one. Common cause is a closure capture
+            // whose env-stored value was loaded with a wider type
+            // than its source bool/i8 width — `if pred(x)` or a
+            // comparison whose other operand is a full i64.
+            if a_ty.bits() < b_ty.bits() {
+                a = builder.ins().sextend(b_ty, a);
+                a_ty = b_ty;
+            } else {
+                b = builder.ins().sextend(a_ty, b);
+                b_ty = a_ty;
+            }
         } else {
             bail!("native codegen: binop operand type mismatch (op={op:?}, {a_ty:?} vs {b_ty:?})");
         }
@@ -8252,6 +9047,137 @@ fn fcmp_bool(
     b: ir::Value,
 ) -> ir::Value {
     builder.ins().fcmp(cc, a, b)
+}
+
+/// Parses a single shape character produced by the MIR's
+/// `mangle_callable_shape` into the cranelift type the thunk
+/// uses for that slot. Pointer-shaped slots resolve to the
+/// target's pointer type (`I64` on 64-bit hosts, `I32` on 32-bit
+/// hosts) so cross-compilation works without further plumbing.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "kept by-value to match the upcoming arena-pinned cl-type variant"
+)]
+fn shape_char_to_cl_type(c: char, _ptr_ty: ir::Type) -> Option<ir::Type> {
+    Some(match c {
+        'b' | 'y' => types::I8,
+        'k' => types::I16,
+        'c' | 'j' => types::I32,
+        'i' => types::I64,
+        'f' => types::F64,
+        'g' => types::F32,
+        'u' => types::I64,
+        _ => return None,
+    })
+}
+
+/// Defines a per-shape callable thunk function in the cranelift
+/// module. The thunk takes `(env: ptr, args...)` matching the
+/// FnTrait sig and forwards typed args to the real function at
+/// `env + 8` via `call_indirect` with the correct calling
+/// convention.
+///
+/// Replaces the earlier mono-i64 `gos_rt_fn_tramp_N` runtime
+/// trampolines, which silently mishandled f64 / bool / aggregate
+/// arguments and returns. Each unique shape used in the program
+/// gets one thunk; the cache key is the thunk's name (already
+/// shape-encoded by `mangle_callable_shape`).
+fn define_shape_thunk(
+    module: &mut dyn Module,
+    intrinsics: &mut IntrinsicContext,
+    name: &str,
+) -> Result<FuncId> {
+    let ptr_ty = module.target_config().pointer_type();
+    // Parse the shape encoding: `__fn_thunk_<inputs>_<ret>`.
+    let suffix = name
+        .strip_prefix("__fn_thunk_")
+        .ok_or_else(|| anyhow!("define_shape_thunk: bad name `{name}`"))?;
+    let mut split = suffix.rsplitn(2, '_');
+    let ret_str = split
+        .next()
+        .ok_or_else(|| anyhow!("define_shape_thunk: missing ret in `{name}`"))?;
+    let inputs_str = split
+        .next()
+        .ok_or_else(|| anyhow!("define_shape_thunk: missing inputs in `{name}`"))?;
+    let mut input_tys: Vec<ir::Type> = Vec::with_capacity(inputs_str.len());
+    for c in inputs_str.chars() {
+        let t = shape_char_to_cl_type(c, ptr_ty)
+            .ok_or_else(|| anyhow!("define_shape_thunk: unknown shape char `{c}` in `{name}`"))?;
+        input_tys.push(t);
+    }
+    let ret_char = ret_str
+        .chars()
+        .next()
+        .ok_or_else(|| anyhow!("define_shape_thunk: empty ret in `{name}`"))?;
+    let ret_ty = shape_char_to_cl_type(ret_char, ptr_ty)
+        .ok_or_else(|| anyhow!("define_shape_thunk: unknown ret shape `{ret_char}` in `{name}`"))?;
+    let unit_ret = ret_char == 'u';
+    // Thunk signature: (env: ptr, typed args...) -> typed ret.
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(ptr_ty));
+    for t in &input_tys {
+        sig.params.push(AbiParam::new(*t));
+    }
+    if !unit_ret {
+        sig.returns.push(AbiParam::new(ret_ty));
+    }
+    let static_name: &'static str = Box::leak(name.to_string().into_boxed_str());
+    let thunk_id = module
+        .declare_function(static_name, Linkage::Local, &sig)
+        .map_err(|e| anyhow!("declare {static_name}: {e}"))?;
+    intrinsics.functions.insert(name.to_string(), thunk_id);
+    let mut func = Function::with_name_signature(UserFuncName::user(0, thunk_id.as_u32()), sig);
+    let mut fb_ctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut func, &mut fb_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let env_param = builder.block_params(entry)[0];
+        let mut arg_values: Vec<ir::Value> = Vec::with_capacity(input_tys.len());
+        for i in 0..input_tys.len() {
+            arg_values.push(builder.block_params(entry)[i + 1]);
+        }
+        // Load the real fn address from env + 8.
+        let real_fn_ptr = builder.ins().load(
+            ptr_ty,
+            MemFlags::trusted(),
+            env_param,
+            ir::immediates::Offset32::new(8),
+        );
+        // Build the call_indirect signature with the actual typed
+        // args / return — no env, since the real fn is a bare fn
+        // item that doesn't take an environment.
+        let mut call_sig = module.make_signature();
+        for t in &input_tys {
+            call_sig.params.push(AbiParam::new(*t));
+        }
+        if !unit_ret {
+            call_sig.returns.push(AbiParam::new(ret_ty));
+        }
+        let sig_ref = builder.import_signature(call_sig);
+        let call = builder
+            .ins()
+            .call_indirect(sig_ref, real_fn_ptr, &arg_values);
+        if unit_ret {
+            builder.ins().return_(&[]);
+        } else {
+            let ret = builder.inst_results(call).first().copied();
+            if let Some(v) = ret {
+                builder.ins().return_(&[v]);
+            } else {
+                let zero = builder.ins().iconst(ret_ty, 0);
+                builder.ins().return_(&[zero]);
+            }
+        }
+        builder.seal_all_blocks();
+        builder.finalize();
+    }
+    let mut ctx = Context::for_function(func);
+    module
+        .define_function(thunk_id, &mut ctx)
+        .map_err(|e| anyhow!("define {static_name}: {e}"))?;
+    Ok(thunk_id)
 }
 
 /// Emits a C-ABI `main(i32, **i8) -> i32` that calls the Gossamer

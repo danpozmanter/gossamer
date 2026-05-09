@@ -42,6 +42,16 @@
 // remain `static mut`; the lint flags every read but the contract
 // is documented at each declaration.
 #![allow(static_mut_refs)]
+// Several runtime helpers were `unsafe extern "C"` because they
+// touched the (now-retired) bump arena's thread-local, mutated
+// `Box::into_raw`-leaked storage, or wrapped `Vec::from_raw_parts`
+// reclamation. The migration to `Box::into_raw`-only allocation
+// (fix_architecture_ownership.md Stage 4) made several call paths
+// safe at the function level — `gos_rt_result_new` is the
+// loudest. Keep the existing `unsafe { ... }` wrappers in callers
+// for now; the rustc warning is silenced here so the lint comes
+// back when we tighten the fn-level `unsafe` story (Stage 6).
+#![allow(unused_unsafe)]
 
 use std::ffi::CStr;
 use std::io::{BufRead, Read, Write};
@@ -55,15 +65,24 @@ use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 //
 // `os::args()` is supposed to behave like a `Vec<String>`:
 // `.len()` is the user-arg count and `args[i]` is the i-th user
-// arg as a String. We map that to the flat codegen's stride-8
-// indexing by returning `argv + 1` (the pointer just past
-// `argv[0]`), so a Place projection with stride 8 reads the
-// successive `char*` entries directly. `gos_rt_arr_len` detects
-// this exact pointer and returns `argc - 1` rather than reading
-// garbage through it.
+// arg as a String. We expose two views:
+//
+//   - the raw `argv + 1` pointer, stored in `ARGS_PTR`, used by
+//     the flat-codegen Place projection with stride 8 (the
+//     legacy Var-typed callers); `gos_rt_arr_len` detects that
+//     pointer and short-circuits to `argc - 1`.
+//   - a real `*mut GosVec` whose backing `ptr` is `argv + 1` and
+//     whose `len`/`cap` are `argc - 1`, returned by
+//     `gos_rt_os_args` itself. Pinning `os::args()` to
+//     `Vec<String>` at MIR lowering then makes `args[i].len()`
+//     dispatch through `gos_rt_str_len` instead of falling into
+//     the generic `gos_rt_len` (which reads a Vec header out of
+//     a `*const c_char` pointer and crashes when the leading
+//     bytes don't form a valid length).
 
 static ARGS_PTR: AtomicUsize = AtomicUsize::new(0);
 static ARGS_LEN: AtomicI64 = AtomicI64::new(0);
+static ARGS_VEC: AtomicUsize = AtomicUsize::new(0);
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char) {
@@ -72,11 +91,31 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
         // argc > 0. `argv + 1` therefore addresses `argc - 1`
         // strings.
         let user_argv = unsafe { argv.add(1) };
+        let len = i64::from(argc - 1);
         ARGS_PTR.store(user_argv as usize, Ordering::SeqCst);
-        ARGS_LEN.store(i64::from(argc - 1), Ordering::SeqCst);
+        ARGS_LEN.store(len, Ordering::SeqCst);
+        // Expose `os::args()` as a real `*mut GosVec` so the
+        // compiled tier can index it with the standard
+        // `header.ptr + i * elem_bytes` shape and dispatch
+        // `args[i].len()` to `gos_rt_str_len` once `os::args`'s
+        // return type is pinned to `Vec<String>`.
+        //
+        // `cap = 0` marks the data buffer as borrowed (libc owns
+        // `argv`), so `gos_rt_vec_free` skips its dealloc arm
+        // when GC sweep walks across this header — `len` alone is
+        // enough for `args.len()` (read at offset 0) and indexing
+        // (which only touches `ptr` and `elem_bytes`).
+        let vec = Box::into_raw(Box::new(GosVec {
+            len,
+            cap: 0,
+            elem_bytes: 8,
+            ptr: user_argv as *mut u8,
+        }));
+        ARGS_VEC.store(vec as usize, Ordering::SeqCst);
     } else {
         ARGS_PTR.store(0, Ordering::SeqCst);
         ARGS_LEN.store(0, Ordering::SeqCst);
+        ARGS_VEC.store(0, Ordering::SeqCst);
     }
     // Initialise the Rust runtime's per-process state. The
     // Cranelift-emitted `main` shim is a plain
@@ -149,13 +188,17 @@ fn runtime_init() {
     });
 }
 
-/// Returns the pointer to the first user-passed argument. A
-/// Place projection with stride 8 reads successive strings
-/// through it; `.len()` routes to `gos_rt_arr_len` which
-/// short-circuits on this exact pointer.
+/// Returns a `*mut GosVec` view of the user arguments. The
+/// header's `ptr` is `argv + 1` and `len`/`cap` are `argc - 1`,
+/// so `args.len()` dispatches through `gos_rt_arr_len` (reading
+/// `len` at offset 0) and `args[i]` reads the i-th `*const c_char`
+/// through the GosVec `ptr` field — same shape as any other
+/// `Vec<String>`. `gos_rt_arr_len`'s legacy `argv + 1` sentinel
+/// short-circuit is retained for callers that still hold the raw
+/// pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_os_args() -> *const c_char {
-    ARGS_PTR.load(Ordering::SeqCst) as *const c_char
+pub unsafe extern "C" fn gos_rt_os_args() -> *mut GosVec {
+    ARGS_VEC.load(Ordering::SeqCst) as *mut GosVec
 }
 
 /// `os::env(name) -> Option<String>`. Compiled tier returns a
@@ -258,6 +301,175 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> *mut GosResu
     unsafe { gos_rt_result_new(0, out as i64) }
 }
 
+/// `fs::walk_dir(root) -> Result<[DirInfo], errors::Error>`.
+/// Recursive descendant walk. Same DirInfo shape as `fs::list_dir`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> *mut GosResult {
+    let root = if path.is_null() {
+        ".".to_string()
+    } else {
+        unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+    };
+    let out = unsafe { gos_rt_vec_new(8) };
+    let mut stack: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(&root)];
+    while let Some(dir) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut entries: Vec<std::fs::DirEntry> = read.flatten().collect();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let Ok(meta) = entry.metadata() else { continue };
+            let Ok(ft) = entry.file_type() else { continue };
+            let name_str = entry.file_name().to_string_lossy().into_owned();
+            let path_buf = entry.path();
+            let path_str = path_buf.to_string_lossy().into_owned();
+            let name_cs = alloc_cstring(name_str.as_bytes()) as i64;
+            let path_cs = alloc_cstring(path_str.as_bytes()) as i64;
+            let is_file = i64::from(ft.is_file());
+            let is_dir = i64::from(ft.is_dir());
+            let is_symlink = i64::from(ft.is_symlink());
+            let size = i64::try_from(meta.len()).unwrap_or(0);
+            let modified_ms = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|d| i64::try_from(d.as_millis()).ok())
+                .unwrap_or(0);
+            let layout = std::alloc::Layout::from_size_align(56, 8).unwrap();
+            let blob = unsafe { std::alloc::alloc(layout) as *mut i64 };
+            if blob.is_null() {
+                continue;
+            }
+            unsafe {
+                *blob.add(0) = name_cs;
+                *blob.add(1) = path_cs;
+                *blob.add(2) = is_file;
+                *blob.add(3) = is_dir;
+                *blob.add(4) = is_symlink;
+                *blob.add(5) = size;
+                *blob.add(6) = modified_ms;
+            }
+            let entry_val = blob as i64;
+            unsafe {
+                gos_rt_vec_push(out, std::ptr::addr_of!(entry_val).cast::<u8>());
+            }
+            if is_dir == 1 && is_symlink == 0 {
+                stack.push(path_buf);
+            }
+        }
+    }
+    unsafe { gos_rt_result_new(0, out as i64) }
+}
+
+/// `os::exists(path) -> bool`. Returns 1 when `path` names an
+/// existing filesystem entry, 0 otherwise. Returns i64 so that
+/// Cranelift / LLVM callers receive a full-width integer rather
+/// than an i8 that gets garbage in the upper bits.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_exists(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    i64::from(std::path::Path::new(&p).exists())
+}
+
+/// `os::is_file(path) -> bool` / `fs::is_file(path) -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_is_file(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    i64::from(std::fs::metadata(&p).is_ok_and(|m| m.is_file()))
+}
+
+/// `os::is_dir(path) -> bool` / `fs::is_dir(path) -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_is_dir(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    i64::from(std::fs::metadata(&p).is_ok_and(|m| m.is_dir()))
+}
+
+/// `exec::run(prog, args) -> Result<Output, errors::Error>`.
+///
+/// Spawns `prog` with `args` (a `Vec<String>` whose backing storage
+/// is a tight array of `*const c_char`), captures stdout/stderr,
+/// and waits for completion.
+///
+/// Ok payload is a 3-slot heap aggregate matching the MIR field
+/// order registered in `stdlib_struct_shapes`:
+/// `[stdout: *c_char, stderr: *c_char, code: i64]`. Err payload is
+/// a `*mut GosError` so callers can `.map_err(|e| errors::wrap(e,
+/// ...))` without a hand-rolled string-to-error coercion.
+///
+/// Without this binding, the MIR layer would fall through to a
+/// generic free-call dispatch that emits a call to a non-existent
+/// symbol; cranelift / LLVM then either drop the call entirely or
+/// stash a garbage pointer in the destination, and the caller
+/// dereferences it as a Result aggregate — the visible symptom is
+/// either a plain segfault or `memory allocation of <huge> bytes
+/// failed` when the runtime treats the random pointer as a
+/// length-prefixed buffer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec) -> *mut GosResult {
+    let prog_str = if prog.is_null() {
+        let cs = std::ffi::CString::new("exec::run: program is null").unwrap_or_default();
+        let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+        return unsafe { gos_rt_result_new(1, err as i64) };
+    } else {
+        unsafe { CStr::from_ptr(prog).to_string_lossy().into_owned() }
+    };
+    let mut cmd_args: Vec<String> = Vec::new();
+    if !args.is_null() {
+        let v = unsafe { &*args };
+        let elem_bytes = v.elem_bytes as usize;
+        if elem_bytes != 0 && !v.ptr.is_null() {
+            for i in 0..v.len {
+                let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
+                let cstr_ptr = unsafe { (slot as *const *const c_char).read_unaligned() };
+                if cstr_ptr.is_null() {
+                    cmd_args.push(String::new());
+                    continue;
+                }
+                let arg_str = unsafe { CStr::from_ptr(cstr_ptr).to_string_lossy().into_owned() };
+                cmd_args.push(arg_str);
+            }
+        }
+    }
+    let mut command = std::process::Command::new(&prog_str);
+    command.args(&cmd_args);
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    match command.output() {
+        Ok(out) => {
+            let stdout_str = String::from_utf8_lossy(&out.stdout).into_owned();
+            let stderr_str = String::from_utf8_lossy(&out.stderr).into_owned();
+            let code = i64::from(out.status.code().unwrap_or(-1));
+            let stdout_cs = alloc_cstring(stdout_str.as_bytes()) as i64;
+            let stderr_cs = alloc_cstring(stderr_str.as_bytes()) as i64;
+            // Output struct laid out as `[stdout: i64, stderr: i64,
+            // code: i64]` (3 × 8 B). Box-allocated so the pointer
+            // shares the global allocator domain with every other
+            // helper-returned aggregate; previously the arena
+            // backed this and an LLVM `arena_restore` could rewind
+            // the watermark while the caller still held the blob.
+            let blob = Box::into_raw(Box::new([stdout_cs, stderr_cs, code])).cast::<i64>();
+            gos_rt_result_new(0, blob as i64)
+        }
+        Err(e) => {
+            let msg = format!("exec::run({prog_str}): {e}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            unsafe { gos_rt_result_new(1, err as i64) }
+        }
+    }
+}
+
 // ---------------------------------------------------------------
 // Array/Vec/Generic len — first i64 of the passed buffer is len
 // ---------------------------------------------------------------
@@ -309,23 +521,19 @@ fn alloc_cstring(s: &[u8]) -> *mut c_char {
     // Pick the first NUL (if any) so we never copy past it.
     let nul = s.iter().position(|&b| b == 0).unwrap_or(s.len());
     let len = nul;
-    // SAFETY: `gos_rt_gc_alloc` returns a pointer into a
-    // thread-local arena sized for `len + 1` bytes; we write the
-    // payload + trailing NUL and return the arena pointer. Freed
-    // en bloc by `gos_rt_gc_reset`.
-    unsafe {
-        let raw = gos_rt_gc_alloc((len + 1) as u64);
-        if raw.is_null() {
-            // Arena exhausted (shouldn't happen under the current
-            // bump allocator). Fall back to a leaky Box.
-            let mut v = s[..len].to_vec();
-            v.push(0);
-            return Box::into_raw(v.into_boxed_slice()).cast::<c_char>();
-        }
-        std::ptr::copy_nonoverlapping(s.as_ptr(), raw, len);
-        *raw.add(len) = 0;
-        raw.cast::<c_char>()
-    }
+    // Heap-allocate via `Box<[u8]>::into_raw` so the c-string lives
+    // in the global allocator's domain (single ownership domain
+    // across the runtime — see
+    // `~/dev/contexts/lang/fix_architecture_ownership.md` Stage 4).
+    // Previously `gos_rt_gc_alloc` returned a bump-arena interior
+    // pointer, which `gos_rt_arena_restore` (emitted by the LLVM
+    // codegen around aggregate-returning user fns) could
+    // invalidate while c-strings stored in `Vec<String>` slots
+    // were still live — silent dangling.
+    let mut v = Vec::with_capacity(len + 1);
+    v.extend_from_slice(&s[..len]);
+    v.push(0);
+    Box::into_raw(v.into_boxed_slice()).cast::<c_char>()
 }
 
 #[unsafe(no_mangle)]
@@ -350,43 +558,42 @@ pub unsafe extern "C" fn gos_rt_len_is_zero(p: *const i64) -> bool {
 /// `xs.to_vec()` so the result is independent of the source —
 /// without this, the previous identity lowering aliased the
 /// source buffer and mutations like `out.swap(i, j)` clobbered
-/// the caller's input. Header + data are arena-allocated; the
-/// next `gos_rt_gc_reset` reclaims them.
+/// the caller's input.
+///
+/// **Allocator domain:** the header is `Box::into_raw` and the
+/// data buffer is `Vec<u8>` (`Global`-allocated, then `forget`-ed),
+/// so the buffer matches the layout `gos_rt_vec_push` reconstructs
+/// via `Vec::from_raw_parts(...)` when the vec needs to grow. The
+/// previous version allocated both from the bump arena
+/// (`gos_rt_gc_alloc`); a subsequent push past `cap` would feed an
+/// arena interior pointer to the global allocator's deallocator, a
+/// cross-domain free that produced heisencrashes anywhere else in
+/// the runtime malloc'd next. See
+/// `~/dev/contexts/lang/fix_architecture_ownership.md` §3.1.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
     if src.is_null() {
         return unsafe { gos_rt_vec_new(8) };
     }
     let s = unsafe { &*src };
-    let header = unsafe { gos_rt_gc_alloc(std::mem::size_of::<GosVec>() as u64) };
-    if header.is_null() {
-        return unsafe { gos_rt_vec_new(s.elem_bytes) };
-    }
     let bytes = (s.len as usize) * (s.elem_bytes as usize);
-    let data = if bytes == 0 {
+    let data: *mut u8 = if bytes == 0 || s.ptr.is_null() {
         std::ptr::null_mut::<u8>()
     } else {
-        let p = unsafe { gos_rt_gc_alloc(bytes as u64) };
-        if !p.is_null() && !s.ptr.is_null() {
-            unsafe {
-                std::ptr::copy_nonoverlapping(s.ptr, p, bytes);
-            }
+        let mut buf: Vec<u8> = vec![0u8; bytes];
+        unsafe {
+            std::ptr::copy_nonoverlapping(s.ptr, buf.as_mut_ptr(), bytes);
         }
+        let p = buf.as_mut_ptr();
+        std::mem::forget(buf);
         p
     };
-    let v = header.cast::<GosVec>();
-    unsafe {
-        std::ptr::write(
-            v,
-            GosVec {
-                len: s.len,
-                cap: s.len,
-                elem_bytes: s.elem_bytes,
-                ptr: data,
-            },
-        );
-    }
-    v
+    Box::into_raw(Box::new(GosVec {
+        len: s.len,
+        cap: s.len,
+        elem_bytes: s.elem_bytes,
+        ptr: data,
+    }))
 }
 
 /// Materialises `s.as_bytes()` as a real `GosVec<u8>` so callees
@@ -447,6 +654,66 @@ pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
     // anyway.
     let byte = unsafe { *s.cast::<u8>().add(i as usize) };
     i64::from(byte)
+}
+
+/// `os::read_dir(path) -> Result<Vec<String>, errors::Error>` —
+/// returns the entry names under `path` as a `*mut GosVec` of
+/// `*const c_char`. Gossamer programs treat the call as
+/// fallible, but the MIR pin keeps it as a plain `Vec<String>`
+/// today (matching the interp's shape) — error cases land as an
+/// empty vec rather than a Result-shaped Adt.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_read_dir(path: *const c_char) -> *mut GosVec {
+    let p = if path.is_null() {
+        ".".to_string()
+    } else {
+        unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+    };
+    let entries: Vec<String> = match std::fs::read_dir(&p) {
+        Ok(it) => {
+            let mut names: Vec<String> = it
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        }
+        Err(_) => Vec::new(),
+    };
+    let out = unsafe { gos_rt_vec_new(8) };
+    for name in entries {
+        let cs = alloc_cstring(name.as_bytes()) as i64;
+        unsafe {
+            gos_rt_vec_push_i64(out, cs);
+        }
+    }
+    out
+}
+
+/// `s.substring(start, end)` — byte-range slice. Clamps `start`
+/// and `end` into `[0, len(s)]` and returns the indicated byte
+/// substring as a fresh `*mut c_char`. Mirrors the interp
+/// builtin so user code that calls `s.substring(a, b)` runs the
+/// same way under `gos run` and `gos build` — without this
+/// helper the compiled tier saw `s.substring(...)` as an
+/// undispatched method, fell through to a free-fn lookup, and
+/// resolved to a user-defined `pub fn substring` (askq's
+/// `util::substring` calls `s.substring` recursively, which then
+/// stack-overflowed instead of reaching the runtime slice).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_substring(
+    s: *const c_char,
+    start: i64,
+    end: i64,
+) -> *mut c_char {
+    if s.is_null() {
+        return alloc_cstring(b"");
+    }
+    let bytes = unsafe { CStr::from_ptr(s) }.to_bytes();
+    let len = bytes.len() as i64;
+    let lo = start.clamp(0, len) as usize;
+    let hi = end.clamp(0, len).max(start.clamp(0, len)) as usize;
+    alloc_cstring(&bytes[lo..hi])
 }
 
 #[unsafe(no_mangle)]
@@ -584,6 +851,26 @@ pub unsafe extern "C" fn gos_rt_str_find(s: *const c_char, needle: *const c_char
     -1
 }
 
+/// `s.find(needle) -> Option<i64>` packed as a `*mut GosResult`
+/// (`disc 0 = Some(idx)`, `disc 1 = None`). Wraps the raw i64
+/// `gos_rt_str_find` return so cranelift's match-on-Option
+/// lowering reads the right discriminant — the bare i64 form
+/// produces a Value the SwitchInt path always treats as Some
+/// because -1 doesn't correspond to either Some-disc (0) or
+/// None-disc (1).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_find_opt(
+    s: *const c_char,
+    needle: *const c_char,
+) -> *mut GosResult {
+    let idx = unsafe { gos_rt_str_find(s, needle) };
+    if idx < 0 {
+        unsafe { gos_rt_result_new(1, 0) }
+    } else {
+        unsafe { gos_rt_result_new(0, idx) }
+    }
+}
+
 /// `s == t` for string operands. Compares byte-for-byte. NULL
 /// pointers compare equal to empty strings.
 #[unsafe(no_mangle)]
@@ -599,6 +886,29 @@ pub unsafe extern "C" fn gos_rt_str_eq(a: *const c_char, b: *const c_char) -> bo
         unsafe { CStr::from_ptr(b).to_str() }.unwrap_or("")
     };
     a == b
+}
+
+/// Lexicographic ordering of two C strings. Returns negative / zero /
+/// positive like libc `strcmp`, but through Rust `Ord` so UTF-8 bytes
+/// compare correctly. Used by the compiled tier for `a < b`, `a > b`,
+/// etc. when both operands are `String` or `&String`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_compare(a: *const c_char, b: *const c_char) -> i32 {
+    let a = if a.is_null() {
+        b""
+    } else {
+        unsafe { CStr::from_ptr(a).to_bytes() }
+    };
+    let b = if b.is_null() {
+        b""
+    } else {
+        unsafe { CStr::from_ptr(b).to_bytes() }
+    };
+    match a.cmp(b) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -763,7 +1073,13 @@ pub unsafe extern "C" fn gos_rt_result_map_err(
     unsafe { gos_rt_result_new(1, new_payload) }
 }
 
-/// `result.map(closure)`.
+/// `result.map(closure)` for **capturing** closures whose lifted
+/// function follows the env-first ABI `extern "C" fn(env, payload)
+/// -> i64`. Non-capturing closures must dispatch through
+/// [`gos_rt_result_map_bare`] instead — they have no env slot, so
+/// passing one would shadow the payload arg and the closure would
+/// transform the env pointer instead of the payload (the askq
+/// round-2 corruption pre-fix).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_result_map(
     result: *mut GosResult,
@@ -783,6 +1099,45 @@ pub unsafe extern "C" fn gos_rt_result_map(
     let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
     let new_payload = f(closure as i64, res.payload);
     unsafe { gos_rt_result_new(0, new_payload) }
+}
+
+/// `result.map(closure)` for **non-capturing** closures whose
+/// lifted function follows the bare ABI `extern "C" fn(payload) ->
+/// i64` (no env slot — this is what `gossamer-hir::lift_closed`
+/// produces). The MIR call-site dispatch picks this entry point
+/// when the closure arg has a recorded `local_fn_name` (i.e. is
+/// a direct path to a lifted function rather than a heap-allocated
+/// env+code blob).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_map_bare(result: *mut GosResult, fn_addr: i64) -> *mut GosResult {
+    if result.is_null() {
+        return result;
+    }
+    let res = unsafe { &*result };
+    if res.disc != 0 || fn_addr == 0 {
+        return result;
+    }
+    let f: extern "C" fn(i64) -> i64 = unsafe { std::mem::transmute(fn_addr as *const ()) };
+    let new_payload = f(res.payload);
+    gos_rt_result_new(0, new_payload)
+}
+
+/// `result.map_err(closure)` for **non-capturing** closures.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_map_err_bare(
+    result: *mut GosResult,
+    fn_addr: i64,
+) -> *mut GosResult {
+    if result.is_null() {
+        return result;
+    }
+    let res = unsafe { &*result };
+    if res.disc == 0 || fn_addr == 0 {
+        return result;
+    }
+    let f: extern "C" fn(i64) -> i64 = unsafe { std::mem::transmute(fn_addr as *const ()) };
+    let new_payload = f(res.payload);
+    gos_rt_result_new(1, new_payload)
 }
 
 /// `*cell` for `flag::Set::string` cells.
@@ -1864,6 +2219,34 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
     }))
 }
 
+/// Converts a flat 2-level nested array `[Array{T,inner_len}; outer_len]` into
+/// a `Vec<*mut GosVec>` where every inner flat array has been promoted to a
+/// heap-allocated `GosVec`. Needed when a `[[T]]` literal is coerced at a
+/// call site that expects `Vec<Vec<T>>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_nested_arr_to_vec(
+    inner_elem_bytes: i64,
+    inner_len: i64,
+    raw: *const u8,
+    outer_len: i64,
+) -> *mut GosVec {
+    // Outer Vec holds pointer-sized elements (*mut GosVec).
+    let outer = unsafe { gos_rt_vec_new(8) };
+    if raw.is_null() || outer_len <= 0 || inner_len <= 0 || inner_elem_bytes <= 0 {
+        return outer;
+    }
+    let stride = (inner_len as usize) * (inner_elem_bytes as usize);
+    for i in 0..(outer_len as usize) {
+        let inner_raw = unsafe { raw.add(i * stride) };
+        let inner_vec =
+            unsafe { gos_rt_vec_from_arr(inner_elem_bytes as u32, inner_raw, inner_len) };
+        let inner_ptr_i64 = inner_vec as i64;
+        let bytes = inner_ptr_i64.to_ne_bytes();
+        unsafe { gos_rt_vec_push(outer, bytes.as_ptr()) };
+    }
+    outer
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_len(v: *const GosVec) -> i64 {
     if v.is_null() {
@@ -1900,7 +2283,10 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
         if !vec.ptr.is_null() && old_bytes > 0 {
             unsafe {
                 std::ptr::copy_nonoverlapping(vec.ptr, buf.as_mut_ptr(), old_bytes);
-                // drop old allocation
+                // drop old allocation — sound only if `vec.ptr` was
+                // allocated through `Vec<u8>::Global`. Every helper
+                // that writes `vec.ptr` does so through that domain
+                // (see fix_architecture_ownership.md Stage 1.a).
                 Vec::from_raw_parts(vec.ptr, old_bytes, old_bytes);
             }
         }
@@ -1937,26 +2323,18 @@ unsafe impl Send for GosResult {}
 unsafe impl Sync for GosResult {}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_new(disc: i64, payload: i64) -> *mut GosResult {
-    // Arena-allocate so per-request results don't leak. The web
-    // server's bench loop produces 100k+ Result handles per
-    // second — Box::into_raw + leak grows RSS without bound.
-    // `gos_rt_gc_reset` at the end of each request reclaims the
-    // arena bytes; the GosHttpResponse referenced by `payload`
-    // is still Box-allocated and freed via `drop_handler_result`.
-    // The arena now 8-byte aligns allocations of size >= 8 bytes
-    // (see `gos_rt_gc_alloc`), so casting the returned `*mut u8`
-    // to `*mut GosResult` (16 B, align 8) is safe. The clippy
-    // alignment lint can't see the runtime invariant from the
-    // bare cast site.
-    let p = unsafe { gos_rt_gc_alloc(std::mem::size_of::<GosResult>() as u64) }.cast::<GosResult>();
-    if p.is_null() {
-        return Box::into_raw(Box::new(GosResult { disc, payload }));
-    }
-    unsafe {
-        std::ptr::write(p, GosResult { disc, payload });
-    }
-    p
+pub extern "C" fn gos_rt_result_new(disc: i64, payload: i64) -> *mut GosResult {
+    // `Box::into_raw` — single ownership domain across every
+    // runtime helper. Previously the bump arena (`gos_rt_gc_alloc`)
+    // backed this; the LLVM codegen's
+    // `arena_save`/`arena_restore` could rewind the watermark
+    // while a `*mut GosResult` was still live in caller code,
+    // producing a dangling pointer that crashed at random sites
+    // when the next allocator request reused the freed bytes.
+    // See `~/dev/contexts/lang/fix_architecture_ownership.md`
+    // Stage 4. Per-request leaks are reclaimed by the global GC
+    // on a future cycle, not by arena reset.
+    Box::into_raw(Box::new(GosResult { disc, payload }))
 }
 
 #[unsafe(no_mangle)]
@@ -2033,6 +2411,23 @@ pub unsafe extern "C" fn gos_rt_result_err(p: *const GosResult) -> i64 {
     }
     let r = unsafe { &*p };
     if r.disc == 1 { r.payload } else { 0 }
+}
+
+/// `result.ok_or(new_err)`. On Ok, returns the receiver unchanged;
+/// on Err, returns a new Result with `new_err` as the payload.
+/// Lets `parse().ok_or("not a number".to_string())?` replace the
+/// raw ParseError with a domain-meaningful message.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_ok_or(p: *mut GosResult, new_err: i64) -> *mut GosResult {
+    if p.is_null() {
+        return unsafe { gos_rt_result_new(1, new_err) };
+    }
+    let r = unsafe { &*p };
+    if r.disc == 0 {
+        p
+    } else {
+        unsafe { gos_rt_result_new(1, new_err) }
+    }
 }
 
 /// `result.is_ok()` / `option.is_some()`. Returns 1 on Ok/Some,
@@ -2138,33 +2533,33 @@ pub unsafe extern "C" fn gos_rt_set_new() -> *mut GosSet {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_set_insert(s: *mut GosSet, key: *const c_char) -> bool {
+pub unsafe extern "C" fn gos_rt_set_insert(s: *mut GosSet, key: *const c_char) -> i64 {
     if s.is_null() || key.is_null() {
-        return false;
+        return 0;
     }
     let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
     let s = unsafe { &mut *s };
-    s.inner.insert(k)
+    i64::from(s.inner.insert(k))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_set_contains(s: *const GosSet, key: *const c_char) -> bool {
+pub unsafe extern "C" fn gos_rt_set_contains(s: *const GosSet, key: *const c_char) -> i64 {
     if s.is_null() || key.is_null() {
-        return false;
+        return 0;
     }
     let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
     let s = unsafe { &*s };
-    s.inner.contains(&k)
+    i64::from(s.inner.contains(&k))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_set_remove(s: *mut GosSet, key: *const c_char) -> bool {
+pub unsafe extern "C" fn gos_rt_set_remove(s: *mut GosSet, key: *const c_char) -> i64 {
     if s.is_null() || key.is_null() {
-        return false;
+        return 0;
     }
     let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
     let s = unsafe { &mut *s };
-    s.inner.remove(&k)
+    i64::from(s.inner.remove(&k))
 }
 
 #[unsafe(no_mangle)]
@@ -2334,14 +2729,9 @@ pub unsafe extern "C" fn gos_rt_vec_format_string(v: *const GosVec) -> *mut c_ch
         }
         let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
         let s_ptr = unsafe { (p as *const *const c_char).read_unaligned() };
-        if s_ptr.is_null() {
-            out.push_str("\"\"");
-        } else {
+        if !s_ptr.is_null() {
             let cs = unsafe { std::ffi::CStr::from_ptr(s_ptr) };
-            let payload = cs.to_string_lossy();
-            out.push('"');
-            out.push_str(&payload);
-            out.push('"');
+            out.push_str(&cs.to_string_lossy());
         }
     }
     out.push(']');
@@ -2380,6 +2770,332 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_c
     }
     out.push(']');
     alloc_cstring(out.as_bytes())
+}
+
+/// Renders a flat `[i64; N]` raw buffer as `[v0, v1, …]`. Used by
+/// the print/format dispatch for fixed-size array literals
+/// (`let xs = [a, b, c]`) whose storage is a flat heap blob, not a
+/// `GosVec` with a header. Each element occupies one i64 slot
+/// regardless of platform pointer width.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_format_i64(p: *const i64, len: i64) -> *mut c_char {
+    if p.is_null() || len <= 0 {
+        return alloc_cstring(b"[]");
+    }
+    let len_usize = len.max(0) as usize;
+    let mut out = String::with_capacity(2 + len_usize * 4);
+    out.push('[');
+    for i in 0..len_usize {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let n = unsafe { p.add(i).read_unaligned() };
+        out.push_str(&format!("{n}"));
+    }
+    out.push(']');
+    alloc_cstring(out.as_bytes())
+}
+
+/// Renders a flat `[f64; N]` raw buffer. Layout: each element is
+/// stored at an 8-byte stride; we read the raw word as f64.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_format_f64(p: *const f64, len: i64) -> *mut c_char {
+    if p.is_null() || len <= 0 {
+        return alloc_cstring(b"[]");
+    }
+    let len_usize = len.max(0) as usize;
+    let mut out = String::with_capacity(2 + len_usize * 6);
+    out.push('[');
+    for i in 0..len_usize {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let n = unsafe { p.add(i).read_unaligned() };
+        out.push_str(&format!("{n}"));
+    }
+    out.push(']');
+    alloc_cstring(out.as_bytes())
+}
+
+/// Renders a flat `[bool; N]` raw buffer. Each element is one
+/// 8-byte slot; the low byte is the bool.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_format_bool(p: *const i64, len: i64) -> *mut c_char {
+    if p.is_null() || len <= 0 {
+        return alloc_cstring(b"[]");
+    }
+    let len_usize = len.max(0) as usize;
+    let mut out = String::with_capacity(2 + len_usize * 6);
+    out.push('[');
+    for i in 0..len_usize {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let raw = unsafe { p.add(i).read_unaligned() };
+        out.push_str(if raw & 1 != 0 { "true" } else { "false" });
+    }
+    out.push(']');
+    alloc_cstring(out.as_bytes())
+}
+
+/// Renders a flat `[String; N]` raw buffer. Each element is a
+/// pointer to a NUL-terminated c-string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_format_string(
+    p: *const *const c_char,
+    len: i64,
+) -> *mut c_char {
+    if p.is_null() || len <= 0 {
+        return alloc_cstring(b"[]");
+    }
+    let len_usize = len.max(0) as usize;
+    let mut out = String::with_capacity(2 + len_usize * 8);
+    out.push('[');
+    for i in 0..len_usize {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let s_ptr = unsafe { p.add(i).read_unaligned() };
+        if !s_ptr.is_null() {
+            let cs = unsafe { std::ffi::CStr::from_ptr(s_ptr) };
+            out.push_str(&cs.to_string_lossy());
+        }
+    }
+    out.push(']');
+    alloc_cstring(out.as_bytes())
+}
+
+/// `os::set_env(name, value) -> Result<(), errors::Error>`.
+///
+/// Mutates the calling process's environment so subsequently
+/// spawned children inherit the new value. Routes through
+/// `safe_env::set_env`, which serializes the POSIX `setenv`
+/// against the rest of the runtime so concurrent goroutines
+/// can't race on the env block.
+///
+/// MIR-side dispatch routes `os::set_env(...)` here so the
+/// compiled tier matches the VM's behaviour. Without this binding
+/// `os::set_env` lowered to a generic call against a non-existent
+/// symbol — the compiled tier silently no-op'd, and downstream
+/// `os::env(name)` returned the old value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_set_env(
+    name: *const c_char,
+    value: *const c_char,
+) -> *mut GosResult {
+    if name.is_null() {
+        let cs = std::ffi::CString::new("os::set_env: name is null").unwrap_or_default();
+        let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+        return unsafe { gos_rt_result_new(1, err as i64) };
+    }
+    let name_str = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+    let value_str = if value.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
+    };
+    crate::safe_env::set_env(&name_str, &value_str);
+    unsafe { gos_rt_result_new(0, 0) }
+}
+
+/// `os::unset_env(name)` — companion to `gos_rt_os_set_env`.
+/// Returns unit; failures (e.g. name with `=`) are silently
+/// dropped to match the VM's lenient behaviour.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_unset_env(name: *const c_char) {
+    if name.is_null() {
+        return;
+    }
+    let name_str = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+    crate::safe_env::unset_env(&name_str);
+}
+
+/// `exec::spawn(prog, args) -> Result<i64, errors::Error>`.
+///
+/// Non-blocking sibling of `exec::run`: launches `prog` with
+/// `args` in the background, redirects stdin/stdout/stderr to
+/// `/dev/null` so the child detaches from the calling tty, and
+/// returns the child PID immediately. Wait/kill is the caller's
+/// responsibility (see `gos_rt_exec_kill`). Used by long-running
+/// daemon launches (e.g. an LLM-server program a tool spawns
+/// before issuing HTTP requests against it).
+///
+/// Ok payload is the PID as `i64`; Err payload is a `*mut
+/// GosError`. The Result aggregate matches the `Result<i64,
+/// errors::Error>` shape MIR pins via the sentinel-DefId Adt.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_exec_spawn(
+    prog: *const c_char,
+    args: *mut GosVec,
+) -> *mut GosResult {
+    let prog_str = if prog.is_null() {
+        let cs = std::ffi::CString::new("exec::spawn: program is null").unwrap_or_default();
+        let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+        return unsafe { gos_rt_result_new(1, err as i64) };
+    } else {
+        unsafe { CStr::from_ptr(prog).to_string_lossy().into_owned() }
+    };
+    let mut cmd_args: Vec<String> = Vec::new();
+    if !args.is_null() {
+        let v = unsafe { &*args };
+        let elem_bytes = v.elem_bytes as usize;
+        if elem_bytes != 0 && !v.ptr.is_null() {
+            for i in 0..v.len {
+                let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
+                let cstr_ptr = unsafe { (slot as *const *const c_char).read_unaligned() };
+                if cstr_ptr.is_null() {
+                    cmd_args.push(String::new());
+                    continue;
+                }
+                let arg_str = unsafe { CStr::from_ptr(cstr_ptr).to_string_lossy().into_owned() };
+                cmd_args.push(arg_str);
+            }
+        }
+    }
+    let mut command = std::process::Command::new(&prog_str);
+    command.args(&cmd_args);
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::null());
+    command.stderr(std::process::Stdio::null());
+    match command.spawn() {
+        Ok(child) => {
+            let pid = i64::from(child.id());
+            // Detach: forget the Child handle so its Drop doesn't
+            // wait. The user shells the kill via `gos_rt_exec_kill`
+            // (or leaves the daemon running for the parent's
+            // lifetime).
+            std::mem::forget(child);
+            unsafe { gos_rt_result_new(0, pid) }
+        }
+        Err(e) => {
+            let msg = format!("exec::spawn({prog_str}): {e}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            unsafe { gos_rt_result_new(1, err as i64) }
+        }
+    }
+}
+
+/// Sends SIGTERM (Unix) / TerminateProcess (Windows) to the PID
+/// returned by `gos_rt_exec_spawn`. Companion to
+/// `gos_rt_exec_spawn` for stop_server-style teardown paths.
+/// Returns `true` on success, `false` if the kill syscall failed
+/// (e.g. the process already exited, EPERM).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_exec_kill(pid: i64) -> i64 {
+    if pid <= 0 {
+        return 0;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: libc::kill is safe to call with any pid /
+        // signal; the kernel returns EINVAL / EPERM on failure
+        // rather than crashing the caller.
+        let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        i64::from(rc == 0)
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows TerminateProcess wiring is a follow-up; for
+        // now return false so the caller can fall through to a
+        // best-effort path.
+        let _ = pid;
+        0
+    }
+}
+
+/// Sorts a flat `[i64; len]` buffer in place using the closure
+/// callback at `env`. The env's first word is the closure body
+/// address; the body has signature `(env, i64, i64) -> i64`
+/// (negative if a < b, positive if a > b, zero if equal),
+/// matching `slice::sort_by`'s comparator contract.
+///
+/// Used by the MIR-side `xs.sort_by(closure)` lowering for fixed-
+/// size arrays. The Vec<T> case routes through
+/// `gos_rt_vec_sort_by_i64` instead. We pass the elements by
+/// value (not pointer) because the typechecker today leaves the
+/// closure params as plain `i64` rather than `&i64`, so the
+/// closure body reads them as direct register values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_sort_by_i64(p: *mut i64, len: i64, env: *const u8) {
+    if p.is_null() || len <= 0 || env.is_null() {
+        return;
+    }
+    let len_usize = len.max(0) as usize;
+    let buf = unsafe { std::slice::from_raw_parts_mut(p, len_usize) };
+    // Closure body sig: (env, i64, i64) -> i64.
+    type CmpFn = unsafe extern "C" fn(env: *const u8, a: i64, b: i64) -> i64;
+    // env[0] holds the body address (cranelift / LLVM both use
+    // this layout for Fn(...)-shaped values).
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return;
+    }
+    let cmp: CmpFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    buf.sort_by(|a, b| {
+        let r = unsafe { cmp(env, *a, *b) };
+        r.cmp(&0)
+    });
+}
+
+/// Sorts a `Vec<i64>` (heap `GosVec`) in place using the closure
+/// callback at `env`. Mirrors [`gos_rt_arr_sort_by_i64`] for the
+/// growable-vec receiver shape.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_sort_by_i64(v: *mut GosVec, env: *const u8) {
+    if v.is_null() || env.is_null() {
+        return;
+    }
+    let vec = unsafe { &mut *v };
+    if vec.len <= 0 || vec.ptr.is_null() {
+        return;
+    }
+    unsafe {
+        gos_rt_arr_sort_by_i64(vec.ptr.cast::<i64>(), vec.len, env);
+    }
+}
+
+/// A heap-allocated iterator over a `GosVec`. Created by
+/// `gos_rt_arr_iter`; advanced one element at a time by
+/// `gos_rt_arr_iter_next`.
+#[repr(C)]
+pub struct GosArrIter {
+    /// Pointer to the vec being iterated. The caller must keep the
+    /// vec alive for the iterator's lifetime.
+    pub vec: *mut GosVec,
+    /// Next element index to yield.
+    pub idx: i64,
+}
+
+unsafe impl Send for GosArrIter {}
+unsafe impl Sync for GosArrIter {}
+
+/// Creates an iterator over `vec`, starting at index 0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_iter(vec: *mut GosVec) -> *mut GosArrIter {
+    Box::into_raw(Box::new(GosArrIter { vec, idx: 0 }))
+}
+
+/// Advances the iterator by one and returns `GosResult { disc=0,
+/// payload=element }` (Some) or `GosResult { disc=1, payload=0 }`
+/// (None) when exhausted. Reads 8-byte-wide element slots only;
+/// callers with other element widths must use a lower-level helper.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_iter_next(iter: *mut GosArrIter) -> *mut GosResult {
+    if iter.is_null() {
+        return gos_rt_result_new(1, 0);
+    }
+    let iter_ref = unsafe { &mut *iter };
+    if iter_ref.vec.is_null() {
+        return gos_rt_result_new(1, 0);
+    }
+    let vec_ref = unsafe { &*iter_ref.vec };
+    if iter_ref.idx >= vec_ref.len {
+        return gos_rt_result_new(1, 0);
+    }
+    let value = unsafe { gos_rt_vec_get_i64(iter_ref.vec, iter_ref.idx) };
+    iter_ref.idx += 1;
+    gos_rt_result_new(0, value)
 }
 
 /// Reads an `i64`-shaped element from a `Vec` (or any
@@ -2974,6 +3690,61 @@ pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
     by
 }
 
+/// `m.or_insert(key, default)` — inserts `default` for `key` only when
+/// the key is absent; returns the current (possibly just-inserted) value.
+/// `HashMap<String, i64>` variant.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
+    m: *mut GosMap,
+    key: *const c_char,
+    default: i64,
+) -> i64 {
+    if m.is_null() || key.is_null() {
+        return default;
+    }
+    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let map = unsafe { &mut *m };
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::StrI64(FxHashMap::default());
+    }
+    let MapStorage::StrI64(inner) = &mut *storage else {
+        return default;
+    };
+    if let Some(v) = inner.get(key_bytes) {
+        return *v;
+    }
+    inner.insert(key_bytes.to_vec().into_boxed_slice(), default);
+    map.len_cache += 1;
+    default
+}
+
+/// `m.or_insert(key, default)` — `HashMap<i64, i64>` variant.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_or_insert_i64_i64(
+    m: *mut GosMap,
+    key: i64,
+    default: i64,
+) -> i64 {
+    if m.is_null() {
+        return default;
+    }
+    let map = unsafe { &mut *m };
+    let mut storage = map.storage.lock();
+    if matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::I64I64(FxHashMap::default());
+    }
+    let MapStorage::I64I64(inner) = &mut *storage else {
+        return default;
+    };
+    if let Some(v) = inner.get(&key) {
+        return *v;
+    }
+    inner.insert(key, default);
+    map.len_cache += 1;
+    default
+}
+
 /// `m.insert(k: i64, v: String)` — `HashMap<i64, String>` insert.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val: *const c_char) {
@@ -3404,6 +4175,29 @@ pub unsafe extern "C" fn gos_rt_chan_try_recv(c: *mut GosChan, out: *mut u8) -> 
     0
 }
 
+/// Single-argument wrapper for LLVM: calls `gos_rt_chan_recv` and
+/// boxes the status + value into a `*mut GosResult` (disc=0 → Some,
+/// disc=1 → None) so callers don't need to manage an out-pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_chan_recv_option(c: *mut GosChan) -> *mut GosResult {
+    let mut out = 0i64;
+    let status = unsafe { gos_rt_chan_recv(c, std::ptr::addr_of_mut!(out).cast::<u8>()) };
+    let disc = 1 - i64::from(status);
+    let payload = if status == 1 { out } else { 0 };
+    Box::into_raw(Box::new(GosResult { disc, payload }))
+}
+
+/// Single-argument wrapper for LLVM: like `gos_rt_chan_recv_option`
+/// but non-blocking (returns None immediately when the buffer is empty).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_chan_try_recv_option(c: *mut GosChan) -> *mut GosResult {
+    let mut out = 0i64;
+    let status = unsafe { gos_rt_chan_try_recv(c, std::ptr::addr_of_mut!(out).cast::<u8>()) };
+    let disc = 1 - i64::from(status);
+    let payload = if status == 1 { out } else { 0 };
+    Box::into_raw(Box::new(GosResult { disc, payload }))
+}
+
 fn storage_len(storage: &ChanStorage) -> usize {
     match storage {
         ChanStorage::I64(d) => d.len(),
@@ -3671,6 +4465,20 @@ pub unsafe extern "C" fn gos_rt_sleep_ns(ns: i64) {
     crate::sched_global::sleep_until(deadline);
 }
 
+/// `time::sleep(ms: i64)` — the millisecond-units variant
+/// surfaced to Gossamer code. The bytecode VM uses
+/// `Duration::from_millis(ms)`; this helper gives the cranelift
+/// / LLVM dispatch the same units so `time::sleep(1000)` waits
+/// one second across all three tiers. Without it the compiled
+/// tier called `gos_rt_sleep_ns(ms)` directly and slept for
+/// nanoseconds, busy-spinning every poll loop under
+/// `gos build` / `gos build --release` builds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sleep_ms(ms: i64) {
+    let ns = ms.max(0).saturating_mul(1_000_000);
+    unsafe { gos_rt_sleep_ns(ns) }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_now_ns() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -3708,227 +4516,82 @@ pub unsafe extern "C" fn gos_rt_now_ns() -> i64 {
 //
 // A real tri-color GC replaces this without changing the ABI.
 
-const ARENA_BYTES: usize = 4 * 1024 * 1024;
-const MAX_ARENA_CAP: usize = 16 * 1024 * 1024;
+// Bump arena retired (fix_architecture_ownership.md Stage 4). The
+// `Arena` / `ARENAS` types and the `try_extend_last_cstring` fast
+// path used to live here; they're gone in favour of Box-leak
+// allocation. Constants kept zeroed-out as documentation of what
+// the previous limits were if anyone wonders about the historical
+// allocator.
 
-struct Arena {
-    buf: Vec<u8>,
-    used: usize,
-    /// Start offset (within `buf`) of the most recent allocation
-    /// returned by `gos_rt_gc_alloc`. Used by
-    /// [`try_extend_last_cstring`] to grow `s = s + c`-style
-    /// concatenation chains in place instead of leaking the
-    /// previous slot.
-    last_start: usize,
-    last_len: usize,
-}
-
-thread_local! {
-    static ARENAS: std::cell::RefCell<Vec<Arena>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
+/// Allocates `size` bytes in the global allocator domain.
+///
+/// **History.** This entry point used to be a thread-local bump
+/// arena (`Vec<Arena { buf: Vec<u8>, used }>`) with explicit
+/// `gos_rt_gc_reset` reclamation and a `gos_rt_arena_save` /
+/// `_restore` checkpoint primitive emitted by the LLVM codegen
+/// around aggregate-returning user calls. That design produced a
+/// silent dangling-pointer class of bug: arena interior pointers
+/// stored in `Vec<String>` slots survived an `arena_restore`
+/// despite the watermark moving past their offset, and the next
+/// `gos_rt_gc_alloc` reused those bytes.
+///
+/// The current shape is the simplest sound replacement: every
+/// allocation is a `Box<[u8]>` leaked via `Box::into_raw`. Single
+/// ownership domain (`Global`); compatible with the
+/// `Vec::from_raw_parts(ptr, n, n)` reclamation `gos_rt_vec_push`
+/// performs when growing a vec; no checkpoint primitives needed.
+/// The leak is collected by the GC on a future cycle, not by
+/// arena reset.
+///
+/// See `~/dev/contexts/lang/fix_architecture_ownership.md` Stage 4.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
+pub extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
     if size == 0 {
         return std::ptr::null_mut();
     }
     let size = size as usize;
-    // Align requests >= 8 bytes to 8-byte boundaries so structs
-    // and aggregates (GosResult, GosTuple, …) come out aligned.
-    // Smaller requests (cstrings, single bytes) keep byte-packing
-    // because strings only require 1-byte alignment and tight
-    // packing matters for `try_extend_last_cstring`.
-    let want_align = size >= 8;
-    ARENAS.with(|cell| {
-        let mut arenas = cell.borrow_mut();
-        // Align the bump cursor *before* the capacity check so a
-        // padded allocation that crosses the buffer end correctly
-        // triggers a fresh arena.
-        if want_align && let Some(a) = arenas.last_mut() {
-            let pad = a.used.wrapping_neg() & 7;
-            let padded = a.used.saturating_add(pad);
-            if padded <= a.buf.len() {
-                a.used = padded;
-            }
-        }
-        if arenas.last().is_none_or(|a| a.used + size > a.buf.len()) {
-            // The 2× headroom on `size` keeps `try_extend_last_cstring`
-            // amortised: an exact-fit arena would force every
-            // subsequent extension to roll over into a new arena, and
-            // each rollover copies the current buffer, reintroducing
-            // the O(N²) blowup the in-place extension was meant to
-            // fix. The 2× on `prev_cap` keeps that amortisation
-            // working when several large strings share the same
-            // arena. Both are bounded by `MAX_ARENA_CAP` so the
-            // doubling can't run away — beyond the cap each new
-            // arena is `MAX_ARENA_CAP` bytes, so total slack across
-            // K arenas is at most `K * MAX_ARENA_CAP` instead of
-            // `ARENA_BYTES * (2^K - 1)`.
-            let prev_cap = arenas.last().map_or(0, |a| a.buf.len());
-            let cap = size
-                .saturating_mul(2)
-                .max(ARENA_BYTES)
-                .max(prev_cap.saturating_mul(2))
-                .min(MAX_ARENA_CAP.max(size));
-            // Zero-initialised arena. Allocations are bumped out
-            // of `buf` and the caller writes before reading, but
-            // zeroing avoids reading-before-write UB if anyone
-            // peeks at the raw arena memory.
-            let buf = vec![0u8; cap];
-            arenas.push(Arena {
-                buf,
-                used: 0,
-                last_start: 0,
-                last_len: 0,
-            });
-        }
-        let arena = arenas.last_mut().unwrap();
-        let ptr = unsafe { arena.buf.as_mut_ptr().add(arena.used) };
-        arena.last_start = arena.used;
-        arena.last_len = size;
-        arena.used += size;
-        ptr
-    })
+    let v: Vec<u8> = vec![0u8; size];
+    let raw = Box::into_raw(v.into_boxed_slice());
+    raw.cast::<u8>()
 }
 
+/// Legacy arena reset — now a no-op. Codegen still declares this
+/// symbol; in practice nothing calls it. The Box-leak allocator
+/// retires per-allocation through Vec::from_raw_parts on the
+/// caller-managed buffer (vec push), or via the GC on a future
+/// cycle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_gc_reset() {
-    // Reset the bump cursors in place rather than dropping the
-    // arena Vecs. Dropping freed the underlying `Vec<u8>` storage,
-    // which then had to be re-malloced on the next allocation —
-    // 100k+ malloc/free pairs per second under HTTP keep-alive
-    // load, hammering glibc's allocator lock. Keeping the arenas
-    // alive across resets means the steady-state path is purely
-    // bump-pointer arithmetic with zero allocator traffic.
-    ARENAS.with(|cell| {
-        let mut arenas = cell.borrow_mut();
-        // If we accumulated multiple arenas (a single request
-        // overflowed `ARENA_BYTES`), keep only the largest one
-        // for reuse. Capacity is preserved; subsequent requests
-        // reuse it without rolling over again.
-        if arenas.len() > 1 {
-            let mut keep_idx = 0usize;
-            for (i, a) in arenas.iter().enumerate() {
-                if a.buf.len() > arenas[keep_idx].buf.len() {
-                    keep_idx = i;
-                }
-            }
-            let keep = arenas.swap_remove(keep_idx);
-            arenas.clear();
-            arenas.push(keep);
-        }
-        if let Some(a) = arenas.last_mut() {
-            a.used = 0;
-            a.last_start = 0;
-            a.last_len = 0;
-        }
-    });
-}
+pub extern "C" fn gos_rt_gc_reset() {}
 
-/// Records the current arena watermark on the calling thread.
-///
-/// The returned `u64` packs `(arena_index << 32) | byte_used` so
-/// `gos_rt_arena_restore` can identify both the arena and the
-/// position within it. Calls outside any active arena return zero,
-/// which `restore` interprets as "rewind everything" (equivalent
-/// to `gos_rt_gc_reset`).
+/// Legacy arena watermark — returns 0 (the "no checkpoint" value).
+/// LLVM codegen still wraps aggregate-returning user calls with
+/// `arena_save`/`arena_restore`; the calls are now no-ops.
+/// Eventually the LLVM emit pass should stop generating them
+/// entirely; the symbol exists so existing compiled artefacts
+/// continue to link.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_arena_save() -> u64 {
-    ARENAS.with(|cell| {
-        let arenas = cell.borrow();
-        if arenas.is_empty() {
-            return 0;
-        }
-        let idx = arenas.len() - 1;
-        let used = arenas[idx].used;
-        ((idx as u64) << 32) | (used as u64)
-    })
+    0
 }
 
-/// Rewinds the calling thread's arena to the watermark `saved`
-/// returned by an earlier `gos_rt_arena_save` call.
-///
-/// All arenas allocated after `saved` are dropped, and the active
-/// arena's `used` is rolled back to the saved offset. Pointers
-/// returned by `gos_rt_gc_alloc` between save and restore become
-/// dangling; the caller is responsible for ensuring no live value
-/// references them. This is the rewind half of the scope-bounded
-/// allocation pattern; codegen-side wiring is a separate concern.
+/// Legacy arena rewind — no-op. See `gos_rt_arena_save`.
 #[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_arena_restore(saved: u64) {
-    ARENAS.with(|cell| {
-        let mut arenas = cell.borrow_mut();
-        if saved == 0 {
-            arenas.clear();
-            return;
-        }
-        let idx = (saved >> 32) as usize;
-        let used = (saved & 0xFFFF_FFFF) as usize;
-        if idx >= arenas.len() {
-            return;
-        }
-        arenas.truncate(idx + 1);
-        if let Some(arena) = arenas.last_mut() {
-            // If the saved offset is past the current high-water
-            // mark (shouldn't happen for valid saves), clamp to
-            // avoid producing garbage `used`.
-            arena.used = arena.used.min(used).max(used.min(arena.buf.len()));
-            // Reset the in-place extension cursor so the next
-            // alloc isn't mistaken for an extension of an
-            // already-rewound allocation.
-            arena.last_start = arena.used;
-            arena.last_len = 0;
-        }
-    });
-}
+pub extern "C" fn gos_rt_arena_restore(_saved: u64) {}
 
-/// If `a_ptr` points to the most recent NUL-terminated arena
-/// allocation in the current thread's active arena and the arena
-/// has room for `extra` additional bytes plus the relocated NUL,
-/// extends that allocation in place by appending `extra` bytes
-/// and returns `a_ptr`. Otherwise returns `null` so the caller
-/// falls back to a fresh allocation.
+/// In-place arena-string extension was a fast path for the
+/// `s = s + c` accumulator pattern. With the Box-leak allocator
+/// every allocation is a fresh `Box<[u8]>` and the "last
+/// allocation" concept no longer applies. Always returns null so
+/// `gos_rt_str_concat`'s caller falls through to its
+/// fresh-allocation slow path.
 ///
-/// The returned C-string still has a single trailing NUL; the
-/// previous NUL is overwritten by the first byte of `extra` and a
-/// new NUL is written one past the last appended byte.
-fn try_extend_last_cstring(a_ptr: *const c_char, extra: &[u8]) -> *mut c_char {
-    if a_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    ARENAS.with(|cell| {
-        let mut arenas = cell.borrow_mut();
-        let Some(arena) = arenas.last_mut() else {
-            return std::ptr::null_mut();
-        };
-        // Allocations always include a trailing NUL inside their
-        // recorded length. The most recent allocation occupies
-        // `[last_start, last_start + last_len) == [last_start, used)`.
-        let last_ptr = unsafe { arena.buf.as_mut_ptr().add(arena.last_start) };
-        if last_ptr.cast::<c_char>() != a_ptr.cast_mut() {
-            return std::ptr::null_mut();
-        }
-        if arena.last_len == 0 {
-            return std::ptr::null_mut();
-        }
-        let payload_len = arena.last_len - 1; // bytes excluding the trailing NUL
-        let need = arena.used + extra.len();
-        if need > arena.buf.len() {
-            return std::ptr::null_mut();
-        }
-        // Overwrite the existing NUL with the first byte of
-        // `extra`, append the rest, then write a fresh NUL.
-        unsafe {
-            let nul_offset = arena.last_start + payload_len;
-            let dst = arena.buf.as_mut_ptr().add(nul_offset);
-            std::ptr::copy_nonoverlapping(extra.as_ptr(), dst, extra.len());
-            *dst.add(extra.len()) = 0;
-        }
-        arena.used += extra.len();
-        arena.last_len += extra.len();
-        last_ptr.cast::<c_char>()
-    })
+/// Removing the optimization is correct: `try_extend_last_cstring`
+/// also had a subtle aliasing hazard — extending the last
+/// allocation mutated bytes that other Gossamer locals might
+/// have been holding (see fix_architecture_ownership.md §3.6).
+#[allow(clippy::unnecessary_wraps)]
+fn try_extend_last_cstring(_a_ptr: *const c_char, _extra: &[u8]) -> *mut c_char {
+    std::ptr::null_mut()
 }
 
 // ---------------------------------------------------------------
@@ -4422,6 +5085,14 @@ pub unsafe extern "C" fn gos_rt_panic(msg: *const c_char) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_exit(code: i32) -> ! {
+    // Drain the runtime's line-buffered stdout cache before
+    // process exit. Without the flush, `println!("...")` followed
+    // by `os::exit(N)` produces no output — `std::process::exit`
+    // skips the C++/atexit handlers that would normally drain
+    // stdio.
+    unsafe {
+        gos_rt_flush_stdout();
+    }
     std::process::exit(code);
 }
 
@@ -5645,15 +6316,70 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_8(
 /// owns every node exclusively (each helper that "returns" a value
 /// boxes a fresh node). Lifetime tied to the next
 /// `gos_rt_gc_reset` only for the cstring helpers — JSON nodes are
-/// `Box`-leaked on purpose so they survive arena resets.
-#[derive(Debug, Clone)]
+/// Heap-allocated JSON node. The compiled tier shuttles raw
+/// `*mut GosJson` pointers through normal i64 slots; each handle
+/// carries a shared `Arc<serde_json::Value>` keeping the parsed
+/// tree alive plus a stable interior pointer naming the specific
+/// sub-node this handle refers to.
+///
+/// Why this shape: `serde_json::Value::clone()` is O(N) on a
+/// nested tree. Previously every `gos_rt_json_get` call deep-cloned
+/// the matched child and `Box`-leaked the copy, so a single askq
+/// chat round walked a 10-deep delta tree per chunk × 200 chunks
+/// = thousands of multi-KB clones leaking permanently. The
+/// `Arc<Value>`-shared model bumps a refcount instead of cloning;
+/// child views are interior pointers into the same allocation.
+/// Tree storage drops when the last GosJson referencing it is
+/// freed (or, today, when the GC reclaims its leaked Box).
+///
+/// **Pointer stability:** `Arc::new(value)` allocates the Value on
+/// the heap via the global allocator. The Value's address never
+/// moves while any `Arc` referencing it lives, so the
+/// `view: *const Value` field is stable for the GosJson's
+/// lifetime. This is the same trick `Pin<Arc<T>>` uses;
+/// formalising it via `Pin` would not change the layout.
+///
+/// See `~/dev/contexts/lang/fix_architecture_ownership.md`
+/// Stage 2 (final form).
 pub struct GosJson {
-    inner: serde_json::Value,
+    /// Owning shared reference to the parsed-once value tree. Kept
+    /// alive for the duration of the GosJson; cloning a GosJson
+    /// only bumps this refcount (not a deep copy).
+    tree: std::sync::Arc<serde_json::Value>,
+    /// View into `tree`'s subtree. Always points to a sub-Value of
+    /// `tree`'s root. Stable as long as `tree` is alive.
+    view: *const serde_json::Value,
 }
 
+// SAFETY: `view` is an interior pointer into the `tree`'s
+// allocation; both target storage and the `Arc` it pins are
+// `Send + Sync` (`serde_json::Value: Send + Sync`). Compiled
+// goroutines may share GosJson handles across worker threads;
+// concurrent reads through `view` are sound because the storage
+// is immutable for the lifetime of the `Arc`.
+unsafe impl Send for GosJson {}
+unsafe impl Sync for GosJson {}
+
 impl GosJson {
+    /// Wraps a fresh `serde_json::Value` as the root of its own
+    /// tree. Allocates one `Arc<Value>` and one `Box<GosJson>`.
     fn into_raw(value: serde_json::Value) -> *mut GosJson {
-        Box::into_raw(Box::new(GosJson { inner: value }))
+        let tree = std::sync::Arc::new(value);
+        let view = std::sync::Arc::as_ptr(&tree);
+        Box::into_raw(Box::new(GosJson { tree, view }))
+    }
+
+    /// Builds a child handle that shares the same tree as `self`
+    /// and points at `child` inside it. `child` must be a
+    /// reference into `self.tree`'s subtree (the type system
+    /// cannot enforce this here because we cross the FFI; every
+    /// caller below derives `child` via `serde_json::Value::get`
+    /// on `self.view`'s subtree, which is sound).
+    fn child(&self, child: &serde_json::Value) -> *mut GosJson {
+        Box::into_raw(Box::new(GosJson {
+            tree: std::sync::Arc::clone(&self.tree),
+            view: std::ptr::from_ref(child),
+        }))
     }
 
     fn null_ptr() -> *mut GosJson {
@@ -5663,10 +6389,28 @@ impl GosJson {
 
 unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
     if p.is_null() {
-        None
-    } else {
-        Some(unsafe { &(*p).inner })
+        return None;
     }
+    let json = unsafe { &*p };
+    if json.view.is_null() {
+        return None;
+    }
+    // SAFETY: `view` was set by `Self::into_raw` (points at the
+    // tree's root) or by `Self::child` (points at a sub-Value of
+    // `self.tree`'s subtree). Either way the pointee lives as
+    // long as `tree` does, which is at least until this `&GosJson`
+    // dies — i.e. at least until this function returns.
+    Some(unsafe { &*json.view })
+}
+
+/// Resolves `p` and returns the GosJson struct itself so the
+/// caller can construct child handles via `Self::child`. Returns
+/// `None` only for null inputs.
+unsafe fn json_handle<'a>(p: *const GosJson) -> Option<&'a GosJson> {
+    if p.is_null() {
+        return None;
+    }
+    Some(unsafe { &*p })
 }
 
 /// `json::parse(text) -> Result<json::Value, String>` runtime
@@ -5704,16 +6448,39 @@ pub unsafe extern "C" fn gos_rt_json_render(j: *const GosJson) -> *mut c_char {
     alloc_cstring(s.as_bytes())
 }
 
+/// Display form of a `json::Value` for `println!("{}", val)`.
+/// Strings are shown without JSON quotes; all other values use
+/// their JSON representation so they stay machine-readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_display(j: *const GosJson) -> *mut c_char {
+    let Some(v) = (unsafe { json_borrow(j) }) else {
+        return alloc_cstring(b"null");
+    };
+    match v {
+        serde_json::Value::String(s) => alloc_cstring(s.as_bytes()),
+        other => {
+            let s = serde_json::to_string(other).unwrap_or_default();
+            alloc_cstring(s.as_bytes())
+        }
+    }
+}
+
 /// `value.get(key) -> json::Value`. Returns a fresh `GosJson*`
 /// holding the field's value, or a JSON-null node when the
 /// receiver is not an object or the field is missing. Nested
 /// chains (`root.latency.low_ms`) work because each call returns
-/// a real handle the next call can dereference.
+/// a real handle the next call can dereference. The child handle
+/// shares the parent's `Arc<Value>` tree (no deep clone).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_get(j: *const GosJson, key: *const c_char) -> *mut GosJson {
-    let Some(v) = (unsafe { json_borrow(j) }) else {
+    let Some(parent) = (unsafe { json_handle(j) }) else {
         return GosJson::null_ptr();
     };
+    // SAFETY: `parent.view` is a stable interior pointer into
+    // `parent.tree`'s allocation; see `GosJson` doc. The
+    // dereference produces a borrow that lives only inside this
+    // function call.
+    let v = unsafe { &*parent.view };
     let key_bytes: &[u8] = if key.is_null() {
         b""
     } else {
@@ -5723,22 +6490,24 @@ pub unsafe extern "C" fn gos_rt_json_get(j: *const GosJson, key: *const c_char) 
         return GosJson::null_ptr();
     };
     match v.get(key_str) {
-        Some(child) => GosJson::into_raw(child.clone()),
+        Some(child) => parent.child(child),
         None => GosJson::null_ptr(),
     }
 }
 
-/// `value.at(idx) -> json::Value`.
+/// `value.at(idx) -> json::Value`. Sub-array index; child handle
+/// shares the parent's tree.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_at(j: *const GosJson, idx: i64) -> *mut GosJson {
-    let Some(v) = (unsafe { json_borrow(j) }) else {
+    let Some(parent) = (unsafe { json_handle(j) }) else {
         return GosJson::null_ptr();
     };
     if idx < 0 {
         return GosJson::null_ptr();
     }
+    let v = unsafe { &*parent.view };
     match v.get(idx as usize) {
-        Some(child) => GosJson::into_raw(child.clone()),
+        Some(child) => parent.child(child),
         None => GosJson::null_ptr(),
     }
 }
@@ -5834,6 +6603,89 @@ pub unsafe extern "C" fn gos_rt_json_as_bool(j: *const GosJson) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_identity(j: *mut GosJson) -> *mut GosJson {
     j
+}
+
+/// `json::get(value, key) -> Option<json::Value>`. Wraps
+/// `gos_rt_json_get`'s null-on-miss result in the standard
+/// `*mut GosResult` Option shape (`disc 0 = Some, disc 1 = None`)
+/// so user-level `match` / `if let` / `is_some` reads the right
+/// discriminant. The bare `gos_rt_json_get` survives for the MIR
+/// field-access lowering of `root.a.b.c`, which threads raw
+/// `*mut GosJson` pointers through chained calls.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_get_opt(
+    j: *const GosJson,
+    key: *const c_char,
+) -> *mut GosResult {
+    let Some(parent) = (unsafe { json_handle(j) }) else {
+        return gos_rt_result_new(1, 0);
+    };
+    let key_bytes: &[u8] = if key.is_null() {
+        b""
+    } else {
+        unsafe { CStr::from_ptr(key).to_bytes() }
+    };
+    let Ok(key_str) = std::str::from_utf8(key_bytes) else {
+        return gos_rt_result_new(1, 0);
+    };
+    let v = unsafe { &*parent.view };
+    match v.get(key_str) {
+        Some(child) => gos_rt_result_new(0, parent.child(child) as i64),
+        None => gos_rt_result_new(1, 0),
+    }
+}
+
+/// `json::keys(value) -> Option<[String]>`. Returns `Some(vec)`
+/// for objects (keys in declaration order), `None` for any other
+/// shape — pinned by `malformed_json_returns_none_not_segfault`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_keys_opt(j: *const GosJson) -> *mut GosResult {
+    let Some(v) = (unsafe { json_borrow(j) }) else {
+        return unsafe { gos_rt_result_new(1, 0) };
+    };
+    match v {
+        serde_json::Value::Object(map) => {
+            // 8-byte slots (cstring pointers) — same shape `[String]`
+            // values use elsewhere in the runtime.
+            let vec_ptr = unsafe { gos_rt_vec_new(8) };
+            for k in map.keys() {
+                let cs = alloc_cstring(k.as_bytes()) as i64;
+                unsafe {
+                    gos_rt_vec_push(vec_ptr, std::ptr::addr_of!(cs).cast::<u8>());
+                }
+            }
+            unsafe { gos_rt_result_new(0, vec_ptr as i64) }
+        }
+        _ => unsafe { gos_rt_result_new(1, 0) },
+    }
+}
+
+/// `json::as_array(value) -> Option<[json::Value]>`. Returns
+/// `Some(vec)` of element-pointers for an array node, `None`
+/// otherwise. Each element is materialised as a fresh `GosJson*`
+/// so the receiver can be dropped independently.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_array_opt(j: *const GosJson) -> *mut GosResult {
+    let Some(parent) = (unsafe { json_handle(j) }) else {
+        return gos_rt_result_new(1, 0);
+    };
+    let v = unsafe { &*parent.view };
+    match v {
+        serde_json::Value::Array(items) => {
+            let vec_ptr = unsafe { gos_rt_vec_new(8) };
+            for item in items {
+                // Each element shares the parent's `Arc<Value>`
+                // tree — no deep clone, no per-element leak of a
+                // freshly-boxed Value.
+                let elem = parent.child(item) as i64;
+                unsafe {
+                    gos_rt_vec_push(vec_ptr, std::ptr::addr_of!(elem).cast::<u8>());
+                }
+            }
+            gos_rt_result_new(0, vec_ptr as i64)
+        }
+        _ => unsafe { gos_rt_result_new(1, 0) },
+    }
 }
 
 /// `json::Value::String(s)` constructor.
@@ -5974,6 +6826,37 @@ pub unsafe extern "C" fn gos_rt_json_value_object(vec: *const GosVec) -> *mut Go
             }
         }
     }
+    GosJson::into_raw(serde_json::Value::Object(out))
+}
+
+/// `json::set(obj, key, val) -> json::Value`. Returns a new JSON
+/// object with `key` updated to `val`. Appends when the key is new.
+/// If `obj` is not an object, returns `obj` unchanged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_set(
+    obj: *const GosJson,
+    key: *const c_char,
+    val: *const GosJson,
+) -> *mut GosJson {
+    let Some(parent) = (unsafe { json_handle(obj) }) else {
+        return GosJson::null_ptr();
+    };
+    let v = unsafe { &*parent.view };
+    let serde_json::Value::Object(existing) = v else {
+        return parent.child(v);
+    };
+    let key_str = if key.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() }
+    };
+    let new_val = if let Some(child) = unsafe { json_borrow(val) } {
+        child.clone()
+    } else {
+        serde_json::Value::Null
+    };
+    let mut out = existing.clone();
+    out.insert(key_str, new_val);
     GosJson::into_raw(serde_json::Value::Object(out))
 }
 
@@ -6154,12 +7037,12 @@ pub unsafe extern "C" fn gos_rt_error_cause(err: *const GosError) -> *mut GosRes
 
 /// Walks the cause chain looking for a substring match.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_error_is(err: *const GosError, needle: *const c_char) -> bool {
+pub unsafe extern "C" fn gos_rt_error_is(err: *const GosError, needle: *const c_char) -> i64 {
     if err.is_null() || needle.is_null() {
-        return false;
+        return 0;
     }
     let Ok(needle) = (unsafe { CStr::from_ptr(needle).to_str() }) else {
-        return false;
+        return 0;
     };
     let mut cur = err;
     while !cur.is_null() {
@@ -6168,11 +7051,105 @@ pub unsafe extern "C" fn gos_rt_error_is(err: *const GosError, needle: *const c_
             && let Ok(text) = unsafe { CStr::from_ptr(m).to_str() }
             && text.contains(needle)
         {
-            return true;
+            return 1;
         }
         cur = unsafe { (*cur).cause };
     }
-    false
+    0
+}
+
+/// Joins every error message in `vec` (a `*mut GosVec` of `*mut GosError`)
+/// with "; " and returns `Some(joined_error)` as a `*mut GosResult`.
+/// Returns a `None`-shaped `GosResult` when the array is null or empty.
+/// `ptr` points directly to the array of `GosError*` elements (stack-allocated
+/// fixed-size array from the compiled tier); `len` is the compile-time count.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_errors_join(ptr: *const *mut GosError, len: i64) -> *mut GosResult {
+    let none = || {
+        Box::into_raw(Box::new(GosResult {
+            disc: 1,
+            payload: 0,
+        }))
+    };
+    if ptr.is_null() || len <= 0 {
+        return none();
+    }
+    let len = len as usize;
+    let mut parts: Vec<String> = Vec::with_capacity(len);
+    for i in 0..len {
+        let err = unsafe { *ptr.add(i) }; // ptr is the array base from the caller
+        if err.is_null() {
+            continue;
+        }
+        let m = unsafe { (*err).message };
+        if m.is_null() {
+            continue;
+        }
+        if let Ok(s) = unsafe { CStr::from_ptr(m).to_str() } {
+            parts.push(s.to_string());
+        }
+    }
+    if parts.is_empty() {
+        return none();
+    }
+    let combined = parts.join("; ");
+    let leaked = alloc_cstring(combined.as_bytes());
+    let err = Box::into_raw(Box::new(GosError {
+        message: leaked,
+        cause: std::ptr::null_mut(),
+    }));
+    Box::into_raw(Box::new(GosResult {
+        disc: 0,
+        payload: err as i64,
+    }))
+}
+
+/// Joins every error in `vec` (a `*mut GosVec` of `*mut GosError` elements)
+/// with "; " and returns `Some(joined_error)` as a `*mut GosResult`.
+/// Returns a None-shaped result when `vec` is null or empty.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_errors_join_vec(vec: *mut GosVec) -> *mut GosResult {
+    let none = || {
+        Box::into_raw(Box::new(GosResult {
+            disc: 1,
+            payload: 0,
+        }))
+    };
+    if vec.is_null() {
+        return none();
+    }
+    let len = unsafe { (*vec).len } as usize;
+    if len == 0 {
+        return none();
+    }
+    let data = unsafe { (*vec).ptr } as *const *mut GosError;
+    let mut parts: Vec<String> = Vec::with_capacity(len);
+    for i in 0..len {
+        let err = unsafe { *data.add(i) };
+        if err.is_null() {
+            continue;
+        }
+        let m = unsafe { (*err).message };
+        if m.is_null() {
+            continue;
+        }
+        if let Ok(s) = unsafe { CStr::from_ptr(m).to_str() } {
+            parts.push(s.to_string());
+        }
+    }
+    if parts.is_empty() {
+        return none();
+    }
+    let combined = parts.join("; ");
+    let leaked = alloc_cstring(combined.as_bytes());
+    let err = Box::into_raw(Box::new(GosError {
+        message: leaked,
+        cause: std::ptr::null_mut(),
+    }));
+    Box::into_raw(Box::new(GosResult {
+        disc: 0,
+        payload: err as i64,
+    }))
 }
 
 // ---------------------------------------------------------------
@@ -6203,12 +7180,12 @@ pub unsafe extern "C" fn gos_rt_regex_compile(pat: *const c_char) -> *mut GosReg
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_regex_is_match(re: *const GosRegex, text: *const c_char) -> bool {
+pub unsafe extern "C" fn gos_rt_regex_is_match(re: *const GosRegex, text: *const c_char) -> i64 {
     if re.is_null() || text.is_null() {
-        return false;
+        return 0;
     }
     let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
-    unsafe { (*re).inner.is_match(s) }
+    i64::from(unsafe { (*re).inner.is_match(s) })
 }
 
 #[unsafe(no_mangle)]
@@ -6223,6 +7200,65 @@ pub unsafe extern "C" fn gos_rt_regex_find(
     match unsafe { (*re).inner.find(s) } {
         Some(m) => alloc_cstring(m.as_str().as_bytes()),
         None => alloc_cstring(b""),
+    }
+}
+
+/// Returns `Option<(start, end, text)>` as a `*mut GosResult`.
+/// disc=0 → Some, disc=1 → None. The payload is a heap-allocated
+/// `{start: i64, end: i64, text: *mut c_char}` triple.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_find_opt(
+    re: *const GosRegex,
+    text: *const c_char,
+) -> *mut GosResult {
+    if re.is_null() || text.is_null() {
+        return gos_rt_result_new(1, 0);
+    }
+    let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+    match unsafe { (*re).inner.find(s) } {
+        None => gos_rt_result_new(1, 0),
+        Some(m) => {
+            #[repr(C)]
+            struct Triple {
+                start: i64,
+                end: i64,
+                text: i64,
+            }
+            let cstr = alloc_cstring(m.as_str().as_bytes());
+            let triple = Box::into_raw(Box::new(Triple {
+                start: m.start() as i64,
+                end: m.end() as i64,
+                text: cstr as i64,
+            }));
+            gos_rt_result_new(0, triple as i64)
+        }
+    }
+}
+
+/// Returns `Option<Vec<String>>` as a `*mut GosResult`.
+/// disc=0 → Some(captures), disc=1 → None. Group 0 = full match.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_captures(
+    re: *const GosRegex,
+    text: *const c_char,
+) -> *mut GosResult {
+    if re.is_null() || text.is_null() {
+        return gos_rt_result_new(1, 0);
+    }
+    let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+    match unsafe { (*re).inner.captures(s) } {
+        None => gos_rt_result_new(1, 0),
+        Some(caps) => {
+            let inner = unsafe { gos_rt_vec_new(8) };
+            for i in 0..caps.len() {
+                let ptr_val: i64 = match caps.get(i) {
+                    Some(m) => alloc_cstring(m.as_str().as_bytes()) as i64,
+                    None => 0,
+                };
+                unsafe { gos_rt_vec_push(inner, std::ptr::addr_of!(ptr_val).cast::<u8>()) };
+            }
+            gos_rt_result_new(0, inner as i64)
+        }
     }
 }
 
@@ -6279,6 +7315,27 @@ pub unsafe extern "C" fn gos_rt_regex_replace_all(
         unsafe { CStr::from_ptr(repl).to_str() }.unwrap_or("")
     };
     alloc_cstring(unsafe { (*re).inner.replace_all(s, r) }.as_bytes())
+}
+
+/// Replaces only the first match of `re` in `text` with `repl`.
+/// Companion to [`gos_rt_regex_replace_all`] — separate symbol so
+/// the codegen dispatch tables can pick the right semantics.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_replace(
+    re: *const GosRegex,
+    text: *const c_char,
+    repl: *const c_char,
+) -> *mut c_char {
+    if re.is_null() || text.is_null() {
+        return alloc_cstring(b"");
+    }
+    let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+    let r = if repl.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(repl).to_str() }.unwrap_or("")
+    };
+    alloc_cstring(unsafe { (*re).inner.replace(s, r) }.as_bytes())
 }
 
 #[unsafe(no_mangle)]
@@ -6358,22 +7415,124 @@ pub unsafe extern "C" fn gos_rt_fs_read_to_string(path: *const c_char) -> *mut c
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_fs_write(path: *const c_char, contents: *const c_char) -> bool {
+pub unsafe extern "C" fn gos_rt_fs_write(path: *const c_char, contents: *const c_char) -> i64 {
     if path.is_null() || contents.is_null() {
-        return false;
+        return 0;
     }
     let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
     let c = unsafe { CStr::from_ptr(contents).to_str() }.unwrap_or("");
-    std::fs::write(p, c).is_ok()
+    i64::from(std::fs::write(p, c).is_ok())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_fs_create_dir_all(path: *const c_char) -> bool {
+pub unsafe extern "C" fn gos_rt_fs_create_dir_all(path: *const c_char) -> i64 {
     if path.is_null() {
-        return false;
+        return 0;
     }
     let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
-    std::fs::create_dir_all(p).is_ok()
+    i64::from(std::fs::create_dir_all(p).is_ok())
+}
+
+/// `os::remove_file(path) -> Result<(), IoError>`. Returns a bool
+/// in the compiled tier (the same shape every other os/fs mutator
+/// uses). Without an explicit binding the call falls through to a
+/// non-existent symbol and corrupts the destination slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_remove_file(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
+    i64::from(std::fs::remove_file(p).is_ok())
+}
+
+/// `os::write_file(path, contents) -> Result<(), IoError>` — Result
+/// shape. Used when the call site chains `.map_err(...)` (askq's
+/// `save_history`); the bool-returning `gos_rt_fs_write` would
+/// trip cranelift's verifier when `.map_err` then tried to feed
+/// the i8 result into a `*mut GosResult` slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_write_file_result(
+    path: *const c_char,
+    contents: *const c_char,
+) -> *mut GosResult {
+    if path.is_null() || contents.is_null() {
+        let cs = std::ffi::CString::new("write_file: null arg").unwrap_or_default();
+        let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+        return unsafe { gos_rt_result_new(1, err as i64) };
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    let c = unsafe { CStr::from_ptr(contents).to_bytes().to_vec() };
+    match std::fs::write(&p, &c) {
+        Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+        Err(e) => {
+            let msg = format!("write_file({p}): {e}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            unsafe { gos_rt_result_new(1, err as i64) }
+        }
+    }
+}
+
+/// `os::mkdir_all(path) -> Result<(), IoError>` — Result shape, for
+/// `.map_err(...)` chains.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> *mut GosResult {
+    if path.is_null() {
+        let cs = std::ffi::CString::new("mkdir_all: null path").unwrap_or_default();
+        let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+        return unsafe { gos_rt_result_new(1, err as i64) };
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    match std::fs::create_dir_all(&p) {
+        Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+        Err(e) => {
+            let msg = format!("mkdir_all({p}): {e}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            unsafe { gos_rt_result_new(1, err as i64) }
+        }
+    }
+}
+
+/// `fs::remove_all(path) -> Result<(), IoError>` — removes a directory tree or file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) -> *mut GosResult {
+    if path.is_null() {
+        let cs = std::ffi::CString::new("remove_all: null path").unwrap_or_default();
+        let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+        return unsafe { gos_rt_result_new(1, err as i64) };
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    match std::fs::remove_dir_all(&p) {
+        Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+        Err(e) => {
+            let msg = format!("remove_all({p}): {e}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            unsafe { gos_rt_result_new(1, err as i64) }
+        }
+    }
+}
+
+/// `os::remove_file(path) -> Result<(), IoError>` — Result shape.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> *mut GosResult {
+    if path.is_null() {
+        let cs = std::ffi::CString::new("remove_file: null path").unwrap_or_default();
+        let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+        return unsafe { gos_rt_result_new(1, err as i64) };
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    match std::fs::remove_file(&p) {
+        Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+        Err(e) => {
+            let msg = format!("remove_file({p}): {e}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            unsafe { gos_rt_result_new(1, err as i64) }
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -6911,7 +8070,7 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
                 p.cast::<*const c_char>().read_unaligned()
             }
         });
-        (len, 1, getter) // GosVec form: skip argv[0]
+        (len, 0, getter) // GosVec from os::args() already excludes argv[0]
     };
     let mut i = start_i;
     while i < argc {
@@ -7484,6 +8643,284 @@ pub unsafe extern "C" fn gos_rt_http_response_get_header(
         .find(|(k, _)| k.eq_ignore_ascii_case(&n))
         .map_or(String::new(), |(_, v)| v.clone());
     alloc_cstring(found.as_bytes())
+}
+
+// ---------------------------------------------------------------
+// http::stream — POST/GET that returns a line-by-line body reader
+// keyed by an integer handle. Mirrors the interp's
+// `builtin_http_stream` shape: the call returns a
+// `Result<ResponseStream, errors::Error>` whose Ok payload is a
+// 3-slot heap aggregate `[__handle: i64, status: i64, content_type:
+// *c_char]`. Subsequent `.next_line()` calls dispatch to
+// `gos_rt_http_stream_next_line`.
+//
+// Implementation: the wire reader stays open across FFI calls by
+// living inside a process-global `Mutex<HashMap<i64, BufReader>>`
+// keyed by the handle stashed in the ResponseStream blob.
+// `next_line` calls `read_line` on the held reader so SSE bodies
+// stream live (askq's `[thinking…]` dots arrive token-by-token
+// rather than after the full LLM completion buffers up).
+// ---------------------------------------------------------------
+
+type StreamReader = std::io::BufReader<Box<dyn std::io::Read + Send + Sync>>;
+
+static STREAM_REGISTRY: parking_lot::Mutex<
+    Option<rustc_hash::FxHashMap<i64, std::sync::Arc<parking_lot::Mutex<StreamReader>>>>,
+> = parking_lot::Mutex::new(None);
+static NEXT_STREAM_HANDLE: AtomicI64 = AtomicI64::new(1);
+
+fn stream_registry_register(reader: StreamReader) -> i64 {
+    let handle = NEXT_STREAM_HANDLE.fetch_add(1, Ordering::SeqCst);
+    let mut guard = STREAM_REGISTRY.lock();
+    let map = guard.get_or_insert_with(rustc_hash::FxHashMap::default);
+    map.insert(handle, std::sync::Arc::new(parking_lot::Mutex::new(reader)));
+    handle
+}
+
+fn stream_registry_lookup(handle: i64) -> Option<std::sync::Arc<parking_lot::Mutex<StreamReader>>> {
+    let guard = STREAM_REGISTRY.lock();
+    guard.as_ref()?.get(&handle).cloned()
+}
+
+fn stream_registry_drop(handle: i64) {
+    let mut guard = STREAM_REGISTRY.lock();
+    if let Some(map) = guard.as_mut() {
+        map.remove(&handle);
+    }
+}
+
+/// Builds a 3-slot ResponseStream blob `[__handle, status,
+/// content_type]`. Field order matches `stdlib_struct_shapes`.
+/// Box-allocated so the pointer outlives any LLVM
+/// `arena_save`/`arena_restore` window the caller's compiled code
+/// emits — see fix_architecture_ownership.md Stage 4.
+fn alloc_response_stream_blob(handle: i64, status: i64, content_type: &str) -> *mut i64 {
+    let ct_cs = alloc_cstring(content_type.as_bytes()) as i64;
+    Box::into_raw(Box::new([handle, status, ct_cs])).cast::<i64>()
+}
+
+fn err_result_with_msg(msg: &str) -> *mut GosResult {
+    let cs = std::ffi::CString::new(msg).unwrap_or_default();
+    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    gos_rt_result_new(1, err as i64)
+}
+
+/// `http::get(url, headers) -> Result<http::Response, errors::Error>`.
+/// One-shot GET. Ok payload is a `*mut GosHttpResponse` so field
+/// access (`r.status`, `r.body`) routes through the existing
+/// `gos_rt_http_response_*` dispatch.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_http_get(url: *const c_char, headers: *mut GosVec) -> *mut GosResult {
+    let url_str = if url.is_null() {
+        return unsafe { err_result_with_msg("http::get: url is null") };
+    } else {
+        unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+    };
+    let mut header_pairs: Vec<(String, String)> = Vec::new();
+    if !headers.is_null() {
+        let v = unsafe { &*headers };
+        let elem_bytes = v.elem_bytes as usize;
+        if elem_bytes != 0 && !v.ptr.is_null() {
+            for i in 0..v.len {
+                let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
+                let key_ptr = unsafe { (slot as *const *const c_char).read_unaligned() };
+                let val_ptr = unsafe { (slot.add(8) as *const *const c_char).read_unaligned() };
+                let key = if key_ptr.is_null() {
+                    String::new()
+                } else {
+                    unsafe { CStr::from_ptr(key_ptr).to_string_lossy().into_owned() }
+                };
+                let val = if val_ptr.is_null() {
+                    String::new()
+                } else {
+                    unsafe { CStr::from_ptr(val_ptr).to_string_lossy().into_owned() }
+                };
+                header_pairs.push((key, val));
+            }
+        }
+    }
+    let agent = ureq::config::Config::builder()
+        .http_status_as_error(false)
+        .timeout_connect(Some(std::time::Duration::from_secs(15)))
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
+        .new_agent();
+    let mut req = agent.get(&url_str);
+    for (k, v) in &header_pairs {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    let resp = match req.call() {
+        Ok(r) => r,
+        Err(e) => return unsafe { err_result_with_msg(&format!("http::get: {e}")) },
+    };
+    let status = i64::from(resp.status().as_u16());
+    let mut hdrs: Vec<(String, String)> = Vec::new();
+    for (name, value) in resp.headers() {
+        hdrs.push((
+            name.as_str().to_string(),
+            value.to_str().unwrap_or("").to_string(),
+        ));
+    }
+    let body = {
+        use std::io::Read;
+        let mut s = String::new();
+        let mut reader = resp.into_body().into_reader();
+        if let Err(e) = reader.read_to_string(&mut s) {
+            return unsafe { err_result_with_msg(&format!("http::get: read body: {e}")) };
+        }
+        s
+    };
+    let body_cs = alloc_cstring(body.as_bytes());
+    let resp_box = Box::into_raw(Box::new(GosHttpResponse {
+        status,
+        body: body_cs,
+        headers: hdrs,
+    }));
+    gos_rt_result_new(0, resp_box as i64)
+}
+
+/// `http::stream(method, url, body, headers) -> Result<ResponseStream, errors::Error>`.
+///
+/// `headers` is a `Vec<(String, String)>` whose backing storage is
+/// a tight array of 16-byte tuples `(*c_char, *c_char)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_stream(
+    method: *const c_char,
+    url: *const c_char,
+    body: *const c_char,
+    headers: *mut GosVec,
+) -> *mut GosResult {
+    let method_str = if method.is_null() {
+        "GET".to_string()
+    } else {
+        unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() }
+    };
+    let url_str = if url.is_null() {
+        return unsafe { err_result_with_msg("http::stream: url is null") };
+    } else {
+        unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+    };
+    let body_str = if body.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(body).to_string_lossy().into_owned() }
+    };
+    let mut header_pairs: Vec<(String, String)> = Vec::new();
+    if !headers.is_null() {
+        let v = unsafe { &*headers };
+        let elem_bytes = v.elem_bytes as usize;
+        if elem_bytes != 0 && !v.ptr.is_null() {
+            for i in 0..v.len {
+                let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
+                // Each tuple slot is two i64-shaped pointers laid
+                // out back-to-back: key at +0, value at +8.
+                let key_ptr = unsafe { (slot as *const *const c_char).read_unaligned() };
+                let val_ptr = unsafe { (slot.add(8) as *const *const c_char).read_unaligned() };
+                let key = if key_ptr.is_null() {
+                    String::new()
+                } else {
+                    unsafe { CStr::from_ptr(key_ptr).to_string_lossy().into_owned() }
+                };
+                let val = if val_ptr.is_null() {
+                    String::new()
+                } else {
+                    unsafe { CStr::from_ptr(val_ptr).to_string_lossy().into_owned() }
+                };
+                header_pairs.push((key, val));
+            }
+        }
+    }
+
+    // Build an agent with no read timeout — SSE / chunked
+    // chat-completion bodies can have multi-second gaps between
+    // tokens (askq's reasoning phase) and the default 30s read
+    // timeout would tear the connection mid-stream.
+    // http_status_as_error(false) so 4xx/5xx bodies are surfaced
+    // to the caller as a live ResponseStream rather than dropped.
+    let agent = ureq::config::Config::builder()
+        .http_status_as_error(false)
+        .timeout_connect(Some(std::time::Duration::from_secs(30)))
+        .build()
+        .new_agent();
+    let mut builder = ureq::http::Request::builder()
+        .method(method_str.as_str())
+        .uri(url_str.as_str());
+    for (k, v) in &header_pairs {
+        builder = builder.header(k.as_str(), v.as_str());
+    }
+    let body_bytes = if body_str.is_empty() {
+        Vec::new()
+    } else {
+        body_str.into_bytes()
+    };
+    let request = match builder.body(body_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            return unsafe { err_result_with_msg(&format!("http::stream: build request: {e}")) };
+        }
+    };
+    let resp = match agent.run(request) {
+        Ok(r) => r,
+        Err(e) => return unsafe { err_result_with_msg(&format!("http::stream: {e}")) },
+    };
+    let status = i64::from(resp.status().as_u16());
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("text/plain")
+        .to_string();
+    let reader = std::io::BufReader::new(
+        Box::new(resp.into_body().into_reader()) as Box<dyn std::io::Read + Send + Sync>
+    );
+    let handle = stream_registry_register(reader);
+    let blob = unsafe { alloc_response_stream_blob(handle, status, &content_type) };
+    if blob.is_null() {
+        stream_registry_drop(handle);
+        return unsafe { err_result_with_msg("http::stream: arena alloc failed") };
+    }
+    unsafe { gos_rt_result_new(0, blob as i64) }
+}
+
+/// `ResponseStream::next_line() -> Option<String>`.
+///
+/// `rs` points at the 3-slot blob `[handle, status, content_type]`
+/// returned by `gos_rt_http_stream`. Returns a `*mut GosResult`
+/// shaped as `Option<String>` (disc 0 = Some, 1 = None). EOF or
+/// I/O failure drops the stream from the registry and returns
+/// None.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_stream_next_line(rs: *const i64) -> *mut GosResult {
+    if rs.is_null() {
+        return unsafe { gos_rt_result_new(1, 0) };
+    }
+    let handle = unsafe { *rs };
+    let Some(arc) = stream_registry_lookup(handle) else {
+        return unsafe { gos_rt_result_new(1, 0) };
+    };
+    use std::io::BufRead;
+    let mut buf = String::new();
+    let read_result = arc.lock().read_line(&mut buf);
+    match read_result {
+        Ok(0) => {
+            stream_registry_drop(handle);
+            unsafe { gos_rt_result_new(1, 0) }
+        }
+        Ok(_) => {
+            if buf.ends_with('\n') {
+                buf.pop();
+                if buf.ends_with('\r') {
+                    buf.pop();
+                }
+            }
+            let cs = alloc_cstring(buf.as_bytes()) as i64;
+            unsafe { gos_rt_result_new(0, cs) }
+        }
+        Err(_) => {
+            stream_registry_drop(handle);
+            unsafe { gos_rt_result_new(1, 0) }
+        }
+    }
 }
 
 // ---------------------------------------------------------------

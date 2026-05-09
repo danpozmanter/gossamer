@@ -1,0 +1,101 @@
+// Time: Monotonic vs Wall Clock
+// Exercise time::now() for monotonic elapsed measurement,
+// time::now_ms() for wall-clock unix milliseconds,
+// time::format_rfc3339 / parse_rfc3339 for round-trip conversion,
+// and time::sleep for observable delay.
+
+use std::time
+
+fn busy_work(n: i64) -> i64 {
+    let mut sum = 0
+    for i in 0..n {
+        sum += i
+    }
+    sum
+}
+
+fn main() {
+    // Wall clock: unix milliseconds
+    let ms_before = time::now_ms()
+    let _ = busy_work(100000)
+    let ms_after = time::now_ms()
+    println!("wall ms before > 0: {}", ms_before > 0)
+    println!("wall ms after >= before: {}", ms_after >= ms_before)
+
+    // Monotonic: now() returns unix ms too; sleep advances it
+    let t1 = time::now()
+    time::sleep(15)
+    let t2 = time::now()
+    println!("sleep advanced time: {}", t2 > t1)
+
+    // RFC3339 round-trip
+    match time::format_rfc3339(ms_before) {
+        Ok(s) => {
+            println!("formatted has T: {}", s.contains("T"))
+            println!("formatted has Z: {}", s.contains("Z") || s.contains("+"))
+            match time::parse_rfc3339(s) {
+                Ok(parsed_ms) => {
+                    // Parsed ms should be close to original (within 1 second)
+                    let diff = parsed_ms - ms_before
+                    println!("parse roundtrip diff < 1000ms: {}", diff < 1000)
+                }
+                Err(e) => println!("parse error: {}", e)
+            }
+        }
+        Err(e) => println!("format error: {}", e)
+    }
+
+    // Duration from millis
+    let d = time::Duration::from_millis(500)
+    println!("duration ok")
+
+    // Duration from secs
+    let ds = time::Duration::from_secs(2)
+    println!("secs duration ok")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time
+    use std::testing
+
+    #[test]
+    fn wall_clock_positive() {
+        let ms = time::now_ms()
+        testing::check(ms > 0, "unix ms > 0")
+    }
+
+    #[test]
+    fn now_monotonic_advances() {
+        let a = time::now()
+        time::sleep(10)
+        let b = time::now()
+        testing::check(b >= a, "monotonic advances after sleep")
+    }
+
+    #[test]
+    fn format_rfc3339_contains_t() {
+        let ms = time::now_ms()
+        match time::format_rfc3339(ms) {
+            Ok(s) => testing::check(s.contains("T"), "RFC3339 contains T"),
+            Err(e) => testing::check(false, e),
+        }
+    }
+
+    #[test]
+    fn parse_rfc3339_roundtrip() {
+        let ms = time::now_ms()
+        match time::format_rfc3339(ms) {
+            Ok(s) => {
+                match time::parse_rfc3339(s) {
+                    Ok(reparsed) => {
+                        let diff = reparsed - ms
+                        testing::check(diff < 1000, "roundtrip within 1s")
+                    }
+                    Err(e) => testing::check(false, e),
+                }
+            }
+            Err(e) => testing::check(false, e),
+        }
+    }
+}

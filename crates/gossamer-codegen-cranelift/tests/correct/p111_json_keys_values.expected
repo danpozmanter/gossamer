@@ -1,0 +1,7 @@
+keys.len = 2
+k[0] = a
+k[1] = b
+vals.len = 2
+v[0] = 1
+v[1] = 2
+string has no keys: ok

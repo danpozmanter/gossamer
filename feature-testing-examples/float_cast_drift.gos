@@ -1,0 +1,76 @@
+// Float Cast Drift
+// Mix integers and floats with explicit as casts and repeated
+// arithmetic to detect tree-walker vs VM/native numeric conversion
+// inconsistencies.
+
+fn main() {
+    let n: i64 = 7
+    let f: f64 = n as f64
+    println!("7 as f64 = {}", f)
+
+    let a: f64 = 1000000001 as f64
+    let b: f64 = 1000000002 as f64
+    let diff = b - a
+    println!("float diff near 1e9 = {}", diff)
+
+    // Repeated int->float arithmetic
+    let mut acc: f64 = 0.0
+    for i in 1..1001 {
+        acc += (i as f64) * 0.1
+    }
+    println!("repeated cast-sum = {}", acc)
+
+    // Division order matters for precision
+    let x: i64 = 22
+    let y: i64 = 7
+    let pi_approx = (x as f64) / (y as f64)
+    println!("22/7 as f64 = {}", pi_approx)
+
+    // Chained casts
+    let chain: f64 = 255 as u8 as i32 as f64
+    println!("255 -> u8 -> i32 -> f64 = {}", chain)
+
+    // Negative ints to float
+    let neg: i64 = -273
+    let float_neg = neg as f64
+    println!("-273 as f64 = {}", float_neg)
+
+    // Large i64 to f64 and back
+    let big: i64 = 9007199254740993
+    let big_f = big as f64
+    let back = big_f as i64
+    println!("big i64 -> f64 -> i64 = {}", back)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn i64_to_f64() {
+        let n: i64 = 7
+        let f: f64 = n as f64
+        testing::check(f > 6.9 && f < 7.1, "7 as f64 ≈ 7.0")
+    }
+
+    #[test]
+    fn pi_approximation() {
+        let pi = (22 as f64) / (7 as f64)
+        testing::check(pi > 3.14 && pi < 3.15, "22/7 ≈ 3.14")
+    }
+
+    #[test]
+    fn negative_to_float() {
+        let neg: i64 = -273
+        let f = neg as f64
+        testing::check(f > -273.1 && f < -272.9, "-273 as f64")
+    }
+
+    #[test]
+    fn float_diff_near_1e9() {
+        let a: f64 = 1000000001 as f64
+        let b: f64 = 1000000002 as f64
+        let diff = b - a
+        testing::check(diff > 0.9 && diff < 1.1, "diff near 1e9 ≈ 1")
+    }
+}

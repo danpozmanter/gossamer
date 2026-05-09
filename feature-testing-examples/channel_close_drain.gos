@@ -1,0 +1,125 @@
+// Channel Close and Drain
+// A producer sends N items then drops its sender so the receiver
+// can drain with `while let Some(v) = rx.recv()`. Verifies that
+// the drain terminates and all values arrive in correct order.
+
+use std::sync::channel
+use std::time
+
+fn count_producer(tx: channel::Sender<i64>, n: i64) {
+    for i in 0..n {
+        tx.send(i)
+    }
+    tx.close()
+}
+
+fn fibonacci_producer(tx: channel::Sender<i64>, limit: i64) {
+    let mut a = 0
+    let mut b = 1
+    while a <= limit {
+        tx.send(a)
+        let tmp = a + b
+        a = b
+        b = tmp
+    }
+    tx.close()
+}
+
+fn batch_sum(vals: [i64]) -> i64 {
+    let mut s = 0
+    for v in vals {
+        s += v
+    }
+    s
+}
+
+fn main() {
+    // Basic drain: 0..10
+    let (tx, rx) = channel()
+    go count_producer(tx, 10)
+    time::sleep(30)
+    let mut collected: [i64] = []
+    while let Some(v) = rx.recv() {
+        collected.push(v)
+    }
+    println!("drain count = {}", collected.len())
+    println!("drain sum = {}", batch_sum(collected))
+
+    // Fibonacci drain
+    let (ftx, frx) = channel()
+    go fibonacci_producer(ftx, 50)
+    time::sleep(30)
+    let mut fibs: [i64] = []
+    while let Some(v) = frx.recv() {
+        fibs.push(v)
+    }
+    println!("fibs count = {}", fibs.len())
+    println!("fibs[0] = {}", fibs[0])
+    println!("fibs[1] = {}", fibs[1])
+    println!("fibs[5] = {}", fibs[5])
+
+    // Multiple producers, single consumer. Each producer closes
+    // its own send handle after pushing — but with two senders
+    // sharing one channel the first close would terminate the
+    // recv loop before the second producer finishes, so we
+    // collect via `try_recv` after a sleep instead. The
+    // close+drain pattern requires a single owner of the close
+    // step (typically the last sender to finish).
+    let (mtx, mrx) = channel()
+    go count_producer(mtx, 5)
+    go count_producer(mtx, 5)
+    time::sleep(40)
+    let mut all: [i64] = []
+    while let Some(v) = mrx.try_recv() {
+        all.push(v)
+    }
+    println!("two-producer count = {}", all.len())
+    println!("two-producer sum = {}", batch_sum(all))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::channel
+    use std::time
+    use std::testing
+
+    #[test]
+    fn drain_all_items() {
+        let (tx, rx) = channel()
+        go super::count_producer(tx, 7)
+        time::sleep(30)
+        let mut count = 0
+        while let Some(_) = rx.recv() {
+            count += 1
+        }
+        testing::check_eq(&count, &7, "7 items drained")
+    }
+
+    #[test]
+    fn drain_sum_correct() {
+        let (tx, rx) = channel()
+        go super::count_producer(tx, 5)
+        time::sleep(20)
+        let mut total = 0
+        while let Some(v) = rx.recv() {
+            total += v
+        }
+        testing::check_eq(&total, &10, "0+1+2+3+4=10")
+    }
+
+    #[test]
+    fn fibonacci_first_values() {
+        let (tx, rx) = channel()
+        go super::fibonacci_producer(tx, 20)
+        time::sleep(20)
+        let mut fibs: [i64] = []
+        while let Some(v) = rx.recv() {
+            fibs.push(v)
+        }
+        testing::check(fibs.len() >= 6, "at least 6 fibs up to 20")
+        testing::check_eq(&fibs[0], &0, "fib[0]=0")
+        testing::check_eq(&fibs[1], &1, "fib[1]=1")
+        testing::check_eq(&fibs[2], &1, "fib[2]=1")
+        testing::check_eq(&fibs[5], &5, "fib[5]=5")
+    }
+}

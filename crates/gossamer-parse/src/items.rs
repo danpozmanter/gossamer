@@ -609,7 +609,15 @@ impl Parser<'_> {
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             let before = self.checkpoint_public();
             if self.at_keyword(Keyword::Use) {
-                let _ = self.parse_use_decl();
+                // Hoist the `use` decl into the side channel so
+                // [`parse_source_file`] adds it to the source file's
+                // top-level imports. Without this, `use
+                // std::encoding::json` inside `mod chat { ... }`
+                // (the auto-bundled sibling shape) silently
+                // disappears and `json::Value` references inside
+                // the module fail to resolve.
+                let use_decl = self.parse_use_decl();
+                self.hoisted_uses.push(use_decl);
                 continue;
             }
             items.push(self.parse_item());

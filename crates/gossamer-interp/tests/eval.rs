@@ -466,6 +466,7 @@ fn main() {
     tx.send(1i64)
     tx.send(2i64)
     tx.send(3i64)
+    close(tx)
     let a = rx.recv()
     let b = rx.recv()
     let c = rx.recv()

@@ -1,0 +1,23 @@
+// Mutable static — read+write across function boundaries.
+// Verifies that `static mut` storage is shared and observable
+// from both the writer and reader, in all tiers.
+
+static mut COUNTER: i64 = 0
+
+fn bump() {
+    COUNTER = COUNTER + 1
+}
+
+fn read() -> i64 {
+    COUNTER
+}
+
+fn main() {
+    println!("start = {}", read())
+    bump()
+    bump()
+    bump()
+    println!("after 3 bumps = {}", read())
+    COUNTER = 100
+    println!("after assign 100 = {}", read())
+}

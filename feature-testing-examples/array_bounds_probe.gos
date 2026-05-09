@@ -1,0 +1,68 @@
+// Array Bounds Probe
+// Access arrays with valid and invalid i64 indices including
+// negative-like cast cases to ensure bounds checking matches across
+// backends.
+
+fn main() {
+    let arr: [i64] = [10, 20, 30, 40, 50]
+
+    // Valid accesses with bare i64 indices
+    println!("arr[0] = {}", arr[0])
+    println!("arr[4] = {}", arr[4])
+    println!("arr[2] = {}", arr[2])
+
+    // Edge of array
+    let last = arr.len() - 1
+    println!("arr[last] = {}", arr[last])
+
+    // Loop access
+    let mut sum = 0
+    for i in 0..arr.len() {
+        sum += arr[i]
+    }
+    println!("sum via loop = {}", sum)
+
+    // Fixed-size array
+    let fixed: [i64; 3] = [1, 2, 3]
+    println!("fixed[1] = {}", fixed[1])
+
+    // Index computed from expression
+    let idx: i64 = (arr.len() / 2)
+    println!("mid = {}", arr[idx])
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn sum_via_loop() {
+        let arr: [i64] = [10, 20, 30, 40, 50]
+        let mut s = 0
+        for i in 0..arr.len() {
+            s += arr[i]
+        }
+        testing::check_eq(&s, &150, "10+20+30+40+50=150")
+    }
+
+    #[test]
+    fn fixed_array_access() {
+        let fixed: [i64; 3] = [1, 2, 3]
+        testing::check_eq(&fixed[0], &1, "fixed[0]=1")
+        testing::check_eq(&fixed[2], &3, "fixed[2]=3")
+    }
+
+    #[test]
+    fn mid_element() {
+        let arr: [i64] = [10, 20, 30, 40, 50]
+        let idx: i64 = (arr.len() / 2)
+        testing::check_eq(&arr[idx], &30, "mid=30")
+    }
+
+    #[test]
+    fn last_element() {
+        let arr: [i64] = [10, 20, 30, 40, 50]
+        let last = arr.len() - 1
+        testing::check_eq(&arr[last], &50, "last=50")
+    }
+}

@@ -1,0 +1,102 @@
+// Process Spawn and Output Capture
+// Use exec::run to spawn subprocesses, capture stdout/stderr,
+// and check exit codes — the one-shot subprocess pattern.
+
+use std::exec
+
+fn run_cmd(prog: String, args: [String]) -> Result<String, String> {
+    match exec::run(prog, args) {
+        Ok(out) => Ok(out.stdout.trim().to_string()),
+        Err(e) => Err(e),
+    }
+}
+
+fn run_and_check_code(prog: String, args: [String]) -> i64 {
+    match exec::run(prog, args) {
+        Ok(out) => out.code,
+        Err(_) => -1,
+    }
+}
+
+fn main() {
+    // echo — simple stdout capture
+    match exec::run("echo", ["hello from subprocess"]) {
+        Ok(out) => {
+            println!("stdout: '{}'", out.stdout.trim())
+            println!("code: {}", out.code)
+        }
+        Err(e) => println!("error: {}", e)
+    }
+
+    // echo with multiple args
+    match exec::run("echo", ["foo", "bar", "baz"]) {
+        Ok(out) => println!("multi-arg: '{}'", out.stdout.trim()),
+        Err(e) => println!("error: {}", e)
+    }
+
+    // true exits 0, false exits 1
+    let true_code = run_and_check_code("true".to_string(), [])
+    println!("true exit code = {}", true_code)
+
+    let false_code = run_and_check_code("false".to_string(), [])
+    println!("false exit code = {}", false_code)
+
+    // printf for controlled output
+    match exec::run("printf", ["%d\\n", "42"]) {
+        Ok(out) => println!("printf output starts: {}", out.stdout.starts_with("42")),
+        Err(e) => println!("printf error: {}", e)
+    }
+
+    // sh -c for pipeline
+    match exec::run("sh", ["-c", "echo hello | tr a-z A-Z"]) {
+        Ok(out) => println!("uppercase: '{}'", out.stdout.trim()),
+        Err(e) => println!("sh error: {}", e)
+    }
+
+    // Chained: run_cmd helper
+    match run_cmd("echo".to_string(), ["world".to_string()]) {
+        Ok(s) => println!("run_cmd result: '{}'", s),
+        Err(e) => println!("run_cmd error: {}", e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::exec
+    use std::testing
+
+    #[test]
+    fn echo_captures_stdout() {
+        match exec::run("echo", ["gossamer"]) {
+            Ok(out) => {
+                testing::check_eq(&out.code, &0, "exit code 0")
+                testing::check(out.stdout.contains("gossamer"), "stdout contains gossamer")
+            }
+            Err(e) => testing::check(false, e),
+        }
+    }
+
+    #[test]
+    fn true_exits_zero() {
+        match exec::run("true", []) {
+            Ok(out) => testing::check_eq(&out.code, &0, "true exits 0"),
+            Err(e) => testing::check(false, e),
+        }
+    }
+
+    #[test]
+    fn false_exits_nonzero() {
+        match exec::run("false", []) {
+            Ok(out) => testing::check(out.code != 0, "false exits non-zero"),
+            Err(e) => testing::check(false, e),
+        }
+    }
+
+    #[test]
+    fn sh_pipeline() {
+        match exec::run("sh", ["-c", "echo hello"]) {
+            Ok(out) => testing::check(out.stdout.contains("hello"), "sh -c echo"),
+            Err(e) => testing::check(false, e),
+        }
+    }
+}

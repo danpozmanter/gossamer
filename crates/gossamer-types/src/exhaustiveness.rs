@@ -80,6 +80,11 @@ impl Checker<'_> {
                 }
                 ItemKind::Const(decl) => self.walk_expr(&decl.value),
                 ItemKind::Static(decl) => self.walk_expr(&decl.value),
+                ItemKind::Mod(decl) => {
+                    if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                        self.walk_items(inner);
+                    }
+                }
                 _ => {}
             }
         }
@@ -382,7 +387,19 @@ fn subsumes(earlier: &Pat, later: &Pat) -> bool {
 
 fn lower_pattern(pattern: &Pattern) -> Pat {
     match &pattern.kind {
-        PatternKind::Wildcard | PatternKind::Ident { .. } | PatternKind::Rest => Pat::Wild,
+        PatternKind::Wildcard | PatternKind::Rest => Pat::Wild,
+        PatternKind::Ident { subpattern, .. } => {
+            // `x @ subpat` matches whatever `subpat` matches; the
+            // bare `x` form is a wildcard. Without recursing, a
+            // user could write `x @ 1 => …` followed by `1 => …`
+            // and the second arm would silently be flagged as
+            // reachable-only when it's actually shadowed (or vice
+            // versa for unreachability).
+            match subpattern {
+                Some(inner) => lower_pattern(inner),
+                None => Pat::Wild,
+            }
+        }
         PatternKind::Literal(lit) => lower_literal(lit),
         PatternKind::Path(path) => {
             let name = path
@@ -436,20 +453,36 @@ fn lower_literal(lit: &Literal) -> Pat {
 
 fn collect_enums(source: &SourceFile, resolutions: &Resolutions) -> HashMap<DefId, Vec<String>> {
     let mut map = HashMap::new();
-    for item in &source.items {
-        if let ItemKind::Enum(decl) = &item.kind {
-            let Some(def) = resolutions.definition_of(item.id) else {
-                continue;
-            };
-            let variants = decl
-                .variants
-                .iter()
-                .map(|variant| variant.name.name.clone())
-                .collect();
-            map.insert(def, variants);
+    collect_enums_in(&source.items, resolutions, &mut map);
+    map
+}
+
+fn collect_enums_in(
+    items: &[gossamer_ast::Item],
+    resolutions: &Resolutions,
+    map: &mut HashMap<DefId, Vec<String>>,
+) {
+    for item in items {
+        match &item.kind {
+            ItemKind::Enum(decl) => {
+                let Some(def) = resolutions.definition_of(item.id) else {
+                    continue;
+                };
+                let variants = decl
+                    .variants
+                    .iter()
+                    .map(|variant| variant.name.name.clone())
+                    .collect();
+                map.insert(def, variants);
+            }
+            ItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    collect_enums_in(inner, resolutions, map);
+                }
+            }
+            _ => {}
         }
     }
-    map
 }
 
 /// Internal lowered pattern form the checker works over.

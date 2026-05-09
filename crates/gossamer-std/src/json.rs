@@ -610,12 +610,16 @@ impl<'a> Parser<'a> {
         }
         let mut out = String::new();
         loop {
-            let Some(byte) = self.bump() else {
+            let Some(byte) = self.peek() else {
                 return Err(self.error("unterminated string"));
             };
             match byte {
-                b'"' => return Ok(out),
+                b'"' => {
+                    self.bump();
+                    return Ok(out);
+                }
                 b'\\' => {
+                    self.bump();
                     let Some(escape) = self.bump() else {
                         return Err(self.error("unterminated escape"));
                     };
@@ -628,15 +632,68 @@ impl<'a> Parser<'a> {
                         b'r' => out.push('\r'),
                         b'b' => out.push('\u{0008}'),
                         b'f' => out.push('\u{000c}'),
+                        b'u' => {
+                            let cp = self.parse_hex4()?;
+                            if (0xD800..=0xDBFF).contains(&cp) {
+                                if self.bump() != Some(b'\\') || self.bump() != Some(b'u') {
+                                    return Err(self.error("expected low surrogate after high"));
+                                }
+                                let lo = self.parse_hex4()?;
+                                if !(0xDC00..=0xDFFF).contains(&lo) {
+                                    return Err(self.error("invalid low surrogate"));
+                                }
+                                let scalar = 0x10000 + (((cp - 0xD800) << 10) | (lo - 0xDC00));
+                                match char::from_u32(scalar) {
+                                    Some(c) => out.push(c),
+                                    None => return Err(self.error("invalid surrogate pair")),
+                                }
+                            } else if (0xDC00..=0xDFFF).contains(&cp) {
+                                return Err(self.error("unpaired low surrogate"));
+                            } else {
+                                match char::from_u32(cp) {
+                                    Some(c) => out.push(c),
+                                    None => return Err(self.error("invalid unicode escape")),
+                                }
+                            }
+                        }
                         other => return Err(self.error(format!("unknown escape {other:#x}"))),
                     }
                 }
                 byte if byte < 0x20 => {
                     return Err(self.error("control character in string"));
                 }
-                _ => out.push(byte as char),
+                _ => {
+                    let cp_len = utf8_first_byte_len(byte);
+                    if self.cursor + cp_len > self.bytes.len() {
+                        return Err(self.error("truncated UTF-8 in string"));
+                    }
+                    let slice = &self.bytes[self.cursor..self.cursor + cp_len];
+                    let text = std::str::from_utf8(slice)
+                        .map_err(|_| self.error("invalid UTF-8 in string"))?;
+                    out.push_str(text);
+                    for _ in 0..cp_len {
+                        self.bump();
+                    }
+                }
             }
         }
+    }
+
+    fn parse_hex4(&mut self) -> Result<u32, Error> {
+        let mut acc: u32 = 0;
+        for _ in 0..4 {
+            let b = self
+                .bump()
+                .ok_or_else(|| self.error("truncated unicode escape"))?;
+            let digit = match b {
+                b'0'..=b'9' => u32::from(b - b'0'),
+                b'a'..=b'f' => u32::from(b - b'a') + 10,
+                b'A'..=b'F' => u32::from(b - b'A') + 10,
+                _ => return Err(self.error("invalid hex digit in unicode escape")),
+            };
+            acc = (acc << 4) | digit;
+        }
+        Ok(acc)
     }
 
     fn parse_bool(&mut self) -> Result<Value, Error> {
@@ -682,6 +739,20 @@ impl<'a> Parser<'a> {
         text.parse::<f64>()
             .map(Value::Number)
             .map_err(|_| self.error(format!("invalid number {text:?}")))
+    }
+}
+
+fn utf8_first_byte_len(b: u8) -> usize {
+    if b < 0x80 {
+        1
+    } else if b & 0xE0 == 0xC0 {
+        2
+    } else if b & 0xF0 == 0xE0 {
+        3
+    } else if b & 0xF8 == 0xF0 {
+        4
+    } else {
+        1
     }
 }
 

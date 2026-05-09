@@ -161,6 +161,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_method_helpers(globals);
     install_concurrency_builtins(globals);
     install_regex_builtins(globals);
+    crate::stdlib_builtins::install(globals);
     globals.push(("serve", native("serve", native_http_serve)));
 }
 
@@ -264,6 +265,10 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("__struct", builtin("__struct", builtin_struct_new)));
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat registration list — splitting hides the per-arm intent"
+)]
 fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("http::serve", native("http::serve", native_http_serve)));
     globals.push((
@@ -297,6 +302,41 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ),
     ));
     globals.push((
+        "Client::post",
+        builtin(
+            "Client::post",
+            crate::http_client_builtins::builtin_http_client_post,
+        ),
+    ));
+    globals.push((
+        "Client::put",
+        builtin(
+            "Client::put",
+            crate::http_client_builtins::builtin_http_client_put,
+        ),
+    ));
+    globals.push((
+        "Client::options",
+        builtin(
+            "Client::options",
+            crate::http_client_builtins::builtin_http_client_options,
+        ),
+    ));
+    globals.push((
+        "Client::delete",
+        builtin(
+            "Client::delete",
+            crate::http_client_builtins::builtin_http_client_delete,
+        ),
+    ));
+    globals.push((
+        "Client::head",
+        builtin(
+            "Client::head",
+            crate::http_client_builtins::builtin_http_client_head,
+        ),
+    ));
+    globals.push((
         "Request::send",
         builtin(
             "Request::send",
@@ -308,6 +348,59 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         builtin(
             "Response::bytes",
             crate::http_client_builtins::builtin_http_response_bytes,
+        ),
+    ));
+    // Free-function client surface: http::request, http::stream, plus
+    // method-specific convenience wrappers.
+    globals.push((
+        "http::request",
+        builtin(
+            "http::request",
+            crate::http_client_builtins::builtin_http_request,
+        ),
+    ));
+    globals.push((
+        "http::get",
+        builtin("http::get", crate::http_client_builtins::builtin_http_get),
+    ));
+    globals.push((
+        "http::post",
+        builtin("http::post", crate::http_client_builtins::builtin_http_post),
+    ));
+    globals.push((
+        "http::put",
+        builtin("http::put", crate::http_client_builtins::builtin_http_put),
+    ));
+    globals.push((
+        "http::options",
+        builtin(
+            "http::options",
+            crate::http_client_builtins::builtin_http_options,
+        ),
+    ));
+    globals.push((
+        "http::delete",
+        builtin(
+            "http::delete",
+            crate::http_client_builtins::builtin_http_delete,
+        ),
+    ));
+    globals.push((
+        "http::head",
+        builtin("http::head", crate::http_client_builtins::builtin_http_head),
+    ));
+    globals.push((
+        "http::stream",
+        builtin(
+            "http::stream",
+            crate::http_client_builtins::builtin_http_stream,
+        ),
+    ));
+    globals.push((
+        "ResponseStream::next_line",
+        builtin(
+            "ResponseStream::next_line",
+            crate::http_client_builtins::builtin_response_stream_next_line,
         ),
     ));
     globals.push(("path", builtin("path", builtin_field::<'p'>)));
@@ -366,8 +459,24 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
-    install_module("exec", &[("run", builtin_exec_run)], globals);
-    install_module("os::exec", &[("run", builtin_exec_run)], globals);
+    install_module(
+        "exec",
+        &[
+            ("run", builtin_exec_run),
+            ("spawn", builtin_exec_spawn),
+            ("kill", builtin_exec_kill),
+        ],
+        globals,
+    );
+    install_module(
+        "os::exec",
+        &[
+            ("run", builtin_exec_run),
+            ("spawn", builtin_exec_spawn),
+            ("kill", builtin_exec_kill),
+        ],
+        globals,
+    );
     install_module(
         "fs",
         &[
@@ -440,17 +549,15 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "bufio",
         &[
             ("read_lines", builtin_bufio_read_lines),
-            // Streaming-from-stdin entry — every Scanner over
-            // os::stdin uses this. The interpreter buffers the
-            // whole stdin once on first call, then walks the
-            // buffer line-by-line.
             ("Scanner::new", builtin_bufio_scanner_new),
             ("Scanner::next", builtin_bufio_scanner_next),
+            ("Scanner::scan", builtin_bufio_scanner_scan),
+            ("Scanner::text", builtin_bufio_scanner_text),
         ],
         globals,
     );
     // Bare names so user code can write `Scanner::new(stream)` /
-    // `s.next()` without an explicit `bufio::` prefix.
+    // `s.scan()` without an explicit `bufio::` prefix.
     globals.push((
         "Scanner::new",
         builtin("Scanner::new", builtin_bufio_scanner_new),
@@ -458,6 +565,14 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push((
         "Scanner::next",
         builtin("Scanner::next", builtin_bufio_scanner_next),
+    ));
+    globals.push((
+        "Scanner::scan",
+        builtin("Scanner::scan", builtin_bufio_scanner_scan),
+    ));
+    globals.push((
+        "Scanner::text",
+        builtin("Scanner::text", builtin_bufio_scanner_text),
     ));
     // Method-call dispatch for `<stream>.read_line()` — the same
     // builtin handles both `os::stdin().read_line()` and the
@@ -522,6 +637,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             // is a struct keyed by field name and a JSON array is a
             // `Value::Array`.
             ("get", builtin_json_get),
+            ("set", builtin_json_set),
             ("at", builtin_json_at),
             ("keys", builtin_json_keys),
             ("len", builtin_json_len),
@@ -884,6 +1000,12 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("reverse", builtin("reverse", builtin_reverse)));
     globals.push(("swap", builtin("swap", builtin_swap)));
     globals.push(("clone", builtin("clone", builtin_clone)));
+    // `iter().next()` outside a for-loop. Returns `Some(first)`
+    // for non-empty collections, `None` otherwise. The for-loop
+    // fast paths still drive real iteration state — this binding
+    // only covers the bare-call shape (`let v = it.next()` and
+    // `match it.next() { Some(_) => …, None => … }`).
+    globals.push(("next", builtin("next", builtin_next)));
     // `Box<T>` / `Arc<T>` / `Rc<T>` are transparent in a fully GC'd
     // language: every value is heap-shared already, so the wrapper
     // type is purely a Rust-flavoured ergonomic spelling. The
@@ -910,6 +1032,15 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("ends_with", builtin("ends_with", builtin_ends_with)));
     globals.push(("replace", builtin("replace", builtin_str_replace)));
     globals.push(("find", builtin("find", builtin_str_find)));
+    // `String::substring(start, end)` — byte-range slice. Registered
+    // under the qualified `String::` key so it dominates any
+    // user-defined free fn named `substring` during method
+    // dispatch (otherwise `s.substring(a, b)` resolves to the user
+    // fn and infinite-recurses).
+    globals.push((
+        "String::substring",
+        builtin("String::substring", builtin_str_substring),
+    ));
     globals.push(("unwrap", builtin("unwrap", builtin_variant_unwrap)));
     globals.push(("unwrap_or", builtin("unwrap_or", builtin_variant_unwrap_or)));
     globals.push((
@@ -926,12 +1057,14 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("is_err", builtin("is_err", builtin_variant_is::<'E'>)));
     globals.push(("ok", builtin("ok", builtin_variant_ok)));
     globals.push(("err", builtin("err", builtin_variant_err)));
+    globals.push(("ok_or", builtin("ok_or", builtin_variant_ok_or)));
     globals.push(("map", native("map", native_variant_map)));
     globals.push(("map_or", native("map_or", native_variant_map_or)));
     globals.push(("map_err", native("map_err", native_variant_map_err)));
     globals.push(("parse", builtin("parse", builtin_str_parse_result)));
     globals.push(("errors::new", builtin("errors::new", builtin_errors_new)));
     globals.push(("errors::wrap", builtin("errors::wrap", builtin_errors_wrap)));
+    globals.push(("errors::join", builtin("errors::join", builtin_errors_join)));
     globals.push((
         "errors::is",
         builtin("errors::is", builtin_errors_is_freefn),
@@ -1016,6 +1149,20 @@ fn builtin_errors_new(args: &[Value]) -> RuntimeResult<Value> {
         None => String::new(),
     };
     Ok(errors_struct(msg, Value::variant("None", Arc::new(vec![]))))
+}
+
+fn builtin_errors_join(args: &[Value]) -> RuntimeResult<Value> {
+    let errs = match args.first() {
+        Some(Value::Array(arr)) => arr.as_ref().clone(),
+        _ => vec![],
+    };
+    let messages: Vec<String> = errs.iter().filter_map(errors_message_of).collect();
+    if messages.is_empty() {
+        return Ok(Value::variant("None", Arc::new(vec![])));
+    }
+    let combined = messages.join("; ");
+    let err = errors_struct(combined, Value::variant("None", Arc::new(vec![])));
+    Ok(Value::variant("Some", Arc::new(vec![err])))
 }
 
 fn builtin_errors_wrap(args: &[Value]) -> RuntimeResult<Value> {
@@ -1123,6 +1270,25 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Channel::recv",
         builtin("Channel::recv", builtin_channel_recv),
     ));
+    globals.push((
+        "Channel::try_recv",
+        builtin("Channel::try_recv", builtin_channel_try_recv),
+    ));
+    // MIR-emitted runtime call names — VM intercepts these so the
+    // interpreter's channel impl is used instead of the native GosChan.
+    globals.push((
+        "gos_rt_chan_recv_option",
+        builtin("gos_rt_chan_recv_option", builtin_channel_recv),
+    ));
+    globals.push((
+        "gos_rt_chan_try_recv_option",
+        builtin("gos_rt_chan_try_recv_option", builtin_channel_try_recv),
+    ));
+    globals.push((
+        "Channel::close",
+        builtin("Channel::close", builtin_channel_close),
+    ));
+    globals.push(("close", builtin("close", builtin_channel_close)));
     globals.push((
         "sync::Channel::new",
         builtin("sync::Channel::new", builtin_channel_new),
@@ -1322,6 +1488,9 @@ fn install_regex_builtins(globals: &mut Vec<(&'static str, Value)>) {
 /// Pointer-sized function type used by the builtin installer.
 type BuiltinFn = fn(&[Value]) -> RuntimeResult<Value>;
 
+/// Re-export of [`BuiltinFn`] for sibling builtin modules.
+pub(crate) type BuiltinFnPub = fn(&[Value]) -> RuntimeResult<Value>;
+
 fn install_module(
     prefix: &'static str,
     entries: &[(&'static str, BuiltinFn)],
@@ -1332,6 +1501,24 @@ fn install_module(
         let joined: &'static str = Box::leak(format!("{prefix}::{short}").into_boxed_str());
         globals.push((joined, builtin(joined, *call)));
     }
+}
+
+/// Same as [`install_module`] but exposed for sibling stdlib-builtin
+/// modules that build on the same shape (qualified + bare-name
+/// registration).
+pub(crate) fn install_module_pub(
+    prefix: &'static str,
+    entries: &[(&'static str, BuiltinFnPub)],
+    globals: &mut Vec<(&'static str, Value)>,
+) {
+    install_module(prefix, entries, globals);
+}
+
+/// Public-crate wrapper around [`builtin`] so sibling builtin
+/// modules can construct callable values without re-implementing
+/// the boxing.
+pub(crate) fn builtin_pub(name: &'static str, call: BuiltinFnPub) -> Value {
+    builtin(name, call)
 }
 
 fn builtin_variant_one<const TAG: char>(args: &[Value]) -> RuntimeResult<Value> {
@@ -2362,6 +2549,72 @@ fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+/// `exec::spawn(prog, args) -> Result<i64, errors::Error>`.
+///
+/// Non-blocking sibling of `exec::run`: launches a child
+/// process with stdin/stdout/stderr connected to `/dev/null`
+/// and returns the PID immediately. Pairs with `exec::kill`
+/// for teardown.
+fn builtin_exec_spawn(args: &[Value]) -> RuntimeResult<Value> {
+    use std::process::{Command as StdCommand, Stdio as StdStdio};
+    let Some(prog) = args.first().and_then(as_str) else {
+        return Ok(err_variant(
+            "exec::spawn: program argument must be a string",
+        ));
+    };
+    let mut cmd = StdCommand::new(prog);
+    if let Some(Value::Array(arr)) = args.get(1) {
+        for arg in arr.iter() {
+            if let Some(s) = as_str(arg) {
+                cmd.arg(s);
+            }
+        }
+    }
+    cmd.stdin(StdStdio::null());
+    cmd.stdout(StdStdio::null());
+    cmd.stderr(StdStdio::null());
+    match cmd.spawn() {
+        Ok(child) => {
+            let pid = i64::from(child.id());
+            // Detach: forget the Child so its Drop doesn't wait.
+            std::mem::forget(child);
+            Ok(ok_variant(Value::Int(pid)))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+/// `exec::kill(pid: i64) -> bool` — best-effort SIGTERM. Mirrors
+/// the runtime helper `gos_rt_exec_kill` so the VM and compiled
+/// tiers behave identically for the daemon-launch teardown path.
+/// Shells out to `/bin/kill` instead of pulling in a libc
+/// dep just for `kill(2)` — the dispatch path is rare (only the
+/// `stop_server` pattern hits it) so an extra fork/exec is fine.
+fn builtin_exec_kill(args: &[Value]) -> RuntimeResult<Value> {
+    use std::process::{Command as StdCommand, Stdio as StdStdio};
+    let Some(Value::Int(pid)) = args.first() else {
+        return Ok(Value::Bool(false));
+    };
+    if *pid <= 0 {
+        return Ok(Value::Bool(false));
+    }
+    #[cfg(unix)]
+    {
+        let status = StdCommand::new("/bin/kill")
+            .arg("-TERM")
+            .arg(format!("{pid}"))
+            .stdout(StdStdio::null())
+            .stderr(StdStdio::null())
+            .status();
+        Ok(Value::Bool(matches!(status, Ok(s) if s.success())))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        Ok(Value::Bool(false))
+    }
+}
+
 /// `fs::list_dir(path: String) -> Result<[DirInfo], String>` — direct-children
 /// listing with metadata. `DirInfo` is a struct carrying the entry's
 /// name, full path, type predicates, byte size (`0` for directories),
@@ -2578,9 +2831,10 @@ fn builtin_stdin_read_line(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `bufio::Scanner::new(stream)` — constructs a scanner. The
-/// interpreter implements scanners as a shared `[String]` of all
-/// remaining lines plus a cursor index, packed into a Struct.
+/// `bufio::Scanner::new(stream)` — constructs a scanner.
+///
+/// State is kept in a Map (`Arc<Mutex>`) so `scan()`/`text()` can mutate
+/// the cursor without requiring the immutable-struct writeback path.
 fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
     use std::io::Read;
     let is_stdin = matches!(args.first(), Some(Value::Struct(s)) if s.name == "StdinStream");
@@ -2593,67 +2847,103 @@ fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
     } else {
         Vec::new()
     };
-    let fields: Vec<(Ident, Value)> = vec![
-        (Ident::new("lines"), Value::Array(Arc::new(lines))),
-        (Ident::new("cursor"), Value::Int(0)),
-    ];
+    let mut state = rustc_hash::FxHashMap::with_capacity_and_hasher(4, rustc_hash::FxBuildHasher);
+    state.insert(
+        MapKey::Str(SmolStr::from("lines")),
+        Value::Array(Arc::new(lines)),
+    );
+    state.insert(MapKey::Str(SmolStr::from("cursor")), Value::Int(-1));
+    state.insert(
+        MapKey::Str(SmolStr::from("current")),
+        Value::String(SmolStr::from("")),
+    );
+    let state_map = Value::Map(Arc::new(parking_lot::Mutex::new(state)));
+    let fields: Vec<(Ident, Value)> = vec![(Ident::new("__state"), state_map)];
     Ok(Value::struct_("Scanner", Arc::new(fields)))
 }
 
-/// `<scanner>.next() -> Option<String>`. Advances the cursor and
-/// returns the next line, `None` at EOF. Mutates by re-binding
-/// the cursor field — relies on the method-dispatch writeback in
-/// the interpreter to durably update the receiver.
-fn builtin_bufio_scanner_next(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Struct(inner)) = args.first() else {
-        return Ok(none_variant());
-    };
-    if inner.name != "Scanner" {
-        return Ok(none_variant());
-    }
-    let mut lines: Arc<Vec<Value>> = crate::value::empty_value_arc();
-    let mut cursor: i64 = 0;
-    for (k, v) in &**inner.fields {
-        match (k.name.as_str(), v) {
-            ("lines", Value::Array(arr)) => lines = Arc::clone(arr),
-            ("cursor", Value::Int(n)) => cursor = *n,
-            _ => {}
+/// Extracts the mutable state Map from a Scanner struct.
+fn scanner_state(
+    args: &[Value],
+) -> Option<Arc<parking_lot::Mutex<rustc_hash::FxHashMap<MapKey, Value>>>> {
+    if let Some(Value::Struct(inner)) = args.first() {
+        if inner.name == "Scanner" {
+            for (name, val) in inner.fields.iter() {
+                if name.name == "__state" {
+                    if let Value::Map(m) = val {
+                        return Some(Arc::clone(m));
+                    }
+                }
+            }
         }
     }
-    if cursor < 0 || cursor as usize >= lines.len() {
-        return Ok(none_variant());
-    }
-    let line = lines[cursor as usize].clone();
-    let new_cursor = cursor + 1;
-    let new_fields: Vec<(Ident, Value)> = vec![
-        (Ident::new("lines"), Value::Array(lines)),
-        (Ident::new("cursor"), Value::Int(new_cursor)),
-    ];
-    // Return the *new scanner* — the method-dispatch writeback
-    // in the interpreter writes this back into the receiver
-    // place. The caller observes a Some(line); the cursor
-    // advances automatically.
-    let new_scanner = Value::struct_("Scanner", Arc::new(new_fields));
-    Ok(some_variant_pair(line, new_scanner))
+    None
 }
 
-/// Helper: returns `Some(line)` AND mutates the scanner via
-/// writeback. The method dispatcher uses the second value as the
-/// new receiver; the first is what the call expression evaluates
-/// to. Shipped as a 2-tuple here, with the scanner being the
-/// "writeback aggregate" and the line being the user-visible
-/// return value.
-///
-/// Implementation note: today the writeback path always uses the
-/// returned value verbatim. To get *both* a returned `Option<String>`
-/// and a mutated scanner from a single builtin, we'd need a richer
-/// dispatch protocol. As a pragmatic shortcut, this helper just
-/// returns `Some(line)` — the cursor advances on the *next* call
-/// because the line value carries the new state through a clone-
-/// and-replace done by the dispatcher. Future work: split into a
-/// proper `(value, writeback)` tuple recognised by the dispatcher.
-fn some_variant_pair(line: Value, _new_scanner: Value) -> Value {
-    some_variant(line)
+/// `scanner.scan() -> bool`. Advances to the next line; returns `true` if one exists.
+fn builtin_bufio_scanner_scan(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(state) = scanner_state(args) else {
+        return Ok(Value::Bool(false));
+    };
+    let mut map = state.lock();
+    let cursor = match map.get(&MapKey::Str(SmolStr::from("cursor"))) {
+        Some(Value::Int(n)) => *n,
+        _ => -1,
+    };
+    let new_cursor = cursor + 1;
+    // Clone the next line while the immutable borrow is still live; then drop it
+    // before calling map.insert (which needs a mutable borrow).
+    let next_line = match map.get(&MapKey::Str(SmolStr::from("lines"))) {
+        Some(Value::Array(arr)) if (new_cursor as usize) < arr.len() => {
+            Some(arr[new_cursor as usize].clone())
+        }
+        _ => None,
+    };
+    if let Some(line) = next_line {
+        map.insert(MapKey::Str(SmolStr::from("cursor")), Value::Int(new_cursor));
+        map.insert(MapKey::Str(SmolStr::from("current")), line);
+        Ok(Value::Bool(true))
+    } else {
+        Ok(Value::Bool(false))
+    }
+}
+
+/// `scanner.text() -> String`. Returns the last line read by `scan()`.
+fn builtin_bufio_scanner_text(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(state) = scanner_state(args) else {
+        return Ok(Value::String(SmolStr::from("")));
+    };
+    let map = state.lock();
+    match map.get(&MapKey::Str(SmolStr::from("current"))) {
+        Some(v) => Ok(v.clone()),
+        None => Ok(Value::String(SmolStr::from(""))),
+    }
+}
+
+/// `scanner.next() -> Option<String>`. Returns the next line and advances, `None` at EOF.
+fn builtin_bufio_scanner_next(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(state) = scanner_state(args) else {
+        return Ok(none_variant());
+    };
+    let mut map = state.lock();
+    let cursor = match map.get(&MapKey::Str(SmolStr::from("cursor"))) {
+        Some(Value::Int(n)) => *n,
+        _ => -1,
+    };
+    let new_cursor = cursor + 1;
+    let next_line = match map.get(&MapKey::Str(SmolStr::from("lines"))) {
+        Some(Value::Array(arr)) if (new_cursor as usize) < arr.len() => {
+            Some(arr[new_cursor as usize].clone())
+        }
+        _ => None,
+    };
+    if let Some(line) = next_line {
+        map.insert(MapKey::Str(SmolStr::from("cursor")), Value::Int(new_cursor));
+        map.insert(MapKey::Str(SmolStr::from("current")), line.clone());
+        Ok(some_variant(line))
+    } else {
+        Ok(none_variant())
+    }
 }
 
 /// `bufio::read_lines(path: String) -> Result<[String], String>`.
@@ -2697,24 +2987,26 @@ fn builtin_json_render(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(json_std::encode(&json_value))))
 }
 
-/// `json::get(value, key)` → object lookup. Returns `Value::Unit`
-/// (`null` shape) when the receiver isn't an object or the key is
-/// missing — keeps call chains short by never panicking.
+/// `json::get(value, key)` → object lookup wrapped in `Option`.
+/// Returns `Some(child)` when `value` is an object and `key` is
+/// present, otherwise `None`. Tests pattern-match the result, so
+/// we must always return a real `Option` variant (never the bare
+/// child or `Value::Unit`).
 fn builtin_json_get(args: &[Value]) -> RuntimeResult<Value> {
     let Some(receiver) = args.first() else {
-        return Ok(Value::Unit);
+        return Ok(none_variant());
     };
     let Some(key) = args.get(1).and_then(as_str) else {
-        return Ok(Value::Unit);
+        return Ok(none_variant());
     };
     if let Value::Struct(inner) = receiver {
         for (field_name, value) in &**inner.fields {
             if field_name.name.as_str() == key {
-                return Ok(value.clone());
+                return Ok(some_variant(value.clone()));
             }
         }
     }
-    Ok(Value::Unit)
+    Ok(none_variant())
 }
 
 /// `json::at(array, idx)` → array index. Returns `Value::Unit`
@@ -2741,15 +3033,18 @@ fn builtin_json_at(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
-/// `json::keys(object)` → `[String]` of every key in sorted order.
+/// `json::keys(object)` → `Some([String])` of every key in sorted
+/// order, or `None` when the receiver isn't an object. Tests
+/// pattern-match the result so we always emit an Option variant.
 fn builtin_json_keys(args: &[Value]) -> RuntimeResult<Value> {
-    let mut out: Vec<Value> = Vec::new();
     if let Some(Value::Struct(inner)) = args.first() {
+        let mut out: Vec<Value> = Vec::new();
         for (name, _) in &**inner.fields {
             out.push(Value::String(SmolStr::from(name.name.as_str())));
         }
+        return Ok(some_variant(Value::Array(Arc::new(out))));
     }
-    Ok(Value::Array(Arc::new(out)))
+    Ok(none_variant())
 }
 
 /// `json::len(value)` → element / pair / byte count, 0 for scalar.
@@ -2809,15 +3104,15 @@ fn builtin_json_as_bool(args: &[Value]) -> RuntimeResult<Value> {
     Ok(none_variant())
 }
 
-/// `json::as_array(value)` → the underlying `Vec` (or empty when
-/// the receiver isn't an array). Returned bare — wrap in
-/// `Some(_)` semantics by checking with `json::len(_) > 0` if you
-/// care about distinguishing empty vs non-array.
+/// `json::as_array(value)` → `Some([T])` when the receiver is an
+/// array, otherwise `None`. Tests pattern-match the result, so we
+/// always emit an Option variant — `unwrap()` on a non-array now
+/// fails loudly instead of returning a misleading empty array.
 fn builtin_json_as_array(args: &[Value]) -> RuntimeResult<Value> {
     if let Some(Value::Array(a)) = args.first() {
-        return Ok(Value::Array(Arc::clone(a)));
+        return Ok(some_variant(Value::Array(Arc::clone(a))));
     }
-    Ok(Value::empty_array())
+    Ok(none_variant())
 }
 
 fn builtin_json_decode(args: &[Value]) -> RuntimeResult<Value> {
@@ -2922,6 +3217,7 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
             }
             json_std::Value::Object(out)
         }
+        Value::Uint(n) => json_std::Value::Number(*n as f64),
     }
 }
 
@@ -3041,6 +3337,29 @@ fn builtin_ends_with(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(Value::Bool(false));
     };
     Ok(Value::Bool(s.ends_with(suffix.as_str())))
+}
+
+fn builtin_str_substring(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::String(s)) = args.first() else {
+        return Ok(Value::String(SmolStr::from(String::new())));
+    };
+    let start = match args.get(1) {
+        Some(Value::Int(n)) => (*n).max(0) as usize,
+        _ => 0,
+    };
+    let end = match args.get(2) {
+        Some(Value::Int(n)) => (*n).max(0) as usize,
+        _ => s.as_str().len(),
+    };
+    let bytes = s.as_str().as_bytes();
+    let lo = start.min(bytes.len());
+    let hi = end.min(bytes.len()).max(lo);
+    let slice = &bytes[lo..hi];
+    let out = std::str::from_utf8(slice).map_or_else(
+        |_| String::from_utf8_lossy(slice).into_owned(),
+        str::to_string,
+    );
+    Ok(Value::String(SmolStr::from(out)))
 }
 
 fn builtin_str_replace(args: &[Value]) -> RuntimeResult<Value> {
@@ -3594,18 +3913,31 @@ fn builtin_truncate(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_sort(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Array(parts)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
-    let mut owned = parts.as_ref().clone();
-    // Comparator: numeric first, else string compare on Display.
-    owned.sort_by(|a, b| match (a, b) {
-        (Value::Int(x), Value::Int(y)) => x.cmp(y),
-        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-        (Value::String(x), Value::String(y)) => x.as_str().cmp(y.as_str()),
-        _ => std::cmp::Ordering::Equal,
-    });
-    Ok(Value::Array(Arc::new(owned)))
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            owned.sort_by(|a, b| match (a, b) {
+                (Value::Int(x), Value::Int(y)) => x.cmp(y),
+                (Value::Float(x), Value::Float(y)) => {
+                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
+                }
+                (Value::String(x), Value::String(y)) => x.as_str().cmp(y.as_str()),
+                _ => std::cmp::Ordering::Equal,
+            });
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(data)) => {
+            let mut owned = data.as_ref().clone();
+            owned.sort_unstable();
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            owned.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        other => Ok(other.cloned().unwrap_or(Value::Unit)),
+    }
 }
 
 fn builtin_reverse(args: &[Value]) -> RuntimeResult<Value> {
@@ -3655,6 +3987,54 @@ fn builtin_swap(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_clone(args: &[Value]) -> RuntimeResult<Value> {
     Ok(args.first().cloned().unwrap_or(Value::Unit))
+}
+
+/// `it.next()` — returns `Some(first)` for non-empty
+/// collection-shaped receivers and `None` for empty. The
+/// for-loop fast paths handle real iterator state; this binding
+/// covers user code that calls `.next()` once outside a
+/// for-loop, and standalone `xs.iter().next()` shapes.
+fn builtin_next(args: &[Value]) -> RuntimeResult<Value> {
+    let none = Value::variant("None", Arc::new(vec![]));
+    let some = |v: Value| Value::variant("Some", Arc::new(vec![v]));
+    match args.first() {
+        Some(Value::Array(items)) => {
+            if let Some(first) = items.first() {
+                Ok(some(first.clone()))
+            } else {
+                Ok(none)
+            }
+        }
+        Some(Value::IntArray(items)) => {
+            if let Some(first) = items.first() {
+                Ok(some(Value::Int(*first)))
+            } else {
+                Ok(none)
+            }
+        }
+        Some(Value::FloatVec(items)) => {
+            if let Some(first) = items.first() {
+                Ok(some(Value::Float(*first)))
+            } else {
+                Ok(none)
+            }
+        }
+        Some(Value::Tuple(items)) => {
+            if let Some(first) = items.first() {
+                Ok(some(first.clone()))
+            } else {
+                Ok(none)
+            }
+        }
+        Some(Value::String(s)) => {
+            if let Some(c) = s.as_str().chars().next() {
+                Ok(some(Value::Char(c)))
+            } else {
+                Ok(none)
+            }
+        }
+        _ => Ok(none),
+    }
 }
 
 fn builtin_path_join_v(args: &[Value]) -> RuntimeResult<Value> {
@@ -3719,6 +4099,38 @@ fn builtin_json_value_object(args: &[Value]) -> RuntimeResult<Value> {
             other => format!("{other:?}"),
         };
         fields.push((Ident::new(key), pair[1].clone()));
+    }
+    Ok(Value::struct_("json::Object", Arc::new(fields)))
+}
+
+/// `json::set(obj, key, value) -> json::Value` — append or
+/// replace the named field on a `json::Value::object()`-shaped
+/// receiver and return the updated value. Non-object receivers
+/// fall through unchanged so callers don't have to special-case
+/// `Null` / arrays. Mirrors the surface documented in the SKILL
+/// card and used by askq's chat-round assembly.
+fn builtin_json_set(args: &[Value]) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let key = match args.get(1) {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        Some(other) => format!("{other}"),
+        None => return Ok(receiver),
+    };
+    let value = args.get(2).cloned().unwrap_or(Value::Unit);
+    let Value::Struct(inner) = &receiver else {
+        return Ok(receiver);
+    };
+    if inner.name != "json::Object" {
+        return Ok(receiver);
+    }
+    let mut fields: Vec<(Ident, Value)> = inner.fields.iter().cloned().collect();
+    if let Some(slot) = fields
+        .iter_mut()
+        .find(|(name, _)| name.name.as_str() == key)
+    {
+        slot.1 = value;
+    } else {
+        fields.push((Ident::new(key), value));
     }
     Ok(Value::struct_("json::Object", Arc::new(fields)))
 }
@@ -3820,6 +4232,25 @@ fn builtin_variant_err(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+/// `result.ok_or(new_err)` / `option.ok_or(new_err)`. Replaces a
+/// missing-value variant (Err / None) with `Err(new_err)`; passes
+/// the success variant through unchanged.
+fn builtin_variant_ok_or(args: &[Value]) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let new_err = args.get(1).cloned().unwrap_or(Value::Unit);
+    match &receiver {
+        Value::Variant(inner)
+            if (inner.name == "Ok" || inner.name == "Some") && !inner.fields.is_empty() =>
+        {
+            Ok(Value::variant(
+                "Ok",
+                Arc::new(vec![inner.fields[0].clone()]),
+            ))
+        }
+        _ => Ok(Value::variant("Err", Arc::new(vec![new_err]))),
+    }
+}
+
 fn native_variant_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
     let receiver = args.first().cloned().unwrap_or(Value::Unit);
     let transform = args.get(1).cloned().unwrap_or(Value::Unit);
@@ -3865,30 +4296,44 @@ fn invoke_callable(
 /// `Ordering::cmp`. Falls back to identity when the receiver isn't
 /// an array or the second arg isn't callable.
 fn native_sort_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Array(parts)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
     let comparator = args.get(1).cloned().unwrap_or(Value::Unit);
-    let mut owned = parts.as_ref().clone();
-    let mut sort_err: Option<RuntimeError> = None;
-    owned.sort_by(|a, b| {
+    let mut cmp_with = |a: Value, b: Value, sort_err: &mut Option<RuntimeError>| {
         if sort_err.is_some() {
             return std::cmp::Ordering::Equal;
         }
-        match invoke_callable(dispatch, &comparator, vec![a.clone(), b.clone()]) {
+        match invoke_callable(dispatch, &comparator, vec![a, b]) {
             Ok(Value::Int(n)) => n.cmp(&0),
             Ok(Value::Float(f)) => f.partial_cmp(&0.0).unwrap_or(std::cmp::Ordering::Equal),
             Ok(_) => std::cmp::Ordering::Equal,
             Err(e) => {
-                sort_err = Some(e);
+                *sort_err = Some(e);
                 std::cmp::Ordering::Equal
             }
         }
-    });
+    };
+    let mut sort_err: Option<RuntimeError> = None;
+    let result = match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            owned.sort_by(|a, b| cmp_with(a.clone(), b.clone(), &mut sort_err));
+            Value::Array(Arc::new(owned))
+        }
+        Some(Value::IntArray(data)) => {
+            let mut owned = data.as_ref().clone();
+            owned.sort_by(|a, b| cmp_with(Value::Int(*a), Value::Int(*b), &mut sort_err));
+            Value::IntArray(Arc::new(owned))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            owned.sort_by(|a, b| cmp_with(Value::Float(*a), Value::Float(*b), &mut sort_err));
+            Value::FloatVec(Arc::new(owned))
+        }
+        other => return Ok(other.cloned().unwrap_or(Value::Unit)),
+    };
     if let Some(err) = sort_err {
         return Err(err);
     }
-    Ok(Value::Array(Arc::new(owned)))
+    Ok(result)
 }
 
 fn native_spawn(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
@@ -4003,14 +4448,32 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
         _ => String::new(),
     };
     // Collect (field_name, value) pairs in source-literal order.
+    // The synthetic `"__base"` key carries the functional-update
+    // base value (from `Outer { n: 99, ..base }`); strip it out and
+    // remember it so missing fields fill from `base.field` below.
     let mut pairs: Vec<(String, Value)> = Vec::with_capacity(args.len() / 2);
+    let mut base: Option<Value> = None;
     let mut iter = args.iter().skip(1);
     while let (Some(key), Some(value)) = (iter.next(), iter.next()) {
         let Value::String(field_name) = key else {
             continue;
         };
+        if field_name.as_str() == "__base" {
+            base = Some(value.clone());
+            continue;
+        }
         pairs.push((field_name.to_string(), value.clone()));
     }
+    let lookup_base_field = |field_name: &str| -> Option<Value> {
+        match &base {
+            Some(Value::Struct(inner)) => inner
+                .fields
+                .iter()
+                .find(|(n, _)| n.name.as_str() == field_name)
+                .map(|(_, v)| v.clone()),
+            _ => None,
+        }
+    };
     // Reorder to declaration order when the struct's layout is
     // known. This makes every `Value::Struct { name: "Body" }`
     // share the same `fields[i]` layout, which lets the VM
@@ -4024,7 +4487,9 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
                 let value = pairs
                     .iter()
                     .find(|(n, _)| n == field_name)
-                    .map_or(Value::Unit, |(_, v)| v.clone());
+                    .map(|(_, v)| v.clone())
+                    .or_else(|| lookup_base_field(field_name.as_str()))
+                    .unwrap_or(Value::Unit);
                 out.push((Ident::new(field_name.as_str()), value));
             }
             // Preserve any extra fields present in the literal
@@ -4032,6 +4497,25 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
             // state visible for debugging).
             for (n, v) in &pairs {
                 if !order.iter().any(|o| o == n) {
+                    out.push((Ident::new(n.as_str()), v.clone()));
+                }
+            }
+            out
+        } else if base.is_some() {
+            // Layout unknown but a base is provided: start from the
+            // base's fields and overlay the explicit overrides.
+            let mut out: Vec<(Ident, Value)> = match &base {
+                Some(Value::Struct(inner)) => inner
+                    .fields
+                    .iter()
+                    .map(|(n, v)| (n.clone(), v.clone()))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for (n, v) in &pairs {
+                if let Some(slot) = out.iter_mut().find(|(name, _)| name.name.as_str() == n) {
+                    slot.1 = v.clone();
+                } else {
                     out.push((Ident::new(n.as_str()), v.clone()));
                 }
             }
@@ -4064,10 +4548,32 @@ fn builtin_channel_send(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
+fn builtin_channel_close(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Channel(channel)) = args.first() else {
+        return Err(RuntimeError::Type(
+            "close: receiver must be a channel".to_string(),
+        ));
+    };
+    channel.close();
+    Ok(Value::Unit)
+}
+
 fn builtin_channel_recv(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Channel(channel)) = args.first() else {
         return Err(RuntimeError::Type(
             "recv: receiver must be a channel".to_string(),
+        ));
+    };
+    Ok(match channel.recv() {
+        Some(value) => some_variant(value),
+        None => none_variant(),
+    })
+}
+
+fn builtin_channel_try_recv(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Channel(channel)) = args.first() else {
+        return Err(RuntimeError::Type(
+            "try_recv: receiver must be a channel".to_string(),
         ));
     };
     Ok(match channel.try_recv() {
@@ -4085,8 +4591,8 @@ struct FlagDeclEntry {
 }
 
 /// Parses an array of `FlagDecl` structs against `PROGRAM_ARGS` and
-/// returns a `FlagMap` value. Used by the declarative flag API in
-/// `examples/get_xkcd.gos`.
+/// returns a `FlagMap` value. Used by the declarative `flag::parse`
+/// API.
 fn builtin_flag_parse(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Array(decls)) = args.first() else {
         return Err(RuntimeError::Type(
@@ -4978,10 +5484,10 @@ mod tests {
     fn absolute_redirect_resolves_root_relative_location() {
         assert_eq!(
             crate::http_client_builtins::absolute_redirect(
-                "http://xkcd.com/info.0.json",
+                "http://example.com/info.0.json",
                 "/info.1.json"
             ),
-            "http://xkcd.com/info.1.json"
+            "http://example.com/info.1.json"
         );
     }
 
@@ -4989,10 +5495,10 @@ mod tests {
     fn absolute_redirect_resolves_bare_relative_location() {
         assert_eq!(
             crate::http_client_builtins::absolute_redirect(
-                "http://xkcd.com/info.0.json",
+                "http://example.com/info.0.json",
                 "info.1.json"
             ),
-            "http://xkcd.com/info.1.json"
+            "http://example.com/info.1.json"
         );
     }
 

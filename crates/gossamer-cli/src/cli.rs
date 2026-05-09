@@ -113,6 +113,12 @@ enum Command {
         /// match byte-for-byte.
         #[arg(long)]
         reproducible: bool,
+        /// Override the directory the linked binary is written to.
+        /// When unset, the binary lands under `target/{debug,release}`
+        /// next to the entry source's manifest. The directory is
+        /// created if it does not exist.
+        #[arg(long = "out-dir")]
+        out_dir: Option<PathBuf>,
     },
     /// Create a `project.toml` in the current directory.
     Init {
@@ -381,6 +387,7 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             debug_info,
             dynamic,
             reproducible,
+            out_dir,
         }) => dispatch_build(
             file,
             target.as_deref(),
@@ -398,6 +405,7 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
                 debug_info,
                 reproducible,
             },
+            out_dir,
         ),
         Some(Command::Init { id }) => cmd::scaffold::init(&id),
         Some(Command::New { id, path, template }) => cmd::scaffold::new(&id, path, &template),
@@ -520,6 +528,7 @@ fn dispatch_build(
     file: Option<PathBuf>,
     target: Option<&str>,
     flags: BuildFlags,
+    out_dir: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     if flags.debug_info {
         gossamer_codegen_llvm::set_debug_info(true);
@@ -533,6 +542,7 @@ fn dispatch_build(
         flags.mode == BuildMode::Release,
         flags.debug_info,
         flags.link == LinkMode::Dynamic,
+        out_dir,
     )
 }
 

@@ -1,0 +1,110 @@
+// JSON Round-Trip
+// Programmatically build json::Value trees, serialize to string,
+// parse back, and assert deep structural equality.
+
+use std::json
+
+fn run() -> Result<(), String> {
+    // Basic parse and access. `json::get` returns
+    // `Option<json::Value>` so callers `.unwrap()` to drill into the
+    // child value before passing it to `json::as_*` / `json::at` /
+    // `json::is_null`.
+    let raw = "{\"name\":\"alice\",\"age\":30,\"active\":true}"
+    let v = json::parse(raw)?
+    println!("name = {}", json::get(v, "name").unwrap())
+    println!("age = {}", json::get(v, "age").unwrap())
+    println!("active = {}", json::get(v, "active").unwrap())
+
+    // Nested object
+    let nested = "{\"user\":{\"id\":1,\"tags\":[\"a\",\"b\",\"c\"]}}"
+    let nv = json::parse(nested)?
+    let user = json::get(nv, "user").unwrap()
+    println!("user.id = {}", json::get(user, "id").unwrap())
+    let tags = json::get(user, "tags").unwrap()
+    println!("tags[0] = {}", json::at(tags, 0))
+    println!("tags[2] = {}", json::at(tags, 2))
+    println!("tags len = {}", json::len(tags))
+
+    // Numeric types
+    let nums = "{\"i\":42,\"f\":3.14,\"neg\":-7}"
+    let nobj = json::parse(nums)?
+    println!("i = {}", json::get(nobj, "i").unwrap())
+    println!("neg = {}", json::get(nobj, "neg").unwrap())
+    match json::as_f64(json::get(nobj, "f").unwrap()) {
+        Some(f) => println!("f approx > 3.1: {}", f > 3.1),
+        None => println!("f: not a float"),
+    }
+
+    // Array root
+    let arr = "[1,2,3,4,5]"
+    let av = json::parse(arr)?
+    let mut total = 0
+    for i in 0..5 {
+        match json::as_i64(json::at(av, i)) {
+            Some(n) => { total += n }
+            None => {}
+        }
+    }
+    println!("array sum = {}", total)
+
+    // Null check
+    let with_null = "{\"x\":null,\"y\":1}"
+    let nv2 = json::parse(with_null)?
+    println!("x is null = {}", json::is_null(json::get(nv2, "x").unwrap()))
+    println!("y is null = {}", json::is_null(json::get(nv2, "y").unwrap()))
+
+    // Render back
+    let simple = "{\"k\":\"v\"}"
+    let parsed = json::parse(simple)?
+    let rendered = json::render(parsed)
+    println!("render contains k = {}", rendered.contains("\"k\""))
+    println!("render contains v = {}", rendered.contains("\"v\""))
+
+    Ok(())
+}
+
+fn main() {
+    match run() {
+        Ok(_) => {}
+        Err(e) => println!("json error: {}", e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::json
+    use std::testing
+
+    #[test]
+    fn parse_and_get_string() {
+        let obj = match json::parse("{\"hello\":\"world\"}") {
+            Ok(o) => o,
+            Err(e) => { testing::check(false, e); return }
+        }
+        match json::as_str(json::get(obj, "hello").unwrap()) {
+            Some(s) => testing::check_eq(&s, &"world".to_string(), "get hello"),
+            None => testing::check(false, "expected string value"),
+        }
+    }
+
+    #[test]
+    fn array_index_access() {
+        let arr = match json::parse("[10,20,30]") {
+            Ok(a) => a,
+            Err(e) => { testing::check(false, e); return }
+        }
+        match json::as_i64(json::at(arr, 1)) {
+            Some(n) => testing::check_eq(&n, &20, "array[1]"),
+            None => testing::check(false, "expected integer at index 1"),
+        }
+    }
+
+    #[test]
+    fn null_detection() {
+        let obj = match json::parse("{\"a\":null}") {
+            Ok(o) => o,
+            Err(e) => { testing::check(false, e); return }
+        }
+        testing::check(json::is_null(json::get(obj, "a").unwrap()), "a is null")
+    }
+}

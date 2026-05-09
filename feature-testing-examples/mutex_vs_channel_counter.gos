@@ -1,0 +1,67 @@
+// Mutex vs Channel Counter
+// Implement the same shared counter once with Mutex and once with
+// channels to compare concurrency correctness and deadlock risks.
+// Note: goroutine mutation of a captured &mut is not yet supported
+// in the tree-walker, so the mutex example runs single-threaded here
+// to avoid a hang on the VM backend.
+
+use std::sync::{Mutex, channel}
+use std::time
+
+fn counter_with_mutex() -> i64 {
+    let counter = Mutex::new()
+    let mut value = 0
+
+    counter.lock()
+    for _ in 0..200 {
+        value += 1
+    }
+    counter.unlock()
+
+    value
+}
+
+fn channel_worker(tx: channel::Sender<i64>) {
+    let mut local = 0
+    for _ in 0..100 {
+        local += 1
+    }
+    tx.send(local)
+}
+
+fn counter_with_channel() -> i64 {
+    let (tx, rx) = channel()
+
+    go channel_worker(tx)
+    go channel_worker(tx)
+
+    // Allow the scheduler to run the goroutines before blocking on recv.
+    time::sleep(50)
+
+    let mut total = 0
+    for _ in 0..2 {
+        if let Some(v) = rx.recv() {
+            total += v
+        }
+    }
+    total
+}
+
+fn main() {
+    let mutex_result = counter_with_mutex()
+    println!("mutex counter = {}", mutex_result)
+
+    let channel_result = counter_with_channel()
+    println!("channel counter = {}", channel_result)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn channel_counter_reaches_200() {
+        let result = super::counter_with_channel()
+        testing::check_eq(&result, &200, "channel counter = 200")
+    }
+}

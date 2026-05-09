@@ -1509,6 +1509,25 @@ enum FormatSegment {
 /// literal braces; malformed specs (`{x:?}`, `{x:0>5}`) fall
 /// through as literal text so the resulting expression still
 /// compiles.
+/// Returns the byte width of a UTF-8 code point given its leading byte.
+/// Used by `parse_format_template` to step past multi-byte chars
+/// without splitting them into 1-byte (Latin-1-style) cells. Falls
+/// back to 1 for malformed leaders so the loop still makes
+/// progress.
+fn utf8_char_len(leader: u8) -> usize {
+    if leader < 0x80 {
+        1
+    } else if leader & 0xE0 == 0xC0 {
+        2
+    } else if leader & 0xF0 == 0xE0 {
+        3
+    } else if leader & 0xF8 == 0xF0 {
+        4
+    } else {
+        1
+    }
+}
+
 fn parse_format_template(template: &str) -> Vec<FormatSegment> {
     let bytes = template.as_bytes();
     let mut segments: Vec<FormatSegment> = Vec::new();
@@ -1542,14 +1561,42 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                     segments.push(FormatSegment::Named(inner.to_string()));
                 } else if let Some(seg) = parse_precision_spec(inner) {
                     segments.push(seg);
+                } else if inner == ":?" {
+                    // `{:?}` — Debug spec. Display already produces a
+                    // bracketed array / tuple / struct rendering, so
+                    // alias to a positional argument rather than
+                    // emitting the literal text the spec used to fall
+                    // through to.
+                    segments.push(FormatSegment::Positional);
+                } else if let Some(name) = inner.strip_suffix(":?") {
+                    let name = name.trim();
+                    if is_identifier(name) {
+                        segments.push(FormatSegment::Named(name.to_string()));
+                    } else {
+                        segments.push(FormatSegment::Literal(format!("{{{inner}}}")));
+                    }
                 } else {
                     segments.push(FormatSegment::Literal(format!("{{{inner}}}")));
                 }
                 i = close + 1;
             }
-            _ => {
-                literal.push(bytes[i] as char);
+            byte if byte < 0x80 => {
+                literal.push(byte as char);
                 i += 1;
+            }
+            byte => {
+                // Non-ASCII UTF-8 sequence: copy the whole code
+                // point's bytes verbatim. The previous
+                // `literal.push(bytes[i] as char)` cast a single
+                // byte to char (giving U+0080..U+00FF) and re-
+                // encoded it as 2-byte UTF-8, which double-encoded
+                // every multi-byte char (e.g. an em-dash `—` came
+                // out as `â\x80\x94` after the runtime treated
+                // each character as Latin-1 again).
+                let len = utf8_char_len(byte);
+                let end = (i + len).min(bytes.len());
+                literal.push_str(&template[i..end]);
+                i = end;
             }
         }
     }

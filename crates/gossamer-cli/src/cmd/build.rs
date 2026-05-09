@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
-use crate::paths::{default_main_entry, default_unit_name, read_source, resolve_output_path};
+use crate::paths::{default_main_entry, default_unit_name, read_entry_source, resolve_output_path};
 
 /// `gos build` dispatcher: walks the project root for a default
 /// entry point when no path is supplied.
@@ -30,6 +30,7 @@ pub(crate) fn dispatch(
     release: bool,
     debug_info: bool,
     dynamic: bool,
+    out_dir: Option<PathBuf>,
 ) -> Result<()> {
     if let Err(err) = crate::binding_dispatch::ensure_external_signatures() {
         eprintln!("warning: failed to load rust-binding signatures: {err}");
@@ -38,7 +39,14 @@ pub(crate) fn dispatch(
         Some(p) => p,
         None => default_main_entry()?,
     };
-    run(&resolved, target, release, debug_info, dynamic)
+    run(
+        &resolved,
+        target,
+        release,
+        debug_info,
+        dynamic,
+        out_dir.as_deref(),
+    )
 }
 
 /// Per-build link options assembled at the dispatch boundary and
@@ -77,14 +85,31 @@ impl LinkOptions {
 /// at cli build time. Populated by `gossamer-cli/build.rs`.
 const MUSL_RUNTIME_LIB: Option<&str> = option_env!("GOSSAMER_RUNTIME_LIB_PATH_MUSL");
 
+/// Resolve where the linked binary should land. `--out-dir` wins
+/// when supplied; otherwise the project-relative `target/` layout
+/// rules.
+fn output_path(
+    file: &Path,
+    unit_name: &str,
+    release: bool,
+    out_dir: Option<&Path>,
+) -> Result<PathBuf> {
+    if let Some(dir) = out_dir {
+        fs::create_dir_all(dir).map_err(|e| anyhow!("creating {}: {e}", dir.display()))?;
+        return Ok(dir.join(unit_name));
+    }
+    resolve_output_path(file, unit_name, release)
+}
+
 fn run(
     file: &PathBuf,
     target: Option<&str>,
     release: bool,
     debug_info: bool,
     dynamic: bool,
+    out_dir: Option<&Path>,
 ) -> Result<()> {
-    let source = read_source(file)?;
+    let source = read_entry_source(file)?;
 
     // Validate source before attempting any codegen.  A broken AST or
     // unresolved name must fail the build immediately rather than
@@ -164,7 +189,7 @@ fn run(
         None => None,
     };
     let unit_name = default_unit_name(file);
-    let out_path = resolve_output_path(file, &unit_name, release)?;
+    let out_path = output_path(file, &unit_name, release, out_dir)?;
 
     if let Some(options) = target_options {
         let host = gossamer_driver::TargetTriple::host();

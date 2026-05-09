@@ -1,0 +1,133 @@
+// Panic and Recover via Result
+// Gossamer propagates errors through Result<T, E> rather than
+// panic/recover. This example demonstrates the full error-handling
+// round-trip: fallible operations, ? propagation, typed error
+// wrapping, and recovery at the call site.
+
+fn parse_positive(s: String) -> Result<i64, String> {
+    match s.parse::<i64>() {
+        Ok(n) => {
+            if n <= 0 {
+                Err(format!("expected positive, got {}", n))
+            } else {
+                Ok(n)
+            }
+        }
+        Err(e) => Err(format!("parse error: {}", e)),
+    }
+}
+
+fn divide_checked(a: i64, b: i64) -> Result<i64, String> {
+    if b == 0 {
+        Err("division by zero".to_string())
+    } else {
+        Ok(a / b)
+    }
+}
+
+fn pipeline(raw: String, divisor: i64) -> Result<i64, String> {
+    let n = parse_positive(raw)?
+    let result = divide_checked(n, divisor)?
+    Ok(result * 2)
+}
+
+fn run_with_recovery(inputs: [[String]]) -> [String] {
+    let mut results: [String] = []
+    for pair in inputs {
+        let raw = pair[0].clone()
+        let divisor_str = pair[1].clone()
+        match divisor_str.parse::<i64>() {
+            Ok(d) => {
+                match pipeline(raw, d) {
+                    Ok(v) => results.push(format!("ok:{}", v)),
+                    Err(e) => results.push(format!("err:{}", e)),
+                }
+            }
+            Err(_) => results.push("err:bad divisor".to_string()),
+        }
+    }
+    results
+}
+
+fn main() {
+    // Happy path
+    match pipeline("50".to_string(), 5) {
+        Ok(v) => println!("pipeline ok: {}", v),
+        Err(e) => println!("pipeline err: {}", e),
+    }
+
+    // Parse failure
+    match pipeline("abc".to_string(), 5) {
+        Ok(v) => println!("unexpected ok: {}", v),
+        Err(e) => println!("parse failure caught: {}", e.starts_with("parse error")),
+    }
+
+    // Domain failure
+    match pipeline("-10".to_string(), 5) {
+        Ok(v) => println!("unexpected ok: {}", v),
+        Err(e) => println!("domain failure caught: {}", e.contains("positive")),
+    }
+
+    // Division by zero
+    match pipeline("100".to_string(), 0) {
+        Ok(v) => println!("unexpected ok: {}", v),
+        Err(e) => println!("div zero caught: {}", e.contains("zero")),
+    }
+
+    // Batch with recovery
+    let pairs = [
+        ["50".to_string(), "5".to_string()],
+        ["abc".to_string(), "2".to_string()],
+        ["100".to_string(), "0".to_string()],
+        ["20".to_string(), "4".to_string()],
+    ]
+    let results = run_with_recovery(pairs)
+    for r in results {
+        println!("result: {}", r)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn pipeline_success() {
+        match super::pipeline("40".to_string(), 4) {
+            Ok(v) => testing::check_eq(&v, &20, "40/4*2=20"),
+            Err(e) => testing::check(false, e),
+        }
+    }
+
+    #[test]
+    fn pipeline_parse_error() {
+        match super::pipeline("xyz".to_string(), 1) {
+            Ok(_) => testing::check(false, "expected error"),
+            Err(e) => testing::check(e.contains("parse"), "parse error message"),
+        }
+    }
+
+    #[test]
+    fn pipeline_domain_error() {
+        match super::pipeline("-5".to_string(), 1) {
+            Ok(_) => testing::check(false, "expected error"),
+            Err(e) => testing::check(e.contains("positive"), "domain error message"),
+        }
+    }
+
+    #[test]
+    fn pipeline_div_zero() {
+        match super::pipeline("10".to_string(), 0) {
+            Ok(_) => testing::check(false, "expected error"),
+            Err(e) => testing::check(e.contains("zero"), "div zero message"),
+        }
+    }
+
+    #[test]
+    fn divide_checked_ok() {
+        match super::divide_checked(15, 3) {
+            Ok(v) => testing::check_eq(&v, &5, "15/3=5"),
+            Err(e) => testing::check(false, e),
+        }
+    }
+}

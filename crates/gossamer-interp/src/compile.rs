@@ -99,6 +99,26 @@ pub fn compile_fn(
     for param in &decl.params {
         let reg = builder.alloc_reg();
         builder.bind_param(&param.pattern, reg);
+        // Track typed-storage parameter shapes so callees can use
+        // the same `IntArrayGetI64` / `FloatVecGetF64` fast paths
+        // they would for a let-binding. The receiver invariant
+        // holds whenever the caller built the argument via
+        // `try_build_int_array` / `try_build_float_vec` — see
+        // `Op::FloatVecGetF64` for the runtime gate.
+        let elem_kind = builder.unwrap_ref(param.ty);
+        if let Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) =
+            tcx.kind(elem_kind)
+        {
+            match tcx.kind(*elem) {
+                Some(TyKind::Float(FloatTy::F64)) => {
+                    builder.flat_float_locals.insert(reg);
+                }
+                Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize)) => {
+                    builder.flat_int_locals.insert(reg);
+                }
+                _ => {}
+            }
+        }
     }
     let result = builder.compile_block(&body.block)?;
     if matches!(result, BlockResult::ValueIn(_)) {
@@ -189,11 +209,15 @@ struct Scope {
 #[derive(Debug)]
 struct LoopCtx {
     break_patches: Vec<InstrIdx>,
+    /// Forward jumps emitted for `continue` inside this loop. Each
+    /// entry is the index of an `Op::Jump { target: 0 }` waiting to
+    /// be patched to the loop's per-iteration step op (or back to
+    /// the re-entry header for shapes whose step happens at the
+    /// top). The per-loop emitter resolves these once it has
+    /// emitted its step / re-entry op so `continue` skips the
+    /// rest of the body without bypassing the iteration counter.
+    continue_patches: Vec<InstrIdx>,
     result_reg: Reg,
-    /// Address of the loop's re-entry point. `Op::Jump` to
-    /// here for `continue`. For `while`, this is the
-    /// condition check; for bare `loop`, the body's first op.
-    loop_start: InstrIdx,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -645,18 +669,45 @@ impl<'tcx> FnBuilder<'tcx> {
                 Ok(())
             }
             HirPatKind::Tuple(elems) => {
+                let rest_pos = elems
+                    .iter()
+                    .position(|p| matches!(p.kind, HirPatKind::Rest));
+                let n_after = rest_pos.map_or(0, |r| elems.len() - r - 1);
                 for (i, sub) in elems.iter().enumerate() {
+                    if matches!(sub.kind, HirPatKind::Rest) {
+                        continue;
+                    }
                     let dst = self.alloc_reg();
-                    self.emit(Op::TupleIndex {
-                        dst,
-                        receiver: init_reg,
-                        index: i as u32,
-                    });
+                    match rest_pos {
+                        None => {
+                            self.emit(Op::TupleIndex {
+                                dst,
+                                receiver: init_reg,
+                                index: i as u32,
+                            });
+                        }
+                        Some(rest_idx) if i < rest_idx => {
+                            self.emit(Op::TupleIndex {
+                                dst,
+                                receiver: init_reg,
+                                index: i as u32,
+                            });
+                        }
+                        Some(_) => {
+                            // Tail-anchored: offset_from_end = n_after - (i - rest_idx - 1) - 1
+                            let offset = n_after - (i - rest_pos.unwrap() - 1) - 1;
+                            self.emit(Op::TupleTailIndex {
+                                dst,
+                                receiver: init_reg,
+                                offset_from_end: offset as u32,
+                            });
+                        }
+                    }
                     self.bind_pattern_locals(sub, dst)?;
                 }
                 Ok(())
             }
-            HirPatKind::Wildcard | HirPatKind::Literal(_) => Ok(()),
+            HirPatKind::Wildcard | HirPatKind::Literal(_) | HirPatKind::Rest => Ok(()),
             other => Err(RuntimeError::Type(format!(
                 "let-pattern shape {other:?} is not yet handled by the VM compiler"
             ))),
@@ -877,14 +928,18 @@ impl<'tcx> FnBuilder<'tcx> {
             // tractable combinations land directly in the right
             // typed register file:
             //
-            //   i64 → f64   →  IntToFloatF64
-            //   f64 → i64   →  FloatToIntI64
-            //   i64 → i64   →  identity (already in I64 file)
-            //   f64 → f64   →  identity (already in F64 file)
+            //   i64 → f64              →  IntToFloatF64
+            //   f64 → i64              →  FloatToIntI64
+            //   i64 → narrow int       →  TruncCastI64 (wrapping semantics)
+            //   i64 → i64/u64/isize    →  identity (same bit width)
+            //   f64 → f64              →  identity
             //
             // Anything else (refs, custom From impls, trait dyn
             // casts) defers via the catch-all in `compile_expr`.
-            HirExprKind::Cast { value, .. } => {
+            HirExprKind::Cast {
+                value,
+                ty: target_ty,
+            } => {
                 let dst_kind = self.expr_kind(expr);
                 let src_kind = self.expr_kind(value);
                 match (dst_kind, src_kind) {
@@ -908,10 +963,53 @@ impl<'tcx> FnBuilder<'tcx> {
                             kind: RegKind::I64,
                         })
                     }
-                    (RegKind::F64, RegKind::F64) | (RegKind::I64, RegKind::I64) => {
-                        // No-op cast — re-classify the inner
-                        // expression's typed result directly.
-                        self.compile_expr_ex(value)
+                    (RegKind::F64, RegKind::F64) => self.compile_expr_ex(value),
+                    (RegKind::I64, RegKind::I64) => {
+                        // Narrowing casts (e.g. `x as i32`, `x as u8`) must
+                        // truncate + sign/zero-extend, not pass through the
+                        // source value unchanged.
+                        let target_kind = self.tcx.kind(*target_ty);
+                        // u64/usize: produce Value::Uint for unsigned display.
+                        if matches!(
+                            target_kind,
+                            Some(TyKind::Int(
+                                gossamer_types::IntTy::U64 | gossamer_types::IntTy::Usize
+                            ))
+                        ) {
+                            let src_tr = self.compile_expr_ex(value)?;
+                            let src_i = self.as_i64(src_tr);
+                            let dst_v = self.alloc_reg();
+                            self.emit(Op::I64ToUint { dst_v, src_i });
+                            return Ok(TypedReg {
+                                reg: dst_v,
+                                kind: RegKind::Value,
+                            });
+                        }
+                        let (shift, signed) = match target_kind {
+                            Some(TyKind::Int(gossamer_types::IntTy::I8)) => (56u8, true),
+                            Some(TyKind::Int(gossamer_types::IntTy::I16)) => (48u8, true),
+                            Some(TyKind::Int(gossamer_types::IntTy::I32)) => (32u8, true),
+                            Some(TyKind::Int(gossamer_types::IntTy::U8)) => (56u8, false),
+                            Some(TyKind::Int(gossamer_types::IntTy::U16)) => (48u8, false),
+                            Some(TyKind::Int(gossamer_types::IntTy::U32)) => (32u8, false),
+                            // i64/isize: same bit width — identity.
+                            _ => {
+                                return self.compile_expr_ex(value);
+                            }
+                        };
+                        let src_tr = self.compile_expr_ex(value)?;
+                        let src_i = self.as_i64(src_tr);
+                        let dst_i = self.alloc_int();
+                        self.emit(Op::TruncCastI64 {
+                            dst_i,
+                            src_i,
+                            shift,
+                            signed,
+                        });
+                        Ok(TypedReg {
+                            reg: dst_i,
+                            kind: RegKind::I64,
+                        })
                     }
                     _ => {
                         let reg = self.compile_deferred(expr)?;
@@ -1104,16 +1202,25 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirExprKind::Return(value) => self.compile_return(value.as_deref()),
             HirExprKind::Break(value) => self.compile_break(value.as_deref()),
-            // Native `continue` — jump to the enclosing loop's
-            // re-entry. Skips the `EvalDeferred` round trip the
-            // walker would otherwise pay each iteration.
+            // Native `continue` — emit a forward jump that the
+            // enclosing loop emitter patches once it knows the
+            // address of its per-iteration step op. Routing through
+            // a patch list (rather than jumping straight to
+            // `loop_start`) lets the for-range / for-vec-iter fast
+            // paths advance their typed counter on `continue`; a
+            // direct jump-to-header bypasses the counter
+            // increment that lives at the bottom of the body and
+            // produces a livelock.
             HirExprKind::Continue => {
-                let target = self
-                    .loop_stack
-                    .last()
-                    .ok_or(RuntimeError::Unsupported("continue outside of loop"))?
-                    .loop_start;
-                self.emit(Op::Jump { target });
+                if self.loop_stack.last().is_none() {
+                    return Err(RuntimeError::Unsupported("continue outside of loop"));
+                }
+                let patch = self.emit(Op::Jump { target: 0 });
+                self.loop_stack
+                    .last_mut()
+                    .expect("loop ctx")
+                    .continue_patches
+                    .push(patch);
                 Ok(self.load_unit())
             }
             // Native method dispatch — avoids the `EvalDeferred`
@@ -2218,15 +2325,9 @@ impl<'tcx> FnBuilder<'tcx> {
         array_ty: Ty,
         elems: &[HirExpr],
     ) -> RuntimeResult<Option<TypedReg>> {
-        let elem_ty = match self.tcx.kind(array_ty) {
-            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
-            _ => return Ok(None),
-        };
-        let elem_is_i64 = matches!(
-            self.tcx.kind(elem_ty),
-            Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
-        );
-        if !elem_is_i64 {
+        if !is_array_elem_kind(self.tcx, array_ty, elems.first().map(|e| e.ty), |k| {
+            matches!(k, TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
+        }) {
             return Ok(None);
         }
         let Ok(count) = u16::try_from(elems.len()) else {
@@ -2275,11 +2376,9 @@ impl<'tcx> FnBuilder<'tcx> {
         value: &HirExpr,
         count: &HirExpr,
     ) -> RuntimeResult<Option<TypedReg>> {
-        let elem_ty = match self.tcx.kind(array_ty) {
-            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
-            _ => return Ok(None),
-        };
-        if !matches!(self.tcx.kind(elem_ty), Some(TyKind::Float(FloatTy::F64))) {
+        if !is_array_elem_kind(self.tcx, array_ty, Some(value.ty), |k| {
+            matches!(k, TyKind::Float(FloatTy::F64))
+        }) {
             return Ok(None);
         }
         let Some(n) = resolve_const_count(count) else {
@@ -2325,14 +2424,9 @@ impl<'tcx> FnBuilder<'tcx> {
         value: &HirExpr,
         count: &HirExpr,
     ) -> RuntimeResult<Option<TypedReg>> {
-        let elem_ty = match self.tcx.kind(array_ty) {
-            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
-            _ => return Ok(None),
-        };
-        if !matches!(
-            self.tcx.kind(elem_ty),
-            Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
-        ) {
+        if !is_array_elem_kind(self.tcx, array_ty, Some(value.ty), |k| {
+            matches!(k, TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
+        }) {
             return Ok(None);
         }
         let Some(n) = resolve_const_count(count) else {
@@ -2380,12 +2474,9 @@ impl<'tcx> FnBuilder<'tcx> {
         array_ty: Ty,
         elems: &[HirExpr],
     ) -> RuntimeResult<Option<TypedReg>> {
-        let elem_ty = match self.tcx.kind(array_ty) {
-            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
-            _ => return Ok(None),
-        };
-        let elem_is_f64 = matches!(self.tcx.kind(elem_ty), Some(TyKind::Float(FloatTy::F64)));
-        if !elem_is_f64 {
+        if !is_array_elem_kind(self.tcx, array_ty, elems.first().map(|e| e.ty), |k| {
+            matches!(k, TyKind::Float(FloatTy::F64))
+        }) {
             return Ok(None);
         }
         let Ok(count) = u16::try_from(elems.len()) else {
@@ -2715,6 +2806,32 @@ impl<'tcx> FnBuilder<'tcx> {
                                 });
                                 return Ok(self.load_unit());
                             }
+                            // Mirror typed-i64 store fast path for
+                            // `Value::IntArray`-backed locals:
+                            // `arr[i] = v` where `arr: [i64; N]`
+                            // skips the box/unbox the generic
+                            // `Op::IndexSet` would impose. fannkuch's
+                            // `perm[j] = perm1[j]` and count
+                            // manipulation rely on this path. The
+                            // gate is purely the receiver tracking
+                            // (any `flat_int_locals` member is
+                            // guaranteed `Value::IntArray` storage),
+                            // because the value's HIR type can be a
+                            // still-bound `TyKind::Var` for arithmetic
+                            // expressions that typeck couldn't
+                            // substitute in-place.
+                            if self.flat_int_locals.contains(&target.reg) {
+                                let idx_tr = self.compile_expr_ex(index)?;
+                                let idx_i = self.as_i64(idx_tr);
+                                let value_tr = self.compile_expr_ex(value)?;
+                                let value_i = self.as_i64(value_tr);
+                                self.emit(Op::IntArraySetI64 {
+                                    base: target.reg,
+                                    index_i: idx_i,
+                                    value_i,
+                                });
+                                return Ok(self.load_unit());
+                            }
                             let idx_reg = self.compile_expr(index)?;
                             let value_reg = self.compile_expr(value)?;
                             self.emit(Op::IndexSet {
@@ -2919,6 +3036,42 @@ impl<'tcx> FnBuilder<'tcx> {
         // writes (in place).
         if name.name == "swap" && args.len() == 2 {
             let recv_reg = self.compile_expr(receiver)?;
+            // Typed-storage fast paths: when the receiver is a
+            // tracked `flat_int_locals` / `flat_float_locals` we
+            // emit the fused `IntArraySwap` / `FloatVecSwap` op
+            // (one dispatch + one `Vec::swap` in place) instead of
+            // the four-op generic IndexGet/IndexSet dance. fannkuch
+            // hits this on `[i64; 16]`.
+            if self.flat_int_locals.contains(&recv_reg) {
+                let i_tr = self.compile_expr_ex(&args[0])?;
+                let i_i = self.as_i64(i_tr);
+                let j_tr = self.compile_expr_ex(&args[1])?;
+                let j_i = self.as_i64(j_tr);
+                self.emit(Op::IntArraySwap {
+                    base: recv_reg,
+                    i_i,
+                    j_i,
+                });
+                let dst = self.alloc_reg();
+                let unit_idx = self.const_idx(ConstKey::Unit, Value::Unit);
+                self.emit(Op::LoadConst { dst, idx: unit_idx });
+                return Ok(dst);
+            }
+            if self.flat_float_locals.contains(&recv_reg) {
+                let i_tr = self.compile_expr_ex(&args[0])?;
+                let i_i = self.as_i64(i_tr);
+                let j_tr = self.compile_expr_ex(&args[1])?;
+                let j_i = self.as_i64(j_tr);
+                self.emit(Op::FloatVecSwap {
+                    base: recv_reg,
+                    i_i,
+                    j_i,
+                });
+                let dst = self.alloc_reg();
+                let unit_idx = self.const_idx(ConstKey::Unit, Value::Unit);
+                self.emit(Op::LoadConst { dst, idx: unit_idx });
+                return Ok(dst);
+            }
             let i_reg = self.compile_expr(&args[0])?;
             let j_reg = self.compile_expr(&args[1])?;
             let temp_i = self.alloc_reg();
@@ -3311,8 +3464,8 @@ impl<'tcx> FnBuilder<'tcx> {
         let result = self.alloc_reg();
         self.loop_stack.push(LoopCtx {
             break_patches: Vec::new(),
+            continue_patches: Vec::new(),
             result_reg: result,
-            loop_start,
         });
         let _ = self.compile_expr(body)?;
         self.emit(Op::Jump { target: loop_start });
@@ -3324,6 +3477,12 @@ impl<'tcx> FnBuilder<'tcx> {
             .expect("loop stack underflow on while");
         for patch in ctx.break_patches {
             self.patch_jump(patch, after);
+        }
+        // `continue` in a `while` loop re-evaluates the condition,
+        // so route every recorded patch back to `loop_start` —
+        // identical semantics to the previous direct-jump form.
+        for patch in ctx.continue_patches {
+            self.patch_jump(patch, loop_start);
         }
         Ok(self.load_unit())
     }
@@ -3555,8 +3714,8 @@ impl<'tcx> FnBuilder<'tcx> {
         let result = self.alloc_reg();
         self.loop_stack.push(LoopCtx {
             break_patches: Vec::new(),
+            continue_patches: Vec::new(),
             result_reg: result,
-            loop_start,
         });
         let _ = self.compile_expr(body)?;
         self.emit(Op::Jump { target: loop_start });
@@ -3564,6 +3723,11 @@ impl<'tcx> FnBuilder<'tcx> {
         let ctx = self.loop_stack.pop().expect("loop stack underflow on loop");
         for patch in ctx.break_patches {
             self.patch_jump(patch, after);
+        }
+        // Bare `loop` re-enters at the body's first op, so
+        // `continue` routes back to `loop_start`.
+        for patch in ctx.continue_patches {
+            self.patch_jump(patch, loop_start);
         }
         Ok(result)
     }
@@ -3671,12 +3835,6 @@ impl<'tcx> FnBuilder<'tcx> {
         let end_tr = self.compile_expr_ex(end)?;
         let counter_i = self.as_i64(start_tr);
         let end_i = self.as_i64(end_tr);
-        let one_idx = self.i64_const_idx(1);
-        let one_i = self.alloc_int();
-        self.emit(Op::LoadConstI64 {
-            dst_i: one_i,
-            idx: one_idx,
-        });
 
         let result = self.alloc_reg();
         self.push_scope();
@@ -3690,6 +3848,15 @@ impl<'tcx> FnBuilder<'tcx> {
             );
         }
 
+        // Layout (preserves the original `continue → header`
+        // semantics): a header bounds-check + the body + a fused
+        // `IncJumpIfLt(target=header)` at the bottom that combines
+        // the per-iter AddI64 + Jump into one dispatch. The fall-
+        // through case after the fused op (counter has reached
+        // end) lands directly on the post-loop block, so the
+        // header check on the final exit iteration is the only
+        // one paid; intermediate iterations skip the redundant
+        // header re-check that the straight-translation form does.
         let header = self.cur_idx();
         let exit_branch_idx = self.emit(if inclusive {
             Op::BranchIfGtI64 {
@@ -3707,16 +3874,29 @@ impl<'tcx> FnBuilder<'tcx> {
 
         self.loop_stack.push(LoopCtx {
             break_patches: Vec::new(),
+            continue_patches: Vec::new(),
             result_reg: result,
-            loop_start: header,
         });
         let _ = self.compile_expr(&some_arm.body)?;
-        self.emit(Op::AddI64 {
-            dst_i: counter_i,
-            lhs_i: counter_i,
-            rhs_i: one_i,
+        // `continue` jumps here: the same fused inc-and-test op
+        // the body's bottom fall-through executes. Routing
+        // `continue` directly to `header` would re-test the
+        // bound without advancing the counter and livelock the
+        // loop.
+        let continue_target = self.cur_idx();
+        self.emit(if inclusive {
+            Op::IncJumpIfLeI64 {
+                counter_i,
+                end_i,
+                target: header,
+            }
+        } else {
+            Op::IncJumpIfLtI64 {
+                counter_i,
+                end_i,
+                target: header,
+            }
         });
-        self.emit(Op::Jump { target: header });
         let after = self.cur_idx();
         self.patch_jump(exit_branch_idx, after);
         let ctx = self
@@ -3725,6 +3905,9 @@ impl<'tcx> FnBuilder<'tcx> {
             .expect("loop stack underflow on for-range");
         for patch in ctx.break_patches {
             self.patch_jump(patch, after);
+        }
+        for patch in ctx.continue_patches {
+            self.patch_jump(patch, continue_target);
         }
         self.pop_scope();
         Ok(Some(result))
@@ -3937,10 +4120,16 @@ impl<'tcx> FnBuilder<'tcx> {
 
         self.loop_stack.push(LoopCtx {
             break_patches: Vec::new(),
+            continue_patches: Vec::new(),
             result_reg: result,
-            loop_start: header,
         });
         let _ = self.compile_expr(&some_arm.body)?;
+        // `continue` jumps here so the counter increment + jump
+        // back to the bounds check still run. A direct jump to
+        // `header` would re-check bounds without advancing the
+        // index and produce an infinite loop on any body that
+        // exercises `continue`.
+        let continue_target = self.cur_idx();
         self.emit(Op::AddI64 {
             dst_i: counter_i,
             lhs_i: counter_i,
@@ -3955,6 +4144,9 @@ impl<'tcx> FnBuilder<'tcx> {
             .expect("loop stack underflow on for-vec-iter");
         for patch in ctx.break_patches {
             self.patch_jump(patch, after);
+        }
+        for patch in ctx.continue_patches {
+            self.patch_jump(patch, continue_target);
         }
         self.pop_scope();
         Ok(Some(result))
@@ -4099,8 +4291,113 @@ fn resolve_const_count(expr: &HirExpr) -> Option<i64> {
 /// compiler doesn't handle natively. When a `Loop { body }` body
 /// contains one, the whole loop defers to the tree-walker so
 /// Break/Continue flow out correctly.
+/// Returns `true` when the array-shaped `array_ty`'s element type
+/// — or, when typeck left the array's elem as a still-bound
+/// `TyKind::Var`, the optional `value_ty` of the literal element —
+/// matches `pred`. Used by every typed-storage `try_build_*`
+/// builder to gate the fast path. Without the value-side fallback,
+/// `let mut perm: [i64; 16] = [0; 16]` and `let mut u: [f64; 6000] =
+/// [1.0; 6000]` failed to specialise: typeck records the element
+/// type on the binding annotation, but the array literal's
+/// `Ty::Array { elem }` keeps a fresh inference var that
+/// `default_unresolved_int_vars` resolves only inside the `InferCtxt`
+/// — never substituted back into the HIR handle compile.rs reads.
+fn is_array_elem_kind(
+    tcx: &TyCtxt,
+    array_ty: Ty,
+    value_ty: Option<Ty>,
+    pred: impl Fn(&TyKind) -> bool,
+) -> bool {
+    let array_elem = match tcx.kind(array_ty) {
+        Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => Some(*elem),
+        _ => None,
+    };
+    if let Some(t) = array_elem {
+        if let Some(k) = tcx.kind(t) {
+            if pred(k) {
+                return true;
+            }
+        }
+    }
+    if let Some(t) = value_ty {
+        if let Some(k) = tcx.kind(t) {
+            if pred(k) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Returns `true` when `expr` is the desugared shape of `for x in
+/// a..b { body }` — `Loop { body: Block { tail: Match { scrutinee:
+/// MethodCall(Range, "next"), arms: [Some, None] } } }`. The
+/// for-range fast path compiles this shape natively, so the
+/// outer-Loop body should not refuse it just because of the inner
+/// `Match`. Mirrors the gate in [`FnBuilder::try_compile_for_loop_range`].
+fn is_for_range_desugar(expr: &gossamer_hir::HirExpr) -> bool {
+    use gossamer_hir::HirExprKind as H;
+    let H::Loop { body } = &expr.kind else {
+        return false;
+    };
+    let H::Block(block) = &body.kind else {
+        return false;
+    };
+    if !block.stmts.is_empty() {
+        return false;
+    }
+    let Some(tail) = block.tail.as_deref() else {
+        return false;
+    };
+    let H::Match { scrutinee, arms } = &tail.kind else {
+        return false;
+    };
+    if arms.len() != 2 {
+        return false;
+    }
+    let H::MethodCall {
+        receiver,
+        name,
+        args,
+    } = &scrutinee.kind
+    else {
+        return false;
+    };
+    if name.name != "next" || !args.is_empty() {
+        return false;
+    }
+    matches!(
+        &receiver.kind,
+        H::Range {
+            start: Some(_),
+            end: Some(_),
+            ..
+        }
+    )
+}
+
 fn body_contains_unsupported(expr: &HirExpr) -> bool {
     use gossamer_hir::{HirArrayExpr, HirExprKind as H};
+    // For-range desugars are natively compilable — recurse into
+    // their Some-arm body only. Without this case, an outer
+    // `loop { ... }` whose body contains any nested `for i in 0..n`
+    // sees the desugar's `Match` and defers the WHOLE outer loop
+    // to the tree-walker. fannkuch / spectral-norm / nbody are
+    // hot-pathed through nested for-ranges and pay the walker
+    // tax on every iteration without this check.
+    if is_for_range_desugar(expr) {
+        if let H::Loop { body } = &expr.kind {
+            if let H::Block(block) = &body.kind {
+                if let Some(tail) = block.tail.as_deref() {
+                    if let H::Match { arms, .. } = &tail.kind {
+                        // Some-arm body is the user-visible loop body.
+                        return body_contains_unsupported(&arms[0].body);
+                    }
+                }
+            }
+        }
+        return false;
+    }
     match &expr.kind {
         H::Match { .. }
         | H::Closure { .. }
@@ -4185,21 +4482,35 @@ fn parse_int(text: &str) -> Option<i64> {
         .strip_prefix("0x")
         .or_else(|| cleaned.strip_prefix("0X"))
     {
-        return i64::from_str_radix(rest, 16).ok();
+        // Try signed first; fall back to unsigned reinterpret for
+        // bit patterns that overflow i64 (e.g. 0xFFFFFFFFFFFFFFFF).
+        return i64::from_str_radix(rest, 16)
+            .ok()
+            .or_else(|| u64::from_str_radix(rest, 16).ok().map(|n| n as i64));
     }
     if let Some(rest) = cleaned
         .strip_prefix("0b")
         .or_else(|| cleaned.strip_prefix("0B"))
     {
-        return i64::from_str_radix(rest, 2).ok();
+        return i64::from_str_radix(rest, 2)
+            .ok()
+            .or_else(|| u64::from_str_radix(rest, 2).ok().map(|n| n as i64));
     }
     if let Some(rest) = cleaned
         .strip_prefix("0o")
         .or_else(|| cleaned.strip_prefix("0O"))
     {
-        return i64::from_str_radix(rest, 8).ok();
+        return i64::from_str_radix(rest, 8)
+            .ok()
+            .or_else(|| u64::from_str_radix(rest, 8).ok().map(|n| n as i64));
     }
-    cleaned.parse::<i64>().ok()
+    // For decimal, try signed parse first, then unsigned reinterpret
+    // for values in [2^63, 2^64) such as u64::MAX or i64::MIN's
+    // magnitude (9223372036854775808).
+    cleaned
+        .parse::<i64>()
+        .ok()
+        .or_else(|| cleaned.parse::<u64>().ok().map(|n| n as i64))
 }
 
 fn strip_int_suffix(text: &str) -> String {

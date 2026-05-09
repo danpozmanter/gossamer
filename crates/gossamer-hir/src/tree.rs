@@ -29,6 +29,14 @@ pub struct HirItem {
     pub span: Span,
     /// `DefId` associated with the item, when resolver assigned one.
     pub def: Option<DefId>,
+    /// Module path the item was originally declared inside, in
+    /// outer-to-inner order. Empty when the item is at the source
+    /// file's top level. Items lowered out of `mod foo { mod bar { ... } }`
+    /// arrive here as `["foo", "bar"]`. Loaders use the path to
+    /// register the item under both its bare name (`item`) and the
+    /// fully-qualified key (`foo::bar::item`) so cross-module
+    /// callers like `bar::item()` can resolve at runtime.
+    pub module_path: Vec<String>,
     /// Item variant.
     pub kind: HirItemKind,
 }
@@ -616,6 +624,20 @@ pub enum HirPatKind {
         hi: HirLiteral,
         /// `true` for `..=` (inclusive of `hi`); `false` for `..`.
         inclusive: bool,
+    },
+    /// `name @ subpattern` — binds the scrutinee to `name` *and*
+    /// requires the scrutinee to match `sub`. Pattern compilers
+    /// that ignore the `sub` filter (or the binding) drop one
+    /// half of the semantics; the lowering must recurse into
+    /// `sub` for the test, then bind `name` to the matched value
+    /// in the arm body.
+    At {
+        /// Binding name introduced by the `@`.
+        name: Ident,
+        /// `true` when declared `mut`.
+        mutable: bool,
+        /// Required subpattern.
+        sub: Box<HirPat>,
     },
 }
 

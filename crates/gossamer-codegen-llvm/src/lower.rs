@@ -17,8 +17,8 @@ use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
 use crate::emit::BuildError;
 use crate::ty::{
-    NumericKind, elem_slots, int_signed, int_width, is_aggregate, is_pure_primitive_aggregate,
-    is_unit, numeric_kind, render_ty, slot_count,
+    NumericKind, elem_slots, field_slot_offset, int_signed, int_width, is_aggregate, is_unit,
+    numeric_kind, render_ty, slot_count,
 };
 
 /// Emits one function's LLVM IR text, including the required
@@ -39,6 +39,11 @@ pub(crate) struct Lowerer<'a> {
     /// resolves to the exported symbol. Populated by the
     /// emitter before calling [`Lowerer::lower`].
     pub(crate) fn_name_by_def: std::collections::HashMap<u32, String>,
+    /// Callee fn-name → parameter MIR types map so `emit_named_call`
+    /// can adapt argument lowering to the callee's signature
+    /// (e.g. load the heap pointer from a slot when the param
+    /// is `&Adt` rather than passing the slot address).
+    pub(crate) param_tys_by_name: std::collections::HashMap<String, Vec<Ty>>,
     /// String-constant pool — the emitter materialises each
     /// entry as a `@.str_N = private unnamed_addr constant
     /// [len x i8] c"..."` module-level global so
@@ -137,6 +142,7 @@ impl<'a> Lowerer<'a> {
             next_ssa: 0,
             runtime_refs: std::collections::BTreeSet::new(),
             fn_name_by_def: std::collections::HashMap::new(),
+            param_tys_by_name: std::collections::HashMap::new(),
             strings: std::rc::Rc::new(std::cell::RefCell::new(StringPool::default())),
             current_block: None,
             preempt_seq: 0,
@@ -149,17 +155,14 @@ impl<'a> Lowerer<'a> {
     /// remain in `self.runtime_refs` and are read by the
     /// caller to prepend to the module.
     pub(crate) fn lower(&mut self) -> Result<String, BuildError> {
-        // Refuse closure bodies — `__closure_N` functions ship
-        // with their MIR return slot still typed `Unit` (a
-        // typechecker quirk pending follow-up) but the call
-        // sites expect the inner expression's value type. The
-        // Cranelift backend handles closures correctly already,
-        // so route them via the per-function fallback rather
-        // than emit a `void`-returning LLVM function whose
-        // callers read zero out of an unrelated register.
-        if self.body.name.starts_with("__closure_") {
-            return Err(BuildError::Unsupported("closure body"));
-        }
+        // Closure bodies (`__closure_N`) used to fall back to
+        // Cranelift because their MIR return slot was typed
+        // `Unit`. The 2026-05-07 lift fix now propagates the
+        // body's typeck-inferred return type into the lifted
+        // fn signature, so the LLVM lowerer can emit them
+        // through the same pipeline as user functions and the
+        // generated `define`s become visible to the IR-shape
+        // gates.
         self.emit_prelude();
         // Entry block opens with `alloca`s for every local.
         self.emit_allocas();
@@ -349,6 +352,18 @@ impl<'a> Lowerer<'a> {
     fn lower_assign(&mut self, place: &Place, rvalue: &Rvalue) -> Result<(), BuildError> {
         let dest_ty_mir = self.body.local_ty(place.local);
         if is_unit(self.tcx, dest_ty_mir) {
+            // Even when the destination's MIR type is unit, the
+            // rvalue may be a side-effecting intrinsic (gos_store
+            // sinks, etc.). Funnel those into the raw-intrinsic
+            // path so the IR records the side effect.
+            if let Rvalue::CallIntrinsic { name, args } = rvalue
+                && matches!(
+                    *name,
+                    "gos_load" | "gos_store" | "gos_alloc" | "gos_fn_addr"
+                )
+            {
+                return self.lower_raw_intrinsic(name, args, place, None);
+            }
             return Ok(());
         }
         // Aggregate constructions (`Aggregate`, `Repeat`) are
@@ -362,25 +377,44 @@ impl<'a> Lowerer<'a> {
             Rvalue::Repeat { value, count } => {
                 return self.emit_repeat_store(place, value, *count);
             }
+            // Rvalue-position raw heap intrinsics (the
+            // `coerce_to_fn_trait_if_needed` MIR pass uses
+            // these for the FnTrait env blob, and lifted
+            // closures use them for env materialisation).
+            // Reuse the same inline handler the terminator path
+            // hits via `lower_call`.
+            Rvalue::CallIntrinsic { name, args }
+                if matches!(
+                    *name,
+                    "gos_load" | "gos_store" | "gos_alloc" | "gos_fn_addr"
+                ) =>
+            {
+                return self.lower_raw_intrinsic(name, args, place, None);
+            }
             _ => {}
         }
         // Whole-aggregate copy: when the destination is an
         // aggregate local and the rvalue is a plain `Use(Copy)`
-        // of another aggregate local, neither side has a
-        // scalar representation — memcpy the flat storage
-        // rather than trying to load/store it as a single
-        // value.
+        // of another aggregate value (a bare local OR a
+        // projected aggregate field — `let p = pts[i]`), memcpy
+        // the flat storage rather than trying to load/store it
+        // as a single scalar.
         if place.projection.is_empty() && is_aggregate(self.tcx, dest_ty_mir) {
             if let Rvalue::Use(Operand::Copy(src_place)) = rvalue {
-                if src_place.projection.is_empty()
-                    && is_aggregate(self.tcx, self.body.local_ty(src_place.local))
-                {
-                    let bytes = u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1)) * 8;
+                let src_leaf_ty = self.place_leaf_ty(src_place);
+                if is_aggregate(self.tcx, src_leaf_ty) {
+                    let bytes =
+                        u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8;
+                    let src_addr = if src_place.projection.is_empty() {
+                        local_slot(src_place.local)
+                    } else {
+                        self.lower_place_address(src_place)
+                    };
                     writeln!(
                         self.out,
                         "  call void @llvm.memcpy.p0.p0.i64(ptr {dst}, ptr {src}, i64 {bytes}, i1 false)",
                         dst = local_slot(place.local),
-                        src = local_slot(src_place.local),
+                        src = src_addr,
                     )
                     .unwrap();
                     return Ok(());
@@ -627,6 +661,60 @@ impl<'a> Lowerer<'a> {
     /// `std::math::sqrt` etc. — each maps to an LLVM intrinsic
     /// (`llvm.sqrt.f64`, `llvm.sin.f64`, …) which `llc -O3`
     /// lowers to the matching SSE/AVX instruction.
+    /// Generic `gos_rt_*` runtime-call intrinsic in `Rvalue`
+    /// position. Mirrors the Cranelift backend's behaviour:
+    /// emit a typed `call` against the named runtime symbol,
+    /// returning the result as the destination local's value.
+    fn lower_runtime_call_intrinsic(
+        &mut self,
+        name: &str,
+        args: &[Operand],
+        dest_local: Local,
+    ) -> Result<String, BuildError> {
+        let dest_ty = render_ty(self.tcx, self.body.local_ty(dest_local));
+        let mut arg_text = String::new();
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                arg_text.push_str(", ");
+            }
+            let a_ty = self.operand_llvm_ty(arg);
+            let a_v = self.lower_operand(arg)?;
+            let _ = write!(arg_text, "{a_ty} {a_v}");
+        }
+        // Build a `declare` stub matching the call's actual
+        // shape so the module header carries a single coherent
+        // declaration. The runtime fn's signature is whatever
+        // we just emitted at the call site — record it here.
+        let mut decl_args = String::new();
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                decl_args.push_str(", ");
+            }
+            let _ = write!(decl_args, "{}", self.operand_llvm_ty(arg));
+        }
+        let decl_ret = if dest_ty == "void" || is_unit(self.tcx, self.body.local_ty(dest_local)) {
+            "void".to_string()
+        } else {
+            dest_ty.clone()
+        };
+        self.runtime_refs
+            .insert(format!("declare {decl_ret} @{name}({decl_args})"));
+        if decl_ret == "void" {
+            writeln!(self.out, "  call void @{name}({arg_text})").unwrap();
+            // Rvalue-position void call: synthesise a sentinel
+            // SSA name. The caller stores it back into the slot
+            // (which is unit-typed and will be a no-op), or
+            // silently ignores the result. Use a literal `0` so
+            // any downstream coerce path treats it like an
+            // unsigned immediate.
+            Ok("0".to_string())
+        } else {
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = call {decl_ret} @{name}({arg_text})").unwrap();
+            Ok(tmp)
+        }
+    }
+
     fn lower_call_intrinsic(
         &mut self,
         name: &str,
@@ -642,6 +730,14 @@ impl<'a> Lowerer<'a> {
             "f64.ceil" | "ceil" => ("llvm.ceil.f64", 1),
             "f64.exp" | "exp" => ("llvm.exp.f64", 1),
             "f64.ln" | "ln" | "f64.log" | "log" => ("llvm.log.f64", 1),
+            other if other.starts_with("gos_rt_") => {
+                // Generic runtime-call intrinsic: emit a regular
+                // call against the named runtime symbol. Mirrors
+                // how the Cranelift backend's `lower_intrinsic_call`
+                // falls through to a named-call dispatch when the
+                // intrinsic isn't a recognised inline shape.
+                return self.lower_runtime_call_intrinsic(other, args, dest_local);
+            }
             _ => {
                 return Err(BuildError::Unsupported("unknown CallIntrinsic name"));
             }
@@ -711,16 +807,32 @@ impl<'a> Lowerer<'a> {
             return String::new();
         }
         if place.projection.is_empty() {
-            // Aggregate locals (`[Body; 5]`, struct, tuple) are
-            // stored as a flat `[N x i64]` slab — the "value"
-            // representation downstream code consumes is the
-            // slot address itself. Loading the first 8 bytes as
-            // a pointer is incorrect (mistakes the aggregate's
-            // first scalar field for a pointer). When the local
-            // *is* an aggregate, return its address; assignments
-            // and call args treat that as the by-reference handle
-            // the runtime / lowered code expects.
-            if is_aggregate(self.tcx, self.body.local_ty(place.local)) {
+            // Multi-slot aggregates (`[Body; 5]`, structs, tuples)
+            // are stored as a flat `[N x i64]` slab — the "value"
+            // downstream code expects is the slot address itself.
+            //
+            // Exception: enum (Adt) types whose field layout is unknown
+            // to the type context (`slot_count = None`) are heap-pointer
+            // aggregates. Their `[1 x i64]` slot holds a heap pointer,
+            // not inline field data. For these, do a `load ptr` to
+            // recover the heap pointer rather than returning the stack
+            // slot address. Example: `List { Cons(i64, Box<List>), Nil }`.
+            let local_ty = self.body.local_ty(place.local);
+            if is_aggregate(self.tcx, local_ty) {
+                let sc = slot_count(self.tcx, local_ty);
+                // Enum / unknown-layout Adt: slot_count returns None.
+                // Load the pointer value stored in the slot.
+                if sc.is_none() {
+                    let tmp = self.fresh();
+                    writeln!(
+                        self.out,
+                        "  {tmp} = load {leaf_llvm}, ptr {slot}",
+                        slot = local_slot(place.local)
+                    )
+                    .unwrap();
+                    return tmp;
+                }
+                // Multi-slot or single-field struct: the address IS the value.
                 return local_slot(place.local);
             }
             let tmp = self.fresh();
@@ -733,6 +845,14 @@ impl<'a> Lowerer<'a> {
             return tmp;
         }
         let addr = self.lower_place_address(place);
+        // When the projected leaf is itself a multi-slot aggregate
+        // (struct/tuple/array embedded inline), return its address
+        // rather than collapsing the sub-aggregate to its first
+        // word. Mirrors the cranelift behaviour and keeps any
+        // downstream `Field`/`Index` projections walking memory.
+        if is_aggregate(self.tcx, leaf_ty) && slot_count(self.tcx, leaf_ty).unwrap_or(1) > 1 {
+            return addr;
+        }
         let tmp = self.fresh();
         writeln!(self.out, "  {tmp} = load {leaf_llvm}, ptr {addr}").unwrap();
         tmp
@@ -851,13 +971,36 @@ impl<'a> Lowerer<'a> {
         for proj in &place.projection {
             match proj {
                 Projection::Field(idx) => {
+                    // Sum prior fields' slot widths so a nested
+                    // struct field (`outer.inner.x`) lands past
+                    // the embedded inner's full layout instead of
+                    // overlapping it. Falls back to `idx` when the
+                    // type is opaque (sentinel Adt, references) —
+                    // in those cases each field is exactly one
+                    // slot and `idx == slot_offset`.
+                    let slot_offset = field_slot_offset(self.tcx, current_ty, *idx);
                     let next = self.fresh();
                     writeln!(
                         self.out,
-                        "  {next} = getelementptr i64, ptr {current}, i64 {idx}"
+                        "  {next} = getelementptr i64, ptr {current}, i64 {slot_offset}"
                     )
                     .unwrap();
                     current = next;
+                    // Advance current_ty so the next projection's
+                    // stride and field-offset computation reflects
+                    // the projected field, not the parent.
+                    current_ty = match self.tcx.kind(current_ty) {
+                        Some(TyKind::Adt { def, .. }) => self
+                            .tcx
+                            .struct_field_tys(*def)
+                            .and_then(|tys| tys.get(*idx as usize).copied())
+                            .unwrap_or(current_ty),
+                        Some(TyKind::Tuple(elems)) => {
+                            elems.get(*idx as usize).copied().unwrap_or(current_ty)
+                        }
+                        _ => current_ty,
+                    };
+                    stride_slots = elem_slots(self.tcx, current_ty);
                 }
                 Projection::Index(index_local) => {
                     // Load the index value, widen to i64, then
@@ -1050,6 +1193,51 @@ impl<'a> Lowerer<'a> {
         rhs: &Operand,
         dest_local: Local,
     ) -> Result<String, BuildError> {
+        // String comparisons must use `gos_rt_str_compare` — pointer
+        // equality on C strings is address comparison, not content.
+        let operand_ty_raw = self.operand_ty(lhs);
+        let is_str_cmp = matches!(
+            op,
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+        ) && {
+            // For Ref types, check that the inner type is String.
+            if let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(operand_ty_raw) {
+                matches!(self.tcx.kind(*inner), Some(TyKind::String))
+            } else {
+                matches!(self.tcx.kind(operand_ty_raw), Some(TyKind::String))
+            }
+        };
+        if is_str_cmp {
+            let lhs_v = self.lower_operand(lhs)?;
+            let rhs_v = self.lower_operand(rhs)?;
+            self.runtime_refs
+                .insert("declare i32 @gos_rt_str_compare(ptr, ptr)".to_string());
+            let cmp_tmp = self.fresh();
+            writeln!(
+                self.out,
+                "  {cmp_tmp} = call i32 @gos_rt_str_compare(ptr {lhs_v}, ptr {rhs_v})"
+            )
+            .unwrap();
+            let pred = match op {
+                BinOp::Eq => "eq",
+                BinOp::Ne => "ne",
+                BinOp::Lt => "slt",
+                BinOp::Le => "sle",
+                BinOp::Gt => "sgt",
+                BinOp::Ge => "sge",
+                _ => unreachable!(),
+            };
+            let bool_tmp = self.fresh();
+            writeln!(self.out, "  {bool_tmp} = icmp {pred} i32 {cmp_tmp}, 0").unwrap();
+            let dest_ty = self.body.local_ty(dest_local);
+            let dest_llvm = render_ty(self.tcx, dest_ty);
+            if dest_llvm == "i1" {
+                return Ok(bool_tmp);
+            }
+            let widened = self.fresh();
+            writeln!(self.out, "  {widened} = zext i1 {bool_tmp} to {dest_llvm}").unwrap();
+            return Ok(widened);
+        }
         let mut lhs_v = self.lower_operand(lhs)?;
         let mut rhs_v = self.lower_operand(rhs)?;
         // Comparisons return `i1`; everything else returns the
@@ -2205,6 +2393,20 @@ impl<'a> Lowerer<'a> {
             self.lower_raw_intrinsic(&name, args, destination, target)?;
             return Ok(());
         }
+        // `v.push(x)` on a Vec — the runtime helper takes
+        // `(*mut GosVec, *const u8)` and `memcpy`s the value
+        // through the second pointer. The MIR routes every
+        // element type to the same generic `gos_rt_vec_push`
+        // symbol, so we have to spill the i64 / ptr value into
+        // an alloca and pass the alloca's address. Without this
+        // the LLVM tier passed the i64 value as a pointer and
+        // the helper segfaulted dereferencing it (`SEGV_MAPERR`
+        // at `si_addr=value`). Mirrors the cranelift-side
+        // stack-slot dance in `lower_intrinsic_call`.
+        if name == "gos_rt_vec_push" && args.len() == 2 {
+            self.lower_vec_push_inline(args, destination, target)?;
+            return Ok(());
+        }
         // Variant constructor stubs: `Ok(v)`, `Some(v)`, `Err(e)`
         // pass the wrapped value through unchanged (the compiled
         // tier flattens Option/Result, so `unwrap` is identity).
@@ -2221,6 +2423,107 @@ impl<'a> Lowerer<'a> {
         }
         let symbol = map_prelude_symbol(&name);
         self.emit_named_call(symbol, args, destination, target)
+    }
+
+    /// Reads the heap pointer value addressed by an operand
+    /// passed as the `ptr` argument of `gos_load`/`gos_store`.
+    /// Differs from the generic `lower_operand` because
+    /// aggregate-typed locals (Adt / Tuple / Array) are stored
+    /// as a heap pointer in their slot — `lower_place_read`
+    /// returns the slot's *address* for those, but the raw
+    /// heap intrinsics need the *contents* (the heap pointer
+    /// the slot stores). Without this distinction the
+    /// `getelementptr` walks from the local's stack alloca
+    /// instead of the heap blob, corrupting the slot.
+    fn lower_raw_ptr_arg(&mut self, op: &Operand) -> Result<String, BuildError> {
+        if let Operand::Copy(place) = op
+            && place.projection.is_empty()
+            && is_aggregate(self.tcx, self.body.local_ty(place.local))
+        {
+            let slot = local_slot(place.local);
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = load ptr, ptr {slot}").unwrap();
+            return Ok(tmp);
+        }
+        let raw = self.lower_operand(op)?;
+        let raw_ty = self.operand_llvm_ty(op);
+        if raw_ty == "ptr" {
+            return Ok(raw);
+        }
+        let tmp = self.fresh();
+        writeln!(self.out, "  {tmp} = inttoptr {raw_ty} {raw} to ptr").unwrap();
+        Ok(tmp)
+    }
+
+    /// Lowers an argument operand for a regular fn call.
+    ///
+    /// Three storage shapes co-exist:
+    ///
+    /// 1. Callee expects `Ref<T>`, caller has an enum-Adt local
+    ///    (slot_count = None): the slot holds a GC heap pointer.
+    ///    Load it and pass it directly so the callee GEPs into the
+    ///    heap data without an extra indirection.
+    ///
+    /// 2. Callee expects an aggregate parameter (Array, Tuple, or
+    ///    any Adt): pass the alloca ADDRESS. `emit_param_stores`
+    ///    in the callee does `memcpy(callee_slot, arg_ptr, bytes)`.
+    ///    For enum-Adt locals the alloca holds the heap pointer (8
+    ///    bytes), so the memcpy correctly copies the pointer; for
+    ///    inline structs it copies the actual field data. Without
+    ///    this bypass, `lower_place_read`'s enum-Adt load would
+    ///    return the heap pointer value and the callee would
+    ///    memcpy from the Cons-node data instead of the pointer.
+    ///
+    /// 3. All other args: `lower_operand` → `lower_place_read`.
+    fn lower_call_arg(
+        &mut self,
+        op: &Operand,
+        expected: Option<Ty>,
+    ) -> Result<(String, String), BuildError> {
+        if let Some(want) = expected
+            && let Operand::Copy(place) = op
+            && place.projection.is_empty()
+        {
+            let local_ty = self.body.local_ty(place.local);
+            if matches!(self.tcx.kind(want), Some(TyKind::Ref { .. })) {
+                // Case 1: &T param, enum-Adt slot → load heap ptr.
+                if matches!(self.tcx.kind(local_ty), Some(TyKind::Adt { .. }))
+                    && slot_count(self.tcx, local_ty).is_none()
+                {
+                    let slot = local_slot(place.local);
+                    let tmp = self.fresh();
+                    writeln!(self.out, "  {tmp} = load ptr, ptr {slot}").unwrap();
+                    return Ok((tmp, "ptr".to_string()));
+                }
+            } else if is_aggregate(self.tcx, want) && is_aggregate(self.tcx, local_ty) {
+                // Case 2: aggregate param → pass alloca address so
+                // the callee's memcpy copies the right bytes.
+                return Ok((local_slot(place.local), "ptr".to_string()));
+            }
+        }
+        let v = self.lower_operand(op)?;
+        let ty = self.operand_llvm_ty(op);
+        Ok((v, ty))
+    }
+
+    /// Reads the value being stored by a raw heap intrinsic
+    /// (`gos_store`'s third arg). Aggregate-typed locals hold
+    /// the heap pointer in their slot — when one flows in as
+    /// the value, return the *contents* (load ptr from slot)
+    /// instead of the slot address. Returns `(value, llvm_ty)`.
+    fn lower_raw_value_arg(&mut self, op: &Operand) -> Result<(String, String), BuildError> {
+        if let Operand::Copy(place) = op
+            && place.projection.is_empty()
+            && is_aggregate(self.tcx, self.body.local_ty(place.local))
+        {
+            let slot = local_slot(place.local);
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = load ptr, ptr {slot}").unwrap();
+            return Ok((tmp, "ptr".to_string()));
+        }
+        let v = self.lower_operand(op)?;
+        let ty = self.operand_llvm_ty(op);
+        Ok((v, ty))
     }
 
     /// Lowers the raw-pointer intrinsics (`gos_load`,
@@ -2244,18 +2547,9 @@ impl<'a> Lowerer<'a> {
                 if args.len() < 2 {
                     return Err(BuildError::Unsupported("gos_load arity"));
                 }
-                let ptr_v = self.lower_operand(&args[0])?;
+                let p = self.lower_raw_ptr_arg(&args[0])?;
                 let off_v = self.lower_operand(&args[1])?;
-                let ptr_ty = self.operand_llvm_ty(&args[0]);
                 let off_ty = self.operand_llvm_ty(&args[1]);
-                // ptr might be i64 or ptr; coerce to ptr.
-                let p = if ptr_ty == "ptr" {
-                    ptr_v
-                } else {
-                    let tmp = self.fresh();
-                    writeln!(self.out, "  {tmp} = inttoptr {ptr_ty} {ptr_v} to ptr").unwrap();
-                    tmp
-                };
                 // gep i8, p, off → addr
                 let off64 = if off_ty == "i64" {
                     off_v
@@ -2281,19 +2575,17 @@ impl<'a> Lowerer<'a> {
                 if args.len() < 3 {
                     return Err(BuildError::Unsupported("gos_store arity"));
                 }
-                let ptr_v = self.lower_operand(&args[0])?;
+                let p = self.lower_raw_ptr_arg(&args[0])?;
                 let off_v = self.lower_operand(&args[1])?;
-                let val_v = self.lower_operand(&args[2])?;
-                let ptr_ty = self.operand_llvm_ty(&args[0]);
                 let off_ty = self.operand_llvm_ty(&args[1]);
-                let val_ty = self.operand_llvm_ty(&args[2]);
-                let p = if ptr_ty == "ptr" {
-                    ptr_v
-                } else {
-                    let tmp = self.fresh();
-                    writeln!(self.out, "  {tmp} = inttoptr {ptr_ty} {ptr_v} to ptr").unwrap();
-                    tmp
-                };
+                // The value being stored may itself be an
+                // aggregate-typed Copy whose slot holds the
+                // heap pointer (the recursive-enum case where
+                // a `Box<List>` rest field lives in another
+                // local's slot). Use the same heap-pointer
+                // resolution as the ptr arg so we store the
+                // heap pointer rather than the slot address.
+                let (val_v, val_ty) = self.lower_raw_value_arg(&args[2])?;
                 let off64 = if off_ty == "i64" {
                     off_v
                 } else {
@@ -2311,7 +2603,15 @@ impl<'a> Lowerer<'a> {
                 writeln!(self.out, "  store i64 {val64}, ptr {addr}").unwrap();
                 if dest_ty != "void" && !is_unit(self.tcx, dest_ty_mir) {
                     let slot = local_slot(destination.local);
-                    writeln!(self.out, "  store {dest_ty} 0, ptr {slot}").unwrap();
+                    // Sink stores: pick a zero-shaped literal that
+                    // matches the destination's LLVM type so `opt`
+                    // doesn't reject `store ptr 0` / `store double 0`.
+                    let zero = match dest_ty.as_str() {
+                        "ptr" => "null".to_string(),
+                        "double" | "float" => "0.0".to_string(),
+                        _ => "0".to_string(),
+                    };
+                    writeln!(self.out, "  store {dest_ty} {zero}, ptr {slot}").unwrap();
                 }
             }
             "gos_alloc" => {
@@ -2354,7 +2654,13 @@ impl<'a> Lowerer<'a> {
                 return Err(BuildError::Unsupported("unrecognised raw intrinsic"));
             }
         }
-        emit_terminator_branch(&mut self.out, target);
+        // The Terminator::Call caller passes a target and expects
+        // the branch to fall through to the next block; the
+        // Rvalue-in-Assign caller passes `None` (it sits inside a
+        // basic block before the terminator) and skips the branch.
+        if target.is_some() {
+            emit_terminator_branch(&mut self.out, target);
+        }
         Ok(())
     }
 
@@ -2836,6 +3142,82 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// Inline `v.push(x)` for arbitrary element widths.
+    /// `gos_rt_vec_push(*mut GosVec, *const u8)` reads the
+    /// element through the second pointer; the i64 / ptr value
+    /// needs to land on the stack first so we can hand the
+    /// helper an `&value` instead of `value`. Mirrors the
+    /// Cranelift backend's `lower_intrinsic_call` stack-slot
+    /// dance for the same symbol.
+    fn lower_vec_push_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let vec_v = self.lower_operand(&args[0])?;
+        let vec_ty = self.operand_llvm_ty(&args[0]);
+        let vec_ptr = if vec_ty == "ptr" {
+            vec_v
+        } else {
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = inttoptr {vec_ty} {vec_v} to ptr").unwrap();
+            tmp
+        };
+        let val_v = self.lower_operand(&args[1])?;
+        let val_ty = self.operand_llvm_ty(&args[1]);
+        // 8-byte slot — every scalar / GC pointer fits in one
+        // word, matching the runtime's `elem_bytes=8` default.
+        let slot = self.fresh();
+        writeln!(self.out, "  {slot} = alloca i64").unwrap();
+        let val_i64 = match val_ty.as_str() {
+            "i64" => val_v,
+            "i32" | "i16" | "i8" | "i1" => {
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = sext {val_ty} {val_v} to i64").unwrap();
+                tmp
+            }
+            "double" => {
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = bitcast double {val_v} to i64").unwrap();
+                tmp
+            }
+            "float" => {
+                let mid = self.fresh();
+                writeln!(self.out, "  {mid} = fpext float {val_v} to double").unwrap();
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = bitcast double {mid} to i64").unwrap();
+                tmp
+            }
+            "ptr" => {
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = ptrtoint ptr {val_v} to i64").unwrap();
+                tmp
+            }
+            _ => val_v,
+        };
+        writeln!(self.out, "  store i64 {val_i64}, ptr {slot}").unwrap();
+        self.runtime_refs
+            .insert("declare void @gos_rt_vec_push(ptr, ptr)".to_string());
+        writeln!(
+            self.out,
+            "  call void @gos_rt_vec_push(ptr {vec_ptr}, ptr {slot})"
+        )
+        .unwrap();
+        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+            let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+            let dslot = local_slot(destination.local);
+            let zero = match dest_ty.as_str() {
+                "ptr" => "null".to_string(),
+                "double" | "float" => "0.0".to_string(),
+                _ => "0".to_string(),
+            };
+            writeln!(self.out, "  store {dest_ty} {zero}, ptr {dslot}").unwrap();
+        }
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
     /// Inline fast path for `gos_rt_str_byte_at(s, i) -> i64`.
     ///
     /// The bytecode is `*((s as *const u8) + i)` zero-extended
@@ -2907,36 +3289,29 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
+        let expected_param_tys: Vec<Option<Ty>> = self
+            .param_tys_by_name
+            .get(symbol)
+            .map(|tys| tys.iter().map(|t| Some(*t)).collect())
+            .unwrap_or_default();
         let mut arg_text = String::new();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 arg_text.push_str(", ");
             }
-            let a_ty = self.operand_llvm_ty(arg);
-            let a_v = self.lower_operand(arg)?;
+            let want = expected_param_tys.get(i).copied().flatten();
+            let (a_v, a_ty) = self.lower_call_arg(arg, want)?;
             let _ = write!(arg_text, "{a_ty} {a_v}");
         }
         let dest_ty_mir = self.body.local_ty(destination.local);
         let dest_ty = render_ty(self.tcx, dest_ty_mir);
 
-        // Detect the call-site arena scoping pattern: a callee
-        // returning a *pure primitive* aggregate (no heap-pointer
-        // fields) hands us a heap pointer; we `memcpy` it into the
-        // caller's stack alloca and the heap copy is dead. Wrap the
-        // call+memcpy in a `gos_rt_arena_save`/`_restore` pair so
-        // the heap copy and any callee-internal allocations are
-        // reclaimed immediately. Drives the spectral-norm matvec
-        // RAM win.
-        let scope_arena = is_aggregate(self.tcx, dest_ty_mir)
-            && is_pure_primitive_aggregate(self.tcx, dest_ty_mir)
-            && !symbol.starts_with("gos_rt_");
-        let saved_tmp = if scope_arena {
-            let s = self.fresh();
-            writeln!(self.out, "  {s} = call i64 @gos_rt_arena_save()").unwrap();
-            Some(s)
-        } else {
-            None
-        };
+        // The call-site arena scoping pass (was wrapping aggregate
+        // returns with `gos_rt_arena_save`/`_restore`) is retired.
+        // The bump arena it depended on is gone — see
+        // `~/dev/contexts/lang/fix_architecture_ownership.md`
+        // Stage 4. The runtime helpers are now no-ops; we no
+        // longer emit the calls.
 
         if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
             writeln!(self.out, "  call void @\"{symbol}\"({arg_text})").unwrap();
@@ -2963,9 +3338,6 @@ impl<'a> Lowerer<'a> {
             } else {
                 writeln!(self.out, "  store {dest_ty} {tmp}, ptr {slot}").unwrap();
             }
-        }
-        if let Some(saved) = saved_tmp {
-            writeln!(self.out, "  call void @gos_rt_arena_restore(i64 {saved})").unwrap();
         }
         emit_terminator_branch(&mut self.out, target);
         Ok(())
@@ -3228,7 +3600,7 @@ fn map_prelude_symbol(name: &str) -> &str {
         "time::now" => "gos_rt_time_now",
         "time::now_ms" => "gos_rt_time_now_ms",
         "time::now_ns" => "gos_rt_now_ns",
-        "time::sleep" => "gos_rt_sleep_ns",
+        "time::sleep" => "gos_rt_sleep_ms",
         "math::pow" => "gos_rt_math_pow",
         "math::abs" => "gos_rt_math_abs",
         "math::sqrt" => "gos_rt_math_sqrt",

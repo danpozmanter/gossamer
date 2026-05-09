@@ -25,6 +25,13 @@ pub struct Parser<'src> {
     /// Depth of contexts where `|` denotes a pattern alternative and
     /// must not be consumed as bitwise-or by the Pratt loop.
     pub(crate) pattern_pipe_depth: u32,
+    /// `use` declarations encountered inside inline `mod ... { ... }`
+    /// bodies. The mod-body grammar collects them into this side
+    /// channel so [`parse_source_file`] can hoist them to the
+    /// `SourceFile.uses` list — the resolver only walks the
+    /// file-level `uses` slot, so a `use std::encoding::json` inside
+    /// `mod chat { ... }` would otherwise be silently dropped.
+    pub(crate) hoisted_uses: Vec<gossamer_ast::UseDecl>,
 }
 
 impl<'src> Parser<'src> {
@@ -38,7 +45,14 @@ impl<'src> Parser<'src> {
             diagnostics: Vec::new(),
             no_struct_literal_depth: 0,
             pattern_pipe_depth: 0,
+            hoisted_uses: Vec::new(),
         }
+    }
+
+    /// Drains the parser's collection of `use` decls hoisted out of
+    /// inline-module bodies. See the field docs on [`Self::hoisted_uses`].
+    pub fn take_hoisted_uses(&mut self) -> Vec<gossamer_ast::UseDecl> {
+        std::mem::take(&mut self.hoisted_uses)
     }
 
     /// Returns the file id being parsed.

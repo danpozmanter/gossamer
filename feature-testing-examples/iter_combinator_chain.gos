@@ -1,0 +1,114 @@
+// Iterator Combinator Chain
+// Manually implement map, filter, fold, zip, and flat-map patterns
+// over arrays to verify that the building blocks of iteration are
+// consistent across execution tiers.
+
+fn map_i64(xs: [i64], f: Fn(i64) -> i64) -> [i64] {
+    let mut out: [i64] = []
+    for x in xs {
+        out.push(f(x))
+    }
+    out
+}
+
+fn filter_i64(xs: [i64], pred: Fn(i64) -> bool) -> [i64] {
+    let mut out: [i64] = []
+    for x in xs {
+        if pred(x) {
+            out.push(x)
+        }
+    }
+    out
+}
+
+fn fold_i64(xs: [i64], init: i64, f: Fn(i64, i64) -> i64) -> i64 {
+    let mut acc = init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    acc
+}
+
+fn zip_sum(xs: [i64], ys: [i64]) -> [i64] {
+    let len = if xs.len() < ys.len() { xs.len() } else { ys.len() }
+    let mut out: [i64] = []
+    for i in 0..len {
+        out.push(xs[i] + ys[i])
+    }
+    out
+}
+
+fn main() {
+    let xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    // map: double every element
+    let doubled = map_i64(xs, |x| x * 2)
+    println!("doubled[0] = {}", doubled[0])
+    println!("doubled[9] = {}", doubled[9])
+
+    // filter: keep evens
+    let evens = filter_i64(xs, |x| x % 2 == 0)
+    println!("evens len = {}", evens.len())
+    println!("evens[0] = {}", evens[0])
+    println!("evens[4] = {}", evens[4])
+
+    // fold: sum
+    let total = fold_i64(xs, 0, |acc, x| acc + x)
+    println!("sum = {}", total)
+
+    // fold: product of first 5
+    let first5 = [1, 2, 3, 4, 5]
+    let product = fold_i64(first5, 1, |acc, x| acc * x)
+    println!("product(1..5) = {}", product)
+
+    // chained: sum of squares of odds
+    let odds = filter_i64(xs, |x| x % 2 != 0)
+    let squares = map_i64(odds, |x| x * x)
+    let sum_sq = fold_i64(squares, 0, |acc, x| acc + x)
+    println!("sum of squares of odds = {}", sum_sq)
+
+    // zip
+    let aa = [1, 2, 3]
+    let bs = [10, 20, 30]
+    let zipped = zip_sum(aa, bs)
+    println!("zip_sum[0] = {}", zipped[0])
+    println!("zip_sum[2] = {}", zipped[2])
+
+    // max via fold
+    let nums = [5, 3, 9, 1, 7]
+    let max = fold_i64(nums, nums[0], |acc, x| if x > acc { x } else { acc })
+    println!("max = {}", max)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn map_doubles() {
+        let r = super::map_i64([1, 2, 3], |x| x * 2)
+        testing::check_eq(&r.len(), &3, "len")
+        testing::check_eq(&r[0], &2, "r[0]")
+        testing::check_eq(&r[2], &6, "r[2]")
+    }
+
+    #[test]
+    fn filter_evens() {
+        let r = super::filter_i64([1, 2, 3, 4], |x| x % 2 == 0)
+        testing::check_eq(&r.len(), &2, "evens len")
+        testing::check_eq(&r[0], &2, "first even")
+    }
+
+    #[test]
+    fn fold_sum() {
+        let s = super::fold_i64([1, 2, 3, 4, 5], 0, |a, x| a + x)
+        testing::check_eq(&s, &15, "sum 1..5")
+    }
+
+    #[test]
+    fn zip_sum_basic() {
+        let r = super::zip_sum([1, 2, 3], [4, 5, 6])
+        testing::check_eq(&r[0], &5, "zip[0]")
+        testing::check_eq(&r[2], &9, "zip[2]")
+    }
+}

@@ -1,0 +1,74 @@
+// Method Dispatch Collision
+// Define similar method names across multiple impl blocks and call
+// both method-style and qualified paths to test resolver correctness.
+
+struct Circle { radius: f64 }
+struct Square { side: f64 }
+
+impl Circle {
+    fn area(&self) -> f64 { 3.14159 * self.radius * self.radius }
+    fn name(&self) -> String { "circle".to_string() }
+    fn describe(&self) -> String { format!("r={}", self.radius) }
+}
+
+impl Square {
+    fn area(&self) -> f64 { self.side * self.side }
+    fn name(&self) -> String { "square".to_string() }
+    fn describe(&self) -> String { format!("s={}", self.side) }
+}
+
+fn main() {
+    let c = Circle { radius: 3.0 }
+    let s = Square { side: 4.0 }
+
+    // Method-style dispatch
+    println!("{} area = {}", c.name(), c.area())
+    println!("{} area = {}", s.name(), s.area())
+
+    // Qualified path calls
+    println!("Circle::area = {}", Circle::area(&c))
+    println!("Square::area = {}", Square::area(&s))
+
+    // Mixed qualified + method
+    println!("{} -> {}", c.describe(), Circle::name(&c))
+    println!("{} -> {}", s.describe(), Square::name(&s))
+
+    // Ensure shadowed names resolve per receiver type
+    println!("{} -> {}", c.name(), c.area())
+    println!("{} -> {}", s.name(), s.area())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn circle_area_pi() {
+        let c = super::Circle { radius: 1.0 }
+        let a = c.area()
+        testing::check(a > 3.14 && a < 3.15, "unit circle area ≈ 3.14159")
+    }
+
+    #[test]
+    fn square_area() {
+        let s = super::Square { side: 4.0 }
+        let a = s.area()
+        testing::check(a > 15.9 && a < 16.1, "4x4=16")
+    }
+
+    #[test]
+    fn name_methods() {
+        let c = super::Circle { radius: 1.0 }
+        let s = super::Square { side: 1.0 }
+        testing::check_eq(&c.name(), &"circle".to_string(), "circle name")
+        testing::check_eq(&s.name(), &"square".to_string(), "square name")
+    }
+
+    #[test]
+    fn describe_methods() {
+        let c = super::Circle { radius: 3.0 }
+        let s = super::Square { side: 4.0 }
+        testing::check(c.describe().contains("3"), "circle describe has radius")
+        testing::check(s.describe().contains("4"), "square describe has side")
+    }
+}

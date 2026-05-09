@@ -1,0 +1,87 @@
+// Tuple Destructuring Loop
+// Iterate over tuples from maps or arrays with destructuring in for
+// and let bindings to verify destructure lowering correctness.
+
+use std::collections::HashMap
+
+fn main() {
+    let pairs = [(1, "one"), (2, "two"), (3, "three")]
+
+    // Destructure in for
+    for (n, word) in pairs {
+        println!("{} -> {}", n, word)
+    }
+
+    // Destructure from a map
+    let mut scores: HashMap<String, i64> = HashMap::new()
+    scores.insert("alice", 95)
+    scores.insert("bob", 87)
+    scores.insert("carol", 92)
+
+    for (name, score) in scores.iter() {
+        println!("{} = {}", name, score)
+    }
+
+    // Nested tuples
+    let triples = [(1, 2, 3), (4, 5, 6)]
+    for (a, b, c) in triples {
+        println!("{} + {} + {} = {}", a, b, c, a + b + c)
+    }
+
+    // Destructure at let with mut binding
+    let (mut x, y) = (10, 20)
+    x += y
+    println!("x after += y = {}", x)
+
+    // Mixed pattern in let
+    let (first, .., last) = (1, 2, 3, 4, 5)
+    println!("first={}, last={}", first, last)
+
+    // While let with tuple Option
+    let mut cursor: Option<(i64, String)> = Some((1, "start".to_string()))
+    while let Some((n, msg)) = cursor {
+        println!("cursor: {} {}", n, msg)
+        cursor = if n < 3 { Some((n + 1, format!("step {}", n + 1))) } else { None }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn destructure_pair_let() {
+        let (x, y) = (10, 20)
+        testing::check_eq(&x, &10, "first=10")
+        testing::check_eq(&y, &20, "second=20")
+    }
+
+    #[test]
+    fn destructure_mut_binding() {
+        let (mut x, y) = (10, 20)
+        x += y
+        testing::check_eq(&x, &30, "mut x += y = 30")
+    }
+
+    #[test]
+    fn destructure_triple_in_loop() {
+        let triples = [(1, 2, 3), (4, 5, 6)]
+        let mut sums: [i64] = []
+        for (a, b, c) in triples {
+            sums.push(a + b + c)
+        }
+        testing::check_eq(&sums[0], &6, "1+2+3=6")
+        testing::check_eq(&sums[1], &15, "4+5+6=15")
+    }
+
+    #[test]
+    fn while_let_cursor() {
+        let mut cursor: Option<i64> = Some(3)
+        let mut count = 0
+        while let Some(n) = cursor {
+            count += 1
+            cursor = if n > 1 { Some(n - 1) } else { None }
+        }
+        testing::check_eq(&count, &3, "cursor runs 3 times: 3,2,1")
+    }
+}

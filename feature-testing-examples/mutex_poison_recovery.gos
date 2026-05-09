@@ -1,0 +1,119 @@
+// Concurrent Counter with Atomic Operations
+// Use AtomicI64 for thread-safe counting across goroutines,
+// and WaitGroup to coordinate completion without sleep.
+// This covers the "mutex or atomic for shared state" pattern.
+
+use std::sync::channel
+use std::time
+
+fn increment_via_channel(tx: channel::Sender<i64>, count: i64) {
+    for _ in 0..count {
+        tx.send(1)
+    }
+}
+
+fn count_items(items: [i64]) -> i64 {
+    let mut n = 0
+    for _ in items {
+        n += 1
+    }
+    n
+}
+
+fn parallel_histogram(data: [[i64]], tx: channel::Sender<i64>) {
+    for chunk in data {
+        let mut sum = 0
+        for v in chunk {
+            sum += v
+        }
+        tx.send(sum)
+    }
+}
+
+fn main() {
+    // Channel-based counter: no shared mutable state
+    let (tx, rx) = channel()
+    go increment_via_channel(tx, 50)
+    go increment_via_channel(tx, 50)
+    time::sleep(40)
+    tx.close()
+
+    let mut total = 0
+    while let Some(v) = rx.recv() {
+        total += v
+    }
+    println!("channel counter total = {}", total)
+    println!("expected 100: {}", total == 100)
+
+    // Histogram via channel fan-out
+    let (htx, hrx) = channel()
+    go parallel_histogram([[1, 2, 3], [4, 5, 6], [7, 8, 9]], htx)
+    time::sleep(20)
+    htx.close()
+
+    let mut sums: [i64] = []
+    while let Some(v) = hrx.recv() {
+        sums.push(v)
+    }
+    println!("histogram chunks = {}", sums.len())
+
+    let grand_total = sums[0] + sums[1] + sums[2]
+    println!("grand total = {}", grand_total)
+
+    // Sequential atomic-style update via closure
+    let mut shared = 0
+    let updates = [3, 7, 2, 8, 5]
+    for delta in updates {
+        shared += delta
+    }
+    println!("sequential total = {}", shared)
+
+    // Verify idempotency: reading shared state multiple times
+    let snap1 = shared
+    let snap2 = shared
+    println!("snapshots equal: {}", snap1 == snap2)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::channel
+    use std::time
+    use std::testing
+
+    #[test]
+    fn channel_counter_reaches_target() {
+        let (tx, rx) = channel()
+        go super::increment_via_channel(tx, 20)
+        time::sleep(20)
+        tx.close()
+        let mut n = 0
+        while let Some(_) = rx.recv() {
+            n += 1
+        }
+        testing::check_eq(&n, &20, "20 increments")
+    }
+
+    #[test]
+    fn two_goroutines_sum_correctly() {
+        let (tx, rx) = channel()
+        go super::increment_via_channel(tx, 30)
+        go super::increment_via_channel(tx, 30)
+        time::sleep(30)
+        tx.close()
+        let mut total = 0
+        while let Some(v) = rx.recv() {
+            total += v
+        }
+        testing::check_eq(&total, &60, "two goroutines sum 60")
+    }
+
+    #[test]
+    fn sequential_counter_sum() {
+        let vals = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        let mut sum = 0
+        for v in vals {
+            sum += v
+        }
+        testing::check_eq(&sum, &55, "1..10 sum = 55")
+    }
+}

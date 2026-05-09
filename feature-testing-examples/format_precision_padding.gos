@@ -1,0 +1,100 @@
+// Format Precision and Padding
+// Verify float precision formatting ({:.N}), integer formatting,
+// and manual string padding through string construction.
+
+fn left_pad(s: String, width: i64, fill: String) -> String {
+    let mut result = s.clone()
+    let mut cur = result.len() as i64
+    while cur < width {
+        result = format!("{}{}", fill, result)
+        cur += 1
+    }
+    result
+}
+
+fn right_pad(s: String, width: i64, fill: String) -> String {
+    let mut result = s.clone()
+    let mut cur = result.len() as i64
+    while cur < width {
+        result = format!("{}{}", result, fill)
+        cur += 1
+    }
+    result
+}
+
+fn format_table_row(label: String, value: f64, decimals: i64) -> String {
+    // Right-align label in 12 chars, then value with requested decimals
+    let padded = right_pad(label, 12, " ".to_string())
+    if decimals == 0 {
+        format!("{}: {}", padded, value as i64)
+    } else if decimals == 1 {
+        format!("{}: {:.1}", padded, value)
+    } else if decimals == 2 {
+        format!("{}: {:.2}", padded, value)
+    } else if decimals == 3 {
+        format!("{}: {:.3}", padded, value)
+    } else {
+        format!("{}: {:.6}", padded, value)
+    }
+}
+
+fn main() {
+    let pi: f64 = 3.14159265358979
+
+    println!("pi 0dp: {:.0}", pi)
+    println!("pi 2dp: {:.2}", pi)
+    println!("pi 4dp: {:.4}", pi)
+    println!("pi 6dp: {:.6}", pi)
+
+    let e: f64 = 2.71828182845904
+    println!("e 3dp: {:.3}", e)
+
+    // Negative values
+    let neg: f64 = -1.41421356
+    println!("neg 4dp: {:.4}", neg)
+
+    // Very small
+    let tiny: f64 = 0.0000012345
+    println!("tiny 9dp: {:.9}", tiny)
+
+    // Manual padding
+    let lp = left_pad("42".to_string(), 6, "0".to_string())
+    println!("left-pad 42 to 6: {}", lp)
+
+    let rp = right_pad("hi".to_string(), 8, ".".to_string())
+    println!("right-pad hi to 8: {}", rp)
+
+    // Table formatting
+    println!("{}", format_table_row("pi".to_string(), pi, 4))
+    println!("{}", format_table_row("e".to_string(), e, 4))
+    println!("{}", format_table_row("sqrt2".to_string(), 1.41421356, 4))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn float_two_decimal_places() {
+        let s = format!("{:.2}", 3.14159)
+        testing::check_eq(&s, &"3.14".to_string(), "2dp")
+    }
+
+    #[test]
+    fn float_zero_decimal_places() {
+        let s = format!("{:.0}", 2.9)
+        testing::check_eq(&s, &"3".to_string(), "0dp rounds up")
+    }
+
+    #[test]
+    fn left_pad_shorter_string() {
+        let s = super::left_pad("7".to_string(), 3, "0".to_string())
+        testing::check_eq(&s, &"007".to_string(), "zero-pad 7")
+    }
+
+    #[test]
+    fn right_pad_already_long() {
+        let s = super::right_pad("hello".to_string(), 3, ".".to_string())
+        testing::check_eq(&s, &"hello".to_string(), "no padding needed")
+    }
+}

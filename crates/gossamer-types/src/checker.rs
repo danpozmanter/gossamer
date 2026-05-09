@@ -79,6 +79,9 @@ struct TypeChecker<'a> {
 
 impl<'a> TypeChecker<'a> {
     fn new(tcx: &'a mut TyCtxt, resolutions: &'a Resolutions) -> Self {
+        register_stdlib_struct_fields(tcx);
+        let mut checker_struct_fields = HashMap::new();
+        seed_checker_stdlib_struct_fields(tcx, &mut checker_struct_fields);
         Self {
             tcx,
             infer: InferCtxt::new(),
@@ -87,7 +90,7 @@ impl<'a> TypeChecker<'a> {
             resolutions,
             scopes: vec![HashMap::new()],
             binding_types: HashMap::new(),
-            struct_fields: HashMap::new(),
+            struct_fields: checker_struct_fields,
             fn_sigs: HashMap::new(),
             const_tys: HashMap::new(),
         }
@@ -205,6 +208,11 @@ impl<'a> TypeChecker<'a> {
                     self.register_struct(item.id, decl.name.name.as_str(), &decl.body);
                 }
                 ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
+                ItemKind::Mod(decl) => {
+                    if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                        self.collect_signatures(inner);
+                    }
+                }
                 _ => {}
             }
         }
@@ -381,7 +389,14 @@ impl<'a> TypeChecker<'a> {
             ItemKind::TypeAlias(decl) => {
                 let _ = self.type_from_ast(&decl.ty);
             }
-            ItemKind::Mod(_) | ItemKind::AttrItem(_) => {}
+            ItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    for nested in inner {
+                        self.check_item(nested);
+                    }
+                }
+            }
+            ItemKind::AttrItem(_) => {}
         }
     }
 
@@ -690,8 +705,63 @@ impl<'a> TypeChecker<'a> {
                     _ => {}
                 }
             }
+            // Built-in intrinsics emitted by the parser's macro
+            // expansion (`format!` only — `println!` / `print!` /
+            // `eprintln!` / `eprint!` etc. expand to a call to the
+            // outer name with the format-built string as the single
+            // argument, and pinning `println` to Unit broke
+            // generic-monomorph paths that route through user-named
+            // functions called `println`). Pinning `__concat` and
+            // `__fmt_prec` to `String` is safe: they're synthetic
+            // names the parser injects and no user code can
+            // shadow them.
+            if module.is_empty() {
+                match last {
+                    "__concat" | "__fmt_prec" => {
+                        return self.tcx.string_ty();
+                    }
+                    // Variant constructors. The resolver doesn't
+                    // hand `Some` / `Ok` / `Err` / `None` a `DefId`,
+                    // so the call expression typechecks as a fresh
+                    // `Var` and the binding `let first = Some(10)`
+                    // collapses to `Int(I64)` — losing the Adt
+                    // wrapper. Match dispatch later treats the
+                    // 8-byte `*mut GosResult` pointer as a raw i64
+                    // and reads garbage from the slot. Recognise
+                    // the four standard variants here and synthesise
+                    // the right Adt: `Some(t)` → `Option<t>`,
+                    // `Ok(t)` → `Result<t, ?>`, `Err(e)` →
+                    // `Result<?, e>`, `None` → `Option<?>`.
+                    "Some" => {
+                        let payload = arg_tys.first().copied().unwrap_or_else(|| self.fresh());
+                        return self.option_adt_ty(payload);
+                    }
+                    "None" => {
+                        let payload = self.fresh();
+                        return self.option_adt_ty(payload);
+                    }
+                    "Ok" => {
+                        let ok_ty = arg_tys.first().copied().unwrap_or_else(|| self.fresh());
+                        let err_ty = self.fresh();
+                        return self.result_adt_ty(ok_ty, err_ty);
+                    }
+                    "Err" => {
+                        let ok_ty = self.fresh();
+                        let err_ty = arg_tys.first().copied().unwrap_or_else(|| self.fresh());
+                        return self.result_adt_ty(ok_ty, err_ty);
+                    }
+                    _ => {}
+                }
+            }
         }
         self.fresh()
+    }
+
+    fn option_adt_ty(&mut self, payload: Ty) -> Ty {
+        let substs = crate::Substs::from_types([payload]);
+        let def = gossamer_resolve::DefId::local(u32::MAX - 1);
+        self.tcx.register_def_name(def, "Option");
+        self.tcx.intern(TyKind::Adt { def, substs })
     }
 
     fn check_method_call(&mut self, receiver: &Expr, args: &[Expr]) -> Ty {
@@ -1285,6 +1355,27 @@ impl<'a> TypeChecker<'a> {
             }
             _ => {}
         }
+        // Recognise stdlib struct types by their last path segment
+        // so parameter annotations like `entry: &fs::DirInfo` resolve
+        // to the sentinel Adt rather than a fresh inference variable.
+        // Without this, the MIR can't recover "DirInfo" from the
+        // parameter's type and field access (`entry.is_symlink`) falls
+        // through to gos_rt_json_get instead of a Field(idx) projection.
+        let tail = path.segments.last().map_or("", |s| s.name.name.as_str());
+        let stdlib_def_offset: Option<u32> = match tail {
+            "DirInfo" => Some(2),
+            "Output" => Some(3),
+            "ResponseStream" => Some(4),
+            "Response" => Some(5),
+            _ => None,
+        };
+        if let Some(off) = stdlib_def_offset {
+            let def = gossamer_resolve::DefId::local(u32::MAX - off);
+            return self.tcx.intern(TyKind::Adt {
+                def,
+                substs: crate::Substs::new(),
+            });
+        }
         self.fresh()
     }
 
@@ -1447,6 +1538,93 @@ impl<'a> TypeChecker<'a> {
 
 fn evaluate_const_int(expr: &Expr) -> Option<usize> {
     evaluate_const_int_from_expr(expr).map(|v| v as usize)
+}
+
+/// Pre-registers field types for stdlib structs that user source can
+/// name (e.g. `fs::DirInfo`, `os::Output`, `http::Response`,
+/// `http::ResponseStream`). The MIR-side dispatch pins free-call
+/// destinations to sentinel `DefId`s (`u32::MAX - N`) for these
+/// structs; without their field types registered here, `entry.path`
+/// / `r.status` projections leave the result `Var(_)` and downstream
+/// `.len()` / println fall back to the wrong dispatch.
+fn register_stdlib_struct_fields(tcx: &mut TyCtxt) {
+    let str_ty = tcx.string_ty();
+    let i64_ty = tcx.int_ty(IntTy::I64);
+    let bool_ty = tcx.bool_ty();
+    // DirInfo: [name, path, is_file, is_dir, is_symlink, size, modified_ms]
+    tcx.register_struct_fields(
+        gossamer_resolve::DefId::local(u32::MAX - 2),
+        vec![str_ty, str_ty, bool_ty, bool_ty, bool_ty, i64_ty, i64_ty],
+    );
+    // Output: [stdout, stderr, code]
+    tcx.register_struct_fields(
+        gossamer_resolve::DefId::local(u32::MAX - 3),
+        vec![str_ty, str_ty, i64_ty],
+    );
+    // ResponseStream: [__handle, status, content_type]
+    tcx.register_struct_fields(
+        gossamer_resolve::DefId::local(u32::MAX - 4),
+        vec![i64_ty, i64_ty, str_ty],
+    );
+    // Response: [status, body, content_type, location]
+    tcx.register_struct_fields(
+        gossamer_resolve::DefId::local(u32::MAX - 5),
+        vec![i64_ty, str_ty, str_ty, str_ty],
+    );
+}
+
+/// Seeds the checker's own `struct_fields` map with the same stdlib
+/// struct entries that `register_stdlib_struct_fields` puts in `tcx`.
+/// Without this, `lookup_field_ty_diagnosed` returns `UnknownField {
+/// opaque: true }` for `entry: &fs::DirInfo` even though `tcx` knows
+/// the field layout.
+fn seed_checker_stdlib_struct_fields(
+    tcx: &mut TyCtxt,
+    map: &mut HashMap<gossamer_resolve::DefId, Vec<(String, Ty)>>,
+) {
+    let str_ty = tcx.string_ty();
+    let i64_ty = tcx.int_ty(IntTy::I64);
+    let bool_ty = tcx.bool_ty();
+    let entries: &[(u32, &[(&str, Ty)])] = &[
+        (
+            2,
+            &[
+                ("name", str_ty),
+                ("path", str_ty),
+                ("is_file", bool_ty),
+                ("is_dir", bool_ty),
+                ("is_symlink", bool_ty),
+                ("size", i64_ty),
+                ("modified_ms", i64_ty),
+            ],
+        ),
+        (
+            3,
+            &[("stdout", str_ty), ("stderr", str_ty), ("code", i64_ty)],
+        ),
+        (
+            4,
+            &[
+                ("__handle", i64_ty),
+                ("status", i64_ty),
+                ("content_type", str_ty),
+            ],
+        ),
+        (
+            5,
+            &[
+                ("status", i64_ty),
+                ("body", str_ty),
+                ("content_type", str_ty),
+                ("location", str_ty),
+            ],
+        ),
+    ];
+    for (offset, fields) in entries {
+        let def = gossamer_resolve::DefId::local(u32::MAX - offset);
+        let list: Vec<(String, Ty)> = fields.iter().map(|(n, t)| ((*n).to_string(), *t)).collect();
+        map.insert(def, list);
+    }
 }
 
 fn evaluate_const_int_from_expr(expr: &Expr) -> Option<u128> {

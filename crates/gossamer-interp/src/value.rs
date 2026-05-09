@@ -102,6 +102,10 @@ pub enum Value {
     /// frequency tables ride this variant, dropping per-iteration
     /// hash + compare cost dramatically.
     IntMap(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<i64, i64>>>),
+    /// Unsigned 64-bit integer — same bit pattern as `Int(n as i64)`
+    /// but formats as an unsigned decimal value. Used exclusively for
+    /// `x as u64` casts to preserve unsigned display semantics.
+    Uint(u64),
     /// Poisoned / uninitialised sentinel.
     Void,
 }
@@ -617,7 +621,20 @@ pub struct Channel {
 struct ChannelInner {
     buf: Mutex<VecDeque<Value>>,
     cv: parking_lot::Condvar,
+    /// `close()` flips this to `true`; receivers that find an empty
+    /// buffer with `closed = true` return `None` instead of parking
+    /// forever. The flag lives behind the same Mutex (we always
+    /// inspect it under `buf.lock()`) so a receiver that sees an
+    /// empty buffer + `closed=true` cannot race against an in-flight
+    /// `send`.
+    closed: std::cell::Cell<bool>,
 }
+
+// SAFETY: `closed` is a `Cell<bool>` (single-byte, never aliased
+// outside the `buf` Mutex critical section). All access to `closed`
+// is gated by `buf.lock()`, so there's no concurrent reader or
+// writer at any moment — `Sync` is sound under that lock discipline.
+unsafe impl Sync for ChannelInner {}
 
 impl Channel {
     /// Constructs a new empty channel.
@@ -627,6 +644,7 @@ impl Channel {
             inner: Arc::new(ChannelInner {
                 buf: Mutex::new(VecDeque::new()),
                 cv: parking_lot::Condvar::new(),
+                closed: std::cell::Cell::new(false),
             }),
         }
     }
@@ -636,14 +654,46 @@ impl Channel {
     pub fn send(&self, value: Value) {
         let mut guard = self.inner.buf.lock();
         guard.push_back(value);
+        // Stay safe under the existing lock-discipline; `closed` is
+        // only ever touched while `buf` is locked.
         self.inner.cv.notify_all();
+        drop(guard);
+    }
+
+    /// Marks the channel as closed and wakes every parked receiver
+    /// so they observe the closed state and exit their wait. Idempotent.
+    pub fn close(&self) {
+        let guard = self.inner.buf.lock();
+        self.inner.closed.set(true);
+        self.inner.cv.notify_all();
+        drop(guard);
     }
 
     /// Non-blocking receive. Returns `None` when the channel is
-    /// empty.
+    /// empty (regardless of close state — callers that need
+    /// drain-aware semantics should use [`Channel::recv`]).
     #[must_use]
     pub fn try_recv(&self) -> Option<Value> {
         self.inner.buf.lock().pop_front()
+    }
+
+    /// Blocking receive. Parks until a value is available or the
+    /// channel is closed AND drained. Returns `None` only after
+    /// observing `closed = true && buf.is_empty()`. Mirrors Go's
+    /// `v, ok := <-ch` shape so `while let Some(v) = rx.recv()`
+    /// drains and exits cleanly when the producer closes.
+    #[must_use]
+    pub fn recv(&self) -> Option<Value> {
+        let mut guard = self.inner.buf.lock();
+        loop {
+            if let Some(v) = guard.pop_front() {
+                return Some(v);
+            }
+            if self.inner.closed.get() {
+                return None;
+            }
+            self.inner.cv.wait(&mut guard);
+        }
     }
 
     /// Returns `true` when the channel currently has at least one
@@ -651,6 +701,13 @@ impl Channel {
     #[must_use]
     pub fn is_ready(&self) -> bool {
         !self.inner.buf.lock().is_empty()
+    }
+
+    /// `true` when both buffer drained and channel closed.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        let guard = self.inner.buf.lock();
+        self.inner.closed.get() && guard.is_empty()
     }
 
     /// Parks the caller on the channel's Condvar until either a
@@ -838,6 +895,15 @@ impl Value {
                 let id = register_heap(RegistryEntry::Channel(ch.clone()));
                 from_heap_handle(id)
             }
+            Self::Uint(n) => {
+                let n_i = *n as i64;
+                if fits_i56(n_i) {
+                    from_i64(n_i)
+                } else {
+                    let id = register_heap(RegistryEntry::Int(n_i));
+                    from_heap_handle(id)
+                }
+            }
             Self::Map(_) | Self::IntMap(_) | Self::Builtin(_) | Self::Native(_) | Self::Void => {
                 // Unencodable in the raw layout — return a sentinel
                 // that `from_raw` maps back to `Void`.
@@ -913,7 +979,31 @@ impl fmt::Display for Value {
                 write_array(out, &elems)
             }
             Self::Variant(inner) => write_variant(out, inner.name, &inner.fields),
-            Self::Struct(inner) => write_struct(out, inner.name, &inner.fields),
+            Self::Struct(inner) => {
+                // Placeholder expressions evaluate to this sentinel in the VM;
+                // the compiled tiers emit "<value>" for the same cases.
+                if inner.name == "<stub>" {
+                    return out.write_str("<value>");
+                }
+                // `errors::Error` prints as its message field so
+                // user code that surfaces an error via `?`
+                // propagation or `format!("{}", e)` matches the
+                // documented behaviour (the runtime's
+                // `gos_rt_error_message`-equivalent path). Other
+                // structs keep the default `Name { f: v, … }`
+                // shape used everywhere else.
+                if inner.name == "errors::Error" {
+                    if let Some(msg) = inner
+                        .fields
+                        .iter()
+                        .find(|(n, _)| n.name.as_str() == "message")
+                        .map(|(_, v)| v.clone())
+                    {
+                        return write!(out, "{msg}");
+                    }
+                }
+                write_struct(out, inner.name, &inner.fields)
+            }
             Self::Closure(_) => out.write_str("<closure>"),
             Self::Builtin(inner) => write!(out, "<builtin {}>", inner.name),
             Self::Native(inner) => write!(out, "<native {}>", inner.name),
@@ -938,6 +1028,7 @@ impl fmt::Display for Value {
                 }
                 out.write_str("}")
             }
+            Self::Uint(n) => write!(out, "{n}"),
             Self::Void => out.write_str("<void>"),
         }
     }

@@ -29,6 +29,158 @@ pub(crate) fn read_source(file: &PathBuf) -> Result<String> {
     fs::read_to_string(&resolved).map_err(|err| friendly_io_error(err, &resolved))
 }
 
+/// Reads `file` and auto-bundles every sibling `*.gos` in the same
+/// directory by wrapping each in `mod NAME { ... }` and appending
+/// it to the entry source. Used by entry-point commands
+/// (`gos run`, `gos build`) so cross-module calls
+/// (`other::greet()` in `main.gos` referencing
+/// `src/other.gos::greet`) resolve at runtime. See
+/// [`bundle_sibling_modules`] for the bundling contract.
+pub(crate) fn read_entry_source(file: &PathBuf) -> Result<String> {
+    let resolved = resolve_gos_source(file);
+    let entry = fs::read_to_string(&resolved).map_err(|err| friendly_io_error(err, &resolved))?;
+    Ok(bundle_sibling_modules(&resolved, entry))
+}
+
+/// Wraps every sibling `*.gos` file in the same directory as `entry`
+/// in `mod NAME { ... }` and concatenates them onto `source`. Skips
+/// the entry file itself, files whose name starts with `_`, and
+/// any `*_test.gos` files (which the test runner picks up
+/// separately). When the entry already declares
+/// `mod NAME;` for a sibling, the external declaration is rewritten
+/// to a comment so the synthetic inline body is the sole definition.
+///
+/// This is the SKILL-card "sibling auto-bundle" contract: items
+/// inside `src/<name>.gos` become reachable from `src/main.gos` as
+/// `name::item` (and as a bare `item` via HIR-flatten visibility).
+pub(crate) fn bundle_sibling_modules(entry: &Path, source: String) -> String {
+    let Some(dir) = entry.parent() else {
+        return source;
+    };
+    // Auto-bundle only fires inside an actual project — i.e. when a
+    // `project.toml` lives next to the entry's directory or one
+    // level up (`<root>/src/main.gos` is the canonical case). Loose
+    // single-file `gos run /tmp/foo.gos` invocations must NOT pick
+    // up unrelated `.gos` files sitting in the same directory.
+    if !is_inside_project(dir) {
+        return source;
+    }
+    let entry_name = entry.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let entry_stem = entry.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let mut siblings: Vec<(String, PathBuf)> = Vec::new();
+    let Ok(read) = fs::read_dir(dir) else {
+        return source;
+    };
+    for entry_res in read {
+        let Ok(dirent) = entry_res else { continue };
+        let path = dirent.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if file_name == entry_name {
+            continue;
+        }
+        if path.extension().and_then(|s| s.to_str()) != Some("gos") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if stem == entry_stem {
+            continue;
+        }
+        if stem.starts_with('_') || stem.ends_with("_test") {
+            continue;
+        }
+        if !is_valid_module_ident(stem) {
+            continue;
+        }
+        siblings.push((stem.to_string(), path));
+    }
+    if siblings.is_empty() {
+        return source;
+    }
+    siblings.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut bundled = neutralize_external_mod_decls(
+        &source,
+        &siblings.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+    );
+    for (name, path) in &siblings {
+        let Ok(body) = fs::read_to_string(path) else {
+            continue;
+        };
+        bundled.push('\n');
+        bundled.push_str("// auto-bundled sibling module: ");
+        bundled.push_str(path.to_string_lossy().as_ref());
+        bundled.push('\n');
+        bundled.push_str("mod ");
+        bundled.push_str(name);
+        bundled.push_str(" {\n");
+        bundled.push_str(&body);
+        bundled.push_str("\n}\n");
+    }
+    bundled
+}
+
+/// Comments out any line that exactly matches `mod NAME;` for one
+/// of the supplied sibling stems. The regex shape is intentionally
+/// narrow: only an unindented `mod NAME;` (with optional whitespace)
+/// is rewritten, so a real inline `mod NAME { ... }` declaration
+/// inside the entry source survives untouched.
+fn neutralize_external_mod_decls(source: &str, sibling_stems: &[&str]) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("mod ") {
+            if let Some(name) = rest.strip_suffix(';') {
+                let name = name.trim();
+                if sibling_stems.contains(&name) {
+                    out.push_str("// (sibling auto-bundled) ");
+                    out.push_str(line);
+                    continue;
+                }
+            }
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+/// `true` when `dir` is the source root of a Gossamer project: a
+/// `project.toml` lives in `dir` itself or in `dir`'s immediate
+/// parent. Used by [`bundle_sibling_modules`] to refuse bundling in
+/// loose-file invocations like `gos run /tmp/foo.gos`.
+fn is_inside_project(dir: &Path) -> bool {
+    if dir.join("project.toml").is_file() {
+        return true;
+    }
+    if let Some(parent) = dir.parent() {
+        if parent.join("project.toml").is_file() {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_valid_module_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return false;
+    }
+    for c in chars {
+        if !(c.is_ascii_alphanumeric() || c == '_') {
+            return false;
+        }
+    }
+    true
+}
+
 /// Renders a `std::io::Error` as a clean diagnostic free of
 /// libc artefacts (`(os error N)` tails, `stat`/`reading`
 /// syscall prefixes). Path-aware where a path is available.
@@ -54,8 +206,8 @@ pub(crate) fn friendly_io_error(err: std::io::Error, path: &Path) -> anyhow::Err
 
 /// When `path` is a shell launcher script (starts with `#!`) or has no
 /// `.gos` extension but `path.gos` exists, returns the `.gos` file.
-/// This prevents `gos run examples/get_xkcd` from trying to parse the
-/// launcher script generated by `gos build`.
+/// This prevents `gos run path/to/program_name` from trying to parse
+/// the launcher script generated by `gos build`.
 pub(crate) fn resolve_gos_source(path: &PathBuf) -> PathBuf {
     if path.extension().and_then(|s| s.to_str()) != Some("gos") {
         let with_ext = path.with_extension("gos");

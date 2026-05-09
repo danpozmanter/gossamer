@@ -291,6 +291,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytes"
+version = "1.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+
+[[package]]
 name = "cc"
 version = "1.2.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -468,9 +474,9 @@ dependencies = [
 
 [[package]]
 name = "cookie_store"
-version = "0.21.1"
+version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eac901828f88a5241ee0600950ab981148a18f2f756900ffba1b125ca6a3ef9"
+checksum = "15b2c103cf610ec6cae3da84a766285b42fd16aad564758459e6ecf128c75206"
 dependencies = [
  "cookie",
  "document-features",
@@ -1116,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-ast"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1124,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-codegen-cranelift",
  "gossamer-interp",
@@ -1137,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1163,7 +1169,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1185,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-llvm"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "gossamer-lex",
@@ -1196,14 +1202,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1214,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-driver"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1237,11 +1243,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-gc"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "gossamer-hir"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1252,7 +1258,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
@@ -1272,7 +1278,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "insta",
  "parking_lot",
@@ -1282,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lint"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1292,7 +1298,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lsp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1305,7 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mir"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-hir",
@@ -1317,7 +1323,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1327,18 +1333,18 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "rustls",
  "rustls-pki-types",
  "sha2",
  "thiserror 2.0.18",
- "webpki-roots 1.0.7",
+ "webpki-roots",
 ]
 
 [[package]]
 name = "gossamer-resolve"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1350,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runner-template"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "syn",
  "toml",
@@ -1358,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
@@ -1375,18 +1381,19 @@ dependencies = [
  "rustc-hash",
  "serde_json",
  "signal-hook",
+ "ureq",
 ]
 
 [[package]]
 name = "gossamer-sched"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1419,13 +1426,13 @@ dependencies = [
  "signal-hook",
  "thiserror 2.0.18",
  "ureq",
- "webpki-roots 1.0.7",
+ "webpki-roots",
  "x509-parser",
 ]
 
 [[package]]
 name = "gossamer-types"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1493,6 +1500,22 @@ checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest",
 ]
+
+[[package]]
+name = "http"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3ba2a386d7f85a81f119ad7498ebe444d2e22c2af0b86b069416ace48b3311a"
+dependencies = [
+ "bytes",
+ "itoa",
+]
+
+[[package]]
+name = "httparse"
+version = "1.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "iana-time-zone"
@@ -2768,22 +2791,35 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "ureq"
-version = "2.12.1"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
+checksum = "dea7109cdcd5864d4eeb1b58a1648dc9bf520360d7af16ec26d0a9354bafcfc0"
 dependencies = [
  "base64",
- "cookie",
  "cookie_store",
  "flate2",
  "log",
- "once_cell",
+ "percent-encoding",
  "rustls",
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "ureq-proto",
  "url",
- "webpki-roots 0.26.11",
+ "utf8-zero",
+ "webpki-roots",
+]
+
+[[package]]
+name = "ureq-proto"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e994ba84b0bd1b1b0cf92878b7ef898a5c1760108fe7b6010327e274917a808c"
+dependencies = [
+ "base64",
+ "http",
+ "httparse",
+ "log",
 ]
 
 [[package]]
@@ -2797,6 +2833,12 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
+
+[[package]]
+name = "utf8-zero"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
 name = "utf8_iter"
@@ -2944,15 +2986,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3a1f51a037ae2c048f0d76d36e27f0d22276295496c44f16a251f24690e003"
 dependencies = [
  "libm",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "0.26.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
-dependencies = [
- "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -3325,7 +3358,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "gossamer-lint",

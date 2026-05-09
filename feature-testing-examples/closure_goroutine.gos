@@ -1,0 +1,26 @@
+// Closure as goroutine body — exercises spawning an inline
+// closure (with captures) as a goroutine in all three tiers.
+
+use std::sync::channel
+
+fn main() {
+    let (tx, rx) = channel()
+    let base = 100
+    let count = 3
+
+    go fn() {
+        let mut i = 0
+        while i < count {
+            tx.send(base + i)
+            i = i + 1
+        }
+        tx.close()
+    }()
+
+    let mut total = 0
+    while let Some(v) = rx.recv() {
+        total = total + 1
+        println!("got: {}", v)
+    }
+    println!("total = {}", total)
+}

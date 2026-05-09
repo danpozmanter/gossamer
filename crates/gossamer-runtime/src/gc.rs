@@ -18,8 +18,9 @@
 //!   gos_rt_gc_concurrent_finish()     // STW remark + sweep
 //! ```
 
+use std::cell::RefCell;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering};
 
 use gossamer_gc::{ConcurrentPhase, GcConfig, GcRef, GcStats, Heap};
 use parking_lot::Mutex;
@@ -29,14 +30,63 @@ use parking_lot::Mutex;
 /// references that live only on the (currently un-scannable) C
 /// stack of compiled goroutines.
 ///
-/// Each thread publishes a `Vec<u32>` mirror of its shadow stack
-/// here. The mirror is rebuilt lazily by `with_shadow_stack` at the
-/// first push or pop after registration, and again every time the
-/// global mark phase requests a snapshot. This trades a small per-
-/// alloc cost for a process-wide root walk that does not require
-/// stack-map emission in the codegen — see C1 in
-/// `~/dev/contexts/lang/adversarial_analysis.md` for context.
-type ShadowStack = std::sync::Arc<Mutex<Vec<u32>>>;
+/// Each thread owns a [`LocalShadow`] containing a fixed-size
+/// `[AtomicU32; STACK_CAPACITY]` slot array plus a published
+/// `len: AtomicUsize`. The mutator (owner) writes slots and
+/// publishes the new length via `Release`; the cross-thread mark
+/// snapshot reads the length via `Acquire` and walks slots without
+/// taking any lock. A cold-path `spill: Mutex<Vec<u32>>` handles
+/// the rare case where call-stack depth exceeds the in-array
+/// capacity.
+///
+/// The earlier design used a `Mutex<Vec<u32>>` per thread, which
+/// paid an uncontended-but-real CAS at every function prologue and
+/// epilogue (codegen emits `shadow_save` / `shadow_restore` at
+/// every entry/exit, see C1 in `~/dev/contexts/lang/
+/// adversarial_analysis.md`). The lock-free shape removes that
+/// per-frame cost on the hot path; the locked spill remains correct
+/// for the deep-stack overflow case.
+const STACK_CAPACITY: usize = 1024;
+
+struct LocalShadow {
+    /// Pre-allocated, never-reallocated slot array. Owner writes
+    /// with `Relaxed`; the mark thread reads with `Relaxed` after
+    /// an `Acquire` load on `len` establishes happens-before.
+    slots: Box<[AtomicU32; STACK_CAPACITY]>,
+    /// Total logical depth, including any spill entries. The
+    /// owner publishes pushes with `Release` so mark observes
+    /// the slot writes through the synchronisation chain. Reads on
+    /// the owner thread itself are `Relaxed` (data races against
+    /// itself are impossible).
+    len: AtomicUsize,
+    /// Cold-path overflow buffer for stacks deeper than
+    /// [`STACK_CAPACITY`]. The mutex contention is per-thread
+    /// only when overflow is actually hit; cross-thread mark
+    /// reads it under the same lock.
+    spill: Mutex<Vec<u32>>,
+}
+
+impl LocalShadow {
+    fn new() -> Self {
+        // `Box::new([T; N])` would stack-allocate the array first; build
+        // the slots through a Vec to avoid the temporary.
+        let mut v = Vec::with_capacity(STACK_CAPACITY);
+        for _ in 0..STACK_CAPACITY {
+            v.push(AtomicU32::new(0));
+        }
+        let boxed: Box<[AtomicU32]> = v.into_boxed_slice();
+        let Ok(slots) = TryInto::<Box<[AtomicU32; STACK_CAPACITY]>>::try_into(boxed) else {
+            panic!("shadow stack slot array allocation")
+        };
+        Self {
+            slots,
+            len: AtomicUsize::new(0),
+            spill: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+type ShadowStack = std::sync::Arc<LocalShadow>;
 type ShadowStackRegistry = Mutex<Vec<ShadowStack>>;
 
 static SHADOW_STACKS: OnceLock<ShadowStackRegistry> = OnceLock::new();
@@ -46,26 +96,54 @@ fn shadow_stacks() -> &'static ShadowStackRegistry {
 }
 
 thread_local! {
-    static THREAD_SHADOW: std::cell::OnceCell<std::sync::Arc<Mutex<Vec<u32>>>>
-        = const { std::cell::OnceCell::new() };
+    /// One `Arc<LocalShadow>` per thread. The `Arc` keeps the
+    /// storage alive for cross-thread mark snapshots even after
+    /// the owning thread exits. `RefCell` because the closure
+    /// passed to `with_local` does not call back into
+    /// `with_local`, so dynamic borrow tracking is sufficient and
+    /// preferable to the `UnsafeCell` + raw deref pattern (Stage
+    /// 6, fix_architecture_ownership.md §3.10).
+    static THREAD_SHADOW: RefCell<Option<ShadowStack>> =
+        const { RefCell::new(None) };
 }
 
-fn thread_shadow() -> std::sync::Arc<Mutex<Vec<u32>>> {
+fn with_local<R>(f: impl FnOnce(&LocalShadow) -> R) -> R {
     THREAD_SHADOW.with(|cell| {
-        cell.get_or_init(|| {
-            let arc = std::sync::Arc::new(Mutex::new(Vec::new()));
+        // First-use init: clone the Arc out under a separate
+        // borrow so the registry push doesn't sit inside our own
+        // RefCell borrow window. Cloning out is O(1) (Arc bump);
+        // installation is a single mut-borrow assignment.
+        let need_init = cell.borrow().is_none();
+        if need_init {
+            let arc = std::sync::Arc::new(LocalShadow::new());
             shadow_stacks().lock().push(std::sync::Arc::clone(&arc));
-            arc
-        })
-        .clone()
+            *cell.borrow_mut() = Some(arc);
+        }
+        let guard = cell.borrow();
+        f(guard.as_ref().expect("just initialised"))
     })
 }
 
 /// Pushes `r` onto the calling thread's shadow stack so the next GC
 /// mark treats it as a live root.
 pub fn shadow_push(r: GcRef) {
-    let s = thread_shadow();
-    s.lock().push(r.as_u32());
+    let raw = r.as_u32();
+    with_local(|local| {
+        // Owner-thread Relaxed read — only the owner mutates `len`,
+        // so the latest value is visible without synchronisation.
+        let cur = local.len.load(Ordering::Relaxed);
+        if cur < STACK_CAPACITY {
+            local.slots[cur].store(raw, Ordering::Relaxed);
+            // Release publishes both the slot write and any prior
+            // owner writes so the mark thread's Acquire-load on
+            // `len` sees them.
+            local.len.store(cur + 1, Ordering::Release);
+        } else {
+            let mut s = local.spill.lock();
+            s.push(raw);
+            local.len.store(cur + 1, Ordering::Release);
+        }
+    });
 }
 
 /// Returns a frame token that [`shadow_restore`] uses to pop every
@@ -74,29 +152,63 @@ pub fn shadow_push(r: GcRef) {
 /// every return so leaked roots cannot pile up across calls.
 #[must_use]
 pub fn shadow_save() -> usize {
-    thread_shadow().lock().len()
+    with_local(|local| local.len.load(Ordering::Relaxed))
 }
 
 /// Truncates the calling thread's shadow stack back to a previously
 /// captured `frame` token from [`shadow_save`].
 pub fn shadow_restore(frame: usize) {
-    let s = thread_shadow();
-    let mut g = s.lock();
-    if g.len() > frame {
-        g.truncate(frame);
-    }
+    with_local(|local| {
+        let cur = local.len.load(Ordering::Relaxed);
+        if frame >= cur {
+            return;
+        }
+        if cur > STACK_CAPACITY {
+            // Some entries live in spill. If the new frame is also
+            // beyond the in-array capacity, truncate spill to the
+            // remainder. Otherwise drop spill entirely (frame falls
+            // back into the in-array region).
+            let new_spill = frame.saturating_sub(STACK_CAPACITY);
+            let mut s = local.spill.lock();
+            if s.len() > new_spill {
+                s.truncate(new_spill);
+            }
+        }
+        local.len.store(frame, Ordering::Release);
+    });
 }
 
 /// Snapshots every thread's shadow stack and feeds the entries
 /// into `f` as `GcRef`s. The mark phase uses this to discover
 /// stack-rooted objects without stop-the-world cooperation from
 /// the mutators.
+///
+/// Reads cross-thread state without locking the per-thread fast
+/// path. Acquire-loads `len` so the slot writes that preceded
+/// each owner's `Release`-store are visible. The spill entries
+/// are protected by their own mutex.
 pub fn for_each_shadow_root(mut f: impl FnMut(GcRef)) {
+    // Snapshot the registry's Arc list under its global lock,
+    // then drop the registry lock before touching individual
+    // thread state. Per-thread reads happen lock-free.
     let stacks = shadow_stacks().lock().clone();
     for s in &stacks {
-        let g = s.lock();
-        for &raw in g.iter() {
+        let n = s.len.load(Ordering::Acquire);
+        let in_array = n.min(STACK_CAPACITY);
+        for i in 0..in_array {
+            // No null filter: a `GcRef::from_u32(0)` is a valid
+            // heap-table index for the first object allocated in
+            // this process, so we forward every published slot.
+            // The C-ABI `gos_rt_gc_shadow_push` filters at the
+            // entry point; the Rust `shadow_push` does not.
+            let raw = s.slots[i].load(Ordering::Relaxed);
             f(GcRef::from_u32(raw));
+        }
+        if n > STACK_CAPACITY {
+            let g = s.spill.lock();
+            for &raw in g.iter() {
+                f(GcRef::from_u32(raw));
+            }
         }
     }
 }

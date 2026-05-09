@@ -487,15 +487,52 @@ executed by `gos test`. Mark non-runnable fences as
 - `std::fmt` — `Display`, `Debug`.
 - `std::io` — `Read`, `Write`, buffered wrappers, `stdin` / `stdout`.
 - `std::os` — process environment, argv, filesystem primitives.
-- `std::strings` / `std::strconv` — string and numeric helpers.
-- `std::collections` — `Vec`, `HashMap`, `HashSet`, `BTreeMap`.
-- `std::net` — `TcpListener`, `TcpStream`, `UdpSocket`, DNS.
+  Now also exposed: `set_env`, `unset_env`, `is_file`, `is_dir`,
+  `is_symlink`, `file_size`, `home`, `temp_dir`, `set_cwd`,
+  `canonicalize`, `remove_dir`, `remove_dir_all`, `copy`.
+- `std::fs` — `metadata`, `is_file`, `is_dir`, `is_symlink`,
+  `file_size`, `copy`, `canonicalize` (in addition to existing
+  `read_to_string` / `write` / `walk_dir` / `read_dir`).
+- `std::strings` — `split`, `splitn`, `split_whitespace`, `trim`,
+  `trim_start`, `trim_end`, `contains`, `find`, `rfind`,
+  `replace`, `replacen`, `to_lower`, `to_upper`, `starts_with`,
+  `ends_with`, `repeat`, `lines`, `join`, `strip_prefix`,
+  `strip_suffix`, `pad_left`, `pad_right`.
+- `std::strconv` — `parse_int`, `parse_i64`, `parse_u64`,
+  `parse_float`, `parse_f64`, `parse_bool`, `format_int`,
+  `format_i64`, `format_float`, `format_f64`, `itoa`, `atoi`.
+- `std::path` — `parent`, `file_name`, `stem`, `ext`,
+  `is_absolute`, `normalize` (in addition to `join` / `walk`).
+- `std::utf8` — `count_runes`, `rune_len`, `is_valid`.
+- `std::collections` — `Vec`, `HashMap`, `HashSet` (real set
+  with `insert`, `remove`, `contains`, `len`, `is_empty`,
+  `clear`, `to_vec`, `iter`), `BTreeMap`.
+- `std::net` — `TcpListener::{bind, accept, local_addr, close}`,
+  `TcpStream::{connect, read, read_to_string, write, close}`,
+  `UdpSocket::{bind, send_to, recv_from, local_addr, close}`,
+  `net::resolve` / `net::lookup` for DNS.
 - `std::net::url` — URL parse + render + escape.
 - `std::http` — `Method`, `StatusCode`, `Headers`, `Request`,
-  `Response`, `Handler`, `serve`.
+  `Response`, `Handler`, `serve`. Client surface:
+  `Client { get, post, put, options, delete, head, request, stream }`
+  plus free wrappers `http::get(url, headers)`,
+  `http::post(url, body, content_type)`,
+  `http::put(url, body, content_type)`,
+  `http::options(url, headers)`,
+  `http::delete(url, body, headers)`, `http::head(url, headers)`,
+  `http::request(method, url, body, headers)`, and
+  `http::stream(method, url, body, headers) -> ResponseStream`
+  whose `next_line()` reads SSE / chunked bodies one line at a
+  time. All method-string entry points accept
+  `"GET"`/`"POST"`/`"PUT"`/`"DELETE"`/`"PATCH"`/`"HEAD"`/`"OPTIONS"`
+  case-insensitively; unknown methods return `Err(transport)`.
 - `std::encoding::{json, base64, hex, binary}`.
-- `std::sync` — `Mutex`, `RwLock`, atomics, `channel`, `Once`.
-- `std::time` — `Instant`, `Duration`, `sleep`, `now`.
+- `std::sync` — `Mutex`, `RwLock`, atomics, `channel`, `Once`,
+  `WaitGroup` (`new`, `add`, `done`, `wait`).
+- `std::time` — `Instant::{now, elapsed_ms}`, `Duration::{from_millis,
+  from_secs, from_micros, as_millis, as_secs, as_micros}`,
+  `sleep`, `now`, `now_nanos`, `monotonic_ms`, `monotonic_nanos`,
+  `since_ms`, `format_rfc3339`, `parse_rfc3339`.
 - `std::context` — cancellation, deadlines, `Context::background()`.
 - `std::bytes` / `std::bufio` — binary buffers and buffered IO.
 - `std::errors` — wrap / chain / join.

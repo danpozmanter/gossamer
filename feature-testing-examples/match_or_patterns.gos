@@ -1,0 +1,101 @@
+// Match Or-Patterns and Struct Rest
+// Exercises `A | B` or-patterns on integers and enum variants,
+// and `..` struct-rest patterns, so all three tiers agree.
+
+enum Rank {
+    Ace,
+    Number(i64),
+    Jack,
+    Queen,
+    King,
+}
+
+fn card_value(r: &Rank) -> i64 {
+    match r {
+        Rank::Ace => 11,
+        Rank::Number(n) => *n,
+        Rank::Jack | Rank::Queen | Rank::King => 10,
+    }
+}
+
+fn classify_int(n: i64) -> String {
+    match n {
+        0 | 1 => "tiny".to_string(),
+        2 | 3 | 5 | 7 => "small-prime".to_string(),
+        _ if n < 0 => "negative".to_string(),
+        _ => "other".to_string(),
+    }
+}
+
+struct Point3 {
+    x: i64,
+    y: i64,
+    z: i64,
+}
+
+fn on_axis(p: &Point3) -> String {
+    match p {
+        Point3 { x, y: 0, z: 0 } => format!("x-axis at {}", x),
+        Point3 { x: 0, y, z: 0 } => format!("y-axis at {}", y),
+        Point3 { x: 0, y: 0, z } => format!("z-axis at {}", z),
+        Point3 { x, .. } => format!("off-axis x={}", x),
+    }
+}
+
+fn main() {
+    let ranks = [Rank::Ace, Rank::Number(7), Rank::Jack, Rank::Queen, Rank::King]
+    for r in ranks {
+        println!("value = {}", card_value(&r))
+    }
+
+    let nums = [0, 1, 2, 3, 5, 7, 4, -1]
+    for n in nums {
+        println!("{} -> {}", n, classify_int(n))
+    }
+
+    let pts = [
+        Point3 { x: 3, y: 0, z: 0 },
+        Point3 { x: 0, y: 5, z: 0 },
+        Point3 { x: 0, y: 0, z: 7 },
+        Point3 { x: 1, y: 2, z: 3 },
+    ]
+    for p in pts {
+        println!("{}", on_axis(&p))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn face_cards_worth_ten() {
+        testing::check_eq(&super::card_value(&super::Rank::Jack), &10, "jack=10")
+        testing::check_eq(&super::card_value(&super::Rank::Queen), &10, "queen=10")
+        testing::check_eq(&super::card_value(&super::Rank::King), &10, "king=10")
+    }
+
+    #[test]
+    fn or_pattern_classify() {
+        testing::check_eq(&super::classify_int(0), &"tiny".to_string(), "0 is tiny")
+        testing::check_eq(&super::classify_int(1), &"tiny".to_string(), "1 is tiny")
+        testing::check_eq(&super::classify_int(3), &"small-prime".to_string(), "3 is small-prime")
+        testing::check_eq(&super::classify_int(4), &"other".to_string(), "4 is other")
+        testing::check_eq(&super::classify_int(-5), &"negative".to_string(), "-5 is negative")
+    }
+
+    #[test]
+    fn struct_rest_on_axis() {
+        let p = super::Point3 { x: 9, y: 0, z: 0 }
+        let desc = super::on_axis(&p)
+        testing::check(&desc.contains("x-axis"), "x-axis detected")
+        testing::check(&desc.contains("9"), "x=9 in description")
+    }
+
+    #[test]
+    fn struct_rest_off_axis() {
+        let p = super::Point3 { x: 1, y: 2, z: 3 }
+        let desc = super::on_axis(&p)
+        testing::check(&desc.contains("off-axis"), "off-axis detected")
+    }
+}

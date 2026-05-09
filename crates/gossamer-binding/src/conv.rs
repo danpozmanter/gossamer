@@ -47,6 +47,7 @@ fn describe(v: &Value) -> &'static str {
         Value::Channel(_) => "channel",
         Value::Map(_) | Value::IntMap(_) => "map",
         Value::Void => "void",
+        Value::Uint(_) => "u64",
     }
 }
 

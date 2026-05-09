@@ -1,0 +1,130 @@
+// Trait Object Dispatch via Impl Methods
+// Exercise trait definitions with multiple implementing types,
+// method dispatch through trait bounds, and polymorphic collections
+// of structs sharing a common trait interface.
+
+use std::math
+
+trait Shape {
+    fn area(&self) -> f64
+    fn perimeter(&self) -> f64
+    fn name(&self) -> String
+}
+
+struct Rectangle {
+    width: f64,
+    height: f64,
+}
+
+impl Shape for Rectangle {
+    fn area(&self) -> f64 {
+        self.width * self.height
+    }
+    fn perimeter(&self) -> f64 {
+        2.0 * (self.width + self.height)
+    }
+    fn name(&self) -> String {
+        "Rectangle".to_string()
+    }
+}
+
+struct Circle {
+    radius: f64,
+}
+
+impl Shape for Circle {
+    fn area(&self) -> f64 {
+        3.14159265 * self.radius * self.radius
+    }
+    fn perimeter(&self) -> f64 {
+        2.0 * 3.14159265 * self.radius
+    }
+    fn name(&self) -> String {
+        "Circle".to_string()
+    }
+}
+
+struct Triangle {
+    a: f64,
+    b: f64,
+    c: f64,
+}
+
+impl Shape for Triangle {
+    fn area(&self) -> f64 {
+        // Heron's formula
+        let s = (self.a + self.b + self.c) * 0.5
+        let inner = s * (s - self.a) * (s - self.b) * (s - self.c)
+        if inner <= 0.0 { 0.0 } else { math::sqrt(inner) }
+    }
+    fn perimeter(&self) -> f64 {
+        self.a + self.b + self.c
+    }
+    fn name(&self) -> String {
+        "Triangle".to_string()
+    }
+}
+
+fn main() {
+    // Direct method dispatch through trait impls
+    let rect = Rectangle { width: 4.0, height: 3.0 }
+    let circ = Circle { radius: 5.0 }
+    let tri = Triangle { a: 3.0, b: 4.0, c: 5.0 }
+
+    println!("{}: area={:.2} perimeter={:.2}", rect.name(), rect.area(), rect.perimeter())
+    println!("{}: area={:.2} perimeter={:.2}", circ.name(), circ.area(), circ.perimeter())
+    println!("{}: area={:.2} perimeter={:.2}", tri.name(), tri.area(), tri.perimeter())
+
+    // Direct method access
+    let r2 = Rectangle { width: 10.0, height: 2.0 }
+    println!("r2 area = {:.0}", r2.area())
+    println!("r2 perimeter = {:.0}", r2.perimeter())
+
+    let c2 = Circle { radius: 1.0 }
+    println!("unit circle area approx 3.14: {}", c2.area() > 3.0 && c2.area() < 3.2)
+
+    // 3-4-5 right triangle: area = 6, perimeter = 12
+    let t2 = Triangle { a: 3.0, b: 4.0, c: 5.0 }
+    println!("3-4-5 area approx 6: {}", t2.area() > 5.9 && t2.area() < 6.1)
+    println!("3-4-5 perimeter = {:.0}", t2.perimeter())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn rectangle_area() {
+        let r = super::Rectangle { width: 5.0, height: 3.0 }
+        let area = r.area()
+        testing::check(area > 14.9 && area < 15.1, "5x3=15")
+    }
+
+    #[test]
+    fn rectangle_perimeter() {
+        let r = super::Rectangle { width: 4.0, height: 6.0 }
+        let p = r.perimeter()
+        testing::check(p > 19.9 && p < 20.1, "2*(4+6)=20")
+    }
+
+    #[test]
+    fn circle_area_unit() {
+        let c = super::Circle { radius: 1.0 }
+        let a = c.area()
+        testing::check(a > 3.14 && a < 3.15, "unit circle area ≈ 3.14159")
+    }
+
+    #[test]
+    fn triangle_3_4_5_area() {
+        let t = super::Triangle { a: 3.0, b: 4.0, c: 5.0 }
+        let a = t.area()
+        testing::check(a > 5.9 && a < 6.1, "3-4-5 area ≈ 6")
+    }
+
+    #[test]
+    fn triangle_perimeter() {
+        let t = super::Triangle { a: 3.0, b: 4.0, c: 5.0 }
+        let p = t.perimeter()
+        testing::check(p > 11.9 && p < 12.1, "3+4+5=12")
+    }
+}

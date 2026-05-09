@@ -56,6 +56,11 @@ crossbeam-utils = { workspace = true }
 mio = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-pkg = { workspace = true }
+# `gos_rt_http_stream` uses ureq for the wire request so the
+# compiled tier matches the interp's `http::stream` semantics.
+# Same feature set as gossamer-std (TLS via rustls, gzip, cookies)
+# for parity with `gos run`.
+ureq = { version = "3", features = ["cookies"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

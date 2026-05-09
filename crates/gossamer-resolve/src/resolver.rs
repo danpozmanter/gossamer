@@ -129,37 +129,89 @@ impl Resolver {
     }
 
     fn collect_items(&mut self, items: &[Item]) {
+        let mut module_path: Vec<String> = Vec::new();
+        self.collect_items_in(items, &mut module_path);
+    }
+
+    fn collect_items_in(&mut self, items: &[Item], module_path: &mut Vec<String>) {
         for item in items {
-            self.collect_item(item);
+            self.collect_item(item, module_path);
         }
     }
 
-    fn collect_item(&mut self, item: &Item) {
+    fn collect_item(&mut self, item: &Item, module_path: &mut Vec<String>) {
         match &item.kind {
             ItemKind::Fn(decl) => {
-                self.register_item(item.id, &decl.name, DefKind::Fn, item.span);
+                self.register_item_with_module(
+                    item.id,
+                    &decl.name,
+                    DefKind::Fn,
+                    item.span,
+                    module_path,
+                );
             }
             ItemKind::Struct(decl) => {
-                self.register_item(item.id, &decl.name, DefKind::Struct, item.span);
+                self.register_item_with_module(
+                    item.id,
+                    &decl.name,
+                    DefKind::Struct,
+                    item.span,
+                    module_path,
+                );
             }
             ItemKind::Enum(decl) => {
-                self.register_item(item.id, &decl.name, DefKind::Enum, item.span);
+                self.register_item_with_module(
+                    item.id,
+                    &decl.name,
+                    DefKind::Enum,
+                    item.span,
+                    module_path,
+                );
                 self.register_enum_variants(decl, item.span);
             }
             ItemKind::Trait(decl) => {
-                self.register_item(item.id, &decl.name, DefKind::Trait, item.span);
+                self.register_item_with_module(
+                    item.id,
+                    &decl.name,
+                    DefKind::Trait,
+                    item.span,
+                    module_path,
+                );
             }
             ItemKind::TypeAlias(decl) => {
-                self.register_item(item.id, &decl.name, DefKind::TypeAlias, item.span);
+                self.register_item_with_module(
+                    item.id,
+                    &decl.name,
+                    DefKind::TypeAlias,
+                    item.span,
+                    module_path,
+                );
             }
             ItemKind::Const(decl) => {
-                self.register_item(item.id, &decl.name, DefKind::Const, item.span);
+                self.register_item_with_module(
+                    item.id,
+                    &decl.name,
+                    DefKind::Const,
+                    item.span,
+                    module_path,
+                );
             }
             ItemKind::Static(decl) => {
-                self.register_item(item.id, &decl.name, DefKind::Static, item.span);
+                self.register_item_with_module(
+                    item.id,
+                    &decl.name,
+                    DefKind::Static,
+                    item.span,
+                    module_path,
+                );
             }
             ItemKind::Mod(decl) => {
                 self.register_item(item.id, &decl.name, DefKind::Mod, item.span);
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    module_path.push(decl.name.name.clone());
+                    self.collect_items_in(inner, module_path);
+                    module_path.pop();
+                }
             }
             ItemKind::Impl(_) | ItemKind::AttrItem(_) => {}
         }
@@ -205,6 +257,57 @@ impl Resolver {
         }
     }
 
+    /// Like [`Self::register_item`] but also registers the item under
+    /// its fully-qualified `mod1::mod2::name` path (when nested inside
+    /// inline modules), so cross-module call-site lookups (`other::greet`)
+    /// resolve directly to the function's `DefId` and the type checker
+    /// can pick up the function's declared return type.
+    fn register_item_with_module(
+        &mut self,
+        node: NodeId,
+        name: &Ident,
+        kind: DefKind,
+        span: Span,
+        module_path: &[String],
+    ) {
+        if module_path.is_empty() {
+            self.register_item(node, name, kind, span);
+            return;
+        }
+        let def = self.alloc_def(node, kind);
+        let binding = Binding::def(def, kind);
+        let module = self.scopes.module_mut();
+        // Register the bare name so callers inside the module can
+        // still write `name(...)` (HIR-flatten visibility).
+        let mut inserted_any = false;
+        if kind.is_type_ns() {
+            inserted_any |= module.insert_type(&name.name, binding);
+        }
+        if kind.is_value_ns() {
+            inserted_any |= module.insert_value(&name.name, binding);
+        }
+        if !inserted_any && (kind.is_type_ns() || kind.is_value_ns()) {
+            self.emit(
+                ResolveError::DuplicateItem {
+                    name: name.name.clone(),
+                },
+                span,
+            );
+        }
+        // Also register `mod1::mod2::name` so cross-module callers
+        // resolve directly to this def. Failure to insert here is a
+        // benign duplicate — another sibling module declared the
+        // same fully-qualified path.
+        let qualified = format!("{}::{}", module_path.join("::"), name.name);
+        let module = self.scopes.module_mut();
+        if kind.is_type_ns() {
+            let _ = module.insert_type(&qualified, binding);
+        }
+        if kind.is_value_ns() {
+            let _ = module.insert_value(&qualified, binding);
+        }
+    }
+
     fn resolve_item(&mut self, item: &Item) {
         match &item.kind {
             ItemKind::Fn(decl) => self.resolve_fn(decl),
@@ -221,7 +324,17 @@ impl Resolver {
                 self.resolve_type(&decl.ty);
                 self.resolve_expr(&decl.value);
             }
-            ItemKind::Mod(_) | ItemKind::AttrItem(_) => {}
+            ItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    for nested in inner {
+                        if !crate::cfg::item_is_active(&nested.attrs) {
+                            continue;
+                        }
+                        self.resolve_item(nested);
+                    }
+                }
+            }
+            ItemKind::AttrItem(_) => {}
         }
     }
 
@@ -642,9 +755,45 @@ impl Resolver {
         let Some(head) = path.segments.first() else {
             return;
         };
-        let name = &head.name.name;
-        let resolution = self.lookup_value_or_type(name).unwrap_or_else(|| {
-            self.emit(ResolveError::UnresolvedName { name: name.clone() }, span);
+        // `super::name` inside an inline child module (`mod tests {}`,
+        // etc.) refers to the parent scope's bare name. The resolver
+        // registers parent-scope items under their bare name in the
+        // same module table the child reads from, so dropping the
+        // `super::` prefix lets the regular flat lookup find them.
+        let effective: Vec<&str> = path
+            .segments
+            .iter()
+            .map(|s| s.name.name.as_str())
+            .skip_while(|s| *s == "super")
+            .collect();
+        // Try the fully-qualified `mod1::mod2::name` form first so
+        // sibling-module call sites (`other::greet`) resolve directly
+        // to the function's [`DefId`] when the resolver registered
+        // it via [`Self::register_item_with_module`]. The single
+        // segment lookup is the fallback for plain paths and for
+        // multi-segment paths whose head is something other than an
+        // inline module (`fmt::println`, `http::Response::text` —
+        // these stay opaque-by-head, matching the historical
+        // tree-walker behaviour).
+        if effective.len() > 1 {
+            let joined = effective.join("::");
+            if let Some(resolution) = self.lookup_value_or_type(&joined) {
+                self.resolutions.insert(anchor, resolution);
+                for segment in &path.segments {
+                    self.resolve_generic_args(&segment.generics);
+                }
+                return;
+            }
+        }
+        let head_name = head.name.name.clone();
+        let lookup_name = effective.first().copied().unwrap_or(head_name.as_str());
+        let resolution = self.lookup_value_or_type(lookup_name).unwrap_or_else(|| {
+            self.emit(
+                ResolveError::UnresolvedName {
+                    name: lookup_name.to_string(),
+                },
+                span,
+            );
             Resolution::Err
         });
         self.resolutions.insert(anchor, resolution);

@@ -1,0 +1,27 @@
+// Scheduler — channel close + drain semantics.
+// `recv` returns `None` after the channel is closed and drained.
+// No `time::sleep` should be needed for this to be deterministic
+// when the producer closes the sender before exiting.
+
+use std::sync::channel
+
+fn producer(tx: channel::Sender<i64>, n: i64) {
+    for i in 0..n {
+        tx.send(i)
+    }
+    tx.close()
+}
+
+fn main() {
+    let (tx, rx) = channel()
+    go producer(tx, 5)
+
+    let mut total = 0
+    let mut count = 0
+    while let Some(v) = rx.recv() {
+        total = total + v
+        count = count + 1
+    }
+    println!("count = {}", count)
+    println!("total = {}", total)
+}

@@ -158,21 +158,38 @@ pub(crate) fn elem_slots(tcx: &TyCtxt, ty: Ty) -> u32 {
     }
 }
 
-/// Returns `true` when `ty` and every transitive component is a
-/// primitive scalar (`bool`, integers, floats, `char`) — i.e. the
-/// type contains no pointer to arena-allocated heap data. Used by
-/// the call-site arena scoping pass to decide whether wrapping a
-/// call with `gos_rt_arena_save`/`gos_rt_arena_restore` is safe:
-/// after the callee's return aggregate is `memcpy`'d into the
-/// caller's stack alloca, restoring the arena watermark cannot
-/// dangle any reference.
-///
-/// Anything containing a `Vec<T>`, `String`, `HashMap<K,V>`, or a
-/// channel handle is rejected because those carry pointers into
-/// arena-managed memory; restoring the arena would free their
-/// backing storage and leave the copied pointer dangling. References
-/// (`&T`) are also rejected — they point at storage outside the
-/// caller's slot, which the arena reset may invalidate.
+/// Returns the slot offset (in 8-byte words) of field `idx` of
+/// `ty` — the sum of `slot_count` for every preceding field. Used
+/// by the projection lowerers so a nested struct/tuple field
+/// (`outer.inner.x`) lands past the inline-flattened sub-aggregate
+/// instead of overlapping its first scalar.
+pub(crate) fn field_slot_offset(tcx: &TyCtxt, ty: Ty, idx: u32) -> u32 {
+    let target = idx as usize;
+    match tcx.kind(ty) {
+        Some(TyKind::Tuple(elems)) => elems
+            .iter()
+            .take(target)
+            .map(|t| slot_count(tcx, *t).unwrap_or(1).max(1))
+            .sum(),
+        Some(TyKind::Adt { def, .. }) => {
+            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                return idx;
+            }
+            tcx.struct_field_tys(*def).map_or(idx, |tys| {
+                tys.iter()
+                    .take(target)
+                    .map(|t| slot_count(tcx, *t).unwrap_or(1).max(1))
+                    .sum()
+            })
+        }
+        Some(TyKind::Ref { inner, .. }) => field_slot_offset(tcx, *inner, idx),
+        _ => idx,
+    }
+}
+
+/// Retired with the bump arena. Kept around for one release cycle
+/// in case downstream forks reach for it; new code should not.
+#[allow(dead_code)]
 pub(crate) fn is_pure_primitive_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
     match tcx.kind(ty) {
         Some(TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Float(_) | TyKind::Unit) => {

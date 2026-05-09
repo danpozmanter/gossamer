@@ -1,0 +1,101 @@
+// Defer Unwind Order (Simulated)
+// Gossamer's VM tier does not yet support the `defer` keyword.
+// This example implements the same LIFO-cleanup semantic explicitly
+// using a Vec<Fn()>-style deferred-actions stack so the correctness
+// of the ordering contract can be tested without the keyword.
+
+fn run_with_cleanup(actions: [Fn() -> String]) -> [String] {
+    // Execute actions in LIFO order, collecting their return values
+    let n = actions.len() as i64
+    let mut out: [String] = []
+    let mut i = n - 1
+    while i >= 0 {
+        let s = (actions[i])()
+        out.push(s)
+        i -= 1
+    }
+    out
+}
+
+fn make_cleanup(label: String) -> Fn() -> String {
+    || format!("cleanup: {}", label)
+}
+
+fn scope_guard(resource: String, work: Fn() -> i64) -> i64 {
+    println!("acquiring {}", resource)
+    let result = work()
+    println!("releasing {}", resource)
+    result
+}
+
+fn main() {
+    // LIFO ordering via explicit stack
+    let mut actions: [Fn() -> String] = []
+    actions.push(make_cleanup("first".to_string()))
+    actions.push(make_cleanup("second".to_string()))
+    actions.push(make_cleanup("third".to_string()))
+    let order = run_with_cleanup(actions)
+    println!("order[0] = {}", order[0])
+    println!("order[1] = {}", order[1])
+    println!("order[2] = {}", order[2])
+
+    // scope_guard: acquire before work, release after
+    let result = scope_guard("file".to_string(), || {
+        println!("working with file")
+        42
+    })
+    println!("work result = {}", result)
+
+    // Nested scope guards (inner releases before outer)
+    let outer = scope_guard("db_connection".to_string(), || {
+        scope_guard("db_transaction".to_string(), || {
+            println!("executing query")
+            100
+        })
+    })
+    println!("nested result = {}", outer)
+
+    // Manual cleanup stack: push registrations, pop on exit
+    let mut cleanup_log: [String] = []
+    cleanup_log.push("opened file A".to_string())
+    cleanup_log.push("opened file B".to_string())
+    cleanup_log.push("opened socket".to_string())
+
+    // Cleanup in reverse order
+    let n = cleanup_log.len() as i64
+    let mut i = n - 1
+    while i >= 0 {
+        println!("closing: {}", cleanup_log[i])
+        i -= 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn lifo_order() {
+        let mut actions: [Fn() -> String] = []
+        actions.push(super::make_cleanup("a".to_string()))
+        actions.push(super::make_cleanup("b".to_string()))
+        actions.push(super::make_cleanup("c".to_string()))
+        let result = super::run_with_cleanup(actions)
+        testing::check_eq(&result[0], &"cleanup: c".to_string(), "c last in, first out")
+        testing::check_eq(&result[1], &"cleanup: b".to_string(), "b second")
+        testing::check_eq(&result[2], &"cleanup: a".to_string(), "a first in, last out")
+    }
+
+    #[test]
+    fn scope_guard_returns_work_value() {
+        let r = super::scope_guard("test_resource".to_string(), || 99)
+        testing::check_eq(&r, &99, "scope_guard passes through work result")
+    }
+
+    #[test]
+    fn empty_cleanup_stack() {
+        let actions: [Fn() -> String] = []
+        let result = super::run_with_cleanup(actions)
+        testing::check_eq(&(result.len() as i64), &0, "empty stack empty result")
+    }
+}

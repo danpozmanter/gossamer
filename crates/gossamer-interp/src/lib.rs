@@ -24,7 +24,9 @@ mod flag_set_builtins;
 mod http_client_builtins;
 mod interp;
 mod jit_call;
+pub mod profile;
 mod regex_builtins;
+mod stdlib_builtins;
 pub mod value;
 mod vm;
 

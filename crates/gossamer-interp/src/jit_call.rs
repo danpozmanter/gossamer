@@ -113,7 +113,7 @@ pub(crate) fn invoke(jit: &JitFn, args: &[Value]) -> Dispatch {
     }
 }
 
-const MAX_ARGS: usize = 8;
+const MAX_ARGS: usize = 12;
 
 #[derive(Clone, Copy)]
 enum Slot {
@@ -309,6 +309,102 @@ macro_rules! gen_call {
             )
         }
     };
+    ($name:ident, $c0:ident, $c1:ident, $c2:ident, $c3:ident, $c4:ident,
+     $c5:ident, $c6:ident, $c7:ident, $c8:ident) => {
+        unsafe fn $name(ptr: *const u8, s: &[Slot], ret: JitKind) -> Option<Value> {
+            let a0 = slot_for!($c0, s, 0);
+            let a1 = slot_for!($c1, s, 1);
+            let a2 = slot_for!($c2, s, 2);
+            let a3 = slot_for!($c3, s, 3);
+            let a4 = slot_for!($c4, s, 4);
+            let a5 = slot_for!($c5, s, 5);
+            let a6 = slot_for!($c6, s, 6);
+            let a7 = slot_for!($c7, s, 7);
+            let a8 = slot_for!($c8, s, 8);
+            call_through!(
+                ptr, ret,
+                [a0: ty_for!($c0), a1: ty_for!($c1),
+                 a2: ty_for!($c2), a3: ty_for!($c3),
+                 a4: ty_for!($c4), a5: ty_for!($c5),
+                 a6: ty_for!($c6), a7: ty_for!($c7),
+                 a8: ty_for!($c8)]
+            )
+        }
+    };
+    ($name:ident, $c0:ident, $c1:ident, $c2:ident, $c3:ident, $c4:ident,
+     $c5:ident, $c6:ident, $c7:ident, $c8:ident, $c9:ident) => {
+        unsafe fn $name(ptr: *const u8, s: &[Slot], ret: JitKind) -> Option<Value> {
+            let a0 = slot_for!($c0, s, 0);
+            let a1 = slot_for!($c1, s, 1);
+            let a2 = slot_for!($c2, s, 2);
+            let a3 = slot_for!($c3, s, 3);
+            let a4 = slot_for!($c4, s, 4);
+            let a5 = slot_for!($c5, s, 5);
+            let a6 = slot_for!($c6, s, 6);
+            let a7 = slot_for!($c7, s, 7);
+            let a8 = slot_for!($c8, s, 8);
+            let a9 = slot_for!($c9, s, 9);
+            call_through!(
+                ptr, ret,
+                [a0: ty_for!($c0), a1: ty_for!($c1),
+                 a2: ty_for!($c2), a3: ty_for!($c3),
+                 a4: ty_for!($c4), a5: ty_for!($c5),
+                 a6: ty_for!($c6), a7: ty_for!($c7),
+                 a8: ty_for!($c8), a9: ty_for!($c9)]
+            )
+        }
+    };
+    ($name:ident, $c0:ident, $c1:ident, $c2:ident, $c3:ident, $c4:ident,
+     $c5:ident, $c6:ident, $c7:ident, $c8:ident, $c9:ident, $c10:ident) => {
+        unsafe fn $name(ptr: *const u8, s: &[Slot], ret: JitKind) -> Option<Value> {
+            let a0 = slot_for!($c0, s, 0);
+            let a1 = slot_for!($c1, s, 1);
+            let a2 = slot_for!($c2, s, 2);
+            let a3 = slot_for!($c3, s, 3);
+            let a4 = slot_for!($c4, s, 4);
+            let a5 = slot_for!($c5, s, 5);
+            let a6 = slot_for!($c6, s, 6);
+            let a7 = slot_for!($c7, s, 7);
+            let a8 = slot_for!($c8, s, 8);
+            let a9 = slot_for!($c9, s, 9);
+            let a10 = slot_for!($c10, s, 10);
+            call_through!(
+                ptr, ret,
+                [a0: ty_for!($c0), a1: ty_for!($c1),
+                 a2: ty_for!($c2), a3: ty_for!($c3),
+                 a4: ty_for!($c4), a5: ty_for!($c5),
+                 a6: ty_for!($c6), a7: ty_for!($c7),
+                 a8: ty_for!($c8), a9: ty_for!($c9),
+                 a10: ty_for!($c10)]
+            )
+        }
+    };
+    ($name:ident, $c0:ident, $c1:ident, $c2:ident, $c3:ident, $c4:ident,
+     $c5:ident, $c6:ident, $c7:ident, $c8:ident, $c9:ident, $c10:ident, $c11:ident) => {
+        unsafe fn $name(ptr: *const u8, s: &[Slot], ret: JitKind) -> Option<Value> {
+            let a0 = slot_for!($c0, s, 0);
+            let a1 = slot_for!($c1, s, 1);
+            let a2 = slot_for!($c2, s, 2);
+            let a3 = slot_for!($c3, s, 3);
+            let a4 = slot_for!($c4, s, 4);
+            let a5 = slot_for!($c5, s, 5);
+            let a6 = slot_for!($c6, s, 6);
+            let a7 = slot_for!($c7, s, 7);
+            let a8 = slot_for!($c8, s, 8);
+            let a9 = slot_for!($c9, s, 9);
+            let a10 = slot_for!($c10, s, 10);
+            let a11 = slot_for!($c11, s, 11);
+            call_through!(
+                ptr, ret,
+                [a0: ty_for!($c0), a1: ty_for!($c1),
+                 a2: ty_for!($c2), a3: ty_for!($c3),
+                 a4: ty_for!($c4), a5: ty_for!($c5),
+                 a6: ty_for!($c6), a7: ty_for!($c7),
+                 a8: ty_for!($c8), a9: ty_for!($c9),
+                 a10: ty_for!($c10), a11: ty_for!($c11)]
+            )
+        }
+    };
 }
 
 unsafe fn dispatch(
@@ -402,6 +498,17 @@ unsafe fn dispatch(
         (7, 0b1111111) => unsafe { call_7fffffff(ptr, slots, ret) },
         (8, 0b00000000) => unsafe { call_8iiiiiiii(ptr, slots, ret) },
         (8, 0b11111111) => unsafe { call_8ffffffff(ptr, slots, ret) },
+        // Arities 9-12: homogeneous only (same shape rationale as 5-8).
+        // Covers `format!`-style helpers and HTTP handlers that take
+        // 8-12 i64-shaped args (request, headers, query, body, etc.).
+        (9, 0b000000000) => unsafe { call_9i(ptr, slots, ret) },
+        (9, 0b111111111) => unsafe { call_9f(ptr, slots, ret) },
+        (10, 0b0000000000) => unsafe { call_10i(ptr, slots, ret) },
+        (10, 0b1111111111) => unsafe { call_10f(ptr, slots, ret) },
+        (11, 0b00000000000) => unsafe { call_11i(ptr, slots, ret) },
+        (11, 0b11111111111) => unsafe { call_11f(ptr, slots, ret) },
+        (12, 0b000000000000) => unsafe { call_12i(ptr, slots, ret) },
+        (12, 0b111111111111) => unsafe { call_12f(ptr, slots, ret) },
         _ => None,
     }
 }
@@ -449,6 +556,14 @@ gen_call!(call_7iiiiiii, i, i, i, i, i, i, i);
 gen_call!(call_7fffffff, f, f, f, f, f, f, f);
 gen_call!(call_8iiiiiiii, i, i, i, i, i, i, i, i);
 gen_call!(call_8ffffffff, f, f, f, f, f, f, f, f);
+gen_call!(call_9i, i, i, i, i, i, i, i, i, i);
+gen_call!(call_9f, f, f, f, f, f, f, f, f, f);
+gen_call!(call_10i, i, i, i, i, i, i, i, i, i, i);
+gen_call!(call_10f, f, f, f, f, f, f, f, f, f, f);
+gen_call!(call_11i, i, i, i, i, i, i, i, i, i, i, i);
+gen_call!(call_11f, f, f, f, f, f, f, f, f, f, f, f);
+gen_call!(call_12i, i, i, i, i, i, i, i, i, i, i, i, i);
+gen_call!(call_12f, f, f, f, f, f, f, f, f, f, f, f, f);
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

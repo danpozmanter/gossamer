@@ -309,6 +309,21 @@ pub enum Op {
         /// Source `f64` register.
         src_f: Reg,
     },
+    /// Narrowing integer cast — truncates an i64 register to a
+    /// target width (in bits) and sign- or zero-extends back to i64.
+    /// Implements Rust-style wrapping `as` semantics for `i64 as i32`,
+    /// `i64 as u8`, etc.
+    TruncCastI64 {
+        /// Destination `i64` register.
+        dst_i: Reg,
+        /// Source `i64` register.
+        src_i: Reg,
+        /// Bits to shift: `64 - target_bits` (e.g. 32 for i32/u32).
+        shift: u8,
+        /// `true` → arithmetic (sign-extending); `false` → logical
+        /// (zero-extending) right shift after the left shift.
+        signed: bool,
+    },
     /// Typed read into an `i64` register from a `Value::IntArray`
     /// base. Skips the per-read enum match + boxing the generic
     /// `Op::IndexGet` performs. fasta's TWO/THREE inner loops
@@ -321,6 +336,41 @@ pub enum Op {
         /// `i64` register holding the index. Negative indices
         /// surface as a runtime error.
         index_i: Reg,
+    },
+    /// Typed write of an `i64` register into a `Value::IntArray`
+    /// at `index_i`. Mirrors [`Op::FloatVecSetF64`] for integer
+    /// arrays — fannkuch's `perm[j] = perm1[j]` and similar
+    /// in-place updates avoid the box/unbox round-trip the
+    /// generic `Op::IndexSet` imposes.
+    IntArraySetI64 {
+        /// Value register holding the `Value::IntArray`.
+        base: Reg,
+        /// `i64` register holding the index.
+        index_i: Reg,
+        /// `i64` register holding the new element.
+        value_i: Reg,
+    },
+    /// Fused in-place swap on a `Value::IntArray`. Replaces the
+    /// 4-op sequence (two `IntArrayGetI64` + two `IntArraySetI64`)
+    /// the swap super-instruction would otherwise emit. fannkuch's
+    /// `perm.swap(a, k - a)` runs millions of times per workload.
+    IntArraySwap {
+        /// Value register holding the `Value::IntArray`.
+        base: Reg,
+        /// `i64` register holding the first index.
+        i_i: Reg,
+        /// `i64` register holding the second index.
+        j_i: Reg,
+    },
+    /// Fused in-place swap on a `Value::FloatVec`. Same shape as
+    /// [`Op::IntArraySwap`] but for primitive `[f64; N]` storage.
+    FloatVecSwap {
+        /// Value register holding the `Value::FloatVec`.
+        base: Reg,
+        /// `i64` register holding the first index.
+        i_i: Reg,
+        /// `i64` register holding the second index.
+        j_i: Reg,
     },
     /// Builds a `Value::FloatVec` by copying `count` consecutive
     /// `f64` registers starting at `first_f`. Mirrors `BuildIntArray`
@@ -515,6 +565,16 @@ pub enum Op {
         receiver: Reg,
         /// Zero-based index.
         index: u32,
+    },
+    /// `dst = tuple[len - offset_from_end - 1]` — tail-anchored
+    /// element access for rest patterns like `(first, .., last)`.
+    TupleTailIndex {
+        /// Destination register.
+        dst: Reg,
+        /// Register holding the tuple.
+        receiver: Reg,
+        /// How many positions from the end (0 = last element).
+        offset_from_end: u32,
     },
     /// `base[index].field_name = value` — fused in-place
     /// write. Avoids the `IndexGet` / `FieldSet` / `IndexSet`
@@ -794,6 +854,26 @@ pub enum Op {
         rhs_f: Reg,
         target: InstrIdx,
     },
+    /// Fused increment + back-edge for the bottom of a `for i in
+    /// a..b { ... }` loop. Computes `ints[counter_i] += 1` then
+    /// branches to `target` when the post-increment counter is
+    /// `< ints[end_i]`. Saves the two-op `AddI64` + `Jump` + the
+    /// header `BranchIfGeI64` re-check that the pre-increment
+    /// shape pays per iteration. The for-range emitter falls
+    /// through past the fused op into the loop's `exit` block when
+    /// the comparison fails. Tier B5 of the bytecode push.
+    IncJumpIfLtI64 {
+        counter_i: Reg,
+        end_i: Reg,
+        target: InstrIdx,
+    },
+    /// Same as [`Op::IncJumpIfLtI64`] but uses `<=` for the
+    /// inclusive-range form (`for i in a..=b`).
+    IncJumpIfLeI64 {
+        counter_i: Reg,
+        end_i: Reg,
+        target: InstrIdx,
+    },
 
     /// `floats[dst_f] = receiver.<struct field at offset>`.
     FieldGetF64ByOffset {
@@ -839,6 +919,14 @@ pub enum Op {
     // contiguous block of float registers for `[S; N]` literals
     // where `S` has all-f64 fields) lives in the `wide_ops`
     // side-table — see `Op::Wide` and `WideOp::BuildFloatArray`.
+    /// `registers[dst_v] = Value::Uint(ints[src_i] as u64)`.
+    /// Produces an unsigned 64-bit display value for `x as u64` / `x as usize`.
+    I64ToUint {
+        /// Destination Value register.
+        dst_v: Reg,
+        /// Source i64 register.
+        src_i: Reg,
+    },
 }
 
 /// Resolved builtin call pointer cached in [`CacheSlot::builtin_fn`].
@@ -1050,21 +1138,56 @@ pub(crate) const ARITH_STRING_STRING: u8 = 3;
 /// trying to re-specialise.
 pub(crate) const ARITH_POLYMORPHIC: u8 = 255;
 
-/// Number of times a chunk must be entered before it triggers the
-/// deferred JIT compile. Conservative enough that a one-shot
-/// `gos run hello.gos` never trips it (its `main` fn runs exactly
-/// once); aggressive enough that nbody-style inner loops trip
-/// almost immediately. The plan suggested 10K back-edges; for the
-/// per-call-entry counter used here a much lower value is
-/// equivalent because hot loops fan calls out by orders of
-/// magnitude faster than they accrue back-edges.
-pub(crate) const HOT_THRESHOLD: i32 = 100;
+/// Baseline call-entry budget before a typical (~50-instr) chunk
+/// trips the deferred JIT compile. Used by [`hot_threshold_for`]
+/// as the reference point; bigger chunks scale linearly to a
+/// lower budget so a 5000-instr function tiers up after the
+/// floor [`HOT_THRESHOLD_FLOOR`] entries instead of waiting for
+/// 100 full calls of its expensive body.
+pub(crate) const HOT_THRESHOLD_BASE: i32 = 100;
+
+/// Lower bound for the dynamic threshold. A 1-instr stub tracks
+/// against this floor; without it, the formula would push tier-up
+/// to 1 entry on tiny stubs and waste compile time on bodies the
+/// JIT can't meaningfully outrun.
+pub(crate) const HOT_THRESHOLD_FLOOR: i32 = 16;
 
 /// Sentinel that the `hot_counter` is initialised to when the JIT
 /// is permanently disabled at chunk construction time. The Cell
 /// can never realistically be decremented past `i32::MIN + 1`, so
 /// using `i32::MAX` as a "never trips" marker is safe.
 pub(crate) const HOT_DISABLED: i32 = i32::MAX;
+
+/// Computes the per-chunk hot-counter initial value. Big chunks
+/// tier up sooner because each apply runs more bytecode; the
+/// `(BASE * 50) / max(50, instr_count)` form keeps a 50-instr
+/// chunk on the legacy threshold (100) and shrinks linearly from
+/// there, clamped at [`HOT_THRESHOLD_FLOOR`].
+///
+/// `GOSSAMER_JIT_THRESHOLD`, if set to a parseable positive `i32`,
+/// overrides the formula entirely (per-chunk). Useful for
+/// reproducing pre-scaling behaviour or aggressive tuning. Read
+/// once on first lookup and cached for subsequent chunks.
+#[must_use]
+pub(crate) fn hot_threshold_for(instr_count: usize) -> i32 {
+    if let Some(override_val) = jit_threshold_override() {
+        return override_val;
+    }
+    let denom = instr_count.max(50) as i32;
+    let scaled = (HOT_THRESHOLD_BASE.saturating_mul(50)) / denom;
+    scaled.max(HOT_THRESHOLD_FLOOR)
+}
+
+fn jit_threshold_override() -> Option<i32> {
+    use std::sync::OnceLock;
+    static OVERRIDE: OnceLock<Option<i32>> = OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        std::env::var("GOSSAMER_JIT_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse::<i32>().ok())
+            .filter(|n| *n > 0)
+    })
+}
 
 impl FnChunk {
     /// Produces a `Arc<Self>` so multiple callers share the same chunk.

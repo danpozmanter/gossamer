@@ -1,0 +1,85 @@
+// String Concatenation Stress
+// Build strings using +, +=, format!, and println! in different
+// combinations to catch ownership and allocation mismatches.
+
+fn main() {
+    let a = "hello".to_string()
+    let b = "world".to_string()
+    let c = a + ", " + &b
+    println!("plus chain: {}", c)
+
+    let mut acc = "".to_string()
+    for word in ["the", "quick", "brown", "fox"] {
+        if acc.len() > 0 {
+            acc += " "
+        }
+        acc += word
+    }
+    println!("accumulated: {}", acc)
+
+    let numbered = format!("{} {} {}", 1, 2, 3)
+    println!("format! numbers: {}", numbered)
+
+    let mixed = format!("int={} float={} str={}", 42, 3.14, "pi")
+    println!("format! mixed: {}", mixed)
+
+    let name = "gossamer"
+    let version = "0.1"
+    let greeting = format!("welcome to {} v{}", name, version)
+    println!("{}", greeting)
+
+    // Repeated mutation
+    let mut line = "".to_string()
+    line += "start"
+    line += " -> "
+    line += "middle"
+    line += " -> "
+    line += "end"
+    println!("mut line: {}", line)
+
+    // Borrow after concat
+    let base = "base"
+    let extended = base.to_string() + "_extended"
+    println!("base still borrowable: {}", base)
+    println!("extended: {}", extended)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn plus_concat() {
+        let a = "hello".to_string()
+        let b = "world".to_string()
+        let c = a + ", " + &b
+        testing::check_eq(&c, &"hello, world".to_string(), "plus concat")
+    }
+
+    #[test]
+    fn format_numbers() {
+        let s = format!("{} {} {}", 1, 2, 3)
+        testing::check_eq(&s, &"1 2 3".to_string(), "format numbers")
+    }
+
+    #[test]
+    fn accumulate_words() {
+        let mut acc = "".to_string()
+        for w in ["a", "b", "c"] {
+            if acc.len() > 0 {
+                acc += " "
+            }
+            acc += w
+        }
+        testing::check_eq(&acc, &"a b c".to_string(), "accumulated words")
+    }
+
+    #[test]
+    fn mut_append_chain() {
+        let mut s = "".to_string()
+        s += "x"
+        s += "-"
+        s += "y"
+        testing::check_eq(&s, &"x-y".to_string(), "mut append chain")
+    }
+}
