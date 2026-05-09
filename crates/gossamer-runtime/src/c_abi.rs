@@ -2998,7 +2998,7 @@ pub unsafe extern "C" fn gos_rt_exec_kill(pid: i64) -> i64 {
     {
         // SAFETY: Win32 OpenProcess/TerminateProcess/CloseHandle.
         // CloseHandle is always called to prevent a handle leak.
-        extern "system" {
+        unsafe extern "system" {
             fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> isize;
             fn TerminateProcess(process: isize, exit_code: u32) -> i32;
             fn CloseHandle(object: isize) -> i32;

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.6
+
+### Fixes
+
+- **`unsafe extern` required in Rust 2024 edition.**
+  The `extern "system"` blocks added in 0.1.5 for the Windows
+  `exec::kill` implementation must be `unsafe extern "system"` in
+  edition 2024. Fixed in both `gossamer-runtime/src/c_abi.rs` and
+  `gossamer-interp/src/builtins.rs`.
+
 ## 0.1.5
 
 ### Fixes
