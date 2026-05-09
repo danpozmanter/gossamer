@@ -2591,6 +2591,7 @@ fn builtin_exec_spawn(args: &[Value]) -> RuntimeResult<Value> {
 /// dep just for `kill(2)` — the dispatch path is rare (only the
 /// `stop_server` pattern hits it) so an extra fork/exec is fine.
 fn builtin_exec_kill(args: &[Value]) -> RuntimeResult<Value> {
+    #[cfg(unix)]
     use std::process::{Command as StdCommand, Stdio as StdStdio};
     let Some(Value::Int(pid)) = args.first() else {
         return Ok(Value::Bool(false));

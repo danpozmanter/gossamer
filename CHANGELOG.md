@@ -4,6 +4,9 @@
 
 ### Fixes
 
+- use std::process::{Command as StdCommand, Stdio as StdStdio} inside 
+  builtin_exec_kill is now #[cfg(unix)]-gated, since those aliases are only 
+  used inside the #[cfg(unix)] block - dead warnings on Windows.
 - **`Ok(N)` / `Some(N)` payload-literal matching in compiled mode.**
   `match r { Ok(1) => …, Ok(2) => … }` always took the first `Ok` arm
   because MIR only compared the discriminant, never the payload value.
