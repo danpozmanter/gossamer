@@ -34,6 +34,14 @@
   `GetFileInformationByHandle`, returning the real NTFS directory-index
   size. Both native functions now use `std::fs::metadata` to match.
 
+- **Missing `.exe` suffix in `codegen_correct` and `native` integration tests on Windows.**
+  `every_correct_program_matches_across_tiers` checked for binary artifacts at
+  `target/debug/<stem>` and `target/release/<stem>` without the `.exe` extension,
+  causing 16 failures (8 programs × 2 profiles). All 13 `gos build`-driven binary
+  path constructions in `codegen_correct.rs` and `native.rs` now use
+  `set_extension(EXE_EXTENSION)` or the new `debug_bin(&dir, stem)` helper.
+  `gos_binary()` in `codegen_correct.rs` (the release `gos` tool path) is also fixed.
+
 ## 0.1.7
 
 ### Fixes

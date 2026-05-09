@@ -45,7 +45,11 @@ fn correct_dir() -> PathBuf {
 fn gos_binary() -> PathBuf {
     // The release binary is what `gos run` / `gos build` reach.
     // Built once by the workspace, shared across tests.
-    workspace_root().join("target").join("release").join("gos")
+    let mut p = workspace_root().join("target").join("release").join("gos");
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        p.set_extension(std::env::consts::EXE_EXTENSION);
+    }
+    p
 }
 
 fn ensure_gos_built() {
@@ -113,7 +117,10 @@ fn run_compiled(src: &Path, release: bool, scratch: &Path) -> TierOutcome {
         };
     }
     let profile = if release { "release" } else { "debug" };
-    let bin = scratch.join("target").join(profile).join(stem);
+    let mut bin = scratch.join("target").join(profile).join(stem);
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        bin.set_extension(std::env::consts::EXE_EXTENSION);
+    }
     if !bin.exists() {
         return TierOutcome {
             stdout: String::new(),

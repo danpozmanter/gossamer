@@ -269,7 +269,9 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> *mut GosResu
         // for directories; the former calls GetFileInformationByHandle and
         // returns the real NTFS directory-index allocation, matching what the
         // interpreter gets via the same syscall path.
-        let Ok(meta) = std::fs::metadata(&entry_path) else { continue };
+        let Ok(meta) = std::fs::metadata(&entry_path) else {
+            continue;
+        };
         let Ok(ft) = entry.file_type() else { continue };
         let name_str = entry.file_name().to_string_lossy().into_owned();
         let path_str = entry_path.to_string_lossy().into_owned();
@@ -330,7 +332,9 @@ pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> *mut GosResu
             // Same reason as in gos_rt_fs_list_dir: use std::fs::metadata
             // rather than entry.metadata() so directory sizes agree with
             // the interpreter on Windows.
-            let Ok(meta) = std::fs::metadata(&path_buf) else { continue };
+            let Ok(meta) = std::fs::metadata(&path_buf) else {
+                continue;
+            };
             let Ok(ft) = entry.file_type() else { continue };
             let name_str = entry.file_name().to_string_lossy().into_owned();
             let path_str = path_buf.to_string_lossy().into_owned();
