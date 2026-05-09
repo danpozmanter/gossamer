@@ -2994,11 +2994,26 @@ pub unsafe extern "C" fn gos_rt_exec_kill(pid: i64) -> i64 {
         let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
         i64::from(rc == 0)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        // Windows TerminateProcess wiring is a follow-up; for
-        // now return false so the caller can fall through to a
-        // best-effort path.
+        // SAFETY: Win32 OpenProcess/TerminateProcess/CloseHandle.
+        // CloseHandle is always called to prevent a handle leak.
+        extern "system" {
+            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> isize;
+            fn TerminateProcess(process: isize, exit_code: u32) -> i32;
+            fn CloseHandle(object: isize) -> i32;
+        }
+        const PROCESS_TERMINATE: u32 = 0x0001;
+        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid as u32) };
+        if handle == 0 {
+            return 0;
+        }
+        let ok = unsafe { TerminateProcess(handle, 1) };
+        unsafe { CloseHandle(handle) };
+        i64::from(ok != 0)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
         let _ = pid;
         0
     }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.5
+
+### Fixes
+
+- **`exec::kill` now terminates processes on Windows.**
+  Both the compiled-tier runtime (`gos_rt_exec_kill` in `c_abi.rs`) and the
+  interpreter (`builtin_exec_kill` in `builtins.rs`) returned `false`
+  unconditionally on Windows. Both now call `OpenProcess(PROCESS_TERMINATE)`
+  + `TerminateProcess` + `CloseHandle` via inline `extern "system"`
+  declarations (no new dependencies). The `#[cfg(not(unix))]` fallback is
+  split into `#[cfg(windows)]` (real implementation) and
+  `#[cfg(not(any(unix, windows)))]` (stub for other platforms).
+
 ## 0.1.4
 
 ### Fixes
