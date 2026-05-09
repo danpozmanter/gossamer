@@ -157,7 +157,10 @@ fn cross_file_project_bundles_sibling_modules() {
         "gos build failed:\nstderr: {}",
         String::from_utf8_lossy(&build_out.stderr),
     );
-    let bin_path = dir.join("target/debug/probe");
+    let mut bin_path = dir.join("target/debug/probe");
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        bin_path.set_extension(std::env::consts::EXE_EXTENSION);
+    }
     assert!(bin_path.is_file(), "expected probe binary at {bin_path:?}");
     let run = run_native(&bin_path);
     let _ = fs::remove_dir_all(&dir);
@@ -233,7 +236,10 @@ fn cross_file_chained_sibling_module_calls() {
         "gos build failed:\nstderr: {}",
         String::from_utf8_lossy(&build_out.stderr),
     );
-    let bin_path = dir.join("target/debug/chained");
+    let mut bin_path = dir.join("target/debug/chained");
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        bin_path.set_extension(std::env::consts::EXE_EXTENSION);
+    }
     assert!(bin_path.is_file(), "expected binary at {bin_path:?}");
     let nat = run_native(&bin_path);
     let _ = fs::remove_dir_all(&dir);

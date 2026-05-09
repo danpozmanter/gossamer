@@ -14,6 +14,18 @@
   `"gos_rt_arr_iter" => "gos_rt_arr_iter_free"` in `ctor_to_free`, so the
   drop pass emits the correct free instead of `gos_rt_vec_free`.
 
+- **Missing `.exe` suffix on Windows in two multi-file regression tests.**
+  `cross_file_project_bundles_sibling_modules` and
+  `cross_file_chained_sibling_module_calls` constructed expected binary paths
+  as bare stems (`target/debug/probe`, `target/debug/chained`) without the
+  `.exe` extension. Fixed with `set_extension(EXE_EXTENSION)`, matching the
+  pattern used in `parity.rs`.
+
+- **Missing LLVM declaration for `gos_rt_arr_iter_free`.**
+  The `dispatch_parity` test enforces that every symbol exported from
+  `c_abi.rs` has a matching `declare` line in the LLVM prelude. Added
+  `declare void @gos_rt_arr_iter_free(ptr)` to `gossamer-codegen-llvm/src/emit.rs`.
+
 ## 0.1.7
 
 ### Fixes

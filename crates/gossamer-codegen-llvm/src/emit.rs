@@ -952,6 +952,7 @@ pub(crate) const RUNTIME_DECLARATIONS: &[&str] = &[
     "declare i64 @gos_rt_arr_len(ptr)",
     "declare ptr @gos_rt_arr_iter(ptr)",
     "declare ptr @gos_rt_arr_iter_next(ptr)",
+    "declare void @gos_rt_arr_iter_free(ptr)",
     "declare i64 @gos_rt_len(ptr)",
     "declare i64 @gos_rt_str_len(ptr)",
     "declare i64 @gos_rt_str_byte_at(ptr, i64)",
