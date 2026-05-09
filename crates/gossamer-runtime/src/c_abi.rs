@@ -3113,6 +3113,16 @@ pub unsafe extern "C" fn gos_rt_arr_iter_next(iter: *mut GosArrIter) -> *mut Gos
     gos_rt_result_new(0, value)
 }
 
+/// Frees a `GosArrIter` allocated by [`gos_rt_arr_iter`]. Does NOT
+/// free the underlying vec — the vec is owned by the original local.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_iter_free(iter: *mut GosArrIter) {
+    if iter.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(iter) });
+}
+
 /// Reads an `i64`-shaped element from a `Vec` (or any
 /// 8-byte-elem `GosVec`) by index. Returns `0` when the receiver
 /// is null or `idx` is out of range. Used by the MIR-side Vec

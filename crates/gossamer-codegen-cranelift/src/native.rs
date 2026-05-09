@@ -5874,12 +5874,17 @@ fn lower_intrinsic_call(
         // Drop helpers emitted by the MIR's drop-insertion pass.
         // Each frees a heap-owned runtime container so the
         // process doesn't leak its contents across calls.
-        "gos_rt_map_free" | "gos_rt_vec_free" | "gos_rt_set_free" | "gos_rt_btmap_free" => {
+        "gos_rt_map_free"
+        | "gos_rt_vec_free"
+        | "gos_rt_set_free"
+        | "gos_rt_btmap_free"
+        | "gos_rt_arr_iter_free" => {
             let static_name: &'static str = match name {
                 "gos_rt_map_free" => "gos_rt_map_free",
                 "gos_rt_vec_free" => "gos_rt_vec_free",
                 "gos_rt_set_free" => "gos_rt_set_free",
                 "gos_rt_btmap_free" => "gos_rt_btmap_free",
+                "gos_rt_arr_iter_free" => "gos_rt_arr_iter_free",
                 _ => unreachable!(),
             };
             let f = intrinsics.extern_fn(module, static_name, &[ptr_ty], &[])?;

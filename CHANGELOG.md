@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.8
+
+### Fixes
+
+- **`STATUS_HEAP_CORRUPTION` crash in native iterator test on Windows.**
+  The MIR drop-insertion pass pins the destination local of `gos_rt_arr_iter`
+  to the source `Vec<T>` type so `.next()` dispatch can recover the element
+  kind. The type-based `inferred_free` path then incorrectly scheduled
+  `gos_rt_vec_free` on the `*mut GosArrIter` pointer, interpreting the
+  iterator's raw bytes as a `GosVec` header and corrupting the heap on free.
+  Fixed by adding `gos_rt_arr_iter_free` to the runtime and registering
+  `"gos_rt_arr_iter" => "gos_rt_arr_iter_free"` in `ctor_to_free`, so the
+  drop pass emits the correct free instead of `gos_rt_vec_free`.
+
 ## 0.1.7
 
 ### Fixes

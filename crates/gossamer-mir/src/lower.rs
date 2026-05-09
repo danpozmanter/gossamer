@@ -199,6 +199,13 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
             "gos_rt_vec_new" | "gos_rt_vec_with_capacity" => Some("gos_rt_vec_free"),
             "gos_rt_set_new" => Some("gos_rt_set_free"),
             "gos_rt_btmap_new" => Some("gos_rt_btmap_free"),
+            // Iterator over a Vec — the destination local is typed as
+            // the source Vec so the `.next()` dispatch can recover the
+            // element type. Without this entry the type-based
+            // `inferred_free` path would schedule `gos_rt_vec_free` on
+            // a `*mut GosArrIter`, mis-interpreting its bytes as a
+            // `GosVec` header and corrupting the heap on free.
+            "gos_rt_arr_iter" => Some("gos_rt_arr_iter_free"),
             // Path-form constructors emitted by the call lowerer.
             // The cranelift backend's `lower_intrinsic_call` table
             // routes these straight to the runtime helper, so the
