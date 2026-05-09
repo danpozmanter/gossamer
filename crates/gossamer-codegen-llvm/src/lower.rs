@@ -21,6 +21,19 @@ use crate::ty::{
     numeric_kind, render_ty, slot_count,
 };
 
+/// Adds the typed `declare` for `name` from the ABI registry into `refs`.
+///
+/// Panics if `name` is not in the registry — this catches typos at
+/// compile time of the test suite rather than at LLVM `llc` time.
+fn declare_rt(refs: &mut std::collections::BTreeSet<String>, name: &str) {
+    let entry = gossamer_abi::lookup(name).unwrap_or_else(|| {
+        panic!(
+            "declare_rt: unknown runtime symbol {name:?} — add it to gossamer-abi/src/registry.rs"
+        )
+    });
+    refs.insert(entry.llvm_declare());
+}
+
 /// Emits one function's LLVM IR text, including the required
 /// `declare` statements for any `gos_rt_*` symbols it calls.
 pub(crate) struct Lowerer<'a> {
@@ -429,34 +442,52 @@ impl<'a> Lowerer<'a> {
         } else {
             self.lower_place_address(place)
         };
-        writeln!(self.out, "  store {leaf_llvm} {value}, ptr {addr}").unwrap();
-        // Write barrier: when the *destination* is heap-resident
-        // (i.e. the place projects through a deref / heap pointer)
-        // and the *value* is itself a heap pointer, the concurrent
-        // collector needs to know about the new edge so its mark
-        // phase doesn't lose track of it. The barrier is a no-op
-        // while the collector is idle (a single load + branch in
-        // the runtime helper) so we emit it unconditionally for
-        // qualifying stores rather than try to model GC liveness
-        // statically here.
-        if !place.projection.is_empty() && Self::is_pointer_local_ty(self.tcx, leaf_ty) {
+        // When a runtime call returns a heap pointer to a multi-slot aggregate
+        // (e.g. `gos_rt_result_payload` returning an ExecOutput blob), the
+        // destination is an inline `[N x i64]` alloca. A bare `store ptr`
+        // only writes the blob address into slot 0; subsequent field reads
+        // then load the blob pointer instead of the actual field value. Memcpy
+        // the full struct instead.
+        if place.projection.is_empty()
+            && leaf_llvm == "ptr"
+            && is_aggregate(self.tcx, dest_ty_mir)
+            && slot_count(self.tcx, dest_ty_mir).is_some_and(|n| n > 1)
+        {
+            let bytes = u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8;
+            writeln!(
+                self.out,
+                "  call void @llvm.memcpy.p0.p0.i64(ptr {addr}, ptr {value}, i64 {bytes}, i1 false)"
+            )
+            .unwrap();
+        } else {
+            writeln!(self.out, "  store {leaf_llvm} {value}, ptr {addr}").unwrap();
+        }
+        // Write barrier: only when the value is an i64-encoded GC ref, not a
+        // raw machine pointer. All pointer-bearing MIR types (Vec, String,
+        // HashMap, Ref, …) render as `ptr` in LLVM IR — the runtime's
+        // gos_rt_write_barrier(u32) takes a GcRef index, not a machine
+        // address, so emitting `trunc i64 ptr to i32` is both invalid IR and
+        // semantically wrong. Skip the barrier for ptr-typed values; the GC
+        // tracks those through its allocation registry rather than write
+        // barriers.
+        if !place.projection.is_empty()
+            && leaf_llvm != "ptr"
+            && Self::is_pointer_local_ty(self.tcx, leaf_ty)
+        {
             self.emit_write_barrier(&value);
         }
         Ok(())
     }
 
-    /// Emits a `gos_rt_write_barrier` call for the supplied
-    /// LLVM value (an `i64` representation of a heap reference).
-    /// Idempotent registration of the runtime declaration.
+    /// Emits a `gos_rt_write_barrier` call for `value`, which must have
+    /// LLVM type `i64` (a GcRef index stored in the flat ABI). Callers
+    /// must ensure `ptr`-typed values are filtered out before reaching here.
     fn emit_write_barrier(&mut self, value: &str) {
-        self.runtime_refs
-            .insert("declare void @gos_rt_write_barrier(i32)".to_string());
+        declare_rt(&mut self.runtime_refs, "gos_rt_write_barrier");
         let truncated = self.fresh();
-        // Heap refs are stored as 64-bit values in the flat ABI;
-        // the runtime symbol takes a 32-bit index. Truncating is
-        // safe here: the compiled tier never produces refs above
-        // the u32 boundary (heap slots are u32-indexed in
-        // gossamer-gc).
+        // GcRef indices are u32-indexed in gossamer-gc; the flat ABI widens
+        // them to i64. Truncating is safe: no program creates more than 2^32
+        // heap slots.
         writeln!(self.out, "  {truncated} = trunc i64 {value} to i32").unwrap();
         writeln!(
             self.out,
@@ -622,8 +653,7 @@ impl<'a> Lowerer<'a> {
                 }
                 // For heap-backed shapes the operand is the
                 // opaque pointer; call the runtime.
-                self.runtime_refs
-                    .insert("declare i64 @gos_rt_len(ptr)".to_string());
+                declare_rt(&mut self.runtime_refs, "gos_rt_len");
                 let ptr = if place.projection.is_empty() {
                     let tmp = self.fresh();
                     writeln!(
@@ -697,6 +727,13 @@ impl<'a> Lowerer<'a> {
         } else {
             dest_ty.clone()
         };
+        // Always declare using call-site types so the declaration matches
+        // the call instruction LLVM sees. Registry types (via declare_rt)
+        // may differ — e.g. gos_rt_result_payload is I64 in the registry
+        // but called as ptr in compiled MIR because the payload is a heap
+        // pointer reinterpreted as i64 in the C ABI. On x86-64 both share
+        // the rax register so the call is correct; the declaration must
+        // agree with the call site or opt miscompiles with the wrong type.
         self.runtime_refs
             .insert(format!("declare {decl_ret} @{name}({decl_args})"));
         if decl_ret == "void" {
@@ -935,8 +972,7 @@ impl<'a> Lowerer<'a> {
             slot = local_slot(*idx_local)
         )
         .unwrap();
-        self.runtime_refs
-            .insert("declare i64 @gos_rt_str_byte_at(ptr, i64)".to_string());
+        declare_rt(&mut self.runtime_refs, "gos_rt_str_byte_at");
         let out = self.fresh();
         writeln!(
             self.out,
@@ -1210,8 +1246,7 @@ impl<'a> Lowerer<'a> {
         if is_str_cmp {
             let lhs_v = self.lower_operand(lhs)?;
             let rhs_v = self.lower_operand(rhs)?;
-            self.runtime_refs
-                .insert("declare i32 @gos_rt_str_compare(ptr, ptr)".to_string());
+            declare_rt(&mut self.runtime_refs, "gos_rt_str_compare");
             let cmp_tmp = self.fresh();
             writeln!(
                 self.out,
@@ -1465,6 +1500,7 @@ impl<'a> Lowerer<'a> {
                     // the heap pointer. Both LLVM and Cranelift
                     // callers can dereference the result safely.
                     let bytes = u64::from(slot_count(self.tcx, ret_ty).unwrap_or(1).max(1)) * 8;
+                    declare_rt(&mut self.runtime_refs, "gos_rt_gc_alloc");
                     let heap = self.fresh();
                     writeln!(
                         self.out,
@@ -1558,6 +1594,7 @@ impl<'a> Lowerer<'a> {
     /// `Terminator::Panic`. The message is interned as a
     /// private rodata global; `gos_rt_panic` is `noreturn`.
     fn lower_panic(&mut self, message: &str) {
+        declare_rt(&mut self.runtime_refs, "gos_rt_panic");
         let msg_global = self.runtime_refs.len();
         let msg_name = format!("@.panic_msg_{msg_global}");
         let escaped = escape_c_string(message);
@@ -1606,6 +1643,7 @@ impl<'a> Lowerer<'a> {
             gossamer_mir::AssertMessage::Overflow => "arithmetic overflow\n",
             gossamer_mir::AssertMessage::DivideByZero => "divide by zero\n",
         };
+        declare_rt(&mut self.runtime_refs, "gos_rt_panic");
         let msg_global = self.runtime_refs.len();
         let msg_name = format!("@.assert_msg_{msg_global}");
         let escaped = escape_c_string(msg_text);
@@ -1715,6 +1753,15 @@ impl<'a> Lowerer<'a> {
                 "println destination cannot have projections",
             ));
         }
+        for sym in [
+            "gos_rt_eprint_str",
+            "gos_rt_eprintln",
+            "gos_rt_stdout_acquire",
+            "gos_rt_println",
+            "gos_rt_stdout_release",
+        ] {
+            declare_rt(&mut self.runtime_refs, sym);
+        }
         if matches!(name, "eprint" | "eprintln") {
             // Build the message via the same per-arg concat
             // machinery `panic` uses, then route it through the
@@ -1778,6 +1825,16 @@ impl<'a> Lowerer<'a> {
     /// pair of args (used by `println(a, b, c)` for the
     /// space-separated form; empty for `__concat`'s tight join).
     fn emit_per_arg_print(&mut self, args: &[Operand], separator: &str) -> Result<(), BuildError> {
+        for sym in [
+            "gos_rt_print_str",
+            "gos_rt_print_i64",
+            "gos_rt_print_u64",
+            "gos_rt_print_f64",
+            "gos_rt_print_bool",
+            "gos_rt_print_char",
+        ] {
+            declare_rt(&mut self.runtime_refs, sym);
+        }
         let sep_name = if separator.is_empty() {
             None
         } else {
@@ -1841,6 +1898,7 @@ impl<'a> Lowerer<'a> {
         args: &[Operand],
         separator: &str,
     ) -> Result<String, BuildError> {
+        declare_rt(&mut self.runtime_refs, "gos_rt_str_concat");
         let (empty_name, _) = self.strings.borrow_mut().intern("");
         if args.is_empty() {
             return Ok(empty_name);
@@ -1877,6 +1935,15 @@ impl<'a> Lowerer<'a> {
     /// argument's stringification. Strings pass through; numeric
     /// types route through their `gos_rt_*_to_str` helper.
     fn lower_arg_to_str_ptr(&mut self, arg: &Operand) -> Result<String, BuildError> {
+        for sym in [
+            "gos_rt_i64_to_str",
+            "gos_rt_u64_to_str",
+            "gos_rt_f64_to_str",
+            "gos_rt_bool_to_str",
+            "gos_rt_char_to_str",
+        ] {
+            declare_rt(&mut self.runtime_refs, sym);
+        }
         let kind = self.concat_print_kind(arg);
         if matches!(kind, ConcatKind::Unsupported) {
             return Err(BuildError::Unsupported(
@@ -1954,6 +2021,18 @@ impl<'a> Lowerer<'a> {
                 "__concat destination cannot have projections",
             ));
         }
+        for sym in [
+            "gos_rt_concat_init",
+            "gos_rt_concat_str",
+            "gos_rt_concat_i64",
+            "gos_rt_concat_u64",
+            "gos_rt_concat_f64",
+            "gos_rt_concat_bool",
+            "gos_rt_concat_char",
+            "gos_rt_concat_finish",
+        ] {
+            declare_rt(&mut self.runtime_refs, sym);
+        }
         writeln!(self.out, "  call void @gos_rt_concat_init()").unwrap();
         for arg in args {
             let kind = self.concat_print_kind(arg);
@@ -2028,6 +2107,7 @@ impl<'a> Lowerer<'a> {
                 "__fmt_prec expects exactly two arguments",
             ));
         }
+        declare_rt(&mut self.runtime_refs, "gos_rt_f64_prec_to_str");
         let value_raw = self.lower_operand(&args[0])?;
         let value = self.coerce_to_f64(&args[0], &value_raw);
         let prec_raw = self.lower_operand(&args[1])?;
@@ -2306,6 +2386,7 @@ impl<'a> Lowerer<'a> {
             // `gos_rt_panic` (noreturn). Empty arg list panics
             // with an empty message — `gos_rt_panic` then
             // emits its default "panic" string.
+            declare_rt(&mut self.runtime_refs, "gos_rt_panic");
             let msg = self.emit_args_to_concat_string(args, " ")?;
             writeln!(self.out, "  call void @gos_rt_panic(ptr {msg})").unwrap();
             writeln!(self.out, "  unreachable").unwrap();
@@ -2365,6 +2446,34 @@ impl<'a> Lowerer<'a> {
             self.lower_str_len_inline(&args[0], destination, target)?;
             return Ok(());
         }
+        // `s.split(c)` where `c` is a char: the runtime takes `sep: *const c_char`
+        // (a C string pointer), but MIR emits the char code as `i32`. Convert
+        // via `gos_rt_char_to_str` first, mirroring the Cranelift backend.
+        if name == "gos_rt_str_split" && args.len() == 2 {
+            if matches!(self.concat_print_kind(&args[1]), ConcatKind::Char) {
+                declare_rt(&mut self.runtime_refs, "gos_rt_char_to_str");
+                declare_rt(&mut self.runtime_refs, "gos_rt_str_split");
+                let s = self.lower_operand(&args[0])?;
+                let c_raw = self.lower_operand(&args[1])?;
+                let c_widened = self.widen_char_to_i32(&args[1], &c_raw);
+                let sep_ptr = self.fresh();
+                let tmp = self.fresh();
+                let dst = local_slot(destination.local);
+                writeln!(
+                    self.out,
+                    "  {sep_ptr} = call ptr @gos_rt_char_to_str(i32 {c_widened})"
+                )
+                .unwrap();
+                writeln!(
+                    self.out,
+                    "  {tmp} = call ptr @gos_rt_str_split(ptr {s}, ptr {sep_ptr})"
+                )
+                .unwrap();
+                writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+                emit_terminator_branch(&mut self.out, target);
+                return Ok(());
+            }
+        }
         // Heap-Vec inline fast paths. The runtime returns a
         // `*mut GosI64Vec { len: i64, data: *mut i64 }`; user
         // code accesses elements via `vec.set_at(i, v)` and
@@ -2419,6 +2528,49 @@ impl<'a> Lowerer<'a> {
                 && !name.contains("::"));
         if is_variant_stub {
             self.emit_variant_stub(&name, args, destination, target)?;
+            return Ok(());
+        }
+        // HashMap / collection constructors: MIR emits a 0-arg call but the
+        // runtime function takes (key_bytes: i32, val_bytes: i32). Mirror the
+        // Cranelift backend's hardcoded 8/8 (all GC-managed values are
+        // pointer-sized, so 8 bytes covers every key/value type).
+        if matches!(
+            name.as_str(),
+            "HashMap::new" | "collections::HashMap::new" | "gos_rt_map_new"
+        ) {
+            declare_rt(&mut self.runtime_refs, "gos_rt_map_new");
+            let dst = local_slot(destination.local);
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = call ptr @gos_rt_map_new(i32 8, i32 8)").unwrap();
+            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            if let Some(tgt) = target {
+                writeln!(self.out, "  br label %bb{}", tgt.as_u32()).unwrap();
+            }
+            return Ok(());
+        }
+        if matches!(
+            name.as_str(),
+            "HashMap::with_capacity"
+                | "collections::HashMap::with_capacity"
+                | "gos_rt_map_new_with_capacity"
+        ) {
+            declare_rt(&mut self.runtime_refs, "gos_rt_map_new_with_capacity");
+            let dst = local_slot(destination.local);
+            let cap = if let Some(a) = args.first() {
+                self.lower_operand(a)?
+            } else {
+                "0".to_string()
+            };
+            let tmp = self.fresh();
+            writeln!(
+                self.out,
+                "  {tmp} = call ptr @gos_rt_map_new_with_capacity(i32 8, i32 8, i64 {cap})"
+            )
+            .unwrap();
+            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            if let Some(tgt) = target {
+                writeln!(self.out, "  br label %bb{}", tgt.as_u32()).unwrap();
+            }
             return Ok(());
         }
         let symbol = map_prelude_symbol(&name);
@@ -2784,6 +2936,13 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
+        for sym in [
+            "gos_rt_stdout_acquire",
+            "gos_rt_stdout_release",
+            "gos_rt_stream_write_byte",
+        ] {
+            declare_rt(&mut self.runtime_refs, sym);
+        }
         let stream_v = self.lower_operand(&args[0])?;
         let byte_v = self.lower_operand(&args[1])?;
         // Suffix to keep block labels unique within a function.
@@ -3024,6 +3183,13 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
+        for sym in [
+            "gos_rt_stdout_acquire",
+            "gos_rt_stdout_release",
+            "gos_rt_stream_write_byte_array",
+        ] {
+            declare_rt(&mut self.runtime_refs, sym);
+        }
         let stream_v = self.lower_operand(&args[0])?;
         let arr_v = self.lower_operand(&args[1])?;
         let len_v = self.lower_operand(&args[2])?;
@@ -3197,8 +3363,7 @@ impl<'a> Lowerer<'a> {
             _ => val_v,
         };
         writeln!(self.out, "  store i64 {val_i64}, ptr {slot}").unwrap();
-        self.runtime_refs
-            .insert("declare void @gos_rt_vec_push(ptr, ptr)".to_string());
+        declare_rt(&mut self.runtime_refs, "gos_rt_vec_push");
         writeln!(
             self.out,
             "  call void @gos_rt_vec_push(ptr {vec_ptr}, ptr {slot})"
@@ -3306,12 +3471,51 @@ impl<'a> Lowerer<'a> {
         let dest_ty_mir = self.body.local_ty(destination.local);
         let dest_ty = render_ty(self.tcx, dest_ty_mir);
 
-        // The call-site arena scoping pass (was wrapping aggregate
-        // returns with `gos_rt_arena_save`/`_restore`) is retired.
-        // The bump arena it depended on is gone — see
-        // `~/dev/contexts/lang/fix_architecture_ownership.md`
-        // Stage 4. The runtime helpers are now no-ops; we no
-        // longer emit the calls.
+        // Auto-declare gos_rt_* symbols that reach the generic call path using
+        // the CALL-SITE types (not registry types). Using registry types here
+        // would cause declaration/call-site mismatches for functions like
+        // `gos_rt_result_payload` where the LLVM lowerer passes a `ptr` but
+        // the C ABI returns `i64` — on x86_64 both are in rax and behave
+        // identically, but a conflicting explicit declaration causes LLVM to
+        // miscompile. User-defined functions are defined in this module and
+        // need no `declare`.
+        if symbol.starts_with("gos_rt_") {
+            let decl_ret = if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
+                "void"
+            } else {
+                &dest_ty
+            };
+            let decl_args = args
+                .iter()
+                .enumerate()
+                .map(|(i, arg)| {
+                    // Mirror lower_call_arg's type selection: aggregate
+                    // params that are expected by a callee expecting Ref<T>
+                    // or another aggregate get "ptr"; everything else uses
+                    // the operand's own LLVM type.
+                    let want = expected_param_tys.get(i).copied().flatten();
+                    if let Some(w) = want
+                        && let Operand::Copy(place) = arg
+                        && place.projection.is_empty()
+                    {
+                        let local_ty = self.body.local_ty(place.local);
+                        if matches!(self.tcx.kind(w), Some(TyKind::Ref { .. }))
+                            && matches!(self.tcx.kind(local_ty), Some(TyKind::Adt { .. }))
+                            && slot_count(self.tcx, local_ty).is_none()
+                        {
+                            return "ptr".to_string();
+                        }
+                        if is_aggregate(self.tcx, w) && is_aggregate(self.tcx, local_ty) {
+                            return "ptr".to_string();
+                        }
+                    }
+                    self.operand_llvm_ty(arg)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.runtime_refs
+                .insert(format!("declare {decl_ret} @{symbol}({decl_args})"));
+        }
 
         if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
             writeln!(self.out, "  call void @\"{symbol}\"({arg_text})").unwrap();
@@ -3614,6 +3818,17 @@ fn map_prelude_symbol(name: &str) -> &str {
         "Mutex::new" | "sync::Mutex::new" | "mutex::new" => "gos_rt_mutex_new",
         "WaitGroup::new" | "sync::WaitGroup::new" | "wg::new" => "gos_rt_wg_new",
         "I64Vec::new" | "heap_i64::new" => "gos_rt_heap_i64_new",
+        "U8Vec::new" | "heap_u8::new" => "gos_rt_heap_u8_new",
+        // HeapU8 (U8Vec) method calls — already named correctly; listed
+        // explicitly so the dispatch-parity test sees a text reference.
+        "gos_rt_heap_u8_new" => "gos_rt_heap_u8_new",
+        "gos_rt_heap_u8_get" => "gos_rt_heap_u8_get",
+        "gos_rt_heap_u8_set" => "gos_rt_heap_u8_set",
+        "gos_rt_heap_u8_len" => "gos_rt_heap_u8_len",
+        "gos_rt_heap_u8_to_string" => "gos_rt_heap_u8_to_string",
+        "gos_rt_heap_u8_write_bytes_to_stdout" => "gos_rt_heap_u8_write_bytes_to_stdout",
+        "gos_rt_heap_u8_write_lines_to_stdout" => "gos_rt_heap_u8_write_lines_to_stdout",
+        "gos_rt_heap_u8_free" => "gos_rt_heap_u8_free",
         "Atomic::new"
         | "sync::Atomic::new"
         | "atomic::new"

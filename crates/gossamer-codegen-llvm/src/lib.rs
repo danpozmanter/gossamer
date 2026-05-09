@@ -60,7 +60,10 @@ pub use emit::{
 /// (e.g. asserting every helper named in `gossamer-runtime::c_abi`
 /// also has a declaration here, so the cranelift dispatch table,
 /// the LLVM declaration table, and the c_abi exports never drift).
+///
+/// Generated from the typed `gossamer_abi::REGISTRY`; the old
+/// hard-coded string array has been removed.
 #[must_use]
-pub fn runtime_declarations() -> &'static [&'static str] {
-    emit::RUNTIME_DECLARATIONS
+pub fn runtime_declarations() -> Vec<String> {
+    gossamer_abi::all_llvm_declarations()
 }

@@ -1528,6 +1528,7 @@ fn install_sync_extras(globals: &mut Vec<(&'static str, Value)>) {
         ("AtomicBool::compare_and_swap", builtin_atomic_bool_cas),
         ("Mutex::new", builtin_mutex_new),
         ("Mutex::lock", builtin_mutex_lock),
+        ("Mutex::unlock", builtin_mutex_unlock),
         ("Mutex::store", builtin_mutex_store),
         ("Once::new", builtin_once_new),
         ("Once::call", builtin_once_call),
@@ -1688,6 +1689,14 @@ fn builtin_mutex_lock(args: &[Value]) -> RuntimeResult<Value> {
         }
         None => Ok(Value::Unit),
     }
+}
+
+fn builtin_mutex_unlock(_args: &[Value]) -> RuntimeResult<Value> {
+    // The VM's `lock()` acquires and releases atomically (the
+    // parking_lot guard is dropped before the builtin returns), so
+    // the lock is never held across Gossamer code. `unlock()` is
+    // therefore a no-op in the interpreted tier.
+    Ok(Value::Unit)
 }
 
 fn builtin_mutex_store(args: &[Value]) -> RuntimeResult<Value> {

@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.2.0
+
+### Performance
+
+- **JIT peak RSS reduced for programs with large array initialisers.**
+  - `Rvalue::Repeat` in the Cranelift backend now skips all stores for
+    zero-constant fills (`[0.0; N]`, `[false; N]`, `[(); N]`) — `calloc`
+    already zeroes memory, so the stores were redundant. Non-zero fills
+    larger than 16 elements emit a counted loop (O(1) IR) instead of N
+    unrolled `store` instructions (O(N) IR), matching the LLVM backend.
+  - Array-typed return values in the Cranelift backend are now returned
+    directly (the existing `calloc`-allocated local is passed back as-is)
+    instead of going through a second `gos_rt_gc_alloc` + memcpy escape.
+    Saves one allocation per array-returning call.
+  - JIT compilation now pre-filters to the minimal set of bodies needed:
+    a BFS from JIT-promotable roots (functions with scalar-only
+    param/return types) collects their transitive user-function callees.
+    Bodies that can never be promoted (aggregate params/returns) are
+    skipped entirely, cutting JIT compile time proportionally.
+- **HIR and type-context dropped before `vm.call()`.** The CLI's `gos run`
+  path now explicitly drops the `HirProgram` and `TyCtxt` before entering
+  the main call, then releases the MIR/TyCtxt JIT prelude after `vm.call()`
+  returns and before goroutine-join. Frees the per-program compilation data
+  while goroutines are still running, reducing peak RSS for large programs.
+
+### Architecture
+
+- **ABI registry (`gossamer-abi` crate) for typed `gos_rt_*` declarations.**
+  A new `gossamer-abi` crate holds a single source-of-truth for every
+  `gos_rt_*` symbol's name and C-ABI signature. The Cranelift backend's
+  `extern_fn_by_name` and the LLVM lowerer's `declare_rt` both derive
+  function declarations from this registry, eliminating the previously
+  parallel string arrays. Typos in symbol names now panic at test time
+  rather than silently producing wrong code.
+
+### Fixes
+
+- **LLVM write-barrier correctness.** The write barrier was being emitted
+  for `ptr`-typed LLVM values (raw machine pointers). `gos_rt_write_barrier`
+  expects a `u32` GcRef index (widened to i64 in the flat ABI); truncating
+  a pointer to i32 is both invalid IR and semantically wrong. The barrier
+  is now suppressed for all `ptr`-typed values; the GC tracks those through
+  its allocation registry.
+- **LLVM aggregate-return memcpy for runtime helpers.** When a runtime call
+  returns a heap pointer to a multi-slot aggregate (e.g.
+  `gos_rt_result_payload` returning an `ExecOutput` blob), the destination
+  is an inline `[N x i64]` alloca. A bare `store ptr` only wrote the blob
+  address into slot 0, making subsequent field reads load the blob pointer
+  instead of the actual field value. The LLVM lowerer now emits a full
+  memcpy for these cases.
+- **LLVM call-site type declarations match the call instruction.** Runtime
+  functions whose registry ABI type differs from the LLVM call-site type
+  (e.g. `gos_rt_result_payload` is `I64` in the registry but called as
+  `ptr` in compiled MIR) now always declare using the call-site type.
+  Registry-type declarations caused `opt` to miscompile the wrong type.
+
+### Added
+
+- **PGO support for `gos build --release`.**
+  Two environment variables drive a standard three-step LLVM PGO workflow:
+  - `GOS_PGO_COLLECT=<output.profraw>` builds an instrumented binary that
+    writes raw profile data on exit. Links `libclang_rt.profile-x86_64.a`
+    automatically.
+  - `GOS_PGO_PROFILE=<merged.profdata>` feeds a previously collected and
+    `llvm-profdata`-merged profile into `opt --pgo-kind=pgo-instr-use-pipeline`.
+  The `gos build` command prints the three-step workflow on first use.
+- **Binary size reduction for `gos build`.**
+  Release builds now strip all symbols and dead sections (`-Wl,--gc-sections`
+  on Linux, `-dead_strip` on macOS). Debug builds without `-g` strip only
+  debug sections, keeping symbol names for crash reports. Brings the
+  Cranelift-generated binary floor down ~75%.
+- Github Actions tests do not fail fast.
 ## 0.1.8
 
 ### Fixes
@@ -88,6 +160,7 @@
   at every call site across seven test files (`aggregate_print_fallback`,
   `cli`, `format_precision_parity`, `memory_growth_bounded`, `parity`,
   `release_stability`, `stdout_concurrent_print`).
+
 
 ## 0.1.3
 

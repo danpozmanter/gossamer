@@ -35,6 +35,9 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_string_view",         // helper used inside other helpers
     "gos_rt_vec_sanity_check",    // debug-only assertion helper
     "gos_rt_static_set_str_rust", // safe Rust API mirror
+    // GC internals — called from vec_free and other runtime helpers,
+    // never emitted from MIR.
+    "gos_rt_gc_deregister",
     // FFI / Rust-binding helpers — declared in c_abi.rs for external
     // callers (Rust bindings, runtime tests) but never lowered from
     // MIR. AOT codegen does not need to dispatch them.
@@ -123,20 +126,36 @@ fn dispatched_helpers(src: &str) -> BTreeSet<String> {
 
 #[test]
 fn every_runtime_helper_has_llvm_declaration_or_prefix_handler() {
-    // Mirror of the AOT cranelift parity test, but for LLVM emit.
-    // LLVM declares helpers up-front in a static prelude block;
-    // anything declared in `c_abi.rs` but missing from
-    // `emit.rs`'s declaration list is silently lowered to a
-    // typed-zero stub at link time, mirroring the cranelift bug.
+    // After ABI Phase 5 the LLVM backend declares runtime symbols
+    // lazily via per-function `declare_rt()` calls in `lower.rs`
+    // rather than emitting a single static prelude. We therefore
+    // scan BOTH `emit.rs` and `lower.rs` for `gos_rt_` references.
+    //
+    // Symbols classified as `Tier::Cranelift` in the ABI registry
+    // are never called by the LLVM backend and need no declaration;
+    // we skip them here. Symbols absent from the registry but also
+    // absent from LLVM source must appear in `RUST_ONLY`.
     let runtime = read_to_string(RUNTIME_PATH);
-    let llvm = read_to_string("../gossamer-codegen-llvm/src/emit.rs");
+    let llvm_emit = read_to_string("../gossamer-codegen-llvm/src/emit.rs");
+    let llvm_lower = read_to_string("../gossamer-codegen-llvm/src/lower.rs");
     let declared = declared_helpers(&runtime);
-    let dispatched = dispatched_helpers(&llvm);
+    let mut llvm_dispatched = dispatched_helpers(&llvm_emit);
+    llvm_dispatched.extend(dispatched_helpers(&llvm_lower));
+
+    // Build a set of Cranelift-only symbol names from the typed
+    // ABI registry. These legitimately have no LLVM declaration.
+    let cranelift_only: BTreeSet<&str> = gossamer_abi::REGISTRY
+        .iter()
+        .filter(|e| e.tier == gossamer_abi::Tier::Cranelift)
+        .map(|e| e.name)
+        .collect();
+
     let missing: Vec<&String> = declared
         .iter()
-        .filter(|name| !dispatched.contains(name.as_str()))
+        .filter(|name| !llvm_dispatched.contains(name.as_str()))
         .filter(|name| !PREFIX_HANDLED.iter().any(|p| name.starts_with(p)))
         .filter(|name| !RUST_ONLY.contains(&name.as_str()))
+        .filter(|name| !cranelift_only.contains(name.as_str()))
         .collect();
     if !missing.is_empty() {
         let names = missing
@@ -146,8 +165,9 @@ fn every_runtime_helper_has_llvm_declaration_or_prefix_handler() {
             .join("\n");
         panic!(
             "{} runtime helper(s) declared in c_abi.rs have no LLVM \
-             declaration in emit.rs:\n{names}\n\nFix: add `\"declare …\"` \
-             entries to the prelude in `crates/gossamer-codegen-llvm/src/emit.rs`.",
+             reference in emit.rs or lower.rs (and are not Cranelift-only):\n\
+             {names}\n\nFix: add a `declare_rt()` call in lower.rs, or add \
+             the symbol to `RUST_ONLY` if it is never called from MIR.",
             missing.len(),
         );
     }

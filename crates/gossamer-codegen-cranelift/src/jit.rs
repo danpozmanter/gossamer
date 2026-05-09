@@ -103,6 +103,58 @@ impl Drop for JitArtifact {
     }
 }
 
+/// Returns the names of user-defined bodies called by `body`.
+fn body_user_calls<'a>(
+    body: &'a Body,
+    all_names: &std::collections::HashSet<&str>,
+) -> Vec<&'a str> {
+    use gossamer_mir::{ConstValue, Operand, Terminator};
+    let mut calls = Vec::new();
+    for block in &body.blocks {
+        let Terminator::Call { callee, .. } = &block.terminator else {
+            continue;
+        };
+        let Operand::Const(ConstValue::Str(name)) = callee else {
+            continue;
+        };
+        if all_names.contains(name.as_str()) {
+            calls.push(name.as_str());
+        }
+    }
+    calls
+}
+
+/// Computes the minimal set of body names needed in the JIT module.
+///
+/// Starts from bodies whose param/return types support JIT promotion
+/// (scalar scalars only), then BFS-expands to include every user body
+/// they transitively call — those need to be compiled too so that
+/// intra-module call references resolve at finalize time.
+fn jit_compile_set<'a>(bodies: &'a [Body], tcx: &TyCtxt) -> std::collections::HashSet<&'a str> {
+    let all_names: std::collections::HashSet<&str> =
+        bodies.iter().map(|b| b.name.as_str()).collect();
+    let body_map: HashMap<&str, &Body> = bodies.iter().map(|b| (b.name.as_str(), b)).collect();
+
+    let mut included: std::collections::HashSet<&str> = bodies
+        .iter()
+        .filter(|b| body_kinds(b, tcx).is_some())
+        .map(|b| b.name.as_str())
+        .collect();
+
+    let mut worklist: Vec<&str> = included.iter().copied().collect();
+    while let Some(name) = worklist.pop() {
+        let Some(body) = body_map.get(name) else {
+            continue;
+        };
+        for callee in body_user_calls(body, &all_names) {
+            if included.insert(callee) {
+                worklist.push(callee);
+            }
+        }
+    }
+    included
+}
+
 /// Compiles every body in `bodies` through cranelift-jit and returns
 /// the resulting handle table. Functions whose codegen path errors,
 /// or whose ABI shape is not supported by the dispatch trampoline,
@@ -122,22 +174,39 @@ pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
     runtime_symbol_set.extend(leaked_binding_names);
     let mut module = JITModule::new(builder);
 
+    // Pre-filter: only compile bodies reachable from JIT-promotable roots.
+    // Bodies whose param/return types can't be marshalled through the
+    // trampoline (aggregates, closures) will never be promoted — compiling
+    // them wastes Cranelift IR capacity and inflates peak RSS.  The BFS
+    // below finds the transitive closure of user-function calls from the
+    // promotable roots so inter-body calls inside the compiled set resolve.
+    let compile_set = jit_compile_set(bodies, tcx);
+    // Clone only the bodies we'll actually compile. Skipping bodies
+    // that can never be promoted (aggregate params/returns) saves
+    // tens of megabytes of peak RSS without affecting correctness —
+    // the bytecode VM handles any body the JIT doesn't cover.
+    let filtered: Vec<Body> = bodies
+        .iter()
+        .filter(|b| compile_set.contains(b.name.as_str()))
+        .cloned()
+        .collect();
+
     // Rename the user's `main` to `gos_main` in the JIT's symbol
     // table. The host binary already exports `main` (the Rust
     // runtime's entry point); declaring a second `Linkage::Local`
     // `main` produced flaky SIGILLs on bring-up. The lookup map
     // we hand back to the VM keeps the original Gossamer name as
     // the key, so dispatch is unaffected.
-    let lowered = lower_program(&mut module, bodies, tcx, Some("gos_main"))?;
+    let lowered = lower_program(&mut module, &filtered, tcx, Some("gos_main"))?;
 
     module
         .finalize_definitions()
         .map_err(|e| anyhow!("jit finalize: {e}"))?;
 
     let body_name_set: std::collections::HashSet<&str> =
-        bodies.iter().map(|b| b.name.as_str()).collect();
+        filtered.iter().map(|b| b.name.as_str()).collect();
     let mut functions = HashMap::new();
-    for body in bodies {
+    for body in &filtered {
         let Some(id) = lowered.function_ids_by_name.get(&body.name).copied() else {
             continue;
         };
@@ -558,6 +627,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_gc_shadow_restore"   => gc::gos_rt_gc_shadow_restore,
         "gos_rt_gc_collect_with_stack_roots"
                                      => gc::gos_rt_gc_collect_with_stack_roots,
+        "gos_rt_gc_deregister"       => rt::gos_rt_gc_deregister,
         "gos_rt_gc_reset"            => rt::gos_rt_gc_reset,
         "gos_rt_arena_save"          => rt::gos_rt_arena_save,
         "gos_rt_arena_restore"       => rt::gos_rt_arena_restore,
@@ -595,12 +665,10 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_bool_to_str"         => rt::gos_rt_bool_to_str,
         "gos_rt_char_to_str"         => rt::gos_rt_char_to_str,
         // Block-write helpers used by `Stream::write_byte_array`
-        // (the codegen emits this in fasta's repeat-fasta loop
-        // for the bulk per-line dump).
+        // for bulk per-line byte dumps.
         "gos_rt_stream_write_byte_array" => rt::gos_rt_stream_write_byte_array,
-        // Heap-allocated i64 vector — `I64Vec` in source. Used
-        // by fasta's section-TWO/THREE workers as the shared
-        // scratch buffer.
+        // Heap-allocated i64 vector — `I64Vec` in source.
+        // Used as a shared scratch buffer by goroutine workers.
         "gos_rt_heap_i64_new"        => rt::gos_rt_heap_i64_new,
         "gos_rt_heap_i64_free"       => rt::gos_rt_heap_i64_free,
         "gos_rt_heap_i64_get"        => rt::gos_rt_heap_i64_get,
@@ -610,7 +678,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
                                      => rt::gos_rt_heap_i64_write_lines_to_stdout,
         "gos_rt_heap_i64_write_bytes_to_stdout"
                                      => rt::gos_rt_heap_i64_write_bytes_to_stdout,
-        // U8Vec — 1-byte-per-element heap vec for fasta-shape
+        // U8Vec — 1-byte-per-element heap vec for byte-oriented
         // scratch buffers. Same shape as the i64 family but
         // with byte-aligned storage.
         "gos_rt_heap_u8_new"         => rt::gos_rt_heap_u8_new,
@@ -623,8 +691,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
                                      => rt::gos_rt_heap_u8_write_lines_to_stdout,
         "gos_rt_heap_u8_write_bytes_to_stdout"
                                      => rt::gos_rt_heap_u8_write_bytes_to_stdout,
-        // Sync primitives + LCG jump used by the goroutine
-        // worker pattern in fasta / nbody.
+        // Sync primitives + LCG jump used by goroutine
+        // worker patterns.
         "gos_rt_mutex_new"           => rt::gos_rt_mutex_new,
         "gos_rt_mutex_lock"          => rt::gos_rt_mutex_lock,
         "gos_rt_mutex_unlock"        => rt::gos_rt_mutex_unlock,

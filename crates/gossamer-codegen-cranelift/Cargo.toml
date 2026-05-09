@@ -42,6 +42,7 @@ collapsible_if = "allow"
 
 [dependencies]
 anyhow = { workspace = true }
+gossamer-abi = { workspace = true }
 cranelift-codegen = "0.123"
 cranelift-frontend = "0.123"
 cranelift-jit = "0.123"

@@ -1190,6 +1190,23 @@ fn jit_threshold_override() -> Option<i32> {
 }
 
 impl FnChunk {
+    /// Releases excess Vec capacity after compilation is complete.
+    ///
+    /// `compile_fn` grows the Vec fields incrementally; this trims
+    /// each one to its occupied length so the chunk holds no wasted
+    /// allocation beyond what the bytecode actually requires.
+    pub fn compact(&mut self) {
+        self.instrs.shrink_to_fit();
+        self.wide_ops.shrink_to_fit();
+        self.consts.shrink_to_fit();
+        self.f64_consts.shrink_to_fit();
+        self.i64_consts.shrink_to_fit();
+        self.globals.shrink_to_fit();
+        self.deferred_exprs.shrink_to_fit();
+        self.deferred_envs.shrink_to_fit();
+        self.deferred_env_regs.shrink_to_fit();
+    }
+
     /// Produces a `Arc<Self>` so multiple callers share the same chunk.
     #[must_use]
     #[allow(

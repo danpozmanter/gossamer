@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+gossamer-abi = { workspace = true }
 gossamer-mir = { workspace = true }
 gossamer-types = { workspace = true }
 gossamer-runtime = { workspace = true }

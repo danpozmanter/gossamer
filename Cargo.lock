@@ -1121,8 +1121,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "gossamer-abi"
+version = "0.2.0"
+
+[[package]]
 name = "gossamer-ast"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1130,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-codegen-cranelift",
  "gossamer-interp",
@@ -1143,11 +1147,12 @@ dependencies = [
 
 [[package]]
 name = "gossamer-cli"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
  "clap_complete",
+ "gossamer-abi",
  "gossamer-ast",
  "gossamer-codegen-llvm",
  "gossamer-diagnostics",
@@ -1169,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1178,6 +1183,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "gossamer-abi",
  "gossamer-ast",
  "gossamer-hir",
  "gossamer-lex",
@@ -1191,9 +1197,10 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-llvm"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
+ "gossamer-abi",
  "gossamer-lex",
  "gossamer-mir",
  "gossamer-runtime",
@@ -1202,14 +1209,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1220,7 +1227,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-driver"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1243,11 +1250,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-gc"
-version = "0.1.8"
+version = "0.2.0"
 
 [[package]]
 name = "gossamer-hir"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1258,7 +1265,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
@@ -1278,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "insta",
  "parking_lot",
@@ -1288,7 +1295,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lint"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1298,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lsp"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1311,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mir"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-hir",
@@ -1323,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1333,7 +1340,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "rustls",
  "rustls-pki-types",
@@ -1344,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-resolve"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1356,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runner-template"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "syn",
  "toml",
@@ -1364,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
@@ -1386,14 +1393,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-sched"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1432,7 +1439,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-types"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -3358,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "gossamer-lint",

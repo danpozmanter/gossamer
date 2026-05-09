@@ -76,10 +76,10 @@ impl LinkOptions {
         self.release && !self.dynamic && cfg!(target_os = "linux") && MUSL_RUNTIME_LIB.is_some()
     }
 
-    /// Whether to pass `-Wl,--strip-all` to the linker. Stripping
-    /// only kicks in for release builds without `-g`.
+    /// Whether to strip symbols from the linked binary. Enabled
+    /// unless the user explicitly requested debug info via `-g`.
     fn want_strip(self) -> bool {
-        self.release && !self.debug_info
+        !self.debug_info
     }
 }
 
@@ -340,6 +340,17 @@ fn try_native_build(
     if let Some(p) = bindings_archive {
         extra_archives.push(p);
     }
+    // PGO collect mode: the LLVM mid-end emits instrumented IR that
+    // calls `__llvm_profile_write_file()` on exit. That symbol lives
+    // in `libclang_rt.profile-x86_64.a`; without it the link fails
+    // with undefined reference. We locate the archive next to the
+    // LLVM toolchain and splice it into the link as an extra archive.
+    let pgo_collect = std::env::var("GOS_PGO_COLLECT").ok();
+    if pgo_collect.is_some() && opts.release {
+        if let Some(proflib) = find_clang_rt_profile() {
+            extra_archives.push(proflib);
+        }
+    }
     let link_result = if cfg!(all(windows, target_env = "msvc")) {
         link_windows_msvc(&object_paths, &runtime_lib, &extra_archives, out_path)
     } else {
@@ -347,18 +358,70 @@ fn try_native_build(
     };
     let _ = fs::remove_dir_all(&tmp_dir);
     let _ = input_path;
-    link_result.map(|()| NativeBuildOutcome {
-        size: fs::metadata(out_path).map_or(0, |m| m.len()),
-        note: format!(
-            "target {triple}{tag}",
-            triple = object_triple.as_deref().unwrap_or("unknown"),
-            tag = if opts.want_static_musl() {
-                ", static-musl"
-            } else {
-                ""
-            },
-        ),
+    link_result.map(|()| {
+        if let Some(profraw) = &pgo_collect {
+            eprintln!(
+                "pgo: instrumented binary at {path}",
+                path = out_path.display()
+            );
+            eprintln!("pgo: run it, then:");
+            eprintln!("      llvm-profdata merge -output=default.profdata {profraw}");
+            eprintln!("      GOS_PGO_PROFILE=default.profdata gos build --release [PATH]");
+        }
+        NativeBuildOutcome {
+            size: fs::metadata(out_path).map_or(0, |m| m.len()),
+            note: format!(
+                "target {triple}{tag}{pgo}",
+                triple = object_triple.as_deref().unwrap_or("unknown"),
+                tag = if opts.want_static_musl() {
+                    ", static-musl"
+                } else {
+                    ""
+                },
+                pgo = if pgo_collect.is_some() {
+                    ", pgo-collect"
+                } else if std::env::var("GOS_PGO_PROFILE").is_ok() {
+                    ", pgo-guided"
+                } else {
+                    ""
+                },
+            ),
+        }
     })
+}
+
+/// Locates `libclang_rt.profile-x86_64.a` alongside the active LLVM
+/// toolchain. Needed when building an instrumented PGO binary
+/// (`GOS_PGO_COLLECT`): the runtime exports `__llvm_profile_write_file`
+/// which the instrumented IR calls on exit to flush raw profile data.
+fn find_clang_rt_profile() -> Option<PathBuf> {
+    // Common system paths for apt-installed LLVM on Debian/Ubuntu.
+    let arch_lib = if cfg!(target_arch = "x86_64") {
+        "libclang_rt.profile-x86_64.a"
+    } else if cfg!(target_arch = "aarch64") {
+        "libclang_rt.profile-aarch64.a"
+    } else {
+        return None;
+    };
+    let candidates = [
+        format!("/usr/lib/llvm-18/lib/clang/18/lib/linux/{arch_lib}"),
+        format!("/usr/lib/llvm-19/lib/clang/19/lib/linux/{arch_lib}"),
+        format!("/usr/lib/llvm-20/lib/clang/20/lib/linux/{arch_lib}"),
+        format!(
+            "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/lib/clang/18/lib/linux/{arch_lib}"
+        ),
+    ];
+    for c in &candidates {
+        let p = PathBuf::from(c);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    eprintln!(
+        "pgo: warning: {arch_lib} not found — instrumented binary may fail to link.\n\
+         Install `clang-18` or `llvm-18` to get the profile runtime."
+    );
+    None
 }
 
 /// Builds the per-project `libgos_static_bindings.a` if the
@@ -444,12 +507,23 @@ fn link_posix(
         cmd.arg("-Wl,--allow-multiple-definition");
     }
     if opts.want_strip() {
-        // macOS's ld doesn't recognise `--strip-all`; use the
-        // dead-strip + post-link `strip` invocation instead.
-        if cfg!(target_os = "macos") {
-            cmd.arg("-Wl,-dead_strip");
+        if opts.release {
+            // Release: remove all symbols + dead sections.
+            // macOS ld uses -dead_strip; strip runs after for -x.
+            if cfg!(target_os = "macos") {
+                cmd.arg("-Wl,-dead_strip");
+            } else {
+                cmd.arg("-Wl,--strip-all").arg("-Wl,--gc-sections");
+            }
         } else {
-            cmd.arg("-Wl,--strip-all").arg("-Wl,--gc-sections");
+            // Debug build without -g: remove debug sections only
+            // (symbol names survive for crash reports) and gc dead
+            // sections. Brings the 4 MB Cranelift floor down to ~1 MB.
+            if cfg!(target_os = "macos") {
+                cmd.arg("-Wl,-dead_strip");
+            } else {
+                cmd.arg("-Wl,--strip-debug").arg("-Wl,--gc-sections");
+            }
         }
     }
     match cmd.status() {

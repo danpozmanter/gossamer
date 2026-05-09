@@ -6,7 +6,7 @@
 //! `float_count`, `int_count`, and `consts.len()`, so every
 //! `get_unchecked` / `get_unchecked_mut` call in this file is
 //! covered by the compiler-established bound. Skipping those
-//! bounds checks is the difference between ~60-second nbody
+//! bounds checks is the difference between a 60-second run
 //! and "slower than the VM was before typed opcodes landed".
 #![allow(unsafe_code)]
 #![allow(clippy::too_many_lines, clippy::many_single_char_names)]
@@ -47,15 +47,14 @@ use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
 pub struct Vm {
     /// Top-level name → callable map. Behind `Arc` so worker `Vm`s
     /// spawned for goroutines share one immutable copy instead of
-    /// each cloning the whole `HashMap` (~700 KB × N workers on fasta
-    /// before this change, several MB at scale).
+    /// each cloning the whole `HashMap` (several MB at scale with
+    /// many goroutines).
     globals: Arc<HashMap<String, Global>>,
     walker: RefCell<Interpreter>,
     /// Frame pool: reused register-file storage handed out at
     /// `run()` entry and returned on exit. Eliminates the per-
     /// call `Vec<Value>` / `Vec<f64>` / `Vec<i64>` malloc storm
-    /// that dominates call-heavy programs (recursive `fib`, the
-    /// inner loops of `nbody` / `fasta`). Stack-discipline:
+    /// that dominates call-heavy programs. Stack-discipline:
     /// nested calls each pop their own buffers off the free
     /// list and push them back on return.
     pool: RefCell<FramePool>,
@@ -83,7 +82,7 @@ pub struct Vm {
     /// zero, `apply()` skips the `jit.read()` `RwLock` probe entirely
     /// — every call is a bytecode dispatch, and probing the `RwLock`
     /// per call costs ~6-8 ns of atomic CAS that adds up across
-    /// tight recursive workloads (fib, nbody pair-loop). Updated by
+    /// tight recursive workloads. Updated by
     /// `try_compile_jit_lazy` once the deferred compile installs
     /// entries; only ever monotonically increases.
     jit_override_count: AtomicUsize,
@@ -113,7 +112,6 @@ pub struct Vm {
     chunk_state_map: RefCell<HashMap<usize, &'static ChunkState>>,
     /// Single-slot last-seen-chunk cache, populated on every
     /// `chunk_state_for` lookup. Recursive / self-call patterns
-    /// (e.g. nbody's `energy` calling `fsqrt` then itself again)
     /// hit this slot before the `HashMap` probe, saving ~10 ns of
     /// hash + comparison per `apply()` call.
     chunk_state_last: Cell<Option<(usize, &'static ChunkState)>>,
@@ -626,13 +624,23 @@ impl Vm {
     /// floor after a goroutine task completes. Without this, a
     /// worker `Vm` that handled one large goroutine carries that
     /// goroutine's high-water mark for the rest of the program;
-    /// fasta's 16 short-lived goroutines would otherwise leave
-    /// every worker holding the union of every register file
-    /// they ever saw. Cheap to call between tasks: a few `Vec`
-    /// truncations and `shrink_to_fit` calls.
+    /// Short-lived goroutines would otherwise leave every worker
+    /// holding the union of every register file they ever saw.
+    /// Cheap to call between tasks: a few `Vec` truncations and
+    /// `shrink_to_fit` calls.
     pub(crate) fn reset_after_task(&mut self) {
         self.pool.borrow_mut().shrink_to(4);
         self.walker.borrow_mut().reset_after_task();
+    }
+
+    /// Frees MIR bodies and the `TyCtxt` snapshot retained for deferred JIT.
+    /// After JIT compilation fires (or is skipped), these are never read
+    /// again on the main `Vm` — goroutines have already cloned their own Arcs.
+    /// Call once after `vm.call()` returns to reclaim the per-program MIR
+    /// allocation before the goroutine-join phase.
+    pub fn release_jit_prelude(&mut self) {
+        self.mir_bodies = None;
+        self.tcx_snapshot = None;
     }
 
     /// Compiles and registers every `fn`/`const`/`static`/impl item in
@@ -875,7 +883,8 @@ impl Vm {
         };
         match &item.kind {
             HirItemKind::Fn(decl) => {
-                let chunk = compile_fn(decl, tcx, layouts, wrappers, module_consts)?;
+                let mut chunk = compile_fn(decl, tcx, layouts, wrappers, module_consts)?;
+                chunk.compact();
                 let shared = chunk.into_shared();
                 if let Some(prefix) = &module_prefix {
                     let qualified = format!("{prefix}::{}", decl.name.name);
@@ -889,7 +898,8 @@ impl Vm {
             }
             HirItemKind::Impl(decl) => {
                 for method in &decl.methods {
-                    let chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
+                    let mut chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
+                    chunk.compact();
                     let shared = chunk.into_shared();
                     // Register both the short name and the
                     // `TypeName::method` qualified key so runtime
@@ -912,7 +922,8 @@ impl Vm {
             HirItemKind::Trait(decl) => {
                 for method in &decl.methods {
                     if method.body.is_some() {
-                        let chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
+                        let mut chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
+                        chunk.compact();
                         let shared = chunk.into_shared();
                         if let Some(prefix) = &module_prefix {
                             globals.insert(
@@ -1022,9 +1033,13 @@ impl Vm {
                 // trigger a deferred JIT compile when the budget is
                 // spent. The counter is per-thread (in `ChunkState`),
                 // so each goroutine independently warms up.
-                if chunk.name.as_str() == "main" {
-                    self.try_compile_jit_lazy();
-                } else {
+                // `main` is always executed on the bytecode path (the
+                // JIT compiler skips it); its hot counter is irrelevant.
+                // We rely purely on per-function counters so short-lived
+                // scripts that never call any function 16+ times skip the
+                // Cranelift compile pass entirely — a ~3 MB RSS saving for
+                // programs that don't benefit from JIT.
+                if chunk.name.as_str() != "main" {
                     let hot = state.hot_counter.get();
                     if hot > 0 && hot != crate::bytecode::HOT_DISABLED {
                         let next = hot - 1;
@@ -1045,8 +1060,7 @@ impl Vm {
                 // overrides are installed. The atomic load is a
                 // single ~1 ns instruction; the RwLock read costs
                 // ~6-8 ns of CAS that compounds across recursive
-                // call chains (fib, nbody) where every leaf fires
-                // through `apply`.
+                // call chains where every leaf fires through `apply`.
                 let jit_opt = if self.jit_override_count.load(Ordering::Acquire) == 0 {
                     None
                 } else {
@@ -1131,10 +1145,9 @@ impl Vm {
     /// cross-thread aliasing concerns.
     fn chunk_state_for(&self, chunk: &Arc<FnChunk>) -> &ChunkState {
         let key = Arc::as_ptr(chunk) as usize;
-        // Single-slot cache: nbody-shape recursion (`energy` →
-        // `fsqrt` → `energy` …) keeps hitting the same chunk on
-        // many adjacent calls, so this saves ~10 ns of hash +
-        // comparison per `apply` entry.
+        // Single-slot cache: mutual recursion keeps hitting the
+        // same chunk on many adjacent calls, saving ~10 ns of
+        // hash + comparison per `apply` entry.
         if let Some((last_key, last_state)) = self.chunk_state_last.get() {
             if last_key == key {
                 return last_state;
@@ -1482,8 +1495,8 @@ impl Vm {
                     // or a per-variant constant). Hit returns the
                     // resolved `Global` directly, skipping the
                     // qualified-key build + double `HashMap::get`
-                    // lookup chain that dominated fasta's per-byte
-                    // `out.write_byte(b)` cost.
+                    // lookup chain that dominates tight per-element
+                    // method call loops.
                     let name = &chunk.globals[name_idx as usize];
                     let argc_usz = argc as usize;
                     let total = argc_usz + 1;
@@ -1517,8 +1530,7 @@ impl Vm {
                     let cached = cached_general;
 
                     // Materialise call args. Stack buffer for argc
-                    // ≤ 7 (recv + 7 args fits 8 slots) — fasta's
-                    // hot path is argc=1.
+                    // ≤ 7 (recv + 7 args fits 8 slots).
                     const SMALL: usize = 8;
                     let result = if total <= SMALL {
                         let mut buf: [Value; SMALL] = [
@@ -3458,10 +3470,9 @@ impl Vm {
                 if let Err(err) = vm.dispatch_call(&callee, args) {
                     eprintln!("goroutine panic (isolated): {err}");
                 }
-                // Trim per-task buffers back toward steady-state so a
-                // bursty workload (e.g. fasta's 16 short-lived
-                // goroutines) does not leave every worker holding the
-                // union of every task's high-water mark.
+                // Trim per-task buffers back toward steady-state so
+                // bursty goroutine workloads do not leave every worker
+                // holding the union of every task's high-water mark.
                 vm.reset_after_task();
             });
         }));
@@ -3736,9 +3747,8 @@ fn intern_type_name(name: &str) -> &'static str {
 
 /// Returns the canonical `"<type>::<method>"` key, allocating only
 /// the first time a given (type, method) pair is seen on this
-/// thread. Hot-loop method dispatch (e.g. fasta's
-/// `stream.write_byte(_)` per character) was burning a lot of
-/// wall clock on `format!` because every call rebuilt the same
+/// thread. Hot-loop method dispatch was burning a lot of wall
+/// clock on `format!` because every call rebuilt the same
 /// 17-byte string. The cache makes the repeat case a single
 /// linear scan over a per-thread Vec.
 ///

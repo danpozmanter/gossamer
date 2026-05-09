@@ -11,6 +11,24 @@ use gossamer_types::TyCtxt;
 
 use crate::lower::{Lowerer, StringPool};
 
+/// LLVM IR strings that must appear in the module header but are
+/// not emitted through `declare_rt()`: LLVM built-in intrinsics,
+/// libc `malloc`, the stdout globals, and the three runtime symbols
+/// called directly by the C `@main` shim (which is hardcoded in
+/// `render_module_inner` rather than lowered from a MIR body).
+const LLVM_SPECIAL_DECLS: &[&str] = &[
+    "declare ptr @malloc(i64)",
+    "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)",
+    "declare void @llvm.lifetime.start.p0(i64, ptr)",
+    "declare void @llvm.lifetime.end.p0(i64, ptr)",
+    "@GOS_RT_STDOUT_BYTES = external local_unnamed_addr global [8192 x i8]",
+    "@GOS_RT_STDOUT_LEN = external local_unnamed_addr global i64",
+    // Called directly by the @main shim — not reachable via declare_rt().
+    "declare void @gos_rt_set_args(i32, ptr)",
+    "declare void @gos_rt_flush_stdout()",
+    "declare i32 @gos_rt_main_exit_code(i64)",
+];
+
 /// Parallel to `gossamer-codegen-cranelift::NativeObject`.
 #[derive(Debug, Clone)]
 pub struct NativeObject {
@@ -152,7 +170,7 @@ fn render_module_inner(
     }
     writeln!(out).unwrap();
 
-    for d in RUNTIME_DECLARATIONS {
+    for d in LLVM_SPECIAL_DECLS {
         writeln!(out, "{d}").unwrap();
     }
     writeln!(out).unwrap();
@@ -674,10 +692,29 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
         // `disable-memmove-idiom` flags exist but no longer take
         // effect under LLVM 18's new pass manager — see the §5
         // release-perf investigation in the bench-game audit.
-        .arg("--disable-loop-idiom-all")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&opt_path);
+        .arg("--disable-loop-idiom-all");
+    // PGO instrumentation mode: `GOS_PGO_COLLECT=<output.profraw>`
+    // builds an instrumented binary that emits raw profile data when
+    // the program exits. Link with `libclang_rt.profile-x86_64.a`
+    // (handled in `gossamer-cli/src/cmd/build.rs`); merge the
+    // resulting `.profraw` with `llvm-profdata merge -output=...`.
+    if let Ok(profraw) = std::env::var("GOS_PGO_COLLECT") {
+        opt_cmd
+            .arg("--pgo-kind=pgo-instr-gen-pipeline")
+            .arg(format!("--pgo-test-profile-file={profraw}"));
+    }
+    // PGO optimisation mode: `GOS_PGO_PROFILE=<merged.profdata>`
+    // feeds a previously collected and merged profile into the `opt`
+    // mid-end so branch weights, inlining thresholds, and the loop /
+    // SLP vectorisers are guided by real execution frequencies.
+    // Typical speedup: 5–10% on compute-heavy workloads. The two
+    // modes are mutually exclusive; setting both is undefined.
+    if let Ok(profdata) = std::env::var("GOS_PGO_PROFILE") {
+        opt_cmd
+            .arg("--pgo-kind=pgo-instr-use-pipeline")
+            .arg(format!("--profile-file={profdata}"));
+    }
+    opt_cmd.arg(&ll_path).arg("-o").arg(&opt_path);
     let opt_output = run_with_timeout(opt_cmd, opt_timeout(), "opt")
         .with_context(|| format!("spawn {}", opt_tool.display()))?;
     if !opt_output.status.success() {
@@ -901,463 +938,6 @@ fn host_triple() -> String {
         .map_or_else(|| "x86_64".to_string(), |s| s.trim().to_string());
     format!("{arch}-unknown-linux-gnu")
 }
-
-/// Declarations for every runtime symbol the lowerer might
-/// reach by name. LLVM wants a declaration before any use.
-/// Redundant declarations are harmless; missing ones surface
-/// as `llc: error: use of undefined value`. Kept in loose
-/// sync with the exported symbols in `gossamer-runtime::c_abi`.
-pub(crate) const RUNTIME_DECLARATIONS: &[&str] = &[
-    // Program entry / control.
-    "declare void @gos_rt_set_args(i32, ptr)",
-    "declare void @gos_rt_flush_stdout()",
-    "declare void @gos_rt_panic(ptr)",
-    "declare void @gos_rt_exit(i32)",
-    // Stdout buffer lock — paired around every inline byte-write
-    // region the lowerer emits so multi-thread output stays
-    // serialised against `@GOS_RT_STDOUT_LEN`.
-    "declare void @gos_rt_stdout_acquire()",
-    "declare void @gos_rt_stdout_release()",
-    // Prelude printers.
-    "declare void @gos_rt_print_str(ptr)",
-    "declare void @gos_rt_println()",
-    "declare void @gos_rt_print_i64(i64)",
-    "declare void @gos_rt_print_u64(i64)",
-    "declare void @gos_rt_eprint_str(ptr)",
-    "declare void @gos_rt_eprintln()",
-    "declare void @gos_rt_print_f64(double)",
-    "declare void @gos_rt_print_bool(i32)",
-    "declare void @gos_rt_print_char(i32)",
-    // Argv / stdin helpers.
-    "declare ptr @gos_rt_os_args()",
-    // Time / runtime cooperation.
-    "declare double @gos_rt_time_now()",
-    "declare i64 @gos_rt_now_ns()",
-    "declare i64 @gos_rt_time_now_ms()",
-    "declare void @gos_rt_sleep_ns(i64)",
-    "declare void @gos_rt_go_yield()",
-    // Math (f64 -> f64) — preferred for cross-backend parity;
-    // the LLVM frontend may also emit `llvm.sqrt.f64` etc.
-    // directly through the math-intrinsic short-path.
-    "declare double @gos_rt_math_sqrt(double)",
-    "declare double @gos_rt_math_sin(double)",
-    "declare double @gos_rt_math_cos(double)",
-    "declare double @gos_rt_math_log(double)",
-    "declare double @gos_rt_math_exp(double)",
-    "declare double @gos_rt_math_abs(double)",
-    "declare double @gos_rt_math_floor(double)",
-    "declare double @gos_rt_math_ceil(double)",
-    "declare double @gos_rt_math_pow(double, double)",
-    // Length / indexing.
-    "declare i64 @gos_rt_arr_len(ptr)",
-    "declare ptr @gos_rt_arr_iter(ptr)",
-    "declare ptr @gos_rt_arr_iter_next(ptr)",
-    "declare void @gos_rt_arr_iter_free(ptr)",
-    "declare i64 @gos_rt_len(ptr)",
-    "declare i64 @gos_rt_str_len(ptr)",
-    "declare i64 @gos_rt_str_byte_at(ptr, i64)",
-    "declare ptr @gos_rt_str_substring(ptr, i64, i64)",
-    "declare ptr @gos_rt_os_read_dir(ptr)",
-    // String constructors / mutation.
-    "declare ptr @gos_rt_str_concat(ptr, ptr)",
-    "declare ptr @gos_rt_str_trim(ptr)",
-    "declare ptr @gos_rt_str_to_upper(ptr)",
-    "declare ptr @gos_rt_str_to_lower(ptr)",
-    "declare i32 @gos_rt_str_contains(ptr, ptr)",
-    "declare i32 @gos_rt_str_starts_with(ptr, ptr)",
-    "declare i32 @gos_rt_str_ends_with(ptr, ptr)",
-    "declare i64 @gos_rt_str_find(ptr, ptr)",
-    "declare ptr @gos_rt_str_find_opt(ptr, ptr)",
-    "declare ptr @gos_rt_str_replace(ptr, ptr, ptr)",
-    "declare ptr @malloc(i64)",
-    "declare ptr @gos_rt_vec_new(i32)",
-    "declare ptr @gos_rt_vec_with_capacity(i32, i64)",
-    "declare i64 @gos_rt_vec_len(ptr)",
-    "declare void @gos_rt_vec_push(ptr, ptr)",
-    "declare void @gos_rt_vec_push_i64(ptr, i64)",
-    "declare ptr @gos_rt_vec_get_ptr(ptr, i64)",
-    "declare i32 @gos_rt_vec_pop(ptr, ptr)",
-    "declare ptr @gos_rt_vec_slice(ptr, i64, i64)",
-    // Errors module.
-    "declare ptr @gos_rt_error_new(ptr)",
-    "declare ptr @gos_rt_error_wrap(ptr, ptr)",
-    "declare ptr @gos_rt_error_message(ptr)",
-    "declare ptr @gos_rt_error_cause(ptr)",
-    "declare i8 @gos_rt_error_is(ptr, ptr)",
-    "declare ptr @gos_rt_errors_join_vec(ptr)",
-    // Regex module.
-    "declare ptr @gos_rt_regex_compile(ptr)",
-    "declare i8 @gos_rt_regex_is_match(ptr, ptr)",
-    "declare ptr @gos_rt_regex_find(ptr, ptr)",
-    "declare ptr @gos_rt_regex_find_opt(ptr, ptr)",
-    "declare ptr @gos_rt_regex_captures(ptr, ptr)",
-    "declare ptr @gos_rt_regex_find_all(ptr, ptr)",
-    "declare ptr @gos_rt_regex_captures_all(ptr, ptr)",
-    "declare ptr @gos_rt_regex_replace_all(ptr, ptr, ptr)",
-    "declare ptr @gos_rt_regex_split(ptr, ptr)",
-    // fs / path.
-    "declare ptr @gos_rt_fs_read_to_string(ptr)",
-    "declare i64 @gos_rt_fs_write(ptr, ptr)",
-    "declare i64 @gos_rt_fs_create_dir_all(ptr)",
-    "declare ptr @gos_rt_path_join(ptr, ptr)",
-    // flag::Set.
-    "declare ptr @gos_rt_flag_set_new(ptr)",
-    "declare ptr @gos_rt_flag_set_string(ptr, ptr, ptr, ptr)",
-    "declare ptr @gos_rt_flag_set_int(ptr, ptr, i64, ptr)",
-    "declare ptr @gos_rt_flag_set_uint(ptr, ptr, i64, ptr)",
-    "declare ptr @gos_rt_flag_set_float(ptr, ptr, double, ptr)",
-    "declare ptr @gos_rt_flag_set_bool(ptr, ptr, i8, ptr)",
-    "declare ptr @gos_rt_flag_set_duration(ptr, ptr, i64, ptr)",
-    "declare ptr @gos_rt_flag_set_string_list(ptr, ptr, ptr)",
-    "declare void @gos_rt_flag_set_short(ptr, i64)",
-    "declare ptr @gos_rt_flag_set_usage(ptr)",
-    "declare ptr @gos_rt_flag_set_parse(ptr, ptr)",
-    "declare i64 @gos_rt_duration_from_secs(i64)",
-    "declare i64 @gos_rt_duration_from_millis(i64)",
-    "declare ptr @gos_rt_time_format_rfc3339(i64)",
-    "declare ptr @gos_rt_flag_parse(ptr)",
-    "declare ptr @gos_rt_flag_map_get(ptr, ptr)",
-    "declare ptr @gos_rt_os_env(ptr)",
-    "declare ptr @gos_rt_os_cwd()",
-    "declare ptr @gos_rt_fs_list_dir(ptr)",
-    "declare ptr @gos_rt_fs_walk_dir(ptr)",
-    "declare ptr @gos_rt_exec_run(ptr, ptr)",
-    "declare i64 @gos_rt_os_exists(ptr)",
-    "declare i64 @gos_rt_os_is_file(ptr)",
-    "declare i64 @gos_rt_os_is_dir(ptr)",
-    "declare i64 @gos_rt_os_remove_file(ptr)",
-    "declare ptr @gos_rt_result_map_bare(ptr, i64)",
-    "declare ptr @gos_rt_result_map_err_bare(ptr, i64)",
-    "declare ptr @gos_rt_os_write_file_result(ptr, ptr)",
-    "declare ptr @gos_rt_os_mkdir_all_result(ptr)",
-    "declare ptr @gos_rt_os_remove_file_result(ptr)",
-    "declare ptr @gos_rt_os_remove_dir_all_result(ptr)",
-    "declare ptr @gos_rt_http_stream(ptr, ptr, ptr, ptr)",
-    "declare ptr @gos_rt_http_get(ptr, ptr)",
-    "declare ptr @gos_rt_http_stream_next_line(ptr)",
-    // bufio::Scanner.
-    "declare ptr @gos_rt_bufio_scanner_new(ptr)",
-    "declare i8 @gos_rt_bufio_scanner_scan(ptr)",
-    "declare ptr @gos_rt_bufio_scanner_text(ptr)",
-    // http client.
-    "declare ptr @gos_rt_http_client_new()",
-    "declare ptr @gos_rt_http_client_get(ptr, ptr)",
-    "declare ptr @gos_rt_http_client_post(ptr, ptr)",
-    "declare ptr @gos_rt_http_request_header(ptr, ptr, ptr)",
-    "declare ptr @gos_rt_http_request_body(ptr, ptr)",
-    "declare ptr @gos_rt_http_request_send(ptr)",
-    "declare i64 @gos_rt_http_response_status(ptr)",
-    "declare ptr @gos_rt_http_response_body(ptr)",
-    "declare i64 @gos_rt_vec_get_i64(ptr, i64)",
-    "declare void @gos_rt_vec_set_i64(ptr, i64, i64)",
-    "declare ptr @gos_rt_vec_format_i64(ptr)",
-    "declare void @gos_rt_concat_init()",
-    "declare void @gos_rt_concat_str(ptr)",
-    "declare void @gos_rt_concat_i64(i64)",
-    "declare void @gos_rt_concat_u64(i64)",
-    "declare void @gos_rt_concat_f64(double)",
-    "declare void @gos_rt_concat_f64_prec(double, i64)",
-    "declare void @gos_rt_concat_bool(i32)",
-    "declare void @gos_rt_concat_char(i32)",
-    "declare ptr @gos_rt_concat_finish()",
-    "declare ptr @gos_rt_f64_prec_to_str(double, i64)",
-    "declare i32 @gos_rt_main_exit_code(i64)",
-    "declare ptr @gos_rt_result_new(i64, i64)",
-    "declare i64 @gos_rt_result_disc(ptr)",
-    "declare i64 @gos_rt_result_payload(ptr)",
-    "declare i64 @gos_rt_result_unwrap(ptr)",
-    "declare i64 @gos_rt_result_unwrap_or(ptr, i64)",
-    "declare i64 @gos_rt_result_ok(ptr)",
-    "declare i64 @gos_rt_result_err(ptr)",
-    "declare ptr @gos_rt_result_ok_or(ptr, i64)",
-    "declare i64 @gos_rt_result_is_ok(ptr)",
-    "declare i64 @gos_rt_result_is_err(ptr)",
-    "declare ptr @gos_rt_set_new()",
-    "declare i8 @gos_rt_set_insert(ptr, ptr)",
-    "declare i8 @gos_rt_set_contains(ptr, ptr)",
-    "declare i8 @gos_rt_set_remove(ptr, ptr)",
-    "declare i64 @gos_rt_set_len(ptr)",
-    "declare ptr @gos_rt_btmap_new()",
-    "declare void @gos_rt_btmap_insert(ptr, ptr, i64)",
-    "declare i64 @gos_rt_btmap_get_or(ptr, ptr, i64)",
-    "declare i64 @gos_rt_btmap_len(ptr)",
-    "declare ptr @gos_rt_btmap_keys(ptr)",
-    "declare ptr @gos_rt_str_as_bytes(ptr)",
-    "declare ptr @gos_rt_vec_clone(ptr)",
-    "declare void @gos_rt_http_response_set_header(ptr, ptr, ptr)",
-    "declare ptr @gos_rt_http_response_get_header(ptr, ptr)",
-    "declare void @gos_rt_http_request_set_header(ptr, ptr, ptr)",
-    "declare ptr @gos_rt_http_request_get_header(ptr, ptr)",
-    "declare ptr @gos_rt_http_request_path(ptr)",
-    "declare ptr @gos_rt_http_request_method(ptr)",
-    "declare ptr @gos_rt_http_request_query(ptr)",
-    "declare ptr @gos_rt_http_request_body_str(ptr)",
-    "declare ptr @gos_rt_http_response_text_new(i64, ptr)",
-    "declare ptr @gos_rt_http_response_json_new(i64, ptr)",
-    // gzip / slog / testing.
-    "declare ptr @gos_rt_gzip_encode(ptr)",
-    "declare ptr @gos_rt_gzip_decode(ptr)",
-    "declare void @gos_rt_slog_info(ptr)",
-    "declare void @gos_rt_slog_warn(ptr)",
-    "declare void @gos_rt_slog_error(ptr)",
-    "declare void @gos_rt_slog_debug(ptr)",
-    "declare i8 @gos_rt_testing_check(i8, ptr)",
-    "declare i8 @gos_rt_testing_check_eq_i64(i64, i64, ptr)",
-    "declare ptr @gos_rt_str_split(ptr, ptr)",
-    "declare ptr @gos_rt_str_lines(ptr)",
-    "declare ptr @gos_rt_str_repeat(ptr, i64)",
-    "declare i8 @gos_rt_str_eq(ptr, ptr)",
-    "declare i8 @gos_rt_str_is_empty(ptr)",
-    "declare i8 @gos_rt_len_is_zero(ptr)",
-    // Parsing / formatting.
-    "declare i64 @gos_rt_parse_i64(ptr, ptr)",
-    "declare ptr @gos_rt_parse_i64_result(ptr)",
-    "declare ptr @gos_rt_result_map_err(ptr, ptr)",
-    "declare ptr @gos_rt_result_map(ptr, ptr)",
-    "declare ptr @gos_rt_flag_cell_load_str(ptr)",
-    "declare i64 @gos_rt_flag_cell_load_i64(ptr)",
-    "declare i64 @gos_rt_flag_cell_load_bool(ptr)",
-    "declare double @gos_rt_flag_cell_load_f64(ptr)",
-    "declare ptr @gos_rt_flag_cell_load_vec(ptr)",
-    "declare ptr @gos_rt_json_value_string(ptr)",
-    "declare ptr @gos_rt_json_value_int(i64)",
-    "declare ptr @gos_rt_json_value_bool(i32)",
-    "declare ptr @gos_rt_json_value_null()",
-    "declare ptr @gos_rt_json_value_array(ptr)",
-    "declare ptr @gos_rt_json_value_object(ptr)",
-    "declare ptr @gos_rt_json_value_object_n(i64, ptr)",
-    "declare double @gos_rt_parse_f64(ptr, ptr)",
-    "declare ptr @gos_rt_i64_to_str(i64)",
-    "declare ptr @gos_rt_u64_to_str(i64)",
-    "declare ptr @gos_rt_f64_to_str(double)",
-    "declare ptr @gos_rt_bool_to_str(i32)",
-    "declare ptr @gos_rt_char_to_str(i32)",
-    // Streams.
-    "declare ptr @gos_rt_io_stdin()",
-    "declare ptr @gos_rt_io_stdout()",
-    "declare ptr @gos_rt_io_stderr()",
-    "declare void @gos_rt_stream_write_byte(ptr, i64)",
-    "declare void @gos_rt_stream_write_byte_array(ptr, ptr, i64)",
-    "declare void @gos_rt_stream_flush(ptr)",
-    "declare void @gos_rt_stream_write_str(ptr, ptr)",
-    "declare ptr @gos_rt_stream_read_line(ptr)",
-    "declare ptr @gos_rt_stream_read_to_string(ptr)",
-    // Memory intrinsic the aggregate path uses.
-    "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)",
-    "declare void @llvm.lifetime.start.p0(i64, ptr)",
-    "declare void @llvm.lifetime.end.p0(i64, ptr)",
-    // Heap allocator backing aggregate-by-value returns. The
-    // callee's stack slot dies when the function frame is
-    // popped, so an aggregate return value has to be copied
-    // into a heap arena that survives the return.
-    "declare ptr @gos_rt_gc_alloc(i64)",
-    // Arena watermark + rewind primitives. The codegen wraps
-    // calls returning a pure-primitive aggregate (e.g.
-    // `[f64; N]`, `(i64, i64)`, `struct Vec3 { x, y, z }`) with
-    // a save/restore pair so the heap copy of the return value —
-    // which is dead the instant the caller `memcpy`s it into its
-    // own slot — does not accumulate across iterations of a
-    // calling loop. Drives the spectral-norm matvec memory fix.
-    "declare i64 @gos_rt_arena_save()",
-    "declare void @gos_rt_arena_restore(i64)",
-    // Sync primitives (Mutex, WaitGroup, Atomic, heap-Vec).
-    "declare ptr @gos_rt_mutex_new()",
-    "declare void @gos_rt_mutex_lock(ptr)",
-    "declare void @gos_rt_mutex_unlock(ptr)",
-    "declare ptr @gos_rt_wg_new()",
-    "declare i64 @gos_rt_wg_add(ptr, i64)",
-    "declare i64 @gos_rt_wg_done(ptr)",
-    "declare void @gos_rt_wg_wait(ptr)",
-    "declare i64 @gos_rt_wg_error(ptr)",
-    "declare i64 @gos_rt_wg_error_clear(ptr)",
-    "declare ptr @gos_rt_sync_i64_new(i64)",
-    "declare void @gos_rt_sync_i64_drop(ptr)",
-    "declare i64 @gos_rt_sync_i64_len(ptr)",
-    "declare i64 @gos_rt_sync_i64_get(ptr, i64)",
-    "declare void @gos_rt_sync_i64_set(ptr, i64, i64)",
-    "declare void @gos_rt_sync_i64_push(ptr, i64)",
-    "declare i64 @gos_rt_sync_i64_add(ptr, i64, i64)",
-    "declare ptr @gos_rt_sync_u8_new(i64)",
-    "declare void @gos_rt_sync_u8_drop(ptr)",
-    "declare i64 @gos_rt_sync_u8_len(ptr)",
-    "declare i64 @gos_rt_sync_u8_get(ptr, i64)",
-    "declare void @gos_rt_sync_u8_set(ptr, i64, i64)",
-    "declare void @gos_rt_sync_u8_push(ptr, i64)",
-    "declare ptr @gos_rt_heap_i64_new(i64)",
-    "declare void @gos_rt_heap_i64_free(ptr)",
-    "declare i64 @gos_rt_heap_i64_get(ptr, i64)",
-    "declare void @gos_rt_heap_i64_set(ptr, i64, i64)",
-    "declare i64 @gos_rt_heap_i64_len(ptr)",
-    "declare void @gos_rt_heap_i64_write_bytes_to_stdout(ptr, i64, i64)",
-    "declare void @gos_rt_heap_i64_write_lines_to_stdout(ptr, i64, i64, i64)",
-    "declare ptr @gos_rt_heap_u8_to_string(ptr, i64)",
-    "declare void @gos_rt_heap_u8_free(ptr)",
-    "declare void @gos_rt_chan_drop(ptr)",
-    "declare ptr @gos_rt_atomic_i64_new(i64)",
-    "declare i64 @gos_rt_atomic_i64_load(ptr)",
-    "declare void @gos_rt_atomic_i64_store(ptr, i64)",
-    "declare i64 @gos_rt_atomic_i64_fetch_add(ptr, i64)",
-    "declare i64 @gos_rt_atomic_i64_load_acquire(ptr)",
-    "declare void @gos_rt_atomic_i64_store_release(ptr, i64)",
-    "declare i64 @gos_rt_atomic_i64_load_relaxed(ptr)",
-    "declare void @gos_rt_atomic_i64_store_relaxed(ptr, i64)",
-    "declare i64 @gos_rt_atomic_i64_fetch_add_acqrel(ptr, i64)",
-    "declare i32 @gos_rt_atomic_i64_cas(ptr, i64, i64)",
-    "declare i32 @gos_rt_atomic_i64_cas_acq_rel(ptr, i64, i64)",
-    "declare i64 @gos_rt_atomic_i64_swap(ptr, i64)",
-    "declare i32 @gos_rt_preempt_check()",
-    "declare i32 @gos_rt_preempt_check_and_yield()",
-    "declare i32 @gos_rt_gc_alloc_rooted(i64)",
-    "declare void @gos_rt_gc_shadow_push(i32)",
-    "declare i64 @gos_rt_gc_shadow_save()",
-    "declare void @gos_rt_gc_shadow_restore(i64)",
-    "declare i64 @gos_rt_gc_collect_with_stack_roots()",
-    // Goroutine spawn helpers (the LLVM backend currently
-    // falls back to Cranelift for `go expr` bodies, but
-    // declaring these makes future direct-LLVM lowering a
-    // one-line addition).
-    "declare void @gos_rt_go_spawn_call_3(ptr, i64, i64, i64)",
-    "declare void @gos_rt_go_spawn_call_4(ptr, i64, i64, i64, i64)",
-    "declare void @gos_rt_go_spawn_call_5(ptr, i64, i64, i64, i64, i64)",
-    "declare void @gos_rt_go_spawn_call_6(ptr, i64, i64, i64, i64, i64, i64)",
-    "declare i64 @gos_rt_lcg_jump(i64, i64, i64, i64, i64)",
-    // HashMap runtime — per-shape ABI variants. The MIR's
-    // method-call dispatch picks one of these based on the
-    // map's key + value kinds. The byte-erased ABI
-    // (`gos_rt_map_insert`/`_get`/`_remove`) stays available
-    // for the cranelift tier; the LLVM tier hits the
-    // scalar / string-keyed shapes directly.
-    "declare ptr @gos_rt_map_new(i32, i32)",
-    "declare ptr @gos_rt_map_new_with_capacity(i32, i32, i64)",
-    "declare i64 @gos_rt_map_len(ptr)",
-    "declare void @gos_rt_map_insert_i64_i64(ptr, i64, i64)",
-    "declare i64 @gos_rt_map_get_i64(ptr, i64)",
-    "declare i64 @gos_rt_map_get_or_i64(ptr, i64, i64)",
-    "declare i64 @gos_rt_map_inc_i64(ptr, i64, i64)",
-    "declare i64 @gos_rt_map_inc_str_i64(ptr, ptr, i64)",
-    "declare i8 @gos_rt_map_remove_i64(ptr, i64)",
-    "declare i8 @gos_rt_map_contains_key_i64(ptr, i64)",
-    "declare void @gos_rt_map_insert_str_i64(ptr, ptr, i64)",
-    "declare i64 @gos_rt_map_get_str_i64(ptr, ptr)",
-    "declare void @gos_rt_map_insert_str_str(ptr, ptr, ptr)",
-    "declare ptr @gos_rt_map_get_str_str(ptr, ptr)",
-    "declare i8 @gos_rt_map_contains_key_str(ptr, ptr)",
-    "declare i8 @gos_rt_map_remove_str(ptr, ptr)",
-    "declare void @gos_rt_map_clear(ptr)",
-    "declare i64 @gos_rt_map_inc_at_str_i64(ptr, ptr, i64, i64, i64)",
-    "declare void @gos_rt_map_free(ptr)",
-    "declare void @gos_rt_vec_free(ptr)",
-    "declare void @gos_rt_set_free(ptr)",
-    "declare void @gos_rt_btmap_free(ptr)",
-    "declare ptr @gos_rt_map_keys_i64(ptr)",
-    "declare ptr @gos_rt_map_values_i64(ptr)",
-    "declare ptr @gos_rt_map_keys_str(ptr)",
-    "declare ptr @gos_rt_map_values_str(ptr)",
-    "declare i64 @gos_rt_map_get_or_str_i64(ptr, ptr, i64)",
-    "declare ptr @gos_rt_map_get_or_str_str(ptr, ptr, ptr)",
-    "declare ptr @gos_rt_map_get_or_i64_str(ptr, i64, ptr)",
-    "declare void @gos_rt_map_insert_i64_str(ptr, i64, ptr)",
-    "declare ptr @gos_rt_map_get_i64_str(ptr, i64)",
-    // Inline-able stdout buffer the LLVM lowerer reads
-    // directly from the runtime to bypass per-byte FFI calls
-    // in the fasta hot loop. Sizes match
-    // `gossamer-runtime::c_abi::STDOUT_BUF_SIZE`.
-    //
-    // `unnamed_addr` tells `opt`'s alias analysis that the symbols'
-    // identities (i.e. addresses) don't matter — only their values.
-    // Without this, `opt -O3` cannot prove that two ptr-typed
-    // arguments to a function don't both alias `@GOS_RT_STDOUT_LEN`,
-    // forcing a reload of `LEN` after every potentially-aliasing
-    // store. This is one of the three fixes the §5 release-perf
-    // investigation produced.
-    "@GOS_RT_STDOUT_BYTES = external local_unnamed_addr global [8192 x i8]",
-    "@GOS_RT_STDOUT_LEN = external local_unnamed_addr global i64",
-    // Channels — declared so a future direct-LLVM lowering of
-    // `chan` operations can call them without a per-call extern
-    // declaration race. Cranelift currently handles the lowering.
-    "declare ptr @gos_rt_chan_new(i32, i64)",
-    "declare void @gos_rt_chan_close(ptr)",
-    "declare void @gos_rt_chan_send(ptr, ptr)",
-    "declare i32 @gos_rt_chan_try_send(ptr, ptr)",
-    "declare i32 @gos_rt_chan_recv(ptr, ptr)",
-    "declare i32 @gos_rt_chan_try_recv(ptr, ptr)",
-    "declare ptr @gos_rt_chan_recv_option(ptr)",
-    "declare ptr @gos_rt_chan_try_recv_option(ptr)",
-    // Goroutine spawn extras (small-arity variants and the
-    // generic environment-pointer entry point).
-    "declare void @gos_rt_go_spawn(ptr, ptr)",
-    "declare void @gos_rt_go_spawn_call_0(ptr)",
-    "declare void @gos_rt_go_spawn_call_1(ptr, i64)",
-    "declare void @gos_rt_go_spawn_call_2(ptr, i64, i64)",
-    // GC reset for between-run runtime resets.
-    "declare void @gos_rt_gc_reset()",
-    // Heap u8 vector ABI.
-    "declare ptr @gos_rt_heap_u8_new(i64)",
-    "declare i64 @gos_rt_heap_u8_get(ptr, i64)",
-    "declare void @gos_rt_heap_u8_set(ptr, i64, i64)",
-    "declare i64 @gos_rt_heap_u8_len(ptr)",
-    "declare void @gos_rt_heap_u8_write_bytes_to_stdout(ptr, i64, i64)",
-    "declare void @gos_rt_heap_u8_write_lines_to_stdout(ptr, i64, i64, i64)",
-    // Long-running HTTP server entry point.
-    "declare void @gos_rt_http_serve(ptr, ptr, i64)",
-    // JSON value accessors / constructors.
-    "declare ptr @gos_rt_json_parse(ptr)",
-    "declare ptr @gos_rt_json_render(ptr)",
-    "declare ptr @gos_rt_json_display(ptr)",
-    "declare ptr @gos_rt_json_get(ptr, ptr)",
-    "declare ptr @gos_rt_json_get_opt(ptr, ptr)",
-    "declare ptr @gos_rt_json_keys_opt(ptr)",
-    "declare ptr @gos_rt_json_as_array_opt(ptr)",
-    "declare ptr @gos_rt_json_at(ptr, i64)",
-    "declare i64 @gos_rt_json_len(ptr)",
-    "declare i32 @gos_rt_json_is_null(ptr)",
-    "declare i64 @gos_rt_json_as_i64(ptr)",
-    "declare double @gos_rt_json_as_f64(ptr)",
-    "declare ptr @gos_rt_json_as_str(ptr)",
-    "declare i32 @gos_rt_json_as_bool(ptr)",
-    "declare ptr @gos_rt_json_identity(ptr)",
-    "declare ptr @gos_rt_json_set(ptr, ptr, ptr)",
-    // Byte-erased map ABI (cranelift fallback path).
-    "declare i32 @gos_rt_map_get(ptr, ptr, ptr)",
-    "declare i32 @gos_rt_map_remove(ptr, ptr)",
-    // Vec format helpers — emit a pretty-printed string for a
-    // GosVec of the given element shape.
-    "declare ptr @gos_rt_vec_format_f64(ptr)",
-    "declare ptr @gos_rt_vec_format_bool(ptr)",
-    "declare ptr @gos_rt_vec_format_string(ptr)",
-    "declare ptr @gos_rt_vec_format_vec_i64(ptr)",
-    // Construct a GosVec from a flat array slot.
-    "declare ptr @gos_rt_vec_from_arr(i32, ptr, i64)",
-    // Result debug printer (used by panic-traceback paths).
-    "declare i64 @gos_rt_result_dbg(i64)",
-    // Array format / sort helpers.
-    "declare ptr @gos_rt_arr_format_bool(ptr, i64)",
-    "declare ptr @gos_rt_arr_format_f64(ptr, i64)",
-    "declare ptr @gos_rt_arr_format_i64(ptr, i64)",
-    "declare ptr @gos_rt_arr_format_string(ptr, i64)",
-    "declare void @gos_rt_arr_sort_by_i64(ptr, i64, ptr)",
-    // Errors / error-list helpers.
-    "declare ptr @gos_rt_errors_join(ptr, i64)",
-    // Process execution.
-    "declare i64 @gos_rt_exec_kill(i64)",
-    "declare ptr @gos_rt_exec_spawn(ptr, ptr)",
-    // HashMap or-insert variants.
-    "declare i64 @gos_rt_map_or_insert_i64_i64(ptr, i64, i64)",
-    "declare i64 @gos_rt_map_or_insert_str_i64(ptr, ptr, i64)",
-    // Nested-array to Vec helper.
-    "declare ptr @gos_rt_nested_arr_to_vec(i64, i64, ptr, i64)",
-    // Environment variable helpers.
-    "declare ptr @gos_rt_os_set_env(ptr, ptr)",
-    "declare void @gos_rt_os_unset_env(ptr)",
-    // Regex replace (non-all variant).
-    "declare ptr @gos_rt_regex_replace(ptr, ptr, ptr)",
-    // Millisecond-granularity sleep.
-    "declare void @gos_rt_sleep_ms(i64)",
-    // String comparison (returns i32: negative/zero/positive).
-    "declare i32 @gos_rt_str_compare(ptr, ptr)",
-    // Vec sort-by with i64 comparator closure env.
-    "declare void @gos_rt_vec_sort_by_i64(ptr, ptr)",
-];
 
 #[cfg(test)]
 mod shape_validation_tests {

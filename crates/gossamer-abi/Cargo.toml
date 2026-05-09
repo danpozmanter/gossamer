@@ -1,0 +1,12 @@
+[package]
+name = "gossamer-abi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Typed runtime ABI registry shared across LLVM, Cranelift, and verifier passes."
+
+[lints]
+workspace = true

@@ -53,11 +53,12 @@
 // back when we tighten the fn-level `unsafe` story (Stage 6).
 #![allow(unused_unsafe)]
 
+use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::ffi::CStr;
 use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::raw::{c_char, c_int};
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------
 // Process-wide argv view
@@ -4562,45 +4563,132 @@ pub unsafe extern "C" fn gos_rt_now_ns() -> i64 {
 // the previous limits were if anyone wonders about the historical
 // allocator.
 
-/// Allocates `size` bytes in the global allocator domain.
+// ---------------------------------------------------------------
+// GC allocation registry
+// ---------------------------------------------------------------
+//
+// `gos_rt_gc_alloc` is the sole entry point for user-struct heap
+// allocation in compiled Gossamer (Cranelift + LLVM tiers).
+//
+// Default mode (GOS_GC_TRACK unset): allocate via the global
+// allocator with 8-byte alignment; no tracking. `gos_rt_gc_reset()`
+// is a no-op. This path has zero overhead vs the old Box-leak shape.
+//
+// Tracking mode (GOS_GC_TRACK=1): every allocation is registered in
+// a process-wide Mutex-protected list. `gos_rt_gc_reset()` sweeps
+// the full list and deallocates. Used for leak detection (valgrind),
+// memory profiling, and as the hook point for future safepoint GC.
+// NOT safe to call mid-execution when cross-goroutine pointers exist
+// — see the safety contract on `gos_rt_gc_reset`.
+//
+// `gos_rt_gc_deregister(ptr)` removes a pointer from the registry
+// when ownership transfers to a runtime structure that manages its
+// own lifetime (e.g. GosVec's data buffer after Vec::from_raw_parts).
+
+static GC_TRACK_ENABLED: AtomicBool = AtomicBool::new(false);
+static GC_TRACK_INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+fn gc_track_enabled() -> bool {
+    GC_TRACK_INIT.get_or_init(|| {
+        let on = std::env::var_os("GOS_GC_TRACK").is_some_and(|v| v == "1");
+        GC_TRACK_ENABLED.store(on, Ordering::Relaxed);
+    });
+    GC_TRACK_ENABLED.load(Ordering::Relaxed)
+}
+
+// Each entry is (ptr, size) — enough to reconstruct the Layout for
+// `dealloc`. 8-byte alignment is used for every alloc.
+//
+// The newtype exists solely to implement `Send + Sync` on the
+// wrapped Vec. The Mutex ensures mutual exclusion; raw pointer
+// aliasing rules are satisfied by the registry's single-owner
+// invariant (each ptr appears at most once).
+struct GcAllocList(Vec<(*mut u8, usize)>);
+// SAFETY: access is serialised by `parking_lot::Mutex`; the
+// Mutex itself is Sync because GcAllocList is Sync via this impl.
+unsafe impl Send for GcAllocList {}
+unsafe impl Sync for GcAllocList {}
+
+static GC_ALLOC_REGISTRY: std::sync::OnceLock<parking_lot::Mutex<GcAllocList>> =
+    std::sync::OnceLock::new();
+
+fn gc_registry() -> &'static parking_lot::Mutex<GcAllocList> {
+    GC_ALLOC_REGISTRY.get_or_init(|| parking_lot::Mutex::new(GcAllocList(Vec::new())))
+}
+
+/// Allocates `size` zeroed bytes for a user-struct instance.
 ///
-/// **History.** This entry point used to be a thread-local bump
-/// arena (`Vec<Arena { buf: Vec<u8>, used }>`) with explicit
-/// `gos_rt_gc_reset` reclamation and a `gos_rt_arena_save` /
-/// `_restore` checkpoint primitive emitted by the LLVM codegen
-/// around aggregate-returning user calls. That design produced a
-/// silent dangling-pointer class of bug: arena interior pointers
-/// stored in `Vec<String>` slots survived an `arena_restore`
-/// despite the watermark moving past their offset, and the next
-/// `gos_rt_gc_alloc` reused those bytes.
+/// In default mode: plain `alloc_zeroed`, no tracking, zero overhead.
+/// In tracking mode (`GOS_GC_TRACK=1`): also registers the pointer so
+/// `gos_rt_gc_reset()` can sweep it later.
 ///
-/// The current shape is the simplest sound replacement: every
-/// allocation is a `Box<[u8]>` leaked via `Box::into_raw`. Single
-/// ownership domain (`Global`); compatible with the
-/// `Vec::from_raw_parts(ptr, n, n)` reclamation `gos_rt_vec_push`
-/// performs when growing a vec; no checkpoint primitives needed.
-/// The leak is collected by the GC on a future cycle, not by
-/// arena reset.
-///
-/// See `~/dev/contexts/lang/fix_architecture_ownership.md` Stage 4.
+/// Eight-byte alignment satisfies all scalar fields (i64, f64, ptr).
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
     if size == 0 {
         return std::ptr::null_mut();
     }
     let size = size as usize;
-    let v: Vec<u8> = vec![0u8; size];
-    let raw = Box::into_raw(v.into_boxed_slice());
-    raw.cast::<u8>()
+    let layout = unsafe {
+        // SAFETY: size > 0, align = 8 is a valid power-of-two ≤ usize::MAX/2
+        Layout::from_size_align_unchecked(size, 8)
+    };
+    let ptr = unsafe { alloc_zeroed(layout) };
+    if ptr.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    if gc_track_enabled() {
+        // SAFETY: ptr is valid and not-null (checked above). The
+        // registry is process-global; the Mutex serialises concurrent
+        // goroutine allocations.
+        gc_registry().lock().0.push((ptr, size));
+    }
+    ptr
 }
 
-/// Legacy arena reset — now a no-op. Codegen still declares this
-/// symbol; in practice nothing calls it. The Box-leak allocator
-/// retires per-allocation through Vec::from_raw_parts on the
-/// caller-managed buffer (vec push), or via the GC on a future
-/// cycle.
+/// Frees all allocations currently in the GC registry.
+///
+/// Safety contract: must only be called at a safepoint where no live
+/// Gossamer pointer from any goroutine was allocated via
+/// `gos_rt_gc_alloc` and still reachable. The compiled tier does not
+/// auto-emit calls to this symbol; callers must honour the invariant
+/// manually. Violating it produces use-after-free.
+///
+/// A no-op when `GOS_GC_TRACK` is not set (default mode).
 #[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_gc_reset() {}
+pub extern "C" fn gos_rt_gc_reset() {
+    if !gc_track_enabled() {
+        return;
+    }
+    let mut registry = gc_registry().lock();
+    for (ptr, size) in registry.0.drain(..) {
+        let layout = unsafe {
+            // SAFETY: size and align match what gos_rt_gc_alloc used.
+            Layout::from_size_align_unchecked(size, 8)
+        };
+        // SAFETY: ptr was returned by alloc_zeroed with this layout
+        // and has not been freed (each entry appears exactly once).
+        unsafe { dealloc(ptr, layout) };
+    }
+}
+
+/// Removes `ptr` from the GC registry when ownership of the block
+/// transfers to a runtime structure that manages its own lifetime.
+///
+/// Called after `Vec::from_raw_parts` takes over a `gos_rt_gc_alloc`
+/// buffer: the Vec's drop impl will call `dealloc`; without
+/// deregistering, `gos_rt_gc_reset()` would double-free.
+/// A no-op when tracking is disabled.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_gc_deregister(ptr: *mut u8) {
+    if ptr.is_null() || !gc_track_enabled() {
+        return;
+    }
+    let mut registry = gc_registry().lock();
+    if let Some(pos) = registry.0.iter().position(|(p, _)| *p == ptr) {
+        registry.0.swap_remove(pos);
+    }
+}
 
 /// Legacy arena watermark — returns 0 (the "no checkpoint" value).
 /// LLVM codegen still wraps aggregate-returning user calls with

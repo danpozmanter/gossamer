@@ -72,6 +72,7 @@ rustyline = { version = "14", default-features = false, features = ["with-file-h
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 
 [dev-dependencies]
+gossamer-abi = { workspace = true }
 gossamer-std = { workspace = true }
 
 [features]

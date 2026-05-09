@@ -51,6 +51,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../gossamer-codegen-cranelift/src/jit.rs");
     println!("cargo:rerun-if-changed=../gossamer-codegen-llvm/src/emit.rs");
     println!("cargo:rerun-if-changed=../gossamer-codegen-llvm/src/lower.rs");
+    println!("cargo:rerun-if-changed=../gossamer-abi/src/registry.rs");
     println!("cargo:rerun-if-env-changed=GOS_RUNTIME_LIB");
     println!("cargo:rerun-if-env-changed=GOSSAMER_SKIP_DISPATCH_PARITY");
 
@@ -242,6 +243,10 @@ fn check_dispatch_parity(workspace_root: &Path) {
     let cl_jit = read_text(workspace_root.join("crates/gossamer-codegen-cranelift/src/jit.rs"));
     let llvm_emit = read_text(workspace_root.join("crates/gossamer-codegen-llvm/src/emit.rs"));
     let llvm_lower = read_text(workspace_root.join("crates/gossamer-codegen-llvm/src/lower.rs"));
+    // The typed ABI registry is the single source of truth for all gos_rt_*
+    // symbols used by both LLVM and Cranelift backends. It replaces the
+    // old RUNTIME_DECLARATIONS string array, so the scanner must include it.
+    let abi_registry = read_text(workspace_root.join("crates/gossamer-abi/src/registry.rs"));
 
     let defined = extract_runtime_definitions(&c_abi);
     let mut referenced: BTreeSet<String> = BTreeSet::new();
@@ -249,6 +254,7 @@ fn check_dispatch_parity(workspace_root: &Path) {
     referenced.extend(extract_referenced_symbols(&cl_jit));
     referenced.extend(extract_referenced_symbols(&llvm_emit));
     referenced.extend(extract_referenced_symbols(&llvm_lower));
+    referenced.extend(extract_referenced_symbols(&abi_registry));
 
     let allowed: BTreeSet<String> = KNOWN_UNUSED_RUNTIME_SYMBOLS
         .iter()

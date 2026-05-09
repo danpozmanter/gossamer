@@ -54,7 +54,17 @@ fn run(file: &PathBuf, mode: RunMode, forwarded: &[String]) -> Result<()> {
     let mut vm = gossamer_interp::Vm::new();
     match vm.load(&program, &mut tcx) {
         Ok(()) => {
+            // Free HIR and type context — the VM has already extracted
+            // everything it needs (bytecode chunks, MIR Arc, TyCtxt Arc).
+            // Holding these on the stack for the full execution life doubles
+            // peak RSS on programs with large ASTs.
+            drop(program);
+            drop(tcx);
             let r = vm.call("main", Vec::new()).map(|_| ());
+            // MIR bodies and TyCtxt snapshot were needed only for deferred JIT.
+            // Release them now so goroutine-join doesn't hold the per-program
+            // compilation data live while waiting on worker threads.
+            vm.release_jit_prelude();
             // Wait for any outstanding goroutines (pool-backed
             // `Op::Spawn` tasks + tree-walker join handles)
             // before exiting so their stdout has a chance to

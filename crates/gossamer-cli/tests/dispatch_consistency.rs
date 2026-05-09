@@ -1,22 +1,21 @@
-//! Cross-table consistency: every `gos_rt_*` extern declared in
-//! the LLVM backend's `RUNTIME_DECLARATIONS` table must also
-//! exist as a `pub unsafe extern "C" fn ...` in
-//! `crates/gossamer-runtime/src/c_abi.rs`. Two real regressions
-//! in the past month (`cranelift_dispatch_table.md` 2026-04-28
-//! and `spectral_norm_regression_fix.md` 2026-04-30) traced
-//! back to a typo'd or stale name in a dispatch table — the
-//! resulting call silently zeroed out (cranelift) or routed
-//! through the per-fn fallback (LLVM). This test cheaply gates
-//! the LLVM half of that drift by parsing both source-of-truth
-//! files at test time.
+//! Cross-table consistency: every `gos_rt_*` symbol in the ABI
+//! registry must exist as a `pub unsafe extern "C" fn ...` in
+//! the runtime source. Two real regressions in the past month
+//! (`cranelift_dispatch_table.md` 2026-04-28 and
+//! `spectral_norm_regression_fix.md` 2026-04-30) traced back to
+//! a typo'd or stale name in a dispatch table — the resulting
+//! call silently zeroed out (Cranelift) or routed through the
+//! per-fn fallback (LLVM).
 //!
-//! It deliberately doesn't check signatures (param/return types
-//! disagree across Rust ↔ LLVM IR by design — Rust's `bool` is
-//! `i8` etc.) — only names. The other direction (every runtime
-//! export has a declaration) is intentionally NOT enforced
-//! because most `gos_rt_*` helpers are referenced by Cranelift
-//! via on-demand `intrinsics.extern_fn(...)` calls and never
-//! flow through LLVM IR — those don't need a declaration here.
+//! After ABI Phase 5 the LLVM backend declares symbols lazily
+//! via per-function `declare_rt()` calls derived from the
+//! registry, so this file no longer needs to parse LLVM IR
+//! strings. All symbol-name validation flows through the typed
+//! `gossamer_abi::REGISTRY`.
+//!
+//! Signatures are intentionally not checked here (Rust `bool`
+//! vs. LLVM `i8` etc.); param-count parity is verified by
+//! `registry_param_counts_match_runtime_exports`.
 
 #![allow(missing_docs)]
 
@@ -64,72 +63,248 @@ fn extract_runtime_exports() -> Vec<String> {
     out
 }
 
-/// Collects the `@symbol` token from each entry in
-/// `gossamer_codegen_llvm::runtime_declarations()`.
-fn extract_llvm_decl_names() -> HashSet<String> {
-    let mut out = HashSet::new();
-    for decl in gossamer_codegen_llvm::runtime_declarations() {
-        if let Some(at) = decl.find('@') {
-            let after = &decl[at + 1..];
-            // `gos_rt_foo(...)` — keep up to the first `(` or
-            // whitespace.
-            let end = after
-                .find(|c: char| c == '(' || c.is_whitespace() || c == ',')
-                .unwrap_or(after.len());
-            let name = after[..end].trim_matches('"');
-            if name.starts_with("gos_rt_") || name.starts_with("GOS_RT_") {
-                out.insert(name.to_string());
-            }
-        }
-    }
-    out
-}
-
-#[test]
-fn every_llvm_declaration_names_a_real_runtime_export() {
-    let exports: HashSet<String> = extract_runtime_exports().into_iter().collect();
-    assert!(
-        exports.len() > 50,
-        "found only {} runtime exports — parser likely broken; expected >50",
-        exports.len()
-    );
-    let llvm_names = extract_llvm_decl_names();
-
-    let mut missing: Vec<String> = Vec::new();
-    for name in &llvm_names {
-        // Globals (`@GOS_RT_STDOUT_LEN`, `@GOS_RT_STDOUT_BYTES`)
-        // are not extern fns; skip them. They live in the
-        // runtime as `static` items, not `pub unsafe extern "C" fn`.
-        if name.starts_with("GOS_RT_") {
-            continue;
-        }
-        if !exports.contains(name) {
-            missing.push(name.clone());
-        }
-    }
-    missing.sort();
-    assert!(
-        missing.is_empty(),
-        "{} LLVM `declare` entr{} reference{} a name that does not exist as \
-         `pub unsafe extern \"C\" fn ...` in crates/gossamer-runtime/src/c_abi.rs:\n  {}\n\n\
-         Either add the runtime export, or remove/fix the `declare ...` line in \
-         crates/gossamer-codegen-llvm/src/emit.rs::RUNTIME_DECLARATIONS.",
-        missing.len(),
-        if missing.len() == 1 { "y" } else { "ies" },
-        if missing.len() == 1 { "s" } else { "" },
-        missing.join("\n  ")
-    );
-}
-
 #[test]
 fn extracted_runtime_export_set_is_non_empty_and_unique() {
-    // Sanity-check the parser: it should find a non-trivial
-    // count of distinct entries.
     let exports = extract_runtime_exports();
     let unique: HashSet<&str> = exports.iter().map(String::as_str).collect();
     assert_eq!(
         exports.len(),
         unique.len(),
         "duplicate runtime exports detected"
+    );
+}
+
+/// Every entry in the ABI registry must have a corresponding
+/// `pub extern "C" fn gos_rt_*` in the runtime. Catches registry
+/// entries that name non-existent functions.
+#[test]
+fn all_registry_entries_exported_by_runtime() {
+    let exports: HashSet<String> = extract_runtime_exports().into_iter().collect();
+    assert!(
+        exports.len() > 50,
+        "runtime export parser broken: only {} exports found",
+        exports.len()
+    );
+
+    let mut missing = Vec::new();
+    for entry in gossamer_abi::REGISTRY {
+        if !exports.contains(entry.name) {
+            missing.push(entry.name);
+        }
+    }
+    missing.sort_unstable();
+    assert!(
+        missing.is_empty(),
+        "{} registry entr{} {} not exported by gossamer-runtime/src/c_abi.rs:\n  {}\n\n\
+         Add the missing `pub extern \"C\" fn` or remove the registry entry.",
+        missing.len(),
+        if missing.len() == 1 { "y" } else { "ies" },
+        if missing.len() == 1 { "is" } else { "are" },
+        missing.join("\n  ")
+    );
+}
+
+/// The ABI registry must have no duplicate entries and must be
+/// sorted (enforced by the gossamer-abi unit tests, but also
+/// validated here for belt-and-suspenders).
+#[test]
+fn registry_sorted_and_unique() {
+    let names: Vec<&str> = gossamer_abi::REGISTRY.iter().map(|e| e.name).collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted, "REGISTRY is not sorted alphabetically");
+
+    let mut deduped = names.clone();
+    deduped.dedup();
+    assert_eq!(
+        names.len(),
+        deduped.len(),
+        "REGISTRY contains duplicate entries"
+    );
+}
+
+/// Every `declare` produced by the registry round-trips correctly
+/// through LLVM IR syntax: starts with `declare ` and includes
+/// the symbol name.
+#[test]
+fn registry_llvm_declares_are_well_formed() {
+    for entry in gossamer_abi::REGISTRY {
+        let decl = entry.llvm_declare();
+        assert!(
+            decl.starts_with("declare "),
+            "bad declare for {}: {decl}",
+            entry.name
+        );
+        assert!(
+            decl.contains(&format!("@{}", entry.name)),
+            "declare missing symbol name for {}: {decl}",
+            entry.name
+        );
+    }
+}
+
+/// Extracts the number of parameters from a Rust function signature
+/// by counting top-level commas in the argument list. Handles nested
+/// angle brackets, parentheses (function pointer params), and trailing
+/// commas (idiomatic in multi-line Rust signatures).
+fn count_params_in_sig(params_text: &str) -> usize {
+    let trimmed = params_text.trim().trim_end_matches(',').trim();
+    if trimmed.is_empty() {
+        return 0;
+    }
+    let mut depth = 0i32;
+    let mut commas = 0usize;
+    for c in trimmed.chars() {
+        match c {
+            '(' | '<' | '[' => depth += 1,
+            ')' | '>' | ']' => depth -= 1,
+            ',' if depth == 0 => commas += 1,
+            _ => {}
+        }
+    }
+    commas + 1
+}
+
+/// Parses `gos_rt_*` function param counts from the given Rust source
+/// file. Returns a map of `function_name → param_count`. Only counts
+/// the declared parameters (ignores the return type).
+fn parse_param_counts(source: &str) -> std::collections::HashMap<String, usize> {
+    let mut out = std::collections::HashMap::new();
+    let mut chars = source.char_indices().peekable();
+
+    while let Some((i, _)) = chars.next() {
+        // Find `fn gos_rt_` prefix anywhere in the source.
+        let rest = &source[i..];
+        if !rest.starts_with("fn gos_rt_") {
+            continue;
+        }
+        // Scan forward to find the function name (up to `(`).
+        let after_fn = &rest["fn ".len()..];
+        let Some(paren) = after_fn.find('(') else {
+            continue;
+        };
+        let name = after_fn[..paren].trim().to_string();
+        if !name.starts_with("gos_rt_") {
+            continue;
+        }
+        // Scan for the matching close paren.
+        let params_start = "fn ".len() + paren + 1;
+        if params_start >= rest.len() {
+            continue;
+        }
+        let mut depth = 1i32;
+        let mut params_end = params_start;
+        for (j, c) in rest[params_start..].char_indices() {
+            match c {
+                '(' | '<' | '[' => depth += 1,
+                ')' | '>' | ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        params_end = params_start + j;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let params_text = &rest[params_start..params_end];
+        // Filter out `self` and `&self` — not real extern params.
+        let params_text = params_text
+            .replace("&mut self,", "")
+            .replace("&self,", "")
+            .replace("mut self,", "")
+            .replace("self,", "")
+            .replace("&mut self", "")
+            .replace("&self", "")
+            .replace("mut self", "")
+            .replace("self", "");
+        let count = count_params_in_sig(&params_text);
+        out.insert(name, count);
+        // Skip past this function to avoid re-matching.
+        for _ in 0..(params_start + params_end) {
+            chars.next();
+        }
+    }
+    out
+}
+
+/// Every REGISTRY entry's `params.len()` must match the number of
+/// parameters declared in the corresponding `pub extern "C" fn` in
+/// the runtime source. Catches param-count mismatches that would
+/// silently produce wrong-code or segfaults at runtime.
+#[test]
+fn registry_param_counts_match_runtime_exports() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    let runtime_src = PathBuf::from(&manifest_dir)
+        .join("..")
+        .join("gossamer-runtime")
+        .join("src");
+    let candidate_files = ["c_abi.rs", "gc.rs", "preempt.rs", "lib.rs", "safe_env.rs"];
+    let mut all_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for filename in candidate_files {
+        let path = runtime_src.join(filename);
+        if let Ok(source) = std::fs::read_to_string(&path) {
+            all_counts.extend(parse_param_counts(&source));
+        }
+    }
+    assert!(
+        all_counts.len() > 50,
+        "param-count parser found only {} functions — likely broken",
+        all_counts.len()
+    );
+
+    let mut mismatches: Vec<String> = Vec::new();
+    for entry in gossamer_abi::REGISTRY {
+        let Some(&actual) = all_counts.get(entry.name) else {
+            // Export-existence is checked by all_registry_entries_exported_by_runtime.
+            continue;
+        };
+        let expected = entry.sig.params.len();
+        if actual != expected {
+            mismatches.push(format!(
+                "{}: REGISTRY has {} param(s), c_abi.rs has {}",
+                entry.name, expected, actual
+            ));
+        }
+    }
+    mismatches.sort();
+    assert!(
+        mismatches.is_empty(),
+        "{} param-count mismatch{}:\n  {}",
+        mismatches.len(),
+        if mismatches.len() == 1 { "" } else { "es" },
+        mismatches.join("\n  ")
+    );
+}
+
+/// Sanity-check the tier field counts: at least 30 Both-tier, 100
+/// Cranelift-tier, and 1 Llvm-tier entry. Catches trivial mistakes
+/// (e.g. all entries set to the same tier after a bulk edit).
+#[test]
+fn tier_field_counts_are_plausible() {
+    use gossamer_abi::Tier;
+    let both = gossamer_abi::REGISTRY
+        .iter()
+        .filter(|e| e.tier == Tier::Both)
+        .count();
+    let cl = gossamer_abi::REGISTRY
+        .iter()
+        .filter(|e| e.tier == Tier::Cranelift)
+        .count();
+    let ll = gossamer_abi::REGISTRY
+        .iter()
+        .filter(|e| e.tier == Tier::Llvm)
+        .count();
+    assert!(
+        both >= 30,
+        "expected >=30 Both-tier entries, got {both}; tier classifications may be wrong"
+    );
+    assert!(
+        cl >= 100,
+        "expected >=100 Cranelift-tier entries, got {cl}; tier classifications may be wrong"
+    );
+    assert!(
+        ll >= 1,
+        "expected >=1 Llvm-tier entries, got {ll}; gos_rt_write_barrier should be Llvm"
     );
 }
