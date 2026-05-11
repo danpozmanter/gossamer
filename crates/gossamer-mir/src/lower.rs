@@ -7455,7 +7455,10 @@ impl<'a> Builder<'a> {
                     }
                 }
             }
-            "clone" => Some(""),
+            "clone" => match &receiver_kind_flat {
+                TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_clone"),
+                _ => Some(""),
+            },
             // Option / Result methods. Result/Option now live as
             // `*mut GosResult { disc, payload }` heap aggregates
             // (see `gos_rt_result_new`), so `.unwrap()` /
