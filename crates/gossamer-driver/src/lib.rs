@@ -26,15 +26,19 @@ pub use build::{
 };
 pub use frontend_cache::{
     FrontendCacheKey, cache_dir, load_blob, load_blob_in, mark_success, mark_success_in,
-    observe_hit, observe_hit_in, store_blob, store_blob_in,
+    observe_hit, observe_hit_in, raw_blob_path, raw_blob_path_in, store_blob, store_blob_in,
+    store_raw, store_raw_in,
 };
 pub use link::{
     ARTIFACT_MAGIC, Artifact, LinkerOptions, Symbol, TargetTriple, TranslationUnit, fingerprint,
     link,
 };
 pub use pipeline::{
-    ReleaseBuild, compile_source, compile_source_native, compile_source_native_release,
+    CheckedFrontend, ReleaseBuild, ReleaseBuildPaths, compile_release_at_paths_from_frontend,
+    compile_source, compile_source_native, compile_source_native_from_frontend,
+    compile_source_native_from_frontend_at_path, compile_source_native_release,
     compile_source_native_release_with_fallback,
+    compile_source_native_release_with_fallback_from_frontend,
 };
 pub use target::{
     ObjectFormat, PrebuiltRuntime, REGISTERED_TARGETS, TargetInfo, all_targets, lookup_target,

@@ -103,7 +103,9 @@ pub(crate) fn load_and_check_with_sf(
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: stderr_supports_colour(),
     };
-    let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file_id);
+    let cache_key = gossamer_driver::FrontendCacheKey::new(source, env!("CARGO_PKG_VERSION"));
+    let trace = std::env::var_os("GOSSAMER_CACHE_TRACE").is_some();
+    let (sf, parse_diags) = load_or_parse(source, file_id, &cache_key, trace);
     if !parse_diags.is_empty() {
         for diag in &parse_diags {
             let structured = diag.to_diagnostic();
@@ -178,15 +180,7 @@ pub(crate) fn load_and_check_with_sf(
         return Err(anyhow!("non-exhaustive match; refusing to execute"));
     }
     let program = gossamer_hir::lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    let cache_key = gossamer_driver::FrontendCacheKey::new(source, env!("CARGO_PKG_VERSION"));
-    if std::env::var_os("GOSSAMER_CACHE_TRACE").is_some()
-        && gossamer_driver::observe_hit(&cache_key)
-    {
-        eprintln!(
-            "cache: frontend hit for {} (skip not wired yet)",
-            cache_key.as_hex()
-        );
-    }
     gossamer_driver::mark_success(&cache_key);
+    gossamer_driver::store_blob(&cache_key, &sf);
     Ok((program, sf, tcx))
 }

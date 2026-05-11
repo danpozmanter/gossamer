@@ -14,8 +14,14 @@ mod lower;
 mod monomorph;
 mod opt;
 
-pub use cleanup::{CleanupEntry, CleanupPlan, HEAP_ALLOCATOR_PAIRS, plan as plan_cleanup};
-pub use escape::{EscapeSet, analyse as analyse_escape};
+pub use cleanup::{
+    CleanupEntry, CleanupPlan, DropAt, HEAP_ALLOCATOR_PAIRS, plan as plan_cleanup,
+    plan_with_summary as plan_cleanup_with_summary,
+};
+pub use escape::{
+    CaptureSummary, EscapeSet, analyse as analyse_escape,
+    analyse_with_summary as analyse_escape_with_summary, build_capture_summary,
+};
 pub use ir::{
     AggregateKind, AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl,
     Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator, UnOp,
@@ -23,6 +29,6 @@ pub use ir::{
 pub use lower::{lower_program, mangle_callable_shape};
 pub use monomorph::{check_generic_layouts, mangled_name, monomorphise};
 pub use opt::{
-    const_branch_elim, const_fold, const_value_of, copy_propagate, dead_store_elim, optimise,
-    statement_count,
+    const_branch_elim, const_fold, const_value_of, copy_propagate, dead_store_elim,
+    inline_small_callees, inline_trivial_wrappers, optimise, statement_count,
 };

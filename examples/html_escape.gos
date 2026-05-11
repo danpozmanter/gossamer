@@ -1,0 +1,40 @@
+/*
+ * HTML escaping and XML utilities with std::html and std::encoding.
+ *
+ * When building web applications you often need to sanitize user input
+ * before embedding it in HTML, or parse/produce structured XML data.
+ * This example shows both: html::escape prevents XSS by replacing
+ * dangerous characters with named entities, and html::unescape
+ * reverses the transformation. The encoding::xml module provides
+ * full XML parse and serialise support.
+ */
+
+use std::html
+use std::encoding
+
+fn main() {
+    // HTML escaping — critical for preventing XSS in template output.
+    let raw = "<script>alert('XSS & injection')</script>"
+    let safe = html::escape(raw)
+    println!("raw:     {}", raw)
+    println!("escaped: {}", safe)
+
+    let back = html::unescape(safe)
+    println!("unescaped: {}", back)
+
+    // Verify round-trip for common dangerous characters.
+    for ch in ["<", ">", "&", "\"", "'"] {
+        let esc = html::escape(ch)
+        let unesc = html::unescape(esc)
+        if unesc == ch {
+            println!("round-trip ok: {}", ch)
+        } else {
+            println!("round-trip FAIL: {} -> {} -> {}", ch, esc, unesc)
+        }
+    }
+
+    // XML escape.
+    let xml_raw = "price < 10 && quantity > 0"
+    let xml_safe = encoding::xml::escape(xml_raw)
+    println!("xml escape: {}", xml_safe)
+}

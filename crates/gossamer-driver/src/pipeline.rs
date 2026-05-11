@@ -4,15 +4,19 @@
 #![forbid(unsafe_code)]
 
 use anyhow::anyhow;
+use gossamer_ast::SourceFile;
 use gossamer_codegen_cranelift::{
     CompileOptions, NativeObject, compile_to_object, compile_to_object_with_options, emit_module,
 };
 use gossamer_hir::{lift_closures, lower_source_file};
 use gossamer_lex::SourceMap;
-use gossamer_mir::{Body, check_generic_layouts, lower_program, optimise};
+use gossamer_mir::{
+    Body, check_generic_layouts, inline_small_callees, inline_trivial_wrappers, lower_program,
+    optimise,
+};
 use gossamer_parse::parse_source_file;
-use gossamer_resolve::resolve_source_file;
-use gossamer_types::{TyCtxt, typecheck_source_file};
+use gossamer_resolve::{Resolutions, resolve_source_file};
+use gossamer_types::{TyCtxt, TypeTable, typecheck_source_file};
 
 use crate::link::{Artifact, LinkerOptions, TranslationUnit, link};
 
@@ -28,6 +32,20 @@ pub fn compile_source(source: &str, unit_name: &str, options: &LinkerOptions) ->
     link(&[unit], options)
 }
 
+/// Pre-parsed, resolved, and typechecked program bundled for reuse.
+/// Created once by `gos build`'s validation pass and consumed by
+/// the codegen path, avoiding a redundant frontend round-trip.
+pub struct CheckedFrontend {
+    /// Parsed AST.
+    pub sf: SourceFile,
+    /// Name-resolution map.
+    pub resolutions: Resolutions,
+    /// Type-inference result table.
+    pub table: TypeTable,
+    /// Accumulated type context (mutated during lowering).
+    pub tcx: TyCtxt,
+}
+
 /// Compiles `source` into a native object file suitable for linking
 /// with `cc`. Returns `Err` only on lower-level failures (generic-ABI
 /// enforcement, cranelift module emission); the MIR lowerer itself
@@ -37,6 +55,29 @@ pub fn compile_source_native(source: &str, unit_name: &str) -> anyhow::Result<Na
     let (bodies, tcx) = lower_to_mir_with_tcx(source, unit_name);
     enforce_generic_abi(&bodies, &tcx)?;
     compile_to_object(&bodies, &tcx)
+}
+
+/// Like [`compile_source_native`] but uses already-computed frontend
+/// artifacts, skipping a second parse/resolve/typecheck round-trip.
+pub fn compile_source_native_from_frontend(
+    checked: CheckedFrontend,
+) -> anyhow::Result<NativeObject> {
+    let (bodies, tcx) = lower_to_mir_from_frontend(checked);
+    enforce_generic_abi(&bodies, &tcx)?;
+    compile_to_object(&bodies, &tcx)
+}
+
+/// Path-oriented Cranelift debug build. Same as
+/// [`compile_source_native_from_frontend`] but writes the produced
+/// object directly to `obj_out` and returns only the triple, so
+/// the caller never holds the full object bytes in memory.
+pub fn compile_source_native_from_frontend_at_path(
+    checked: CheckedFrontend,
+    obj_out: &std::path::Path,
+) -> anyhow::Result<String> {
+    let (bodies, tcx) = lower_to_mir_from_frontend(checked);
+    enforce_generic_abi(&bodies, &tcx)?;
+    gossamer_codegen_cranelift::compile_to_object_at_path(&bodies, &tcx, obj_out)
 }
 
 /// `--release` build path: lower through the LLVM backend
@@ -73,6 +114,83 @@ pub struct ReleaseBuild {
     pub cranelift: Option<NativeObject>,
     /// Names of bodies that fell back. Useful for diagnostics.
     pub fallback_bodies: Vec<String>,
+}
+
+/// Like [`compile_source_native_release_with_fallback`] but uses
+/// already-computed frontend artifacts.
+pub fn compile_source_native_release_with_fallback_from_frontend(
+    checked: CheckedFrontend,
+) -> anyhow::Result<ReleaseBuild> {
+    let (bodies, tcx) = lower_to_mir_from_frontend(checked);
+    enforce_generic_abi(&bodies, &tcx)?;
+    let outcome = gossamer_codegen_llvm::compile_with_fallback(&bodies, &tcx)?;
+    let cranelift = if outcome.fallback_bodies.is_empty() {
+        None
+    } else {
+        let options = CompileOptions {
+            main_symbol_override: Some("gos_main".to_string()),
+            omit_c_main_shim: true,
+            define_only: Some(outcome.fallback_bodies.clone()),
+        };
+        Some(compile_to_object_with_options(&bodies, &tcx, options)?)
+    };
+    Ok(ReleaseBuild {
+        llvm: NativeObject {
+            triple: outcome.object.triple,
+            bytes: outcome.object.bytes,
+        },
+        cranelift,
+        fallback_bodies: outcome.fallback_bodies,
+    })
+}
+
+/// Result of a path-oriented per-function fallback release build.
+/// Contrast with [`ReleaseBuild`], which carries object bytes.
+/// The path-oriented form keeps both objects on disk so peak RSS
+/// is not pushed up by simultaneous LLVM + Cranelift `Vec<u8>`
+/// retention.
+#[derive(Debug, Clone)]
+pub struct ReleaseBuildPaths {
+    /// Triple the LLVM backend reported for the emitted objects.
+    pub triple: String,
+    /// Names of the bodies that fell back to Cranelift.
+    pub fallback_bodies: Vec<String>,
+    /// True iff `cl_obj_out` was actually written (i.e. there was
+    /// at least one fallback body). When false the caller should
+    /// skip the Cranelift companion in the link step.
+    pub has_cranelift_companion: bool,
+}
+
+/// Path-oriented variant of
+/// [`compile_source_native_release_with_fallback_from_frontend`].
+/// Writes both the LLVM-compiled and (if any fallback bodies
+/// exist) the Cranelift-compiled object directly to the supplied
+/// paths so the caller never holds object bytes in memory.
+pub fn compile_release_at_paths_from_frontend(
+    checked: CheckedFrontend,
+    llvm_obj_out: &std::path::Path,
+    cl_obj_out: &std::path::Path,
+) -> anyhow::Result<ReleaseBuildPaths> {
+    let (bodies, tcx) = lower_to_mir_from_frontend(checked);
+    enforce_generic_abi(&bodies, &tcx)?;
+    let (triple, fallback_bodies) =
+        gossamer_codegen_llvm::compile_with_fallback_at_path(&bodies, &tcx, llvm_obj_out)?;
+    let has_cranelift_companion = !fallback_bodies.is_empty();
+    if has_cranelift_companion {
+        let options = CompileOptions {
+            main_symbol_override: Some("gos_main".to_string()),
+            omit_c_main_shim: true,
+            define_only: Some(fallback_bodies.clone()),
+        };
+        gossamer_codegen_cranelift::compile_to_object_at_path_with_options(
+            &bodies, &tcx, cl_obj_out, options,
+        )?;
+    }
+    Ok(ReleaseBuildPaths {
+        triple,
+        fallback_bodies,
+        has_cranelift_companion,
+    })
 }
 
 /// Per-function fallback release build. Bodies the LLVM
@@ -123,6 +241,26 @@ fn lower_to_mir(source: &str, unit_name: &str) -> Vec<Body> {
     lower_to_mir_with_tcx(source, unit_name).0
 }
 
+/// HIR + MIR lowering from pre-computed frontend artifacts.
+fn lower_to_mir_from_frontend(checked: CheckedFrontend) -> (Vec<Body>, TyCtxt) {
+    let CheckedFrontend {
+        sf,
+        resolutions,
+        table,
+        mut tcx,
+    } = checked;
+    let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
+    let hir = lift_closures(hir, &mut tcx);
+    let mut bodies = lower_program(&hir, &mut tcx);
+    gossamer_mir::monomorphise(&mut bodies, &mut tcx);
+    inline_trivial_wrappers(&mut bodies);
+    inline_small_callees(&mut bodies);
+    for body in &mut bodies {
+        optimise(body, &tcx);
+    }
+    (bodies, tcx)
+}
+
 /// Surfaces the Tier B6.3 generic-ABI check as an `anyhow::Error`
 /// so the CLI's existing `Err`-render path prints a clean
 /// diagnostic. Compiled paths (`compile_source_native`,
@@ -152,6 +290,8 @@ fn lower_to_mir_with_tcx(source: &str, unit_name: &str) -> (Vec<Body>, TyCtxt) {
     let hir = lift_closures(hir, &mut tcx);
     let mut bodies = lower_program(&hir, &mut tcx);
     gossamer_mir::monomorphise(&mut bodies, &mut tcx);
+    inline_trivial_wrappers(&mut bodies);
+    inline_small_callees(&mut bodies);
     for body in &mut bodies {
         optimise(body, &tcx);
     }

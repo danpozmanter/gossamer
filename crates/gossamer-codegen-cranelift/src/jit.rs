@@ -374,6 +374,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_str_eq"              => rt::gos_rt_str_eq,
         "gos_rt_str_compare"         => rt::gos_rt_str_compare,
         "gos_rt_str_is_empty"        => rt::gos_rt_str_is_empty,
+        "gos_rt_str_free"            => rt::gos_rt_str_free,
         "gos_rt_len_is_zero"         => rt::gos_rt_len_is_zero,
         "gos_rt_error_new"           => rt::gos_rt_error_new,
         "gos_rt_error_wrap"          => rt::gos_rt_error_wrap,

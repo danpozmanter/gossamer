@@ -157,6 +157,39 @@ fn fold_binary_const(
 
 /// Drop-insertion pass.
 ///
+/// Returns `true` when `callee` is a constructor-shape Call whose
+/// arguments are aggregated into the returned value, meaning a
+/// pointer arg can flow through to `Local::RETURN` and must skip
+/// its drop. Plain user fns and stdlib helpers (println,
+/// `str_concat`, `map_get_or`, …) consume their args without
+/// retaining them, so they are excluded.
+fn is_aggregate_ctor_callee(callee: &Operand) -> bool {
+    if let Operand::Const(ConstValue::Str(name)) = callee {
+        return matches!(
+            name.as_str(),
+            // Result / Option payload constructors. Wrapping a
+            // heap-owning local into `Result::Ok(R { xs: v })`
+            // moves the Vec into the returned aggregate.
+            "gos_rt_result_new"
+                | "gos_rt_option_new"
+                | "gos_rt_option_some"
+                // Synthetic tuple / struct lowerings.
+                | "__tuple"
+                | "__struct"
+        );
+    }
+    false
+}
+
+/// Runtime callees whose result is a *borrowed* pointer (a
+/// process-wide sentinel or a runtime-managed global). Auto-drop
+/// scheduling must skip these locals because freeing them aborts
+/// in the allocator's metadata probe — the pointee was never
+/// reachable through the global allocator in the first place.
+fn returns_borrowed_pointer(name: &str) -> bool {
+    matches!(name, "gos_rt_os_args")
+}
+
 /// Emits a `Call(gos_rt_*_free, [local])` before each `Return`
 /// terminator for every local that owns a heap-allocated runtime
 /// container (`HashMap` / `Vec` / `HashSet` / `BTreeMap`) and
@@ -226,7 +259,18 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
 
     // Pass 1: discover constructor-allocated locals. Track every
     // assignment that *might* invalidate ownership (re-assignment,
+    // projection writes) so we can disqualify aliasing patterns. Track every
+    // assignment that *might* invalidate ownership (re-assignment,
     // projection writes) so we can disqualify aliasing patterns.
+    //
+    // Also disqualifies any local passed as a Copy arg to a Call
+    // whose callee may capture its arguments (any user FnRef, or a
+    // named runtime helper outside the non-capturing whitelist).
+    // Without this disqualification, the drop pass would free a
+    // container whose pointer is now retained inside the callee
+    // (e.g. `flag::parse(os::args())` slurps the args vec; freeing
+    // the args vec after the call orphans the parsed `rest`
+    // strings).
     for block in &body.blocks {
         for stmt in &block.stmts {
             if let StatementKind::Assign { place, rvalue } = &stmt.kind {
@@ -265,11 +309,27 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
             // the return slot. Match by static type, since the
             // callee name ("count_kmers", arbitrary user fn)
             // doesn't telegraph ownership.
+            //
+            // A handful of runtime callees return *borrowed*
+            // pointers — `gos_rt_os_args` hands back the global
+            // `ARGS_VEC` sentinel that lives for the whole
+            // process; passing it to `gos_rt_vec_free` aborts in
+            // `__libc_free` on the next-pointer probe. Skip the
+            // inferred_free assignment for those.
+            let borrowed_callee = matches!(
+                callee,
+                Operand::Const(ConstValue::Str(s))
+                    if returns_borrowed_pointer(s.as_str())
+            );
             let dest_ty = body.locals[idx].ty;
-            let inferred_free: Option<&'static str> = match tcx.kind_of(dest_ty) {
-                TyKind::HashMap { .. } => Some("gos_rt_map_free"),
-                TyKind::Vec(_) => Some("gos_rt_vec_free"),
-                _ => None,
+            let inferred_free: Option<&'static str> = if borrowed_callee {
+                None
+            } else {
+                match tcx.kind_of(dest_ty) {
+                    TyKind::HashMap { .. } => Some("gos_rt_map_free"),
+                    TyKind::Vec(_) => Some("gos_rt_vec_free"),
+                    _ => None,
+                }
             };
             if let Operand::Const(ConstValue::Str(name)) = callee {
                 if let Some(free) = ctor_to_free(name.as_str()) {
@@ -428,7 +488,10 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
                 }
             }
             if let Terminator::Call {
-                destination, args, ..
+                callee,
+                destination,
+                args,
+                ..
             } = &block.terminator
             {
                 if !destination.projection.is_empty() {
@@ -436,6 +499,16 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
                 }
                 let dest_idx = destination.local.0 as usize;
                 if dest_idx >= moved_into_return.len() || !moved_into_return[dest_idx] {
+                    continue;
+                }
+                // Only aggregate-constructor callees actually move
+                // their args into the destination value. Generic
+                // Calls (println, str_concat, map_get_or, every
+                // user fn) consume their args without retaining
+                // them, so propagating "moved" through their args
+                // would mark unrelated heap-owning locals as
+                // moved-into-return and silently skip their drops.
+                if !is_aggregate_ctor_callee(callee) {
                     continue;
                 }
                 propagate_call_args(args, &mut moved_into_return, &mut changed);

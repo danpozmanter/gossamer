@@ -60,26 +60,32 @@
 
 use std::collections::HashMap;
 
+use std::collections::HashSet;
+
 use anyhow::{Result, anyhow, bail};
 use cranelift_codegen::ir::{
-    AbiParam, Function, InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind,
-    UserFuncName, condcodes::IntCC, types,
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
+    immediates::Imm64, types,
 };
+use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_codegen::{Context, ir};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleDeclarations};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use gossamer_mir::{
     BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, StatementKind, Terminator,
     UnOp,
 };
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
+use rayon::prelude::*;
 
 /// Globally-scoped rodata + intrinsic function handles accumulated
 /// across every body in a single [`compile_to_object`] run. Keeps
 /// the per-function lowering paths from having to thread the
 /// module's mutation needs through themselves.
+#[derive(Clone)]
 struct IntrinsicContext {
     /// Interned map from string contents to the `DataId` of the
     /// null-terminated rodata slot holding them. Deduped so the same
@@ -122,6 +128,12 @@ struct IntrinsicContext {
     /// type is still an unresolved inference variable. Cleared
     /// between bodies.
     local_declared_ty: HashMap<Local, ir::Type>,
+    /// Per-function: pre-computed cranelift type for every local,
+    /// indexed by `local.0`. Populated once via `infer_body_cl_types`
+    /// before the body's lowering begins; `define_var_to` and
+    /// `ensure_var` read from here instead of re-running the full
+    /// body scan on every assignment. Cleared between bodies.
+    pub(crate) body_cl_types: Vec<Option<ir::Type>>,
 }
 
 impl IntrinsicContext {
@@ -136,6 +148,7 @@ impl IntrinsicContext {
             elem_slots: HashMap::new(),
             local_slots: HashMap::new(),
             local_declared_ty: HashMap::new(),
+            body_cl_types: Vec::new(),
         }
     }
 
@@ -215,6 +228,229 @@ impl IntrinsicContext {
             .map_err(|e| anyhow!("declare extern {name}: {e}"))?;
         self.externs.insert(name, id);
         Ok(id)
+    }
+}
+
+/// Read-only snapshot of a declared `ObjectModule` that can be cheaply
+/// cloned and sent to rayon worker threads. Body IR building reads the
+/// pre-populated function/data maps via [`Module`] trait dispatch;
+/// methods that would mutate the module (`declare_function`,
+/// `define_function`, …) are unreachable during the parallel phase and
+/// call `unreachable!()`.
+///
+/// Built once after the sequential pre-declaration phase, then cloned
+/// per rayon thread by [`lower_program_full`].
+#[derive(Clone)]
+struct OfflineModule {
+    frontend_config: TargetFrontendConfig,
+    default_call_conv: CallConv,
+    /// FuncId.as_u32() → (signature, colocated) snapshot from the real module.
+    func_sigs: HashMap<u32, (Signature, bool)>,
+    /// DataId.as_u32() → (colocated, tls) snapshot from the real module.
+    data_info: HashMap<u32, (bool, bool)>,
+}
+
+impl Module for OfflineModule {
+    fn isa(&self) -> &dyn cranelift_codegen::isa::TargetIsa {
+        unreachable!("OfflineModule: isa() must not be called in parallel IR phase")
+    }
+    fn declarations(&self) -> &ModuleDeclarations {
+        unreachable!("OfflineModule: declarations() must not be called in parallel IR phase")
+    }
+    fn target_config(&self) -> TargetFrontendConfig {
+        self.frontend_config
+    }
+    fn make_signature(&self) -> Signature {
+        Signature::new(self.default_call_conv)
+    }
+    fn declare_function(
+        &mut self,
+        _name: &str,
+        _linkage: Linkage,
+        _sig: &Signature,
+    ) -> cranelift_module::ModuleResult<FuncId> {
+        unreachable!("OfflineModule: declare_function called in parallel phase — pre-declare first")
+    }
+    fn declare_anonymous_function(
+        &mut self,
+        _sig: &Signature,
+    ) -> cranelift_module::ModuleResult<FuncId> {
+        unreachable!("OfflineModule: declare_anonymous_function called in parallel phase")
+    }
+    fn declare_data(
+        &mut self,
+        _name: &str,
+        _linkage: Linkage,
+        _writable: bool,
+        _tls: bool,
+    ) -> cranelift_module::ModuleResult<DataId> {
+        unreachable!(
+            "OfflineModule: declare_data called in parallel phase — pre-intern strings first"
+        )
+    }
+    fn declare_anonymous_data(
+        &mut self,
+        _writable: bool,
+        _tls: bool,
+    ) -> cranelift_module::ModuleResult<DataId> {
+        unreachable!("OfflineModule: declare_anonymous_data called in parallel phase")
+    }
+    fn define_function_with_control_plane(
+        &mut self,
+        _func: FuncId,
+        _ctx: &mut Context,
+        _ctrl_plane: &mut cranelift_codegen::control::ControlPlane,
+    ) -> cranelift_module::ModuleResult<()> {
+        unreachable!("OfflineModule: define_function called in parallel phase")
+    }
+    fn define_function_bytes(
+        &mut self,
+        _func_id: FuncId,
+        _alignment: u64,
+        _bytes: &[u8],
+        _relocs: &[cranelift_module::ModuleReloc],
+    ) -> cranelift_module::ModuleResult<()> {
+        unreachable!("OfflineModule: define_function_bytes called in parallel phase")
+    }
+    fn define_data(
+        &mut self,
+        _data_id: DataId,
+        _ctx: &DataDescription,
+    ) -> cranelift_module::ModuleResult<()> {
+        unreachable!("OfflineModule: define_data called in parallel phase")
+    }
+    /// Override the default implementation so we never call `declarations()`.
+    fn declare_func_in_func(&mut self, func_id: FuncId, func: &mut ir::Function) -> ir::FuncRef {
+        let (sig, colocated) = self.func_sigs.get(&func_id.as_u32()).unwrap_or_else(|| {
+            panic!(
+                "OfflineModule: FuncId {} not pre-declared",
+                func_id.as_u32()
+            )
+        });
+        let signature = func.import_signature(sig.clone());
+        let user_name_ref = func.declare_imported_user_function(UserExternalName {
+            namespace: 0,
+            index: func_id.as_u32(),
+        });
+        func.import_function(ExtFuncData {
+            name: ir::ExternalName::user(user_name_ref),
+            signature,
+            colocated: *colocated,
+        })
+    }
+    /// Override the default implementation so we never call `declarations()`.
+    fn declare_data_in_func(&self, data_id: DataId, func: &mut ir::Function) -> ir::GlobalValue {
+        let (colocated, tls) = self
+            .data_info
+            .get(&data_id.as_u32())
+            .copied()
+            .unwrap_or((true, false));
+        let user_name_ref = func.declare_imported_user_function(UserExternalName {
+            namespace: 1,
+            index: data_id.as_u32(),
+        });
+        func.create_global_value(GlobalValueData::Symbol {
+            name: ir::ExternalName::user(user_name_ref),
+            offset: Imm64::new(0),
+            colocated,
+            tls,
+        })
+    }
+}
+
+/// Collects every `ConstValue::Str` string from all operand positions in `body`.
+/// Used during the N9 pre-declaration phase to intern all string data objects
+/// before the parallel IR-building pass begins.
+fn collect_body_str_consts(body: &Body) -> Vec<String> {
+    fn op_str(op: &Operand) -> Option<String> {
+        if let Operand::Const(ConstValue::Str(s)) = op {
+            Some(s.clone())
+        } else {
+            None
+        }
+    }
+    fn rvalue_strs(rv: &Rvalue) -> Vec<String> {
+        match rv {
+            Rvalue::Use(op)
+            | Rvalue::UnaryOp { operand: op, .. }
+            | Rvalue::Cast { operand: op, .. }
+            | Rvalue::Repeat { value: op, .. } => op_str(op).into_iter().collect(),
+            Rvalue::BinaryOp { lhs, rhs, .. } => {
+                op_str(lhs).into_iter().chain(op_str(rhs)).collect()
+            }
+            Rvalue::Aggregate { operands, .. } => operands.iter().filter_map(op_str).collect(),
+            Rvalue::CallIntrinsic { args, .. } => args.iter().filter_map(op_str).collect(),
+            Rvalue::Len(_) | Rvalue::Ref { .. } => vec![],
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { rvalue, .. } = &stmt.kind {
+                out.extend(rvalue_strs(rvalue));
+            }
+        }
+        match &block.terminator {
+            Terminator::Call { callee, args, .. } => {
+                out.extend(op_str(callee));
+                out.extend(args.iter().filter_map(op_str));
+            }
+            Terminator::SwitchInt { discriminant, .. } => {
+                out.extend(op_str(discriminant));
+            }
+            Terminator::Assert { cond, .. } => {
+                out.extend(op_str(cond));
+            }
+            Terminator::Goto { .. }
+            | Terminator::Return
+            | Terminator::Unreachable
+            | Terminator::Panic { .. }
+            | Terminator::Drop { .. } => {}
+        }
+    }
+    out
+}
+
+/// Builds an [`OfflineModule`] by snapshotting the signature and
+/// colocated flag for every declared function/data from the real module.
+///
+/// Called once after the sequential pre-declaration phase in
+/// [`lower_program_full`] to produce the cloneable offline representation
+/// each rayon worker thread uses during parallel IR building.
+fn build_offline_module(
+    module: &dyn Module,
+    intrinsics: &IntrinsicContext,
+    function_ids_by_name: &HashMap<String, FuncId>,
+) -> OfflineModule {
+    let frontend_config = module.target_config();
+    let default_call_conv = module.isa().default_call_conv();
+    let decls = module.declarations();
+    let mut func_sigs: HashMap<u32, (Signature, bool)> = HashMap::new();
+    let mut populate_fn = |func_id: FuncId| {
+        func_sigs.entry(func_id.as_u32()).or_insert_with(|| {
+            let decl = decls.get_function_decl(func_id);
+            (decl.signature.clone(), decl.linkage.is_final())
+        });
+    };
+    for &func_id in function_ids_by_name.values() {
+        populate_fn(func_id);
+    }
+    for &func_id in intrinsics.externs.values() {
+        populate_fn(func_id);
+    }
+    for &func_id in intrinsics.functions.values() {
+        populate_fn(func_id);
+    }
+    let mut data_info: HashMap<u32, (bool, bool)> = HashMap::new();
+    for &data_id in intrinsics.strings.values() {
+        let decl = decls.get_data_decl(data_id);
+        data_info.insert(data_id.as_u32(), (decl.linkage.is_final(), decl.tls));
+    }
+    OfflineModule {
+        frontend_config,
+        default_call_conv,
+        func_sigs,
+        data_info,
     }
 }
 
@@ -340,7 +576,7 @@ pub(crate) fn lower_program_full(
     tcx: &TyCtxt,
     entry_symbol_for_main: Option<&str>,
     cross_object: bool,
-    define_only: Option<&[String]>,
+    define_only: Option<&HashSet<String>>,
 ) -> Result<LoweredProgram> {
     if std::env::var("GOS_DUMP_MIR").is_ok() {
         for body in bodies {
@@ -381,16 +617,29 @@ pub(crate) fn lower_program_full(
     // `Operand::FnRef(def)` from MIR lowers to the right function
     // ref, with a by-name fallback for the rare body that has no
     // resolver id (synthesised closures).
+    //
+    // N1+C2: precompute one `body_cl_types` Vec per body and reuse
+    // it for both the declaration-phase signature and the definition-
+    // phase codegen. Avoids the O(body) HashMap scan being run twice
+    // per function and eliminates the per-local `infer_body_cl_types`
+    // calls that previously happened inside `ensure_var` / `define_var_to`.
     let mut function_ids_by_def: HashMap<u32, FuncId> = HashMap::new();
     let mut function_ids_by_name: HashMap<String, FuncId> = HashMap::new();
     let body_should_be_defined = |name: &str| -> bool {
         match define_only {
-            Some(allowed) => allowed.iter().any(|n| n == name),
+            Some(allowed) => allowed.contains(name),
             None => true,
         }
     };
-    for body in bodies {
-        let signature = build_signature(&*module, body, tcx);
+    // Precompute one type-inference Vec per body. Kept in parallel
+    // with `bodies` by index so the definition loop can look them up
+    // without re-running inference.
+    let body_type_vecs: Vec<Vec<Option<ir::Type>>> = bodies
+        .iter()
+        .map(|body| infer_body_cl_types(body, tcx, &*module))
+        .collect();
+    for (body, bct) in bodies.iter().zip(body_type_vecs.iter()) {
+        let signature = build_signature_from_types(&*module, body, tcx, bct);
         let symbol = if body.name == "main" {
             entry_symbol_for_main.map_or_else(|| body.name.clone(), str::to_string)
         } else {
@@ -417,35 +666,96 @@ pub(crate) fn lower_program_full(
         }
     }
 
+    // N9-A: Seed the IntrinsicContext with all function maps so that
+    // clones sent to rayon threads carry complete function-pointer tables.
     let mut intrinsics = IntrinsicContext::new();
     intrinsics.functions.clone_from(&function_ids_by_name);
     intrinsics.functions_by_def.clone_from(&function_ids_by_def);
+
+    // N9-B: Pre-declare every runtime symbol the codegen may reference
+    // so that all IntrinsicContext cache lookups in the parallel phase
+    // hit without touching the module. Three categories:
+    //   1. Every symbol in the ABI registry (covers all gos_rt_* helpers
+    //      including the cleanup free-functions).
+    //   2. C standard-library symbols used by codegen helpers directly
+    //      (malloc, strlen, calloc).
+    //   3. Infrastructure strings and all ConstValue::Str literals from
+    //      bodies; shape thunks whose names encode Fn-trait signatures.
+    let ptr_ty = module.target_config().pointer_type();
+    for entry in gossamer_abi::REGISTRY {
+        intrinsics.extern_fn_by_name(module, entry.name)?;
+    }
+    intrinsics.extern_fn(module, "malloc", &[ptr_ty], &[ptr_ty])?;
+    intrinsics.extern_fn(module, "strlen", &[ptr_ty], &[types::I64])?;
+    intrinsics.extern_fn(module, "calloc", &[ptr_ty, ptr_ty], &[ptr_ty])?;
+    for &s in &["", " ", "<value>"] {
+        intrinsics.intern_string(module, s)?;
+    }
     for body in bodies {
-        if !body_should_be_defined(&body.name) {
-            continue;
+        for s in collect_body_str_consts(body) {
+            if s.starts_with("__fn_thunk_") {
+                if !intrinsics.functions.contains_key(&s) {
+                    define_shape_thunk(module, &mut intrinsics, &s)?;
+                }
+            } else {
+                intrinsics.intern_string(module, &s)?;
+            }
         }
-        intrinsics.elem_cl_ty.clear();
-        intrinsics.elem_slots.clear();
-        intrinsics.local_slots.clear();
-        let id = function_ids_by_name
-            .get(&body.name)
-            .copied()
-            .ok_or_else(|| anyhow!("function id missing: {}", body.name))?;
-        let signature = build_signature(&*module, body, tcx);
-        let mut func = Function::with_name_signature(UserFuncName::user(0, id.as_u32()), signature);
-        let mut fb_ctx = FunctionBuilderContext::new();
-        lower_body(
-            module,
-            &mut func,
-            &mut fb_ctx,
-            body,
-            tcx,
-            &function_ids_by_def,
-            &function_ids_by_name,
-            &mut intrinsics,
-        )?;
-        if std::env::var("GOS_DUMP_CLIF").is_ok() {
-            eprintln!("=== CLIF {} ===\n{}", body.name, func.display());
+    }
+
+    // N9-C: Build the OfflineModule snapshot. From this point the real
+    // ObjectModule is only needed for define_function (N9-E below).
+    let offline = build_offline_module(module, &intrinsics, &function_ids_by_name);
+
+    // Inter-procedural capture summary: feeds the cleanup pass so
+    // owning bindings whose only outbound use is a non-capturing
+    // user fn get a precise per-block drop instead of being forced
+    // into the escape set.
+    let capture_summary = gossamer_mir::build_capture_summary(bodies);
+
+    // N9-D: Build every function's IR in parallel. Each rayon thread
+    // receives its own clone of `offline` and `intrinsics`; per-body
+    // mutable state starts cleared because those maps are empty at
+    // clone time (they are only filled during lower_body).
+    let dump_clif = std::env::var("GOS_DUMP_CLIF").is_ok();
+    let ir_pairs: Vec<(FuncId, String, Function)> = bodies
+        .par_iter()
+        .zip(body_type_vecs.par_iter())
+        .filter(|(body, _)| body_should_be_defined(&body.name))
+        .map(|(body, bct)| -> Result<(FuncId, String, Function)> {
+            let id = function_ids_by_name
+                .get(&body.name)
+                .copied()
+                .ok_or_else(|| anyhow!("function id missing: {}", body.name))?;
+            let mut offline_clone = offline.clone();
+            let mut local_intrinsics = intrinsics.clone();
+            local_intrinsics.body_cl_types.clone_from(bct);
+            let signature = build_signature_from_types(&offline_clone, body, tcx, bct);
+            let mut func =
+                Function::with_name_signature(UserFuncName::user(0, id.as_u32()), signature);
+            let mut fb_ctx = FunctionBuilderContext::new();
+            lower_body(
+                &mut offline_clone,
+                &mut func,
+                &mut fb_ctx,
+                body,
+                tcx,
+                &function_ids_by_def,
+                &function_ids_by_name,
+                &mut local_intrinsics,
+                &capture_summary,
+            )?;
+            Ok((id, body.name.clone(), func))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // N9-E: Emit each compiled function into the real ObjectModule
+    // sequentially (ObjectModule is not Sync). Cranelift compilation
+    // happens here too, but the IR construction above (the expensive
+    // allocation-heavy work) ran in parallel.
+    for (id, name, func) in ir_pairs {
+        if dump_clif {
+            eprintln!("=== CLIF {name} ===\n{}", func.display());
         }
         let mut ctx = Context::for_function(func);
         module.define_function(id, &mut ctx).map_err(|e| {
@@ -453,7 +763,7 @@ pub(crate) fn lower_program_full(
                 cranelift_module::ModuleError::Compilation(ce) => format!("{ce:#}\n{ce:?}"),
                 other => format!("{other:#}"),
             };
-            anyhow!("define {}: {detail}", body.name)
+            anyhow!("define {name}: {detail}")
         })?;
     }
 
@@ -521,13 +831,15 @@ pub fn compile_to_object_with_options(
         .main_symbol_override
         .as_deref()
         .unwrap_or("gossamer_main");
+    let define_only_set: Option<HashSet<String>> =
+        options.define_only.map(|v| v.into_iter().collect());
     let lowered = lower_program_full(
         &mut module,
         bodies,
         tcx,
         Some(main_rename),
         options.omit_c_main_shim,
-        options.define_only.as_deref(),
+        define_only_set.as_ref(),
     )?;
 
     if !options.omit_c_main_shim {
@@ -541,15 +853,98 @@ pub fn compile_to_object_with_options(
     Ok(NativeObject { triple, bytes })
 }
 
-fn build_signature(module: &dyn Module, body: &Body, tcx: &TyCtxt) -> Signature {
+/// Path-oriented variant: writes the freshly emitted object
+/// directly to `obj_out` instead of returning the bytes through
+/// `NativeObject`. Build paths that immediately persist the
+/// object to disk (the AOT pipeline) avoid the redundant
+/// `Vec<u8>` heap retention by going through this entry point.
+pub fn compile_to_object_at_path(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    obj_out: &std::path::Path,
+) -> Result<String> {
+    compile_to_object_at_path_with_options(bodies, tcx, obj_out, CompileOptions::default())
+}
+
+/// Path-oriented + options variant. Mirrors
+/// [`compile_to_object_with_options`] except the produced object
+/// is written to `obj_out`; only the resolved triple comes back.
+pub fn compile_to_object_at_path_with_options(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    obj_out: &std::path::Path,
+    options: CompileOptions,
+) -> Result<String> {
+    let isa = build_native_isa(true)?;
+    let triple = isa.triple().to_string();
+
+    let builder = ObjectBuilder::new(
+        isa,
+        "gossamer".to_string().into_bytes(),
+        cranelift_module::default_libcall_names(),
+    )
+    .map_err(|e| anyhow!("object builder: {e}"))?;
+    let mut module = ObjectModule::new(builder);
+
+    let main_rename = options
+        .main_symbol_override
+        .as_deref()
+        .unwrap_or("gossamer_main");
+    let define_only_set: Option<HashSet<String>> =
+        options.define_only.map(|v| v.into_iter().collect());
+    let lowered = lower_program_full(
+        &mut module,
+        bodies,
+        tcx,
+        Some(main_rename),
+        options.omit_c_main_shim,
+        define_only_set.as_ref(),
+    )?;
+
+    if !options.omit_c_main_shim {
+        if let Some(gos_main) = lowered.function_ids_by_name.get("main").copied() {
+            emit_c_main_shim(&mut module, gos_main)?;
+        }
+    }
+
+    let product = module.finish();
+    if let Some(parent) = obj_out.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow!("creating {}: {e}", parent.display()))?;
+    }
+    let f = std::fs::File::create(obj_out)
+        .map_err(|e| anyhow!("creating {}: {e}", obj_out.display()))?;
+    let mut w = std::io::BufWriter::new(f);
+    product
+        .object
+        .write_stream(&mut w)
+        .map_err(|e| anyhow!("emit object: {e}"))?;
+    use std::io::Write as _;
+    w.flush()
+        .map_err(|e| anyhow!("flushing {}: {e}", obj_out.display()))?;
+    Ok(triple)
+}
+
+fn build_signature_from_types(
+    module: &dyn Module,
+    body: &Body,
+    tcx: &TyCtxt,
+    bct: &[Option<ir::Type>],
+) -> Signature {
     let mut sig = module.make_signature();
     for pidx in 1..=body.arity {
         let local = Local(pidx);
-        let cl = infer_local_cl_type(body, tcx, module, local)
+        let cl = bct
+            .get(local.0 as usize)
+            .copied()
+            .flatten()
             .unwrap_or_else(|| cl_type_of(tcx, body.local_ty(local), module));
         sig.params.push(AbiParam::new(cl));
     }
-    let ret_cl = infer_local_cl_type(body, tcx, module, Local::RETURN)
+    let ret_cl = bct
+        .get(Local::RETURN.0 as usize)
+        .copied()
+        .flatten()
         .unwrap_or_else(|| cl_type_of(tcx, body.local_ty(Local::RETURN), module));
     sig.returns.push(AbiParam::new(ret_cl));
     sig
@@ -643,6 +1038,7 @@ fn lower_body(
     function_ids_by_def: &HashMap<u32, FuncId>,
     function_ids_by_name: &HashMap<String, FuncId>,
     intrinsics: &mut IntrinsicContext,
+    capture_summary: &gossamer_mir::CaptureSummary,
 ) -> Result<()> {
     let mut builder = FunctionBuilder::new(func, fb_ctx);
 
@@ -665,9 +1061,7 @@ fn lower_body(
             define_var_to(
                 &mut builder,
                 &mut locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 local,
                 param_value,
             );
@@ -694,9 +1088,16 @@ fn lower_body(
     // invariant happy across older toolchains.
     let shadow_frame_var = builder.declare_var(types::I64);
 
+    let cleanup_plan = gossamer_mir::plan_cleanup_with_summary(body, capture_summary);
     for block in &body.blocks {
         let cl_block = blocks[&block.id.as_u32()];
         builder.switch_to_block(cl_block);
+
+        if !cleanup_plan.is_empty() {
+            for entry in cleanup_plan.at_block_entry(block.id) {
+                emit_cleanup_drop(module, &mut builder, &mut locals, intrinsics, entry)?;
+            }
+        }
 
         for statement in &block.stmts {
             lower_statement(
@@ -708,6 +1109,12 @@ fn lower_body(
                 statement,
                 intrinsics,
             )?;
+        }
+
+        if !cleanup_plan.is_empty() {
+            for entry in cleanup_plan.at_block_exit(block.id) {
+                emit_cleanup_drop(module, &mut builder, &mut locals, intrinsics, entry)?;
+            }
         }
 
         lower_terminator(
@@ -737,6 +1144,7 @@ fn ensure_var(
     body: &Body,
     tcx: &TyCtxt,
     module: &dyn Module,
+    body_cl_types: &[Option<ir::Type>],
     local: Local,
 ) -> Variable {
     if let Some(var) = locals.get(&local).copied() {
@@ -745,31 +1153,11 @@ fn ensure_var(
     // Read-before-write fallback: prefer the inferred effective type
     // (from body scanning) and only fall back to the MIR-declared
     // type if the inference turned up nothing.
-    let inferred = infer_local_cl_type(body, tcx, module, local);
+    let inferred = body_cl_types.get(local.0 as usize).copied().flatten();
     let cl = inferred.unwrap_or_else(|| cl_type_of(tcx, body.local_ty(local), module));
     let var = builder.declare_var(cl);
     locals.insert(local, var);
     var
-}
-
-/// Best-effort cranelift-type inference for a MIR local by scanning
-/// the body for assignments. Used when the MIR's recorded type is
-/// `Error`/`Var`/otherwise-opaque, so read-before-write paths (in
-/// particular: function parameter arrivals whose HIR param type
-/// was lost) still declare the right width.
-fn infer_local_cl_type(
-    body: &Body,
-    tcx: &TyCtxt,
-    module: &dyn Module,
-    local: Local,
-) -> Option<ir::Type> {
-    // Delegate to the body-wide inference table. Computing it once
-    // per body would be more efficient; today this is O(body) per
-    // local, bounded by the fixed-point iteration. The types the
-    // table picks are stable across callers, so a memoization
-    // pass could be added if codegen time matters.
-    let table = infer_body_cl_types(body, tcx, module);
-    table.get(&local).copied()
 }
 
 /// Propagates concrete cranelift types across every local in a body
@@ -780,8 +1168,9 @@ fn infer_local_cl_type(
 /// seed later gets rewritten by a float store — common when a
 /// parameter's MIR type came out as `Error` but its body uses are
 /// all floating-point).
-fn infer_body_cl_types(body: &Body, tcx: &TyCtxt, module: &dyn Module) -> HashMap<Local, ir::Type> {
-    let mut table: HashMap<Local, ir::Type> = HashMap::new();
+fn infer_body_cl_types(body: &Body, tcx: &TyCtxt, module: &dyn Module) -> Vec<Option<ir::Type>> {
+    let n = body.locals.len();
+    let mut table: HashMap<Local, ir::Type> = HashMap::with_capacity(n);
     // Seed: MIR types that directly map to a concrete cranelift type.
     for (idx, decl) in body.locals.iter().enumerate() {
         if let Some(cl) = cl_type_of_if_concrete(tcx, decl.ty, module) {
@@ -890,7 +1279,14 @@ fn infer_body_cl_types(body: &Body, tcx: &TyCtxt, module: &dyn Module) -> HashMa
             }
         }
     }
-    table
+    // Convert to Vec indexed by local.0 for O(1) lookup.
+    let mut vec = vec![None; n];
+    for (local, ty) in table {
+        if (local.0 as usize) < n {
+            vec[local.0 as usize] = Some(ty);
+        }
+    }
+    vec
 }
 
 fn operand_locals(rvalue: &Rvalue) -> Vec<Local> {
@@ -932,13 +1328,11 @@ fn cl_type_of_if_concrete(tcx: &TyCtxt, ty: Ty, module: &dyn Module) -> Option<i
 fn define_var_to(
     builder: &mut FunctionBuilder<'_>,
     locals: &mut HashMap<Local, Variable>,
-    body: &Body,
-    tcx: &TyCtxt,
-    module: &dyn Module,
+    body_cl_types: &[Option<ir::Type>],
     local: Local,
     value: ir::Value,
 ) {
-    let preferred = infer_local_cl_type(body, tcx, module, local);
+    let preferred = body_cl_types.get(local.0 as usize).copied().flatten();
     define_var_to_with(builder, locals, local, value, preferred);
 }
 
@@ -1185,7 +1579,13 @@ fn lower_statement(
                 intrinsics,
             )?;
             if place.projection.is_empty() {
-                define_var_to(builder, locals, body, tcx, module, place.local, value);
+                define_var_to(
+                    builder,
+                    locals,
+                    &intrinsics.body_cl_types,
+                    place.local,
+                    value,
+                );
                 if let Some(elem) = aggregate_elem_ty {
                     intrinsics.elem_cl_ty.insert(place.local, elem);
                 }
@@ -1229,7 +1629,15 @@ fn lower_statement(
         // (tag at slot 0, payload at +8).
         StatementKind::SetDiscriminant { place, variant } => {
             let addr = if place.projection.is_empty() {
-                let var = ensure_var(builder, locals, body, tcx, module, place.local);
+                let var = ensure_var(
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    module,
+                    &intrinsics.body_cl_types,
+                    place.local,
+                );
                 builder.use_var(var)
             } else {
                 lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?
@@ -1608,7 +2016,15 @@ fn lower_place_address(
     place: &Place,
     intrinsics: &IntrinsicContext,
 ) -> Result<ir::Value> {
-    let var = ensure_var(builder, locals, body, tcx, module, place.local);
+    let var = ensure_var(
+        builder,
+        locals,
+        body,
+        tcx,
+        module,
+        &intrinsics.body_cl_types,
+        place.local,
+    );
     let ptr_ty = module.target_config().pointer_type();
     let root_value = builder.use_var(var);
     // The root local holds a pointer (an aggregate's stack-slot
@@ -1648,7 +2064,15 @@ fn lower_place_address(
                 }
             }
             Projection::Index(index_local) => {
-                let index_var = ensure_var(builder, locals, body, tcx, module, *index_local);
+                let index_var = ensure_var(
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    module,
+                    &intrinsics.body_cl_types,
+                    *index_local,
+                );
                 let idx_val = builder.use_var(index_var);
                 let idx_ptr = match value_type(idx_val, builder) {
                     t if t == ptr_ty => idx_val,
@@ -1754,7 +2178,13 @@ fn store_call_result(
         intrinsics
             .local_declared_ty
             .insert(destination.local, ret_ty);
-        define_var_to(builder, locals, body, tcx, module, destination.local, value);
+        define_var_to(
+            builder,
+            locals,
+            &intrinsics.body_cl_types,
+            destination.local,
+            value,
+        );
         return Ok(());
     }
     let elem_hint = intrinsics.elem_cl_ty.get(&destination.local).copied();
@@ -1813,6 +2243,30 @@ fn lower_first_ptr_arg(
 }
 
 /// Coerce a value to the cranelift type expected by a call-site or
+/// Emits a `<free_fn>(local)` call for a cleanup entry. Used by
+/// the per-block drop sites and the at-Return fallback. Skips
+/// silently if the local has no cranelift backing variable yet
+/// (defensive: cleanup should only schedule allocator destinations,
+/// which always have a backing var by the time their block runs).
+fn emit_cleanup_drop(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    intrinsics: &mut IntrinsicContext,
+    entry: &gossamer_mir::CleanupEntry,
+) -> Result<()> {
+    let ptr_ty = module.target_config().pointer_type();
+    let Some(&var) = locals.get(&entry.local) else {
+        return Ok(());
+    };
+    let raw = builder.use_var(var);
+    let ptr = coerce_arg_to(builder, raw, ptr_ty).unwrap_or(raw);
+    let free_fn = intrinsics.extern_fn(module, entry.free_fn, &[ptr_ty], &[])?;
+    let free_ref = module.declare_func_in_func(free_fn, builder.func);
+    builder.ins().call(free_ref, &[ptr]);
+    Ok(())
+}
+
 /// store. Handles the two common mismatches: i64 ↔ f64 (bitcast),
 /// and widening/narrowing between integer widths.
 fn coerce_arg_to(
@@ -1978,14 +2432,8 @@ fn lower_terminator(
             // `gos_rt_gc_alloc_rooted` / `gos_rt_gc_shadow_push`
             // introduced inside the body.
             {
-                let restore_sig = {
-                    let mut s = module.make_signature();
-                    s.params.push(AbiParam::new(types::I64));
-                    s
-                };
-                let restore_id = module
-                    .declare_function("gos_rt_gc_shadow_restore", Linkage::Import, &restore_sig)
-                    .map_err(|e| anyhow!("declare gos_rt_gc_shadow_restore: {e}"))?;
+                let restore_id =
+                    intrinsics.extern_fn_by_name(module, "gos_rt_gc_shadow_restore")?;
                 let restore_ref = module.declare_func_in_func(restore_id, builder.func);
                 let frame = builder.use_var(shadow_frame_var);
                 builder.ins().call(restore_ref, &[frame]);
@@ -2003,7 +2451,7 @@ fn lower_terminator(
             let cleanup = gossamer_mir::plan_cleanup(body);
             if !cleanup.is_empty() {
                 let ptr_ty = module.target_config().pointer_type();
-                for entry in cleanup.entries() {
+                for entry in cleanup.at_return() {
                     let Some(&var) = locals.get(&entry.local) else {
                         continue;
                     };
@@ -2052,16 +2500,7 @@ fn lower_terminator(
                     builder.ins().return_(&[retval]);
                 } else {
                     let bytes = u64::from(ret_slots) * 8;
-                    let ptr_ty = module.target_config().pointer_type();
-                    let alloc_sig = {
-                        let mut s = module.make_signature();
-                        s.params.push(AbiParam::new(types::I64));
-                        s.returns.push(AbiParam::new(ptr_ty));
-                        s
-                    };
-                    let alloc_id = module
-                        .declare_function("gos_rt_gc_alloc", Linkage::Import, &alloc_sig)
-                        .map_err(|e| anyhow!("declare gos_rt_gc_alloc: {e}"))?;
+                    let alloc_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_alloc")?;
                     let alloc_ref = module.declare_func_in_func(alloc_id, builder.func);
                     let bytes_v = builder.ins().iconst(types::I64, bytes as i64);
                     let call = builder.ins().call(alloc_ref, &[bytes_v]);
@@ -3488,10 +3927,22 @@ fn lower_generic_rt_call(
     let call = builder.ins().call(fref, &arg_values);
     if let Some(_ret_ty) = ret {
         let v = builder.inst_results(call)[0];
-        define_var_to(builder, locals, body, tcx, module, destination.local, v);
+        define_var_to(
+            builder,
+            locals,
+            &intrinsics.body_cl_types,
+            destination.local,
+            v,
+        );
     } else {
         let zero = builder.ins().iconst(types::I64, 0);
-        define_var_to(builder, locals, body, tcx, module, destination.local, zero);
+        define_var_to(
+            builder,
+            locals,
+            &intrinsics.body_cl_types,
+            destination.local,
+            zero,
+        );
     }
     Ok(())
 }
@@ -3567,10 +4018,22 @@ fn lower_external_binding_call(
     let call = builder.ins().call(fref, &arg_values);
     if dest_cl_ty.is_some() {
         let v = builder.inst_results(call)[0];
-        define_var_to(builder, locals, body, tcx, module, destination.local, v);
+        define_var_to(
+            builder,
+            locals,
+            &intrinsics.body_cl_types,
+            destination.local,
+            v,
+        );
     } else {
         let zero = builder.ins().iconst(types::I64, 0);
-        define_var_to(builder, locals, body, tcx, module, destination.local, zero);
+        define_var_to(
+            builder,
+            locals,
+            &intrinsics.body_cl_types,
+            destination.local,
+            zero,
+        );
     }
     Ok(())
 }
@@ -3867,9 +4330,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 result,
             );
@@ -3916,9 +4377,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 result,
             );
@@ -3939,7 +4398,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         // Method-side routing for stream values. The MIR
@@ -3982,7 +4447,13 @@ fn lower_intrinsic_call(
             let b64 = coerce_arg_to(builder, b, types::I64)?;
             let _ = builder.ins().call(fref, &[stream, b64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_stream_write_byte_array" => {
@@ -4040,7 +4511,13 @@ fn lower_intrinsic_call(
             let len64 = coerce_arg_to(builder, len, types::I64)?;
             let _ = builder.ins().call(fref, &[stream, arr, len64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_stream_write_str" => {
@@ -4074,7 +4551,13 @@ fn lower_intrinsic_call(
             };
             let _ = builder.ins().call(fref, &[stream, s]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_stream_flush" => {
@@ -4095,7 +4578,13 @@ fn lower_intrinsic_call(
             };
             let _ = builder.ins().call(fref, &[stream]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_stream_read_line" | "gos_rt_stream_read_to_string" => {
@@ -4120,7 +4609,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[stream]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "println" | "print" => {
@@ -4154,7 +4649,13 @@ fn lower_intrinsic_call(
                 bail!("native codegen: intrinsic destination cannot have projections");
             }
             let zero = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, zero);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                zero,
+            );
             Ok(true)
         }
         "eprintln" | "eprint" => {
@@ -4179,7 +4680,13 @@ fn lower_intrinsic_call(
                 bail!("native codegen: intrinsic destination cannot have projections");
             }
             let zero = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, zero);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                zero,
+            );
             Ok(true)
         }
         "gos_fn_addr" => {
@@ -4224,9 +4731,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 as_i64,
             );
@@ -4262,9 +4767,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 as_i64,
             );
@@ -4307,7 +4810,13 @@ fn lower_intrinsic_call(
                 ir::immediates::Offset32::new(0),
             );
             let zero = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, zero);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                zero,
+            );
             Ok(true)
         }
         "gos_load" => {
@@ -4342,9 +4851,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 loaded,
             );
@@ -4409,7 +4916,13 @@ fn lower_intrinsic_call(
             if !destination.projection.is_empty() {
                 bail!("native codegen: gos_rt_str_concat destination cannot have projections");
             }
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         // Byte-at: `s[i]` on a `String` loads the `i`-th byte and
@@ -4426,7 +4939,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[p]);
             let ret = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ret);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ret,
+            );
             Ok(true)
         }
         "gos_rt_str_substring" => {
@@ -4457,7 +4976,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[s, start, end]);
             let ret = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ret);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ret,
+            );
             Ok(true)
         }
         "gos_rt_str_byte_at" => {
@@ -4485,7 +5010,13 @@ fn lower_intrinsic_call(
             if !destination.projection.is_empty() {
                 bail!("native codegen: gos_rt_str_byte_at destination cannot have projections");
             }
-            define_var_to(builder, locals, body, tcx, module, destination.local, value);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                value,
+            );
             Ok(true)
         }
         // String length: we treat `String` at the native ABI as a
@@ -4503,7 +5034,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(strlen_ref, &[ptr]);
             let len = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, len);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                len,
+            );
             Ok(true)
         }
         // `os::args()` returns the program's argv as a
@@ -4522,7 +5059,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(args_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let ret = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ret);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ret,
+            );
             Ok(true)
         }
         // `std::time::now()` — opaque monotonic clock value. Cast
@@ -4535,7 +5078,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "time::now_ms" => {
@@ -4543,7 +5092,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         // `std::math::*` — all (f64) -> f64 except where noted.
@@ -4578,7 +5133,13 @@ fn lower_intrinsic_call(
             let x64 = coerce_arg_to(builder, x, types::F64)?;
             let call = builder.ins().call(fref, &[x64]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "math::pow" => {
@@ -4619,7 +5180,13 @@ fn lower_intrinsic_call(
             let y64 = coerce_arg_to(builder, y, types::F64)?;
             let call = builder.ins().call(fref, &[x64, y64]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "time::now_ns" => {
@@ -4627,7 +5194,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_go_spawn_call_0" => {
@@ -4648,7 +5221,13 @@ fn lower_intrinsic_call(
             };
             let _ = builder.ins().call(fref, &[fn_addr]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_go_spawn_call_1" => {
@@ -4679,7 +5258,13 @@ fn lower_intrinsic_call(
             let a0_i64 = coerce_arg_to(builder, a0, types::I64)?;
             let _ = builder.ins().call(fref, &[fn_addr, a0_i64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_go_spawn_call_2" => {
@@ -4715,7 +5300,13 @@ fn lower_intrinsic_call(
             let a1_i64 = coerce_arg_to(builder, a1, types::I64)?;
             let _ = builder.ins().call(fref, &[fn_addr, a0_i64, a1_i64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_go_spawn_call_3" => {
@@ -4756,7 +5347,13 @@ fn lower_intrinsic_call(
             let a2 = coerce_arg_to(builder, a2, types::I64)?;
             let _ = builder.ins().call(fref, &[fn_addr, a0, a1, a2]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_go_spawn_call_5" => {
@@ -4801,7 +5398,13 @@ fn lower_intrinsic_call(
             all_args.extend(vals);
             let _ = builder.ins().call(fref, &all_args);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_go_spawn_call_6" => {
@@ -4847,7 +5450,13 @@ fn lower_intrinsic_call(
             all_args.extend(vals);
             let _ = builder.ins().call(fref, &all_args);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_go_spawn_call_4" => {
@@ -4893,7 +5502,13 @@ fn lower_intrinsic_call(
             let a3 = coerce_arg_to(builder, a3, types::I64)?;
             let _ = builder.ins().call(fref, &[fn_addr, a0, a1, a2, a3]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "sync::yield_now" | "runtime::yield_now" => {
@@ -4901,7 +5516,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let _ = builder.ins().call(fref, &[]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "time::sleep" => {
@@ -4930,7 +5551,13 @@ fn lower_intrinsic_call(
             let ms = coerce_arg_to(builder, ms, types::I64)?;
             let _ = builder.ins().call(fref, &[ms]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // `std::strconv::parse_i64(s)` / `parse_f64(s)` — route
@@ -4959,7 +5586,13 @@ fn lower_intrinsic_call(
             let n64 = coerce_arg_to(builder, n, types::I64)?;
             let call = builder.ins().call(fref, &[n64]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_f64_to_str" => {
@@ -4981,7 +5614,13 @@ fn lower_intrinsic_call(
             let x64 = coerce_arg_to(builder, x, types::F64)?;
             let call = builder.ins().call(fref, &[x64]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "strconv::parse_i64" | "gos_rt_parse_i64" => {
@@ -5008,7 +5647,13 @@ fn lower_intrinsic_call(
             let null = builder.ins().iconst(ptr_ty, 0);
             let call = builder.ins().call(fref, &[s, null]);
             let n = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, n);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                n,
+            );
             Ok(true)
         }
         "gos_rt_parse_i64_result" => {
@@ -5029,7 +5674,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[s]);
             let r = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, r);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                r,
+            );
             Ok(true)
         }
         "gos_rt_result_map_err" | "gos_rt_result_map" => {
@@ -5068,7 +5719,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[recv, clos]);
             let r = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, r);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                r,
+            );
             Ok(true)
         }
         "gos_rt_flag_cell_load_str"
@@ -5112,7 +5769,13 @@ fn lower_intrinsic_call(
             if helper_name == "gos_rt_flag_cell_load_bool" {
                 r = builder.ins().ireduce(types::I8, r);
             }
-            define_var_to(builder, locals, body, tcx, module, destination.local, r);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                r,
+            );
             Ok(true)
         }
         "strconv::parse_f64" => {
@@ -5139,7 +5802,13 @@ fn lower_intrinsic_call(
             let null = builder.ins().iconst(ptr_ty, 0);
             let call = builder.ins().call(fref, &[s, null]);
             let x = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, x);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                x,
+            );
             Ok(true)
         }
         // `std::http::serve(addr, handler)` — start a blocking
@@ -5199,7 +5868,13 @@ fn lower_intrinsic_call(
             let fn_ptr64 = coerce_arg_to(builder, fn_ptr, types::I64)?;
             let _ = builder.ins().call(fref, &[addr, env_ptr, fn_ptr64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // `std::os::exit(code)` — route through `gos_rt_exit`
@@ -5220,7 +5895,13 @@ fn lower_intrinsic_call(
             };
             let _ = builder.ins().call(exit_ref, &[code32]);
             let zero = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, zero);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                zero,
+            );
             Ok(true)
         }
         // `Vec::new` / `Vec::with_capacity` — elem width is
@@ -5233,7 +5914,13 @@ fn lower_intrinsic_call(
             let eb = builder.ins().iconst(types::I32, 8);
             let call = builder.ins().call(fref, &[eb]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "Vec::with_capacity" | "gos_rt_vec_with_capacity" => {
@@ -5261,7 +5948,13 @@ fn lower_intrinsic_call(
             let cap64 = coerce_arg_to(builder, cap, types::I64)?;
             let call = builder.ins().call(fref, &[eb, cap64]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_vec_from_arr" => {
@@ -5321,7 +6014,13 @@ fn lower_intrinsic_call(
             let len64 = coerce_arg_to(builder, len, types::I64)?;
             let call = builder.ins().call(fref, &[eb_i32, data_coerced, len64]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_nested_arr_to_vec" => {
@@ -5391,7 +6090,13 @@ fn lower_intrinsic_call(
                 .ins()
                 .call(fref, &[inner_eb, inner_len_v, raw_coerced, outer_len_v]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         // HashMap runtime. Key/value widths are hard-coded to 8
@@ -5410,7 +6115,13 @@ fn lower_intrinsic_call(
             let v = builder.ins().iconst(types::I32, 8);
             let call = builder.ins().call(fref, &[k, v]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "HashMap::with_capacity"
@@ -5441,7 +6152,13 @@ fn lower_intrinsic_call(
             let cap64 = coerce_arg_to(builder, cap, types::I64)?;
             let call = builder.ins().call(fref, &[k, v, cap64]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "HashSet::new" | "collections::HashSet::new" => {
@@ -5449,7 +6166,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(new_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "BTreeMap::new" | "collections::BTreeMap::new" => {
@@ -5457,7 +6180,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(new_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_map_len" => {
@@ -5478,7 +6207,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[m]);
             let n = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, n);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                n,
+            );
             Ok(true)
         }
         "gos_rt_map_insert" => {
@@ -5528,7 +6263,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(ins_fn, builder.func);
             let _ = builder.ins().call(fref, &[m, k_addr, v_addr]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_map_get" => {
@@ -5577,9 +6318,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 loaded,
             );
@@ -5610,7 +6349,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(ins_fn, builder.func);
             let _ = builder.ins().call(fref, &[m, k, v]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // Scalar-ABI lookup. Returns 0 when the key is absent
@@ -5632,7 +6377,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(get_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_map_remove_i64" => {
@@ -5651,7 +6402,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rm_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k]);
             let ok = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ok);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ok,
+            );
             Ok(true)
         }
         "gos_rt_map_contains_key_i64" => {
@@ -5670,7 +6427,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(ck_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k]);
             let ok = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ok);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ok,
+            );
             Ok(true)
         }
         "gos_rt_map_insert_str_i64" => {
@@ -5702,7 +6465,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(ins_fn, builder.func);
             let _ = builder.ins().call(fref, &[m, k_val, v]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_map_get_str_i64" => {
@@ -5729,7 +6498,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(get_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k_val]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_map_insert_str_str" => {
@@ -5769,7 +6544,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(ins_fn, builder.func);
             let _ = builder.ins().call(fref, &[m, k_val, v_val]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_map_get_str_str" => {
@@ -5796,7 +6577,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(get_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k_val]);
             let s = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, s);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                s,
+            );
             Ok(true)
         }
         "gos_rt_map_contains_key_str" => {
@@ -5823,7 +6610,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(ck_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k_val]);
             let ok = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ok);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ok,
+            );
             Ok(true)
         }
         "gos_rt_map_remove_str" => {
@@ -5850,7 +6643,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rm_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k_val]);
             let ok = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ok);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ok,
+            );
             Ok(true)
         }
         "gos_rt_map_clear" => {
@@ -5859,7 +6658,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(cl_fn, builder.func);
             let _ = builder.ins().call(fref, &[m]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // `m.inc_at(seq, start, len, by)` — zero-copy slice hash
@@ -5904,7 +6709,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[m, seq, start64, len64, by64]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         // Drop helpers emitted by the MIR's drop-insertion pass.
@@ -5928,7 +6739,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[m]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // HashMap iteration helpers — each returns a *mut GosVec
@@ -5956,7 +6773,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[m]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_map_inc_i64" => {
@@ -5992,7 +6815,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(inc_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k64, by64]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_map_inc_str_i64" => {
@@ -6037,7 +6866,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(inc_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k_ptr, by64]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_map_get_or_i64" => {
@@ -6073,7 +6908,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(get_or_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k64, d64]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         // String-keyed `get_or` for `HashMap<String, i64>`. The key
@@ -6108,7 +6949,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(get_or_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k_val, d64]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         // String-keyed, string-valued `get_or`. Default and result
@@ -6150,7 +6997,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(get_or_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k_val, d_val]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         // i64-keyed, string-valued `get_or` for `HashMap<i64, String>`.
@@ -6183,7 +7036,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(get_or_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k64, d_val]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         // `m.insert(k: i64, v: String)` for `HashMap<i64, String>`.
@@ -6216,7 +7075,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(ins_fn, builder.func);
             let _ = builder.ins().call(fref, &[m, k64, v_val]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // `m.get(k: i64) -> String` for `HashMap<i64, String>`.
@@ -6236,7 +7101,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(get_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k64]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_map_remove" => {
@@ -6274,7 +7145,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rm_fn, builder.func);
             let call = builder.ins().call(fref, &[m, k_addr]);
             let ok = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ok);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ok,
+            );
             Ok(true)
         }
         // JSON runtime — every helper accepts an opaque
@@ -6289,7 +7166,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_value_string" | "gos_rt_json_value_array" | "gos_rt_json_value_object" => {
@@ -6303,7 +7186,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_value_object_n" => {
@@ -6344,7 +7233,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[n64, pairs_ptr]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_value_int" => {
@@ -6366,7 +7261,13 @@ fn lower_intrinsic_call(
             let n = coerce_arg_to(builder, n, types::I64)?;
             let call = builder.ins().call(fref, &[n]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_value_bool" => {
@@ -6388,7 +7289,13 @@ fn lower_intrinsic_call(
             let b = coerce_arg_to(builder, b, types::I32)?;
             let call = builder.ins().call(fref, &[b]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_value_null" => {
@@ -6396,7 +7303,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_render" => {
@@ -6405,7 +7318,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_as_str" => {
@@ -6414,7 +7333,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_get" => {
@@ -6437,7 +7362,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[recv, key_ptr]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_get_opt" => {
@@ -6465,7 +7396,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[recv, key_ptr]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_keys_opt" => {
@@ -6474,7 +7411,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_as_array_opt" => {
@@ -6483,7 +7426,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_at" => {
@@ -6497,7 +7446,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[recv, idx64]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_len" => {
@@ -6506,7 +7461,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_as_i64" => {
@@ -6515,7 +7476,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_as_f64" => {
@@ -6524,7 +7491,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_is_null" => {
@@ -6533,7 +7506,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_as_bool" => {
@@ -6542,12 +7521,24 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[arg]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_json_identity" => {
             let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
-            define_var_to(builder, locals, body, tcx, module, destination.local, arg);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                arg,
+            );
             Ok(true)
         }
         // Channels delegate to the gossamer-runtime staticlib.
@@ -6603,7 +7594,13 @@ fn lower_intrinsic_call(
             // projections lower as memory loads from `base + N*8`
             // rather than reading a Variable directly.
             intrinsics.local_slots.insert(destination.local, 2);
-            define_var_to(builder, locals, body, tcx, module, destination.local, base);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                base,
+            );
             Ok(true)
         }
         "gos_rt_chan_send" | "send" => {
@@ -6638,7 +7635,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(send_fn, builder.func);
             let _ = builder.ins().call(fref, &[chan, slot_addr]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_chan_try_send" | "try_send" => {
@@ -6676,7 +7679,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(send_fn, builder.func);
             let call = builder.ins().call(fref, &[chan, slot_addr]);
             let ok = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ok);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ok,
+            );
             Ok(true)
         }
         "gos_rt_chan_try_recv_option" | "gos_rt_chan_try_recv" | "try_recv" => {
@@ -6705,9 +7714,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 opt_ptr,
             );
@@ -6731,7 +7738,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(close_fn, builder.func);
             let _ = builder.ins().call(fref, &[chan]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_chan_recv_option" | "gos_rt_chan_recv" | "recv" => {
@@ -6755,9 +7768,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 opt_ptr,
             );
@@ -6769,7 +7780,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(new_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_mutex_lock" => {
@@ -6790,7 +7807,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[m]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_mutex_unlock" => {
@@ -6811,7 +7834,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[m]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // ---- WaitGroup primitive ----
@@ -6820,7 +7849,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_wg_add" => {
@@ -6863,9 +7898,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 result,
             );
@@ -6892,9 +7925,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 result,
             );
@@ -6918,7 +7949,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[wg]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // ---- Heap [i64] primitive ----
@@ -6941,7 +7978,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[len64]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_heap_i64_get" => {
@@ -6981,7 +8024,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[v, idx64]);
             let val = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, val);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                val,
+            );
             Ok(true)
         }
         "gos_rt_heap_i64_set" => {
@@ -7035,7 +8084,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[v, idx64, val64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_heap_i64_len" => {
@@ -7056,7 +8111,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[v]);
             let val = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, val);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                val,
+            );
             Ok(true)
         }
         "gos_rt_heap_i64_write_lines_to_stdout" => {
@@ -7124,7 +8185,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[v, s64, n64, w64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_heap_i64_write_bytes_to_stdout" => {
@@ -7178,7 +8245,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[v, s64, n64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // ---- Heap [u8] primitive (`U8Vec`) — 1 byte per element ----
@@ -7201,7 +8274,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[len64]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_heap_u8_get" => {
@@ -7241,7 +8320,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[v, idx64]);
             let val = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, val);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                val,
+            );
             Ok(true)
         }
         "gos_rt_heap_u8_set" => {
@@ -7295,7 +8380,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[v, idx64, val64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_heap_u8_len" => {
@@ -7316,7 +8407,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[v]);
             let val = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, val);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                val,
+            );
             Ok(true)
         }
         // `buf.to_string(len)` — freezes the first `len` bytes of
@@ -7349,7 +8446,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[v, len64]);
             let val = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, val);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                val,
+            );
             Ok(true)
         }
         "gos_rt_heap_u8_write_lines_to_stdout" => {
@@ -7417,7 +8520,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[v, s64, n64, w64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         "gos_rt_heap_u8_write_bytes_to_stdout" => {
@@ -7471,7 +8580,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[v, s64, n64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // ---- Atomic<i64> primitive ----
@@ -7501,7 +8616,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[i64]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_atomic_i64_load" => {
@@ -7522,7 +8643,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[a]);
             let val = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, val);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                val,
+            );
             Ok(true)
         }
         "gos_rt_atomic_i64_store" => {
@@ -7562,7 +8689,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let _ = builder.ins().call(fref, &[a, v64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // LCG jump-ahead helper. Used by multi-threaded programs
@@ -7599,7 +8732,13 @@ fn lower_intrinsic_call(
                 .collect::<Result<Vec<_>>>()?;
             let call = builder.ins().call(fref, &coerced);
             let val = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, val);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                val,
+            );
             Ok(true)
         }
         "gos_rt_atomic_i64_fetch_add" => {
@@ -7639,7 +8778,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[a, d64]);
             let val = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, val);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                val,
+            );
             Ok(true)
         }
         // `Vec<T>::len()` — the runtime exposes `len` as the first
@@ -7669,7 +8814,13 @@ fn lower_intrinsic_call(
             let is_null = builder.ins().icmp(ir::condcodes::IntCC::Equal, m, null_ptr);
             let loaded = builder.ins().load(types::I64, MemFlags::trusted(), m, 0);
             let n = builder.ins().select(is_null, zero, loaded);
-            define_var_to(builder, locals, body, tcx, module, destination.local, n);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                n,
+            );
             Ok(true)
         }
         // Array length: forward to the runtime shim, which reads
@@ -7693,7 +8844,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[p]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_len_is_zero" => {
@@ -7714,7 +8871,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[p]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_arr_len" | "gos_rt_len" => {
@@ -7735,7 +8898,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(len_ref, &[p]);
             let n = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, n);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                n,
+            );
             Ok(true)
         }
         // Unary string helpers that return a fresh String
@@ -7774,7 +8943,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[s]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         // Predicate string helpers: `(ptr, ptr) -> i32`.
@@ -7822,9 +8997,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 result,
             );
@@ -7870,7 +9043,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[a, b]);
             let n = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, n);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                n,
+            );
             Ok(true)
         }
         // `s.split(sep)`, `s.lines()`, `s.repeat(n)`. Each
@@ -7906,7 +9085,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[a, b]);
             let v = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, v);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
             Ok(true)
         }
         "gos_rt_str_split" | "gos_rt_str_lines" => {
@@ -7976,7 +9161,13 @@ fn lower_intrinsic_call(
                 builder.ins().call(fref, &[s])
             };
             let ptr = builder.inst_results(result)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_str_repeat" => {
@@ -8009,7 +9200,13 @@ fn lower_intrinsic_call(
             let n = coerce_arg_to(builder, n_val, types::I64)?;
             let call = builder.ins().call(fref, &[s, n]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         "gos_rt_str_replace" => {
@@ -8061,7 +9258,13 @@ fn lower_intrinsic_call(
             };
             let call = builder.ins().call(fref, &[a, b, c]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         // `v.push(x)` on a Vec<T>: spill x to a stack slot and
@@ -8098,7 +9301,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(push_fn, builder.func);
             let _ = builder.ins().call(fref, &[vec_p, slot_addr]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // Typed-i64 push used by the dynamic-count `[value; n]`
@@ -8127,7 +9336,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(push_fn, builder.func);
             let _ = builder.ins().call(fref, &[vec_p, v64]);
             let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(builder, locals, body, tcx, module, destination.local, unit);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
             Ok(true)
         }
         // `arr[lo..hi]` — copies a subrange into a new GosVec.
@@ -8164,7 +9379,13 @@ fn lower_intrinsic_call(
             let hi = coerce_arg_to(builder, hi_v, types::I64)?;
             let call = builder.ins().call(fref, &[v, lo, hi]);
             let p = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, p);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                p,
+            );
             Ok(true)
         }
         // `vec_get_ptr(v, i)` — returns a `*mut u8` pointer to
@@ -8200,7 +9421,13 @@ fn lower_intrinsic_call(
             let fref = module.declare_func_in_func(get_fn, builder.func);
             let call = builder.ins().call(fref, &[vec_p, i]);
             let ptr = builder.inst_results(call)[0];
-            define_var_to(builder, locals, body, tcx, module, destination.local, ptr);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
             Ok(true)
         }
         // `v.pop()` — pops the last element through an 8-byte
@@ -8236,9 +9463,7 @@ fn lower_intrinsic_call(
             define_var_to(
                 builder,
                 locals,
-                body,
-                tcx,
-                module,
+                &intrinsics.body_cl_types,
                 destination.local,
                 loaded,
             );
@@ -8860,7 +10085,15 @@ fn lower_rvalue(
         // address.
         Rvalue::Ref { place, .. } => {
             if place.projection.is_empty() {
-                let var = ensure_var(builder, locals, body, tcx, module, place.local);
+                let var = ensure_var(
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    module,
+                    &intrinsics.body_cl_types,
+                    place.local,
+                );
                 builder.use_var(var)
             } else {
                 lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?
@@ -8950,7 +10183,15 @@ fn lower_place_read(
     intrinsics: &IntrinsicContext,
 ) -> Result<ir::Value> {
     if place.projection.is_empty() {
-        let var = ensure_var(builder, locals, body, tcx, module, place.local);
+        let var = ensure_var(
+            builder,
+            locals,
+            body,
+            tcx,
+            module,
+            &intrinsics.body_cl_types,
+            place.local,
+        );
         return Ok(builder.use_var(var));
     }
     let addr = lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?;

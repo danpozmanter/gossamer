@@ -532,6 +532,31 @@ unsafe fn c_str_len(s: *const c_char) -> usize {
     unsafe { CStr::from_ptr(s).to_bytes().len() }
 }
 
+/// Reclaims a c-string previously returned by [`alloc_cstring`].
+/// Reconstructs the original `Box<[u8]>` by scanning to the
+/// terminating NUL and dropping it. The cleanup pass emits a call
+/// to this helper at every body return for a non-escaping String
+/// produced by a known String allocator (e.g.
+/// `gos_rt_stream_read_to_string`); the escape analyser's
+/// non-capturing-callee whitelist ensures only owning bindings
+/// reach this path so the drop never observes an aliased pointer.
+///
+/// SAFETY: caller guarantees that `s` was allocated by
+/// `alloc_cstring` (i.e., is the head of a `Box<[u8]>` whose final
+/// byte is a NUL) and that no other live pointer aliases it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
+    if s.is_null() {
+        return;
+    }
+    // Walk to NUL to recover the slice length. `Box::from_raw` on
+    // a `*mut [u8]` reconstructs the original allocation; the
+    // closing NUL byte sits inside the box, so length is `walk + 1`.
+    let len = unsafe { c_str_len(s) } + 1;
+    let slice = std::ptr::slice_from_raw_parts_mut(s.cast::<u8>(), len);
+    drop(unsafe { Box::from_raw(slice) });
+}
+
 fn alloc_cstring(s: &[u8]) -> *mut c_char {
     // Pick the first NUL (if any) so we never copy past it.
     let nul = s.iter().position(|&b| b == 0).unwrap_or(s.len());

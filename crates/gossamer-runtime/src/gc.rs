@@ -251,7 +251,38 @@ pub extern "C" fn gos_rt_gc_alloc_rooted(size: i64) -> u32 {
     let r = with_heap(|h| h.alloc(gossamer_gc::ObjKind::Leaf, Vec::new(), 0, size));
     let raw = r.as_u32();
     shadow_push(r);
+    // Drive one incremental step so marking work is amortised across
+    // the allocation sequence rather than accumulating into a single
+    // stop-the-world pause.
+    drive_incremental();
     raw
+}
+
+/// Objects to mark per allocation-site incremental step.
+const STEP_BUDGET: usize = 32;
+
+/// Drives one step of the concurrent GC cycle from an allocation
+/// site. Reads the `PHASE` atomic lock-free and takes the heap mutex
+/// only when action is needed.
+fn drive_incremental() {
+    match PHASE.load(Ordering::Relaxed) {
+        // Idle — start a new cycle when allocation pressure exceeds the
+        // threshold. `gos_rt_gc_concurrent_start` also greys shadow-stack
+        // roots, which is mandatory for compiled goroutines that hold
+        // stack-only rooted refs.
+        0 if with_heap(|h| h.should_start_concurrent_cycle()) => {
+            gos_rt_gc_concurrent_start();
+        }
+        // Marking — mark a small batch to amortise work per allocation.
+        1 => {
+            gos_rt_gc_concurrent_step(STEP_BUDGET as i64);
+        }
+        // ReadyToSweep — finalise the cycle.
+        2 => {
+            gos_rt_gc_concurrent_finish();
+        }
+        _ => {}
+    }
 }
 
 /// Lock-free mirror of `Heap::concurrent_phase()`. Updated by
@@ -424,9 +455,29 @@ mod tests {
     use super::*;
     use gossamer_gc::ObjKind;
 
+    // Serialise every test that touches the global heap/PHASE so
+    // concurrent test runners don't interfere.
+    static GC_TEST_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+    fn drain_to_idle() {
+        // Drive the global state machine to Idle so each test starts clean.
+        match PHASE.load(Ordering::Relaxed) {
+            1 => {
+                let _ = gos_rt_gc_concurrent_step(i64::MAX);
+                let _ = gos_rt_gc_concurrent_finish();
+            }
+            2 => {
+                let _ = gos_rt_gc_concurrent_finish();
+            }
+            _ => {}
+        }
+        assert_eq!(gos_rt_gc_phase(), 0, "heap must be Idle before test");
+    }
+
     #[test]
     fn write_barrier_idle_is_noop() {
-        // Idle phase: barrier returns without touching the heap.
+        let _g = GC_TEST_LOCK.lock();
+        drain_to_idle();
         let ref0 = with_heap(|h| h.alloc(ObjKind::Leaf, Vec::new(), 0, 8));
         gos_rt_write_barrier(ref0.as_u32());
         // No assertion — just verifying no panic.
@@ -434,7 +485,8 @@ mod tests {
 
     #[test]
     fn write_barrier_during_mark_greys_target() {
-        // Allocate, root, start concurrent mark.
+        let _g = GC_TEST_LOCK.lock();
+        drain_to_idle();
         let ref0 = with_heap(|h| {
             let r = h.alloc(ObjKind::Leaf, Vec::new(), 0, 8);
             h.add_root(r);
@@ -442,12 +494,43 @@ mod tests {
         });
         gos_rt_gc_concurrent_start();
         assert_eq!(gos_rt_gc_phase(), 1);
-        // Barrier on a live ref should not panic.
         gos_rt_write_barrier(ref0.as_u32());
         let _ = gos_rt_gc_concurrent_step(1024);
         let freed = gos_rt_gc_concurrent_finish();
-        // The rooted object survives.
         assert!(with_heap(|h| h.is_rooted(ref0)));
         assert!(freed >= 0);
+    }
+
+    #[test]
+    fn drive_incremental_steps_marking_phase() {
+        let _g = GC_TEST_LOCK.lock();
+        drain_to_idle();
+        // Root one object and start the cycle manually.
+        let ref0 = with_heap(|h| {
+            let r = h.alloc(ObjKind::Leaf, Vec::new(), 0, 8);
+            h.add_root(r);
+            r
+        });
+        gos_rt_gc_concurrent_start();
+        assert_eq!(gos_rt_gc_phase(), 1, "should be Marking after start");
+        // A rooted allocation triggers drive_incremental, which should
+        // step the grey set (just ref0) to ReadyToSweep.
+        let _ = gos_rt_gc_alloc_rooted(8);
+        let phase_after_step = gos_rt_gc_phase();
+        // Either still Marking (large grey set) or ReadyToSweep (done).
+        // With one root and STEP_BUDGET=32, it must be done.
+        assert!(
+            phase_after_step == 2 || phase_after_step == 0,
+            "expected ReadyToSweep(2) or Idle(0) after stepping one-root grey set, got {phase_after_step}"
+        );
+        // Another allocation triggers the finish path → back to Idle.
+        let _ = gos_rt_gc_alloc_rooted(8);
+        assert_eq!(
+            gos_rt_gc_phase(),
+            0,
+            "should be Idle after incremental finish"
+        );
+        // The explicitly rooted object must have survived the collection.
+        assert!(with_heap(|h| h.is_rooted(ref0)));
     }
 }

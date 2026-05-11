@@ -312,6 +312,15 @@ impl Heap {
         false
     }
 
+    /// Returns `true` when the heap is idle and allocation pressure
+    /// has exceeded the configured threshold — i.e. a new concurrent
+    /// cycle should be started. Does not modify any state.
+    #[must_use]
+    pub fn should_start_concurrent_cycle(&self) -> bool {
+        matches!(self.phase, ConcurrentPhase::Idle)
+            && self.bytes_since_collect >= self.config.threshold_bytes
+    }
+
     fn mark(&mut self) {
         for obj in &mut self.objects {
             obj.marked = false;

@@ -2,19 +2,88 @@
 //! A local "escapes" the current function when any of the following
 //! is true:
 //! - It is assigned into `Local::RETURN` (flows out to the caller).
-//! - It is passed as an argument to a call terminator.
+//! - It is passed as an argument to a call terminator whose callee
+//!   may capture the pointer (any user fn, plus runtime helpers
+//!   not on the non-capturing whitelist below).
 //! - It aliases (by copy) an already-escaping local.
 //!
 //! The analysis is intentionally conservative and linear in the
 //! number of statements. Downstream passes can use
 //! [`EscapeSet::is_non_escaping`] to decide whether a value can be
 //! stack-allocated instead of boxed.
+//!
+//! The non-capturing runtime callee set is the keystone for the
+//! heap-cleanup pass: a `let buf = U8Vec::new(...)` that flows only
+//! into `buf.set_byte(...)` / `buf.to_string(...)` would otherwise
+//! be marked as escaping (because the helper takes the pointer as a
+//! `Copy` arg) and never get freed. Listing the helpers that only
+//! read/write the pointee — never stash the pointer in a global,
+//! return it back, or hand it to a user-controllable callback — lets
+//! the cleanup pass see the local as non-escaping and emit the
+//! matching `_free` call at the body's `Return`.
 
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeSet;
 
 use crate::ir::{Body, Local, Operand, Rvalue, StatementKind, Terminator};
+
+/// Runtime helpers that take heap pointers as arguments but never
+/// capture them: they read/write the pointee in place, optionally
+/// allocate a *fresh* result (independent of the input), and then
+/// return. The escape analyser treats their args as non-escaping so
+/// the cleanup pass can free heap-owned locals whose only uses are
+/// these helpers.
+///
+/// Adding a helper here is a load-bearing safety claim: if the
+/// runtime ever stores the pointer somewhere with lifetime longer
+/// than the call (a global, a thread-local, an output aggregate),
+/// the cleanup pass will free still-reachable memory and the
+/// program will use-after-free. New helpers must be added only
+/// after auditing their `c_abi.rs` implementation for capture.
+// Listed in sorted order so [`is_non_capturing_runtime_callee`] can
+// binary-search.
+//
+// A helper qualifies when (a) it does not stash any pointer
+// argument anywhere with a lifetime longer than the call, and
+// (b) any pointer it returns is freshly allocated, not aliased
+// from an argument. Helpers that return a borrow of an argument
+// (e.g. `map_keys` returning slices into the map's internal Box
+// storage) MUST NOT appear here — the caller would otherwise
+// free the source while the borrowed pointer is still live.
+const NON_CAPTURING_RUNTIME_CALLEES: &[&str] = &[
+    "gos_rt_heap_i64_get",
+    "gos_rt_heap_i64_len",
+    "gos_rt_heap_i64_set",
+    "gos_rt_heap_u8_get",
+    "gos_rt_heap_u8_len",
+    "gos_rt_heap_u8_set",
+    "gos_rt_heap_u8_to_string",
+    "gos_rt_heap_u8_write_lines_to_stdout",
+    "gos_rt_len",
+    "gos_rt_len_is_zero",
+    // HashMap counter / probe helpers. The string-key variants
+    // copy the key into a fresh `Box<[u8]>` before stashing it in
+    // the map, so the caller's key buffer is not retained. The
+    // map pointer is mutated but not captured.
+    "gos_rt_map_get_or_i64_i64",
+    "gos_rt_map_get_or_str_i64",
+    "gos_rt_map_inc_at_str_i64",
+    "gos_rt_map_inc_i64",
+    "gos_rt_map_inc_str_i64",
+    "gos_rt_map_or_insert_i64_i64",
+    "gos_rt_map_or_insert_str_i64",
+    "gos_rt_str_byte_at",
+    "gos_rt_str_is_empty",
+    "gos_rt_str_len",
+];
+
+/// `true` when the callee name is on the non-capturing runtime
+/// whitelist. The escape analyser uses this to skip marking args
+/// as escaping for a known-safe call.
+fn is_non_capturing_runtime_callee(name: &str) -> bool {
+    NON_CAPTURING_RUNTIME_CALLEES.binary_search(&name).is_ok()
+}
 
 /// Result of [`analyse`] — the set of locals that escape this body.
 ///
@@ -56,9 +125,87 @@ impl EscapeSet {
     }
 }
 
-/// Computes the escape set for `body`.
+/// Inter-procedural per-fn argument capture summary. Maps the
+/// callee's `DefId.local` to a bool vector — `captures[i] = true`
+/// means parameter `i` (1-indexed; the entry corresponds to MIR
+/// `Local(i+1)`) of the callee escapes its body. Callers can
+/// safely skip the escape mark on non-capturing arguments.
+#[derive(Debug, Clone, Default)]
+pub struct CaptureSummary {
+    captures: std::collections::BTreeMap<u32, Vec<bool>>,
+}
+
+impl CaptureSummary {
+    /// Returns the captures vector for the callee identified by
+    /// `def_local`. `None` when the callee has no recorded summary
+    /// — callers must conservatively assume "captures all".
+    #[must_use]
+    pub fn captures(&self, def_local: u32) -> Option<&[bool]> {
+        self.captures.get(&def_local).map(Vec::as_slice)
+    }
+
+    fn insert(&mut self, def_local: u32, captures: Vec<bool>) -> bool {
+        match self.captures.get(&def_local) {
+            Some(existing) if existing == &captures => false,
+            _ => {
+                self.captures.insert(def_local, captures);
+                true
+            }
+        }
+    }
+}
+
+/// Builds a capture summary across `bodies` by iterating to a
+/// fixed point: each round re-runs the escape analyser with the
+/// current summary, then refines each fn's captures vector based
+/// on which parameter locals showed up in the escape set. The
+/// monotone "true → false" direction guarantees termination.
+#[must_use]
+pub fn build_capture_summary(bodies: &[Body]) -> CaptureSummary {
+    let mut summary = CaptureSummary::default();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for body in bodies {
+            let Some(def) = body.def else {
+                continue;
+            };
+            let escape = analyse_with_summary(body, &summary);
+            let arity = body.arity as usize;
+            let mut captures = Vec::with_capacity(arity);
+            for i in 0..arity {
+                // Param i in source order corresponds to MIR
+                // `Local(i + 1)` — `Local(0)` is the return slot.
+                let pl = Local((i + 1) as u32);
+                captures.push(escape.escapes(pl));
+            }
+            if summary.insert(def.local, captures) {
+                changed = true;
+            }
+        }
+    }
+    summary
+}
+
+/// Computes the escape set for `body` assuming worst-case
+/// "captures all" semantics for every Call to a user-defined
+/// function. Equivalent to [`analyse_with_summary`] with an empty
+/// summary; kept for callers that don't have a program-wide
+/// summary handy.
 #[must_use]
 pub fn analyse(body: &Body) -> EscapeSet {
+    analyse_with_summary(body, &CaptureSummary::default())
+}
+
+/// Computes the escape set for `body`, consulting `summary` to
+/// decide which arguments of each user-fn Call need the escape
+/// mark. A callee's parameter that does not capture in `summary`
+/// allows the caller to leave the matching argument off the
+/// escape set, which in turn lets the cleanup pass schedule a
+/// drop for owning bindings whose only outbound use is a
+/// non-capturing helper.
+#[must_use]
+pub fn analyse_with_summary(body: &Body, summary: &CaptureSummary) -> EscapeSet {
     let mut set = EscapeSet::default();
 
     set.escapes.insert(Local::RETURN.0);
@@ -92,10 +239,30 @@ pub fn analyse(body: &Body) -> EscapeSet {
                     }
                 }
             }
-            if let Terminator::Call { args, .. } = &block.terminator {
-                for arg in args {
-                    if let Operand::Copy(src) = arg {
-                        if set.escapes.insert(src.local.0) {
+            if let Terminator::Call { callee, args, .. } = &block.terminator {
+                let skip_all = if let Operand::Const(crate::ir::ConstValue::Str(name)) = callee {
+                    is_non_capturing_runtime_callee(name)
+                } else {
+                    false
+                };
+                let per_arg_captures: Option<&[bool]> = if let Operand::FnRef { def, .. } = callee {
+                    summary.captures(def.local)
+                } else {
+                    None
+                };
+                if !skip_all {
+                    for (idx, arg) in args.iter().enumerate() {
+                        if let Some(captures) = per_arg_captures
+                            && captures.get(idx).copied() == Some(false)
+                        {
+                            // Callee's summary proves this parameter
+                            // does not escape its body, so the arg
+                            // does not escape this caller either.
+                            continue;
+                        }
+                        if let Operand::Copy(src) = arg
+                            && set.escapes.insert(src.local.0)
+                        {
                             changed = true;
                         }
                     }

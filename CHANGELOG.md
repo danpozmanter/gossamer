@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- **`std::compress` expanded.** New `flate` (raw DEFLATE), `zlib`, and
+  `bzip2` submodules join the existing `gzip` module. All three are
+  feature-gated (`compress` / `bzip2-compress`).
+- **`std::archive`.** New `tar` and `zip` submodules for reading and
+  writing archives, backed by the `tar` and `zip` crates.
+- **`std::hash::fnv`.** FNV-1a and FNV-1 hashes in 32- and 64-bit
+  variants; no new dependencies.
+- **`std::encoding` expanded.** New `base32` (RFC 4648 standard and hex
+  alphabets), `ascii85` (Adobe / btoa), and `xml` (quick-xml backed)
+  submodules. Qualified-path access for `encoding::base64` and
+  `encoding::hex` is now wired.
+- **`std::crypto::insecure`.** MD5 and SHA-1 for legacy-compatibility
+  contexts; feature-gated as `insecure-crypto`.
+- **`std::math::big`.** Arbitrary-precision integers via decimal-string
+  representation. Exposes `Int::parse`, `Uint::parse`, `Int::compare`,
+  and `factorial`.
+- **`std::sync::AtomicU64` and `sync::Barrier`** wired to the interpreter.
+- **52 integration tests** for all new stdlib modules in
+  `crates/gossamer-cli/tests/stdlib_new_modules.rs`.
+- **5 new examples**: `crypto_hashing.gos`, `encoding_codecs.gos`,
+  `big_numbers.gos`, `compress_demo.gos`, `html_escape.gos`.
+
+### Performance
+
+- **Parallel Cranelift body lowering.** Function bodies now compile
+  concurrently via rayon. An `OfflineModule` snapshot pre-declares all
+  symbols in a single-threaded phase; each rayon worker then lowers its
+  assigned body without taking any global lock.
+- **Auto-drop pass overhaul.** Ten stacked compiler and runtime fixes
+  make the heap-free pipeline produce IR that actually executes
+  `gos_rt_*_free` calls. Changes include: per-block liveness-based drop
+  placement, copy-alias chain tracking, inter-procedural escape analysis
+  (`CaptureSummary`), a sentinel-pointer skiplist for globally-owned
+  buffers, and `gos_rt_str_free` for owning strings. Effect on benchmarks
+  (source unchanged): k-nucleotide −33% peak RSS, spectral-norm −8%.
+- **`gos test` parallel by default.** Defaults to
+  `available_parallelism()` workers. `--serial` (alias `--parallel 1`)
+  opts back to sequential execution.
+- **`define_only` allow-list check is O(1).** Converted from a linear
+  scan to a `HashSet` in `lower_program_full`.
+
+### Architecture
+
+- **Incremental GC drive wired into the allocation fast path.**
+  `gos_rt_gc_alloc_rooted` calls `drive_incremental()` after each
+  rooted allocation: starts a new concurrent cycle when RSS exceeds the
+  threshold (default 4 MB; override with `GOSSAMER_GC_TARGET`), marks a
+  32-object batch during marking, and finalises when the grey set is
+  exhausted.
+
+### Fixes
+
+- **`Result` used as a bare statement is now a compile error (GT0007).**
+  Every `Result<T, E>` expression must be handled via `?`,
+  `match`/`if let`, or `let _ = expr`. `gos explain GT0007` documents
+  the rationale.
+
 ## 0.2.0
 
 ### Performance

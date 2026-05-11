@@ -1402,3 +1402,79 @@ fn skill_prompt_subcommand_prints_skill_card() {
         "skill card should cover concurrency"
     );
 }
+
+// --- N6: must_use Result lint (SPEC §9) ---
+
+#[test]
+fn discarded_result_is_a_type_error() {
+    // SPEC §9: a `Result<T, E>` value used as a statement without
+    // binding or propagating the result is a compile error (GT0007).
+    // `gos run` must refuse to execute and mention the error code.
+    // `let _ = expr` is the explicit-discard exception and must NOT
+    // trigger the diagnostic.
+    let src = r#"
+use std::errors
+
+fn may_fail(n: i64) -> Result<i64, errors::Error> {
+    if n > 0 { Ok(n) } else { Err(errors::new("negative")) }
+}
+
+fn main() {
+    may_fail(1)
+}
+"#;
+    let fixture = write_fixture("n6-discard-result", src);
+    let out = std::process::Command::new(gos_bin())
+        .args(["run"])
+        .arg(&fixture)
+        .output()
+        .expect("spawn gos run");
+    let _ = std::fs::remove_file(&fixture);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "run must reject a discarded Result; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("GT0007")
+            || stderr.contains("unused `Result`")
+            || stderr.contains("type error"),
+        "expected GT0007 or a Result-related diagnostic in stderr; got: {stderr}"
+    );
+}
+
+#[test]
+fn let_underscore_result_is_not_an_error() {
+    // `let _ = expr` is the explicit-discard form for Result. It must
+    // NOT trigger GT0007 — the user has consciously chosen to ignore
+    // the Result (best-effort operations, etc.).
+    let src = r#"
+use std::errors
+
+fn may_fail(n: i64) -> Result<i64, errors::Error> {
+    if n > 0 { Ok(n) } else { Err(errors::new("negative")) }
+}
+
+fn main() {
+    let _ = may_fail(1)
+    println!("ok")
+}
+"#;
+    let fixture = write_fixture("n6-let-underscore-ok", src);
+    let out = std::process::Command::new(gos_bin())
+        .args(["run"])
+        .arg(&fixture)
+        .output()
+        .expect("spawn gos run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&fixture);
+    assert!(
+        out.status.success(),
+        "let _ = result should be accepted; stderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("ok"),
+        "expected 'ok' in stdout; got: {stdout}"
+    );
+}

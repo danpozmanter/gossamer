@@ -54,6 +54,7 @@ gossamer-mir = { workspace = true }
 gossamer-runtime = { workspace = true }
 gossamer-types = { workspace = true }
 linkme = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 gossamer-ast = { workspace = true }

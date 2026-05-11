@@ -57,6 +57,7 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_go_spawn",
     "gos_rt_heap_i64_free",
     "gos_rt_heap_u8_free",
+    "gos_rt_str_free",
     "gos_rt_result_dbg",
     "gos_rt_sync_i64_add",
     "gos_rt_sync_i64_drop",

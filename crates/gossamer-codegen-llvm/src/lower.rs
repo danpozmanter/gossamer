@@ -76,6 +76,13 @@ pub(crate) struct Lowerer<'a> {
     /// suffixes so the LLVM IR has unique block names per
     /// preempt-check call site.
     pub(crate) preempt_seq: u32,
+    /// Inter-procedural capture summary. The emitter populates
+    /// this once per module (via `build_capture_summary`) and the
+    /// cleanup pass uses it to skip escape marks for callee
+    /// parameters that are known not to capture, unlocking precise
+    /// per-block drops for owning bindings whose only outbound use
+    /// is a non-capturing user fn.
+    pub(crate) capture_summary: gossamer_mir::CaptureSummary,
 }
 
 /// Module-scoped string intern pool.
@@ -159,6 +166,7 @@ impl<'a> Lowerer<'a> {
             strings: std::rc::Rc::new(std::cell::RefCell::new(StringPool::default())),
             current_block: None,
             preempt_seq: 0,
+            capture_summary: gossamer_mir::CaptureSummary::default(),
         }
     }
 
@@ -275,13 +283,37 @@ impl<'a> Lowerer<'a> {
 
     fn lower_block(&mut self, block: &gossamer_mir::BasicBlock) -> Result<(), BuildError> {
         writeln!(self.out, "bb{}:", block.id.as_u32()).unwrap();
+        let cleanup = gossamer_mir::plan_cleanup_with_summary(self.body, &self.capture_summary);
+        for entry in cleanup.at_block_entry(block.id) {
+            self.emit_cleanup_call(entry);
+        }
         for stmt in &block.stmts {
             self.lower_stmt(stmt)?;
+        }
+        for entry in cleanup.at_block_exit(block.id) {
+            self.emit_cleanup_call(entry);
         }
         self.current_block = Some(block.id.as_u32());
         self.lower_terminator(&block.terminator)?;
         self.current_block = None;
         Ok(())
+    }
+
+    fn emit_cleanup_call(&mut self, entry: &gossamer_mir::CleanupEntry) {
+        declare_rt(&mut self.runtime_refs, entry.free_fn);
+        let tmp = self.fresh();
+        writeln!(
+            self.out,
+            "  {tmp} = load ptr, ptr {slot}",
+            slot = local_slot(entry.local)
+        )
+        .unwrap();
+        writeln!(
+            self.out,
+            "  call void @{free}(ptr {tmp})",
+            free = entry.free_fn
+        )
+        .unwrap();
     }
 
     /// Back-edge safepoint for cooperative preemption. Currently a
@@ -376,6 +408,20 @@ impl<'a> Lowerer<'a> {
                 )
             {
                 return self.lower_raw_intrinsic(name, args, place, None);
+            }
+            // Drop-style intrinsic calls (`gos_rt_map_free`,
+            // `gos_rt_vec_free`, etc.) emitted by the MIR cleanup
+            // pass come through with a unit-typed destination
+            // because their result is `()`. Without this branch
+            // the call would be dropped on the floor and the
+            // container would leak until process exit. Route any
+            // `gos_rt_*` intrinsic at the runtime-call path so
+            // the IR records the side effect.
+            if let Rvalue::CallIntrinsic { name, args } = rvalue
+                && name.starts_with("gos_rt_")
+            {
+                self.lower_runtime_call_intrinsic(name, args, place.local)?;
+                return Ok(());
             }
             return Ok(());
         }
@@ -734,8 +780,20 @@ impl<'a> Lowerer<'a> {
         // pointer reinterpreted as i64 in the C ABI. On x86-64 both share
         // the rax register so the call is correct; the declaration must
         // agree with the call site or opt miscompiles with the wrong type.
-        self.runtime_refs
-            .insert(format!("declare {decl_ret} @{name}({decl_args})"));
+        //
+        // De-duplicate by function name: if any prior call site already
+        // produced a declaration for this symbol, keep that one and
+        // skip this insertion. Multiple distinct signatures for the
+        // same name make `opt` reject the IR with `invalid
+        // redefinition of function`, which then drops the whole module
+        // into the Cranelift fallback (Result/Option constructors with
+        // mixed `i64` / `ptr` / `void` payload args are the canonical
+        // trigger).
+        let needle = format!("@{name}(");
+        if !self.runtime_refs.iter().any(|d| d.contains(&needle)) {
+            self.runtime_refs
+                .insert(format!("declare {decl_ret} @{name}({decl_args})"));
+        }
         if decl_ret == "void" {
             writeln!(self.out, "  call void @{name}({arg_text})").unwrap();
             // Rvalue-position void call: synthesise a sentinel
@@ -1472,21 +1530,10 @@ impl<'a> Lowerer<'a> {
                 // the runtime but are never called and every owning
                 // `Vec<i64>` / `Vec<u8>` / channel leaks until process
                 // exit (C2 in `~/dev/contexts/lang/adversarial_analysis.md`).
-                let cleanup = gossamer_mir::plan_cleanup(self.body);
-                for entry in cleanup.entries() {
-                    let tmp = self.fresh();
-                    writeln!(
-                        self.out,
-                        "  {tmp} = load ptr, ptr {slot}",
-                        slot = local_slot(entry.local)
-                    )
-                    .unwrap();
-                    writeln!(
-                        self.out,
-                        "  call void @{free}(ptr {tmp})",
-                        free = entry.free_fn
-                    )
-                    .unwrap();
+                let cleanup =
+                    gossamer_mir::plan_cleanup_with_summary(self.body, &self.capture_summary);
+                for entry in cleanup.at_return() {
+                    self.emit_cleanup_call(entry);
                 }
                 let ret_ty = self.body.local_ty(Local::RETURN);
                 let ret_llvm = render_ty(self.tcx, ret_ty);
@@ -3829,6 +3876,11 @@ fn map_prelude_symbol(name: &str) -> &str {
         "gos_rt_heap_u8_write_bytes_to_stdout" => "gos_rt_heap_u8_write_bytes_to_stdout",
         "gos_rt_heap_u8_write_lines_to_stdout" => "gos_rt_heap_u8_write_lines_to_stdout",
         "gos_rt_heap_u8_free" => "gos_rt_heap_u8_free",
+        "gos_rt_heap_i64_free" => "gos_rt_heap_i64_free",
+        "gos_rt_chan_drop" => "gos_rt_chan_drop",
+        // String allocator reclamation for owning bindings the
+        // cleanup pass schedules to drop at body return.
+        "gos_rt_str_free" => "gos_rt_str_free",
         "Atomic::new"
         | "sync::Atomic::new"
         | "atomic::new"

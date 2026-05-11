@@ -55,7 +55,7 @@ gossamer-mir = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-runtime = { workspace = true }
-gossamer-std = { workspace = true, features = ["regex", "compress", "http-client"] }
+gossamer-std = { workspace = true, features = ["regex", "compress", "http-client", "crypto", "yaml", "hash", "archive", "xml", "insecure-crypto", "bzip2-compress", "bigint"] }
 gossamer-types = { workspace = true }
 parking_lot = { workspace = true }
 rustc-hash = "2"

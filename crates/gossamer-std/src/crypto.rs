@@ -557,6 +557,10 @@ pub mod kdf {
     }
 }
 
+/// Legacy/insecure hashes (MD5, SHA-1). Feature-gated; must not be used for security.
+#[cfg(feature = "insecure-crypto")]
+pub mod insecure;
+
 #[inline]
 fn nibble_char(n: u8) -> char {
     match n {

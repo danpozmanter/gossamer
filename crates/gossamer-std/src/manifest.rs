@@ -62,6 +62,16 @@ pub const ALL_MODULES: &[StdModule] = &[
     HTML_TEMPLATE,
     TEXT_TEMPLATE,
     DATABASE_SQL,
+    // P0 gap-fill: math, unicode, utf8 expansion, encoding, strings.
+    MATH,
+    MATH_BITS,
+    UNICODE,
+    ENCODING_CSV,
+    ENCODING_PEM,
+    ENCODING_BINARY_FULL,
+    // P0 gap-fill: utf16, iter.
+    UTF16,
+    ITER,
 ];
 
 const OS_EXEC: StdModule = StdModule {
@@ -1549,6 +1559,667 @@ const PANIC: StdModule = StdModule {
             name: "catch_unwind",
             kind: StdItemKind::Function,
             doc: "Runs a closure, catching any panic it raises.",
+        },
+    ],
+};
+
+const MATH: StdModule = StdModule {
+    path: "std::math",
+    summary: "Mathematical constants and f64 functions (Go's math package shape).",
+    items: &[
+        StdItem {
+            name: "PI",
+            kind: StdItemKind::Const,
+            doc: "Archimedes' constant π.",
+        },
+        StdItem {
+            name: "E",
+            kind: StdItemKind::Const,
+            doc: "Euler's number e.",
+        },
+        StdItem {
+            name: "SQRT_2",
+            kind: StdItemKind::Const,
+            doc: "√2.",
+        },
+        StdItem {
+            name: "LN_2",
+            kind: StdItemKind::Const,
+            doc: "Natural log of 2.",
+        },
+        StdItem {
+            name: "LN_10",
+            kind: StdItemKind::Const,
+            doc: "Natural log of 10.",
+        },
+        StdItem {
+            name: "PHI",
+            kind: StdItemKind::Const,
+            doc: "Golden ratio φ.",
+        },
+        StdItem {
+            name: "INF",
+            kind: StdItemKind::Const,
+            doc: "Positive infinity.",
+        },
+        StdItem {
+            name: "abs",
+            kind: StdItemKind::Function,
+            doc: "Absolute value of x.",
+        },
+        StdItem {
+            name: "sqrt",
+            kind: StdItemKind::Function,
+            doc: "Square root.",
+        },
+        StdItem {
+            name: "cbrt",
+            kind: StdItemKind::Function,
+            doc: "Cube root.",
+        },
+        StdItem {
+            name: "floor",
+            kind: StdItemKind::Function,
+            doc: "Largest integer ≤ x.",
+        },
+        StdItem {
+            name: "ceil",
+            kind: StdItemKind::Function,
+            doc: "Smallest integer ≥ x.",
+        },
+        StdItem {
+            name: "round",
+            kind: StdItemKind::Function,
+            doc: "Nearest integer, half away from zero.",
+        },
+        StdItem {
+            name: "trunc",
+            kind: StdItemKind::Function,
+            doc: "Integer part of x.",
+        },
+        StdItem {
+            name: "sin",
+            kind: StdItemKind::Function,
+            doc: "Sine (radians).",
+        },
+        StdItem {
+            name: "cos",
+            kind: StdItemKind::Function,
+            doc: "Cosine (radians).",
+        },
+        StdItem {
+            name: "tan",
+            kind: StdItemKind::Function,
+            doc: "Tangent (radians).",
+        },
+        StdItem {
+            name: "asin",
+            kind: StdItemKind::Function,
+            doc: "Arcsine (radians).",
+        },
+        StdItem {
+            name: "acos",
+            kind: StdItemKind::Function,
+            doc: "Arccosine (radians).",
+        },
+        StdItem {
+            name: "atan",
+            kind: StdItemKind::Function,
+            doc: "Arctangent (radians).",
+        },
+        StdItem {
+            name: "atan2",
+            kind: StdItemKind::Function,
+            doc: "Four-quadrant arctangent of y/x.",
+        },
+        StdItem {
+            name: "exp",
+            kind: StdItemKind::Function,
+            doc: "e^x.",
+        },
+        StdItem {
+            name: "exp2",
+            kind: StdItemKind::Function,
+            doc: "2^x.",
+        },
+        StdItem {
+            name: "ln",
+            kind: StdItemKind::Function,
+            doc: "Natural logarithm.",
+        },
+        StdItem {
+            name: "log2",
+            kind: StdItemKind::Function,
+            doc: "Base-2 logarithm.",
+        },
+        StdItem {
+            name: "log10",
+            kind: StdItemKind::Function,
+            doc: "Base-10 logarithm.",
+        },
+        StdItem {
+            name: "log",
+            kind: StdItemKind::Function,
+            doc: "Logarithm with given base.",
+        },
+        StdItem {
+            name: "pow",
+            kind: StdItemKind::Function,
+            doc: "x raised to the power y.",
+        },
+        StdItem {
+            name: "hypot",
+            kind: StdItemKind::Function,
+            doc: "Euclidean distance √(x²+y²).",
+        },
+        StdItem {
+            name: "min_f64",
+            kind: StdItemKind::Function,
+            doc: "Lesser of two f64 values.",
+        },
+        StdItem {
+            name: "max_f64",
+            kind: StdItemKind::Function,
+            doc: "Greater of two f64 values.",
+        },
+        StdItem {
+            name: "min_i64",
+            kind: StdItemKind::Function,
+            doc: "Lesser of two i64 values.",
+        },
+        StdItem {
+            name: "max_i64",
+            kind: StdItemKind::Function,
+            doc: "Greater of two i64 values.",
+        },
+        StdItem {
+            name: "abs_i64",
+            kind: StdItemKind::Function,
+            doc: "Absolute value of an i64.",
+        },
+        StdItem {
+            name: "fmod",
+            kind: StdItemKind::Function,
+            doc: "Floating-point remainder x%y.",
+        },
+        StdItem {
+            name: "is_nan",
+            kind: StdItemKind::Function,
+            doc: "Reports whether x is NaN.",
+        },
+        StdItem {
+            name: "is_inf",
+            kind: StdItemKind::Function,
+            doc: "Reports whether x is infinite.",
+        },
+        StdItem {
+            name: "nan",
+            kind: StdItemKind::Function,
+            doc: "Returns the IEEE 754 NaN value.",
+        },
+        StdItem {
+            name: "inf",
+            kind: StdItemKind::Function,
+            doc: "Returns ±infinity based on sign.",
+        },
+        StdItem {
+            name: "copysign",
+            kind: StdItemKind::Function,
+            doc: "Magnitude of x with sign of y.",
+        },
+        StdItem {
+            name: "dim",
+            kind: StdItemKind::Function,
+            doc: "max(x-y, 0) — Go's math.Dim.",
+        },
+    ],
+};
+
+const MATH_BITS: StdModule = StdModule {
+    path: "std::math::bits",
+    summary: "Integer bit-manipulation operations (Go's math/bits shape).",
+    items: &[
+        StdItem {
+            name: "count_ones",
+            kind: StdItemKind::Function,
+            doc: "Number of set bits (popcount).",
+        },
+        StdItem {
+            name: "count_zeros",
+            kind: StdItemKind::Function,
+            doc: "Number of clear bits.",
+        },
+        StdItem {
+            name: "leading_zeros",
+            kind: StdItemKind::Function,
+            doc: "Leading zero bit count.",
+        },
+        StdItem {
+            name: "trailing_zeros",
+            kind: StdItemKind::Function,
+            doc: "Trailing zero bit count.",
+        },
+        StdItem {
+            name: "rotate_left",
+            kind: StdItemKind::Function,
+            doc: "Rotates x left by n bits.",
+        },
+        StdItem {
+            name: "rotate_right",
+            kind: StdItemKind::Function,
+            doc: "Rotates x right by n bits.",
+        },
+        StdItem {
+            name: "reverse_bits",
+            kind: StdItemKind::Function,
+            doc: "Reverses bit order of x.",
+        },
+        StdItem {
+            name: "reverse_bytes",
+            kind: StdItemKind::Function,
+            doc: "Reverses byte order of x.",
+        },
+        StdItem {
+            name: "len",
+            kind: StdItemKind::Function,
+            doc: "Minimum bits required to represent x.",
+        },
+        StdItem {
+            name: "add",
+            kind: StdItemKind::Function,
+            doc: "x + y + carry; returns (sum, carry_out).",
+        },
+        StdItem {
+            name: "sub",
+            kind: StdItemKind::Function,
+            doc: "x - y - borrow; returns (diff, borrow_out).",
+        },
+        StdItem {
+            name: "mul",
+            kind: StdItemKind::Function,
+            doc: "Full 128-bit product; returns (hi, lo).",
+        },
+        StdItem {
+            name: "div",
+            kind: StdItemKind::Function,
+            doc: "128-bit dividend / 64-bit divisor; returns (quotient, remainder).",
+        },
+    ],
+};
+
+const UNICODE: StdModule = StdModule {
+    path: "std::unicode",
+    summary: "Unicode character property predicates and casing operations.",
+    items: &[
+        StdItem {
+            name: "is_letter",
+            kind: StdItemKind::Function,
+            doc: "True if r is a Unicode letter.",
+        },
+        StdItem {
+            name: "is_digit",
+            kind: StdItemKind::Function,
+            doc: "True if r is a decimal digit.",
+        },
+        StdItem {
+            name: "is_number",
+            kind: StdItemKind::Function,
+            doc: "True if r is a numeric character.",
+        },
+        StdItem {
+            name: "is_space",
+            kind: StdItemKind::Function,
+            doc: "True if r is whitespace.",
+        },
+        StdItem {
+            name: "is_upper",
+            kind: StdItemKind::Function,
+            doc: "True if r is an uppercase letter.",
+        },
+        StdItem {
+            name: "is_lower",
+            kind: StdItemKind::Function,
+            doc: "True if r is a lowercase letter.",
+        },
+        StdItem {
+            name: "is_title",
+            kind: StdItemKind::Function,
+            doc: "True if r is a titlecase letter.",
+        },
+        StdItem {
+            name: "is_punct",
+            kind: StdItemKind::Function,
+            doc: "True if r is a punctuation character.",
+        },
+        StdItem {
+            name: "is_symbol",
+            kind: StdItemKind::Function,
+            doc: "True if r is a symbol character.",
+        },
+        StdItem {
+            name: "is_mark",
+            kind: StdItemKind::Function,
+            doc: "True if r is a combining mark.",
+        },
+        StdItem {
+            name: "is_print",
+            kind: StdItemKind::Function,
+            doc: "True if r is a printable character.",
+        },
+        StdItem {
+            name: "is_graphic",
+            kind: StdItemKind::Function,
+            doc: "True if r is a graphic character.",
+        },
+        StdItem {
+            name: "is_control",
+            kind: StdItemKind::Function,
+            doc: "True if r is a control character.",
+        },
+        StdItem {
+            name: "to_upper",
+            kind: StdItemKind::Function,
+            doc: "Maps r to its uppercase equivalent.",
+        },
+        StdItem {
+            name: "to_lower",
+            kind: StdItemKind::Function,
+            doc: "Maps r to its lowercase equivalent.",
+        },
+        StdItem {
+            name: "to_title",
+            kind: StdItemKind::Function,
+            doc: "Maps r to its titlecase equivalent.",
+        },
+        StdItem {
+            name: "simple_fold",
+            kind: StdItemKind::Function,
+            doc: "Next rune in Unicode case-folding cycle.",
+        },
+    ],
+};
+
+const ENCODING_CSV: StdModule = StdModule {
+    path: "std::encoding::csv",
+    summary: "CSV record reader and writer.",
+    items: &[
+        StdItem {
+            name: "read",
+            kind: StdItemKind::Function,
+            doc: "Parses all CSV records from a string.",
+        },
+        StdItem {
+            name: "parse_line",
+            kind: StdItemKind::Function,
+            doc: "Parses a single CSV-formatted line.",
+        },
+        StdItem {
+            name: "write",
+            kind: StdItemKind::Function,
+            doc: "Serialises records as a CSV string.",
+        },
+    ],
+};
+
+const ENCODING_PEM: StdModule = StdModule {
+    path: "std::encoding::pem",
+    summary: "PEM block encoder and decoder.",
+    items: &[
+        StdItem {
+            name: "Block",
+            kind: StdItemKind::Type,
+            doc: "A decoded PEM block with type label and DER bytes.",
+        },
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "Encodes a Block as a PEM string.",
+        },
+        StdItem {
+            name: "decode",
+            kind: StdItemKind::Function,
+            doc: "Decodes the first PEM block from a string.",
+        },
+        StdItem {
+            name: "decode_all",
+            kind: StdItemKind::Function,
+            doc: "Decodes all PEM blocks from a string.",
+        },
+    ],
+};
+
+const ENCODING_BINARY_FULL: StdModule = StdModule {
+    path: "std::encoding::binary",
+    summary: "Complete big/little-endian integer packing and varint codecs.",
+    items: &[
+        StdItem {
+            name: "get_u8",
+            kind: StdItemKind::Function,
+            doc: "Reads a single byte.",
+        },
+        StdItem {
+            name: "put_u8",
+            kind: StdItemKind::Function,
+            doc: "Writes a single byte.",
+        },
+        StdItem {
+            name: "get_u16_be",
+            kind: StdItemKind::Function,
+            doc: "Reads a big-endian u16.",
+        },
+        StdItem {
+            name: "put_u16_be",
+            kind: StdItemKind::Function,
+            doc: "Writes a big-endian u16.",
+        },
+        StdItem {
+            name: "get_u16_le",
+            kind: StdItemKind::Function,
+            doc: "Reads a little-endian u16.",
+        },
+        StdItem {
+            name: "put_u16_le",
+            kind: StdItemKind::Function,
+            doc: "Writes a little-endian u16.",
+        },
+        StdItem {
+            name: "get_u32_be",
+            kind: StdItemKind::Function,
+            doc: "Reads a big-endian u32.",
+        },
+        StdItem {
+            name: "put_u32_be",
+            kind: StdItemKind::Function,
+            doc: "Writes a big-endian u32.",
+        },
+        StdItem {
+            name: "get_u32_le",
+            kind: StdItemKind::Function,
+            doc: "Reads a little-endian u32.",
+        },
+        StdItem {
+            name: "put_u32_le",
+            kind: StdItemKind::Function,
+            doc: "Writes a little-endian u32.",
+        },
+        StdItem {
+            name: "get_u64_be",
+            kind: StdItemKind::Function,
+            doc: "Reads a big-endian u64.",
+        },
+        StdItem {
+            name: "put_u64_be",
+            kind: StdItemKind::Function,
+            doc: "Writes a big-endian u64.",
+        },
+        StdItem {
+            name: "get_u64_le",
+            kind: StdItemKind::Function,
+            doc: "Reads a little-endian u64.",
+        },
+        StdItem {
+            name: "put_u64_le",
+            kind: StdItemKind::Function,
+            doc: "Writes a little-endian u64.",
+        },
+        StdItem {
+            name: "uvarint",
+            kind: StdItemKind::Function,
+            doc: "Decodes an unsigned varint.",
+        },
+        StdItem {
+            name: "varint",
+            kind: StdItemKind::Function,
+            doc: "Decodes a signed varint (zigzag).",
+        },
+        StdItem {
+            name: "put_uvarint",
+            kind: StdItemKind::Function,
+            doc: "Encodes an unsigned varint.",
+        },
+        StdItem {
+            name: "put_varint",
+            kind: StdItemKind::Function,
+            doc: "Encodes a signed varint (zigzag).",
+        },
+    ],
+};
+
+const UTF16: StdModule = StdModule {
+    path: "std::utf16",
+    summary: "UTF-16 encoding/decoding and surrogate pair helpers.",
+    items: &[
+        StdItem {
+            name: "is_surrogate",
+            kind: StdItemKind::Function,
+            doc: "True iff r falls in the surrogate range U+D800..U+DFFF.",
+        },
+        StdItem {
+            name: "rune_len",
+            kind: StdItemKind::Function,
+            doc: "Number of UTF-16 code units needed to encode r (1 or 2).",
+        },
+        StdItem {
+            name: "encode_rune",
+            kind: StdItemKind::Function,
+            doc: "Encodes r as 1 or 2 u16 code units.",
+        },
+        StdItem {
+            name: "decode_surrogate_pair",
+            kind: StdItemKind::Function,
+            doc: "Decodes a high+low surrogate pair to a char.",
+        },
+        StdItem {
+            name: "append_rune",
+            kind: StdItemKind::Function,
+            doc: "Appends the UTF-16 encoding of r to a Vec<u16>.",
+        },
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "Encodes a []char to Vec<u16>.",
+        },
+        StdItem {
+            name: "decode",
+            kind: StdItemKind::Function,
+            doc: "Decodes a []u16 to Vec<char>, replacing surrogates with U+FFFD.",
+        },
+        StdItem {
+            name: "encode_string",
+            kind: StdItemKind::Function,
+            doc: "Encodes a String directly to Vec<u16>.",
+        },
+        StdItem {
+            name: "decode_to_string",
+            kind: StdItemKind::Function,
+            doc: "Decodes a []u16 to String.",
+        },
+    ],
+};
+
+const ITER: StdModule = StdModule {
+    path: "std::iter",
+    summary: "Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.",
+    items: &[
+        StdItem {
+            name: "count",
+            kind: StdItemKind::Function,
+            doc: "Number of elements.",
+        },
+        StdItem {
+            name: "take",
+            kind: StdItemKind::Function,
+            doc: "First n elements.",
+        },
+        StdItem {
+            name: "skip",
+            kind: StdItemKind::Function,
+            doc: "All elements after the first n.",
+        },
+        StdItem {
+            name: "zip",
+            kind: StdItemKind::Function,
+            doc: "Pairs elements from two sequences.",
+        },
+        StdItem {
+            name: "enumerate",
+            kind: StdItemKind::Function,
+            doc: "Pairs each element with its index.",
+        },
+        StdItem {
+            name: "chain",
+            kind: StdItemKind::Function,
+            doc: "Concatenates two sequences.",
+        },
+        StdItem {
+            name: "flatten",
+            kind: StdItemKind::Function,
+            doc: "Flattens a Vec<Vec<T>> into Vec<T>.",
+        },
+        StdItem {
+            name: "reversed",
+            kind: StdItemKind::Function,
+            doc: "Returns a reversed copy.",
+        },
+        StdItem {
+            name: "dedup",
+            kind: StdItemKind::Function,
+            doc: "Removes consecutive duplicate elements.",
+        },
+        StdItem {
+            name: "map",
+            kind: StdItemKind::Function,
+            doc: "Applies f to each element, returning a new Vec.",
+        },
+        StdItem {
+            name: "filter",
+            kind: StdItemKind::Function,
+            doc: "Returns elements where f is true.",
+        },
+        StdItem {
+            name: "fold",
+            kind: StdItemKind::Function,
+            doc: "Reduces a sequence with an accumulator.",
+        },
+        StdItem {
+            name: "flat_map",
+            kind: StdItemKind::Function,
+            doc: "Maps f and flattens one level.",
+        },
+        StdItem {
+            name: "any",
+            kind: StdItemKind::Function,
+            doc: "True if any element satisfies f.",
+        },
+        StdItem {
+            name: "all",
+            kind: StdItemKind::Function,
+            doc: "True if every element satisfies f.",
+        },
+        StdItem {
+            name: "sum",
+            kind: StdItemKind::Function,
+            doc: "Sum of i64 or f64 elements.",
         },
     ],
 };

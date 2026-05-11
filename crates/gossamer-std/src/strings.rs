@@ -156,6 +156,111 @@ pub fn replacen(text: &str, from: &str, to: &str, n: usize) -> String {
     text.replacen(from, to, n)
 }
 
+/// Returns `true` if `text` contains the Unicode scalar `r`.
+#[must_use]
+pub fn contains_rune(text: &str, r: char) -> bool {
+    text.contains(r)
+}
+
+/// Returns `true` if `text` contains any character found in `chars`.
+#[must_use]
+pub fn contains_any(text: &str, chars: &str) -> bool {
+    text.chars().any(|c| chars.contains(c))
+}
+
+/// Byte offset of the first occurrence of `r` in `text`, or `None`.
+#[must_use]
+pub fn index_rune(text: &str, r: char) -> Option<usize> {
+    text.find(r)
+}
+
+/// Byte offset of the first occurrence of any character in `chars`
+/// within `text`, or `None`.
+#[must_use]
+pub fn index_any(text: &str, chars: &str) -> Option<usize> {
+    text.char_indices()
+        .find(|(_, c)| chars.contains(*c))
+        .map(|(i, _)| i)
+}
+
+/// Byte offset of the last occurrence of any character in `chars`
+/// within `text`, or `None`.
+#[must_use]
+pub fn last_index_any(text: &str, chars: &str) -> Option<usize> {
+    text.char_indices()
+        .rev()
+        .find(|(_, c)| chars.contains(*c))
+        .map(|(i, _)| i)
+}
+
+/// Splits `text` on runs of Unicode whitespace, returning non-empty fields.
+/// Equivalent to Go's `strings.Fields`.
+#[must_use]
+pub fn fields(text: &str) -> Vec<String> {
+    text.split_whitespace().map(str::to_string).collect()
+}
+
+/// Returns `true` if `a` and `b` are equal under Unicode simple case folding.
+#[must_use]
+pub fn equal_fold(a: &str, b: &str) -> bool {
+    if a.len() != b.len() && a.chars().count() != b.chars().count() {
+        return false;
+    }
+    a.chars()
+        .zip(b.chars())
+        .all(|(ac, bc)| ac.to_lowercase().eq(bc.to_lowercase()))
+}
+
+/// Applies `f` to each Unicode scalar in `text`, replacing it with the
+/// return value. If `f` returns `None` the character is dropped.
+#[must_use]
+pub fn map_chars(text: &str, f: impl Fn(char) -> Option<char>) -> String {
+    text.chars().filter_map(f).collect()
+}
+
+/// Trims characters in `cutset` from both ends of `text`.
+#[must_use]
+pub fn trim_matches(text: &str, cutset: &str) -> String {
+    text.trim_matches(|c| cutset.contains(c)).to_string()
+}
+
+/// Trims characters in `cutset` from the start of `text`.
+#[must_use]
+pub fn trim_start_matches(text: &str, cutset: &str) -> String {
+    text.trim_start_matches(|c| cutset.contains(c)).to_string()
+}
+
+/// Trims characters in `cutset` from the end of `text`.
+#[must_use]
+pub fn trim_end_matches(text: &str, cutset: &str) -> String {
+    text.trim_end_matches(|c| cutset.contains(c)).to_string()
+}
+
+/// Returns `text` with non-UTF-8 bytes replaced by `replacement`.
+#[must_use]
+pub fn to_valid_utf8(text: &[u8], replacement: &str) -> String {
+    String::from_utf8_lossy(text).replace('\u{FFFD}', replacement)
+}
+
+/// Converts `text` to Unicode title case (first letter of each word uppercased).
+#[must_use]
+pub fn to_title(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut capitalize_next = true;
+    for c in text.chars() {
+        if c.is_whitespace() {
+            capitalize_next = true;
+            result.push(c);
+        } else if capitalize_next {
+            result.extend(c.to_uppercase());
+            capitalize_next = false;
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

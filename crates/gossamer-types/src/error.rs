@@ -90,6 +90,11 @@ pub enum TypeError {
         /// `true` when the receiver is opaque to the checker.
         opaque: bool,
     },
+    /// A `Result<T, E>` expression was used as a statement without
+    /// binding or propagating the value. SPEC §9: discarded Results
+    /// are a compile error unless explicitly suppressed with `let _ =`.
+    #[error("unused `Result` value — the `Err` variant may go unhandled")]
+    DiscardedResult,
 }
 
 impl TypeError {
@@ -103,6 +108,7 @@ impl TypeError {
             Self::NonExhaustiveMatch { .. } => "non-exhaustive-match",
             Self::InvalidCast { .. } => "invalid-cast",
             Self::UnknownField { .. } => "unknown-field",
+            Self::DiscardedResult => "discarded-result",
         }
     }
 
@@ -116,6 +122,7 @@ impl TypeError {
             Self::NonExhaustiveMatch { .. } => "GT0004",
             Self::InvalidCast { .. } => "GT0005",
             Self::UnknownField { .. } => "GT0006",
+            Self::DiscardedResult => "GT0007",
         }
     }
 }
@@ -225,6 +232,14 @@ impl TypeDiagnostic {
                          definition for `{ty}` is in scope."
                     ));
                 }
+            }
+            TypeError::DiscardedResult => {
+                out = out
+                    .with_help(
+                        "propagate the error with `?`, handle it with `match` / `if let`, \
+                         or explicitly discard with `let _ = <expr>`",
+                    )
+                    .with_note("SPEC §9: every `Result` value must be handled");
             }
         }
         out

@@ -98,6 +98,19 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      receiver's actual type — generics and inference often resolve\n\
                      this once the surrounding code is more constrained."
         }
+        "GT0007" => {
+            "A `Result<T, E>` expression was used as a statement without its\n\
+                     value being handled. If the operation failed the error is\n\
+                     silently ignored, which is almost always a bug.\n\n\
+                     Three ways to fix this:\n\
+                     - Propagate with `?`: `do_something()?` (requires the\n\
+                       enclosing function to return `Result`).\n\
+                     - Match explicitly: `match do_something() { Ok(v) => …, Err(e) => … }`.\n\
+                     - Acknowledge and discard: `let _ = do_something()` — this\n\
+                       silences GT0007 but leaves the error unhandled; only\n\
+                       appropriate when the operation is best-effort.\n\n\
+                     SPEC §9 requires every `Result` value to be handled."
+        }
         "GM0001" => {
             "Generic monomorphization received a type substitution that the\n\
                      compiler does not yet support — typically a generic parameter\n\

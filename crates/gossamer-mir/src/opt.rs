@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use gossamer_types::{TyCtxt, TyKind};
 
 use crate::ir::{
-    BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, StatementKind, Terminator,
+    BinOp, BlockId, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, StatementKind,
+    Terminator,
 };
 
 /// Runs the full optimisation pipeline on `body`. Copy propagation
@@ -24,6 +25,328 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     copy_propagate(body, tcx);
     const_branch_elim(body);
     dead_store_elim(body, tcx);
+}
+
+/// Detects trivial wrapper functions (a two-block body whose entry block
+/// immediately calls another function with all params forwarded in order)
+/// and rewrites every call site to invoke the inner function directly,
+/// eliminating the intermediate call frame.
+///
+/// Must be called before [`optimise`] so that subsequent copy-propagation
+/// and dead-store passes see the tightened call graph.
+pub fn inline_trivial_wrappers(bodies: &mut [Body]) {
+    let mut wrappers: HashMap<String, Operand> = HashMap::new();
+    for body in bodies.iter() {
+        if let Some(inner_callee) = detect_wrapper_callee(body) {
+            wrappers.insert(body.name.clone(), inner_callee);
+        }
+    }
+    if wrappers.is_empty() {
+        return;
+    }
+    for body in bodies.iter_mut() {
+        for block in &mut body.blocks {
+            if let Terminator::Call { callee, .. } = &mut block.terminator {
+                if let Operand::Const(ConstValue::Str(name)) = callee {
+                    if let Some(inner) = wrappers.get(name.as_str()) {
+                        *callee = inner.clone();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Returns the inner callee if `body` is a trivial wrapper, `None` otherwise.
+/// A trivial wrapper has exactly two blocks:
+/// - bb0: no statements, `Call` terminator whose args are exactly the
+///   params `Local(1)..=Local(arity)` forwarded in source order.
+/// - bb1: no statements, `Return` terminator.
+fn detect_wrapper_callee(body: &Body) -> Option<Operand> {
+    if body.blocks.len() != 2 {
+        return None;
+    }
+    let bb0 = &body.blocks[0];
+    let bb1 = &body.blocks[1];
+    if !bb0.stmts.is_empty() || !bb1.stmts.is_empty() {
+        return None;
+    }
+    if !matches!(bb1.terminator, Terminator::Return) {
+        return None;
+    }
+    let Terminator::Call {
+        callee,
+        args,
+        destination,
+        target,
+    } = &bb0.terminator
+    else {
+        return None;
+    };
+    if *target != Some(bb1.id) {
+        return None;
+    }
+    if destination.local != Local::RETURN || !destination.projection.is_empty() {
+        return None;
+    }
+    if args.len() != body.arity as usize {
+        return None;
+    }
+    for (i, arg) in args.iter().enumerate() {
+        let expected = Local((i as u32) + 1);
+        match arg {
+            Operand::Copy(place) if place.local == expected && place.projection.is_empty() => {}
+            _ => return None,
+        }
+    }
+    Some(callee.clone())
+}
+
+/// Maximum number of statements in a callee body that we are willing to inline.
+const INLINE_STMT_LIMIT: usize = 4;
+
+/// Snapshot of an inlineable callee body: its arity, its locals
+/// (for splicing into the caller's local table), and its one
+/// computation block's statements.
+#[derive(Clone)]
+struct InlineableCallee {
+    arity: u32,
+    /// Callee locals from index `arity + 1` onward (the temps only;
+    /// params and the return slot are remapped to caller locals).
+    extra_locals: Vec<crate::ir::LocalDecl>,
+    /// Statements from the callee's single computation block, before
+    /// remapping.
+    stmts: Vec<crate::ir::Statement>,
+}
+
+/// Inlines small (≤ `INLINE_STMT_LIMIT`-statement) single-block callee
+/// bodies into their call sites. Only inlines when:
+/// - The callee has 1 or 2 blocks with all statements in block 0.
+/// - All statements are plain assignments (`Assign`) with no calls and
+///   no projected places on the destination.
+/// - All call-site arguments are simple bare-local copies or constants
+///   (no projections on the arg places).
+/// - The call destination place has no projections.
+///
+/// Run before `optimise` so the per-body passes see the flattened graph.
+pub fn inline_small_callees(bodies: &mut [Body]) {
+    let mut inlineables: HashMap<String, InlineableCallee> = HashMap::new();
+    for body in bodies.iter() {
+        if let Some(ic) = try_build_inlineable(body) {
+            inlineables.insert(body.name.clone(), ic);
+        }
+    }
+    if inlineables.is_empty() {
+        return;
+    }
+    for body in bodies.iter_mut() {
+        inline_into_body(body, &inlineables);
+    }
+}
+
+fn try_build_inlineable(body: &Body) -> Option<InlineableCallee> {
+    // Callee must have 1 or 2 blocks. With 2 blocks, block 1 is an
+    // empty Return continuation (same shape as `detect_wrapper_callee`).
+    if body.blocks.len() > 2 || body.blocks.is_empty() {
+        return None;
+    }
+    let bb0 = &body.blocks[0];
+    // The computation block must not contain nested calls.
+    for stmt in &bb0.stmts {
+        let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+            return None;
+        };
+        // Destination must be a bare local (no projections).
+        if !place.projection.is_empty() {
+            return None;
+        }
+        // Rvalue must not be a call or contain a call.
+        if matches!(rvalue, Rvalue::CallIntrinsic { .. }) {
+            return None;
+        }
+    }
+    // Terminator of bb0: either Return or Goto{bb1}.
+    match &bb0.terminator {
+        Terminator::Return => {}
+        Terminator::Goto { target } => {
+            if body.blocks.len() < 2 {
+                return None;
+            }
+            let bb1 = &body.blocks[1];
+            if bb1.id != *target || !bb1.stmts.is_empty() {
+                return None;
+            }
+            if !matches!(bb1.terminator, Terminator::Return) {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    let total_stmts = bb0.stmts.len();
+    if total_stmts > INLINE_STMT_LIMIT {
+        return None;
+    }
+    // Slice off the extra locals (temps beyond params + return slot).
+    let param_end = (body.arity + 1) as usize;
+    let extra_locals = if param_end < body.locals.len() {
+        body.locals[param_end..].to_vec()
+    } else {
+        Vec::new()
+    };
+    Some(InlineableCallee {
+        arity: body.arity,
+        extra_locals,
+        stmts: bb0.stmts.clone(),
+    })
+}
+
+fn inline_into_body(body: &mut Body, inlineables: &HashMap<String, InlineableCallee>) {
+    // Iterate over block indices because we mutate `body.locals` (to
+    // add callee temps) during the loop. The block list itself does
+    // not grow — we splice statements into existing blocks.
+    let mut bi = 0;
+    while bi < body.blocks.len() {
+        let Terminator::Call {
+            callee,
+            args,
+            destination,
+            target,
+        } = body.blocks[bi].terminator.clone()
+        else {
+            bi += 1;
+            continue;
+        };
+        let callee_name = if let Operand::Const(ConstValue::Str(s)) = &callee {
+            s.clone()
+        } else {
+            bi += 1;
+            continue;
+        };
+        let Some(ic) = inlineables.get(&callee_name) else {
+            bi += 1;
+            continue;
+        };
+        // Guard: destination must be a bare local.
+        if !destination.projection.is_empty() {
+            bi += 1;
+            continue;
+        }
+        // Guard: all args must be bare-local copies or consts.
+        let arg_locals: Vec<Option<Local>> = args
+            .iter()
+            .map(|op| match op {
+                Operand::Copy(p) if p.projection.is_empty() => Some(p.local),
+                _ => None,
+            })
+            .collect();
+        if arg_locals.iter().any(Option::is_none) {
+            // Some arg is a const or projected place; fall back to
+            // introducing a let binding for each such arg.
+            // For simplicity, skip inlining this site.
+            bi += 1;
+            continue;
+        }
+        // All guards passed — inline.
+        let orig_local_count = body.locals.len() as u32;
+        body.locals.extend(ic.extra_locals.iter().cloned());
+
+        // Build a remapping closure: callee Local → caller Local.
+        let remap = |l: Local| -> Local {
+            if l == Local::RETURN {
+                return destination.local;
+            }
+            let idx = l.0;
+            if idx >= 1 && idx <= ic.arity {
+                // Param: map to the corresponding arg local.
+                return arg_locals[(idx - 1) as usize].unwrap_or(Local(idx));
+            }
+            // Temp: shift by (orig_local_count - (arity + 1)).
+            let temp_idx = idx - ic.arity - 1;
+            Local(orig_local_count + temp_idx)
+        };
+
+        let remapped: Vec<crate::ir::Statement> = ic
+            .stmts
+            .iter()
+            .map(|stmt| remap_statement(stmt, &remap))
+            .collect();
+
+        // Replace the Call terminator with Goto and splice statements.
+        let continuation = target.unwrap_or(BlockId(bi as u32 + 1));
+        body.blocks[bi].stmts.extend(remapped);
+        body.blocks[bi].terminator = Terminator::Goto {
+            target: continuation,
+        };
+        bi += 1;
+    }
+}
+
+fn remap_statement(
+    stmt: &crate::ir::Statement,
+    remap: &impl Fn(Local) -> Local,
+) -> crate::ir::Statement {
+    let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+        return stmt.clone();
+    };
+    let new_place = remap_place(place, remap);
+    let new_rvalue = remap_rvalue(rvalue, remap);
+    crate::ir::Statement {
+        kind: StatementKind::Assign {
+            place: new_place,
+            rvalue: new_rvalue,
+        },
+        span: stmt.span,
+    }
+}
+
+fn remap_place(place: &Place, remap: &impl Fn(Local) -> Local) -> Place {
+    Place {
+        local: remap(place.local),
+        projection: place.projection.clone(),
+    }
+}
+
+fn remap_operand(op: &Operand, remap: &impl Fn(Local) -> Local) -> Operand {
+    match op {
+        Operand::Copy(place) => Operand::Copy(remap_place(place, remap)),
+        other => other.clone(),
+    }
+}
+
+fn remap_rvalue(rv: &Rvalue, remap: &impl Fn(Local) -> Local) -> Rvalue {
+    match rv {
+        Rvalue::Use(op) => Rvalue::Use(remap_operand(op, remap)),
+        Rvalue::BinaryOp { op, lhs, rhs } => Rvalue::BinaryOp {
+            op: *op,
+            lhs: remap_operand(lhs, remap),
+            rhs: remap_operand(rhs, remap),
+        },
+        Rvalue::UnaryOp { op, operand } => Rvalue::UnaryOp {
+            op: *op,
+            operand: remap_operand(operand, remap),
+        },
+        Rvalue::Cast { operand, target } => Rvalue::Cast {
+            operand: remap_operand(operand, remap),
+            target: *target,
+        },
+        Rvalue::Aggregate { kind, operands } => Rvalue::Aggregate {
+            kind: kind.clone(),
+            operands: operands.iter().map(|op| remap_operand(op, remap)).collect(),
+        },
+        Rvalue::Repeat { value, count } => Rvalue::Repeat {
+            value: remap_operand(value, remap),
+            count: *count,
+        },
+        Rvalue::Len(place) => Rvalue::Len(remap_place(place, remap)),
+        Rvalue::Ref { place, mutable } => Rvalue::Ref {
+            place: remap_place(place, remap),
+            mutable: *mutable,
+        },
+        Rvalue::CallIntrinsic { name, args } => Rvalue::CallIntrinsic {
+            name,
+            args: args.iter().map(|op| remap_operand(op, remap)).collect(),
+        },
+    }
 }
 
 /// Identifies which locals hold aggregate types

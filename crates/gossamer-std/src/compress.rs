@@ -1,19 +1,13 @@
-//! Runtime support for `std::compress::gzip`.
-//!
-//! Wraps the `flate2` crate's gzip encoder/decoder in the Gossamer
-//! `IoError` shape. The user-facing surface is two builders:
-//!
-//! - `gzip::Encoder::new(level)` returns an encoder; call
-//!   `encoder.encode(bytes)` to produce the compressed payload, or
-//!   `encoder.write(stream, bytes)` to drain into a writer.
-//! - `gzip::Decoder::new()` returns a decoder; call
-//!   `decoder.decode(bytes)` to expand a payload, or
-//!   `decoder.read_all(stream)` to drain a reader.
-//!
-//! Compression levels: `0` (none) → `9` (best). `Default` (`6`) is
-//! the recommended general-purpose tradeoff and matches `gzip(1)`'s
-//! default.
+//! Runtime support for `std::compress` — compression and decompression codecs.
 
 #![forbid(unsafe_code)]
 
+/// Bzip2 encoder and decoder.
+#[cfg(feature = "bzip2-compress")]
+pub mod bzip2;
+/// Raw DEFLATE (RFC 1951) encoder and decoder.
+pub mod flate;
+/// Gzip (RFC 1952) encoder and decoder.
 pub mod gzip;
+/// Zlib (RFC 1950) encoder and decoder.
+pub mod zlib;

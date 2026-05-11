@@ -331,6 +331,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_str_eq", (Ptr, Ptr) -> I8, Cranelift, "Return 1 if two strings are equal."),
     rt!("gos_rt_str_find", (Ptr, Ptr) -> I64, Cranelift, "Return the byte index of the first occurrence of a substring, or -1."),
     rt!("gos_rt_str_find_opt", (Ptr, Ptr) -> Ptr, Cranelift, "Return an Option<i64> of the byte index of the first substring match."),
+    rt!("gos_rt_str_free", (Ptr) -> Void, Both, "Drop a String allocated by the runtime and release its memory."),
     rt!("gos_rt_str_is_empty", (Ptr) -> I8, Cranelift, "Return 1 if the string has zero bytes."),
     rt!("gos_rt_str_len", (Ptr) -> I64, Both, "Return the byte length of a String."),
     rt!("gos_rt_str_lines", (Ptr) -> Ptr, Cranelift, "Split a string into lines and return them as a GosVec."),

@@ -50,8 +50,8 @@ mod lower;
 mod ty;
 
 pub use emit::{
-    BuildError, CompileOutcome, NativeObject, compile_to_object, compile_with_fallback,
-    set_debug_info, set_reproducible,
+    BuildError, CompileOutcome, NativeObject, compile_to_object, compile_to_object_at_path,
+    compile_with_fallback, compile_with_fallback_at_path, set_debug_info, set_reproducible,
 };
 
 /// Read-only view of the LLVM backend's runtime-symbol declaration

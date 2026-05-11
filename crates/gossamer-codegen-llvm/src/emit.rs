@@ -2,7 +2,6 @@
 //! per-function lowering + `llc -O3` invocation.
 
 use std::fmt::Write;
-use std::io::Write as IoWrite;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
@@ -84,21 +83,62 @@ pub struct CompileOutcome {
 /// flag.
 pub fn compile_to_object(bodies: &[Body], tcx: &TyCtxt) -> Result<NativeObject> {
     if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
-        for body in bodies {
-            eprintln!("=== MIR {} ===", body.name);
-            for (i, block) in body.blocks.iter().enumerate() {
-                eprintln!("  bb{i}:");
-                for stmt in &block.stmts {
-                    eprintln!("    {:?}", stmt.kind);
-                }
-                eprintln!("    -> {:?}", block.terminator);
+        dump_mir(bodies);
+    }
+    let triple = host_triple();
+    let tmp_dir = pipeline_tmp_dir()?;
+    let ll_path = tmp_dir.join("unit.ll");
+    let _ = render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ false)?;
+    let obj_path = tmp_dir.join("unit.o");
+    invoke_llc_pipeline(&ll_path, &obj_path, &triple)?;
+    let bytes =
+        std::fs::read(&obj_path).with_context(|| format!("reading {}", obj_path.display()))?;
+    let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
+    if keep_artifacts {
+        eprintln!("llvm backend: IR at {}", ll_path.display());
+    } else {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+    Ok(NativeObject { triple, bytes })
+}
+
+/// Path-oriented variant of [`compile_to_object`]: writes the LLVM
+/// object directly to `obj_out` instead of returning bytes. Used
+/// by the AOT release driver so the LLVM object never lives in
+/// the parent process's heap, only on disk.
+pub fn compile_to_object_at_path(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    obj_out: &std::path::Path,
+) -> Result<String> {
+    if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
+        dump_mir(bodies);
+    }
+    let triple = host_triple();
+    let tmp_dir = pipeline_tmp_dir()?;
+    let ll_path = tmp_dir.join("unit.ll");
+    let _ = render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ false)?;
+    invoke_llc_pipeline(&ll_path, obj_out, &triple)?;
+    let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
+    if keep_artifacts {
+        eprintln!("llvm backend: IR at {}", ll_path.display());
+    } else {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+    Ok(triple)
+}
+
+fn dump_mir(bodies: &[Body]) {
+    for body in bodies {
+        eprintln!("=== MIR {} ===", body.name);
+        for (i, block) in body.blocks.iter().enumerate() {
+            eprintln!("  bb{i}:");
+            for stmt in &block.stmts {
+                eprintln!("    {:?}", stmt.kind);
             }
+            eprintln!("    -> {:?}", block.terminator);
         }
     }
-    let ir = render_module(bodies, tcx)?;
-    let triple = host_triple();
-    let bytes = invoke_llc(&ir, &triple)?;
-    Ok(NativeObject { triple, bytes })
 }
 
 /// Per-function fallback build. Each body is attempted
@@ -110,70 +150,81 @@ pub fn compile_to_object(bodies: &[Body], tcx: &TyCtxt) -> Result<NativeObject> 
 /// Cranelift-built companion object.
 pub fn compile_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<CompileOutcome> {
     if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
-        for body in bodies {
-            eprintln!("=== MIR {} ===", body.name);
-            for (i, block) in body.blocks.iter().enumerate() {
-                eprintln!("  bb{i}:");
-                for stmt in &block.stmts {
-                    eprintln!("    {:?}", stmt.kind);
-                }
-                eprintln!("    -> {:?}", block.terminator);
-            }
-        }
+        dump_mir(bodies);
     }
-    let (ir, fallback_bodies) = render_module_with_fallback(bodies, tcx)?;
     let triple = host_triple();
-    let bytes = invoke_llc(&ir, &triple)?;
+    let tmp_dir = pipeline_tmp_dir()?;
+    let ll_path = tmp_dir.join("unit.ll");
+    let fallback_bodies =
+        render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ true)?;
+    let obj_path = tmp_dir.join("unit.o");
+    invoke_llc_pipeline(&ll_path, &obj_path, &triple)?;
+    let bytes =
+        std::fs::read(&obj_path).with_context(|| format!("reading {}", obj_path.display()))?;
+    let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
+    if keep_artifacts {
+        eprintln!("llvm backend: IR at {}", ll_path.display());
+    } else {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
     Ok(CompileOutcome {
         object: NativeObject { triple, bytes },
         fallback_bodies,
     })
 }
 
-fn render_module(bodies: &[Body], tcx: &TyCtxt) -> Result<String> {
-    let (ir, fallbacks) = render_module_inner(bodies, tcx, /*allow_fallback=*/ false)?;
-    debug_assert!(fallbacks.is_empty());
-    Ok(ir)
-}
-
-fn render_module_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<(String, Vec<String>)> {
-    render_module_inner(bodies, tcx, /*allow_fallback=*/ true)
-}
-
-/// Single shared rendering pipeline used by both the strict
-/// (`compile_to_object`) and the fallback-tolerant
-/// (`compile_with_fallback`) paths.
-///
-/// When `allow_fallback` is true, bodies the lowerer rejects
-/// are dropped from the LLVM module and replaced by an
-/// `extern` declaration so the linker can resolve them against
-/// the Cranelift-built companion object. The names are returned
-/// in the second tuple slot.
-///
-/// Bodies that emit an LLVM-internal tool error or I/O failure
-/// always abort regardless of `allow_fallback` — those signal
-/// pipeline bugs, not coverage gaps.
-fn render_module_inner(
+/// Path-oriented variant of [`compile_with_fallback`]: writes the
+/// LLVM object directly to `obj_out` and returns only the triple
+/// plus the per-function fallback list. The object never lives
+/// in the parent process's heap.
+pub fn compile_with_fallback_at_path(
     bodies: &[Body],
     tcx: &TyCtxt,
-    allow_fallback: bool,
+    obj_out: &std::path::Path,
 ) -> Result<(String, Vec<String>)> {
-    let mut out = String::new();
-    writeln!(out, "; ModuleID = \"gossamer\"").unwrap();
-    writeln!(out, "target triple = \"{}\"", host_triple()).unwrap();
-    if want_reproducible() {
-        // Skip any wallclock / hostname / pid headers a future
-        // emitter might be tempted to add. The current pipeline
-        // doesn't include any, but pin the rule here so future
-        // edits don't silently break reproducibility.
-        writeln!(out, "; reproducible-build = true").unwrap();
+    if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
+        dump_mir(bodies);
     }
-    writeln!(out).unwrap();
+    let triple = host_triple();
+    let tmp_dir = pipeline_tmp_dir()?;
+    let ll_path = tmp_dir.join("unit.ll");
+    let fallback_bodies =
+        render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ true)?;
+    invoke_llc_pipeline(&ll_path, obj_out, &triple)?;
+    let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
+    if keep_artifacts {
+        eprintln!("llvm backend: IR at {}", ll_path.display());
+    } else {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+    Ok((triple, fallback_bodies))
+}
 
-    for d in LLVM_SPECIAL_DECLS {
-        writeln!(out, "{d}").unwrap();
+/// Streaming renderer: writes the full module to `ll_path` without
+/// retaining a complete IR `String` in memory. Bodies are emitted
+/// directly to a temp body file as they're lowered, then spliced
+/// into the final IR file behind the header / globals / pool.
+///
+/// Returns the names of bodies that fell back to Cranelift when
+/// `allow_fallback` is true. Bodies that emit an LLVM-internal
+/// tool error always abort regardless of `allow_fallback`.
+fn render_module_to_path(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    ll_path: &std::path::Path,
+    allow_fallback: bool,
+) -> Result<Vec<String>> {
+    use std::io::{BufWriter, Write as _};
+
+    if let Some(parent) = ll_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
-    writeln!(out).unwrap();
+
+    let body_path = ll_path.with_file_name(match ll_path.file_name() {
+        Some(name) => format!("{}.body", name.to_string_lossy()),
+        None => "module.body".to_string(),
+    });
 
     let mut fn_name_by_def: std::collections::HashMap<u32, String> =
         std::collections::HashMap::new();
@@ -194,19 +245,34 @@ fn render_module_inner(
         param_tys_by_name.insert(body.name.clone(), param_tys);
     }
 
-    let mut body_text = String::new();
     let mut globals: Vec<String> = Vec::new();
     let mut fallback_bodies: Vec<String> = Vec::new();
     let string_pool = std::rc::Rc::new(std::cell::RefCell::new(StringPool::default()));
+
+    // Inter-procedural capture summary: feeds the cleanup pass so
+    // owning bindings whose only outbound use is a non-capturing
+    // user fn can get a precise per-block drop instead of being
+    // forced into the escape set.
+    let capture_summary = gossamer_mir::build_capture_summary(bodies);
+
+    let body_file = std::fs::File::create(&body_path)
+        .with_context(|| format!("creating {}", body_path.display()))?;
+    let mut body_w = BufWriter::with_capacity(64 * 1024, body_file);
+
     for body in bodies {
         let mut lowerer = Lowerer::new(body, tcx);
         lowerer.fn_name_by_def.clone_from(&fn_name_by_def);
         lowerer.param_tys_by_name.clone_from(&param_tys_by_name);
         lowerer.strings = string_pool.clone();
+        lowerer.capture_summary = capture_summary.clone();
         match lowerer.lower() {
             Ok(text) => {
-                body_text.push_str(&text);
-                body_text.push('\n');
+                body_w
+                    .write_all(text.as_bytes())
+                    .with_context(|| format!("writing {}", body_path.display()))?;
+                body_w
+                    .write_all(b"\n")
+                    .with_context(|| format!("writing {}", body_path.display()))?;
                 globals.extend(lowerer.take_module_globals());
             }
             Err(BuildError::Unsupported(msg)) => {
@@ -222,6 +288,7 @@ fn render_module_inner(
                     .ok()
                     .is_some_and(|v| !v.is_empty() && v != "0");
                 if fail_on_fallback {
+                    let _ = std::fs::remove_file(&body_path);
                     return Err(anyhow!(
                         "llvm backend: `{fn_name}` would fall back to Cranelift ({msg}) but \
                          GOSSAMER_FAIL_ON_LLVM_FALLBACK is set",
@@ -236,9 +303,15 @@ fn render_module_inner(
                         );
                     }
                     fallback_bodies.push(body.name.clone());
-                    body_text.push_str(&extern_declare(body, tcx));
-                    body_text.push('\n');
+                    let decl = extern_declare(body, tcx);
+                    body_w
+                        .write_all(decl.as_bytes())
+                        .with_context(|| format!("writing {}", body_path.display()))?;
+                    body_w
+                        .write_all(b"\n")
+                        .with_context(|| format!("writing {}", body_path.display()))?;
                 } else {
+                    let _ = std::fs::remove_file(&body_path);
                     return Err(anyhow!(
                         "llvm backend: cannot lower `{fn_name}`: {msg}",
                         fn_name = body.name,
@@ -246,99 +319,116 @@ fn render_module_inner(
                 }
             }
             Err(BuildError::Tool(msg)) => {
+                let _ = std::fs::remove_file(&body_path);
                 return Err(anyhow!("llvm backend: tool: {msg}"));
             }
-            Err(BuildError::Io(err)) => return Err(err),
+            Err(BuildError::Io(err)) => {
+                let _ = std::fs::remove_file(&body_path);
+                return Err(err);
+            }
         }
     }
-    globals.sort();
-    globals.dedup();
-    // Shape-validate every accumulated module global. The
-    // `runtime_refs` BTreeSet inside `Lowerer` accepts arbitrary
-    // strings; two real regressions (`spectral_norm_regression_fix.md`
-    // 2026-04-30 and `llvm_release_silent_fallback.md` 2026-04-28)
-    // shipped because a malformed entry corrupted the IR string
-    // and silently flipped affected bodies to the Cranelift
-    // fallback — costing 18-21x perf with no diagnostic. Each entry
-    // must be either an `@symbol = ... constant ...` definition or
-    // an `@symbol = ... global ...` definition or a `declare ...`
-    // function declaration. Anything else is a programmer error.
-    for g in &globals {
-        validate_global_decl_shape(g)?;
-        writeln!(out, "{g}").unwrap();
-    }
-    if !globals.is_empty() {
-        writeln!(out).unwrap();
-    }
-    let pool_text = string_pool.borrow().render();
-    if !pool_text.is_empty() {
-        out.push_str(&pool_text);
-        writeln!(out).unwrap();
-    }
-    out.push_str(&body_text);
 
-    // Per-shape callable thunks. The MIR emits `gos_fn_addr(
-    // "__fn_thunk_<sig>")` whenever a bare fn item is coerced
-    // to a `Fn(...)` parameter; each unique shape needs one
-    // thunk that loads the real fn pointer from `env+8` and
-    // forwards the typed arguments. Collect the set of
-    // referenced thunk names from MIR and synthesize an LLVM
-    // `define` for each. Mirrors `define_shape_thunk` on the
-    // Cranelift side.
     let mut thunk_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for body in bodies {
         collect_thunk_names_in_body(body, &mut thunk_names);
     }
     for name in &thunk_names {
         if let Some(text) = render_shape_thunk(name) {
-            out.push_str(&text);
-            out.push('\n');
+            body_w
+                .write_all(text.as_bytes())
+                .with_context(|| format!("writing {}", body_path.display()))?;
+            body_w
+                .write_all(b"\n")
+                .with_context(|| format!("writing {}", body_path.display()))?;
         }
     }
 
-    // The user's `main` function might be in the fallback set.
-    // The C-ABI shim must call `gos_main` regardless — if main
-    // fell back, it gets an `extern declare` above and the call
-    // resolves against the Cranelift object at link time.
     if let Some(user_main) = bodies.iter().find(|b| b.name == "main") {
         let ret_is_unit = matches!(
             tcx.kind(user_main.local_ty(gossamer_mir::Local::RETURN)),
             Some(gossamer_types::TyKind::Unit)
         );
-        writeln!(out, "define i32 @main(i32 %argc, ptr %argv) {{").unwrap();
-        writeln!(out, "entry:").unwrap();
-        writeln!(out, "  call void @gos_rt_set_args(i32 %argc, ptr %argv)").unwrap();
+        writeln!(body_w, "define i32 @main(i32 %argc, ptr %argv) {{")?;
+        writeln!(body_w, "entry:")?;
+        writeln!(body_w, "  call void @gos_rt_set_args(i32 %argc, ptr %argv)")?;
         if ret_is_unit {
-            writeln!(out, "  call void @\"gos_main\"()").unwrap();
-            writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
-            writeln!(out, "  ret i32 0").unwrap();
+            writeln!(body_w, "  call void @\"gos_main\"()")?;
+            writeln!(body_w, "  call void @gos_rt_flush_stdout()")?;
+            writeln!(body_w, "  ret i32 0")?;
         } else {
-            writeln!(out, "  %r = call i64 @\"gos_main\"()").unwrap();
-            writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
-            writeln!(out, "  %code = call i32 @gos_rt_main_exit_code(i64 %r)").unwrap();
-            writeln!(out, "  ret i32 %code").unwrap();
+            writeln!(body_w, "  %r = call i64 @\"gos_main\"()")?;
+            writeln!(body_w, "  call void @gos_rt_flush_stdout()")?;
+            writeln!(body_w, "  %code = call i32 @gos_rt_main_exit_code(i64 %r)")?;
+            writeln!(body_w, "  ret i32 %code")?;
         }
-        writeln!(out, "}}").unwrap();
+        writeln!(body_w, "}}")?;
     }
-    // Module-level metadata referenced by `!invariant.load
-    // !0` in the inlined hot paths. Empty list (`!{}`) is the
-    // standard form for "no extra info"; LLVM only needs a
-    // metadata node to attach to the load, the contents are
-    // unused for invariance.
-    writeln!(out).unwrap();
-    writeln!(out, "!0 = !{{}}").unwrap();
+    writeln!(body_w)?;
+    writeln!(body_w, "!0 = !{{}}")?;
+
+    body_w
+        .flush()
+        .with_context(|| format!("flushing {}", body_path.display()))?;
+    drop(body_w);
+
+    // Now write the final IR file. Header → special decls →
+    // sorted/deduped globals → string pool → body file content.
+    globals.sort();
+    globals.dedup();
+    let ll_file = std::fs::File::create(ll_path)
+        .with_context(|| format!("creating {}", ll_path.display()))?;
+    let mut ll_w = BufWriter::with_capacity(64 * 1024, ll_file);
+    writeln!(ll_w, "; ModuleID = \"gossamer\"")?;
+    writeln!(ll_w, "target triple = \"{}\"", host_triple())?;
+    if want_reproducible() {
+        writeln!(ll_w, "; reproducible-build = true")?;
+    }
+    writeln!(ll_w)?;
+    for d in LLVM_SPECIAL_DECLS {
+        writeln!(ll_w, "{d}")?;
+    }
+    writeln!(ll_w)?;
+    // Shape-validate each accumulated global. The `runtime_refs`
+    // BTreeSet inside `Lowerer` accepts arbitrary strings; a
+    // malformed entry corrupts the IR string and silently flips
+    // affected bodies to the Cranelift fallback. Each entry must
+    // be either an `@symbol = ...` definition or a `declare ...`
+    // function declaration.
+    for g in &globals {
+        validate_global_decl_shape(g)?;
+        writeln!(ll_w, "{g}")?;
+    }
+    if !globals.is_empty() {
+        writeln!(ll_w)?;
+    }
+    let pool_text = string_pool.borrow().render();
+    if !pool_text.is_empty() {
+        ll_w.write_all(pool_text.as_bytes())?;
+        writeln!(ll_w)?;
+    }
+    let mut body_in = std::fs::File::open(&body_path)
+        .with_context(|| format!("opening {}", body_path.display()))?;
+    std::io::copy(&mut body_in, &mut ll_w)
+        .with_context(|| format!("appending body buffer to {}", ll_path.display()))?;
+    drop(body_in);
+    let _ = std::fs::remove_file(&body_path);
+    ll_w.flush()
+        .with_context(|| format!("flushing {}", ll_path.display()))?;
+    drop(ll_w);
+
+    // DWARF emission needs to insert `!dbg !N` after each function
+    // header. Defer to the in-memory string mutator on the rare `-g`
+    // path; the streaming default never pays this cost.
     if want_dwarf() {
-        emit_dwarf_metadata(&mut out, bodies);
+        let mut content = std::fs::read_to_string(ll_path)
+            .with_context(|| format!("reading {}", ll_path.display()))?;
+        emit_dwarf_metadata(&mut content, bodies);
+        std::fs::write(ll_path, &content)
+            .with_context(|| format!("writing {}", ll_path.display()))?;
     }
-    // The previous implementation emitted `@"main"` and then ran
-    // `out.replace("@\"main\"", "@\"gos_main\"")` here. That cloned
-    // the entire IR string into a second buffer — on a 50k-LOC
-    // program with ~50 MB of IR text, peak heap doubled to ~100 MB
-    // for one tick. Both `lower::Lowerer::define_open` and the
-    // `body_decl` declarer now route the function name through
-    // `mangle_fn_name`, so the IR is emitted with `@"gos_main"`
-    // already in place and no second pass is needed.
-    Ok((out, fallback_bodies))
+
+    Ok(fallback_bodies)
 }
 
 /// Process-wide flag toggled by [`set_debug_info`] so the CLI can
@@ -607,25 +697,36 @@ fn extern_declare(body: &Body, tcx: &TyCtxt) -> String {
     )
 }
 
-fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
-    // Reproducible mode: pin SOURCE_DATE_EPOCH so any timestamp
-    // `llc` writes into the object header is deterministic, and
-    // pick a stable temp directory layout instead of `pid`-based.
+/// Returns the temp directory the LLVM pipeline emits its
+/// intermediate IR / opt-bitcode artifacts into. Reproducible mode
+/// pins a stable name; otherwise the directory is namespaced with
+/// the process id so concurrent builds don't clobber each other.
+fn pipeline_tmp_dir() -> Result<PathBuf> {
     let tmp_dir = if want_reproducible() {
         std::env::temp_dir().join("gos-llvm-reproducible")
     } else {
         std::env::temp_dir().join(format!("gos-llvm-{}", std::process::id()))
     };
     std::fs::create_dir_all(&tmp_dir).with_context(|| format!("creating {}", tmp_dir.display()))?;
-    let ll_path = tmp_dir.join("unit.ll");
-    let opt_path = tmp_dir.join("unit.opt.bc");
-    let obj_path = tmp_dir.join("unit.o");
-    {
-        let mut f = std::fs::File::create(&ll_path)
-            .with_context(|| format!("creating {}", ll_path.display()))?;
-        f.write_all(ir.as_bytes())
-            .with_context(|| format!("writing {}", ll_path.display()))?;
-    }
+    Ok(tmp_dir)
+}
+
+/// Path-only variant of the historical `invoke_llc(ir_str, triple)
+/// -> Vec<u8>`. Reads the IR from `ll_path` (already on disk) and
+/// writes the resulting object directly to `obj_out`. The previous
+/// API forced callers to round-trip the IR + the object through
+/// memory; this one keeps both on disk and returns nothing.
+fn invoke_llc_pipeline(
+    ll_path: &std::path::Path,
+    obj_out: &std::path::Path,
+    triple: &str,
+) -> Result<()> {
+    // Reproducible / scratch siblings of `ll_path`. `unit.opt.bc`
+    // is the post-`opt` bitcode; `obj_out` is the caller-chosen
+    // final object (kept across invocations only when GOS_LLVM_DUMP
+    // is set). Locating the bitcode next to the IR keeps the
+    // pipeline self-contained for `llc` invocation.
+    let opt_path = ll_path.with_extension("opt.bc");
     let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
     if keep_artifacts {
         // Emit the canonical dump-path marker the
@@ -714,13 +815,11 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
             .arg("--pgo-kind=pgo-instr-use-pipeline")
             .arg(format!("--profile-file={profdata}"));
     }
-    opt_cmd.arg(&ll_path).arg("-o").arg(&opt_path);
+    opt_cmd.arg(ll_path).arg("-o").arg(&opt_path);
     let opt_output = run_with_timeout(opt_cmd, opt_timeout(), "opt")
         .with_context(|| format!("spawn {}", opt_tool.display()))?;
     if !opt_output.status.success() {
-        if !keep_artifacts {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        } else {
+        if keep_artifacts {
             eprintln!("llvm backend: failing IR kept at {}", ll_path.display());
         }
         return Err(anyhow!(
@@ -754,7 +853,7 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
         .arg("-mattr=+prefer-256-bit")
         .arg(&opt_path)
         .arg("-o")
-        .arg(&obj_path);
+        .arg(obj_out);
     // Pin DWARF version to match what the module metadata declared
     // (`!{i32 7, "Dwarf Version", i32 4}`). `llc` may otherwise pick
     // a newer default if the host LLVM is bumped, producing object
@@ -765,9 +864,7 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
     let output = run_with_timeout(llc_cmd, opt_timeout(), "llc")
         .with_context(|| format!("spawn {}", llc.display()))?;
     if !output.status.success() {
-        if !keep_artifacts {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        } else {
+        if keep_artifacts {
             eprintln!("llvm backend: failing IR kept at {}", ll_path.display());
         }
         return Err(anyhow!(
@@ -776,14 +873,8 @@ fn invoke_llc(ir: &str, triple: &str) -> Result<Vec<u8>> {
             stderr = String::from_utf8_lossy(&output.stderr)
         ));
     }
-    let bytes =
-        std::fs::read(&obj_path).with_context(|| format!("reading {}", obj_path.display()))?;
-    if keep_artifacts {
-        eprintln!("llvm backend: IR at {}", ll_path.display());
-    } else {
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-    }
-    Ok(bytes)
+    let _ = std::fs::remove_file(&opt_path);
+    Ok(())
 }
 
 /// Returns the wall-clock cap for the `opt` and `llc` subprocesses.
@@ -811,22 +902,41 @@ fn opt_timeout() -> std::time::Duration {
 
 /// Spawns `cmd`, waits up to `timeout`, and surfaces a clear error
 /// when the subprocess exceeds the cap (kills the child first so
-/// it doesn't outlive the build). Captures stdout / stderr so the
-/// caller can fold them into its diagnostics. The polling cadence
-/// (50 ms) keeps the steady-state overhead negligible compared to
-/// `opt -O3`'s usual runtime.
+/// it doesn't outlive the build). Captures stdout / stderr through
+/// a 64 KiB-per-stream cap so a runaway `opt`/`llc` diagnostic
+/// stream cannot grow unbounded. The polling cadence (50 ms) keeps
+/// the steady-state overhead negligible compared to `opt -O3`'s
+/// usual runtime.
 fn run_with_timeout(
     mut cmd: std::process::Command,
     timeout: std::time::Duration,
     tool: &str,
 ) -> Result<std::process::Output> {
+    use std::io::Read;
+
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn().with_context(|| format!("spawn {tool}"))?;
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let stdout_thread = stdout_pipe.take().map(|mut s| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf);
+            cap_diagnostic_stream(buf)
+        })
+    });
+    let stderr_thread = stderr_pipe.take().map(|mut s| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf);
+            cap_diagnostic_stream(buf)
+        })
+    });
     let start = std::time::Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(s)) => break s,
             Ok(None) => {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
@@ -844,10 +954,38 @@ fn run_with_timeout(
                 return Err(anyhow!("{tool} wait failed: {e}"));
             }
         }
+    };
+    let stdout = stdout_thread
+        .map(|t| t.join().unwrap_or_default())
+        .unwrap_or_default();
+    let stderr = stderr_thread
+        .map(|t| t.join().unwrap_or_default())
+        .unwrap_or_default();
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+/// Caps a captured subprocess stream at the last 64 KiB. LLVM tools
+/// occasionally emit hundreds of MB of repetitive diagnostics (e.g.
+/// instcombine loops on pathological IR); without a cap, the parent
+/// build process would mirror that growth in RSS while waiting for
+/// the child to exit. The tail is kept rather than the head because
+/// the actionable error (the failure point) is invariably last.
+fn cap_diagnostic_stream(buf: Vec<u8>) -> Vec<u8> {
+    const CAP: usize = 64 * 1024;
+    if buf.len() <= CAP {
+        return buf;
     }
-    child
-        .wait_with_output()
-        .with_context(|| format!("wait {tool}"))
+    let trimmed_start = buf.len() - CAP;
+    let mut out = Vec::with_capacity(CAP + 64);
+    out.extend_from_slice(
+        format!("[diagnostic stream truncated: dropped {trimmed_start} bytes]\n").as_bytes(),
+    );
+    out.extend_from_slice(&buf[trimmed_start..]);
+    out
 }
 
 fn find_opt() -> Result<PathBuf> {

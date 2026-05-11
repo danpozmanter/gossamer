@@ -224,12 +224,15 @@ on integer types:
 - Panic on overflow in debug builds (`gos build` without `--release`).
 - Wrap modulo 2<sup>N</sup> in release builds (`gos build --release`).
 
+> **Implementation status (pre-v1):** Overflow checking in `gos build`
+> debug mode is not yet emitted by the Cranelift backend; native debug
+> builds currently wrap silently. `gos run` inherits the host Rust
+> binary's overflow behaviour. The method forms `checked_add`,
+> `wrapping_add`, `saturating_add`, `overflowing_add` and friends are
+> available for explicit control and are the portable form today.
+
 Silent wrap is never the default in any build mode — the release
-behaviour is explicit two's-complement wrap, not "undefined." The
-method forms `checked_add`, `wrapping_add`, `saturating_add`,
-`overflowing_add` and friends are always available for explicit
-disambiguation and are the required form in code that must behave
-identically across build modes.
+behaviour is explicit two's-complement wrap, not "undefined."
 
 **No implicit numeric widening.** All numeric conversions — widening or
 narrowing — require an explicit `as` cast. `let bigger: i64 = small_i32`
@@ -238,10 +241,10 @@ silent truncation, silent sign changes, and surprise precision loss.
 
 ### 3.2 Strings
 
-`String` is an immutable, growable (via `+`, `push_str`, etc.) GC-backed
-UTF-8 string. Because `String` is GC-managed, there is no `&str`/`String`
-distinction and no lifetime parameter. String literals have type
-`String`.
+`String` is a GC-managed, growable UTF-8 string. It is mutable through
+`push_str`, `+`, and similar methods. Because `String` is GC-managed,
+there is no `&str`/`String` split and no lifetime parameter. String
+literals have type `String`.
 
 `char` is a 32-bit Unicode scalar value. A `String` is not indexable by
 `char`; iteration is via `.chars()` (an iterator of `char`) or
@@ -992,11 +995,17 @@ that do not escape their defining function may be stack-allocated
 
 ### 7.2 Garbage collection
 
-The GC is a concurrent, tri-color, non-generational mark-sweep collector
-with a Dijkstra-style insertion write barrier during the mark phase.
-Collection is triggered by a heap-growth pacer identical in shape to
-Go's: `GC_trigger = live_after_last_gc * (1 + GOGC/100)` with a default
-`GOGC` of 100.
+> **Implementation status (pre-v1):** The current collector is a
+> stop-the-world mark-sweep with incremental-phase API scaffolding.
+> The concurrent mark-phase and generational nursery described below
+> are the v1 target; GC pause latency for long-running programs will
+> improve as the concurrent path is wired in.
+
+The GC target is a concurrent, tri-color, non-generational mark-sweep
+collector with a Dijkstra-style insertion write barrier during the mark
+phase. Collection is triggered by a heap-growth pacer identical in shape
+to Go's: `GC_trigger = live_after_last_gc * (1 + GOGC/100)` with a
+default `GOGC` of 100.
 
 Stop-the-world is limited to:
 
@@ -1040,7 +1049,7 @@ The memory model is the Go 1.19 memory model verbatim:
 - Channel operations establish happens-before relationships.
 - Mutex lock/unlock establish happens-before relationships.
 - `sync::Once` establishes happens-before relationships.
-- Atomics via `std::atomic` (sequentially consistent by default;
+- Atomics via `std::sync::atomic` (sequentially consistent by default;
   relaxed/acquire/release available).
 
 ### 7.5 Local borrow checking
@@ -1051,6 +1060,12 @@ duration of their lexical scope. Assignment, parameter passing, and
 closure capture all behave like Go: a GC reference for heap-managed
 types, a copy for `Copy` types. The cognitive load of "who owns this
 value now" does not exist.
+
+> **Implementation status (pre-v1):** The scope-local borrow check
+> described in §7.5.1–7.5.4 is the v1 target. `&mut T` is parsed and
+> type-checked today but the exclusivity enforcement pass has not been
+> implemented. Programs that would violate the rule compile and run;
+> the check will be added before v1.0.0.
 
 GC already guarantees that no reference dangles. Gossamer layers one
 additional check on top: **within a single function body, a value may
@@ -1199,11 +1214,12 @@ Channel operations (non-`select`):
 
 - `tx.send(v)` — blocks until a receiver is ready (unbuffered) or
   buffer has capacity.
-- `rx.recv() -> Result<T, ChannelClosed>` — blocks until a sender
-  sends a value or the channel is closed (with drain).
+- `rx.recv() -> Option<T>` — blocks until a sender sends a value or
+  the channel is closed; returns `None` when the channel is closed and
+  drained.
 - `rx.try_recv() -> Option<T>` — non-blocking.
 - `tx.close()` — marks the channel closed. Subsequent sends panic.
-  Receives drain buffered values then return `Err(ChannelClosed)`.
+  Receives drain buffered values then return `None`.
 
 Channels are many-to-many. Close only once.
 
@@ -1218,19 +1234,16 @@ follow an access marker across goroutine boundaries.
 ### 8.3 Select
 
 Each arm of `select` is a communication operation. The `rx.recv()`
-call returns `Result<T, ChannelClosed>`, so pattern-matching the arm
-on `Ok(v)` or `Err(_)` is how closed channels surface:
+call returns `Option<T>`, so matching `Some(v)` / `None` handles the
+closed-channel case:
 
 ```
 select {
-  Ok(v) = ch.recv() => process(v),
-  Err(_) = ch.recv() => { break; }       // channel closed
+  Some(v) = ch.recv() => process(v),
+  None    = ch.recv() => { break; }      // channel closed
   default              => do_other(),
 }
 ```
-
-Because the language does not have Go's "comma-ok" idiom, the `Result`
-return type replaces it.
 
 ### 8.4 `defer` and goroutines
 
@@ -1284,6 +1297,10 @@ the type is explicitly ignored with `let _ = expr` or the function is
 annotated `#[allow(unused_result)]`. Dropping an error on the floor
 must be an intentional act. The same treatment applies to `Option<T>`
 only when the function producing it is itself marked `#[must_use]`.
+
+> **Implementation status (pre-v1):** The `must_use` lint for `Result`
+> is not yet emitted. Silently-dropped `Result` values compile without
+> warning today; the lint will be added before v1.0.0.
 
 ---
 
@@ -1403,6 +1420,10 @@ identical in deployment experience to `CGO_ENABLED=0` Go.
 
 Dynamic linking for FFI is supported via `extern "C"` blocks.
 
+> **Implementation status (pre-v1):** Binaries are currently linked
+> dynamically against the system libc via `cc`. Static-musl linking is
+> the v1 target; for now, deployed binaries require a compatible libc.
+
 ### 11.3 Compile modes
 
 | Mode | Command | Backend | Speed | Output quality |
@@ -1473,6 +1494,13 @@ v1 supports only the built-in macros:
 - `vec!`, `map!`, `set!` (collection literals).
 - `assert!`, `assert_eq!`, `debug_assert!`.
 - `include_str!`, `include_bytes!`, `env!`.
+
+> **Implementation status (pre-v1):** The current toolchain implements
+> `println!`, `print!`, `eprintln!`, `eprint!`, `format!`, and `panic!`.
+> The remaining macros (`write!`, `writeln!`, `unreachable!`, `todo!`,
+> `unimplemented!`, `vec!`, `map!`, `set!`, `assert!`, `assert_eq!`,
+> `debug_assert!`, `include_str!`, `include_bytes!`, `env!`) are planned
+> for v1.
 
 User-defined macros (declarative `macro_rules!` or procedural) are
 **post-v1**.

@@ -617,12 +617,17 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
     }
     loop {
         if slot.retired.load(Ordering::Acquire) {
+            // Zero the handle before exiting so the watchdog cannot
+            // call pthread_kill on a thread that has already exited.
+            slot.thread_handle.store(0, Ordering::Release);
             shared.live_workers.fetch_sub(1, Ordering::AcqRel);
             return;
         }
         let task = next_task(index, &deque, &slot, &shared, &mut steal_cursor);
         let Some(mut task) = task else {
             if shared.stopping.load(Ordering::Acquire) {
+                // Same: zero the handle before this thread exits.
+                slot.thread_handle.store(0, Ordering::Release);
                 shared.live_workers.fetch_sub(1, Ordering::AcqRel);
                 // The exiting worker may have been the last one
                 // holding wait_until_idle awake. Notify in case
@@ -769,6 +774,11 @@ fn watchdog_loop(shared: Arc<Shared>) {
             let workers = shared.workers.lock();
             for i in kill_indices {
                 if let Some(slot) = workers.get(i) {
+                    // Skip retired slots — the thread may have already
+                    // exited and the pthread_t would be dangling.
+                    if slot.retired.load(Ordering::Acquire) {
+                        continue;
+                    }
                     let handle = slot.thread_handle.load(Ordering::Acquire);
                     let _ = crate::preempt::signal_thread_sigurg(handle);
                 }

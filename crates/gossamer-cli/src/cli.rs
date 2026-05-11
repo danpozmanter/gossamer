@@ -233,9 +233,16 @@ enum Command {
         /// Run only tests whose name matches this regex.
         #[arg(long)]
         run: Option<String>,
-        /// Number of tests to run in parallel. Defaults to 1.
+        /// Number of test files to run in parallel. Defaults to the
+        /// number of logical CPUs. Use `--serial` to force sequential
+        /// execution, or `--parallel 1` for the same effect.
         #[arg(long)]
         parallel: Option<usize>,
+        /// Run tests sequentially (equivalent to `--parallel 1`).
+        /// Useful for reproducible output ordering or when tests share
+        /// global process state that parallelism would corrupt.
+        #[arg(long, conflicts_with = "parallel")]
+        serial: bool,
         /// Output format. Defaults to the human-readable line
         /// format. `junit` writes `JUnit` XML to stdout.
         #[arg(long)]
@@ -430,19 +437,29 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             path,
             run,
             parallel,
+            serial,
             format,
             junit_out,
             race,
             coverage,
-        }) => cmd::test::run_with_opts(TestOpts {
-            path: path.as_deref().map(Path::to_path_buf),
-            run_filter: run,
-            parallel: parallel.unwrap_or(1),
-            format: format.unwrap_or_else(|| "human".to_string()),
-            junit_out,
-            race,
-            coverage,
-        }),
+        }) => {
+            let cpu_count =
+                std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+            let n_parallel = if serial {
+                1
+            } else {
+                parallel.unwrap_or(cpu_count)
+            };
+            cmd::test::run_with_opts(TestOpts {
+                path: path.as_deref().map(Path::to_path_buf),
+                run_filter: run,
+                parallel: n_parallel,
+                format: format.unwrap_or_else(|| "human".to_string()),
+                junit_out,
+                race,
+                coverage,
+            })
+        }
         Some(Command::Bench { file, iterations }) => {
             cmd::bench::run(&file, iterations.unwrap_or(100))
         }

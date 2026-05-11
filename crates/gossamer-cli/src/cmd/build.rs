@@ -113,17 +113,83 @@ fn run(
     out_dir: Option<&Path>,
 ) -> Result<()> {
     let source = read_entry_source(file)?;
+    let (sf, resolutions, table, tcx) = validate_source(file, &source)?;
 
-    // Validate source before attempting any codegen.  A broken AST or
-    // unresolved name must fail the build immediately rather than
-    // producing a segfaulting native binary or a launcher that
-    // panics at runtime.
+    // Validate `--target` if explicitly provided. The Cranelift
+    // happy-path uses the host ISA; non-host targets fall through
+    // to the legacy artifact path (a deterministic byte stream
+    // wrapping the rendered module). Reject unknown triples
+    // early so the error is a clean parse failure, not a linker
+    // blow-up.
+    let target_options = match target {
+        Some(triple) => Some(
+            gossamer_driver::LinkerOptions::for_target(triple)
+                .ok_or_else(|| anyhow!("unknown target `{triple}`"))?,
+        ),
+        None => None,
+    };
+    let unit_name = default_unit_name(file);
+    let out_path = output_path(file, &unit_name, release, out_dir)?;
+
+    if let Some(options) = target_options {
+        let host = gossamer_driver::TargetTriple::host();
+        if options.target.as_str() != host.as_str() {
+            let artifact = gossamer_driver::compile_source(&source, &unit_name, &options);
+            fs::write(&out_path, &artifact.bytes)
+                .map_err(|err| anyhow!("build: writing {}: {err}", out_path.display()))?;
+            set_executable(&out_path)?;
+            println!(
+                "build: {bytes}B artifact at {path} (target {triple}, cross-link pending)",
+                bytes = artifact.bytes.len(),
+                path = out_path.display(),
+                triple = options.target.as_str(),
+            );
+            return Ok(());
+        }
+    }
+    let checked = gossamer_driver::CheckedFrontend {
+        sf,
+        resolutions,
+        table,
+        tcx,
+    };
+    let opts = LinkOptions {
+        release,
+        debug_info,
+        dynamic,
+    };
+    let outcome = try_native_build(&source, &unit_name, file, &out_path, opts, checked)
+        .map_err(|err| anyhow!("build: {}", err.user_message()))?;
+    println!(
+        "build: {bytes}B native executable at {path} ({note})",
+        bytes = outcome.size,
+        path = out_path.display(),
+        note = outcome.note,
+    );
+    Ok(())
+}
+
+/// Parses, resolves, and typechecks `source`. Renders diagnostics
+/// to stderr on failure and returns a hard error so the caller
+/// stops before reaching codegen. On success drops the
+/// `SourceMap` and diagnostic vectors before returning so peak
+/// RSS during backend lowering reflects only the live frontend
+/// artifacts.
+fn validate_source(
+    file: &Path,
+    source: &str,
+) -> Result<(
+    gossamer_ast::SourceFile,
+    gossamer_resolve::Resolutions,
+    gossamer_types::TypeTable,
+    gossamer_types::TyCtxt,
+)> {
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
+    let file_id = map.add_file(file.to_string_lossy().into_owned(), source.to_string());
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: crate::paths::stderr_supports_colour(),
     };
-    let (sf, parse_diags) = gossamer_parse::parse_source_file(&source, file_id);
+    let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file_id);
     if !parse_diags.is_empty() {
         for diag in &parse_diags {
             let structured = diag.to_diagnostic();
@@ -163,7 +229,7 @@ fn run(
         ));
     }
     let mut tcx = gossamer_types::TyCtxt::new();
-    let (_table, type_diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
+    let (table, type_diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
     if !type_diags.is_empty() {
         for diag in &type_diags {
             let structured = diag.to_diagnostic();
@@ -177,53 +243,11 @@ fn run(
             type_diags.len()
         ));
     }
-
-    // Validate `--target` if explicitly provided. The Cranelift
-    // happy-path uses the host ISA; non-host targets fall through
-    // to the legacy artifact path (a deterministic byte stream
-    // wrapping the rendered module). Reject unknown triples
-    // early so the error is a clean parse failure, not a linker
-    // blow-up.
-    let target_options = match target {
-        Some(triple) => Some(
-            gossamer_driver::LinkerOptions::for_target(triple)
-                .ok_or_else(|| anyhow!("unknown target `{triple}`"))?,
-        ),
-        None => None,
-    };
-    let unit_name = default_unit_name(file);
-    let out_path = output_path(file, &unit_name, release, out_dir)?;
-
-    if let Some(options) = target_options {
-        let host = gossamer_driver::TargetTriple::host();
-        if options.target.as_str() != host.as_str() {
-            let artifact = gossamer_driver::compile_source(&source, &unit_name, &options);
-            fs::write(&out_path, &artifact.bytes)
-                .map_err(|err| anyhow!("build: writing {}: {err}", out_path.display()))?;
-            set_executable(&out_path)?;
-            println!(
-                "build: {bytes}B artifact at {path} (target {triple}, cross-link pending)",
-                bytes = artifact.bytes.len(),
-                path = out_path.display(),
-                triple = options.target.as_str(),
-            );
-            return Ok(());
-        }
-    }
-    let opts = LinkOptions {
-        release,
-        debug_info,
-        dynamic,
-    };
-    let outcome = try_native_build(&source, &unit_name, file, &out_path, opts)
-        .map_err(|err| anyhow!("build: {}", err.user_message()))?;
-    println!(
-        "build: {bytes}B native executable at {path} ({note})",
-        bytes = outcome.size,
-        path = out_path.display(),
-        note = outcome.note,
-    );
-    Ok(())
+    drop(map);
+    drop(parse_diags);
+    drop(resolve_diags);
+    drop(type_diags);
+    Ok((sf, resolutions, table, tcx))
 }
 
 struct NativeBuildOutcome {
@@ -315,13 +339,14 @@ fn try_native_build(
     input_path: &PathBuf,
     out_path: &PathBuf,
     opts: LinkOptions,
+    checked: gossamer_driver::CheckedFrontend,
 ) -> std::result::Result<NativeBuildOutcome, NativeBuildError> {
     let tmp_dir =
         std::env::temp_dir().join(format!("gos-build-{}-{}", std::process::id(), unit_name));
     fs::create_dir_all(&tmp_dir)
         .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", tmp_dir.display())))?;
     let (object_paths, object_triple) =
-        emit_native_objects(source, unit_name, &tmp_dir, opts.release)?;
+        emit_native_objects(source, unit_name, &tmp_dir, opts.release, checked)?;
     let runtime_lib = if opts.want_static_musl() {
         // The musl runtime archive lives at a baked path emitted by
         // `gossamer-cli/build.rs`. If `option_env!` resolved at cli
@@ -747,37 +772,53 @@ fn locate_rust_lld() -> std::result::Result<PathBuf, NativeBuildError> {
 /// Lowers `source` into one or two object files under `tmp_dir`,
 /// picking the codegen tier from `release`. Returns the object
 /// paths plus the recorded target triple for the linker step.
+/// Cache namespace distinguishing Cranelift debug objects from other
+/// cached blobs. Changing this string invalidates all prior cache entries.
+const CRANELIFT_OBJ_CACHE_NS: &str = concat!("cranelift-debug-obj-", env!("CARGO_PKG_VERSION"));
+
 fn emit_native_objects(
     source: &str,
     unit_name: &str,
     tmp_dir: &Path,
     release: bool,
+    checked: gossamer_driver::CheckedFrontend,
 ) -> std::result::Result<(Vec<PathBuf>, Option<String>), NativeBuildError> {
     let mut object_paths: Vec<PathBuf> = Vec::new();
     if !release {
-        let object = gossamer_driver::compile_source_native(source, unit_name)
-            .map_err(|err| NativeBuildError::LowerFailed(err.to_string()))?;
+        // Content-addressed cache for Cranelift debug object bytes.
+        // On-disk layout: `[triple_len: u32 LE][triple bytes][object bytes]`.
+        // Stored raw (no bincode envelope) so a cache hit can stream
+        // the bytes straight to the temp object file via a windowed
+        // `fs::File` read+write rather than holding the whole object
+        // in memory.
+        let cache_key = gossamer_driver::FrontendCacheKey::new(source, CRANELIFT_OBJ_CACHE_NS);
         let object_path = tmp_dir.join(format!("{unit_name}.o"));
-        fs::write(&object_path, &object.bytes).map_err(|err| {
-            NativeBuildError::Io(anyhow!("writing {}: {err}", object_path.display()))
-        })?;
-        let triple = Some(object.triple);
+        let triple = if let Some(cache_path) = gossamer_driver::raw_blob_path(&cache_key)
+            && let Some(t) = stream_cached_object_to_path(&cache_path, &object_path)?
+        {
+            Some(t)
+        } else {
+            // Path-oriented codegen: write the freshly produced
+            // object directly to `object_path` so the parent process
+            // never holds the bytes in memory. Then mirror the
+            // emitted file into the cache for future cache-hit
+            // reuse via `stream_cached_object_to_path`.
+            let triple =
+                gossamer_driver::compile_source_native_from_frontend_at_path(checked, &object_path)
+                    .map_err(|err| NativeBuildError::LowerFailed(err.to_string()))?;
+            mirror_object_into_cache(&cache_key, &triple, &object_path);
+            Some(triple)
+        };
         object_paths.push(object_path);
         return Ok((object_paths, triple));
     }
-    match gossamer_driver::compile_source_native_release_with_fallback(source, unit_name) {
+    let llvm_path = tmp_dir.join(format!("{unit_name}.llvm.o"));
+    let cl_path = tmp_dir.join(format!("{unit_name}.cl.o"));
+    match gossamer_driver::compile_release_at_paths_from_frontend(checked, &llvm_path, &cl_path) {
         Ok(build) => {
-            let llvm_path = tmp_dir.join(format!("{unit_name}.llvm.o"));
-            fs::write(&llvm_path, &build.llvm.bytes).map_err(|err| {
-                NativeBuildError::Io(anyhow!("writing {}: {err}", llvm_path.display()))
-            })?;
-            let triple = Some(build.llvm.triple.clone());
+            let triple = Some(build.triple.clone());
             object_paths.push(llvm_path);
-            if let Some(cl) = build.cranelift {
-                let cl_path = tmp_dir.join(format!("{unit_name}.cl.o"));
-                fs::write(&cl_path, &cl.bytes).map_err(|err| {
-                    NativeBuildError::Io(anyhow!("writing {}: {err}", cl_path.display()))
-                })?;
+            if build.has_cranelift_companion {
                 object_paths.push(cl_path);
                 if std::env::var("GOS_LLVM_TRACE").is_ok() {
                     eprintln!(
@@ -795,17 +836,99 @@ fn emit_native_objects(
                     "build: LLVM path rejected `{unit_name}`: {err}; falling back to Cranelift"
                 );
             }
-            let object = gossamer_driver::compile_source_native(source, unit_name)
-                .map_err(|e| NativeBuildError::LowerFailed(e.to_string()))?;
             let object_path = tmp_dir.join(format!("{unit_name}.o"));
-            fs::write(&object_path, &object.bytes).map_err(|err| {
-                NativeBuildError::Io(anyhow!("writing {}: {err}", object_path.display()))
-            })?;
-            let triple = Some(object.triple);
+            let triple = gossamer_driver::compile_source_native(source, unit_name)
+                .and_then(|obj| {
+                    fs::write(&object_path, &obj.bytes)
+                        .map_err(|err| anyhow!("writing {}: {err}", object_path.display()))?;
+                    Ok(obj.triple)
+                })
+                .map_err(|e| NativeBuildError::LowerFailed(e.to_string()))?;
             object_paths.push(object_path);
-            Ok((object_paths, triple))
+            Ok((object_paths, Some(triple)))
         }
     }
+}
+
+/// Copies a freshly emitted object file into the cache as
+/// `[triple_len: u32 LE][triple][object]`. Streams via `fs::File`
+/// and `std::io::copy` so the in-memory peak is bounded by the
+/// `BufWriter` buffer, not the object size.
+fn mirror_object_into_cache(
+    key: &gossamer_driver::FrontendCacheKey,
+    triple: &str,
+    obj_path: &Path,
+) {
+    use std::io::Write;
+
+    let dir = gossamer_driver::cache_dir();
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let tmp = dir.join(format!("{}.tmp.{}", key.as_hex(), std::process::id()));
+    let final_path = dir.join(format!("{}.bin", key.as_hex()));
+    let triple_bytes = triple.as_bytes();
+    let len = triple_bytes.len() as u32;
+    let Ok(out_file) = fs::File::create(&tmp) else {
+        return;
+    };
+    let mut w = std::io::BufWriter::new(out_file);
+    if w.write_all(&len.to_le_bytes()).is_err() || w.write_all(triple_bytes).is_err() {
+        let _ = fs::remove_file(&tmp);
+        return;
+    }
+    let Ok(mut obj_in) = fs::File::open(obj_path) else {
+        let _ = fs::remove_file(&tmp);
+        return;
+    };
+    if std::io::copy(&mut obj_in, &mut w).is_err() || w.flush().is_err() {
+        let _ = fs::remove_file(&tmp);
+        return;
+    }
+    drop(w);
+    let _ = fs::rename(&tmp, &final_path);
+}
+
+/// Reads the `[triple_len: u32 LE][triple][object]` header from
+/// `cache_path`, then streams the object bytes to `dest_path` via
+/// `std::io::copy` without retaining a full-object copy in RAM.
+/// Returns `Ok(Some(triple))` on a clean hit, `Ok(None)` if the
+/// cached file is malformed (caller must re-emit), or an `Io`
+/// error on filesystem failure.
+fn stream_cached_object_to_path(
+    cache_path: &Path,
+    dest_path: &Path,
+) -> std::result::Result<Option<String>, NativeBuildError> {
+    use std::io::{BufReader, BufWriter, Read, Write};
+
+    let Ok(file) = fs::File::open(cache_path) else {
+        return Ok(None);
+    };
+    let mut reader = BufReader::new(file);
+    let mut len_buf = [0u8; 4];
+    if reader.read_exact(&mut len_buf).is_err() {
+        return Ok(None);
+    }
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len > 256 {
+        return Ok(None);
+    }
+    let mut triple_buf = vec![0u8; len];
+    if reader.read_exact(&mut triple_buf).is_err() {
+        return Ok(None);
+    }
+    let Ok(triple) = String::from_utf8(triple_buf) else {
+        return Ok(None);
+    };
+    let dest = fs::File::create(dest_path)
+        .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", dest_path.display())))?;
+    let mut writer = BufWriter::new(dest);
+    std::io::copy(&mut reader, &mut writer)
+        .map_err(|err| NativeBuildError::Io(anyhow!("streaming cache hit: {err}")))?;
+    writer
+        .flush()
+        .map_err(|err| NativeBuildError::Io(anyhow!("flushing {}: {err}", dest_path.display())))?;
+    Ok(Some(triple))
 }
 
 fn set_executable(path: &Path) -> Result<()> {

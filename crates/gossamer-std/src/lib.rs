@@ -9,10 +9,14 @@
 
 #![forbid(unsafe_code)]
 
+/// Archive readers and writers (zip, tar).
+#[cfg(feature = "archive")]
+pub mod archive;
 pub mod blocking_pool;
 pub mod bufio;
 pub mod bytes;
 pub mod collections;
+/// Compression and decompression codecs (gzip, flate, zlib).
 #[cfg(feature = "compress")]
 pub mod compress;
 pub mod context;
@@ -27,12 +31,17 @@ pub mod ffi;
 pub mod flag;
 pub mod fmt;
 pub mod fs;
-#[cfg(feature = "templates")]
+/// Non-cryptographic hash functions (FNV, etc.).
+pub mod hash;
+/// HTML escaping utilities and optional template engine.
 pub mod html;
 pub mod http;
 pub mod io;
+pub mod iter;
 pub mod json;
 pub mod manifest;
+/// Mathematical constants, f64 functions, and integer bit operations.
+pub mod math;
 pub mod mathrand;
 pub mod net;
 pub mod os;
@@ -53,10 +62,14 @@ pub mod sync;
 pub mod testing;
 #[cfg(feature = "templates")]
 pub mod text;
+/// OS thread spawn and sleep helpers.
+pub mod thread;
 pub mod time;
 #[cfg(feature = "tls")]
 pub mod tls;
+pub mod unicode;
 pub mod url;
+pub mod utf16;
 pub mod utf8;
 
 pub use registry::{StdItem, StdItemKind, StdModule, item, module, modules};

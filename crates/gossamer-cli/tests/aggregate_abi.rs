@@ -456,3 +456,83 @@ fn main() {
 "#;
     assert_three_tier_parity("nested_field_of_field_assign", src, "100 200 t");
 }
+
+// --- N9: parallel Cranelift body lowering regression tests ---
+//
+// These tests guard the correctness guarantee introduced by N9: that
+// lowering function bodies in parallel (via rayon) produces the same
+// result as sequential lowering. The key invariants are:
+//
+//   1. Pre-declared symbols (REGISTRY, malloc/strlen/calloc, interned
+//      strings, shape thunks) are visible in every rayon worker thread.
+//   2. Functions that return aggregates route through `gos_rt_gc_alloc`
+//      (pre-declared in the N9-B phase via REGISTRY) without hitting the
+//      OfflineModule::declare_function unreachable.
+//   3. Cross-function calls resolve correctly when both caller and callee
+//      are lowered by different rayon workers.
+
+#[test]
+fn parallel_lowering_many_functions_share_string_literal() {
+    // Twelve independent helper functions all println! the same string
+    // literal ("ok"). In the parallel lowering phase every rayon worker
+    // thread clones a local IntrinsicContext; the string must be interned
+    // (DataId assigned) in the N9-B pre-declaration pass so none of the
+    // workers hits OfflineModule::declare_data_in_func with an unknown id.
+    let src = r#"
+fn f1() -> i64 { println!("ok"); 1 }
+fn f2() -> i64 { println!("ok"); 2 }
+fn f3() -> i64 { println!("ok"); 3 }
+fn f4() -> i64 { println!("ok"); 4 }
+fn f5() -> i64 { println!("ok"); 5 }
+fn f6() -> i64 { println!("ok"); 6 }
+fn f7() -> i64 { println!("ok"); 7 }
+fn f8() -> i64 { println!("ok"); 8 }
+fn f9() -> i64 { println!("ok"); 9 }
+fn f10() -> i64 { println!("ok"); 10 }
+fn f11() -> i64 { println!("ok"); 11 }
+fn f12() -> i64 { println!("ok"); 12 }
+
+fn main() {
+    let sum = f1() + f2() + f3() + f4() + f5() + f6()
+            + f7() + f8() + f9() + f10() + f11() + f12()
+    println!("sum={}", sum)
+}
+"#;
+    let expected = "ok\n".repeat(12) + "sum=78";
+    assert_three_tier_parity("n9_many_fns_shared_string", src, &expected);
+}
+
+#[test]
+fn parallel_lowering_aggregate_chain_across_call_boundaries() {
+    // A chain of three helpers, each returning a struct by value.
+    // The innermost `make_dims` returns a two-field aggregate; the
+    // middle `scale_dims` receives it and returns a new one; `main`
+    // reads the final fields. In the parallel phase, `make_dims` and
+    // `scale_dims` are lowered by potentially different rayon workers.
+    // Each must use the pre-declared `gos_rt_gc_alloc` FuncId rather
+    // than calling OfflineModule::declare_function directly.
+    // This was the root cause of the option/result aggregate test
+    // failures before N9 was fully fixed.
+    let src = r#"
+struct Dims { w: i64, h: i64 }
+
+fn make_dims(w: i64, h: i64) -> Dims {
+    Dims { w: w, h: h }
+}
+
+fn scale_dims(d: Dims, factor: i64) -> Dims {
+    Dims { w: d.w * factor, h: d.h * factor }
+}
+
+fn area(d: Dims) -> i64 {
+    d.w * d.h
+}
+
+fn main() {
+    let base = make_dims(3, 4)
+    let big = scale_dims(base, 10)
+    println!("w={} h={} area={}", big.w, big.h, area(big))
+}
+"#;
+    assert_three_tier_parity("n9_aggregate_chain", src, "w=30 h=40 area=1200");
+}

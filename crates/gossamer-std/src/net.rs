@@ -193,3 +193,6 @@ pub fn resolve(host: &str) -> Result<Vec<SocketAddr>, IoError> {
         .map_err(|e| IoError::from_std(e, host))?;
     Ok(iter.collect())
 }
+
+/// IP address parsing and inspection utilities.
+pub mod ip;

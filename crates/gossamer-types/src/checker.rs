@@ -1030,7 +1030,17 @@ impl<'a> TypeChecker<'a> {
                 self.bind_pattern(pattern, binding_ty);
             }
             StmtKind::Expr { expr, .. } => {
-                self.check_expr(expr);
+                let expr_ty = self.check_expr(expr);
+                // N6 / SPEC §9: a `Result<T,E>` value used as a statement
+                // (value discarded) is a compile error. The explicit discard
+                // form `let _ = expr` goes through `StmtKind::Let` and is
+                // not subject to this check.
+                let resolved = self.infer.resolve(self.tcx, expr_ty);
+                if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) {
+                    if self.tcx.def_name(*def) == Some("Result") {
+                        self.emit(TypeError::DiscardedResult, expr.span);
+                    }
+                }
             }
             StmtKind::Item(item) => self.check_item(item),
             StmtKind::Defer(inner) | StmtKind::Go(inner) => {

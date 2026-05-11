@@ -654,7 +654,10 @@ impl Vm {
     /// during lowering); the bytecode compiler still treats it as
     /// read-only.
     pub fn load(&mut self, program: &HirProgram, tcx: &mut TyCtxt) -> RuntimeResult<()> {
-        self.walker.borrow_mut().load(program);
+        // Phase 1: evaluate consts/statics and register ADT constructors.
+        // Skips function body clones — those are only needed when at least
+        // one bytecode chunk defers expressions back to the tree-walker.
+        self.walker.borrow_mut().load_non_fns(program);
         // Prepass: collect struct field orderings so `__struct`
         // can place literal fields in declaration order and the
         // VM compiler can emit compile-time offset reads.
@@ -718,6 +721,26 @@ impl Vm {
         for item in &program.items {
             self.load_item(item, tcx, &def_layouts, &wrappers, &module_consts)?;
         }
+        // Phase 2: load function closures into the walker, but only when
+        // the program actually needs them. Two cases require walker fns:
+        //   1. Any bytecode chunk has deferred exprs (closure fallback path).
+        //   2. Any impl/trait block exists — native built-ins like http::serve
+        //      call back through `NativeDispatch::call_fn` which dispatches
+        //      into the walker's function table for impl methods.
+        let has_deferred = self.globals.values().any(|g| {
+            if let Global::Fn(chunk) = g {
+                !chunk.deferred_exprs.is_empty()
+            } else {
+                false
+            }
+        });
+        let has_impl = program
+            .items
+            .iter()
+            .any(|item| matches!(item.kind, HirItemKind::Impl(_) | HirItemKind::Trait(_)));
+        if has_deferred || has_impl {
+            self.walker.borrow_mut().load_fns(program);
+        }
         // Tier D2 — deferred JIT. Lower MIR up front so the
         // tier-up trigger (in `apply`) can dispatch a compile via
         // `&self`, but don't compile yet: short-running programs
@@ -732,7 +755,9 @@ impl Vm {
         // would never be consumed. `hello.gos` lands in this
         // bucket, shaving the lower + the tcx clone.
         if jit_call::jit_enabled() && has_jit_eligible_fn(program) {
-            let bodies = gossamer_mir::lower_program(program, tcx);
+            let mut bodies = gossamer_mir::lower_program(program, tcx);
+            gossamer_mir::inline_trivial_wrappers(&mut bodies);
+            gossamer_mir::inline_small_callees(&mut bodies);
             self.mir_bodies = Some(Arc::new(bodies));
             self.tcx_snapshot = Some(Arc::new(tcx.clone()));
         } else {
@@ -790,6 +815,7 @@ impl Vm {
                 if trace {
                     eprintln!("jit: compile_to_jit failed: {err}");
                 }
+                self.jit.write().compiled = JitCompileState::Failed;
                 return;
             }
         };

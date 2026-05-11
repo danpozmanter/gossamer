@@ -218,6 +218,44 @@ impl Interpreter {
         }
     }
 
+    /// Loads only const, static, and ADT items — skips function bodies.
+    /// Lets the VM snapshot evaluated const/static values without paying
+    /// for HIR body clones that are only needed for `EvalDeferred` fallback.
+    pub fn load_non_fns(&mut self, program: &HirProgram) {
+        for item in &program.items {
+            self.load_item_non_fn(item);
+        }
+    }
+
+    /// Loads function, impl, and trait items as closures. Call this after
+    /// [`load_non_fns`] when at least one bytecode chunk has deferred exprs.
+    pub fn load_fns(&mut self, program: &HirProgram) {
+        for item in &program.items {
+            let module_prefix = if item.module_path.is_empty() {
+                None
+            } else {
+                Some(item.module_path.join("::"))
+            };
+            match &item.kind {
+                HirItemKind::Fn(decl) => self.load_fn(decl, module_prefix.as_deref()),
+                HirItemKind::Impl(decl) => {
+                    for fn_decl in &decl.methods {
+                        self.load_fn(fn_decl, module_prefix.as_deref());
+                        if let Some(type_name) = &decl.self_name {
+                            self.load_impl_fn(type_name, fn_decl, module_prefix.as_deref());
+                        }
+                    }
+                }
+                HirItemKind::Trait(decl) => {
+                    for fn_decl in &decl.methods {
+                        self.load_fn(fn_decl, module_prefix.as_deref());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Returns the value bound to a top-level `const`/`static` name,
     /// if one is registered. The bytecode VM consults this so a
     /// `LoadGlobal` opcode whose operand resolves to a const item
@@ -347,6 +385,41 @@ impl Interpreter {
                 }
             }
             HirItemKind::Adt(decl) => self.load_adt(decl, module_prefix.as_deref()),
+        }
+    }
+
+    /// Like `load_item` but skips function/impl/trait items (no HIR body clones).
+    fn load_item_non_fn(&mut self, item: &HirItem) {
+        let module_prefix = if item.module_path.is_empty() {
+            None
+        } else {
+            Some(item.module_path.join("::"))
+        };
+        match &item.kind {
+            HirItemKind::Const(decl) => {
+                let value = match self.eval_expr(&decl.value, &mut Env::new()) {
+                    Ok(Flow::Value(value)) => value,
+                    _ => Value::Void,
+                };
+                if let Some(prefix) = &module_prefix {
+                    self.globals
+                        .insert(format!("{prefix}::{}", decl.name.name), value.clone());
+                }
+                self.globals.insert(decl.name.name.clone(), value);
+            }
+            HirItemKind::Static(decl) => {
+                let value = match self.eval_expr(&decl.value, &mut Env::new()) {
+                    Ok(Flow::Value(value)) => value,
+                    _ => Value::Void,
+                };
+                if let Some(prefix) = &module_prefix {
+                    self.globals
+                        .insert(format!("{prefix}::{}", decl.name.name), value.clone());
+                }
+                self.globals.insert(decl.name.name.clone(), value);
+            }
+            HirItemKind::Adt(decl) => self.load_adt(decl, module_prefix.as_deref()),
+            HirItemKind::Fn(_) | HirItemKind::Impl(_) | HirItemKind::Trait(_) => {}
         }
     }
 

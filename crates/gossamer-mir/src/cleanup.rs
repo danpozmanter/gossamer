@@ -1,40 +1,94 @@
 //! Heap-allocator cleanup analysis.
 //!
 //! Identifies locals that own the result of a runtime heap-allocator
-//! call (`gos_rt_heap_i64_new`, `gos_rt_heap_u8_new`, `gos_rt_chan_new`)
-//! and that do not escape the current body. Both codegen tiers query
-//! this set so they can emit a matching `gos_rt_*_free` /
-//! `gos_rt_chan_drop` call at every `Return` terminator — closing the
-//! "every `Vec<i64>` / `Vec<u8>` / `Channel` leaks until process exit"
-//! finding (C2 in `~/dev/contexts/lang/adversarial_analysis.md`).
+//! call and computes a per-local drop position so the codegen can
+//! release the allocation as soon as the value is no longer live —
+//! not at the function's `Return`. Without per-block drops, every
+//! owning binding stays alive until process exit, peak RSS carries
+//! the union of all live + dead allocations, and `main()`-shaped
+//! programs are forced to keep their input buffers around long
+//! after the last use.
 //!
-//! The analysis is deliberately conservative: an allocation is only
-//! cleaned up when its destination local is known not to escape and
-//! the allocating call's block dominates *every* `Return` block. The
-//! second condition rules out conditional allocations whose value the
-//! return path may never have observed.
+//! The drop placement uses a small backward liveness pass per
+//! candidate. Two rules cover the common shapes:
+//!
+//! - **Block-exit drop:** if a block uses (or holds live) the local
+//!   and no successor block sees it live, drop at the end of that
+//!   block (after the last statement, before the terminator). This
+//!   matches the "last use was inside this block" pattern.
+//!
+//! - **Block-entry drop:** if a block does not use the local, no
+//!   successor sees it live, but every predecessor had it live at
+//!   exit, drop at the start of that block. This catches the
+//!   "loop just finished" / "branch joined" pattern where the local
+//!   transitions from live to dead between blocks.
+//!
+//! When neither rule fires (mixed-liveness predecessors, irreducible
+//! CFGs), the local falls back to the legacy `at-Return` placement
+//! — still better than leaking, just not as tight.
 
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::escape::analyse as analyse_escape;
-use crate::ir::{BlockId, Body, ConstValue, Local, Operand, Terminator};
+use crate::escape::{CaptureSummary, analyse_with_summary as analyse_escape_with_summary};
+use crate::ir::{
+    BlockId, Body, ConstValue, Local, Operand, Place, Rvalue, StatementKind, Terminator,
+};
 
 /// Names of runtime functions that allocate on the heap and return
 /// an owning pointer. Each entry maps a constructor symbol to the
 /// matching reclamation symbol the codegen should call when the
 /// destination local is dropped.
+///
+/// The constructor side covers both the user-facing names that MIR
+/// preserves verbatim from the surface syntax (e.g. `U8Vec::new`)
+/// and the runtime symbols that lowering occasionally produces
+/// directly. Both forms reach the codegen as `Call { callee:
+/// Const(Str(...)), ... }`, so the cleanup pass has to recognise
+/// either string before its dominance check decides whether to emit
+/// a free.
 pub const HEAP_ALLOCATOR_PAIRS: &[(&str, &str)] = &[
     ("gos_rt_heap_i64_new", "gos_rt_heap_i64_free"),
+    ("I64Vec::new", "gos_rt_heap_i64_free"),
+    ("heap_i64::new", "gos_rt_heap_i64_free"),
     ("gos_rt_heap_u8_new", "gos_rt_heap_u8_free"),
+    ("U8Vec::new", "gos_rt_heap_u8_free"),
+    ("heap_u8::new", "gos_rt_heap_u8_free"),
     ("gos_rt_chan_new", "gos_rt_chan_drop"),
+    // String allocators reachable from user code. The owning
+    // pointer returned by `read_to_string` (and friends) lives in
+    // the runtime's `Box<[u8]>::into_raw` domain; `gos_rt_str_free`
+    // reverses the leak. The cleanup pass is gated by the same
+    // escape-analysis filter as the heap-vec pairs, so only owning
+    // bindings whose only uses are non-capturing reader helpers
+    // (length / byte / substring read) reach the free.
+    ("gos_rt_stream_read_to_string", "gos_rt_str_free"),
+    ("gos_rt_stream_read_line", "gos_rt_str_free"),
 ];
 
-/// Per-body cleanup plan: every entry says "before each `Return`,
-/// load the value of `local` and call the runtime function named
-/// `free_fn`". The list is in deterministic order (locals ascending)
-/// so the codegens emit the same byte stream on repeated runs.
+/// Where in the body a particular cleanup entry should be emitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropAt {
+    /// Emit the drop just before every `Return` terminator. Used as
+    /// the fallback when liveness cannot pinpoint a tighter site.
+    Return,
+    /// Emit the drop at the start of `block`, before any other
+    /// statement. Used when the local was alive in every predecessor
+    /// of the block and this block (and its successors) no longer
+    /// reference it.
+    BlockEntry(BlockId),
+    /// Emit the drop at the end of `block`, after the last statement
+    /// and before the terminator. Used when the last live use of
+    /// the local sits inside this block and no successor sees it.
+    BlockExit(BlockId),
+}
+
+/// Per-body cleanup plan. Each entry identifies an owning heap
+/// local and a `DropAt` site where the matching `_free` call
+/// should be emitted. The list is in deterministic order
+/// (`(local, drop_at)` ascending) so the codegens emit the same
+/// byte stream on repeated runs.
 #[derive(Debug, Clone, Default)]
 pub struct CleanupPlan {
     entries: Vec<CleanupEntry>,
@@ -47,30 +101,63 @@ pub struct CleanupEntry {
     pub local: Local,
     /// Runtime symbol the codegen should call to free `local`.
     pub free_fn: &'static str,
+    /// Where the drop should be emitted.
+    pub drop_at: DropAt,
 }
 
 impl CleanupPlan {
-    /// Returns every cleanup entry in stable order.
+    /// Returns every cleanup entry in stable order. Codegen tiers
+    /// that still emit drops only at `Return` can filter via
+    /// [`Self::at_return`].
     #[must_use]
     pub fn entries(&self) -> &[CleanupEntry] {
         &self.entries
     }
 
-    /// Whether the plan has anything to emit. Hot-path test that
-    /// lets codegens skip the cleanup-emit prologue when no
-    /// allocations were found.
+    /// Subset to emit at every `Return` terminator.
+    pub fn at_return(&self) -> impl Iterator<Item = &CleanupEntry> {
+        self.entries
+            .iter()
+            .filter(|e| matches!(e.drop_at, DropAt::Return))
+    }
+
+    /// Subset to emit at the start of `block`.
+    pub fn at_block_entry(&self, block: BlockId) -> impl Iterator<Item = &CleanupEntry> {
+        self.entries
+            .iter()
+            .filter(move |e| e.drop_at == DropAt::BlockEntry(block))
+    }
+
+    /// Subset to emit at the end of `block` (before its terminator).
+    pub fn at_block_exit(&self, block: BlockId) -> impl Iterator<Item = &CleanupEntry> {
+        self.entries
+            .iter()
+            .filter(move |e| e.drop_at == DropAt::BlockExit(block))
+    }
+
+    /// Whether the plan has anything to emit.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 }
 
-/// Returns the cleanup plan for `body`. Pure inspection of the
-/// body — the body itself is not mutated.
+/// Returns the cleanup plan for `body`, consulting an empty
+/// inter-procedural capture summary. Equivalent to
+/// [`plan_with_summary`] with no callee data; kept for callers
+/// that don't have a program-wide summary handy.
 #[must_use]
 pub fn plan(body: &Body) -> CleanupPlan {
-    // Map from allocator symbol → free symbol so the lookup below
-    // is constant-time.
+    plan_with_summary(body, &CaptureSummary::default())
+}
+
+/// Returns the cleanup plan for `body`, using `summary` to refine
+/// the escape analyser's decisions about user-fn calls. With a
+/// converged summary, owning bindings whose only outbound use is a
+/// non-capturing helper get a precise per-block drop instead of
+/// being forced into the escape set and skipped.
+#[must_use]
+pub fn plan_with_summary(body: &Body, summary: &CaptureSummary) -> CleanupPlan {
     let alloc_pairs: BTreeMap<&str, &str> = HEAP_ALLOCATOR_PAIRS.iter().copied().collect();
 
     // Find every Call terminator whose callee is a known allocator
@@ -98,23 +185,12 @@ pub fn plan(body: &Body) -> CleanupPlan {
     // Drop any candidate whose local escapes — return values, call
     // arguments, and aggregates are off-limits because the freed
     // memory may still be reachable by the caller.
-    let escape = analyse_escape(body);
+    let escape = analyse_escape_with_summary(body, summary);
     candidates.retain(|(local, _, _)| escape.is_non_escaping(*local));
     if candidates.is_empty() {
         return CleanupPlan::default();
     }
 
-    // Compute reverse-CFG reachability so we can verify that every
-    // `Return` block is dominated (in the sense of "must-execute")
-    // by the allocator's block. We approximate dominance with a
-    // forward reachability test from `entry`: a block B dominates
-    // every path through `Return` only when removing B from the CFG
-    // makes those Returns unreachable from entry. The
-    // simpler-and-equivalent test we use here: the allocator's
-    // block must lie on *every* path from entry to *every* `Return`.
-    // We compute this by checking that, after removing the
-    // allocator's block from the graph, no `Return` block is still
-    // reachable from entry.
     let return_blocks: Vec<BlockId> = body
         .blocks
         .iter()
@@ -125,35 +201,277 @@ pub fn plan(body: &Body) -> CleanupPlan {
         return CleanupPlan::default();
     }
 
-    // Track every (local, free_fn) that survives the dominance check
-    // and dedupe so a re-assigned local only frees once.
+    // Precompute the predecessor map; both liveness rules consult it.
+    let predecessors = compute_predecessors(body);
+
     let mut seen: BTreeSet<u32> = BTreeSet::new();
     let mut entries: Vec<CleanupEntry> = Vec::new();
     for (local, free_fn, alloc_block) in candidates {
         if seen.contains(&local.0) {
             continue;
         }
-        if dominates_all(body, alloc_block, &return_blocks) {
+        let drop_sites = compute_drop_sites(body, local, &predecessors);
+        if !drop_sites.is_empty() {
+            // Liveness already proved each drop site is reached
+            // only on paths that allocated the local; per-block
+            // drops are safe regardless of dominance over Return.
             seen.insert(local.0);
-            entries.push(CleanupEntry { local, free_fn });
+            for site in drop_sites {
+                entries.push(CleanupEntry {
+                    local,
+                    free_fn,
+                    drop_at: site,
+                });
+            }
+            continue;
         }
+        // No precise site → fall back to drop-at-Return, but only
+        // when the allocator strictly dominates every Return. The
+        // dominance check rules out conditional allocations whose
+        // slot the early-return path may never have observed (and
+        // freeing uninit memory at that Return would be UB).
+        if !dominates_all(body, alloc_block, &return_blocks) {
+            continue;
+        }
+        seen.insert(local.0);
+        entries.push(CleanupEntry {
+            local,
+            free_fn,
+            drop_at: DropAt::Return,
+        });
     }
-    entries.sort_by_key(|e| e.local.0);
+    entries.sort_by_key(|e| (e.local.0, drop_at_sort_key(e.drop_at)));
     CleanupPlan { entries }
 }
 
+fn drop_at_sort_key(d: DropAt) -> (u8, u32) {
+    match d {
+        DropAt::Return => (0, 0),
+        DropAt::BlockEntry(b) => (1, b.as_u32()),
+        DropAt::BlockExit(b) => (2, b.as_u32()),
+    }
+}
+
+/// Backward liveness for a single owning local plus the drop-site
+/// extraction described in the module header. Returns the list of
+/// `DropAt` sites (or empty when no precise placement was found,
+/// which signals "fall back to Return").
+fn compute_drop_sites(body: &Body, local: Local, predecessors: &[Vec<BlockId>]) -> Vec<DropAt> {
+    let n = body.blocks.len();
+    // The MIR routinely splits `let buf = U8Vec::new(...)` into a
+    // temporary destination plus a `Local(user) = Use(Copy(temp))`
+    // assignment. Both locals alias the same heap memory; freeing
+    // one invalidates the other. The cleanup pass therefore tracks
+    // every Copy-alias of the original allocator destination and
+    // computes liveness on the union — a "use" of any chain member
+    // counts as a use of the underlying allocation.
+    let chain = compute_alias_chain(body, local);
+    // Split stmt-uses from terminator-uses so we know whether the
+    // terminator reads the local. Drops emitted at "block exit"
+    // (just before the terminator) are unsafe when the terminator
+    // itself reads the value — those cases must drop on the
+    // successor's entry instead.
+    let mut stmt_uses = vec![false; n];
+    let mut term_uses = vec![false; n];
+    let mut defs = vec![false; n];
+    for (i, block) in body.blocks.iter().enumerate() {
+        for stmt in &block.stmts {
+            for &cl in &chain {
+                let cl_local = Local(cl);
+                if stmt_reads_local(stmt, cl_local) {
+                    stmt_uses[i] = true;
+                }
+                if stmt_writes_local(stmt, cl_local) {
+                    defs[i] = true;
+                }
+            }
+        }
+        for &cl in &chain {
+            let cl_local = Local(cl);
+            if terminator_reads_local(&block.terminator, cl_local) {
+                term_uses[i] = true;
+            }
+            if terminator_writes_local(&block.terminator, cl_local) {
+                defs[i] = true;
+            }
+        }
+    }
+
+    let mut live_in = vec![false; n];
+    let mut live_out = vec![false; n];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (i, block) in body.blocks.iter().enumerate() {
+            let new_live_out = successors(&block.terminator)
+                .into_iter()
+                .any(|s| live_in[s.as_u32() as usize]);
+            let total_uses = stmt_uses[i] || term_uses[i];
+            let new_live_in = total_uses || (new_live_out && !defs[i]);
+            if new_live_out != live_out[i] || new_live_in != live_in[i] {
+                changed = true;
+                live_out[i] = new_live_out;
+                live_in[i] = new_live_in;
+            }
+        }
+    }
+
+    let mut sites: Vec<DropAt> = Vec::new();
+    for (i, block) in body.blocks.iter().enumerate() {
+        // Block-exit drop: emit just before the terminator. Safe
+        // only when the local was live during stmts (or live-in)
+        // AND the terminator does NOT read it AND no successor
+        // sees it live. Excludes Return blocks; the legacy
+        // at-Return path covers those.
+        let alive_during_stmts = stmt_uses[i] || live_in[i];
+        let dead_after_stmts = !term_uses[i] && !live_out[i];
+        if alive_during_stmts && dead_after_stmts && !matches!(block.terminator, Terminator::Return)
+        {
+            sites.push(DropAt::BlockExit(block.id));
+        }
+    }
+    for (i, _block) in body.blocks.iter().enumerate() {
+        // Block-entry drop: emit at the start of S when the local
+        // is dead at S's entry but every predecessor had it live
+        // at end-of-block (either through the terminator or a
+        // live-out of the successor it picked). This covers two
+        // cases the BlockExit rule cannot:
+        //   * terminator reads the local (e.g. Call args) on the
+        //     way to S, and S itself does not read it;
+        //   * loop exit, where the loop header's terminator does
+        //     not read the local but the back-edge target does —
+        //     dropping at the loop-exit's entry catches the
+        //     fall-through transition.
+        if stmt_uses[i] || term_uses[i] || live_in[i] {
+            continue;
+        }
+        let preds = &predecessors[i];
+        if preds.is_empty() {
+            continue;
+        }
+        let all_preds_alive_at_end = preds.iter().all(|p| {
+            let pi = p.as_u32() as usize;
+            term_uses[pi] || live_out[pi]
+        });
+        if !all_preds_alive_at_end {
+            continue;
+        }
+        sites.push(DropAt::BlockEntry(body.blocks[i].id));
+    }
+
+    sites
+}
+
+/// Iterates Copy-assignments to a fixed point starting from
+/// `alloc_local`, returning the set of locals that alias the same
+/// heap memory. A local `M` is in the chain when there is a chain
+/// of `M = Use(Copy(L))` assignments rooting at `alloc_local`.
+fn compute_alias_chain(body: &Body, alloc_local: Local) -> BTreeSet<u32> {
+    let mut chain: BTreeSet<u32> = BTreeSet::new();
+    chain.insert(alloc_local.0);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                    && place.projection.is_empty()
+                    && let Rvalue::Use(Operand::Copy(src_place)) = rvalue
+                    && src_place.projection.is_empty()
+                    && chain.contains(&src_place.local.0)
+                    && chain.insert(place.local.0)
+                {
+                    changed = true;
+                }
+            }
+        }
+    }
+    chain
+}
+
+fn compute_predecessors(body: &Body) -> Vec<Vec<BlockId>> {
+    let n = body.blocks.len();
+    let mut preds: Vec<Vec<BlockId>> = vec![Vec::new(); n];
+    for block in &body.blocks {
+        for s in successors(&block.terminator) {
+            let idx = s.as_u32() as usize;
+            if idx < n {
+                preds[idx].push(block.id);
+            }
+        }
+    }
+    preds
+}
+
+fn stmt_reads_local(stmt: &crate::ir::Statement, local: Local) -> bool {
+    if let StatementKind::Assign { rvalue, .. } = &stmt.kind {
+        return rvalue_reads_local(rvalue, local);
+    }
+    false
+}
+
+fn stmt_writes_local(stmt: &crate::ir::Statement, local: Local) -> bool {
+    if let StatementKind::Assign { place, .. } = &stmt.kind {
+        return place.local == local && place.projection.is_empty();
+    }
+    false
+}
+
+fn rvalue_reads_local(rvalue: &Rvalue, local: Local) -> bool {
+    match rvalue {
+        Rvalue::Use(op) => operand_reads_local(op, local),
+        Rvalue::Repeat { value, .. } => operand_reads_local(value, local),
+        Rvalue::Aggregate { operands, .. } => {
+            operands.iter().any(|op| operand_reads_local(op, local))
+        }
+        Rvalue::BinaryOp { lhs, rhs, .. } => {
+            operand_reads_local(lhs, local) || operand_reads_local(rhs, local)
+        }
+        Rvalue::UnaryOp { operand, .. } => operand_reads_local(operand, local),
+        Rvalue::Cast { operand, .. } => operand_reads_local(operand, local),
+        Rvalue::Ref { place, .. } => place_reads_local(place, local),
+        Rvalue::Len(place) => place_reads_local(place, local),
+        Rvalue::CallIntrinsic { args, .. } => args.iter().any(|op| operand_reads_local(op, local)),
+    }
+}
+
+fn operand_reads_local(op: &Operand, local: Local) -> bool {
+    match op {
+        Operand::Copy(place) => place_reads_local(place, local),
+        Operand::Const(_) => false,
+        Operand::FnRef { .. } => false,
+    }
+}
+
+fn place_reads_local(place: &Place, local: Local) -> bool {
+    place.local == local
+}
+
+fn terminator_reads_local(t: &Terminator, local: Local) -> bool {
+    match t {
+        Terminator::SwitchInt { discriminant, .. } => operand_reads_local(discriminant, local),
+        Terminator::Call { args, .. } => args.iter().any(|a| operand_reads_local(a, local)),
+        Terminator::Assert { cond, .. } => operand_reads_local(cond, local),
+        Terminator::Drop { place, .. } => place_reads_local(place, local),
+        _ => false,
+    }
+}
+
+fn terminator_writes_local(t: &Terminator, local: Local) -> bool {
+    if let Terminator::Call { destination, .. } = t {
+        return destination.local == local && destination.projection.is_empty();
+    }
+    false
+}
+
 /// Tests whether `gate` is on every path from the body's entry to
-/// each block in `targets`. Implemented by forward BFS that skips
-/// `gate`: if any target stays reachable, `gate` does not dominate
-/// it.
+/// each block in `targets`.
 fn dominates_all(body: &Body, gate: BlockId, targets: &[BlockId]) -> bool {
     let entry = match body.blocks.first() {
         Some(b) => b.id,
         None => return false,
     };
     if entry == gate {
-        // The gate is the entry block — vacuously dominates every
-        // reachable target.
         return true;
     }
     let mut visited: BTreeSet<u32> = BTreeSet::new();

@@ -140,6 +140,36 @@ pub fn load_blob_in<T: serde::de::DeserializeOwned>(
     bincode::deserialize(&bytes).ok()
 }
 
+/// Writes `bytes` directly to the cache file for `key` without any
+/// envelope encoding. Use this for raw binary blobs (object files,
+/// large buffers) where bincode's `Vec<u8>` round-trip would force
+/// an extra full-buffer clone on every cache miss.
+pub fn store_raw(key: &FrontendCacheKey, bytes: &[u8]) {
+    store_raw_in(&cache_dir(), key, bytes);
+}
+
+/// Variant of [`store_raw`] that writes into `root`.
+pub fn store_raw_in(root: &Path, key: &FrontendCacheKey, bytes: &[u8]) {
+    let _ = fs::create_dir_all(root);
+    let _ = fs::write(blob_path(root, key), bytes);
+}
+
+/// Returns the on-disk path the cache uses for `key` if a prior
+/// `store_raw` (or `store_blob`) populated it. Used by callers that
+/// want to copy the cache file directly to a destination path
+/// instead of round-tripping through a `Vec<u8>` in memory.
+#[must_use]
+pub fn raw_blob_path(key: &FrontendCacheKey) -> Option<PathBuf> {
+    raw_blob_path_in(&cache_dir(), key)
+}
+
+/// Variant of [`raw_blob_path`] that consults `root`.
+#[must_use]
+pub fn raw_blob_path_in(root: &Path, key: &FrontendCacheKey) -> Option<PathBuf> {
+    let p = blob_path(root, key);
+    if p.is_file() { Some(p) } else { None }
+}
+
 fn marker_path(dir: &Path, key: &FrontendCacheKey) -> PathBuf {
     dir.join(format!("{}.ok", key.as_hex()))
 }
