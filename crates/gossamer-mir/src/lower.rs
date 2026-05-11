@@ -7006,21 +7006,32 @@ impl<'a> Builder<'a> {
         // helper, returning the empty string. Short-circuit clone
         // on a JsonValue receiver to a direct copy with the
         // receiver's MIR type preserved.
-        if method.name.as_str() == "clone" && args.is_empty() {
+        // `.clone()` on a `json::Value` receiver short-circuits to a
+        // direct copy with the receiver's MIR type preserved (the
+        // generic identity-copy arm later falls through to a Var dest
+        // for `tcs[k].clone()` shapes and downstream json helpers stop
+        // dispatching). Only lower the receiver when we know we'll
+        // consume it here — falling through after the lower would
+        // leave behind the receiver's lowered Call as dead but live
+        // MIR, and any heap-container result (e.g. `gos_rt_vec_get_i64`
+        // producing a `Vec<T>`-typed dest) would be marked twice for
+        // `gos_rt_vec_free`, producing a double free at scope end.
+        if method.name.as_str() == "clone"
+            && args.is_empty()
+            && self.is_json_value_ty(receiver.ty)
+        {
             let recv_local = self.lower_expr(receiver)?;
             let recv_mir_ty = self.locals[recv_local.0 as usize].ty;
-            if matches!(self.tcx.kind_of(recv_mir_ty), TyKind::JsonValue) {
-                let dest = self.fresh(recv_mir_ty);
-                if let Some(rk) = self.local_runtime_kind.get(&recv_local).copied() {
-                    self.local_runtime_kind.insert(dest, rk);
-                }
-                self.emit_assign(
-                    Place::local(dest),
-                    Rvalue::Use(Operand::Copy(Place::local(recv_local))),
-                    span,
-                );
-                return Some(dest);
+            let dest = self.fresh(recv_mir_ty);
+            if let Some(rk) = self.local_runtime_kind.get(&recv_local).copied() {
+                self.local_runtime_kind.insert(dest, rk);
             }
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::Use(Operand::Copy(Place::local(recv_local))),
+                span,
+            );
+            return Some(dest);
         }
         // `result.map_err(closure)` / `result.map(closure)` when the
         // HIR receiver type is unresolved but its lowered MIR type
@@ -8311,6 +8322,25 @@ impl<'a> Builder<'a> {
                 _ => {}
             }
         }
+        // `.clone()` on a Vec/Slice receiver: dispatch to
+        // `gos_rt_vec_clone` so the result is a fresh independent
+        // `GosVec` allocation rather than a bitwise pointer alias.
+        // Without this, `caps[0].clone()` (where `caps[0]` returns an
+        // inner `*mut GosVec` pinned to a fresh local) leaves two
+        // locals holding the same pointer; the auto-drop pass then
+        // emits `gos_rt_vec_free` for each, producing a double free.
+        // The top-of-method dispatch table (`runtime_symbol = match
+        // method.name.as_str() { … }`) keys on the HIR receiver kind,
+        // which is still a `Var` for chained `Index<i>.clone()` shapes
+        // — `lowered_recv_ty` is the resolved MIR-side type.
+        if method.name.as_str() == "clone"
+            && matches!(
+                self.tcx.kind_of(lowered_recv_ty),
+                TyKind::Vec(_) | TyKind::Slice(_)
+            )
+        {
+            runtime_symbol = Some("gos_rt_vec_clone");
+        }
 
         if let Some(sym) = runtime_symbol {
             if sym.is_empty() {
@@ -8725,6 +8755,28 @@ impl<'a> Builder<'a> {
                     match self.tcx.kind_of(flat) {
                         TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => flat,
                         _ => receiver_ty,
+                    }
+                }
+                // `.clone()` on a Vec/Slice: dest holds a fresh `*mut
+                // GosVec` of the same element shape as the receiver.
+                // The HIR `ty` is often a `Var(_)` here because the
+                // typechecker leaves the method's return wrapper
+                // unresolved (`xs[i].clone()` is a chained index +
+                // method) so we recover the shape from the lowered
+                // receiver. Without this pin the dest defaults to i64
+                // and `row[1]` later misses the `gos_rt_vec_get_i64`
+                // helper.
+                "gos_rt_vec_clone" => {
+                    let mut flat = self.locals[receiver_local.0 as usize].ty;
+                    while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                        flat = *inner;
+                    }
+                    match self.tcx.kind_of(flat) {
+                        TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => flat,
+                        _ => match self.tcx.kind_of(ty) {
+                            TyKind::Vec(_) | TyKind::Slice(_) => ty,
+                            _ => receiver_ty,
+                        },
                     }
                 }
                 _ => match self.tcx.kind_of(ty) {
