@@ -7016,9 +7016,7 @@ impl<'a> Builder<'a> {
         // MIR, and any heap-container result (e.g. `gos_rt_vec_get_i64`
         // producing a `Vec<T>`-typed dest) would be marked twice for
         // `gos_rt_vec_free`, producing a double free at scope end.
-        if method.name.as_str() == "clone"
-            && args.is_empty()
-            && self.is_json_value_ty(receiver.ty)
+        if method.name.as_str() == "clone" && args.is_empty() && self.is_json_value_ty(receiver.ty)
         {
             let recv_local = self.lower_expr(receiver)?;
             let recv_mir_ty = self.locals[recv_local.0 as usize].ty;
