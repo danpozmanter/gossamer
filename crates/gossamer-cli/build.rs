@@ -44,6 +44,13 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // Setup function called directly from Rust (gossamer-interp's
     // `set_runtime_program_name`), not from generated Gossamer code.
     "gos_rt_set_program_name",
+    // ABI 0.4 compiled-tier callback dispatcher fallback. Referenced
+    // directly from `gossamer-binding::native::NativeCallback::invoke_raw`
+    // (Rust binding code), not from generated Gossamer programs. The
+    // stub exists so MSVC link succeeds when the codegen hasn't
+    // emitted a per-program override; Linux ld is permissive about
+    // such unresolved externs but Windows isn't.
+    "gos_rt_callback_invoke",
 ];
 
 fn main() {

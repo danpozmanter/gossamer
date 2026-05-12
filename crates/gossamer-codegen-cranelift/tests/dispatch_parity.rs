@@ -60,6 +60,7 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_atomic_i64_store_relaxed",
     "gos_rt_atomic_i64_store_release",
     "gos_rt_atomic_i64_swap",
+    "gos_rt_callback_invoke",
     "gos_rt_chan_drop",
     "gos_rt_concat_f64_prec",
     "gos_rt_gc_reset",

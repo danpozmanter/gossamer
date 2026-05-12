@@ -3216,6 +3216,30 @@ pub unsafe extern "C" fn gos_rt_vec_sort_by_aggr(v: *mut GosVec, env: *const u8)
     }
 }
 
+/// Default stub for the ABI 0.4 compiled-tier callback
+/// dispatcher. The real handle table lives in the codegen layer,
+/// so the runtime only ships this fallback that returns a
+/// non-zero error code — calls land here when the codegen hasn't
+/// emitted a per-program override. Provided so test binaries
+/// that link `gossamer-binding::native::NativeCallback::invoke_raw`
+/// (which declares the symbol as `extern "C"`) link cleanly on
+/// MSVC; the Linux ld toolchain is permissive about unresolved
+/// references in `cdylib`/`bin` artefacts but Windows isn't.
+///
+/// `args` / `args_len` / `result_out` are accepted but unused —
+/// the stub never touches caller memory. Returns `-1` to signal
+/// "no dispatcher installed" so callers see a stable failure
+/// path rather than a silent zero-result success.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_callback_invoke(
+    _handle: u64,
+    _args: *const u8,
+    _args_len: u32,
+    _result_out: *mut u8,
+) -> i32 {
+    -1
+}
+
 /// A heap-allocated iterator over a `GosVec`. Created by
 /// `gos_rt_arr_iter`; advanced one element at a time by
 /// `gos_rt_arr_iter_next`.
