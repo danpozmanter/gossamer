@@ -628,10 +628,10 @@ executed by <code>gos test</code>. Mark non-runnable fences as
 partial implementations. Trust examples in the repo; write
 a small test when unsure.</p>
 <h2 id="13-project-layout">13. Project layout<a class="headerlink" href="#13-project-layout" title="Permanent link">&para;</a></h2>
-<pre><code>project.toml       # manifest: [project], [dependencies], [registries]
+<pre><code>project.toml       # manifest: [project], [dependencies], [registries], optional [[bin]] / [lib]
 src/
-├── main.gos       # binary entry
-├── lib.gos        # library root (optional)
+├── main.gos       # default binary entry  (override via [[bin]].path)
+├── lib.gos        # default library root  (override via [lib].path)
 └── subdir/
     └── mod.gos    # module `subdir`
 tests/             # integration tests
@@ -645,6 +645,18 @@ license = &quot;Apache-2.0&quot;
 
 [dependencies]
 &quot;example.org/lib&quot; = &quot;1.2.3&quot;
+
+# Optional. Without this section, the default is one binary
+# named after the project id whose entry point is src/main.gos.
+[[bin]]
+name = &quot;widget&quot;
+path = &quot;src/main.gos&quot;
+
+# Optional. Without this section, presence of src/lib.gos is
+# enough to build the library by convention.
+[lib]
+name = &quot;widget&quot;
+path = &quot;src/lib.gos&quot;
 </code></pre>
 <h2 id="14-worked-examples">14. Worked examples<a class="headerlink" href="#14-worked-examples" title="Permanent link">&para;</a></h2>
 <h3 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h3>

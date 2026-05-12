@@ -164,9 +164,26 @@ impl Ord for TimerEntry {
 /// registered by the network code via [`OsPoller::register_io`],
 /// which wraps the registration with the [`Interest`] -> mio
 /// translation.
+/// Reserved mio token for the internal `mio::Waker` that lets us
+/// interrupt a long-blocking `poll()` from another thread (e.g.
+/// when a goroutine registers a new I/O source while the poller
+/// thread is mid-syscall). Numerically distinct from the
+/// `next_token` allocator, which starts at 1.
+const INTERRUPT_TOKEN: mio::Token = mio::Token(0);
+
+/// `mio`-backed OS poller. Holds the `mio::Poll` handle plus
+/// bookkeeping for outstanding registrations (one entry per
+/// `(PollSource, Interest)` pair), the timer wheel, and the
+/// pending readiness buffer drained between polls.
 pub struct OsPoller {
     poll: mio::Poll,
     events: mio::Events,
+    /// `mio::Waker` bound to this poll. Calling `.wake()` from any
+    /// thread unblocks an in-flight `poll()` call immediately —
+    /// used by `register_io` to let a freshly registered source
+    /// take effect without waiting for the current poll cycle's
+    /// timeout to expire.
+    interrupt: std::sync::Arc<mio::Waker>,
     /// Map registered `PollSource` -> `(mio::Token, Gid)` so
     /// `deregister` can find the entry to remove.
     by_source: HashMap<(PollSource, Interest), Gid>,
@@ -196,15 +213,27 @@ impl OsPoller {
     /// kernel rejects the underlying `epoll_create1` / `kqueue` /
     /// `CreateIoCompletionPort` syscall.
     pub fn new() -> io::Result<Self> {
+        let poll = mio::Poll::new()?;
+        let interrupt = std::sync::Arc::new(mio::Waker::new(poll.registry(), INTERRUPT_TOKEN)?);
         Ok(Self {
-            poll: mio::Poll::new()?,
+            poll,
             events: mio::Events::with_capacity(1024),
+            interrupt,
             by_source: HashMap::new(),
             pending: Vec::new(),
             timers: BinaryHeap::new(),
             next_token: 1,
             by_token: HashMap::new(),
         })
+    }
+
+    /// Returns a clone of the interrupt-waker Arc. Callers fire
+    /// `.wake()` on it after acquiring + releasing the poller
+    /// lock to register / deregister an I/O source, ensuring the
+    /// poller thread re-enters its loop with the fresh state.
+    #[must_use]
+    pub fn interrupt_handle(&self) -> std::sync::Arc<mio::Waker> {
+        std::sync::Arc::clone(&self.interrupt)
     }
 
     /// Registers a goroutine `gid` to wake when `io` reports the
@@ -216,6 +245,10 @@ impl OsPoller {
         interest: Interest,
         gid: Gid,
     ) -> io::Result<PollSource> {
+        // Skip token 0 (reserved for the interrupt-waker).
+        if self.next_token == INTERRUPT_TOKEN.0 {
+            self.next_token = 1;
+        }
         let token = mio::Token(self.next_token);
         self.next_token = self.next_token.wrapping_add(1).max(1);
         let source = PollSource(u32::try_from(token.0 & 0xFFFF_FFFF).unwrap_or(0));
@@ -341,6 +374,12 @@ impl Poller for OsPoller {
             self.poll.poll(&mut self.events, combined)?;
             for event in &self.events {
                 let token = event.token();
+                if token == INTERRUPT_TOKEN {
+                    // Interrupt waker fired — drain any expired
+                    // timers + return so the caller can re-poll with
+                    // up-to-date registrations.
+                    continue;
+                }
                 if let Some(&(source, interest, gid)) = self.by_token.get(&token) {
                     let fired = match interest {
                         Interest::Readable => event.is_readable(),

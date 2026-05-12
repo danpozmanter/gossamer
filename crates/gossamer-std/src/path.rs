@@ -7,6 +7,7 @@
 //! call.
 
 #![forbid(unsafe_code)]
+#![allow(clippy::manual_let_else)]
 
 /// Joins `base` with `segment`, collapsing duplicate separators and
 /// absorbing a leading `/` in `segment`.
@@ -260,5 +261,355 @@ mod tests {
         assert!(has_prefix("a/b/c", "a/b"));
         assert!(has_prefix("a/b", "a/b"));
         assert!(!has_prefix("a/bc", "a/b"));
+    }
+}
+
+// --- Pattern matching + walk (Go's path/filepath) ---------------------
+
+/// Sentinel returned by a [`walk`] visitor to skip the current
+/// directory subtree.
+pub const SKIP_DIR: &str = "__SKIP_DIR__";
+/// Sentinel returned by a [`walk`] visitor to skip every
+/// remaining entry.
+pub const SKIP_ALL: &str = "__SKIP_ALL__";
+
+/// `filepath.Match` semantics: tests whether `name` matches the
+/// shell-glob `pattern`. Single-segment matching only — `/`
+/// inside `name` does NOT match `*`.
+///
+/// Pattern operators:
+///
+/// - `*` — matches any run of characters except `/`.
+/// - `?` — matches any single character except `/`.
+/// - `[abc]` — character class (no negation, no ranges).
+/// - any other byte — literal.
+#[must_use]
+pub fn matches(pattern: &str, name: &str) -> bool {
+    matches_inner(pattern.as_bytes(), name.as_bytes())
+}
+
+fn matches_inner(pat: &[u8], name: &[u8]) -> bool {
+    let mut pi = 0;
+    let mut ni = 0;
+    let mut star_pat: Option<usize> = None;
+    let mut star_name: usize = 0;
+    while ni < name.len() {
+        if pi < pat.len() {
+            match pat[pi] {
+                b'*' => {
+                    star_pat = Some(pi);
+                    star_name = ni;
+                    pi += 1;
+                    continue;
+                }
+                b'?' => {
+                    if name[ni] == b'/' {
+                        return false;
+                    }
+                    pi += 1;
+                    ni += 1;
+                    continue;
+                }
+                b'[' => {
+                    let close = match pat[pi + 1..].iter().position(|&b| b == b']') {
+                        Some(p) => pi + 1 + p,
+                        None => return false,
+                    };
+                    let class = &pat[pi + 1..close];
+                    if class.contains(&name[ni]) {
+                        pi = close + 1;
+                        ni += 1;
+                        continue;
+                    }
+                    // Fall through to backtrack.
+                }
+                lit if lit == name[ni] => {
+                    pi += 1;
+                    ni += 1;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        if let Some(sp) = star_pat
+            && name[star_name] != b'/'
+        {
+            pi = sp + 1;
+            star_name += 1;
+            ni = star_name;
+            continue;
+        }
+        return false;
+    }
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
+/// Walks `root` recursively. The visitor is invoked once per
+/// entry (directories first, then their contents). Return
+/// [`SKIP_DIR`] to skip the current directory's contents,
+/// [`SKIP_ALL`] to stop the walk entirely. Any other error is
+/// propagated.
+///
+/// Symlinks are NOT followed by default (matches Go's
+/// `filepath.Walk` behaviour).
+pub fn walk<F>(root: impl AsRef<std::path::Path>, mut visit: F) -> std::io::Result<()>
+where
+    F: FnMut(&std::path::Path, &std::fs::Metadata) -> std::io::Result<()>,
+{
+    let root = root.as_ref();
+    let meta = std::fs::symlink_metadata(root)?;
+    let mut stack: Vec<std::path::PathBuf> = Vec::new();
+    match visit(root, &meta) {
+        Ok(()) => {}
+        Err(e) if e.to_string().contains(SKIP_ALL) => return Ok(()),
+        Err(e) if e.to_string().contains(SKIP_DIR) => return Ok(()),
+        Err(e) => return Err(e),
+    }
+    if meta.is_dir() {
+        stack.push(root.to_path_buf());
+    }
+    while let Some(dir) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let mut children: Vec<std::path::PathBuf> = Vec::new();
+        for entry in entries.flatten() {
+            children.push(entry.path());
+        }
+        children.sort();
+        let mut skip_remaining = false;
+        for child in children {
+            if skip_remaining {
+                break;
+            }
+            let meta = match std::fs::symlink_metadata(&child) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            match visit(&child, &meta) {
+                Ok(()) => {
+                    if meta.is_dir() {
+                        stack.push(child);
+                    }
+                }
+                Err(e) if e.to_string().contains(SKIP_ALL) => return Ok(()),
+                Err(e) if e.to_string().contains(SKIP_DIR) => {
+                    skip_remaining = false; // SKIP_DIR only skips THIS entry's contents
+                    // We achieve that by not pushing the dir
+                    // onto the stack — which is the same effect.
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns paths matching the glob `pattern`. Glob handles `*`,
+/// `?`, `[abc]`, and `**` (recursive directory match). The
+/// pattern is rooted at the current working directory unless
+/// it begins with `/`.
+pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
+    let (root, rest) = split_glob_root(pattern);
+    let segments: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+    let mut frontier: Vec<std::path::PathBuf> = vec![root];
+    for seg in &segments {
+        let mut next: Vec<std::path::PathBuf> = Vec::new();
+        for base in &frontier {
+            if *seg == "**" {
+                // Recursive descent: include `base` itself plus
+                // every subdirectory.
+                let mut bfs: Vec<std::path::PathBuf> = vec![base.clone()];
+                while let Some(p) = bfs.pop() {
+                    next.push(p.clone());
+                    if let Ok(entries) = std::fs::read_dir(&p) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                bfs.push(path);
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            let entries = match std::fs::read_dir(base) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                if matches(seg, name) {
+                    next.push(path);
+                }
+            }
+        }
+        frontier = next;
+    }
+    let mut out: Vec<String> = frontier
+        .into_iter()
+        .filter_map(|p| p.to_str().map(str::to_string))
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
+fn split_glob_root(pattern: &str) -> (std::path::PathBuf, &str) {
+    if let Some(rest) = pattern.strip_prefix('/') {
+        (std::path::PathBuf::from("/"), rest)
+    } else {
+        (std::path::PathBuf::from("."), pattern)
+    }
+}
+
+/// Resolves all symlinks along `path` and returns the canonical
+/// absolute path.
+pub fn eval_symlinks(path: impl AsRef<std::path::Path>) -> std::io::Result<String> {
+    let canonical = std::fs::canonicalize(path)?;
+    canonical
+        .into_os_string()
+        .into_string()
+        .map_err(|_| std::io::Error::other("non-UTF-8 path"))
+}
+
+#[cfg(test)]
+mod glob_walk_tests {
+    use super::*;
+
+    struct TmpDir(std::path::PathBuf);
+    impl TmpDir {
+        fn new(tag: &str) -> Self {
+            let pid = std::process::id();
+            let n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos());
+            let p = std::env::temp_dir().join(format!("gos-path-{tag}-{pid}-{n}"));
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn match_literal() {
+        assert!(matches("hello", "hello"));
+        assert!(!matches("hello", "world"));
+    }
+
+    #[test]
+    fn match_star_in_single_segment() {
+        assert!(matches("*.gos", "hello.gos"));
+        assert!(matches("hello*", "hello.gos"));
+        assert!(!matches("*.gos", "hello.rs"));
+    }
+
+    #[test]
+    fn match_question_mark_is_single_char() {
+        assert!(matches("?ello", "hello"));
+        assert!(!matches("?ello", "yello world"));
+    }
+
+    #[test]
+    fn match_character_class() {
+        assert!(matches("h[aeiou]llo", "hello"));
+        assert!(matches("h[aeiou]llo", "hallo"));
+        assert!(!matches("h[aeiou]llo", "hxllo"));
+    }
+
+    #[test]
+    fn star_does_not_cross_slash() {
+        assert!(!matches("a*c", "a/c"));
+    }
+
+    #[test]
+    fn glob_returns_matching_files() {
+        let dir = TmpDir::new("glob");
+        std::fs::write(dir.path().join("a.gos"), "").unwrap();
+        std::fs::write(dir.path().join("b.gos"), "").unwrap();
+        std::fs::write(dir.path().join("c.rs"), "").unwrap();
+        let pattern = format!("{}/*.gos", dir.path().display());
+        let mut out = glob(&pattern).unwrap();
+        out.sort();
+        assert_eq!(out.len(), 2);
+        assert!(out[0].ends_with("a.gos"));
+        assert!(out[1].ends_with("b.gos"));
+    }
+
+    #[test]
+    fn glob_recursive_double_star() {
+        let dir = TmpDir::new("glob_rec");
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::fs::create_dir(dir.path().join("sub/deep")).unwrap();
+        std::fs::write(dir.path().join("a.gos"), "").unwrap();
+        std::fs::write(dir.path().join("sub/b.gos"), "").unwrap();
+        std::fs::write(dir.path().join("sub/deep/c.gos"), "").unwrap();
+        let pattern = format!("{}/**/*.gos", dir.path().display());
+        let out = glob(&pattern).unwrap();
+        assert_eq!(out.len(), 3, "got {out:?}");
+    }
+
+    #[test]
+    fn walk_visits_every_entry() {
+        let dir = TmpDir::new("walk");
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        std::fs::write(dir.path().join("sub/b.txt"), "").unwrap();
+        let mut count = 0;
+        walk(dir.path(), |_path, _meta| {
+            count += 1;
+            Ok(())
+        })
+        .unwrap();
+        // root + sub + a.txt + sub/b.txt = 4
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn walk_skip_dir_skips_subtree() {
+        let dir = TmpDir::new("walkskip");
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        std::fs::write(dir.path().join(".git/HEAD"), "").unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        let mut visited: Vec<String> = Vec::new();
+        walk(dir.path(), |path, _meta| {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            visited.push(name.clone());
+            if name == ".git" {
+                return Err(std::io::Error::other(SKIP_DIR));
+            }
+            Ok(())
+        })
+        .unwrap();
+        // .git/HEAD must NOT have been visited
+        assert!(!visited.iter().any(|n| n == "HEAD"));
+        assert!(visited.iter().any(|n| n == "a.txt"));
+    }
+
+    #[test]
+    fn eval_symlinks_returns_canonical() {
+        let dir = TmpDir::new("evalsym");
+        let file = dir.path().join("real.txt");
+        std::fs::write(&file, "x").unwrap();
+        let resolved = eval_symlinks(&file).unwrap();
+        assert!(resolved.ends_with("real.txt"));
     }
 }

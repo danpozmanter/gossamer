@@ -1,0 +1,37 @@
+/*
+ * HTTP/2 cleartext (h2c) server using std::http2.
+ *
+ * Each accepted connection runs the h2 handshake under the
+ * goroutine scheduler and spawns one child goroutine per inbound
+ * stream — see crates/gossamer-std/HTTP_H2_ARCH.md for the
+ * runtime/future-driver story.
+ *
+ * Handlers return `Result<Response, Error>` just like the h1
+ * `http::serve` shape — the runtime reads `Ok(response)` as a
+ * success response and `Err(_)` as a 500.
+ *
+ * Run:
+ *     gos run examples/http2_server.gos          # interpreted
+ *     gos build examples/http2_server.gos        # compiled binary
+ *     curl --http2-prior-knowledge -i http://localhost:8443/
+ *     curl --http2-prior-knowledge -i -X POST -d 'hello' http://localhost:8443/echo
+ */
+
+use std::http
+use std::http2
+
+struct App { }
+
+impl App {
+    fn serve(&self, request: http::Request) -> Result<http::Response, http::Error> {
+        if request.path == "/echo" {
+            return Ok(http::Response::text(200, &format!("echo: {}", request.body)))
+        }
+        Ok(http::Response::text(200, "Gossamer HTTP/2 (h2c). Try POST /echo with a body."))
+    }
+}
+
+fn main() {
+    println!("HTTP/2 (h2c) listening on :8443")
+    let _ = http2::bind_and_run_h2c("0.0.0.0:8443", App { }, http2::Config::default())
+}

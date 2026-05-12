@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::fmt::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use gossamer_ast::Ident;
 
@@ -23,6 +24,7 @@ use crate::value::{MapKey, NativeDispatch, RuntimeError, RuntimeResult, SmolStr,
 
 thread_local! {
     pub(crate) static PROGRAM_ARGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static PROGRAM_NAME: RefCell<String> = RefCell::new(String::from("gos"));
 }
 
 /// Overwrites the program-level argument list that `os::args()`
@@ -48,6 +50,13 @@ pub fn set_program_args(args: &[String]) {
         v.extend_from_slice(args);
     });
     crate::set_runtime_args(args);
+}
+
+/// Sets the program name returned by `os::program_name()`. The CLI
+/// calls this with the script path before invoking `main`.
+pub fn set_program_name(name: &str) {
+    PROGRAM_NAME.with(|cell| *cell.borrow_mut() = String::from(name));
+    crate::set_runtime_program_name(name);
 }
 
 // ------------------------------------------------------------------
@@ -272,6 +281,18 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
 fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("http::serve", native("http::serve", native_http_serve)));
     globals.push((
+        "Router::serve",
+        native("Router::serve", crate::stdlib_builtins::native_router_serve),
+    ));
+    globals.push((
+        "http2::bind_and_run_h2c",
+        native("http2::bind_and_run_h2c", native_http2_bind_and_run_h2c),
+    ));
+    globals.push((
+        "http2::Config::default",
+        builtin("http2::Config::default", builtin_http2_config_default),
+    ));
+    globals.push((
         "http::Response::text",
         builtin("http::Response::text", builtin_http_response_text),
     ));
@@ -428,6 +449,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "os",
         &[
             ("args", builtin_os_args),
+            ("program_name", builtin_os_program_name),
             ("env", builtin_os_env),
             ("cwd", builtin_os_cwd),
             ("list_dir", builtin_os_list_dir),
@@ -1959,6 +1981,33 @@ fn builtin_http_response_json(args: &[Value]) -> RuntimeResult<Value> {
     Ok(response_struct(status, body, "application/json"))
 }
 
+fn builtin_http2_config_default(_args: &[Value]) -> RuntimeResult<Value> {
+    let c = gossamer_std::http_h2::Config::default();
+    let fields = vec![
+        (
+            Ident::new("max_concurrent_streams"),
+            Value::Int(i64::from(c.max_concurrent_streams)),
+        ),
+        (
+            Ident::new("initial_window_size"),
+            Value::Int(i64::from(c.initial_window_size)),
+        ),
+        (
+            Ident::new("initial_connection_window_size"),
+            Value::Int(i64::from(c.initial_connection_window_size)),
+        ),
+        (
+            Ident::new("max_frame_size"),
+            Value::Int(i64::from(c.max_frame_size)),
+        ),
+        (
+            Ident::new("max_header_list_size"),
+            Value::Int(i64::from(c.max_header_list_size)),
+        ),
+    ];
+    Ok(Value::struct_("Config", Arc::new(fields)))
+}
+
 fn response_struct(status: i64, body: String, content_type: &str) -> Value {
     let fields = vec![
         (Ident::new("status"), Value::Int(status)),
@@ -2042,10 +2091,18 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
     let errors = Mutex::new(Vec::<String>::new());
     let dispatch_cell = std::cell::RefCell::new(dispatch);
 
+    // Resolve serve to the handler's specific impl by struct
+    // name. The bare "serve" global key gets overwritten as
+    // each impl loads, so dispatching on it picks the last-
+    // loaded serve regardless of which type the handler is.
+    let serve_method_name = match &handler {
+        Value::Struct(inner) => format!("{}::serve", inner.name),
+        _ => "serve".to_string(),
+    };
     let result = http_std::server::bind_and_run(&addr, &config, |request| {
         let request_value = request_to_value(&request);
         let mut guard = dispatch_cell.borrow_mut();
-        let dispatched = guard.call_fn("serve", vec![handler.clone(), request_value]);
+        let dispatched = guard.call_fn(&serve_method_name, vec![handler.clone(), request_value]);
         drop(guard);
         match dispatched {
             Ok(value) => {
@@ -2079,11 +2136,129 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
     }
 }
 
-fn request_to_value(request: &http_std::Request) -> Value {
-    let (bare_path, query_string) = match request.path.split_once('?') {
-        Some((p, q)) => (p.to_string(), q.to_string()),
-        None => (request.path.clone(), String::new()),
+/// `http2::bind_and_run_h2c(addr: String, handler) -> Result<(), Error>`.
+///
+/// Boots an HTTP/2 cleartext server. The handler is a struct
+/// with a `serve(request) -> Response` method (or any callable
+/// value with that shape). Connections run in goroutines; each
+/// request is dispatched back to the main thread via a channel
+/// so the interpreter's `NativeDispatch` (which is not Send) can
+/// invoke the handler on the calling thread.
+#[allow(
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::needless_continue
+)]
+fn native_http2_bind_and_run_h2c(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if args.len() < 2 {
+        return Err(RuntimeError::Arity {
+            expected: 2,
+            found: args.len(),
+        });
+    }
+    let addr: String = match &args[0] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected address string, got {other}"
+            )));
+        }
     };
+    let handler = args[1].clone();
+
+    use std::sync::mpsc;
+    let (req_tx, req_rx) = mpsc::channel::<(http_std::Request, mpsc::Sender<http_std::Response>)>();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    install_sigint_handler(Arc::clone(&shutdown));
+
+    let max_requests = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
+
+    let addr_for_server = addr.clone();
+    let shutdown_for_server = Arc::clone(&shutdown);
+    let req_tx_for_server = req_tx.clone();
+    std::thread::Builder::new()
+        .name("gossamer-http2-accept".to_string())
+        .spawn(move || {
+            let _ = gossamer_std::http_h2::bind_and_run_h2c(
+                &addr_for_server,
+                move |req: http_std::Request| -> http_std::Response {
+                    if shutdown_for_server.load(Ordering::Acquire) {
+                        return http_std::Response {
+                            status: http_std::StatusCode(503),
+                            headers: http_std::Headers::new(),
+                            body: b"shutting down".to_vec(),
+                        };
+                    }
+                    let (resp_tx, resp_rx) = mpsc::channel();
+                    if req_tx_for_server.send((req, resp_tx)).is_err() {
+                        return http_std::Response {
+                            status: http_std::StatusCode(500),
+                            headers: http_std::Headers::new(),
+                            body: b"dispatch channel closed".to_vec(),
+                        };
+                    }
+                    match resp_rx.recv_timeout(Duration::from_secs(30)) {
+                        Ok(r) => r,
+                        Err(_) => http_std::Response {
+                            status: http_std::StatusCode(504),
+                            headers: http_std::Headers::new(),
+                            body: b"handler timeout".to_vec(),
+                        },
+                    }
+                },
+                gossamer_std::http_h2::Config::default(),
+            );
+        })
+        .map_err(|e| RuntimeError::Panic(format!("http2::bind_and_run_h2c spawn: {e}")))?;
+    drop(req_tx);
+
+    let dispatch_cell = std::cell::RefCell::new(dispatch);
+    let mut served: u64 = 0;
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        match req_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok((req, resp_tx)) => {
+                let request_value = request_to_value(&req);
+                let mut guard = dispatch_cell.borrow_mut();
+                let dispatched = guard.call_fn("serve", vec![handler.clone(), request_value]);
+                drop(guard);
+                let response = match dispatched {
+                    Ok(value) => value_to_response(&value).unwrap_or_else(|| http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: b"handler did not return http::Response".to_vec(),
+                    }),
+                    Err(err) => http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: format!("handler error: {err}").into_bytes(),
+                    },
+                };
+                let _ = resp_tx.send(response);
+                served = served.saturating_add(1);
+                if max_requests > 0 && served >= max_requests {
+                    shutdown.store(true, Ordering::Release);
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    Ok(Value::variant("Ok", Arc::new(vec![Value::Unit])))
+}
+
+fn request_to_value(request: &http_std::Request) -> Value {
+    // Path and query are split at the ABI level since 0.4.
+    let bare_path = request.path.clone();
+    let query_string = request.query.clone();
     let headers: Vec<Value> = request
         .headers
         .iter()
@@ -2243,6 +2418,11 @@ fn builtin_os_args(_args: &[Value]) -> RuntimeResult<Value> {
         .map(|s| Value::String(s.into()))
         .collect();
     Ok(Value::Array(Arc::new(argv)))
+}
+
+fn builtin_os_program_name(_args: &[Value]) -> RuntimeResult<Value> {
+    let name = PROGRAM_NAME.with(|cell| cell.borrow().clone());
+    Ok(Value::String(name.into()))
 }
 
 fn builtin_os_env(args: &[Value]) -> RuntimeResult<Value> {

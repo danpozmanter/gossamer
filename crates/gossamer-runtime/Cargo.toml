@@ -62,5 +62,18 @@ gossamer-pkg = { workspace = true }
 # for parity with `gos run`.
 ureq = { version = "3", features = ["cookies"] }
 
+# HTTP/2 server compiled into libgossamer_runtime.a so
+# `http2::bind_and_run_h2c` works under `gos build`. Tokio is
+# pulled in for its `io-util` trait surface only (AsyncRead /
+# AsyncWrite) — no runtime, no reactor; the goroutine scheduler
+# drives futures via [`crate::http2_server::drive`].
+h2 = "0.4"
+http = "1"
+bytes = "1"
+tokio = { version = "1", default-features = false, features = ["io-util"] }
+futures-core = { version = "0.3", default-features = false }
+futures-task = { version = "0.3", default-features = false, features = ["alloc"] }
+pin-project-lite = "0.2"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

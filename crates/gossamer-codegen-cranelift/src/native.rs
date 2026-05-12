@@ -1861,10 +1861,22 @@ fn resolve_place_ty(tcx: &TyCtxt, body: &Body, place: &Place) -> Ty {
     for projection in &place.projection {
         ty = match projection {
             Projection::Field(idx) => field_ty_at(tcx, ty, *idx).unwrap_or(ty),
-            Projection::Index(_) => match tcx.kind_of(ty) {
-                TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => *elem,
-                _ => ty,
-            },
+            Projection::Index(_) => {
+                // `&[(i64, f64); 15][j]` keeps the indexed type as the
+                // tuple element, not as the reference. Without peeling
+                // here, downstream `type_slot_count` sees `Ref` (1 slot)
+                // and the by-value read path drops the second half of
+                // every tuple element. Peel through any chain of `Ref`
+                // wrappers first, then walk into the array/slice/vec.
+                let mut peeled = ty;
+                while let TyKind::Ref { inner, .. } = tcx.kind_of(peeled) {
+                    peeled = *inner;
+                }
+                match tcx.kind_of(peeled) {
+                    TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => *elem,
+                    _ => ty,
+                }
+            }
             Projection::Deref => match tcx.kind_of(ty) {
                 TyKind::Ref { inner, .. } => *inner,
                 _ => ty,
@@ -2090,8 +2102,15 @@ fn lower_place_address(
                 // After indexing, the cursor sits inside a single
                 // element; advance `current_ty` to the element type
                 // so subsequent Field projections compute their
-                // offsets relative to that element's layout.
-                current_ty = match tcx.kind_of(current_ty).clone() {
+                // offsets relative to that element's layout. Peel
+                // any `Ref` wrappers first so `&[(T, U); N][j].0`
+                // descends into the tuple instead of treating the
+                // element as opaque.
+                let mut peeled = current_ty;
+                while let TyKind::Ref { inner, .. } = tcx.kind_of(peeled).clone() {
+                    peeled = inner;
+                }
+                current_ty = match tcx.kind_of(peeled).clone() {
                     TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => elem,
                     _ => current_ty,
                 };
@@ -2784,6 +2803,61 @@ fn lower_terminator(
                         }
                     }
                     return Ok(());
+                }
+                // Registry-known `gos_rt_*` symbol that wasn't pre-bound
+                // into `callees_by_name`. The ABI registry walk above
+                // declares the function via `extern_fn_by_name`, so all
+                // we have to do is fetch the FuncId, build a callsite
+                // ext-func ref, lower args, and emit the call. Without
+                // this branch every newly-added runtime helper that
+                // MIR references by name silently zeros at codegen time
+                // (cranelift_dispatch_table.md, 2026-04-28).
+                if name.starts_with("gos_rt_") {
+                    if let Some(entry) = gossamer_abi::lookup(name) {
+                        let id = intrinsics.extern_fn_by_name(module, entry.name)?;
+                        let func_ref = module.declare_func_in_func(id, builder.func);
+                        let expected = builder
+                            .func
+                            .dfg
+                            .signatures
+                            .get(builder.func.dfg.ext_funcs[func_ref].signature)
+                            .map(|s| s.params.iter().map(|p| p.value_type).collect::<Vec<_>>())
+                            .unwrap_or_default();
+                        let mut arg_values: Vec<ir::Value> = Vec::with_capacity(args.len());
+                        for (idx, op) in args.iter().enumerate() {
+                            let mut v = lower_operand(
+                                module, builder, locals, body, tcx, op, None, intrinsics,
+                            )?;
+                            if let Some(want) = expected.get(idx).copied() {
+                                v = coerce_arg_to(builder, v, want)?;
+                            }
+                            arg_values.push(v);
+                        }
+                        let call = builder.ins().call(func_ref, &arg_values);
+                        let results = builder.inst_results(call).to_vec();
+                        if let Some(&ret) = results.first() {
+                            store_call_result(
+                                module,
+                                builder,
+                                locals,
+                                body,
+                                tcx,
+                                destination,
+                                ret,
+                                intrinsics,
+                            )?;
+                        }
+                        match target {
+                            Some(block_id) => {
+                                let block = blocks[&block_id.as_u32()];
+                                builder.ins().jump(block, &[]);
+                            }
+                            None => {
+                                builder.ins().trap(ir::TrapCode::user(1).unwrap());
+                            }
+                        }
+                        return Ok(());
+                    }
                 }
                 // Stdlib-shaped callees (`std::...`, `fmt::...`,
                 // `os::...`, `sync::...`, …) plus enum-variant
@@ -3649,6 +3723,7 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_flag_parse" => Some("gos_rt_flag_parse"),
         "gos_rt_flag_map_get" => Some("gos_rt_flag_map_get"),
         "gos_rt_os_env" => Some("gos_rt_os_env"),
+        "gos_rt_os_program_name" => Some("gos_rt_os_program_name"),
         "gos_rt_os_cwd" => Some("gos_rt_os_cwd"),
         "gos_rt_os_exists" => Some("gos_rt_os_exists"),
         "gos_rt_os_is_file" => Some("gos_rt_os_is_file"),
@@ -3720,6 +3795,32 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_http_request_get_header" => Some("gos_rt_http_request_get_header"),
         "gos_rt_gzip_encode" => Some("gos_rt_gzip_encode"),
         "gos_rt_gzip_decode" => Some("gos_rt_gzip_decode"),
+        "gos_rt_chunked_encode" => Some("gos_rt_chunked_encode"),
+        "gos_rt_chunked_decode" => Some("gos_rt_chunked_decode"),
+        "gos_rt_sse_encode_event" => Some("gos_rt_sse_encode_event"),
+        "gos_rt_sse_encode_comment" => Some("gos_rt_sse_encode_comment"),
+        "gos_rt_sse_encode_retry" => Some("gos_rt_sse_encode_retry"),
+        "gos_rt_mw_new_request_id" => Some("gos_rt_mw_new_request_id"),
+        "gos_rt_mw_accepts_gzip" => Some("gos_rt_mw_accepts_gzip"),
+        "gos_rt_ws_accept_key" => Some("gos_rt_ws_accept_key"),
+        "gos_rt_static_mime_for_path" => Some("gos_rt_static_mime_for_path"),
+        "gos_rt_router_new" => Some("gos_rt_router_new"),
+        "gos_rt_router_add" => Some("gos_rt_router_add"),
+        "gos_rt_router_get" => Some("gos_rt_router_get"),
+        "gos_rt_router_post" => Some("gos_rt_router_post"),
+        "gos_rt_router_put" => Some("gos_rt_router_put"),
+        "gos_rt_router_delete" => Some("gos_rt_router_delete"),
+        "gos_rt_router_patch" => Some("gos_rt_router_patch"),
+        "gos_rt_router_head" => Some("gos_rt_router_head"),
+        "gos_rt_router_options" => Some("gos_rt_router_options"),
+        "gos_rt_router_serve" => Some("gos_rt_router_serve"),
+        "gos_rt_file_server_new" => Some("gos_rt_file_server_new"),
+        "gos_rt_file_server_serve" => Some("gos_rt_file_server_serve"),
+        "gos_rt_native_client_new" => Some("gos_rt_native_client_new"),
+        "gos_rt_native_client_get" => Some("gos_rt_native_client_get"),
+        "gos_rt_proxy_new" => Some("gos_rt_proxy_new"),
+        "gos_rt_proxy_forward" => Some("gos_rt_proxy_forward"),
+        "gos_rt_ws_frame_text" => Some("gos_rt_ws_frame_text"),
         "gos_rt_slog_info" => Some("gos_rt_slog_info"),
         "gos_rt_slog_warn" => Some("gos_rt_slog_warn"),
         "gos_rt_slog_error" => Some("gos_rt_slog_error"),
@@ -3737,6 +3838,12 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         // Sort-by callbacks for fixed-array / Vec receivers.
         "gos_rt_arr_sort_by_i64" => Some("gos_rt_arr_sort_by_i64"),
         "gos_rt_vec_sort_by_i64" => Some("gos_rt_vec_sort_by_i64"),
+        // Stride-aware sort_by for multi-slot aggregate elements
+        // (Tuple / struct). The comparator receives element
+        // pointers; the cranelift ABI passes aggregates that way
+        // already so the user closure body works unchanged.
+        "gos_rt_arr_sort_by_aggr" => Some("gos_rt_arr_sort_by_aggr"),
+        "gos_rt_vec_sort_by_aggr" => Some("gos_rt_vec_sort_by_aggr"),
         "gos_rt_json_set" => Some("gos_rt_json_set"),
         "gos_rt_arr_iter" => Some("gos_rt_arr_iter"),
         "gos_rt_arr_iter_next" => Some("gos_rt_arr_iter_next"),
@@ -3803,6 +3910,7 @@ fn lower_generic_rt_call(
         "gos_rt_flag_parse" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_map_get" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_os_env" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_os_program_name" => (&[], Some(ptr_ty)),
         "gos_rt_os_cwd" => (&[], Some(ptr_ty)),
         "gos_rt_fs_list_dir" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_fs_walk_dir" => (&[ptr_ty], Some(ptr_ty)),
@@ -3879,6 +3987,31 @@ fn lower_generic_rt_call(
         "gos_rt_http_response_text_new" => (&[types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_http_response_json_new" => (&[types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_gzip_encode" | "gos_rt_gzip_decode" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_chunked_encode" | "gos_rt_chunked_decode" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_sse_encode_event" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_sse_encode_comment" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_sse_encode_retry" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_mw_new_request_id" => (&[], Some(ptr_ty)),
+        "gos_rt_mw_accepts_gzip" => (&[ptr_ty], Some(types::I32)),
+        "gos_rt_ws_accept_key" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_static_mime_for_path" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_router_new" => (&[], Some(ptr_ty)),
+        "gos_rt_router_add" => (&[ptr_ty, ptr_ty, ptr_ty, ptr_ty, types::I64], None),
+        "gos_rt_router_get"
+        | "gos_rt_router_post"
+        | "gos_rt_router_put"
+        | "gos_rt_router_delete"
+        | "gos_rt_router_patch"
+        | "gos_rt_router_head"
+        | "gos_rt_router_options" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], None),
+        "gos_rt_router_serve" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_file_server_new" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_file_server_serve" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_native_client_new" => (&[], Some(ptr_ty)),
+        "gos_rt_native_client_get" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_proxy_new" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_proxy_forward" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_ws_frame_text" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_slog_info" | "gos_rt_slog_warn" | "gos_rt_slog_error" | "gos_rt_slog_debug" => {
             (&[ptr_ty], None)
         }
@@ -3894,6 +4027,11 @@ fn lower_generic_rt_call(
         "gos_rt_flag_cell_load_vec" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_arr_sort_by_i64" => (&[ptr_ty, types::I64, ptr_ty], None),
         "gos_rt_vec_sort_by_i64" => (&[ptr_ty, ptr_ty], None),
+        // Aggregate-stride variants. Vec form reads `elem_bytes`
+        // from the GosVec header so it has no extra arg; array
+        // form takes `(buf, len, elem_bytes, env)`.
+        "gos_rt_arr_sort_by_aggr" => (&[ptr_ty, types::I64, types::I64, ptr_ty], None),
+        "gos_rt_vec_sort_by_aggr" => (&[ptr_ty, ptr_ty], None),
         "gos_rt_json_set" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_arr_iter" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_arr_iter_next" => (&[ptr_ty], Some(ptr_ty)),
@@ -4704,6 +4842,16 @@ fn lower_intrinsic_call(
             // intrinsic-fn machinery so the linker resolves them
             // against `gossamer-runtime`.
             let func_id = if let Some(id) = intrinsics.functions.get(name).copied() {
+                id
+            } else if let Some(id) = intrinsics.externs.get(name.as_str()).copied() {
+                // Runtime extern symbol — `gos_rt_router_serve` and
+                // the other stateful-type serve dispatchers are
+                // declared via `extern_fn_by_name` at codegen init
+                // (loop over `gossamer_abi::REGISTRY`) and live in
+                // `intrinsics.externs`. Surface them here so
+                // `gos_fn_addr` can hand back their address for
+                // handler-fn-ptr indirection through
+                // `gos_rt_http_serve` etc.
                 id
             } else if name.starts_with("__fn_thunk_") {
                 // Per-shape callable thunk. The name encodes the
@@ -5877,6 +6025,67 @@ fn lower_intrinsic_call(
             );
             Ok(true)
         }
+        // Same shape as http::serve but routes to the h2 server.
+        "http2::bind_and_run_h2c" | "gos_rt_http2_bind_and_run_h2c" => {
+            let rt_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_http2_bind_and_run_h2c",
+                &[ptr_ty, ptr_ty, types::I64],
+                &[],
+            )?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let addr = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let env = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let env_ptr = coerce_arg_to(builder, env, ptr_ty)?;
+            let fn_ptr = match args.get(2) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let fn_ptr64 = coerce_arg_to(builder, fn_ptr, types::I64)?;
+            let _ = builder.ins().call(fref, &[addr, env_ptr, fn_ptr64]);
+            let unit = builder.ins().iconst(types::I64, 0);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
+            Ok(true)
+        }
         // `std::os::exit(code)` — route through `gos_rt_exit`
         // (which calls `std::process::exit` — identical behavior
         // to libc's `exit`, but keeps every syscall that touches
@@ -5904,14 +6113,31 @@ fn lower_intrinsic_call(
             );
             Ok(true)
         }
-        // `Vec::new` / `Vec::with_capacity` — elem width is
-        // hard-coded to 8 bytes (one word). All scalars and all
-        // GC pointers fit; matches the flat slot layout the
-        // codegen uses for aggregates.
+        // `Vec::new(elem_bytes)` / `Vec::with_capacity(elem_bytes,
+        // cap)`. The MIR builder passes the actual element width
+        // as the leading argument (sized from the binding's
+        // `Vec<T>` element type via `elem_bytes_of`). Reading that
+        // arg through — rather than hard-coding 8 — lets multi-
+        // slot elements like `(String, i64)` reach the runtime
+        // with the right stride.
         "Vec::new" | "gos_rt_vec_new" => {
             let new_fn = intrinsics.extern_fn_by_name(module, "gos_rt_vec_new")?;
             let fref = module.declare_func_in_func(new_fn, builder.func);
-            let eb = builder.ins().iconst(types::I32, 8);
+            let eb_raw = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 8),
+            };
+            let eb_i64 = coerce_arg_to(builder, eb_raw, types::I64)?;
+            let eb = builder.ins().ireduce(types::I32, eb_i64);
             let call = builder.ins().call(fref, &[eb]);
             let ptr = builder.inst_results(call)[0];
             define_var_to(
@@ -5931,8 +6157,22 @@ fn lower_intrinsic_call(
                 &[ptr_ty],
             )?;
             let fref = module.declare_func_in_func(new_fn, builder.func);
-            let eb = builder.ins().iconst(types::I32, 8);
-            let cap = match args.first() {
+            let eb_raw = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I64),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I64, 8),
+            };
+            let eb_i64 = coerce_arg_to(builder, eb_raw, types::I64)?;
+            let eb = builder.ins().ireduce(types::I32, eb_i64);
+            let cap = match args.get(1) {
                 Some(a) => lower_operand(
                     module,
                     builder,
@@ -9268,9 +9508,15 @@ fn lower_intrinsic_call(
             Ok(true)
         }
         // `v.push(x)` on a Vec<T>: spill x to a stack slot and
-        // call the runtime's typed push. We hard-code elem_bytes=8
-        // because every scalar + every GC pointer fits in a word,
-        // matching the aggregate layout the codegen already uses.
+        // call the runtime's typed push. The runtime reads
+        // `vec.elem_bytes` bytes from the pointer we pass, so for
+        // multi-slot aggregates (tuples / structs / inline arrays)
+        // we must pass the address of the actual storage —
+        // spilling the operand's pointer-value into an 8-byte
+        // slot leaks only the first word and rereads adjacent
+        // stack bytes for the rest. Scalars still go through the
+        // 8-byte slot path so misaligned int / float types reach
+        // the runtime as a clean little-endian 8-byte payload.
         "gos_rt_vec_push" => {
             let push_fn = intrinsics.extern_fn_by_name(module, "gos_rt_vec_push")?;
             let vec_p = match args.first() {
@@ -9286,20 +9532,38 @@ fn lower_intrinsic_call(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
-            let value = match args.get(1) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
+            let elem_arg = args.get(1);
+            let agg_slots = elem_arg.and_then(|a| operand_aggregate_slots(body, tcx, a));
+            let elem_addr = if let (Some(slots), Some(a)) = (agg_slots, elem_arg) {
+                // Multi-slot aggregate operand. Take the address of
+                // its backing storage and pass it through — the
+                // runtime memcpys `slots * 8` bytes into the vec.
+                let _ = slots;
+                let Operand::Copy(place) = a else {
+                    // operand_aggregate_slots only returns Some for
+                    // Copy(place) — unreachable otherwise.
+                    unreachable!("aggregate-slot operand must be Copy(place)")
+                };
+                lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?
+            } else {
+                let value = match elem_arg {
+                    Some(a) => {
+                        lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?
+                    }
+                    None => builder.ins().iconst(types::I64, 0),
+                };
+                let v64 = coerce_arg_to(builder, value, types::I64)?;
+                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    8,
+                    3,
+                ));
+                let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
+                builder.ins().store(MemFlags::trusted(), v64, slot_addr, 0);
+                slot_addr
             };
-            let v64 = coerce_arg_to(builder, value, types::I64)?;
-            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
-            builder.ins().store(MemFlags::trusted(), v64, slot_addr, 0);
             let fref = module.declare_func_in_func(push_fn, builder.func);
-            let _ = builder.ins().call(fref, &[vec_p, slot_addr]);
+            let _ = builder.ins().call(fref, &[vec_p, elem_addr]);
             let unit = builder.ins().iconst(types::I64, 0);
             define_var_to(
                 builder,

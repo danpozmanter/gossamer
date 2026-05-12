@@ -84,6 +84,11 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 static ARGS_PTR: AtomicUsize = AtomicUsize::new(0);
 static ARGS_LEN: AtomicI64 = AtomicI64::new(0);
 static ARGS_VEC: AtomicUsize = AtomicUsize::new(0);
+// Pointer to the program name string. Set from argv[0] in
+// `gos_rt_set_args`, or overridden via `gos_rt_set_program_name`.
+// Lifetime: either the OS-owned argv[0] (process-lifetime), or a
+// leaked CString allocated by `gos_rt_set_program_name`.
+static PROGRAM_NAME_PTR: AtomicUsize = AtomicUsize::new(0);
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char) {
@@ -91,6 +96,11 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
         // SAFETY: libc guarantees argv[0..argc] is valid when
         // argc > 0. `argv + 1` therefore addresses `argc - 1`
         // strings.
+
+        // Capture argv[0] as the program name before shifting.
+        let name_ptr = unsafe { *argv };
+        PROGRAM_NAME_PTR.store(name_ptr as usize, Ordering::SeqCst);
+
         let user_argv = unsafe { argv.add(1) };
         let len = i64::from(argc - 1);
         ARGS_PTR.store(user_argv as usize, Ordering::SeqCst);
@@ -200,6 +210,29 @@ fn runtime_init() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_os_args() -> *mut GosVec {
     ARGS_VEC.load(Ordering::SeqCst) as *mut GosVec
+}
+
+/// Overrides the program name returned by `os::program_name()`.
+/// The interpreter calls this via `gos_rt_set_program_name` when it
+/// knows the script path (e.g. `gos run examples/cat.gos`). The
+/// provided string is copied into a leaked `CString` so the pointer
+/// is process-lifetime safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_program_name(name: *const c_char) {
+    if name.is_null() {
+        return;
+    }
+    // SAFETY: caller guarantees `name` is a valid NUL-terminated string.
+    let bytes = unsafe { CStr::from_ptr(name).to_bytes() };
+    let owned = alloc_cstring(bytes);
+    PROGRAM_NAME_PTR.store(owned as usize, Ordering::SeqCst);
+}
+
+/// Returns the program name as a `*const c_char` (argv[0] for native
+/// binaries; the script path for `gos run`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_program_name() -> *const c_char {
+    PROGRAM_NAME_PTR.load(Ordering::SeqCst) as *const c_char
 }
 
 /// `os::env(name) -> Option<String>`. Compiled tier returns a
@@ -3110,6 +3143,79 @@ pub unsafe extern "C" fn gos_rt_vec_sort_by_i64(v: *mut GosVec, env: *const u8) 
     }
 }
 
+/// Sorts a flat `[T; len]` buffer of `elem_bytes`-wide elements in
+/// place using the closure callback at `env`. The closure body sig
+/// is `(env, *const T, *const T) -> i64` — multi-slot aggregates
+/// (Tuple / struct) are passed as pointers because the cranelift /
+/// LLVM ABI already routes by-value aggregates that way. Used by
+/// `xs.sort_by(closure)` for fixed-size arrays whose element type
+/// is not single-slot scalar.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_sort_by_aggr(
+    p: *mut u8,
+    len: i64,
+    elem_bytes: i64,
+    env: *const u8,
+) {
+    if p.is_null() || len <= 0 || elem_bytes <= 0 || env.is_null() {
+        return;
+    }
+    let len_usize = len.max(0) as usize;
+    let stride = elem_bytes.max(0) as usize;
+    type CmpFn = unsafe extern "C" fn(env: *const u8, a: *const u8, b: *const u8) -> i64;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return;
+    }
+    let cmp: CmpFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    // Indirect sort: rank the indices, then permute the buffer.
+    // Sorting indices keeps the comparator pointer-stable across
+    // swaps and avoids `unsafe` slice juggling for variable
+    // strides that `slice::sort_by` doesn't support natively.
+    let mut indices: Vec<usize> = (0..len_usize).collect();
+    indices.sort_by(|&ai, &bi| {
+        let pa = unsafe { p.add(ai * stride) };
+        let pb = unsafe { p.add(bi * stride) };
+        let r = unsafe { cmp(env, pa, pb) };
+        r.cmp(&0)
+    });
+    // Permute via a temp buffer rather than in-place cycle
+    // following — simpler, still O(n * stride) bytes and one
+    // memcpy per element on the way back. Cycle-following would
+    // halve peak memory but adds index bookkeeping that doesn't
+    // earn its complexity at the sizes the comparator surface
+    // sees in practice.
+    let total = len_usize.checked_mul(stride).unwrap_or(0);
+    let mut tmp: Vec<u8> = vec![0u8; total];
+    for (new_idx, &old_idx) in indices.iter().enumerate() {
+        unsafe {
+            let src = p.add(old_idx * stride);
+            let dst = tmp.as_mut_ptr().add(new_idx * stride);
+            std::ptr::copy_nonoverlapping(src, dst, stride);
+        }
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(tmp.as_ptr(), p, total);
+    }
+}
+
+/// Sorts a `Vec<T>` (heap `GosVec`) of multi-slot aggregate
+/// elements in place. Stride comes from `vec.elem_bytes`, so the
+/// MIR side doesn't have to thread it through separately.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_sort_by_aggr(v: *mut GosVec, env: *const u8) {
+    if v.is_null() || env.is_null() {
+        return;
+    }
+    let vec = unsafe { &mut *v };
+    if vec.len <= 0 || vec.ptr.is_null() {
+        return;
+    }
+    unsafe {
+        gos_rt_arr_sort_by_aggr(vec.ptr, vec.len, i64::from(vec.elem_bytes), env);
+    }
+}
+
 /// A heap-allocated iterator over a `GosVec`. Created by
 /// `gos_rt_arr_iter`; advanced one element at a time by
 /// `gos_rt_arr_iter_next`.
@@ -4856,6 +4962,29 @@ pub unsafe extern "C" fn gos_rt_http_serve(
 
 type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> *mut GosResult;
 
+/// HTTP/2 cleartext server. Mirror of [`gos_rt_http_serve`] for
+/// HTTP/2 — the MIR lowerer emits this call when the compiled
+/// program invokes `http2::bind_and_run_h2c(addr, app, config)`.
+/// The h2 server implementation lives in
+/// [`crate::http2_server`]; this thunk just adapts the C-ABI
+/// signature into the Rust API.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http2_bind_and_run_h2c(
+    addr: *const c_char,
+    handler_env: *mut u8,
+    handler_fn: i64,
+) -> ! {
+    let addr_s = if addr.is_null() {
+        "0.0.0.0:8080".to_string()
+    } else {
+        unsafe { CStr::from_ptr(addr).to_string_lossy().into_owned() }
+    };
+    let env_addr = handler_env as usize;
+    let fn_addr = handler_fn as usize;
+    crate::http2_server::serve_h2c_with_handler(&addr_s, env_addr, fn_addr);
+    std::process::exit(0);
+}
+
 fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
     let mut scratch = ConnScratch::new();
     let mut accum: Vec<u8> = Vec::with_capacity(8192);
@@ -5038,7 +5167,7 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 ///    Box-allocate (e.g. `gos_rt_http_request_send` from the
 ///    client side, never reachable from a server handler today).
 /// 3. `result` is null or carries `Err` — nothing to drop.
-unsafe fn drop_handler_result(result: *mut GosResult) {
+pub(crate) unsafe fn drop_handler_result(result: *mut GosResult) {
     if result.is_null() {
         return;
     }
@@ -5126,7 +5255,7 @@ fn parse_request_into(raw: &[u8], request: &mut GosHttpRequest) -> bool {
 /// Writes `result`'s response payload (status + headers +
 /// body) into `out` as raw HTTP/1.1 bytes. Returns false if
 /// `result` doesn't carry a valid OK response.
-fn extract_response_into(result: *mut GosResult, out: &mut Vec<u8>) -> bool {
+pub(crate) fn extract_response_into(result: *mut GosResult, out: &mut Vec<u8>) -> bool {
     if result.is_null() {
         return false;
     }
@@ -8314,6 +8443,26 @@ pub struct GosHttpRequest {
     body: Vec<u8>,
 }
 
+impl GosHttpRequest {
+    /// Builds a request from h2's parsed `(method, path?query,
+    /// headers, body)` tuple. Mirrors the manually-parsed form
+    /// `parse_request_into` produces for the h1 path.
+    #[must_use]
+    pub fn for_h2(
+        method: String,
+        path_and_query: String,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    ) -> Self {
+        Self {
+            method,
+            url: path_and_query,
+            headers,
+            body,
+        }
+    }
+}
+
 pub struct GosHttpResponse {
     pub status: i64,
     pub body: *mut c_char,
@@ -9143,6 +9292,722 @@ pub unsafe extern "C" fn gos_rt_gzip_decode(data: *const c_char) -> *mut c_char 
 }
 
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// 0.4.0 HTTP-module bridges — compiled tier stateful + free-fn
+// entry points. Matches the interp surface in
+// `gossamer_interp::stdlib_builtins::install_http_*`.
+// ---------------------------------------------------------------
+
+// Router: stateful Box-allocated handle. Each route stores
+// (method, parsed pattern, handler env+fn) so `Router.serve(req)`
+// can walk the list and invoke the matching handler via the
+// same fn-pointer ABI gos_rt_http_serve uses.
+
+pub struct GosRouter {
+    routes: Vec<GosRoute>,
+}
+
+struct GosRoute {
+    method: String, // empty = any verb
+    segments: Vec<RouteSegment>,
+    env: usize,
+    fn_addr: usize,
+}
+
+enum RouteSegment {
+    Literal(String),
+    Capture,    // `{name}` — captures one path segment
+    CaptureAll, // `{name...}` — captures the rest
+}
+
+fn parse_route_pattern(pattern: &str) -> Vec<RouteSegment> {
+    let mut out = Vec::new();
+    for seg in pattern.split('/').filter(|s| !s.is_empty()) {
+        if seg.starts_with('{') && seg.ends_with("...}") {
+            out.push(RouteSegment::CaptureAll);
+        } else if seg.starts_with('{') && seg.ends_with('}') {
+            out.push(RouteSegment::Capture);
+        } else {
+            out.push(RouteSegment::Literal(seg.to_string()));
+        }
+    }
+    out
+}
+
+fn route_segments_match(segments: &[RouteSegment], path: &str) -> bool {
+    let path_segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut i = 0;
+    let mut j = 0;
+    while i < segments.len() {
+        match &segments[i] {
+            RouteSegment::CaptureAll => return true,
+            RouteSegment::Capture => {
+                if j >= path_segs.len() {
+                    return false;
+                }
+                i += 1;
+                j += 1;
+            }
+            RouteSegment::Literal(lit) => {
+                if j >= path_segs.len() || path_segs[j] != lit {
+                    return false;
+                }
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    j == path_segs.len()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_new() -> *mut GosRouter {
+    Box::into_raw(Box::new(GosRouter { routes: Vec::new() }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_add(
+    router: *mut GosRouter,
+    method: *const c_char,
+    pattern: *const c_char,
+    env: *mut u8,
+    fn_addr: i64,
+) {
+    if router.is_null() {
+        return;
+    }
+    let r = unsafe { &mut *router };
+    let m = if method.is_null() {
+        String::new()
+    } else {
+        unsafe {
+            CStr::from_ptr(method)
+                .to_string_lossy()
+                .into_owned()
+                .to_ascii_uppercase()
+        }
+    };
+    let pat = if pattern.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(pattern).to_string_lossy().into_owned() }
+    };
+    let segments = parse_route_pattern(&pat);
+    r.routes.push(GosRoute {
+        method: m,
+        segments,
+        env: env as usize,
+        fn_addr: fn_addr as usize,
+    });
+}
+
+/// Convenience verb-specific entry points that map cleanly to
+/// `Router.get(pattern, handler)` etc. in Gossamer source. Spelled
+/// out one per verb so the `pub extern "C" fn` line parses through
+/// the dispatch-consistency test's source scanner (macro-generated
+/// fn names are invisible to a textual scan).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_get(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    env: *mut u8,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("GET").expect("static verb");
+    unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_post(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    env: *mut u8,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("POST").expect("static verb");
+    unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_put(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    env: *mut u8,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("PUT").expect("static verb");
+    unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_delete(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    env: *mut u8,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("DELETE").expect("static verb");
+    unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_patch(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    env: *mut u8,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("PATCH").expect("static verb");
+    unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_head(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    env: *mut u8,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("HEAD").expect("static verb");
+    unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_options(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    env: *mut u8,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("OPTIONS").expect("static verb");
+    unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
+}
+
+/// Dispatch a request through the router. Walks the route table,
+/// invokes the first matching handler via fn-pointer ABI, and
+/// returns its `*mut GosResult`. Returns a 404-shaped result when
+/// nothing matches.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_serve(
+    router: *const GosRouter,
+    req: *mut GosHttpRequest,
+) -> *mut GosResult {
+    if router.is_null() || req.is_null() {
+        return router_404_result();
+    }
+    let r = unsafe { &*router };
+    let request = unsafe { &*req };
+    let path = request.url_path_only();
+    for route in &r.routes {
+        if !route.method.is_empty() && !route.method.eq_ignore_ascii_case(&request.method) {
+            continue;
+        }
+        if route_segments_match(&route.segments, path) {
+            type HandlerFn =
+                unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> *mut GosResult;
+            let handler: HandlerFn = unsafe { std::mem::transmute(route.fn_addr) };
+            return unsafe { handler(route.env as *mut u8, req) };
+        }
+    }
+    router_404_result()
+}
+
+fn router_404_result() -> *mut GosResult {
+    let resp = Box::into_raw(Box::new(GosHttpResponse {
+        status: 404,
+        body: alloc_cstring(b"not found"),
+        headers: Vec::new(),
+    }));
+    Box::into_raw(Box::new(GosResult {
+        disc: 0,
+        payload: resp as i64,
+    }))
+}
+
+// FileServer: read-and-serve from a root directory with a path
+// prefix strip. Mirrors `static_files::FileServer`'s common case.
+
+pub struct GosFileServer {
+    root: String,
+    prefix: String,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_file_server_new(
+    root: *const c_char,
+    prefix: *const c_char,
+) -> *mut GosFileServer {
+    let root_s = if root.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(root).to_string_lossy().into_owned() }
+    };
+    let prefix_s = if prefix.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(prefix).to_string_lossy().into_owned() }
+    };
+    Box::into_raw(Box::new(GosFileServer {
+        root: root_s,
+        prefix: prefix_s,
+    }))
+}
+
+/// `FileServer.serve(req) -> Result<Response, Error>`. Reads the
+/// requested file from disk; rejects path traversal; returns 404
+/// when missing.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_file_server_serve(
+    fs: *const GosFileServer,
+    req: *const GosHttpRequest,
+) -> *mut GosResult {
+    if fs.is_null() || req.is_null() {
+        return router_404_result();
+    }
+    let server = unsafe { &*fs };
+    let request = unsafe { &*req };
+    let path = request.url_path_only();
+    let rel = path.strip_prefix(&server.prefix).unwrap_or(path);
+    let rel = rel.trim_start_matches('/');
+    if rel.contains("..") {
+        return Box::into_raw(Box::new(GosResult {
+            disc: 0,
+            payload: Box::into_raw(Box::new(GosHttpResponse {
+                status: 403,
+                body: alloc_cstring(b"forbidden"),
+                headers: Vec::new(),
+            })) as i64,
+        }));
+    }
+    let full = std::path::PathBuf::from(&server.root).join(rel);
+    match std::fs::read(&full) {
+        Ok(bytes) => {
+            let mime = mime_for_path_str(&full.to_string_lossy());
+            let headers: Vec<(String, String)> =
+                vec![("content-type".to_string(), mime.to_string())];
+            let body_cstr = alloc_cstring(&bytes);
+            Box::into_raw(Box::new(GosResult {
+                disc: 0,
+                payload: Box::into_raw(Box::new(GosHttpResponse {
+                    status: 200,
+                    body: body_cstr,
+                    headers,
+                })) as i64,
+            }))
+        }
+        Err(_) => router_404_result(),
+    }
+}
+
+fn mime_for_path_str(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "application/javascript",
+        "json" => "application/json",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "wasm" => "application/wasm",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        "xml" => "application/xml",
+        _ => "application/octet-stream",
+    }
+}
+
+// NativeClient: minimal stateful handle that round-trips through
+// `gos_rt_http_get` / a tiny POST helper for the methods callers
+// actually use in compiled mode. The full builder surface lives
+// in gossamer-std for interp; the compiled handle is intentionally
+// thin since most consumers go through `http::get` / `http::Client`.
+
+pub struct GosNativeClient;
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_native_client_new() -> *mut GosNativeClient {
+    Box::into_raw(Box::new(GosNativeClient))
+}
+
+/// `NativeClient.get(url) -> Result<Response, Error>`. Delegates
+/// to the existing one-shot GET helper.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_native_client_get(
+    _client: *const GosNativeClient,
+    url: *const c_char,
+) -> *mut GosResult {
+    unsafe { gos_rt_http_get(url, std::ptr::null_mut()) }
+}
+
+// Proxy: stateful upstream-URL holder. `Proxy.forward(req)` issues
+// a one-shot upstream request and returns the response.
+
+pub struct GosProxy {
+    upstream: String,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_proxy_new(upstream: *const c_char) -> *mut GosProxy {
+    let u = if upstream.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(upstream).to_string_lossy().into_owned() }
+    };
+    Box::into_raw(Box::new(GosProxy { upstream: u }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_proxy_forward(
+    proxy: *const GosProxy,
+    req: *const GosHttpRequest,
+) -> *mut GosResult {
+    if proxy.is_null() {
+        return router_404_result();
+    }
+    let p = unsafe { &*proxy };
+    let request_path = if req.is_null() {
+        "/".to_string()
+    } else {
+        unsafe { (&*req).url.clone() }
+    };
+    let full = format!("{}{request_path}", p.upstream.trim_end_matches('/'));
+    let url_c = std::ffi::CString::new(full).unwrap_or_default();
+    unsafe { gos_rt_http_get(url_c.as_ptr(), std::ptr::null_mut()) }
+}
+
+// WebSocket: handshake/frame helpers. Full bidirectional framing
+// needs a per-connection state machine that mostly lives in the
+// existing gossamer-std `WebSocket` Rust impl; compiled-mode users
+// drive it via `accept_key` + manual frame layout for now. The
+// accept-key thunk is already declared above (gos_rt_ws_accept_key).
+// gos_rt_ws_frame_text — encodes one text frame for outbound use.
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_ws_frame_text(payload: *const c_char) -> *mut c_char {
+    if payload.is_null() {
+        return alloc_cstring(b"");
+    }
+    let bytes = unsafe { CStr::from_ptr(payload).to_bytes() };
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len() + 14);
+    out.push(0x81); // FIN + text opcode
+    let len = bytes.len();
+    if len < 126 {
+        out.push(len as u8);
+    } else if len < 65536 {
+        out.push(126);
+        out.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        out.push(127);
+        out.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+    out.extend_from_slice(bytes);
+    alloc_cstring(&out)
+}
+
+impl GosHttpRequest {
+    fn url_path_only(&self) -> &str {
+        match self.url.split('?').next() {
+            Some(p) => p,
+            None => self.url.as_str(),
+        }
+    }
+}
+
+/// chunked::encode — wrap one buffer in HTTP/1.1 chunked
+/// transfer-encoding with a single data chunk + terminator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_chunked_encode(data: *const c_char) -> *mut c_char {
+    if data.is_null() {
+        return alloc_cstring(b"");
+    }
+    let bytes = unsafe { CStr::from_ptr(data).to_bytes() };
+    let out = format!("{:x}\r\n", bytes.len());
+    let mut buf: Vec<u8> = Vec::with_capacity(bytes.len() + out.len() + 7);
+    buf.extend_from_slice(out.as_bytes());
+    buf.extend_from_slice(bytes);
+    buf.extend_from_slice(b"\r\n0\r\n\r\n");
+    alloc_cstring(&buf)
+}
+
+/// chunked::decode — concat the data chunks from a complete
+/// chunked body (trailers discarded).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_chunked_decode(data: *const c_char) -> *mut c_char {
+    if data.is_null() {
+        return alloc_cstring(b"");
+    }
+    let bytes = unsafe { CStr::from_ptr(data).to_bytes() };
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        // Read hex chunk size up to CRLF.
+        let mut j = i;
+        while j < bytes.len() && bytes[j] != b'\r' {
+            j += 1;
+        }
+        let line = std::str::from_utf8(&bytes[i..j]).unwrap_or("");
+        let size_str = line.split(';').next().unwrap_or(line).trim();
+        let Ok(size) = u64::from_str_radix(size_str, 16) else {
+            return alloc_cstring(b"");
+        };
+        // Skip CRLF.
+        i = j + 2;
+        if size == 0 {
+            // Skip trailers up to terminating blank line.
+            while i + 1 < bytes.len() && &bytes[i..i + 2] != b"\r\n" {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            break;
+        }
+        let take = size as usize;
+        if i + take > bytes.len() {
+            return alloc_cstring(b"");
+        }
+        out.extend_from_slice(&bytes[i..i + take]);
+        i += take;
+        // Skip data-trailing CRLF.
+        if i + 1 < bytes.len() {
+            i += 2;
+        }
+    }
+    alloc_cstring(&out)
+}
+
+/// sse::encode_event(name, data, id) — render one
+/// `event:`/`data:` block.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sse_encode_event(
+    name: *const c_char,
+    data: *const c_char,
+    id: *const c_char,
+) -> *mut c_char {
+    let n = if name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+    };
+    let d = if data.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(data).to_string_lossy().into_owned() }
+    };
+    let id_s = if id.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(id).to_string_lossy().into_owned() }
+    };
+    let mut out = String::new();
+    if !id_s.is_empty() {
+        out.push_str("id: ");
+        out.push_str(&id_s);
+        out.push('\n');
+    }
+    if !n.is_empty() {
+        out.push_str("event: ");
+        out.push_str(&n);
+        out.push('\n');
+    }
+    for line in d.split('\n') {
+        out.push_str("data: ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push('\n');
+    alloc_cstring(out.as_bytes())
+}
+
+/// sse::encode_comment — render a `:`-prefixed keepalive line.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sse_encode_comment(text: *const c_char) -> *mut c_char {
+    let t = if text.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(text).to_string_lossy().into_owned() }
+    };
+    alloc_cstring(format!(": {t}\n\n").as_bytes())
+}
+
+/// sse::encode_retry — render a `retry:` directive.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sse_encode_retry(ms: i64) -> *mut c_char {
+    alloc_cstring(format!("retry: {ms}\n\n").as_bytes())
+}
+
+/// middleware::new_request_id — process-monotonic id with nanos
+/// prefix.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_mw_new_request_id() -> *mut c_char {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    alloc_cstring(format!("{nanos:x}-{n:x}").as_bytes())
+}
+
+/// middleware::accepts_gzip — comma-split the header, look for a
+/// gzip token.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_mw_accepts_gzip(header: *const c_char) -> i32 {
+    if header.is_null() {
+        return 0;
+    }
+    let h = unsafe { CStr::from_ptr(header).to_string_lossy() };
+    let accepts = h
+        .split(',')
+        .any(|tok| tok.trim().eq_ignore_ascii_case("gzip"));
+    i32::from(accepts)
+}
+
+/// websocket::accept_key — RFC 6455 Sec-WebSocket-Accept
+/// derivation: base64(sha1(client_key + GUID)).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_ws_accept_key(client_key: *const c_char) -> *mut c_char {
+    const WS_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    if client_key.is_null() {
+        return alloc_cstring(b"");
+    }
+    let k = unsafe { CStr::from_ptr(client_key).to_bytes() };
+    let mut input: Vec<u8> = Vec::with_capacity(k.len() + WS_GUID.len());
+    input.extend_from_slice(k);
+    input.extend_from_slice(WS_GUID);
+    let digest = sha1_oneshot(&input);
+    let encoded = base64_oneshot(&digest);
+    alloc_cstring(encoded.as_bytes())
+}
+
+/// static_files::mime_for_path — extension-driven MIME lookup.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_static_mime_for_path(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        return alloc_cstring(b"application/octet-stream");
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    let ext = std::path::Path::new(&p)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "application/javascript",
+        "json" => "application/json",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "wasm" => "application/wasm",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        "xml" => "application/xml",
+        _ => "application/octet-stream",
+    };
+    alloc_cstring(mime.as_bytes())
+}
+
+// Minimal sha1 + base64 used by gos_rt_ws_accept_key. Inlined
+// here to avoid pulling in another dep — the runtime crate
+// stays self-contained for these tiny one-shots.
+fn sha1_oneshot(input: &[u8]) -> [u8; 20] {
+    // FIPS 180-4 SHA-1.
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xEFCD_AB89,
+        0x98BA_DCFE,
+        0x1032_5476,
+        0xC3D2_E1F0,
+    ];
+    let bit_len = (input.len() as u64).wrapping_mul(8);
+    let mut padded: Vec<u8> = Vec::with_capacity(input.len() + 72);
+    padded.extend_from_slice(input);
+    padded.push(0x80);
+    while padded.len() % 64 != 56 {
+        padded.push(0);
+    }
+    padded.extend_from_slice(&bit_len.to_be_bytes());
+    for chunk in padded.chunks_exact(64) {
+        let mut w: [u32; 80] = [0; 80];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                chunk[4 * i],
+                chunk[4 * i + 1],
+                chunk[4 * i + 2],
+                chunk[4 * i + 3],
+            ]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e) = (h[0], h[1], h[2], h[3], h[4]);
+        for (i, wi) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | ((!b) & d), 0x5A82_7999_u32),
+                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1_u32),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC_u32),
+                _ => (b ^ c ^ d, 0xCA62_C1D6_u32),
+            };
+            let temp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*wi);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = temp;
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+    }
+    let mut out = [0u8; 20];
+    for (i, word) in h.iter().enumerate() {
+        out[4 * i..4 * i + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    out
+}
+
+fn base64_oneshot(input: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+        out.push(TABLE[(b0 >> 2) as usize] as char);
+        out.push(TABLE[((b0 & 0b11) << 4 | b1 >> 4) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((b1 & 0b1111) << 2 | b2 >> 6) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(b2 & 0b111111) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------
 // slog — simple stderr logger.
 // ---------------------------------------------------------------
 
@@ -9180,6 +10045,499 @@ pub unsafe extern "C" fn gos_rt_slog_debug(msg: *const c_char) {
     }
     let m = unsafe { CStr::from_ptr(msg).to_string_lossy() };
     eprintln!("DEBUG: {m}");
+}
+
+// ======================================================================
+// std::iter combinators — AOT runtime helpers.
+//
+// The interp wires these as native fns in stdlib_builtins.rs; this block
+// is the cranelift + LLVM counterpart. SPEC §10.4: data-last argument
+// order; combinators specialize on i64 element width where it matters
+// (the dominant case for benchmark-shaped code), with `_ptr` variants
+// for word-sized pointer elements (strings and aggregates).
+//
+// Closure-taking helpers follow the env-ptr + fn_addr@env[0] ABI
+// established by `gos_rt_arr_sort_by_i64` (above). Each helper
+// transmutes env[0] to a typed `fn(env, args...) -> ret` pointer and
+// calls back through it once per element.
+
+/// Return the element count of `v` as i64 (`iter::count(xs)`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_count(v: *const GosVec) -> i64 {
+    if v.is_null() {
+        return 0;
+    }
+    unsafe { (*v).len }
+}
+
+/// Sum all i64 elements of `v`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_sum_i64(v: *const GosVec) -> i64 {
+    if v.is_null() {
+        return 0;
+    }
+    let vec = unsafe { &*v };
+    if vec.ptr.is_null() || vec.len <= 0 {
+        return 0;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<i64>(), vec.len as usize) };
+    slice.iter().copied().sum()
+}
+
+/// Sum all f64 elements of `v`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_sum_f64(v: *const GosVec) -> f64 {
+    if v.is_null() {
+        return 0.0;
+    }
+    let vec = unsafe { &*v };
+    if vec.ptr.is_null() || vec.len <= 0 {
+        return 0.0;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<f64>(), vec.len as usize) };
+    slice.iter().copied().sum()
+}
+
+/// Product of all i64 elements of `v`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_product_i64(v: *const GosVec) -> i64 {
+    if v.is_null() {
+        return 1;
+    }
+    let vec = unsafe { &*v };
+    if vec.ptr.is_null() || vec.len <= 0 {
+        return 1;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<i64>(), vec.len as usize) };
+    slice.iter().copied().fold(1i64, i64::wrapping_mul)
+}
+
+/// Product of all f64 elements of `v`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_product_f64(v: *const GosVec) -> f64 {
+    if v.is_null() {
+        return 1.0;
+    }
+    let vec = unsafe { &*v };
+    if vec.ptr.is_null() || vec.len <= 0 {
+        return 1.0;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<f64>(), vec.len as usize) };
+    slice.iter().copied().product()
+}
+
+/// Minimum i64 element. Returns `i64::MIN` for empty input (caller
+/// should check `iter::count(xs) > 0` first, or use the closure-taking
+/// variants when the empty-vs-non-empty distinction matters).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_min_i64(v: *const GosVec) -> i64 {
+    if v.is_null() {
+        return i64::MIN;
+    }
+    let vec = unsafe { &*v };
+    if vec.ptr.is_null() || vec.len <= 0 {
+        return i64::MIN;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<i64>(), vec.len as usize) };
+    slice.iter().copied().min().unwrap_or(i64::MIN)
+}
+
+/// Maximum i64 element. Returns `i64::MIN` for empty input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_max_i64(v: *const GosVec) -> i64 {
+    if v.is_null() {
+        return i64::MIN;
+    }
+    let vec = unsafe { &*v };
+    if vec.ptr.is_null() || vec.len <= 0 {
+        return i64::MIN;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<i64>(), vec.len as usize) };
+    slice.iter().copied().max().unwrap_or(i64::MIN)
+}
+
+/// Build a `Vec<i64>` of `[start, end)`. Empty if `end <= start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_range(start: i64, end: i64) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if end > start {
+        for n in start..end {
+            unsafe { gos_rt_vec_push_i64(out, n) };
+        }
+    }
+    out
+}
+
+/// Build a `Vec<i64>` of `[start, end]`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_range_inclusive(start: i64, end: i64) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if end >= start {
+        for n in start..=end {
+            unsafe { gos_rt_vec_push_i64(out, n) };
+        }
+    }
+    out
+}
+
+/// Build `Vec<i64>` of length `n` filled with `value`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_repeat_i64(value: i64, n: i64) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if n > 0 {
+        for _ in 0..n {
+            unsafe { gos_rt_vec_push_i64(out, value) };
+        }
+    }
+    out
+}
+
+/// Build `Vec<i64>` from the first `n` elements of `v`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_take_i64(n: i64, v: *const GosVec) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if v.is_null() {
+        return out;
+    }
+    let vec = unsafe { &*v };
+    let take_n = n.max(0).min(vec.len);
+    for i in 0..take_n {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        unsafe { gos_rt_vec_push_i64(out, x) };
+    }
+    out
+}
+
+/// Build `Vec<i64>` dropping the first `n` elements of `v`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_skip_i64(n: i64, v: *const GosVec) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if v.is_null() {
+        return out;
+    }
+    let vec = unsafe { &*v };
+    let start = n.max(0).min(vec.len);
+    for i in start..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        unsafe { gos_rt_vec_push_i64(out, x) };
+    }
+    out
+}
+
+/// Reverse a `Vec<i64>` into a fresh vec.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_reversed_i64(v: *const GosVec) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if v.is_null() {
+        return out;
+    }
+    let vec = unsafe { &*v };
+    for i in (0..vec.len).rev() {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        unsafe { gos_rt_vec_push_i64(out, x) };
+    }
+    out
+}
+
+/// Concatenate two `Vec<i64>`s.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_chain_i64(a: *const GosVec, b: *const GosVec) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    for v in [a, b] {
+        if v.is_null() {
+            continue;
+        }
+        let vec = unsafe { &*v };
+        for i in 0..vec.len {
+            let x = unsafe { gos_rt_vec_get_i64(v, i) };
+            unsafe { gos_rt_vec_push_i64(out, x) };
+        }
+    }
+    out
+}
+
+// -- Closure-taking iter helpers. Closure ABI: env pointer with
+// fn_addr at env[0]. Each helper transmutes env[0] to a specific
+// `(env, args...) -> ret` signature determined by the combinator's
+// callback contract.
+
+/// `iter::for_each(f, xs)` — call `f(x)` once per element.
+/// Closure body sig: `(env: *const u8, x: i64) -> i64` (return value
+/// ignored; using i64 keeps the callback ABI uniform with sort_by).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_for_each_i64(env: *const u8, v: *const GosVec) {
+    if env.is_null() || v.is_null() {
+        return;
+    }
+    let vec = unsafe { &*v };
+    if vec.len <= 0 {
+        return;
+    }
+    type CallFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return;
+    }
+    let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    for i in 0..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        unsafe { f(env, x) };
+    }
+}
+
+/// `iter::for_each(f, xs)` for `Vec<String>` / `Vec<*ptr>` shape.
+/// Closure body sig: `(env: *const u8, x: *const u8) -> i64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_for_each_ptr(env: *const u8, v: *const GosVec) {
+    if env.is_null() || v.is_null() {
+        return;
+    }
+    let vec = unsafe { &*v };
+    if vec.len <= 0 {
+        return;
+    }
+    type CallFn = unsafe extern "C" fn(env: *const u8, x: *const u8) -> i64;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return;
+    }
+    let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    for i in 0..vec.len {
+        let p = unsafe { gos_rt_vec_get_ptr(v, i) };
+        unsafe { f(env, p) };
+    }
+}
+
+/// `iter::map(f, xs)` for `Vec<i64> -> Vec<i64>`.
+/// Closure body sig: `(env, i64) -> i64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_map_i64(env: *const u8, v: *const GosVec) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if env.is_null() || v.is_null() {
+        return out;
+    }
+    let vec = unsafe { &*v };
+    type CallFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return out;
+    }
+    let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    for i in 0..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        let y = unsafe { f(env, x) };
+        unsafe { gos_rt_vec_push_i64(out, y) };
+    }
+    out
+}
+
+/// `iter::filter(p, xs)` for `Vec<i64>`. Predicate returns i64
+/// (truthy = nonzero) to keep the callback ABI uniform.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_filter_i64(env: *const u8, v: *const GosVec) -> *mut GosVec {
+    let out = unsafe { gos_rt_vec_new(8) };
+    if env.is_null() || v.is_null() {
+        return out;
+    }
+    let vec = unsafe { &*v };
+    type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return out;
+    }
+    let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    for i in 0..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        if unsafe { p(env, x) } {
+            unsafe { gos_rt_vec_push_i64(out, x) };
+        }
+    }
+    out
+}
+
+/// `iter::fold(init, f, xs)` for `Vec<i64>` with i64 accumulator.
+/// Closure body sig: `(env, acc, x) -> acc`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_fold_i64(init: i64, env: *const u8, v: *const GosVec) -> i64 {
+    if env.is_null() || v.is_null() {
+        return init;
+    }
+    let vec = unsafe { &*v };
+    type FoldFn = unsafe extern "C" fn(env: *const u8, acc: i64, x: i64) -> i64;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return init;
+    }
+    let f: FoldFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    let mut acc = init;
+    for i in 0..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        acc = unsafe { f(env, acc, x) };
+    }
+    acc
+}
+
+/// `iter::sum_by(f, xs)` for `Vec<i64>` -> i64. `f` maps each element
+/// to its contribution.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_sum_by_i64(env: *const u8, v: *const GosVec) -> i64 {
+    if env.is_null() || v.is_null() {
+        return 0;
+    }
+    let vec = unsafe { &*v };
+    type MapFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return 0;
+    }
+    let f: MapFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    let mut total: i64 = 0;
+    for i in 0..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        total = total.wrapping_add(unsafe { f(env, x) });
+    }
+    total
+}
+
+/// `iter::any(p, xs)` for `Vec<i64>` -> bool (returned as i64 0/1).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_any_i64(env: *const u8, v: *const GosVec) -> i64 {
+    if env.is_null() || v.is_null() {
+        return 0;
+    }
+    let vec = unsafe { &*v };
+    type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return 0;
+    }
+    let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    for i in 0..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        if unsafe { p(env, x) } {
+            return 1;
+        }
+    }
+    0
+}
+
+/// `iter::all(p, xs)` for `Vec<i64>` -> bool (returned as i64 0/1).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_all_i64(env: *const u8, v: *const GosVec) -> i64 {
+    if env.is_null() || v.is_null() {
+        return 1;
+    }
+    let vec = unsafe { &*v };
+    type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return 1;
+    }
+    let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    for i in 0..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        if !unsafe { p(env, x) } {
+            return 0;
+        }
+    }
+    1
+}
+
+/// `iter::find(p, xs)` for `Vec<i64>` -> `(found, value)` packed: returns
+/// `(1, x)` for first match and `(0, 0)` for none. Caller pulls the
+/// match flag through `gos_rt_iter_find_i64_flag`; this entry returns
+/// the value. Two-stage so the same dispatch table can name both.
+///
+/// In MIR we expose this as `iter::find` producing `Option<i64>` —
+/// the lowering builds a `gos_rt_option_new(disc, payload)` from the
+/// `(flag, value)` pair so source-level pattern-matching keeps working.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_find_i64(env: *const u8, v: *const GosVec) -> i64 {
+    if env.is_null() || v.is_null() {
+        return 0;
+    }
+    let vec = unsafe { &*v };
+    type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return 0;
+    }
+    let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    for i in 0..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        if unsafe { p(env, x) } {
+            return x;
+        }
+    }
+    0
+}
+
+/// Companion to `gos_rt_iter_find_i64` — returns 1 if some element
+/// matched, 0 otherwise. Together they let the lowering synthesize an
+/// `Option<i64>` without packing values into wider returns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_find_i64_flag(env: *const u8, v: *const GosVec) -> i64 {
+    if env.is_null() || v.is_null() {
+        return 0;
+    }
+    let vec = unsafe { &*v };
+    type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
+    let fn_addr_raw = unsafe { (env as *const usize).read() };
+    if fn_addr_raw == 0 {
+        return 0;
+    }
+    let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+    for i in 0..vec.len {
+        let x = unsafe { gos_rt_vec_get_i64(v, i) };
+        if unsafe { p(env, x) } {
+            return 1;
+        }
+    }
+    0
+}
+
+// ======================================================================
+// std::option — non-closure accessors. The closure-taking option::map /
+// and_then / filter / default_with / or_else / iter helpers stay in the
+// interp VM only for the moment; they need per-shape thunks across all
+// inner types, which is the open piece of the Phase 1b follow-up.
+
+/// `option::is_some(opt)` — opt is the `*mut GosResult`-shaped enum
+/// handle produced by the `Option<T>` constructor lowering (disc 0 =
+/// Some, 1 = None per `lower_result_ctor`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_option_is_some(opt: *const u8) -> i64 {
+    if opt.is_null() {
+        return 0;
+    }
+    // disc lives at byte 0 of the enum handle.
+    let disc = unsafe { *opt };
+    i64::from(disc == 0)
+}
+
+/// `option::is_none(opt)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_option_is_none(opt: *const u8) -> i64 {
+    if opt.is_null() {
+        return 1;
+    }
+    let disc = unsafe { *opt };
+    i64::from(disc != 0)
+}
+
+/// `option::default(v, opt) -> v if opt is None else inner`. Specialised
+/// for i64 payloads (the dominant case in arithmetic pipelines).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_option_default_i64(fallback: i64, opt: *const u8) -> i64 {
+    if opt.is_null() {
+        return fallback;
+    }
+    let disc = unsafe { *opt };
+    if disc != 0 {
+        return fallback;
+    }
+    // Payload at offset 8 (one word past the disc).
+    unsafe { opt.add(8).cast::<i64>().read_unaligned() }
 }
 
 #[cfg(test)]

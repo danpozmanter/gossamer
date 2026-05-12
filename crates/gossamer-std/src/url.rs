@@ -180,6 +180,216 @@ pub fn decode_query(raw: &str) -> Result<Vec<(String, String)>, Error> {
     Ok(out)
 }
 
+/// Escapes `text` for use as one segment of a URL path. Unlike
+/// [`query_escape`], spaces become `%20` (not `+`) and the `/`
+/// is preserved per RFC 3986 §3.3.
+#[must_use]
+pub fn path_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.as_bytes() {
+        let b = *byte;
+        if b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'-' | b'_'
+                    | b'.'
+                    | b'~'
+                    | b'/'
+                    | b':'
+                    | b'@'
+                    | b'!'
+                    | b'$'
+                    | b'&'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b'+'
+                    | b','
+                    | b';'
+                    | b'='
+            )
+        {
+            out.push(b as char);
+        } else {
+            out.push('%');
+            out.push(upper_hex(b >> 4));
+            out.push(upper_hex(b & 0xf));
+        }
+    }
+    out
+}
+
+/// Inverts [`path_escape`]. Percent-encoded escapes are decoded;
+/// `+` is NOT translated to space (that's a query convention).
+pub fn path_unescape(text: &str) -> Result<String, Error> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                if i + 2 >= bytes.len() {
+                    return Err(Error::new("truncated percent-escape"));
+                }
+                let hi = hex_value(bytes[i + 1]).ok_or_else(|| Error::new("bad hex"))?;
+                let lo = hex_value(bytes[i + 2]).ok_or_else(|| Error::new("bad hex"))?;
+                out.push((hi << 4) | lo);
+                i += 3;
+            }
+            other => {
+                out.push(other);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).map_err(|_| Error::new("non-UTF-8 percent-escape"))
+}
+
+/// Userinfo pair (`user[:password]`) extracted from a URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserInfo {
+    /// Username (always present when this struct exists).
+    pub username: String,
+    /// Password (optional).
+    pub password: Option<String>,
+}
+
+impl UserInfo {
+    /// Parses a `user:pass` userinfo prefix. Both halves are
+    /// percent-decoded.
+    pub fn parse(raw: &str) -> Result<Self, Error> {
+        if let Some((u, p)) = raw.split_once(':') {
+            Ok(Self {
+                username: path_unescape(u)?,
+                password: Some(path_unescape(p)?),
+            })
+        } else {
+            Ok(Self {
+                username: path_unescape(raw)?,
+                password: None,
+            })
+        }
+    }
+
+    /// Renders to `user[:password]` with percent-encoding.
+    #[must_use]
+    pub fn render(&self) -> String {
+        match &self.password {
+            Some(p) => format!("{}:{}", path_escape(&self.username), path_escape(p)),
+            None => path_escape(&self.username),
+        }
+    }
+}
+
+/// Multi-valued query map (Go's `url.Values`).
+///
+/// Preserves insertion order. Use [`Values::add`] to append a
+/// new value for a key (allows duplicates); [`Values::set`] to
+/// replace any existing values for a key.
+#[derive(Debug, Clone, Default)]
+pub struct Values {
+    pairs: Vec<(String, String)>,
+}
+
+impl Values {
+    /// Empty map.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Appends `value` under `key`. Existing values for the key
+    /// are preserved.
+    pub fn add(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.pairs.push((key.into(), value.into()));
+    }
+
+    /// Removes every existing value for `key` and sets it to
+    /// the single given value.
+    pub fn set(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        let k = key.into();
+        self.pairs.retain(|(existing, _)| existing != &k);
+        self.pairs.push((k, value.into()));
+    }
+
+    /// Returns the first value for `key`, or `None`.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.pairs
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Returns every value for `key` in insertion order.
+    #[must_use]
+    pub fn get_all(&self, key: &str) -> Vec<&str> {
+        self.pairs
+            .iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
+    /// Removes every value for `key`.
+    pub fn delete(&mut self, key: &str) {
+        self.pairs.retain(|(k, _)| k != key);
+    }
+
+    /// Returns `true` if `key` has at least one value.
+    #[must_use]
+    pub fn has(&self, key: &str) -> bool {
+        self.pairs.iter().any(|(k, _)| k == key)
+    }
+
+    /// Returns the number of pairs (with duplicates counted).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.pairs.len()
+    }
+
+    /// `true` when there are no pairs.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.pairs.is_empty()
+    }
+
+    /// Iterates every `(key, value)` pair in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.pairs.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
+    /// Renders the values as a sorted-by-key query string. Keys
+    /// with multiple values are emitted in insertion order.
+    /// Matches Go's `Values.Encode`.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        let mut sorted: Vec<(&str, &str)> = self
+            .pairs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        sorted.sort_by(|a, b| a.0.cmp(b.0));
+        let mut out = String::new();
+        for (i, (k, v)) in sorted.iter().enumerate() {
+            if i > 0 {
+                out.push('&');
+            }
+            out.push_str(&query_escape(k));
+            out.push('=');
+            out.push_str(&query_escape(v));
+        }
+        out
+    }
+
+    /// Parses a query string (no leading `?`) into a `Values`.
+    pub fn parse(raw: &str) -> Result<Self, Error> {
+        let pairs = decode_query(raw)?;
+        Ok(Self { pairs })
+    }
+}
+
 const fn upper_hex(n: u8) -> char {
     match n {
         0..=9 => (b'0' + n) as char,
@@ -238,6 +448,97 @@ mod tests {
         let escaped = query_escape(raw);
         assert_eq!(escaped, "hello+world%2F%21%2A%27");
         assert_eq!(query_unescape(&escaped).unwrap(), raw);
+    }
+
+    #[test]
+    fn path_escape_preserves_slash() {
+        let s = path_escape("a/b c");
+        assert_eq!(s, "a/b%20c");
+    }
+
+    #[test]
+    fn path_unescape_does_not_decode_plus() {
+        let decoded = path_unescape("a%20b+c").unwrap();
+        assert_eq!(decoded, "a b+c");
+    }
+
+    #[test]
+    fn user_info_parses_username_only() {
+        let u = UserInfo::parse("alice").unwrap();
+        assert_eq!(u.username, "alice");
+        assert!(u.password.is_none());
+    }
+
+    #[test]
+    fn user_info_parses_with_password() {
+        let u = UserInfo::parse("alice:wonder%20land").unwrap();
+        assert_eq!(u.username, "alice");
+        assert_eq!(u.password, Some("wonder land".into()));
+    }
+
+    #[test]
+    fn user_info_round_trips_through_render() {
+        let u = UserInfo {
+            username: "user".into(),
+            password: Some("p:w".into()),
+        };
+        let s = u.render();
+        let back = UserInfo::parse(&s).unwrap();
+        assert_eq!(back, u);
+    }
+
+    #[test]
+    fn values_basic_add_get_round_trip() {
+        let mut v = Values::new();
+        v.add("a", "1");
+        v.add("a", "2");
+        v.add("b", "3");
+        assert_eq!(v.get("a"), Some("1"));
+        assert_eq!(v.get_all("a"), vec!["1", "2"]);
+        assert_eq!(v.len(), 3);
+    }
+
+    #[test]
+    fn values_set_replaces_all_existing() {
+        let mut v = Values::new();
+        v.add("a", "1");
+        v.add("a", "2");
+        v.set("a", "only");
+        assert_eq!(v.get_all("a"), vec!["only"]);
+    }
+
+    #[test]
+    fn values_delete_removes_every_match() {
+        let mut v = Values::new();
+        v.add("a", "1");
+        v.add("a", "2");
+        v.add("b", "3");
+        v.delete("a");
+        assert!(!v.has("a"));
+        assert!(v.has("b"));
+    }
+
+    #[test]
+    fn values_encode_sorts_by_key() {
+        let mut v = Values::new();
+        v.add("z", "1");
+        v.add("a", "2");
+        v.add("m", "3");
+        assert_eq!(v.encode(), "a=2&m=3&z=1");
+    }
+
+    #[test]
+    fn values_parse_round_trip() {
+        let mut v = Values::new();
+        v.add("name", "jane doe");
+        v.add("city", "NYC");
+        let s = v.encode();
+        let parsed = Values::parse(&s).unwrap();
+        // Encoding is sorted; parsed pairs preserve that order.
+        let pairs: Vec<(&str, &str)> = parsed.iter().collect();
+        assert_eq!(pairs.len(), 2);
+        assert!(parsed.has("name"));
+        assert_eq!(parsed.get("name"), Some("jane doe"));
     }
 
     #[test]

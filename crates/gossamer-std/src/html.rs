@@ -2,7 +2,6 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(feature = "templates")]
 pub mod template;
 
 /// Escapes `s` for safe insertion into HTML text or attribute values.

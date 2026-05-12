@@ -6,14 +6,14 @@
  * `i64` overflows past 20! — pick `i128` if you need more.
  */
 
+use std::iter
+
 fn factorial_recursive(n: i64) -> i64 {
     if n <= 1 { 1 } else { n * factorial_recursive(n - 1) }
 }
 
 fn factorial_iterative(n: i64) -> i64 {
-    let mut acc: i64 = 1
-    for i in 2..=n { acc *= i }
-    acc
+    iter::range_inclusive(2, n) |> iter::fold(1, |acc, i| acc * i)
 }
 
 fn main() {

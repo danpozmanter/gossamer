@@ -232,8 +232,8 @@ fn iter_take_skip_chain() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    let first = iter::take(xs, 3)
-    let rest = iter::skip(xs, 3)
+    let first = iter::take(3, xs)
+    let rest = iter::skip(3, xs)
     let merged = iter::chain(first, rest)
     println!("{}", merged.len())
 }
@@ -250,9 +250,9 @@ fn iter_map_filter_fold() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    let doubled = iter::map(xs, |x: i64| x * 2)
-    let evens = iter::filter(doubled, |x: i64| x % 4 == 0)
-    let total = iter::fold(evens, 0, |acc: i64, x: i64| acc + x)
+    let doubled = iter::map(|x: i64| x * 2, xs)
+    let evens = iter::filter(|x: i64| x % 4 == 0, doubled)
+    let total = iter::fold(0, |acc: i64, x: i64| acc + x, evens)
     println!("{}", total)
 }
 "#,
@@ -268,8 +268,8 @@ fn iter_any_all() {
 use std::iter
 fn main() {
     let xs = [2, 4, 6, 8]
-    println!("{}", iter::all(xs, |x: i64| x % 2 == 0))
-    println!("{}", iter::any(xs, |x: i64| x > 5))
+    println!("{}", iter::all(|x: i64| x % 2 == 0, xs))
+    println!("{}", iter::any(|x: i64| x > 5, xs))
 }
 "#,
         "true\ntrue",

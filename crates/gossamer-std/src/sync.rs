@@ -736,6 +736,184 @@ impl Barrier {
     }
 }
 
+// --- Concurrent Map (Go's sync.Map) ----------------------------------
+
+/// Goroutine-safe map. Mirrors Go's `sync.Map` shape.
+///
+/// `K` must be hashable and equality-comparable. Reads and
+/// writes serialise on a single `RwLock` (read-heavy traffic
+/// stays concurrent). For very-high-contention single-int
+/// access, prefer [`SyncIntVec`] or a sharded structure.
+pub struct SyncMap<K, V> {
+    inner: parking_lot::RwLock<std::collections::HashMap<K, V>>,
+}
+
+impl<K: std::hash::Hash + Eq, V: Clone> SyncMap<K, V> {
+    /// Empty map.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: parking_lot::RwLock::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Inserts or replaces the value for `key`.
+    pub fn store(&self, key: K, value: V) {
+        self.inner.write().insert(key, value);
+    }
+
+    /// Returns a clone of the value for `key`, if present.
+    pub fn load(&self, key: &K) -> Option<V> {
+        self.inner.read().get(key).cloned()
+    }
+
+    /// If `key` is absent, inserts `value` and returns the
+    /// inserted clone with `false`. If present, returns the
+    /// existing value with `true`. Mirrors Go's
+    /// `(*Map).LoadOrStore`.
+    pub fn load_or_store(&self, key: K, value: V) -> (V, bool) {
+        // Fast path: shared lock for hit.
+        if let Some(existing) = self.inner.read().get(&key) {
+            return (existing.clone(), true);
+        }
+        let mut w = self.inner.write();
+        if let Some(existing) = w.get(&key) {
+            return (existing.clone(), true);
+        }
+        w.insert(key, value.clone());
+        (value, false)
+    }
+
+    /// Removes `key`, returning the value if it was present.
+    pub fn delete(&self, key: &K) -> Option<V> {
+        self.inner.write().remove(key)
+    }
+
+    /// Returns `true` if `key` is present.
+    pub fn contains(&self, key: &K) -> bool {
+        self.inner.read().contains_key(key)
+    }
+
+    /// Returns the number of entries.
+    pub fn len(&self) -> usize {
+        self.inner.read().len()
+    }
+
+    /// Returns `true` when the map is empty.
+    pub fn is_empty(&self) -> bool {
+        self.inner.read().is_empty()
+    }
+
+    /// Calls `f` once per `(key, value)` pair. Iteration order
+    /// is unspecified. The map cannot be mutated from inside
+    /// `f` — `f` takes shared references.
+    pub fn range(&self, mut f: impl FnMut(&K, &V) -> bool) {
+        let g = self.inner.read();
+        for (k, v) in g.iter() {
+            if !f(k, v) {
+                break;
+            }
+        }
+    }
+}
+
+impl<K: std::hash::Hash + Eq, V: Clone> Default for SyncMap<K, V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// --- sync::Pool (per-process object freelist) ------------------------
+
+/// Goroutine-safe object pool. Mirrors Go's `sync.Pool` shape
+/// without the per-P locality optimisation (v1 uses a single
+/// mutex-protected freelist; sharding is a future perf pass).
+pub struct Pool<T> {
+    inner: parking_lot::Mutex<Vec<T>>,
+    factory: Box<dyn Fn() -> T + Send + Sync>,
+}
+
+impl<T: Send + 'static> Pool<T> {
+    /// Builds a new pool. `factory` produces a fresh `T` when
+    /// the pool is empty.
+    pub fn new(factory: impl Fn() -> T + Send + Sync + 'static) -> Self {
+        Self {
+            inner: parking_lot::Mutex::new(Vec::new()),
+            factory: Box::new(factory),
+        }
+    }
+
+    /// Borrows an object from the pool (or constructs a fresh
+    /// one). The caller is responsible for returning it via
+    /// [`Pool::put`].
+    pub fn get(&self) -> T {
+        if let Some(t) = self.inner.lock().pop() {
+            t
+        } else {
+            (self.factory)()
+        }
+    }
+
+    /// Returns `value` to the pool.
+    pub fn put(&self, value: T) {
+        self.inner.lock().push(value);
+    }
+
+    /// Number of cached objects currently in the pool.
+    pub fn len(&self) -> usize {
+        self.inner.lock().len()
+    }
+
+    /// `true` when the pool has no cached objects.
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().is_empty()
+    }
+}
+
+// --- sync::Cond (condition variable) ---------------------------------
+
+/// Condition variable for goroutine signalling. Pairs with a
+/// [`Mutex`] (caller-provided) — `wait` releases the mutex
+/// while parked and re-acquires it on wake.
+pub struct Cond {
+    cv: parking_lot::Condvar,
+}
+
+impl Cond {
+    /// Empty condition variable.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            cv: parking_lot::Condvar::new(),
+        }
+    }
+
+    /// Wakes one waiter, if any.
+    pub fn signal(&self) {
+        self.cv.notify_one();
+    }
+
+    /// Wakes every waiter.
+    pub fn broadcast(&self) {
+        self.cv.notify_all();
+    }
+
+    /// Waits on the condition. Releases `lock` while parked,
+    /// re-acquires on return. `lock` is supplied as a borrow of
+    /// the calling code's mutex guard; the typical pattern is
+    /// `cond.wait(&mut guard)` where `guard` is the held
+    /// `parking_lot::MutexGuard<T>`.
+    pub fn wait<T>(&self, guard: &mut parking_lot::MutexGuard<'_, T>) {
+        self.cv.wait(guard);
+    }
+}
+
+impl Default for Cond {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -901,5 +1079,119 @@ mod tests {
         drop(g);
         let r = mu.try_with(|x| *x + 1);
         assert_eq!(r, Some(1));
+    }
+
+    // --- P0 stdlib additions: SyncMap / Pool / Cond ------------
+
+    #[test]
+    fn sync_map_store_load_round_trip() {
+        let m: SyncMap<String, i64> = SyncMap::new();
+        m.store("count".into(), 1);
+        m.store("ttl".into(), 60);
+        assert_eq!(m.load(&"count".into()), Some(1));
+        assert_eq!(m.load(&"ttl".into()), Some(60));
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn sync_map_load_or_store_returns_existing() {
+        let m: SyncMap<String, i64> = SyncMap::new();
+        let (v, loaded) = m.load_or_store("k".into(), 1);
+        assert_eq!(v, 1);
+        assert!(!loaded);
+        let (v, loaded) = m.load_or_store("k".into(), 999);
+        assert_eq!(v, 1);
+        assert!(loaded);
+    }
+
+    #[test]
+    fn sync_map_concurrent_inserts_settle() {
+        let m: Arc<SyncMap<i64, i64>> = Arc::new(SyncMap::new());
+        let mut handles = Vec::new();
+        for t in 0..8 {
+            let m = Arc::clone(&m);
+            handles.push(thread::spawn(move || {
+                for i in 0..1000 {
+                    m.store(t * 1000 + i, i);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(m.len(), 8 * 1000);
+    }
+
+    #[test]
+    fn sync_map_delete_removes_entry() {
+        let m: SyncMap<String, i64> = SyncMap::new();
+        m.store("k".into(), 1);
+        assert_eq!(m.delete(&"k".into()), Some(1));
+        assert!(!m.contains(&"k".into()));
+    }
+
+    #[test]
+    fn pool_get_constructs_when_empty_put_caches() {
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter_for_factory = Arc::clone(&counter);
+        let pool: Pool<Vec<u8>> = Pool::new(move || {
+            counter_for_factory.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Vec::with_capacity(64)
+        });
+        let v = pool.get();
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
+        pool.put(v);
+        let _v = pool.get();
+        // Second get should not invoke factory again.
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn cond_signal_wakes_waiter() {
+        use parking_lot::Mutex as PLMutex;
+        let pair: Arc<(PLMutex<bool>, Cond)> = Arc::new((PLMutex::new(false), Cond::new()));
+        let pair_for_thread = Arc::clone(&pair);
+        let waiter = thread::spawn(move || {
+            let (lock, cond) = &*pair_for_thread;
+            let mut g = lock.lock();
+            while !*g {
+                cond.wait(&mut g);
+            }
+            *g
+        });
+        thread::sleep(Duration::from_millis(50));
+        {
+            let (lock, cond) = &*pair;
+            let mut g = lock.lock();
+            *g = true;
+            cond.signal();
+        }
+        assert!(waiter.join().unwrap());
+    }
+
+    #[test]
+    fn cond_broadcast_wakes_every_waiter() {
+        use parking_lot::Mutex as PLMutex;
+        let pair: Arc<(PLMutex<u32>, Cond)> = Arc::new((PLMutex::new(0), Cond::new()));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let pair = Arc::clone(&pair);
+            handles.push(thread::spawn(move || {
+                let (lock, cond) = &*pair;
+                let mut g = lock.lock();
+                while *g == 0 {
+                    cond.wait(&mut g);
+                }
+            }));
+        }
+        thread::sleep(Duration::from_millis(50));
+        {
+            let (lock, cond) = &*pair;
+            *lock.lock() = 1;
+            cond.broadcast();
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 }

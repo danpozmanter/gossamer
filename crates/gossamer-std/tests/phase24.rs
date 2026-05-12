@@ -92,6 +92,7 @@ fn request_accessor_returns_path() {
     let req = Request {
         method: Method::Get,
         path: "/a/b".to_string(),
+        query: String::new(),
         headers: Headers::new(),
         body: Vec::new(),
         context: gossamer_std::context::Context::background(),

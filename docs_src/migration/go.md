@@ -193,6 +193,42 @@ select {
 }
 ```
 
+### Functional combinators replace per-loop accumulators
+
+Go:
+
+```go
+total := 0
+for _, n := range xs {
+    if n%2 == 0 {
+        total += n * n
+    }
+}
+```
+
+Gossamer:
+
+```gos
+let total = xs
+    |> iter::filter(|n: i64| n % 2 == 0)
+    |> iter::sum_by(|n: i64| n * n)
+```
+
+`std::iter` (SPEC §10.4) ships F#-style chaining combinators —
+`map`, `filter`, `for_each`, `fold`, `sum_by`, `find`, `any`, `all`,
+`take`, `skip`, `range`/`range_inclusive`, `chain`, `reversed`,
+plus closure-taking siblings. Argument order is data-last so each
+combinator threads naturally through `|>`. Mirror modules for
+`Option<T>` (`std::option`) and `Result<T, E>` (`std::result`)
+cover the absent-or-default and error-mapping cases without a
+`match` block.
+
+The `for` loop stays in the language and stays idiomatic — for
+side-effect loops with `break` / `continue`, for state machines
+(running flag, accumulator pair, etc.), and for loops that need
+to early-return. `iter::*` is for the *transformation* cases that
+otherwise spawn a `let mut acc = 0; for x in xs { acc += … }`.
+
 ## Stdlib equivalents
 
 | Go | Gossamer | Status |

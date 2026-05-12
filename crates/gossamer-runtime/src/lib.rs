@@ -13,6 +13,7 @@ pub mod builtins;
 pub mod c_abi;
 pub mod ffi;
 pub mod gc;
+pub mod http2_server;
 pub mod layout;
 pub mod preempt;
 pub mod race;

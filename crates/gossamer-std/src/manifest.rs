@@ -5,8 +5,123 @@
 //! implementation plan.
 
 #![forbid(unsafe_code)]
+#![allow(clippy::items_after_statements, clippy::manual_let_else)]
 
 use crate::registry::{StdItem, StdItemKind, StdModule};
+
+/// Renders one stdlib module as a Markdown page (Python-style
+/// per-module reference). Used by `gos doc --emit-stdlib`.
+#[must_use]
+pub fn render_module_markdown(module: &StdModule) -> String {
+    let mut out = String::with_capacity(1024);
+    out.push_str(&format!("# `{}`\n\n", module.path));
+    out.push_str(&format!("{}\n\n", module.summary));
+    out.push_str("## Public items\n\n");
+    out.push_str("| Name | Kind | Description |\n");
+    out.push_str("|---|---|---|\n");
+    for item in module.items {
+        let kind = match item.kind {
+            StdItemKind::Function => "fn",
+            StdItemKind::Type => "type",
+            StdItemKind::Trait => "trait",
+            StdItemKind::Macro => "macro",
+            StdItemKind::Const => "const",
+        };
+        out.push_str(&format!(
+            "| `{}` | {} | {} |\n",
+            item.name,
+            kind,
+            item.doc.replace('|', "\\|"),
+        ));
+    }
+    out.push('\n');
+    out
+}
+
+/// Renders the `docs_src/stdlib/index.md` landing page listing
+/// every module with its one-line summary.
+#[must_use]
+pub fn render_index_markdown() -> String {
+    let mut out = String::new();
+    out.push_str("# Gossamer standard library\n\n");
+    out.push_str(
+        "One page per module. Source is `crates/gossamer-std/src/`; \
+this index is regenerated from `manifest::ALL_MODULES` by \
+`gos doc --emit-stdlib`.\n\n",
+    );
+    out.push_str("| Module | Summary |\n");
+    out.push_str("|---|---|\n");
+    use std::collections::BTreeSet;
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut sorted: Vec<&StdModule> = ALL_MODULES.iter().collect();
+    sorted.sort_by_key(|m| m.path);
+    for m in sorted {
+        if !seen.insert(m.path) {
+            continue;
+        }
+        let slug = module_slug(m.path);
+        out.push_str(&format!(
+            "| [`{}`]({}.md) | {} |\n",
+            m.path, slug, m.summary
+        ));
+    }
+    out.push('\n');
+    out
+}
+
+/// Canonical slug for a module path — `std::http::router`
+/// becomes `http_router`.
+#[must_use]
+pub fn module_slug(path: &str) -> String {
+    path.strip_prefix("std::")
+        .unwrap_or(path)
+        .replace("::", "_")
+}
+
+/// Returns every `(slug, markdown)` pair for the docs site.
+/// Includes the `index` page plus one page per module.
+///
+/// Multiple manifest entries sharing the same module path
+/// (e.g. an initial `ENCODING_BINARY` plus a later
+/// `ENCODING_BINARY_FULL` that extends it) are merged into one
+/// page with the union of their item lists.
+#[must_use]
+pub fn render_all_docs() -> Vec<(String, String)> {
+    use std::collections::BTreeMap;
+    // Group items by module path, preserving insertion order.
+    let mut order: Vec<&'static str> = Vec::new();
+    let mut merged: BTreeMap<&'static str, (String, Vec<&'static StdItem>)> = BTreeMap::new();
+    for m in ALL_MODULES {
+        let entry = merged.entry(m.path).or_insert_with(|| {
+            order.push(m.path);
+            (m.summary.to_string(), Vec::new())
+        });
+        for item in m.items {
+            // Dedupe by item name within the merged set.
+            if !entry.1.iter().any(|i| i.name == item.name) {
+                entry.1.push(item);
+            }
+        }
+    }
+    let mut out: Vec<(String, String)> = Vec::with_capacity(order.len() + 1);
+    out.push(("index".to_string(), render_index_markdown()));
+    for path in order {
+        let (summary, items) = &merged[path];
+        let synthetic = StdModule {
+            path,
+            summary: Box::leak(summary.clone().into_boxed_str()),
+            items: Box::leak(
+                items
+                    .iter()
+                    .map(|i| **i)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
+        };
+        out.push((module_slug(path), render_module_markdown(&synthetic)));
+    }
+    out
+}
 
 /// Single source of truth for the stdlib's public surface.
 pub const ALL_MODULES: &[StdModule] = &[
@@ -72,6 +187,29 @@ pub const ALL_MODULES: &[StdModule] = &[
     // P0 gap-fill: utf16, iter.
     UTF16,
     ITER,
+    // 0.4.0 — HTTP/2 + extended HTTP surface, archives, big-int,
+    // FNV, XML, base32 / ascii85, insecure crypto, cipher modes.
+    HTTP2,
+    HTTP_ROUTER,
+    HTTP_MIDDLEWARE,
+    HTTP_STATIC_FILES,
+    HTTP_PROXY,
+    HTTP_WEBSOCKET,
+    HTTP_SSE,
+    HTTP_CHUNKED,
+    HTTP_NATIVE_CLIENT,
+    ARCHIVE_ZIP,
+    ARCHIVE_TAR,
+    COMPRESS_FLATE,
+    COMPRESS_ZLIB,
+    COMPRESS_BZIP2,
+    ENCODING_XML,
+    ENCODING_BASE32,
+    ENCODING_ASCII85,
+    HASH_FNV,
+    MATH_BIG,
+    CRYPTO_INSECURE,
+    CRYPTO_CIPHER,
 ];
 
 const OS_EXEC: StdModule = StdModule {
@@ -1141,6 +1279,11 @@ const OS: StdModule = StdModule {
             name: "args",
             kind: StdItemKind::Function,
             doc: "Returns the program's command-line arguments.",
+        },
+        StdItem {
+            name: "program_name",
+            kind: StdItemKind::Function,
+            doc: "Returns the path used to invoke the program (argv[0]).",
         },
         StdItem {
             name: "env",
@@ -2220,6 +2363,579 @@ const ITER: StdModule = StdModule {
             name: "sum",
             kind: StdItemKind::Function,
             doc: "Sum of i64 or f64 elements.",
+        },
+    ],
+};
+
+// ---------------------------------------------------------------------------
+// 0.4.0 surface — HTTP/2, websocket, sse, router, middleware, static files,
+// proxy, native client, chunked transfer, archives, extended compress,
+// XML / base32 / ascii85, FNV, big-int, insecure / cipher crypto.
+// ---------------------------------------------------------------------------
+
+const HTTP2: StdModule = StdModule {
+    path: "std::http2",
+    summary: "HTTP/2 server (h2 crate over goroutine future-driver). Bounded and streaming handler shapes; ALPN-aware HTTPS dispatch via http::server::bind_and_run_tls_h2.",
+    items: &[
+        StdItem {
+            name: "Handler",
+            kind: StdItemKind::Trait,
+            doc: "Bounded-body handler: serve(Request) -> Response.",
+        },
+        StdItem {
+            name: "StreamingHandler",
+            kind: StdItemKind::Trait,
+            doc: "Chunked-body handler: serve(Request, ResponseWriter) -> Result<(), Error>.",
+        },
+        StdItem {
+            name: "ResponseWriter",
+            kind: StdItemKind::Type,
+            doc: "Streaming response writer; set_status / header / write_chunk / finish.",
+        },
+        StdItem {
+            name: "Config",
+            kind: StdItemKind::Type,
+            doc: "Per-connection h2 tuning (window sizes, max concurrent streams, frame caps).",
+        },
+        StdItem {
+            name: "ServerHandle",
+            kind: StdItemKind::Type,
+            doc: "Handle returned by serve_connection to inspect in-flight count and trigger graceful shutdown.",
+        },
+        StdItem {
+            name: "Error",
+            kind: StdItemKind::Type,
+            doc: "h2 server error: Io, Protocol, Handler.",
+        },
+        StdItem {
+            name: "serve_connection",
+            kind: StdItemKind::Function,
+            doc: "Drive an HTTP/2 connection on the calling goroutine (bounded Handler).",
+        },
+        StdItem {
+            name: "serve_connection_streaming",
+            kind: StdItemKind::Function,
+            doc: "Same shape for StreamingHandler.",
+        },
+        StdItem {
+            name: "bind_and_run_h2c",
+            kind: StdItemKind::Function,
+            doc: "Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext).",
+        },
+        StdItem {
+            name: "bind_and_run_h2c_streaming",
+            kind: StdItemKind::Function,
+            doc: "Same shape for StreamingHandler.",
+        },
+    ],
+};
+
+const HTTP_ROUTER: StdModule = StdModule {
+    path: "std::http::router",
+    summary: "Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes.",
+    items: &[
+        StdItem {
+            name: "Router",
+            kind: StdItemKind::Type,
+            doc: "Routing table (Rust-side full surface; method-chain bridge is interp tier).",
+        },
+        StdItem {
+            name: "Params",
+            kind: StdItemKind::Type,
+            doc: "Captured path parameters.",
+        },
+        StdItem {
+            name: "Handler",
+            kind: StdItemKind::Trait,
+            doc: "Anything callable as Fn(&Request, &Params) -> Response.",
+        },
+        StdItem {
+            name: "new",
+            kind: StdItemKind::Function,
+            doc: "Allocate a fresh Router handle. Interp tier.",
+        },
+        StdItem {
+            name: "add",
+            kind: StdItemKind::Function,
+            doc: "Register a route: `(router, method, pattern)`. Interp tier.",
+        },
+        StdItem {
+            name: "lookup",
+            kind: StdItemKind::Function,
+            doc: "Find the index of the first route matching `(method, path)`. Interp tier.",
+        },
+    ],
+};
+
+const HTTP_MIDDLEWARE: StdModule = StdModule {
+    path: "std::http::middleware",
+    summary: "Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.",
+    items: &[
+        StdItem {
+            name: "Handler",
+            kind: StdItemKind::Trait,
+            doc: "Anything serving (Request, Params) -> Response.",
+        },
+        StdItem {
+            name: "Chain",
+            kind: StdItemKind::Type,
+            doc: "Helper for composing middleware in a single value.",
+        },
+        StdItem {
+            name: "logger",
+            kind: StdItemKind::Function,
+            doc: "Logs method path status bytes elapsed_ms per request.",
+        },
+        StdItem {
+            name: "recoverer",
+            kind: StdItemKind::Function,
+            doc: "Catches handler panics; returns 500.",
+        },
+        StdItem {
+            name: "request_id",
+            kind: StdItemKind::Function,
+            doc: "Stamps each response with X-Request-Id.",
+        },
+        StdItem {
+            name: "cors",
+            kind: StdItemKind::Function,
+            doc: "CORS preflight + per-response headers.",
+        },
+        StdItem {
+            name: "basic_auth",
+            kind: StdItemKind::Function,
+            doc: "HTTP Basic auth gate; constant-time compare.",
+        },
+        StdItem {
+            name: "compress_gzip",
+            kind: StdItemKind::Function,
+            doc: "Gzips bodies above a size threshold when client advertises Accept-Encoding: gzip (Rust-side wrapper).",
+        },
+        StdItem {
+            name: "new_request_id",
+            kind: StdItemKind::Function,
+            doc: "Generate a process-monotonic request id string. Available in interp + compiled.",
+        },
+        StdItem {
+            name: "accepts_gzip",
+            kind: StdItemKind::Function,
+            doc: "Check an Accept-Encoding header for a gzip token. Available in interp + compiled.",
+        },
+        StdItem {
+            name: "decode_basic_auth",
+            kind: StdItemKind::Function,
+            doc: "Decode a Basic-auth Authorization header into (user, password). Interp tier.",
+        },
+    ],
+};
+
+const HTTP_STATIC_FILES: StdModule = StdModule {
+    path: "std::http::static_files",
+    summary: "Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff.",
+    items: &[
+        StdItem {
+            name: "FileServer",
+            kind: StdItemKind::Type,
+            doc: "Static-file handler rooted at a directory (Rust-side; streaming).",
+        },
+        StdItem {
+            name: "serve_file",
+            kind: StdItemKind::Function,
+            doc: "Read a single file and return it as a Response struct. Interp tier.",
+        },
+        StdItem {
+            name: "mime_for_path",
+            kind: StdItemKind::Function,
+            doc: "Guess a MIME type from a file path's extension. Available in interp + compiled.",
+        },
+    ],
+};
+
+const HTTP_PROXY: StdModule = StdModule {
+    path: "std::http::proxy",
+    summary: "Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler.",
+    items: &[
+        StdItem {
+            name: "Proxy",
+            kind: StdItemKind::Type,
+            doc: "Reverse-proxy handler (Rust-side).",
+        },
+        StdItem {
+            name: "Director",
+            kind: StdItemKind::Type,
+            doc: "Fn(&mut Request) request mutator (Rust-side).",
+        },
+        StdItem {
+            name: "forward",
+            kind: StdItemKind::Function,
+            doc: "One-shot upstream forward: `(url, method, body) -> Result<Response, Error>`. Interp tier.",
+        },
+    ],
+};
+
+const HTTP_WEBSOCKET: StdModule = StdModule {
+    path: "std::http::websocket",
+    summary: "RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close.",
+    items: &[
+        StdItem {
+            name: "WebSocket",
+            kind: StdItemKind::Type,
+            doc: "Accepted WebSocket connection (Rust-side framing).",
+        },
+        StdItem {
+            name: "Message",
+            kind: StdItemKind::Type,
+            doc: "Text / Binary / Ping / Pong / Close.",
+        },
+        StdItem {
+            name: "accept",
+            kind: StdItemKind::Function,
+            doc: "Upgrade an incoming Request to a WebSocket (Rust-side).",
+        },
+        StdItem {
+            name: "Error",
+            kind: StdItemKind::Type,
+            doc: "Io / Protocol / BadHandshake.",
+        },
+        StdItem {
+            name: "accept_key",
+            kind: StdItemKind::Function,
+            doc: "Compute RFC 6455 Sec-WebSocket-Accept from a client nonce. Available in interp + compiled.",
+        },
+        StdItem {
+            name: "is_websocket_upgrade",
+            kind: StdItemKind::Function,
+            doc: "Test whether an incoming Request carries a WebSocket upgrade handshake. Interp tier.",
+        },
+    ],
+};
+
+const HTTP_SSE: StdModule = StdModule {
+    path: "std::http::sse",
+    summary: "Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint.",
+    items: &[
+        StdItem {
+            name: "Stream",
+            kind: StdItemKind::Type,
+            doc: "Active SSE stream — handler writes events through it (Rust-side).",
+        },
+        StdItem {
+            name: "Event",
+            kind: StdItemKind::Type,
+            doc: "One SSE event (id, event, data, retry).",
+        },
+        StdItem {
+            name: "serve",
+            kind: StdItemKind::Function,
+            doc: "Wraps a handler closure into an SSE response (Rust-side; streaming).",
+        },
+        StdItem {
+            name: "encode_event",
+            kind: StdItemKind::Function,
+            doc: "Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled.",
+        },
+        StdItem {
+            name: "encode_comment",
+            kind: StdItemKind::Function,
+            doc: "Render a `:`-prefixed keepalive line. Available in interp + compiled.",
+        },
+        StdItem {
+            name: "encode_retry",
+            kind: StdItemKind::Function,
+            doc: "Render a `retry:` reconnect-hint directive in milliseconds. Available in interp + compiled.",
+        },
+    ],
+};
+
+const HTTP_CHUNKED: StdModule = StdModule {
+    path: "std::http::chunked",
+    summary: "RFC 7230 §4.1 chunked transfer-encoding reader and writer.",
+    items: &[
+        StdItem {
+            name: "Reader",
+            kind: StdItemKind::Type,
+            doc: "Decodes a chunked body from any Read source (Rust-side; streaming).",
+        },
+        StdItem {
+            name: "Writer",
+            kind: StdItemKind::Type,
+            doc: "Encodes raw bytes into chunked frames over any Write sink (Rust-side; streaming).",
+        },
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "One-shot: wraps a buffer in chunked transfer-encoding with terminator. Available in interp + compiled.",
+        },
+        StdItem {
+            name: "decode",
+            kind: StdItemKind::Function,
+            doc: "One-shot: concatenates data chunks from a complete chunked body. Available in interp + compiled.",
+        },
+    ],
+};
+
+const HTTP_NATIVE_CLIENT: StdModule = StdModule {
+    path: "std::http::native_client",
+    summary: "Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool).",
+    items: &[
+        StdItem {
+            name: "Client",
+            kind: StdItemKind::Type,
+            doc: "Native h1 client (Rust-side; full builder surface).",
+        },
+        StdItem {
+            name: "Error",
+            kind: StdItemKind::Type,
+            doc: "Connect / Tls / Http / Redirect / Timeout / Io.",
+        },
+        StdItem {
+            name: "get",
+            kind: StdItemKind::Function,
+            doc: "One-shot GET → Result<Response, Error>. Interp tier (compiled tier shares http::get).",
+        },
+        StdItem {
+            name: "post",
+            kind: StdItemKind::Function,
+            doc: "One-shot POST: `(url, body, content_type)`. Interp tier.",
+        },
+        StdItem {
+            name: "put",
+            kind: StdItemKind::Function,
+            doc: "One-shot PUT: `(url, body, content_type)`. Interp tier.",
+        },
+        StdItem {
+            name: "delete",
+            kind: StdItemKind::Function,
+            doc: "One-shot DELETE → Result<Response, Error>. Interp tier.",
+        },
+    ],
+};
+
+const ARCHIVE_ZIP: StdModule = StdModule {
+    path: "std::archive::zip",
+    summary: "ZIP archive reader and writer.",
+    items: &[
+        StdItem {
+            name: "ZipEntry",
+            kind: StdItemKind::Type,
+            doc: "name + decompressed data + is_dir flag.",
+        },
+        StdItem {
+            name: "read",
+            kind: StdItemKind::Function,
+            doc: "Reads all file entries from a zip stored in `data`.",
+        },
+        StdItem {
+            name: "write",
+            kind: StdItemKind::Function,
+            doc: "Builds an in-memory zip from (name, data) pairs.",
+        },
+    ],
+};
+
+const ARCHIVE_TAR: StdModule = StdModule {
+    path: "std::archive::tar",
+    summary: "Unix tar reader and writer (USTAR / PAX-aware decode).",
+    items: &[
+        StdItem {
+            name: "TarEntry",
+            kind: StdItemKind::Type,
+            doc: "name + data + size + mode.",
+        },
+        StdItem {
+            name: "read",
+            kind: StdItemKind::Function,
+            doc: "Reads all entries from a tar archive.",
+        },
+        StdItem {
+            name: "write",
+            kind: StdItemKind::Function,
+            doc: "Builds a tar archive from (name, data) pairs.",
+        },
+    ],
+};
+
+const COMPRESS_FLATE: StdModule = StdModule {
+    path: "std::compress::flate",
+    summary: "Raw DEFLATE (RFC 1951) encoder / decoder.",
+    items: &[
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "One-shot DEFLATE compress.",
+        },
+        StdItem {
+            name: "decode",
+            kind: StdItemKind::Function,
+            doc: "One-shot DEFLATE decompress.",
+        },
+    ],
+};
+
+const COMPRESS_ZLIB: StdModule = StdModule {
+    path: "std::compress::zlib",
+    summary: "zlib (RFC 1950) encoder / decoder.",
+    items: &[
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "One-shot zlib compress.",
+        },
+        StdItem {
+            name: "decode",
+            kind: StdItemKind::Function,
+            doc: "One-shot zlib decompress.",
+        },
+    ],
+};
+
+const COMPRESS_BZIP2: StdModule = StdModule {
+    path: "std::compress::bzip2",
+    summary: "bzip2 encoder / decoder (BZh format).",
+    items: &[
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "One-shot bzip2 compress.",
+        },
+        StdItem {
+            name: "decode",
+            kind: StdItemKind::Function,
+            doc: "One-shot bzip2 decompress.",
+        },
+    ],
+};
+
+const ENCODING_XML: StdModule = StdModule {
+    path: "std::encoding::xml",
+    summary: "Streaming XML decoder + builder (quick-xml).",
+    items: &[
+        StdItem {
+            name: "Reader",
+            kind: StdItemKind::Type,
+            doc: "Pull-style XML reader.",
+        },
+        StdItem {
+            name: "Writer",
+            kind: StdItemKind::Type,
+            doc: "Streaming XML writer.",
+        },
+        StdItem {
+            name: "Event",
+            kind: StdItemKind::Type,
+            doc: "Start / End / Text / CData / Comment / Eof.",
+        },
+    ],
+};
+
+const ENCODING_BASE32: StdModule = StdModule {
+    path: "std::encoding::base32",
+    summary: "RFC 4648 base32 (uppercase) encode / decode.",
+    items: &[
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "Bytes -> base32 string.",
+        },
+        StdItem {
+            name: "encode_padded",
+            kind: StdItemKind::Function,
+            doc: "With explicit = padding.",
+        },
+        StdItem {
+            name: "decode",
+            kind: StdItemKind::Function,
+            doc: "Base32 string -> bytes.",
+        },
+    ],
+};
+
+const ENCODING_ASCII85: StdModule = StdModule {
+    path: "std::encoding::ascii85",
+    summary: "ASCII85 / base85 encode / decode.",
+    items: &[
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "Bytes -> ASCII85 string.",
+        },
+        StdItem {
+            name: "decode",
+            kind: StdItemKind::Function,
+            doc: "ASCII85 string -> bytes.",
+        },
+    ],
+};
+
+const HASH_FNV: StdModule = StdModule {
+    path: "std::hash::fnv",
+    summary: "FNV-1a non-cryptographic hash (32-bit, 64-bit).",
+    items: &[
+        StdItem {
+            name: "fnv1a_32",
+            kind: StdItemKind::Function,
+            doc: "One-shot 32-bit FNV-1a of a byte slice.",
+        },
+        StdItem {
+            name: "fnv1a_64",
+            kind: StdItemKind::Function,
+            doc: "One-shot 64-bit FNV-1a of a byte slice.",
+        },
+    ],
+};
+
+const MATH_BIG: StdModule = StdModule {
+    path: "std::math::big",
+    summary: "Arbitrary-precision integers (num-bigint).",
+    items: &[
+        StdItem {
+            name: "Int",
+            kind: StdItemKind::Type,
+            doc: "Arbitrary-precision signed integer.",
+        },
+        StdItem {
+            name: "Uint",
+            kind: StdItemKind::Type,
+            doc: "Arbitrary-precision unsigned integer.",
+        },
+        StdItem {
+            name: "factorial",
+            kind: StdItemKind::Function,
+            doc: "Computes n! as an Int.",
+        },
+    ],
+};
+
+const CRYPTO_INSECURE: StdModule = StdModule {
+    path: "std::crypto::insecure",
+    summary: "Legacy / broken hashes (MD5, SHA-1). Compat only — never use for new code.",
+    items: &[
+        StdItem {
+            name: "md5",
+            kind: StdItemKind::Function,
+            doc: "One-shot MD5.",
+        },
+        StdItem {
+            name: "sha1",
+            kind: StdItemKind::Function,
+            doc: "One-shot SHA-1.",
+        },
+    ],
+};
+
+const CRYPTO_CIPHER: StdModule = StdModule {
+    path: "std::crypto::cipher",
+    summary: "AES key handling + CBC / CTR block-cipher modes.",
+    items: &[
+        StdItem {
+            name: "AesKey",
+            kind: StdItemKind::Type,
+            doc: "Validated key bytes for the chosen size.",
+        },
+        StdItem {
+            name: "AesKeySize",
+            kind: StdItemKind::Type,
+            doc: "Aes128 / Aes192 / Aes256.",
         },
     ],
 };

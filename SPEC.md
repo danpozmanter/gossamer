@@ -43,6 +43,18 @@ The language is designed so that:
     boilerplate, no annotation blocks where a sigil suffices.
   This principle resolves style disputes: when two forms are otherwise
   equivalent, pick the one with fewer characters.
+- **Expressiveness via functional combinators.** Character economy
+  cuts ceremony out of programs; expressiveness keeps the remaining
+  programs at the expression level instead of dropping them to
+  procedural loops with named accumulators. The forward pipe `|>`
+  (§4.6) is one half of this; a comprehensive `std::iter` /
+  `std::option` / `std::result` surface (§10.4) is the other. The
+  rule of thumb: a data transformation should read top-to-bottom as
+  a chain of named stages, not as a `for` loop building up a `let
+  mut` accumulator. `for` loops keep their place for side-effects
+  and complex state; transformations should compose. Gossamer
+  follows F#'s "data-last" argument-order convention in stdlib free
+  functions so `x |> f(a, b)` reads as `f(a, b, x)` naturally.
 - A single pass over the source file classifies it into tokens.
 - A single recursive-descent parser produces an AST without
   context-dependent parsing tricks beyond bounded lookahead.
@@ -202,6 +214,24 @@ fn abs(n: i32) -> i32 {
 
 Unlike Go, Gossamer never auto-inserts `;`. The lexer emits tokens
 verbatim; the parser consumes whitespace/newlines only as separators.
+
+One narrow newline rule disambiguates the three operators that are
+also unary prefixes (`&`, `*`, `-`): when one of them appears as the
+first non-whitespace token on a new line, it begins a new statement
+rather than continuing the previous expression as a binary operator.
+So:
+
+```
+let s = read_file(path)?
+&s |> strings::lines |> iter::for_each(handle)   // two statements
+```
+
+parses as a let followed by a pipe-expression statement, not as
+`let s = read_file(path)? & s |> ...`. Multi-line continuation of
+those three operators still works when the operator sits at the end
+of the previous line (`let x = a -\n  b`) or inside parentheses.
+The other binary operators (`+`, `&&`, `|>`, `==`, …) continue across
+newlines unconditionally.
 
 ---
 
@@ -680,6 +710,14 @@ Desugars to:
 ```
 let total = iter::sum::<i64>(iter::map(|n| n * n, iter::filter(|n| n % 2 == 0, 1..=100)))
 ```
+
+**Argument-order convention.** Stdlib free functions intended to be
+piped into (`std::iter`, `std::option`, `std::result`, and most of
+`std::strings`) follow a uniform "data-last" rule: the value being
+transformed is the **last** positional parameter. This is what makes
+`x |> f(a, b)` thread cleanly without explicit placeholders. The
+convention is documented per-module; APIs that diverge from it (for
+historical or readability reasons) are called out at their declaration.
 
 Interaction with `?`:
 
@@ -1337,9 +1375,149 @@ This is an outline; full API docs ship with the first implementation.
 
 ### 10.4 `std::iter`
 
-- `trait Iterator { type Item; fn next(&mut self) -> Option<Self::Item>; ... }`.
-- Combinators: `map`, `filter`, `fold`, `collect`, `take`, `skip`,
-  `zip`, `enumerate`, `chain`, `flat_map`, `any`, `all`, `sum`, `count`.
+**One obvious way.** Transformations (`map`, `filter`, `fold`,
+`reduce`, `partition`, …) live as **free functions in `std::iter`
+only**. `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`, `BTreeMap<K, V>`,
+`Receiver<T>`, and friends do **not** carry `.map(…)` / `.filter(…)`
+/ `.fold(…)` methods. F#'s `Seq`/`List`/`Array` module convention
+applies: data flows through `|>` into free functions; the surface
+stays small and the call shape is uniform. The mutating helpers
+that don't compose with `|>` (`xs.push`, `xs.pop`, `xs.sort`,
+`xs.swap`, `m.inc`, `m.or_insert`, etc.) remain methods because
+they operate by side-effect on the receiver — there is no chain
+to fit them into.
+
+The iterator protocol is one trait:
+
+```
+pub trait Iterator {
+    type Item
+    fn next(&mut self) -> Option<Self::Item>
+    // default methods cover the consumer surface below
+}
+```
+
+Any type implementing `Iterator` ranges over with `for`:
+
+```
+for x in iter { body }
+```
+
+desugars to a `loop` that calls `iter.next()` and binds on `Some`,
+stopping on `None`. An `IntoIterator` trait converts collections
+(`Vec<T>`, `HashMap<K,V>`, `HashSet<T>`, `Receiver<T>`, …) to their
+respective iterator types when the `for` loop drives them.
+
+Built-in iterator types (lazy, single-pass unless noted):
+`RangeIter` (from `a..b` and `a..=b`), `VecIter`, `MapIter`,
+`FilterIter`, `FilterMapIter`, `TakeIter`, `SkipIter`,
+`TakeWhileIter`, `SkipWhileIter`, `ChainIter`, `ZipIter`,
+`EnumerateIter`, `FlatMapIter`, `WindowsIter`, `ChunksIter`,
+`PairwiseIter`, `RepeatIter`, `CycleIter`, `StepByIter`,
+`ScanIter`, `UnfoldIter`.
+
+Free functions in `std::iter`. Argument order is **data-last**
+(§4.6) so every entry threads with `|>`. Functions taking a callable
+accept any `Fn(...) -> _` (capturing closures and bare functions
+both qualify).
+
+Transformations (lazy when chained — no intermediate `Vec`
+allocation between stages):
+
+- `map(f, it)` — apply `f` to every element.
+- `filter(p, it)` — keep elements where `p(elem)` is true.
+- `filter_map(f, it)` — apply `f`, keep the `Some` results.
+- `take(n, it)` / `skip(n, it)`.
+- `take_while(p, it)` / `skip_while(p, it)`.
+- `chain(a, b)`, `zip(a, b)`, `enumerate(it)`.
+- `flat_map(f, it)`, `flatten(it)`.
+- `windowed(n, it)`, `pairwise(it)`, `chunk_by_size(n, it)`.
+- `step_by(n, it)`, `cycle(it)`, `repeat(v, n)`.
+- `scan(init, f, it)`, `unfold(seed, f)`.
+
+Consumers (force the chain to completion, return a non-iterator):
+
+- `for_each(f, it)` — apply `f` for its side-effects; returns `()`.
+- `fold(init, f, it)`, `reduce(f, it) -> Option<T>`.
+- `sum(it)`, `sum_by(f, it)`, `product(it)`, `product_by(f, it)`.
+- `count(it)`.
+- `min(it) -> Option<T>`, `max`, `min_by`, `max_by`, `min_by_key`,
+  `max_by_key`.
+- `any(p, it)`, `all(p, it)`.
+- `find(p, it) -> Option<T>`, `position(p, it) -> Option<usize>`,
+  `find_map(f, it) -> Option<U>`.
+- `partition(p, it) -> (Vec<T>, Vec<T>)`.
+
+Materializers (consumers that build a collection):
+
+- `collect::<C>(it)` — into `Vec<T>`, `HashSet<T>`, `HashMap<K,V>`,
+  `BTreeMap<K,V>`, `String`, depending on the turbofish.
+- `group_by(key, it) -> HashMap<K, Vec<T>>`.
+- `count_by(key, it) -> HashMap<K, i64>`.
+- `sort_by(cmp, it) -> Vec<T>`, `sort_by_key(key, it) -> Vec<T>`.
+- `dedup(it) -> Vec<T>`, `reversed(it) -> Vec<T>`.
+- `unzip(it) -> (Vec<A>, Vec<B>)`.
+
+Constructors:
+
+- `range(a, b) -> RangeIter`, `range_inclusive(a, b) -> RangeIter`.
+- `repeat(v, n) -> RepeatIter`, `empty() -> EmptyIter`,
+  `once(v) -> OnceIter`.
+
+Example (lazy chain — `iter::filter` and `iter::map` never
+allocate intermediate `Vec`s):
+
+```
+let total =
+  1..=100
+    |> iter::filter(|n| n % 2 == 0)
+    |> iter::map(|n| n * n)
+    |> iter::sum::<i64>()
+```
+
+Example (eager — input `Vec`, output `Vec`):
+
+```
+let xs = [3, 1, 4, 1, 5, 9, 2, 6]
+let sorted = xs |> iter::sort_by_key(|n| -n)
+```
+
+### 10.4a `std::option`
+
+Free-function chaining surface for `Option<T>`. Mirrors F# `Option`
+module. Argument order is data-last so every entry threads with `|>`.
+
+- `map(f, opt) -> Option<U>`.
+- `and_then(f, opt) -> Option<U>` — F# `Option.bind`; flat-map.
+- `filter(p, opt) -> Option<T>`.
+- `default(v, opt) -> T` — F# `Option.defaultValue`.
+- `default_with(f, opt) -> T` — lazy default.
+- `or(alt, opt) -> Option<T>` / `or_else(f, opt) -> Option<T>`.
+- `iter(f, opt) -> ()` — F# `Option.iter`.
+- `is_some(opt) -> bool`, `is_none(opt) -> bool`.
+- `flatten(opt: Option<Option<T>>) -> Option<T>`.
+- `zip(a, b) -> Option<(A, B)>`.
+
+The same surface is mirrored as methods on `Option<T>` for the
+Rust-style call form (`opt.map(f)`, `opt.unwrap_or(0)`). Pick the
+form that fits the surrounding code; don't mix in one chain.
+
+### 10.4b `std::result`
+
+Free-function chaining surface for `Result<T, E>`. Mirrors F#
+`Result` module. Data-last.
+
+- `map(f, r) -> Result<U, E>`.
+- `map_err(f, r) -> Result<T, F>`.
+- `and_then(f, r) -> Result<U, E>` — F# `Result.bind`.
+- `or_else(f, r) -> Result<T, F>`.
+- `default(v, r) -> T`, `default_with(f, r) -> T`.
+- `ok(r) -> Option<T>`, `err(r) -> Option<E>`.
+- `is_ok(r) -> bool`, `is_err(r) -> bool`.
+
+The `?` operator (§4.5) remains the right tool for short-circuit
+propagation; `result::map` / `result::and_then` are for in-pipeline
+transformation when the chain doesn't return from the enclosing fn.
 
 ### 10.5 `std::strings` (alias `std::str`)
 
@@ -1679,6 +1857,18 @@ sources is a fully supported, registry-free setup.
 10. **Forward pipe `|>`** (F#-style, left-associative, appends the
     piped value as the **last** argument). See §4.6. Rust has no pipe
     operator; Gossamer adds it as a first-class part of the grammar.
+11. **F#-style free-function combinator surface in stdlib.**
+    `std::iter`, `std::option`, and `std::result` ship F#-style
+    free-function chaining APIs (see §10.4–§10.4b) with data-last
+    argument order so they thread cleanly through `|>`. Unlike
+    Rust, collections (`Vec<T>`, `HashMap<K, V>`, `HashSet<T>`,
+    `BTreeMap<K, V>`) do **not** carry `.map`/`.filter`/`.fold`/
+    `.reduce`/`.partition`/etc. methods — `iter::*` free functions
+    are the one obvious way to chain transformations. `Option<T>`
+    and `Result<T, E>` keep their Rust-style methods
+    (`opt.map(f)`, `opt.unwrap_or(0)`) alongside the free
+    functions because the method form fits how those types are
+    commonly used inline.
 
 ## Appendix C — Go features not ported
 

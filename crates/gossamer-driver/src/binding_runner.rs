@@ -567,6 +567,9 @@ pub enum DumpedType {
     /// `String` / `&str`.
     #[serde(rename = "string")]
     String,
+    /// `Bytes` (ABI 0.4+).
+    #[serde(rename = "bytes")]
+    Bytes,
     /// `(T1, T2, ...)`.
     #[serde(rename = "tuple")]
     Tuple {
@@ -593,6 +596,28 @@ pub enum DumpedType {
         /// `Err` payload type.
         err: Box<DumpedType>,
     },
+    /// `Map<K, V>` (ABI 0.4+).
+    #[serde(rename = "map")]
+    Map {
+        /// Key type.
+        key: Box<DumpedType>,
+        /// Value type.
+        value: Box<DumpedType>,
+    },
+    /// Tagged-union return (ABI 0.4+).
+    #[serde(rename = "variant")]
+    Variant {
+        /// Variant arms.
+        arms: Vec<DumpedVariantArm>,
+    },
+    /// `Fn(args...) -> ret` callback (ABI 0.4+).
+    #[serde(rename = "callback")]
+    Callback {
+        /// Positional argument types.
+        args: Vec<DumpedType>,
+        /// Return type.
+        ret: Box<DumpedType>,
+    },
     /// Opaque handle.
     #[serde(rename = "opaque")]
     Opaque {
@@ -602,6 +627,15 @@ pub enum DumpedType {
     /// Untyped (`Value::Native` passthrough).
     #[serde(rename = "any")]
     Any,
+}
+
+/// One arm in a [`DumpedType::Variant`].
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct DumpedVariantArm {
+    /// Arm name.
+    pub name: String,
+    /// Positional payload types.
+    pub payload: Vec<DumpedType>,
 }
 
 /// Parses the sigs-dump JSON.

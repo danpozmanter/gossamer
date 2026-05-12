@@ -26,6 +26,36 @@ pub struct Manifest {
     pub registries: BTreeMap<String, String>,
     /// `[rust-bindings]` map keyed by Cargo crate name.
     pub rust_bindings: BTreeMap<String, RustBindingSpec>,
+    /// `[[bin]]` array-of-tables — explicit binary targets.
+    /// When empty, the implicit `main.gos` / `src/main.gos`
+    /// filesystem convention applies (with a deprecation
+    /// warning planned for 0.5).
+    pub bins: Vec<BinTarget>,
+    /// `[lib]` table — explicit library target. `None` means
+    /// no library; the implicit `lib.gos` / `src/lib.gos`
+    /// convention only applies when no `[[bin]]` is declared
+    /// either.
+    pub lib: Option<LibTarget>,
+}
+
+/// One `[[bin]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinTarget {
+    /// `bin.name` — required, used as the artefact filename.
+    pub name: String,
+    /// `bin.path` — relative to the manifest directory.
+    /// Defaults to `src/bin/<name>.gos` when omitted.
+    pub path: Option<String>,
+}
+
+/// `[lib]` table — optional library target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibTarget {
+    /// `lib.name` — defaults to the project id's leaf.
+    pub name: Option<String>,
+    /// `lib.path` — relative to manifest dir. Defaults to
+    /// `src/lib.gos`.
+    pub path: Option<String>,
 }
 
 /// `[project]` table contents.
@@ -202,13 +232,42 @@ impl Manifest {
         let mut deps: BTreeMap<String, DependencySpec> = BTreeMap::new();
         let mut registries: BTreeMap<String, String> = BTreeMap::new();
         let mut rust_bindings: BTreeMap<String, RustBindingSpec> = BTreeMap::new();
+        let mut bins: Vec<RawTable> = Vec::new();
+        let mut current_bin: Option<RawTable> = None;
+        let mut lib_raw: Option<RawTable> = None;
         for (i, raw_line) in source.lines().enumerate() {
             let line_no = u32::try_from(i + 1).expect("line overflow");
             let trimmed = strip_comment(raw_line).trim();
             if trimmed.is_empty() {
                 continue;
             }
+            // `[[bin]]` array-of-table opener.
+            if let Some(inner) = trimmed
+                .strip_prefix("[[")
+                .and_then(|s| s.strip_suffix("]]"))
+            {
+                let header = inner.trim();
+                // Flush in-progress bin into the array before
+                // switching context.
+                if let Some(prev) = current_bin.take() {
+                    bins.push(prev);
+                }
+                if header == "bin" {
+                    current_section = Some("__bin__".to_string());
+                    current_bin = Some(RawTable::default());
+                } else {
+                    return Err(ManifestError::Malformed {
+                        line_no,
+                        line: format!("unknown array-of-table [[{header}]]"),
+                    });
+                }
+                continue;
+            }
             if let Some(section) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                // Leaving a `[[bin]]` block — flush.
+                if let Some(prev) = current_bin.take() {
+                    bins.push(prev);
+                }
                 current_section = Some(section.trim().to_string());
                 continue;
             }
@@ -237,6 +296,19 @@ impl Manifest {
                     let spec = parse_rust_binding_value(value, &key)?;
                     rust_bindings.insert(key, spec);
                 }
+                Some("__bin__") => {
+                    if let Some(table) = current_bin.as_mut() {
+                        table.insert(key.to_string(), value.to_string());
+                    }
+                }
+                Some("lib") => {
+                    if lib_raw.is_none() {
+                        lib_raw = Some(RawTable::default());
+                    }
+                    if let Some(table) = lib_raw.as_mut() {
+                        table.insert(key.to_string(), value.to_string());
+                    }
+                }
                 Some(other) => {
                     return Err(ManifestError::Malformed {
                         line_no,
@@ -250,6 +322,10 @@ impl Manifest {
                     });
                 }
             }
+        }
+        // Flush final pending bin.
+        if let Some(prev) = current_bin.take() {
+            bins.push(prev);
         }
         let id_text = project
             .get("id")
@@ -277,6 +353,40 @@ impl Manifest {
         let output = project
             .get("output")
             .and_then(|raw| parse_string(raw).map(str::to_string));
+        let bins_parsed: Vec<BinTarget> = bins
+            .iter()
+            .map(|raw| {
+                let name = raw
+                    .get("name")
+                    .and_then(|v| parse_string(v).map(str::to_string))
+                    .ok_or(ManifestError::MissingField("bin.name"))?;
+                let path = raw
+                    .get("path")
+                    .and_then(|v| parse_string(v).map(str::to_string));
+                Ok::<_, ManifestError>(BinTarget { name, path })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let lib_parsed = lib_raw.map(|raw| LibTarget {
+            name: raw
+                .get("name")
+                .and_then(|v| parse_string(v).map(str::to_string)),
+            path: raw
+                .get("path")
+                .and_then(|v| parse_string(v).map(str::to_string)),
+        });
+
+        // Reject duplicate `[[bin]]` names — they would collide
+        // at the artefact-filename level.
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for b in &bins_parsed {
+            if !seen.insert(b.name.as_str()) {
+                return Err(ManifestError::Malformed {
+                    line_no: 0,
+                    line: format!("duplicate [[bin]] name: {}", b.name),
+                });
+            }
+        }
+
         Ok(Self {
             project: ProjectTable {
                 id,
@@ -288,7 +398,19 @@ impl Manifest {
             dependencies: deps,
             registries,
             rust_bindings,
+            bins: bins_parsed,
+            lib: lib_parsed,
         })
+    }
+
+    /// Returns `true` when the manifest declares any explicit
+    /// `[[bin]]` or `[lib]` target. When `false`, the toolchain
+    /// falls back to the legacy filesystem convention
+    /// (`main.gos` / `lib.gos`) — and emits a deprecation
+    /// warning.
+    #[must_use]
+    pub fn has_explicit_targets(&self) -> bool {
+        !self.bins.is_empty() || self.lib.is_some()
     }
 
     /// SHA-256 of the canonicalised `[rust-bindings]` set, with

@@ -20,6 +20,7 @@ fn type_to_json(t: &gossamer_binding::Type) -> String {
         T::F64 => "{\"kind\":\"f64\"}".to_string(),
         T::Char => "{\"kind\":\"char\"}".to_string(),
         T::String => "{\"kind\":\"string\"}".to_string(),
+        T::Bytes => "{\"kind\":\"bytes\"}".to_string(),
         T::Tuple(ts) => {
             let inner: Vec<String> = ts.iter().map(type_to_json).collect();
             format!("{{\"kind\":\"tuple\",\"items\":[{}]}}", inner.join(","))
@@ -31,6 +32,33 @@ fn type_to_json(t: &gossamer_binding::Type) -> String {
             type_to_json(ok),
             type_to_json(err)
         ),
+        T::Map(k, v) => format!(
+            "{{\"kind\":\"map\",\"key\":{},\"value\":{}}}",
+            type_to_json(k),
+            type_to_json(v)
+        ),
+        T::Variant(arms) => {
+            let arms_json: Vec<String> = arms
+                .iter()
+                .map(|a| {
+                    let payload: Vec<String> = a.payload.iter().map(type_to_json).collect();
+                    format!(
+                        "{{\"name\":{},\"payload\":[{}]}}",
+                        json_string(a.name),
+                        payload.join(",")
+                    )
+                })
+                .collect();
+            format!("{{\"kind\":\"variant\",\"arms\":[{}]}}", arms_json.join(","))
+        }
+        T::Callback(args, ret) => {
+            let args_json: Vec<String> = args.iter().map(type_to_json).collect();
+            format!(
+                "{{\"kind\":\"callback\",\"args\":[{}],\"ret\":{}}}",
+                args_json.join(","),
+                type_to_json(ret)
+            )
+        }
         T::Opaque(name) => format!("{{\"kind\":\"opaque\",\"name\":{}}}", json_string(name)),
         T::Any => "{\"kind\":\"any\"}".to_string(),
     }

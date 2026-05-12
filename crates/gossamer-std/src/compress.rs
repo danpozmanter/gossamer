@@ -3,7 +3,6 @@
 #![forbid(unsafe_code)]
 
 /// Bzip2 encoder and decoder.
-#[cfg(feature = "bzip2-compress")]
 pub mod bzip2;
 /// Raw DEFLATE (RFC 1951) encoder and decoder.
 pub mod flate;

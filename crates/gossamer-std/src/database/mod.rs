@@ -2,5 +2,4 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(feature = "sql")]
 pub mod sql;

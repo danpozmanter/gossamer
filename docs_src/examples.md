@@ -6,11 +6,16 @@ directory ships a handful of worked programs.
 ## A friendly taste
 
 `examples/function_piping.gos` walks through the `|>` forward-pipe
-operator, the feature most likely to surprise readers coming from
-Rust or Go. It straightens out nested calls so the data flow reads
-left-to-right:
+operator and the F#-style combinator surface in `std::iter` /
+`std::option` (SPEC §10.4 / §10.4a). `|>` straightens out nested
+calls so the data flow reads left-to-right; the combinators take
+the data value as the last positional parameter so each call
+threads naturally:
 
 ```gossamer
+use std::iter
+use std::option
+
 fn double(x: i64) -> i64 { x * 2 }
 fn add(a: i64, b: i64) -> i64 { a + b }
 fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
@@ -19,7 +24,18 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 
 fn main() {
     let n = 3 |> double |> add(10) |> clamp(0, 100)
-    println("arithmetic:", n)
+    println!("arithmetic: {n}")
+
+    let total = iter::range_inclusive(1, 10)
+        |> iter::filter(|n: i64| n % 2 == 0)
+        |> iter::sum_by(|n: i64| n * n)
+    println!("sum of even squares: {total}")
+
+    let xs = [1, 3, 5, 9, 14, 21]
+    let first_big = xs
+        |> iter::find(|n: i64| n > 10)
+        |> option::default(-1)
+    println!("first > 10 (or -1): {first_big}")
 }
 ```
 
@@ -28,7 +44,11 @@ fn main() {
 - **`hello_world.gos`** — one-liner that prints via `fmt::println`.
   Runs under `gos run`.
 - **`function_piping.gos`** — tour of the `|>` forward-pipe
-  operator, both arithmetic chains and method pipelines.
+  operator plus the `std::iter` / `std::option` combinator
+  surface (`filter`, `sum_by`, `find`, `option::default`, …).
+  Runs under `gos run`, `gos build` (cranelift), and
+  `gos build --release` (LLVM); the tier_parity test confirms
+  identical output across all three.
 - **`go_spawn.gos`** — goroutine fan-out with no channels.
   Every construct lowers through native codegen, so `gos build`
   produces a working binary.

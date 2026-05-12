@@ -11,6 +11,8 @@
  * for `std::crypto::aead`.
  */
 
+use std::iter
+
 fn shift_byte(b: i64, key: i64) -> i64 {
     if b >= 65 && b <= 90 {
         65 + (b - 65 + key + 26 * 26) % 26
@@ -22,9 +24,7 @@ fn shift_byte(b: i64, key: i64) -> i64 {
 }
 
 fn shift_codes(codes: &[i64], key: i64) -> [i64] {
-    let mut out: [i64] = []
-    for c in codes.iter() { out.push(shift_byte(*c, key)) }
-    out
+    codes |> iter::map(|c: i64| shift_byte(c, key))
 }
 
 fn equal(a: &[i64], b: &[i64]) -> bool {

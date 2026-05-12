@@ -45,6 +45,9 @@ impl Parser<'_> {
                 if op == BinaryOp::BitOr && self.in_pattern_pipe() {
                     break;
                 }
+                if is_unary_startable(op) && self.newline_before_peek() {
+                    break;
+                }
                 self.bump();
                 if is_non_associative_compare(op)
                     && self.peek_matches_compare_after_parse(op, precedence)
@@ -285,10 +288,26 @@ impl Parser<'_> {
                 continue;
             }
             if self.at_punct(Punct::LParen) {
+                // A `(` on the next source line never attaches to the
+                // previous expression. Without this break, a function
+                // body like `for {...}\n(a, 7.0)` parses as one
+                // expression — calling the for-loop's `()` result with
+                // `(a, 7.0)` as args — instead of two statements.
+                // Mirrors the same statement-boundary rule already
+                // applied to `&` / `*` / `-` in `parse_expr_with_prec`.
+                if self.newline_before_peek() {
+                    break;
+                }
                 primary = self.parse_call_suffix(primary);
                 continue;
             }
             if self.at_punct(Punct::LBracket) {
+                // Same as `(` above: a `[` on the next line opens a
+                // fresh array literal, not an index into the previous
+                // expression.
+                if self.newline_before_peek() {
+                    break;
+                }
                 primary = self.parse_index_suffix(primary);
                 continue;
             }
@@ -1413,6 +1432,16 @@ fn is_non_associative_compare(op: BinaryOp) -> bool {
 
 fn keyword_or_ident_text(text: &str) -> String {
     text.to_string()
+}
+
+/// Whether a binary operator's punctuation also serves as a unary
+/// prefix in Gossamer. These are the only ops for which a leading
+/// newline must be treated as a statement boundary, so that
+/// `let x = expr\n&y` parses as two statements (`let x = expr;`
+/// followed by `&y`) rather than the binary `expr & y`. The other
+/// unary prefix `!` has no binary form so does not need this guard.
+fn is_unary_startable(op: BinaryOp) -> bool {
+    matches!(op, BinaryOp::Sub | BinaryOp::BitAnd | BinaryOp::Mul)
 }
 
 fn extract_raw_string_body(source: &str, hashes: u8) -> String {

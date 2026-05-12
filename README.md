@@ -28,6 +28,7 @@ A language that balances developer experience, execution efficiency, and safety.
 
 ### From F#
 * Forward pipe operator
+* Functional style chaining, not method style (nums |> List.map, not nums.map())
 
 ### From Python
 * Interpreted mode
@@ -116,7 +117,7 @@ gos test src/main.gos
 gos
 ```
 
-## Supported platforms
+## Supported Platforms
 
 The runtime's stackful goroutines (corosensei) need a per-arch
 context-switch implementation. The current support matrix:
@@ -133,6 +134,27 @@ context-switch implementation. The current support matrix:
 Other targets compile but the goroutine scheduler will refuse to
 start. Cross-compiling to the supported targets is wired up in
 `gos build --target <triple>`.
+
+## Status and Rough Roadmap
+
+Examples all run via interpretation, compile in debug or release mode.
+
+There are gaps to fill in the standard library, bugs and optimizations to find via real world usage.
+
+This project is very early. Right now performance, resource usage, functionality, and productivity
+all feel very promising. But do not trust this yet.
+
+My main goals are:
+
+* Making Gossamer reliable enough to run real production code, and trust.
+
+* Optimizing Gossamer to be Go-grade or better for performance and resource usage.
+
+* Building a reliable standard library to reduce the need to reach for third party libraries (using Golang as the gold standard, with small changes that feel right).
+
+* Writing some ecosystem libraries for key functionality (gRPC, Postgres, etc) that shouldn't be in the standard library, but are necessary for real work.
+
+* Ensuring the developer experience fits the broad goals I have for a language that can replace or reduce my use of Go, Rust, Python, and F#.
 
 ## Build
 

@@ -14,7 +14,6 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use thiserror::Error;
 
-#[cfg(feature = "ffi-sqlite")]
 pub mod sqlite;
 
 /// Statically typed value passed to / returned from the database.

@@ -238,7 +238,16 @@ fn main() {
   between) is its documentation; `gos doc` renders these and
   `gos test` runs fenced code inside them.
 - **Semicolons** are optional at statement boundaries; one
-  statement per line.
+  statement per line. A newline followed by a leading `&`,
+  `*`, or `-` always starts a new statement (so `let s = expr\n&s
+  |> ...` parses as two statements, not `expr & s`). For
+  legitimate multi-line continuation of those three operators,
+  put the operator at the end of the previous line
+  (`let x = a -\n  b`) or parenthesize the expression.
+- **Imports.** `use std::iter` for a single import; group with
+  braces for several from the same module — `use std::{iter,
+  os, strings}`. No trailing `;`. Alias an entry with
+  `use std::collections::{HashMap as Map}`.
 - **Expressions-as-statements.** `if`, `match`, `loop`, and
   block expressions all yield values.
 - **Bindings.** `let name = expr`, `let mut name = expr`,
@@ -321,6 +330,30 @@ fn load_config(path: &String) -> Result<String, errors::Error> {
 - `errors::is(err, needle)` — walk the cause chain.
 - `errors::chain(err)` — iterate the cause chain.
 - `errors::join([err, err])` — combine several into one.
+
+Idiomatic shape — fallible work returns `Result`, piped
+through `result::map` for the ok-path and
+`result::default_with` to handle the error in-line:
+
+```gossamer
+use std::{errors, iter, os, result}
+
+fn cat(f: &String) -> Result<(), errors::Error> {
+    os::read_file_to_string(f) |> result::map(|s| print!("{}", s))
+}
+
+fn main() {
+    os::args() |> iter::for_each(|f| cat(&f) |> result::default_with(|e| eprintln!("{f}: {e}")))
+}
+```
+
+`result::map(fn, r)` transforms `Ok(v)` via `fn`, leaving
+`Err` untouched. `result::default_with(fn, r)` calls `fn`
+on the error and returns `()`, consuming the result — the
+data-last argument order lets both thread through `|>`.
+`?` also works anywhere (including inside macro arguments
+like `print!("{}", expr?)`) for sequential `let`-binding
+style when that is clearer.
 
 Panics abort the current goroutine (and, for now, usually the
 process). Reserve them for invariant violations, not
@@ -489,7 +522,8 @@ executed by `gos test`. Mark non-runnable fences as
 - `std::os` — process environment, argv, filesystem primitives.
   Now also exposed: `set_env`, `unset_env`, `is_file`, `is_dir`,
   `is_symlink`, `file_size`, `home`, `temp_dir`, `set_cwd`,
-  `canonicalize`, `remove_dir`, `remove_dir_all`, `copy`.
+  `canonicalize`, `remove_dir`, `remove_dir_all`, `copy`,
+  `program_name` (returns argv[0]; `args()` already skips it).
 - `std::fs` — `metadata`, `is_file`, `is_dir`, `is_symlink`,
   `file_size`, `copy`, `canonicalize` (in addition to existing
   `read_to_string` / `write` / `walk_dir` / `read_dir`).
@@ -698,6 +732,28 @@ match per (method, path), exact match by default with
   self-evident code. Gossamer has no `///` / `//!` form.
 - **Pipe aggressively** — if a value flows through more
   than one call, use `|>`.
+- **`iter::*` over hand-rolled `for` loops for transformations.**
+  `xs |> iter::for_each(handle)` instead of
+  `for x in xs { handle(x) }` when the body is a single call.
+  `let total = xs |> iter::sum_by(|n| n*n)` instead of
+  `let mut total=0; for n in xs { total += n*n }`. The
+  combinators (`map`, `filter`, `filter_map`, `fold`, `reduce`,
+  `for_each`, `find`, `group_by`, `partition`, …) live as free
+  functions in `std::iter` with data-last argument order so they
+  thread through `|>`. Keep `for` for side-effects with
+  complex state, early-return shapes, or `break`/`continue`
+  flows.
+- **`option::*` / `result::*` for in-pipeline chaining.**
+  `parse(s) |> result::map(render) |> result::default("")`
+  instead of a `match` with two arms when each arm is an
+  extract-or-default. `?` is still the right tool for
+  short-circuit propagation; the combinators are for transforming
+  values mid-chain.
+- **Free functions in `std::iter`, not methods on collections.**
+  `Vec<T>` / `HashMap` / `HashSet` do not carry `.map` /
+  `.filter` / `.fold` methods. The mutating helpers
+  (`xs.push`, `xs.sort`, `m.inc`, `m.or_insert`) stay as
+  methods because they operate by side-effect on the receiver.
 - **One statement per line;** omit semicolons.
 - **Derive `Debug`, `Clone`, `PartialEq`** when cheap and
   meaningful; derive `Default` for zero-valued types.

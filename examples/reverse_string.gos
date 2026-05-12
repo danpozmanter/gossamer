@@ -8,6 +8,8 @@
  * so the doc strings call that out.
  */
 
+use std::iter
+
 // Returns the reversed sequence of byte codes. Treats input
 // as bytes — multi-byte UTF-8 would be split mid-codepoint.
 fn reverse_bytes(text: &String) -> [i64] {
@@ -37,7 +39,7 @@ fn main() {
         let label = if is_palindrome(&s) { "palindrome" } else { "not palindrome" }
         println!("{} reversed-bytes={} ({})", s, rev.len(), label)
         print("  codes:")
-        for code in rev.iter() { print!(" {}", *code) }
+        rev |> iter::for_each(|code: i64| print!(" {}", code))
         println("")
     }
 }

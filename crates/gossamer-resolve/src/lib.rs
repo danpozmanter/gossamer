@@ -30,6 +30,7 @@ pub use resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions
 pub use resolver::resolve_source_file;
 
 pub use external::{
-    BindingType, ExternalItem, ExternalModule, all_external_module_paths, all_external_modules,
-    clear_for_test, lookup_external_item, lookup_external_module, set_external_modules,
+    BindingType, BindingVariantArm, ExternalItem, ExternalModule, all_external_module_paths,
+    all_external_modules, clear_for_test, lookup_external_item, lookup_external_module,
+    set_external_modules,
 };

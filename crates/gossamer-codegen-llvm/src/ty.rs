@@ -117,9 +117,21 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
         | TyKind::Sender(_)
         | TyKind::Receiver(_) => Some(1),
         TyKind::Tuple(elems) => {
+            // Mirror `Array`'s behaviour: if any element type didn't
+            // resolve to anything concrete (typeck left a `Var(_)`),
+            // assume one slot instead of collapsing the whole tuple
+            // to `None`. Without this fallback, a tuple literal whose
+            // elements have inference variables (e.g. the operand of
+            // `xs.push((1, 1.5))` whose tuple-local is left as
+            // `(Var, Var)` because the surrounding `Vec<(i64, f64)>`
+            // element type didn't reach the operands) collapses the
+            // alloca to a single slot, and the second-slot store
+            // overflows the alloca and clobbers adjacent stack
+            // memory. Same root cause for the `(array, scalar)` /
+            // nested-loop tuple-return regressions.
             let mut total = 0u32;
             for e in elems {
-                total += slot_count(tcx, *e)?;
+                total += slot_count(tcx, *e).unwrap_or(1).max(1);
             }
             Some(total)
         }
@@ -134,10 +146,17 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             Some(elem_slots * (*len as u32))
         }
         TyKind::Adt { def, .. } => {
+            // `struct_field_tys` returning `None` is the
+            // genuinely-unknown-layout case (recursive enum, opaque
+            // sentinel) — keep that as `None` so the caller falls
+            // through to the heap-pointer path. When the field list
+            // exists but a single field has a `Var` type, mirror
+            // the `Tuple` fallback above so the alloca still gets
+            // sized for the known fields.
             let field_tys = tcx.struct_field_tys(*def)?;
             let mut total = 0u32;
             for t in field_tys {
-                total += slot_count(tcx, *t)?;
+                total += slot_count(tcx, *t).unwrap_or(1).max(1);
             }
             Some(total)
         }

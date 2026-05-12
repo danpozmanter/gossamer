@@ -21,9 +21,15 @@
 // The render loop walks one byte at a time over the template body,
 // branching per `{{ }}` action shape; the flat match-on-action keeps
 // the parser's intent in a single readable scan.
-#![allow(clippy::too_many_lines)]
+#![allow(
+    clippy::too_many_lines,
+    clippy::type_complexity,
+    clippy::doc_markdown,
+    clippy::missing_errors_doc
+)]
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -109,7 +115,7 @@ pub struct Template {
 #[derive(Debug, Clone)]
 enum Node {
     Text(String),
-    Substitute(String),
+    Substitute(Pipeline),
     If {
         cond: String,
         then_body: Vec<Node>,
@@ -119,6 +125,136 @@ enum Node {
         path: String,
         body: Vec<Node>,
     },
+}
+
+/// One stage in a `{{ expr | f1 | f2 arg }}` pipeline.
+#[derive(Debug, Clone)]
+struct PipelineStage {
+    func: String,
+    args: Vec<String>,
+}
+
+/// Parsed pipeline: an initial field path, then zero-or-more
+/// function applications. `{{ .name }}` is a pipeline with no
+/// stages; `{{ .name | upper }}` has one stage.
+#[derive(Debug, Clone)]
+struct Pipeline {
+    source: String,
+    stages: Vec<PipelineStage>,
+}
+
+fn parse_pipeline(expr: &str) -> Pipeline {
+    let mut parts = expr.split('|').map(str::trim);
+    let source = parts.next().unwrap_or("").to_string();
+    let stages: Vec<PipelineStage> = parts
+        .map(|seg| {
+            let mut tokens = seg.split_whitespace();
+            let func = tokens.next().unwrap_or("").to_string();
+            let args: Vec<String> = tokens.map(str::to_string).collect();
+            PipelineStage { func, args }
+        })
+        .collect();
+    Pipeline { source, stages }
+}
+
+/// Registry of named functions usable inside `{{ ... }}`
+/// pipelines. Mirrors Go's `template.FuncMap`.
+#[derive(Default)]
+pub struct FuncMap {
+    funcs: std::collections::HashMap<
+        String,
+        Arc<dyn Fn(&[Value]) -> Result<Value, Error> + Send + Sync>,
+    >,
+}
+
+impl FuncMap {
+    /// Empty FuncMap.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers a function under `name`.
+    pub fn add(
+        &mut self,
+        name: impl Into<String>,
+        f: impl Fn(&[Value]) -> Result<Value, Error> + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.funcs.insert(name.into(), Arc::new(f));
+        self
+    }
+
+    /// Looks up a function.
+    #[must_use]
+    pub fn get(
+        &self,
+        name: &str,
+    ) -> Option<Arc<dyn Fn(&[Value]) -> Result<Value, Error> + Send + Sync>> {
+        self.funcs.get(name).cloned()
+    }
+
+    /// Default FuncMap with the common helpers
+    /// (`upper`/`lower`/`trim`/`len`/`default`/`html_escape`).
+    #[must_use]
+    pub fn defaults() -> Self {
+        let mut m = Self::new();
+        m.add("upper", |args| match args.first() {
+            Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
+            Some(v) => Ok(Value::String(v.to_text().to_uppercase())),
+            None => Ok(Value::String(String::new())),
+        });
+        m.add("lower", |args| match args.first() {
+            Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
+            Some(v) => Ok(Value::String(v.to_text().to_lowercase())),
+            None => Ok(Value::String(String::new())),
+        });
+        m.add("trim", |args| match args.first() {
+            Some(Value::String(s)) => Ok(Value::String(s.trim().to_string())),
+            Some(v) => Ok(Value::String(v.to_text().trim().to_string())),
+            None => Ok(Value::String(String::new())),
+        });
+        m.add("len", |args| match args.first() {
+            Some(Value::String(s)) => Ok(Value::Int(s.chars().count() as i64)),
+            Some(Value::Seq(items)) => Ok(Value::Int(items.len() as i64)),
+            Some(Value::Map(map)) => Ok(Value::Int(map.len() as i64)),
+            _ => Ok(Value::Int(0)),
+        });
+        m.add("default", |args| {
+            // `{{ .x | default "fallback" }}` — return arg if .x
+            // is falsy / missing, else .x.
+            let value = args.first().cloned().unwrap_or(Value::Null);
+            let fallback = args.get(1).cloned().unwrap_or(Value::Null);
+            if value.truthy() {
+                Ok(value)
+            } else {
+                Ok(fallback)
+            }
+        });
+        m.add("html_escape", |args| {
+            let s = args.first().map(Value::to_text).unwrap_or_default();
+            let mut out = String::with_capacity(s.len());
+            for ch in s.chars() {
+                match ch {
+                    '<' => out.push_str("&lt;"),
+                    '>' => out.push_str("&gt;"),
+                    '&' => out.push_str("&amp;"),
+                    '"' => out.push_str("&quot;"),
+                    '\'' => out.push_str("&#39;"),
+                    c => out.push(c),
+                }
+            }
+            Ok(Value::String(out))
+        });
+        m
+    }
+}
+
+impl std::fmt::Debug for FuncMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FuncMap")
+            .field("names", &self.funcs.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 /// Errors raised by the parser / renderer.
@@ -149,23 +285,54 @@ impl Template {
         parse(source)
     }
 
-    /// Renders the template against `data`.
+    /// Renders the template against `data` with no FuncMap.
     pub fn render(&self, data: &Value) -> Result<String, Error> {
+        let empty = FuncMap::new();
+        self.render_with_funcs(data, &empty)
+    }
+
+    /// Renders the template against `data`, resolving pipeline
+    /// function calls through `funcs`. Functions not in
+    /// `funcs` fall through to the built-in set
+    /// ([`FuncMap::defaults`]). Use [`FuncMap::defaults`] +
+    /// [`FuncMap::add`] to extend with custom helpers.
+    pub fn render_with_funcs(&self, data: &Value, funcs: &FuncMap) -> Result<String, Error> {
+        let defaults = FuncMap::defaults();
         let mut out = String::with_capacity(64);
-        render_block(&self.nodes, std::slice::from_ref(data), &mut out)?;
+        render_block(
+            &self.nodes,
+            std::slice::from_ref(data),
+            funcs,
+            &defaults,
+            &mut out,
+        )?;
         Ok(out)
     }
 }
 
-/// Convenience renderer.
+/// Convenience renderer with no custom funcs.
 pub fn render(source: &str, data: &Value) -> Result<String, Error> {
     let tpl = parse(source)?;
     tpl.render(data)
 }
 
+/// Convenience renderer with a [`FuncMap`].
+pub fn render_with_funcs(source: &str, data: &Value, funcs: &FuncMap) -> Result<String, Error> {
+    let tpl = parse(source)?;
+    tpl.render_with_funcs(data, funcs)
+}
+
 /// Writes the rendered template into `out`. Useful for streaming.
 pub fn render_to(template: &Template, data: &Value, out: &mut String) -> Result<(), Error> {
-    render_block(&template.nodes, std::slice::from_ref(data), out)
+    let empty = FuncMap::new();
+    let defaults = FuncMap::defaults();
+    render_block(
+        &template.nodes,
+        std::slice::from_ref(data),
+        &empty,
+        &defaults,
+        out,
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -345,7 +512,7 @@ where
                     }
                     nodes.push(Node::Range { path, body });
                 } else {
-                    nodes.push(Node::Substitute(trimmed.to_string()));
+                    nodes.push(Node::Substitute(parse_pipeline(trimmed)));
                 }
             }
         }
@@ -382,12 +549,18 @@ fn resolve(stack: &[Value], expr: &str) -> Value {
     Value::Null
 }
 
-fn render_block(nodes: &[Node], stack: &[Value], out: &mut String) -> Result<(), Error> {
+fn render_block(
+    nodes: &[Node],
+    stack: &[Value],
+    funcs: &FuncMap,
+    defaults: &FuncMap,
+    out: &mut String,
+) -> Result<(), Error> {
     for node in nodes {
         match node {
             Node::Text(t) => out.push_str(t),
-            Node::Substitute(expr) => {
-                let value = resolve(stack, expr);
+            Node::Substitute(pipe) => {
+                let value = apply_pipeline(stack, pipe, funcs, defaults)?;
                 out.push_str(&value.to_text());
             }
             Node::If {
@@ -397,9 +570,9 @@ fn render_block(nodes: &[Node], stack: &[Value], out: &mut String) -> Result<(),
             } => {
                 let value = resolve(stack, cond);
                 if value.truthy() {
-                    render_block(then_body, stack, out)?;
+                    render_block(then_body, stack, funcs, defaults, out)?;
                 } else {
-                    render_block(else_body, stack, out)?;
+                    render_block(else_body, stack, funcs, defaults, out)?;
                 }
             }
             Node::Range { path, body } => {
@@ -408,7 +581,7 @@ fn render_block(nodes: &[Node], stack: &[Value], out: &mut String) -> Result<(),
                     for item in items {
                         let mut child_stack: Vec<Value> = stack.to_vec();
                         child_stack.push(item);
-                        render_block(body, &child_stack, out)?;
+                        render_block(body, &child_stack, funcs, defaults, out)?;
                     }
                 } else if let Value::Map(map) = value {
                     for (k, v) in map {
@@ -417,13 +590,49 @@ fn render_block(nodes: &[Node], stack: &[Value], out: &mut String) -> Result<(),
                         framed.insert("Value".to_string(), v);
                         let mut child_stack: Vec<Value> = stack.to_vec();
                         child_stack.push(Value::Map(framed));
-                        render_block(body, &child_stack, out)?;
+                        render_block(body, &child_stack, funcs, defaults, out)?;
                     }
                 }
             }
         }
     }
     Ok(())
+}
+
+fn apply_pipeline(
+    stack: &[Value],
+    pipe: &Pipeline,
+    funcs: &FuncMap,
+    defaults: &FuncMap,
+) -> Result<Value, Error> {
+    let mut value = resolve(stack, &pipe.source);
+    for stage in &pipe.stages {
+        let f = lookup_func(stage.func.as_str(), funcs, defaults)?;
+        let mut args: Vec<Value> = Vec::with_capacity(1 + stage.args.len());
+        args.push(value);
+        for a in &stage.args {
+            args.push(resolve_literal_or_field(stack, a));
+        }
+        value = f(&args)?;
+    }
+    Ok(value)
+}
+
+fn lookup_func(
+    name: &str,
+    funcs: &FuncMap,
+    defaults: &FuncMap,
+) -> Result<Arc<dyn Fn(&[Value]) -> Result<Value, Error> + Send + Sync>, Error> {
+    if let Some(f) = funcs.get(name) {
+        return Ok(f);
+    }
+    defaults
+        .get(name)
+        .ok_or_else(|| Error::Parse(format!("unknown template function {name:?}")))
+}
+
+fn resolve_literal_or_field(stack: &[Value], expr: &str) -> Value {
+    resolve(stack, expr)
 }
 
 #[cfg(test)]
@@ -493,5 +702,87 @@ mod tests {
         let outer = map(&[("user", inner)]);
         let out = render("hi {{ .user.name }}", &outer).unwrap();
         assert_eq!(out, "hi nested");
+    }
+
+    // --- P1 template parity: FuncMap + pipelines ----------------
+
+    #[test]
+    fn pipeline_uppercase_works() {
+        let data = map(&[("name", Value::String("ada".into()))]);
+        let out = render("hi {{ .name | upper }}", &data).unwrap();
+        assert_eq!(out, "hi ADA");
+    }
+
+    #[test]
+    fn pipeline_chained_functions() {
+        let data = map(&[("name", Value::String("  Ada  ".into()))]);
+        let out = render("[{{ .name | trim | lower }}]", &data).unwrap();
+        assert_eq!(out, "[ada]");
+    }
+
+    #[test]
+    fn pipeline_default_falls_back_when_empty() {
+        let data = map(&[("name", Value::String(String::new()))]);
+        let out = render("hi {{ .name | default \"anon\" }}", &data).unwrap();
+        // Note: default's second arg "anon" is a literal string.
+        assert_eq!(out, "hi anon");
+    }
+
+    #[test]
+    fn pipeline_len_counts_seq() {
+        let data = map(&[(
+            "items",
+            Value::Seq(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+        )]);
+        let out = render("{{ .items | len }}", &data).unwrap();
+        assert_eq!(out, "3");
+    }
+
+    #[test]
+    fn pipeline_html_escape_protects_metachars() {
+        let data = map(&[("body", Value::String("<b>hi</b>".into()))]);
+        let out = render("{{ .body | html_escape }}", &data).unwrap();
+        assert_eq!(out, "&lt;b&gt;hi&lt;/b&gt;");
+    }
+
+    #[test]
+    fn custom_func_via_funcmap() {
+        let mut fm = FuncMap::new();
+        fm.add("exclaim", |args| {
+            let s = args.first().map(Value::to_text).unwrap_or_default();
+            Ok(Value::String(format!("{s}!")))
+        });
+        let tpl = parse("{{ .name | exclaim }}").unwrap();
+        let data = map(&[("name", Value::String("hi".into()))]);
+        let out = tpl.render_with_funcs(&data, &fm).unwrap();
+        assert_eq!(out, "hi!");
+    }
+
+    #[test]
+    fn unknown_function_errors() {
+        let tpl = parse("{{ .x | not_a_real_func }}").unwrap();
+        let data = map(&[("x", Value::String("v".into()))]);
+        let err = tpl.render(&data).unwrap_err();
+        assert!(matches!(err, Error::Parse(_)));
+    }
+
+    #[test]
+    fn pipeline_passes_through_when_no_stages() {
+        // Just a substitution — no pipeline functions.
+        let data = map(&[("x", Value::String("plain".into()))]);
+        let out = render("{{ .x }}", &data).unwrap();
+        assert_eq!(out, "plain");
+    }
+
+    #[test]
+    fn render_with_funcs_helper_works() {
+        let mut fm = FuncMap::new();
+        fm.add("double", |args| match args.first() {
+            Some(Value::Int(n)) => Ok(Value::Int(n * 2)),
+            _ => Ok(Value::Null),
+        });
+        let data = map(&[("n", Value::Int(21))]);
+        let out = render_with_funcs("{{ .n | double }}", &data, &fm).unwrap();
+        assert_eq!(out, "42");
     }
 }

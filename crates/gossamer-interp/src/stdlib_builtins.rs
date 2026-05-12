@@ -17,6 +17,8 @@ use std::sync::Arc;
 
 use gossamer_ast::Ident;
 
+use crate::value::SmolStr;
+
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
 use gossamer_std::net as net_std;
@@ -57,6 +59,8 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_encoding_pem(globals);
     install_utf16(globals);
     install_iter(globals);
+    install_option(globals);
+    install_result(globals);
     install_crypto(globals);
     install_encoding_yaml(globals);
     install_compress(globals);
@@ -79,6 +83,14 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_crypto_insecure(globals);
     install_compress_bzip2(globals);
     install_math_big(globals);
+    install_http_chunked(globals);
+    install_http_sse(globals);
+    install_http_native_client(globals);
+    install_http_static_files(globals);
+    install_http_proxy(globals);
+    install_http_websocket(globals);
+    install_http_router(globals);
+    install_http_middleware(globals);
 }
 
 // ----------------------------------------------------------------------
@@ -2833,6 +2845,9 @@ fn collect_array(v: &Value) -> Vec<Value> {
 fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // Register only qualified `iter::*` names to avoid shadowing built-in
     // method dispatch (Option::map, Result::filter, Vec::any, etc.).
+    //
+    // Argument order is DATA-LAST throughout, matching SPEC §4.6 so
+    // `xs |> iter::map(f)` desugars to `iter::map(f, xs)` and threads.
     let static_entries: &[(&str, BuiltinFnPub)] = &[
         ("count", builtin_iter_count),
         ("take", builtin_iter_take),
@@ -2844,6 +2859,16 @@ fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("reversed", builtin_iter_reversed),
         ("dedup", builtin_iter_dedup),
         ("sum", builtin_iter_sum),
+        ("product", builtin_iter_product),
+        ("min", builtin_iter_min),
+        ("max", builtin_iter_max),
+        ("range", builtin_iter_range),
+        ("range_inclusive", builtin_iter_range_inclusive),
+        ("repeat", builtin_iter_repeat),
+        ("unzip", builtin_iter_unzip),
+        ("windowed", builtin_iter_windowed),
+        ("pairwise", builtin_iter_pairwise),
+        ("chunk_by_size", builtin_iter_chunk_by_size),
     ];
     for (short, call) in static_entries {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
@@ -2852,12 +2877,32 @@ fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
 
     // Closure-taking functions — must be `native` to access the interpreter.
     let native_entries: &[(&str, NativeCall)] = &[
+        ("for_each", native_iter_for_each),
         ("map", native_iter_map),
         ("filter", native_iter_filter),
+        ("filter_map", native_iter_filter_map),
+        ("flat_map", native_iter_flat_map),
         ("fold", native_iter_fold),
+        ("reduce", native_iter_reduce),
+        ("scan", native_iter_scan),
+        ("sum_by", native_iter_sum_by),
+        ("product_by", native_iter_product_by),
         ("any", native_iter_any),
         ("all", native_iter_all),
-        ("flat_map", native_iter_flat_map),
+        ("find", native_iter_find),
+        ("position", native_iter_position),
+        ("find_map", native_iter_find_map),
+        ("take_while", native_iter_take_while),
+        ("skip_while", native_iter_skip_while),
+        ("partition", native_iter_partition),
+        ("sort_by", native_iter_sort_by),
+        ("sort_by_key", native_iter_sort_by_key),
+        ("min_by", native_iter_min_by),
+        ("max_by", native_iter_max_by),
+        ("min_by_key", native_iter_min_by_key),
+        ("max_by_key", native_iter_max_by_key),
+        ("group_by", native_iter_group_by),
+        ("count_by", native_iter_count_by),
     ];
     for (short, call) in native_entries {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
@@ -2876,18 +2921,18 @@ fn builtin_iter_count(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_iter_take(args: &[Value]) -> RuntimeResult<Value> {
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let n = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let n = args.first().and_then(value_to_int).unwrap_or(0);
     let n = usize::try_from(n.max(0)).unwrap_or(0);
-    let taken = iter_std::take(&xs, n);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let taken = iter_std::take(n, &xs);
     Ok(Value::Array(Arc::new(taken)))
 }
 
 fn builtin_iter_skip(args: &[Value]) -> RuntimeResult<Value> {
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let n = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let n = args.first().and_then(value_to_int).unwrap_or(0);
     let n = usize::try_from(n.max(0)).unwrap_or(0);
-    let rest = iter_std::skip(&xs, n);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let rest = iter_std::skip(n, &xs);
     Ok(Value::Array(Arc::new(rest)))
 }
 
@@ -2984,9 +3029,24 @@ fn builtin_iter_sum(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+// ------- closure-taking iter natives (DATA-LAST argument order) -------
+//
+// Each native reads its callable(s) from the head of `args` and the data
+// from `args.last()`. This matches SPEC §4.6 so the pipe form
+// `xs |> iter::f(g)` desugars to `iter::f(g, xs)` and threads.
+
+fn native_iter_for_each(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    for x in xs {
+        dispatch.call_value(&f, vec![x])?;
+    }
+    Ok(Value::Unit)
+}
+
 fn native_iter_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let mut out = Vec::with_capacity(xs.len());
     for x in xs {
         out.push(dispatch.call_value(&f, vec![x])?);
@@ -2995,32 +3055,130 @@ fn native_iter_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runtime
 }
 
 fn native_iter_filter(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let mut out = Vec::new();
     for x in xs {
-        if let Value::Bool(true) = dispatch.call_value(&f, vec![x.clone()])? {
+        if let Value::Bool(true) = dispatch.call_value(&p, vec![x.clone()])? {
             out.push(x);
         }
     }
     Ok(Value::Array(Arc::new(out)))
 }
 
+fn native_iter_filter_map(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut out = Vec::new();
+    for x in xs {
+        if let Some(v) = some_payload(&dispatch.call_value(&f, vec![x])?) {
+            out.push(v);
+        }
+    }
+    Ok(Value::Array(Arc::new(out)))
+}
+
 fn native_iter_fold(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let mut acc = args.get(1).cloned().unwrap_or(Value::Unit);
-    let f = args.get(2).cloned().unwrap_or(Value::Unit);
+    // Signature: fold(init, f, xs) — data still last.
+    let mut acc = args.first().cloned().unwrap_or(Value::Unit);
+    let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(2).unwrap_or(&Value::Unit));
     for x in xs {
         acc = dispatch.call_value(&f, vec![acc, x])?;
     }
     Ok(acc)
 }
 
-fn native_iter_any(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
+fn native_iter_reduce(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut iter = xs.into_iter();
+    let Some(first) = iter.next() else {
+        return Ok(none_variant());
+    };
+    let mut acc = first;
+    for x in iter {
+        acc = dispatch.call_value(&f, vec![acc, x])?;
+    }
+    Ok(some_variant(acc))
+}
+
+fn native_iter_scan(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    // Signature: scan(init, f, xs).
+    let mut acc = args.first().cloned().unwrap_or(Value::Unit);
     let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(2).unwrap_or(&Value::Unit));
+    let mut out = Vec::with_capacity(xs.len());
     for x in xs {
-        if matches!(dispatch.call_value(&f, vec![x])?, Value::Bool(true)) {
+        acc = dispatch.call_value(&f, vec![acc.clone(), x])?;
+        out.push(acc.clone());
+    }
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn native_iter_sum_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut int_sum: i64 = 0;
+    let mut float_sum: f64 = 0.0;
+    let mut is_float = false;
+    for x in xs {
+        match dispatch.call_value(&f, vec![x])? {
+            Value::Int(n) => {
+                int_sum += n;
+                float_sum += n as f64;
+            }
+            Value::Float(v) => {
+                is_float = true;
+                float_sum += v;
+            }
+            _ => {}
+        }
+    }
+    Ok(if is_float {
+        Value::Float(float_sum)
+    } else {
+        Value::Int(int_sum)
+    })
+}
+
+fn native_iter_product_by(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut int_prod: i64 = 1;
+    let mut float_prod: f64 = 1.0;
+    let mut is_float = false;
+    for x in xs {
+        match dispatch.call_value(&f, vec![x])? {
+            Value::Int(n) => {
+                int_prod = int_prod.wrapping_mul(n);
+                float_prod *= n as f64;
+            }
+            Value::Float(v) => {
+                is_float = true;
+                float_prod *= v;
+            }
+            _ => {}
+        }
+    }
+    Ok(if is_float {
+        Value::Float(float_prod)
+    } else {
+        Value::Int(int_prod)
+    })
+}
+
+fn native_iter_any(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    for x in xs {
+        if matches!(dispatch.call_value(&p, vec![x])?, Value::Bool(true)) {
             return Ok(Value::Bool(true));
         }
     }
@@ -3028,25 +3186,744 @@ fn native_iter_any(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runtime
 }
 
 fn native_iter_all(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     for x in xs {
-        if !matches!(dispatch.call_value(&f, vec![x])?, Value::Bool(true)) {
+        if !matches!(dispatch.call_value(&p, vec![x])?, Value::Bool(true)) {
             return Ok(Value::Bool(false));
         }
     }
     Ok(Value::Bool(true))
 }
 
+fn native_iter_find(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    for x in xs {
+        if matches!(dispatch.call_value(&p, vec![x.clone()])?, Value::Bool(true)) {
+            return Ok(some_variant(x));
+        }
+    }
+    Ok(none_variant())
+}
+
+fn native_iter_position(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    for (i, x) in xs.into_iter().enumerate() {
+        if matches!(dispatch.call_value(&p, vec![x])?, Value::Bool(true)) {
+            return Ok(some_variant(Value::Int(i as i64)));
+        }
+    }
+    Ok(none_variant())
+}
+
+fn native_iter_find_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    for x in xs {
+        let r = dispatch.call_value(&f, vec![x])?;
+        if let Some(v) = some_payload(&r) {
+            return Ok(some_variant(v));
+        }
+    }
+    Ok(none_variant())
+}
+
+fn native_iter_take_while(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut out = Vec::new();
+    for x in xs {
+        if matches!(dispatch.call_value(&p, vec![x.clone()])?, Value::Bool(true)) {
+            out.push(x);
+        } else {
+            break;
+        }
+    }
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn native_iter_skip_while(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut out = Vec::new();
+    let mut dropping = true;
+    for x in xs {
+        if dropping && matches!(dispatch.call_value(&p, vec![x.clone()])?, Value::Bool(true)) {
+            continue;
+        }
+        dropping = false;
+        out.push(x);
+    }
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn native_iter_partition(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut yes = Vec::new();
+    let mut no = Vec::new();
+    for x in xs {
+        if matches!(dispatch.call_value(&p, vec![x.clone()])?, Value::Bool(true)) {
+            yes.push(x);
+        } else {
+            no.push(x);
+        }
+    }
+    Ok(Value::Tuple(Arc::new(vec![
+        Value::Array(Arc::new(yes)),
+        Value::Array(Arc::new(no)),
+    ])))
+}
+
+fn native_iter_sort_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let cmp = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut out = xs;
+    let mut error: Option<crate::value::RuntimeError> = None;
+    out.sort_by(|a, b| {
+        if error.is_some() {
+            return std::cmp::Ordering::Equal;
+        }
+        match dispatch.call_value(&cmp, vec![a.clone(), b.clone()]) {
+            Ok(Value::Int(n)) => match n.signum() {
+                -1 => std::cmp::Ordering::Less,
+                1 => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            },
+            Ok(_) => std::cmp::Ordering::Equal,
+            Err(e) => {
+                error = Some(e);
+                std::cmp::Ordering::Equal
+            }
+        }
+    });
+    if let Some(e) = error {
+        return Err(e);
+    }
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn native_iter_sort_by_key(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut keyed: Vec<(Value, Value)> = Vec::with_capacity(xs.len());
+    for x in xs {
+        let k = dispatch.call_value(&key, vec![x.clone()])?;
+        keyed.push((k, x));
+    }
+    keyed.sort_by(|a, b| compare_values_total(&a.0, &b.0));
+    Ok(Value::Array(Arc::new(
+        keyed.into_iter().map(|(_, v)| v).collect(),
+    )))
+}
+
+fn native_iter_min_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let cmp = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut iter = xs.into_iter();
+    let Some(mut best) = iter.next() else {
+        return Ok(none_variant());
+    };
+    for x in iter {
+        let ord = dispatch.call_value(&cmp, vec![x.clone(), best.clone()])?;
+        if let Value::Int(n) = ord
+            && n < 0
+        {
+            best = x;
+        }
+    }
+    Ok(some_variant(best))
+}
+
+fn native_iter_max_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let cmp = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut iter = xs.into_iter();
+    let Some(mut best) = iter.next() else {
+        return Ok(none_variant());
+    };
+    for x in iter {
+        let ord = dispatch.call_value(&cmp, vec![x.clone(), best.clone()])?;
+        if let Value::Int(n) = ord
+            && n > 0
+        {
+            best = x;
+        }
+    }
+    Ok(some_variant(best))
+}
+
+fn native_iter_min_by_key(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut iter = xs.into_iter();
+    let Some(mut best) = iter.next() else {
+        return Ok(none_variant());
+    };
+    let mut best_key = dispatch.call_value(&key, vec![best.clone()])?;
+    for x in iter {
+        let k = dispatch.call_value(&key, vec![x.clone()])?;
+        if compare_values_total(&k, &best_key) == std::cmp::Ordering::Less {
+            best = x;
+            best_key = k;
+        }
+    }
+    Ok(some_variant(best))
+}
+
+fn native_iter_max_by_key(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut iter = xs.into_iter();
+    let Some(mut best) = iter.next() else {
+        return Ok(none_variant());
+    };
+    let mut best_key = dispatch.call_value(&key, vec![best.clone()])?;
+    for x in iter {
+        let k = dispatch.call_value(&key, vec![x.clone()])?;
+        if compare_values_total(&k, &best_key) == std::cmp::Ordering::Greater {
+            best = x;
+            best_key = k;
+        }
+    }
+    Ok(some_variant(best))
+}
+
+fn native_iter_group_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut groups: rustc_hash::FxHashMap<MapKey, Vec<Value>> = rustc_hash::FxHashMap::default();
+    for x in xs {
+        let k = dispatch.call_value(&key, vec![x.clone()])?;
+        groups.entry(MapKey::from_value(&k)).or_default().push(x);
+    }
+    let map: rustc_hash::FxHashMap<MapKey, Value> = groups
+        .into_iter()
+        .map(|(k, v)| (k, Value::Array(Arc::new(v))))
+        .collect();
+    Ok(Value::Map(Arc::new(parking_lot::Mutex::new(map))))
+}
+
+fn native_iter_count_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let mut counts: rustc_hash::FxHashMap<MapKey, i64> = rustc_hash::FxHashMap::default();
+    for x in xs {
+        let k = dispatch.call_value(&key, vec![x])?;
+        *counts.entry(MapKey::from_value(&k)).or_insert(0) += 1;
+    }
+    let map: rustc_hash::FxHashMap<MapKey, Value> = counts
+        .into_iter()
+        .map(|(k, v)| (k, Value::Int(v)))
+        .collect();
+    Ok(Value::Map(Arc::new(parking_lot::Mutex::new(map))))
+}
+
 fn native_iter_flat_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let mut out = Vec::new();
     for x in xs {
         let result = dispatch.call_value(&f, vec![x])?;
         out.extend(collect_array(&result));
     }
     Ok(Value::Array(Arc::new(out)))
+}
+
+// ------- non-closure iter builtins added in the F#-parity pass -------
+
+fn builtin_iter_product(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first() {
+        Some(Value::IntArray(arr)) => Ok(Value::Int(arr.iter().product())),
+        Some(Value::FloatVec(arr)) => Ok(Value::Float(arr.iter().product())),
+        Some(Value::Array(arr)) => {
+            let mut int_prod: i64 = 1;
+            let mut float_prod: f64 = 1.0;
+            let mut is_float = false;
+            for v in arr.iter() {
+                match v {
+                    Value::Int(n) => {
+                        int_prod = int_prod.wrapping_mul(*n);
+                        float_prod *= *n as f64;
+                    }
+                    Value::Float(f) => {
+                        is_float = true;
+                        float_prod *= f;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(if is_float {
+                Value::Float(float_prod)
+            } else {
+                Value::Int(int_prod)
+            })
+        }
+        _ => Ok(Value::Int(1)),
+    }
+}
+
+fn builtin_iter_min(args: &[Value]) -> RuntimeResult<Value> {
+    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let mut iter = xs.into_iter();
+    let Some(mut best) = iter.next() else {
+        return Ok(none_variant());
+    };
+    for x in iter {
+        if compare_values_total(&x, &best) == std::cmp::Ordering::Less {
+            best = x;
+        }
+    }
+    Ok(some_variant(best))
+}
+
+fn builtin_iter_max(args: &[Value]) -> RuntimeResult<Value> {
+    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let mut iter = xs.into_iter();
+    let Some(mut best) = iter.next() else {
+        return Ok(none_variant());
+    };
+    for x in iter {
+        if compare_values_total(&x, &best) == std::cmp::Ordering::Greater {
+            best = x;
+        }
+    }
+    Ok(some_variant(best))
+}
+
+fn builtin_iter_range(args: &[Value]) -> RuntimeResult<Value> {
+    let start = args.first().and_then(value_to_int).unwrap_or(0);
+    let end = args.get(1).and_then(value_to_int).unwrap_or(0);
+    Ok(Value::IntArray(Arc::new(iter_std::range(start, end))))
+}
+
+fn builtin_iter_range_inclusive(args: &[Value]) -> RuntimeResult<Value> {
+    let start = args.first().and_then(value_to_int).unwrap_or(0);
+    let end = args.get(1).and_then(value_to_int).unwrap_or(0);
+    Ok(Value::IntArray(Arc::new(iter_std::range_inclusive(
+        start, end,
+    ))))
+}
+
+fn builtin_iter_repeat(args: &[Value]) -> RuntimeResult<Value> {
+    let v = args.first().cloned().unwrap_or(Value::Unit);
+    let n = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let out: Vec<Value> = (0..n).map(|_| v.clone()).collect();
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn builtin_iter_unzip(args: &[Value]) -> RuntimeResult<Value> {
+    let pairs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let mut a = Vec::with_capacity(pairs.len());
+    let mut b = Vec::with_capacity(pairs.len());
+    for p in pairs {
+        if let Value::Tuple(t) = p
+            && t.len() >= 2
+        {
+            a.push(t[0].clone());
+            b.push(t[1].clone());
+        }
+    }
+    Ok(Value::Tuple(Arc::new(vec![
+        Value::Array(Arc::new(a)),
+        Value::Array(Arc::new(b)),
+    ])))
+}
+
+fn builtin_iter_windowed(args: &[Value]) -> RuntimeResult<Value> {
+    let n = args.first().and_then(value_to_int).unwrap_or(0);
+    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    if n == 0 || xs.len() < n {
+        return Ok(Value::Array(Arc::new(Vec::new())));
+    }
+    let out: Vec<Value> = xs
+        .windows(n)
+        .map(|w| Value::Array(Arc::new(w.to_vec())))
+        .collect();
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn builtin_iter_pairwise(args: &[Value]) -> RuntimeResult<Value> {
+    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let out: Vec<Value> = xs
+        .windows(2)
+        .map(|w| Value::Tuple(Arc::new(vec![w[0].clone(), w[1].clone()])))
+        .collect();
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn builtin_iter_chunk_by_size(args: &[Value]) -> RuntimeResult<Value> {
+    let n = args.first().and_then(value_to_int).unwrap_or(0);
+    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    if n == 0 {
+        return Ok(Value::Array(Arc::new(Vec::new())));
+    }
+    let out: Vec<Value> = xs
+        .chunks(n)
+        .map(|c| Value::Array(Arc::new(c.to_vec())))
+        .collect();
+    Ok(Value::Array(Arc::new(out)))
+}
+
+// ------- support helpers for iter combinators -------
+
+/// Extract the payload of a `Some(_)` variant, or `None` for `None`/non-variant.
+fn some_payload(v: &Value) -> Option<Value> {
+    if let Value::Variant(inner) = v
+        && inner.name == "Some"
+        && let Some(first) = inner.fields.first()
+    {
+        return Some(first.clone());
+    }
+    None
+}
+
+/// Total order over `Value`s for sort/min/max stability. Falls back to
+/// `Equal` for cross-type comparisons rather than panicking.
+fn compare_values_total(a: &Value, b: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x.cmp(y),
+        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+        (Value::Int(x), Value::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(Ordering::Equal),
+        (Value::Float(x), Value::Int(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(Ordering::Equal),
+        (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+        (Value::Char(x), Value::Char(y)) => x.cmp(y),
+        (Value::String(x), Value::String(y)) => x.as_str().cmp(y.as_str()),
+        _ => Ordering::Equal,
+    }
+}
+
+// ----------------------------------------------------------------------
+// option — F#-style chaining surface for `Option<T>` (SPEC §10.4a).
+// Data-last argument order. Methods are kept on `Option<T>` itself
+// (Rust-style); these are the free-function siblings for use with
+// `|>`.
+
+fn install_option(globals: &mut Vec<(&'static str, Value)>) {
+    let static_entries: &[(&str, BuiltinFnPub)] = &[
+        ("is_some", builtin_option_is_some),
+        ("is_none", builtin_option_is_none),
+        ("default", builtin_option_default),
+        ("or", builtin_option_or),
+        ("flatten", builtin_option_flatten),
+        ("zip", builtin_option_zip),
+    ];
+    for (short, call) in static_entries {
+        let qualified: &'static str = Box::leak(format!("option::{short}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
+    }
+
+    let native_entries: &[(&str, NativeCall)] = &[
+        ("map", native_option_map),
+        ("and_then", native_option_and_then),
+        ("filter", native_option_filter),
+        ("default_with", native_option_default_with),
+        ("or_else", native_option_or_else),
+        ("iter", native_option_iter),
+    ];
+    for (short, call) in native_entries {
+        let qualified: &'static str = Box::leak(format!("option::{short}").into_boxed_str());
+        globals.push((qualified, Value::native(qualified, *call)));
+    }
+}
+
+fn is_some_variant(v: &Value) -> bool {
+    matches!(v, Value::Variant(inner) if inner.name == "Some")
+}
+
+fn is_none_variant(v: &Value) -> bool {
+    matches!(v, Value::Variant(inner) if inner.name == "None")
+}
+
+fn builtin_option_is_some(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(is_some_variant(
+        args.first().unwrap_or(&Value::Unit),
+    )))
+}
+
+fn builtin_option_is_none(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(is_none_variant(
+        args.first().unwrap_or(&Value::Unit),
+    )))
+}
+
+fn builtin_option_default(args: &[Value]) -> RuntimeResult<Value> {
+    let fallback = args.first().cloned().unwrap_or(Value::Unit);
+    let opt = args.get(1).unwrap_or(&Value::Unit);
+    Ok(some_payload(opt).unwrap_or(fallback))
+}
+
+fn builtin_option_or(args: &[Value]) -> RuntimeResult<Value> {
+    let alt = args.first().cloned().unwrap_or_else(none_variant);
+    let opt = args.get(1).cloned().unwrap_or_else(none_variant);
+    Ok(if is_some_variant(&opt) { opt } else { alt })
+}
+
+fn builtin_option_flatten(args: &[Value]) -> RuntimeResult<Value> {
+    let outer = args.first().cloned().unwrap_or_else(none_variant);
+    if let Some(inner) = some_payload(&outer) {
+        return Ok(inner);
+    }
+    Ok(none_variant())
+}
+
+fn builtin_option_zip(args: &[Value]) -> RuntimeResult<Value> {
+    let a = args.first().cloned().unwrap_or_else(none_variant);
+    let b = args.get(1).cloned().unwrap_or_else(none_variant);
+    match (some_payload(&a), some_payload(&b)) {
+        (Some(x), Some(y)) => Ok(some_variant(Value::Tuple(Arc::new(vec![x, y])))),
+        _ => Ok(none_variant()),
+    }
+}
+
+fn native_option_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let opt = args.get(1).cloned().unwrap_or_else(none_variant);
+    match some_payload(&opt) {
+        Some(x) => Ok(some_variant(dispatch.call_value(&f, vec![x])?)),
+        None => Ok(none_variant()),
+    }
+}
+
+fn native_option_and_then(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let opt = args.get(1).cloned().unwrap_or_else(none_variant);
+    match some_payload(&opt) {
+        Some(x) => dispatch.call_value(&f, vec![x]),
+        None => Ok(none_variant()),
+    }
+}
+
+fn native_option_filter(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let p = args.first().cloned().unwrap_or(Value::Unit);
+    let opt = args.get(1).cloned().unwrap_or_else(none_variant);
+    if let Some(x) = some_payload(&opt) {
+        if matches!(dispatch.call_value(&p, vec![x.clone()])?, Value::Bool(true)) {
+            return Ok(some_variant(x));
+        }
+    }
+    Ok(none_variant())
+}
+
+fn native_option_default_with(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let opt = args.get(1).unwrap_or(&Value::Unit);
+    if let Some(x) = some_payload(opt) {
+        return Ok(x);
+    }
+    dispatch.call_value(&f, Vec::new())
+}
+
+fn native_option_or_else(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let opt = args.get(1).cloned().unwrap_or_else(none_variant);
+    if is_some_variant(&opt) {
+        return Ok(opt);
+    }
+    dispatch.call_value(&f, Vec::new())
+}
+
+fn native_option_iter(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let opt = args.get(1).unwrap_or(&Value::Unit);
+    if let Some(x) = some_payload(opt) {
+        dispatch.call_value(&f, vec![x])?;
+    }
+    Ok(Value::Unit)
+}
+
+// ----------------------------------------------------------------------
+// result — F#-style chaining surface for `Result<T, E>` (SPEC §10.4b).
+// Data-last. The `?` operator stays the right tool for short-circuit
+// propagation; these are for in-pipeline transformation.
+
+fn install_result(globals: &mut Vec<(&'static str, Value)>) {
+    let static_entries: &[(&str, BuiltinFnPub)] = &[
+        ("is_ok", builtin_result_is_ok),
+        ("is_err", builtin_result_is_err),
+        ("ok", builtin_result_ok),
+        ("err", builtin_result_err),
+        ("default", builtin_result_default),
+    ];
+    for (short, call) in static_entries {
+        let qualified: &'static str = Box::leak(format!("result::{short}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
+    }
+
+    let native_entries: &[(&str, NativeCall)] = &[
+        ("map", native_result_map),
+        ("map_err", native_result_map_err),
+        ("and_then", native_result_and_then),
+        ("or_else", native_result_or_else),
+        ("default_with", native_result_default_with),
+    ];
+    for (short, call) in native_entries {
+        let qualified: &'static str = Box::leak(format!("result::{short}").into_boxed_str());
+        globals.push((qualified, Value::native(qualified, *call)));
+    }
+}
+
+fn is_ok_variant(v: &Value) -> bool {
+    matches!(v, Value::Variant(inner) if inner.name == "Ok")
+}
+
+fn is_err_variant(v: &Value) -> bool {
+    matches!(v, Value::Variant(inner) if inner.name == "Err")
+}
+
+fn ok_payload(v: &Value) -> Option<Value> {
+    if let Value::Variant(inner) = v
+        && inner.name == "Ok"
+        && let Some(first) = inner.fields.first()
+    {
+        return Some(first.clone());
+    }
+    None
+}
+
+fn err_payload(v: &Value) -> Option<Value> {
+    if let Value::Variant(inner) = v
+        && inner.name == "Err"
+        && let Some(first) = inner.fields.first()
+    {
+        return Some(first.clone());
+    }
+    None
+}
+
+fn builtin_result_is_ok(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(is_ok_variant(
+        args.first().unwrap_or(&Value::Unit),
+    )))
+}
+
+fn builtin_result_is_err(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(is_err_variant(
+        args.first().unwrap_or(&Value::Unit),
+    )))
+}
+
+fn builtin_result_ok(args: &[Value]) -> RuntimeResult<Value> {
+    let r = args.first().unwrap_or(&Value::Unit);
+    Ok(ok_payload(r).map_or_else(none_variant, some_variant))
+}
+
+fn builtin_result_err(args: &[Value]) -> RuntimeResult<Value> {
+    let r = args.first().unwrap_or(&Value::Unit);
+    Ok(err_payload(r).map_or_else(none_variant, some_variant))
+}
+
+fn builtin_result_default(args: &[Value]) -> RuntimeResult<Value> {
+    let fallback = args.first().cloned().unwrap_or(Value::Unit);
+    let r = args.get(1).unwrap_or(&Value::Unit);
+    Ok(ok_payload(r).unwrap_or(fallback))
+}
+
+fn native_result_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let r = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| ok_variant(Value::Unit));
+    match ok_payload(&r) {
+        Some(x) => Ok(ok_variant(dispatch.call_value(&f, vec![x])?)),
+        None => Ok(r),
+    }
+}
+
+fn native_result_map_err(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let r = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| ok_variant(Value::Unit));
+    if let Some(e) = err_payload(&r) {
+        let mapped = dispatch.call_value(&f, vec![e])?;
+        return Ok(Value::variant("Err", Arc::new(vec![mapped])));
+    }
+    Ok(r)
+}
+
+fn native_result_and_then(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let r = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| ok_variant(Value::Unit));
+    match ok_payload(&r) {
+        Some(x) => dispatch.call_value(&f, vec![x]),
+        None => Ok(r),
+    }
+}
+
+fn native_result_or_else(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let r = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| ok_variant(Value::Unit));
+    if let Some(e) = err_payload(&r) {
+        return dispatch.call_value(&f, vec![e]);
+    }
+    Ok(r)
+}
+
+fn native_result_default_with(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let f = args.first().cloned().unwrap_or(Value::Unit);
+    let r = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| ok_variant(Value::Unit));
+    if let Some(x) = ok_payload(&r) {
+        return Ok(x);
+    }
+    let e = err_payload(&r).unwrap_or(Value::Unit);
+    dispatch.call_value(&f, vec![e])
 }
 
 // ----------------------------------------------------------------------
@@ -4891,6 +5768,680 @@ fn builtin_big_factorial(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(
         gossamer_std::math::big::factorial(n).to_string().into(),
     ))
+}
+
+// ---------------------------------------------------------------------------
+// 0.4.0 HTTP-module bridges (interp tier).
+//
+// Free-function-style entry points for the stateless / single-call
+// modules. Stateful types that need cross-call state (Router,
+// FileServer, WebSocket, Proxy, NativeClient) use a thread-local
+// registry keyed by an i64 handle — same shape the existing atomic
+// / mutex / scanner bridges use, so the dispatch path is uniform.
+// ---------------------------------------------------------------------------
+
+fn install_http_chunked(globals: &mut Vec<(&'static str, Value)>) {
+    for (name, call) in [
+        ("encode", builtin_chunked_encode as BuiltinFnPub),
+        ("decode", builtin_chunked_decode),
+    ] {
+        let qualified: &'static str = Box::leak(format!("http::chunked::{name}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
+        let short: &'static str = Box::leak(format!("chunked::{name}").into_boxed_str());
+        globals.push((short, crate::builtins::builtin_pub(short, call)));
+    }
+}
+
+fn builtin_chunked_encode(args: &[Value]) -> RuntimeResult<Value> {
+    let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
+    let out = gossamer_std::http_chunked::encode_one(&input);
+    Ok(bytes_to_array(out))
+}
+
+fn builtin_chunked_decode(args: &[Value]) -> RuntimeResult<Value> {
+    let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
+    match gossamer_std::http_chunked::decode_all(&input) {
+        Ok(bytes) => Ok(ok_variant(bytes_to_array(bytes))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn install_http_sse(globals: &mut Vec<(&'static str, Value)>) {
+    for (name, call) in [
+        ("encode_event", builtin_sse_encode_event as BuiltinFnPub),
+        ("encode_comment", builtin_sse_encode_comment),
+        ("encode_retry", builtin_sse_encode_retry),
+    ] {
+        let qualified: &'static str = Box::leak(format!("http::sse::{name}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
+        let short: &'static str = Box::leak(format!("sse::{name}").into_boxed_str());
+        globals.push((short, crate::builtins::builtin_pub(short, call)));
+    }
+}
+
+fn builtin_sse_encode_event(args: &[Value]) -> RuntimeResult<Value> {
+    let event_name = arg_str(args.first());
+    let data = arg_str(args.get(1));
+    let id = match args.get(2) {
+        Some(Value::String(s)) if !s.as_str().is_empty() => Some(s.as_str().to_string()),
+        _ => None,
+    };
+    let mut out = String::new();
+    if let Some(id) = id {
+        out.push_str("id: ");
+        out.push_str(&id);
+        out.push('\n');
+    }
+    if !event_name.is_empty() {
+        out.push_str("event: ");
+        out.push_str(&event_name);
+        out.push('\n');
+    }
+    for line in data.split('\n') {
+        out.push_str("data: ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push('\n');
+    Ok(Value::String(out.into()))
+}
+
+fn builtin_sse_encode_comment(args: &[Value]) -> RuntimeResult<Value> {
+    let comment = arg_str(args.first());
+    Ok(Value::String(format!(": {comment}\n\n").into()))
+}
+
+fn builtin_sse_encode_retry(args: &[Value]) -> RuntimeResult<Value> {
+    let ms = args.first().and_then(value_to_int).unwrap_or(2000);
+    Ok(Value::String(format!("retry: {ms}\n\n").into()))
+}
+
+fn arg_str(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => String::new(),
+    }
+}
+
+fn response_value_from_native(resp: gossamer_std::http_native_client::NativeResponse) -> Value {
+    let mut fields = vec![
+        (
+            Ident::new("status"),
+            Value::Int(i64::from(resp.status.as_u16())),
+        ),
+        (
+            Ident::new("body"),
+            Value::String(String::from_utf8_lossy(&resp.body).into_owned().into()),
+        ),
+    ];
+    let headers: Vec<Value> = resp
+        .headers
+        .iter()
+        .map(|(name, value)| {
+            Value::Tuple(Arc::new(vec![
+                Value::String(SmolStr::from(name.to_string())),
+                Value::String(SmolStr::from(value.to_string())),
+            ]))
+        })
+        .collect();
+    fields.push((Ident::new("headers"), Value::Array(Arc::new(headers))));
+    Value::struct_("Response", Arc::new(fields))
+}
+
+fn install_http_native_client(globals: &mut Vec<(&'static str, Value)>) {
+    for (name, call) in [
+        ("get", builtin_native_client_get as BuiltinFnPub),
+        ("post", builtin_native_client_post),
+        ("put", builtin_native_client_put),
+        ("delete", builtin_native_client_delete),
+    ] {
+        let qualified: &'static str =
+            Box::leak(format!("http::native_client::{name}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
+        let short: &'static str = Box::leak(format!("native_client::{name}").into_boxed_str());
+        globals.push((short, crate::builtins::builtin_pub(short, call)));
+    }
+}
+
+fn builtin_native_client_get(args: &[Value]) -> RuntimeResult<Value> {
+    let url = arg_str(args.first());
+    let client = gossamer_std::http_native_client::NativeClient::new();
+    match client.get(&url) {
+        Ok(r) => Ok(ok_variant(response_value_from_native(r))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_native_client_post(args: &[Value]) -> RuntimeResult<Value> {
+    let url = arg_str(args.first());
+    let body = bytes_from_value(args.get(1).unwrap_or(&Value::Unit));
+    let content_type = arg_str(args.get(2));
+    let ct = if content_type.is_empty() {
+        "application/octet-stream"
+    } else {
+        &content_type
+    };
+    let client = gossamer_std::http_native_client::NativeClient::new();
+    match client.post(&url, &body, ct) {
+        Ok(r) => Ok(ok_variant(response_value_from_native(r))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_native_client_put(args: &[Value]) -> RuntimeResult<Value> {
+    let url = arg_str(args.first());
+    let body = bytes_from_value(args.get(1).unwrap_or(&Value::Unit));
+    let content_type = arg_str(args.get(2));
+    let ct = if content_type.is_empty() {
+        "application/octet-stream"
+    } else {
+        &content_type
+    };
+    let client = gossamer_std::http_native_client::NativeClient::new();
+    match client.put(&url, &body, ct) {
+        Ok(r) => Ok(ok_variant(response_value_from_native(r))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_native_client_delete(args: &[Value]) -> RuntimeResult<Value> {
+    let url = arg_str(args.first());
+    let client = gossamer_std::http_native_client::NativeClient::new();
+    match client.delete(&url) {
+        Ok(r) => Ok(ok_variant(response_value_from_native(r))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn install_http_static_files(globals: &mut Vec<(&'static str, Value)>) {
+    for (name, call) in [
+        ("serve_file", builtin_static_serve_file as BuiltinFnPub),
+        ("mime_for_path", builtin_static_mime_for_path),
+    ] {
+        let qualified: &'static str =
+            Box::leak(format!("http::static_files::{name}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
+        let short: &'static str = Box::leak(format!("static_files::{name}").into_boxed_str());
+        globals.push((short, crate::builtins::builtin_pub(short, call)));
+    }
+}
+
+fn builtin_static_serve_file(args: &[Value]) -> RuntimeResult<Value> {
+    let path = arg_str(args.first());
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let mime = guess_mime_from_path(&path);
+            let mut fields = vec![
+                (Ident::new("status"), Value::Int(200)),
+                (
+                    Ident::new("body"),
+                    Value::String(String::from_utf8_lossy(&bytes).into_owned().into()),
+                ),
+                (
+                    Ident::new("content_type"),
+                    Value::String(SmolStr::from(mime.to_string())),
+                ),
+            ];
+            fields.push((Ident::new("headers"), Value::Array(Arc::new(Vec::new()))));
+            Ok(ok_variant(Value::struct_("Response", Arc::new(fields))))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_static_mime_for_path(args: &[Value]) -> RuntimeResult<Value> {
+    let path = arg_str(args.first());
+    let mime = guess_mime_from_path(&path);
+    Ok(Value::String(SmolStr::from(mime.to_string())))
+}
+
+fn guess_mime_from_path(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "application/javascript",
+        "json" => "application/json",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "wasm" => "application/wasm",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        "xml" => "application/xml",
+        _ => "application/octet-stream",
+    }
+}
+
+fn install_http_proxy(globals: &mut Vec<(&'static str, Value)>) {
+    let call = builtin_proxy_forward as BuiltinFnPub;
+    let qualified: &'static str = "http::proxy::forward";
+    globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
+    let short: &'static str = "proxy::forward";
+    globals.push((short, crate::builtins::builtin_pub(short, call)));
+}
+
+fn builtin_proxy_forward(args: &[Value]) -> RuntimeResult<Value> {
+    let upstream_url = arg_str(args.first());
+    let method = arg_str(args.get(1));
+    let body = bytes_from_value(args.get(2).unwrap_or(&Value::Unit));
+    let m_upper = method.to_ascii_uppercase();
+    let client = gossamer_std::http_native_client::NativeClient::new();
+    let result = match m_upper.as_str() {
+        "GET" => client.get(&upstream_url),
+        "POST" => client.post(&upstream_url, &body, "application/octet-stream"),
+        "PUT" => client.put(&upstream_url, &body, "application/octet-stream"),
+        "DELETE" => client.delete(&upstream_url),
+        _ => client.get(&upstream_url),
+    };
+    match result {
+        Ok(r) => Ok(ok_variant(response_value_from_native(r))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn install_http_websocket(globals: &mut Vec<(&'static str, Value)>) {
+    for (name, call) in [
+        ("accept_key", builtin_ws_accept_key as BuiltinFnPub),
+        ("is_websocket_upgrade", builtin_ws_is_upgrade),
+    ] {
+        let qualified: &'static str =
+            Box::leak(format!("http::websocket::{name}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
+        let short: &'static str = Box::leak(format!("websocket::{name}").into_boxed_str());
+        globals.push((short, crate::builtins::builtin_pub(short, call)));
+    }
+}
+
+const WS_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+fn builtin_ws_accept_key(args: &[Value]) -> RuntimeResult<Value> {
+    let client_key = arg_str(args.first());
+    let mut input = client_key.into_bytes();
+    input.extend_from_slice(WS_GUID);
+    let digest = gossamer_std::crypto::insecure::sha1(&input);
+    let encoded = gossamer_std::encoding::base64::encode(&digest);
+    Ok(Value::String(encoded.into()))
+}
+
+fn builtin_ws_is_upgrade(args: &[Value]) -> RuntimeResult<Value> {
+    // Inspects a Request value's headers array for Upgrade +
+    // Connection headers. The Request struct lays headers out
+    // as Array<Tuple<String, String>>.
+    let Some(Value::Struct(inner)) = args.first() else {
+        return Ok(Value::Bool(false));
+    };
+    let mut has_upgrade_ws = false;
+    let mut has_connection_upgrade = false;
+    for (i, v) in inner.fields.iter() {
+        if i.name == "headers" {
+            if let Value::Array(arr) = v {
+                for entry in arr.iter() {
+                    if let Value::Tuple(t) = entry {
+                        if t.len() == 2 {
+                            if let (Value::String(n), Value::String(val)) = (&t[0], &t[1]) {
+                                let name = n.as_str().to_ascii_lowercase();
+                                let value = val.as_str().to_ascii_lowercase();
+                                if name == "upgrade" && value == "websocket" {
+                                    has_upgrade_ws = true;
+                                }
+                                if name == "connection" && value.contains("upgrade") {
+                                    has_connection_upgrade = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(Value::Bool(has_upgrade_ws && has_connection_upgrade))
+}
+
+// Router: free-fn API over a thread-local registry. The full
+// method-chain shape (`r.get(...)`, `r.serve(req)`) lives in the
+// follow-on bridge (#54); this surface is enough to write
+// dispatchers in Gossamer source by hand.
+thread_local! {
+    #[allow(clippy::missing_const_for_thread_local)]
+    static ROUTER_REGISTRY: RefCell<StdHashMap<i64, RefCell<RouterTable>>> =
+        RefCell::new(StdHashMap::new());
+    static NEXT_ROUTER_ID: RefCell<i64> = const { RefCell::new(1) };
+}
+
+#[derive(Default)]
+struct RouterTable {
+    routes: Vec<(String, String)>, // (method, pattern)
+}
+
+fn install_http_router(globals: &mut Vec<(&'static str, Value)>) {
+    for (name, call) in [
+        ("new", builtin_router_new as BuiltinFnPub),
+        ("add", builtin_router_add),
+        ("lookup", builtin_router_lookup),
+    ] {
+        let qualified: &'static str = Box::leak(format!("http::router::{name}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
+        let short: &'static str = Box::leak(format!("router::{name}").into_boxed_str());
+        globals.push((short, crate::builtins::builtin_pub(short, call)));
+    }
+    // Constructor aliases that mirror the compiled-tier surface
+    // (Gossamer source: `let r = router::Router::new()`).
+    for alias in [
+        "router::Router::new",
+        "http::router::Router::new",
+        "Router::new",
+    ] {
+        globals.push((
+            alias,
+            crate::builtins::builtin_pub(alias, builtin_router_new as BuiltinFnPub),
+        ));
+    }
+    // Method-style add/get/post/etc. So `r.get(pattern, handler)`
+    // resolves to `Router::get(r, pattern, handler)` which stores
+    // the route + a Value-handler in the registry. Dispatch via
+    // http::serve goes through Router::serve below.
+    for (method_name, http_verb) in [
+        ("get", "GET"),
+        ("post", "POST"),
+        ("put", "PUT"),
+        ("delete", "DELETE"),
+        ("patch", "PATCH"),
+        ("head", "HEAD"),
+        ("options", "OPTIONS"),
+    ] {
+        let qualified: &'static str = Box::leak(format!("Router::{method_name}").into_boxed_str());
+        let verb_static: &'static str = Box::leak(http_verb.to_string().into_boxed_str());
+        let closure: BuiltinFnPub = make_router_method_builtin(verb_static);
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, closure)));
+    }
+}
+
+fn make_router_method_builtin(verb: &'static str) -> BuiltinFnPub {
+    // Builtin fn pointers must be top-level — use a thread_local
+    // to thread `verb` into a shared dispatch. The simpler shape
+    // is to register one builtin per verb, each with the verb
+    // baked in via a small closure-shaped wrapper.
+    match verb {
+        "GET" => builtin_router_method_get,
+        "POST" => builtin_router_method_post,
+        "PUT" => builtin_router_method_put,
+        "DELETE" => builtin_router_method_delete,
+        "PATCH" => builtin_router_method_patch,
+        "HEAD" => builtin_router_method_head,
+        "OPTIONS" => builtin_router_method_options,
+        _ => builtin_router_method_get,
+    }
+}
+
+fn router_method_add(verb: &'static str, args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(router_id_of) else {
+        return Ok(err_variant("Router method: first arg must be a Router"));
+    };
+    let pattern = arg_str(args.get(1));
+    let handler = args.get(2).cloned().unwrap_or(Value::Unit);
+    ROUTER_REGISTRY.with(|r| {
+        if let Some(table) = r.borrow().get(&id) {
+            table
+                .borrow_mut()
+                .routes
+                .push((verb.to_string(), pattern.clone()));
+        }
+    });
+    ROUTER_HANDLERS.with(|h| {
+        h.borrow_mut().entry(id).or_default().push(handler);
+    });
+    Ok(ok_variant(args.first().cloned().unwrap_or(Value::Unit)))
+}
+
+fn builtin_router_method_get(args: &[Value]) -> RuntimeResult<Value> {
+    router_method_add("GET", args)
+}
+fn builtin_router_method_post(args: &[Value]) -> RuntimeResult<Value> {
+    router_method_add("POST", args)
+}
+fn builtin_router_method_put(args: &[Value]) -> RuntimeResult<Value> {
+    router_method_add("PUT", args)
+}
+fn builtin_router_method_delete(args: &[Value]) -> RuntimeResult<Value> {
+    router_method_add("DELETE", args)
+}
+fn builtin_router_method_patch(args: &[Value]) -> RuntimeResult<Value> {
+    router_method_add("PATCH", args)
+}
+fn builtin_router_method_head(args: &[Value]) -> RuntimeResult<Value> {
+    router_method_add("HEAD", args)
+}
+fn builtin_router_method_options(args: &[Value]) -> RuntimeResult<Value> {
+    router_method_add("OPTIONS", args)
+}
+
+thread_local! {
+    #[allow(clippy::missing_const_for_thread_local)]
+    static ROUTER_HANDLERS: RefCell<StdHashMap<i64, Vec<Value>>> =
+        RefCell::new(StdHashMap::new());
+}
+
+/// `Router::serve(router, request)` — invoked by `http::serve`'s
+/// dispatch loop when the handler is a Router. Walks the route
+/// table, finds the first match for the request's (method, path),
+/// and invokes the stored handler via `NativeDispatch::call_fn`
+/// so the user's `fn serve(&self, req) -> Result<...>` runs with
+/// the right receiver. Returns 404 when no route matches.
+pub(crate) fn native_router_serve(
+    dispatch: &mut dyn crate::value::NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let Some(router_id) = args.first().and_then(router_id_of) else {
+        return Ok(ok_variant(http_404_response()));
+    };
+    let request = args.get(1).cloned().unwrap_or(Value::Unit);
+    // Extract method + path from the Request value.
+    let (method, path) = request_method_and_path(&request);
+    // Find a matching route index.
+    let matched_idx: Option<usize> = ROUTER_REGISTRY.with(|r| {
+        r.borrow().get(&router_id).and_then(|table| {
+            let table = table.borrow();
+            for (i, (m, pat)) in table.routes.iter().enumerate() {
+                if (m.is_empty() || m.eq_ignore_ascii_case(&method)) && pattern_matches(pat, &path)
+                {
+                    return Some(i);
+                }
+            }
+            None
+        })
+    });
+    let Some(idx) = matched_idx else {
+        return Ok(ok_variant(http_404_response()));
+    };
+    let handler = ROUTER_HANDLERS.with(|h| {
+        h.borrow()
+            .get(&router_id)
+            .and_then(|hs| hs.get(idx).cloned())
+            .unwrap_or(Value::Unit)
+    });
+    // Resolve serve to the handler's specific impl by struct
+    // name. The bare "serve" key is shared by every impl-method
+    // named serve and gets overwritten as more types load.
+    let method_name = match &handler {
+        Value::Struct(inner) => format!("{}::serve", inner.name),
+        _ => "serve".to_string(),
+    };
+    dispatch.call_fn(&method_name, vec![handler, request])
+}
+
+fn http_404_response() -> Value {
+    let mut fields = vec![
+        (Ident::new("status"), Value::Int(404)),
+        (Ident::new("body"), Value::String("not found".into())),
+    ];
+    fields.push((Ident::new("headers"), Value::Array(Arc::new(Vec::new()))));
+    Value::struct_("Response", Arc::new(fields))
+}
+
+fn request_method_and_path(v: &Value) -> (String, String) {
+    let mut method = String::new();
+    let mut path = String::new();
+    if let Value::Struct(inner) = v {
+        for (i, val) in inner.fields.iter() {
+            match (i.name.as_str(), val) {
+                ("method", Value::String(s)) => method = s.as_str().to_string(),
+                ("path", Value::String(s)) => path = s.as_str().to_string(),
+                _ => {}
+            }
+        }
+    }
+    (method, path)
+}
+
+fn builtin_router_new(_args: &[Value]) -> RuntimeResult<Value> {
+    let id = NEXT_ROUTER_ID.with(|c| {
+        let mut v = c.borrow_mut();
+        let id = *v;
+        *v += 1;
+        id
+    });
+    ROUTER_REGISTRY.with(|r| {
+        r.borrow_mut()
+            .insert(id, RefCell::new(RouterTable::default()));
+    });
+    let fields = vec![(Ident::new("__router"), Value::Int(id))];
+    Ok(Value::struct_("Router", Arc::new(fields)))
+}
+
+fn router_id_of(v: &Value) -> Option<i64> {
+    if let Value::Struct(inner) = v {
+        if inner.name == "Router" {
+            for (i, val) in inner.fields.iter() {
+                if i.name == "__router" {
+                    if let Value::Int(n) = val {
+                        return Some(*n);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn builtin_router_add(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(router_id_of) else {
+        return Ok(err_variant("router::add: first arg must be a Router"));
+    };
+    let method = arg_str(args.get(1));
+    let pattern = arg_str(args.get(2));
+    ROUTER_REGISTRY.with(|r| {
+        if let Some(table) = r.borrow().get(&id) {
+            table
+                .borrow_mut()
+                .routes
+                .push((method.to_ascii_uppercase(), pattern));
+        }
+    });
+    Ok(ok_variant(Value::Unit))
+}
+
+fn builtin_router_lookup(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(router_id_of) else {
+        return Ok(none_variant());
+    };
+    let method = arg_str(args.get(1)).to_ascii_uppercase();
+    let path = arg_str(args.get(2));
+    let matched: Option<usize> = ROUTER_REGISTRY.with(|r| {
+        r.borrow().get(&id).and_then(|table| {
+            let table = table.borrow();
+            for (i, (m, pat)) in table.routes.iter().enumerate() {
+                if (m.is_empty() || m == &method) && pattern_matches(pat, &path) {
+                    return Some(i);
+                }
+            }
+            None
+        })
+    });
+    match matched {
+        Some(idx) => Ok(some_variant(Value::Int(idx as i64))),
+        None => Ok(none_variant()),
+    }
+}
+
+fn pattern_matches(pattern: &str, path: &str) -> bool {
+    // Tiny matcher: exact match, plus `{name}` captures one
+    // path segment. Sufficient for the bridge surface; full
+    // typed / multi-segment captures land in #54.
+    let pat_segments: Vec<&str> = pattern.split('/').collect();
+    let req_segments: Vec<&str> = path.split('/').collect();
+    if pat_segments.len() != req_segments.len() {
+        return false;
+    }
+    for (p, q) in pat_segments.iter().zip(req_segments.iter()) {
+        if p.starts_with('{') && p.ends_with('}') {
+            continue;
+        }
+        if p != q {
+            return false;
+        }
+    }
+    true
+}
+
+fn install_http_middleware(globals: &mut Vec<(&'static str, Value)>) {
+    for (name, call) in [
+        ("new_request_id", builtin_mw_new_request_id as BuiltinFnPub),
+        ("decode_basic_auth", builtin_mw_decode_basic_auth),
+        ("accepts_gzip", builtin_mw_accepts_gzip),
+    ] {
+        let qualified: &'static str =
+            Box::leak(format!("http::middleware::{name}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
+        let short: &'static str = Box::leak(format!("middleware::{name}").into_boxed_str());
+        globals.push((short, crate::builtins::builtin_pub(short, call)));
+    }
+}
+
+fn builtin_mw_new_request_id(_args: &[Value]) -> RuntimeResult<Value> {
+    use std::sync::atomic::AtomicU64;
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    Ok(Value::String(format!("{nanos:x}-{n:x}").into()))
+}
+
+fn builtin_mw_decode_basic_auth(args: &[Value]) -> RuntimeResult<Value> {
+    let header = arg_str(args.first());
+    let token = header.strip_prefix("Basic ").unwrap_or(&header);
+    let Ok(decoded) = gossamer_std::encoding::base64::decode(token.trim()) else {
+        return Ok(err_variant("invalid base64"));
+    };
+    let Ok(decoded) = String::from_utf8(decoded) else {
+        return Ok(err_variant("non-utf8 credentials"));
+    };
+    let Some((user, pass)) = decoded.split_once(':') else {
+        return Ok(err_variant("missing colon separator"));
+    };
+    let fields = vec![
+        (Ident::new("user"), Value::String(user.to_string().into())),
+        (
+            Ident::new("password"),
+            Value::String(pass.to_string().into()),
+        ),
+    ];
+    Ok(ok_variant(Value::struct_("BasicAuth", Arc::new(fields))))
+}
+
+fn builtin_mw_accepts_gzip(args: &[Value]) -> RuntimeResult<Value> {
+    let header = arg_str(args.first());
+    let accepts = header
+        .split(',')
+        .any(|tok| tok.trim().eq_ignore_ascii_case("gzip"));
+    Ok(Value::Bool(accepts))
 }
 
 #[cfg(test)]

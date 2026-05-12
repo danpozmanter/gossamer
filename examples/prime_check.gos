@@ -37,7 +37,7 @@ fn main() {
 
     // A few targeted spot-checks.
     for (n, expected) in [(2, true), (3, true), (4, false), (97, true),
-                          (100, false), (7919, true), (7920, false)].iter() {
+                          (100, false), (7919, true), (7920, false)] {
         let actual = is_prime(n)
         let label = if actual == expected { "ok" } else { "WRONG" }
         println!("is_prime({}) = {} (expected {}): {}", n, actual, expected, label)

@@ -3,11 +3,52 @@
 //! 2000-line hard limit defined in `GUIDELINES.md`.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 
 use crate::paths::read_source;
+
+/// Emits one Markdown page per stdlib module under `out_dir`.
+/// When `check` is true, no files are written; instead the
+/// committed pages are compared against the would-be output
+/// and a mismatch returns an error (non-zero exit suitable
+/// for CI).
+pub(crate) fn cmd_emit_stdlib(out_dir: &Path, check: bool) -> Result<()> {
+    let pages = gossamer_std::manifest::render_all_docs();
+    if check {
+        let mut drift: Vec<String> = Vec::new();
+        for (slug, body) in &pages {
+            let path = out_dir.join(format!("{slug}.md"));
+            let on_disk = fs::read_to_string(&path).unwrap_or_default();
+            if on_disk.trim_end() != body.trim_end() {
+                drift.push(format!("{}", path.display()));
+            }
+        }
+        if drift.is_empty() {
+            println!("doc: stdlib docs in sync ({} pages)", pages.len());
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "stdlib docs drift detected ({} files): {}",
+                drift.len(),
+                drift.join(", ")
+            ))
+        }
+    } else {
+        fs::create_dir_all(out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
+        for (slug, body) in &pages {
+            let path = out_dir.join(format!("{slug}.md"));
+            fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
+        }
+        println!(
+            "doc: wrote {} stdlib pages to {}",
+            pages.len(),
+            out_dir.display()
+        );
+        Ok(())
+    }
+}
 
 pub(crate) fn cmd_doc(file: &PathBuf, html_out: Option<&std::path::Path>) -> Result<()> {
     let source = read_source(file)?;

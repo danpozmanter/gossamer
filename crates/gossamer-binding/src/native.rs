@@ -23,9 +23,11 @@
     clippy::not_unsafe_ptr_arg_deref
 )]
 
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+use crate::conv::{Bytes, DynValue};
 use crate::types::Type;
 
 // Bring `gos_rt_gc_alloc` into scope. Defined in
@@ -177,6 +179,72 @@ pub struct GosTuple {
     pub fields: *mut GosVariantValue,
 }
 
+/// Aggregate matching the runtime's `Bytes` ABI.
+///
+/// ABI 0.4. Header lives on the heap (boxed via `Box::into_raw`)
+/// so the runtime's `gos_rt_bytes_free` reclaims it the same way
+/// `GosVec` is reclaimed. Data buffer is a heap `Vec<u8>` whose
+/// pointer is leaked into `ptr` (cap = len in v1).
+#[repr(C)]
+#[derive(Debug)]
+pub struct GosBytes {
+    /// Byte length.
+    pub len: i64,
+    /// Allocated capacity.
+    pub cap: i64,
+    /// Byte buffer.
+    pub ptr: *mut u8,
+}
+
+/// Aggregate matching the runtime's `Map<K, V>` ABI.
+///
+/// ABI 0.4. Two parallel [`GosVec`]s: `keys[i]` pairs with
+/// `values[i]`. Order is not significant for set semantics; for
+/// `HashMap::from_gos`, the keys vec is walked in declaration
+/// order and the first entry for a duplicate key wins.
+#[repr(C)]
+#[derive(Debug)]
+pub struct GosMap {
+    /// Keys vec header.
+    pub keys: *mut GosVec,
+    /// Values vec header.
+    pub values: *mut GosVec,
+}
+
+/// Aggregate matching the runtime's `Variant` ABI.
+///
+/// ABI 0.4. Carries an arm name (NUL-terminated, arena-allocated)
+/// plus a payload list. The arm name is the only piece of
+/// metadata runtime code needs to dispatch on; payload typing is
+/// the binding signature's responsibility.
+#[repr(C)]
+#[derive(Debug)]
+pub struct GosDynVariant {
+    /// Arm name as a NUL-terminated C string (arena-allocated).
+    pub name: *const c_char,
+    /// Payload count.
+    pub payload_len: i32,
+    /// Padding to align `payload` to an 8-byte boundary.
+    pub pad: i32,
+    /// Payload pointer. Layout is `payload_len` `GosVariantValue`s.
+    pub payload: *mut GosVariantValue,
+}
+
+/// Aggregate matching the runtime's `Callback` ABI.
+///
+/// ABI 0.4. Carries a Gossamer-side callable handle. The handle
+/// is registered into a per-call dispatch table by the codegen at
+/// the binding call site; the binding invokes through
+/// `gos_rt_callback_invoke(handle, ...)`. The handle is INVALID
+/// after the binding fn returns — bindings MUST NOT retain it
+/// past the call.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct GosCallback {
+    /// Opaque dispatch-table handle. Zero is the null sentinel.
+    pub handle: u64,
+}
+
 // --- BindingAbi -----------------------------------------------------
 
 /// Maps a Rust binding-signature type to its compiled-mode
@@ -222,6 +290,22 @@ impl BindingAbi for i64 {
         input
     }
     fn to_output(self) -> i64 {
+        self
+    }
+}
+
+impl BindingAbi for u64 {
+    type Input = u64;
+    type Output = u64;
+    // u64 maps to the same Gossamer-source type as i64 — both
+    // are 64-bit integers; the difference is unsigned display
+    // semantics, not wire shape.
+    const TYPE: Type = Type::I64;
+
+    unsafe fn from_input(input: u64) -> Self {
+        input
+    }
+    fn to_output(self) -> u64 {
         self
     }
 }
@@ -593,6 +677,626 @@ impl BindingAbi for Result<i64, String> {
     }
 }
 
+// --- ABI 0.4: Bytes (Vec<u8> via the `Bytes` newtype) ----------------
+
+/// Builds a `GosBytes` header on the heap; the data buffer is
+/// `Vec::leak`'d so the runtime's `gos_rt_bytes_free` can reclaim
+/// it with `Vec::from_raw_parts`. Arena allocation is not used
+/// here because reclamation happens at GC-reset boundaries that
+/// the binding may outlive (e.g. an HTTP body returned to a
+/// long-running connection handler).
+fn make_gos_bytes(bytes: Vec<u8>) -> *mut GosBytes {
+    let len = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
+    let cap = i64::try_from(bytes.capacity()).unwrap_or(len);
+    let mut boxed = bytes.into_boxed_slice();
+    let ptr = boxed.as_mut_ptr();
+    std::mem::forget(boxed);
+    Box::into_raw(Box::new(GosBytes { len, cap, ptr }))
+}
+
+unsafe fn read_gos_bytes(p: *const GosBytes) -> Vec<u8> {
+    if p.is_null() {
+        return Vec::new();
+    }
+    let header = unsafe { &*p };
+    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    if header.ptr.is_null() || len == 0 {
+        return Vec::new();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(header.ptr, len) };
+    slice.to_vec()
+}
+
+impl BindingAbi for Bytes {
+    type Input = *const GosBytes;
+    type Output = *mut GosBytes;
+    const TYPE: Type = Type::Bytes;
+
+    unsafe fn from_input(input: *const GosBytes) -> Self {
+        Bytes::new(unsafe { read_gos_bytes(input) })
+    }
+
+    fn to_output(self) -> *mut GosBytes {
+        make_gos_bytes(self.into_inner())
+    }
+}
+
+// --- ABI 0.4: Map<K, V> (HashMap<K, V>) ------------------------------
+
+/// Builds a `GosMap` from parallel-vec halves. Each half is a
+/// heap-owned `GosVec` produced through [`make_gos_vec`]; the
+/// outer `GosMap` is arena-allocated because the runtime's
+/// `gos_rt_map_free` only consults the two inner `GosVec`
+/// pointers.
+fn make_gos_map<K: Copy, V: Copy>(keys: &[K], values: &[V]) -> *mut GosMap {
+    let keys_ptr = make_gos_vec(keys);
+    let values_ptr = make_gos_vec(values);
+    Box::into_raw(Box::new(GosMap {
+        keys: keys_ptr,
+        values: values_ptr,
+    }))
+}
+
+unsafe fn read_gos_map_keys_values_i64(p: *const GosMap) -> (Vec<i64>, Vec<i64>) {
+    if p.is_null() {
+        return (Vec::new(), Vec::new());
+    }
+    let m = unsafe { &*p };
+    let keys = unsafe { read_gos_vec_i64(m.keys) };
+    let values = unsafe { read_gos_vec_i64(m.values) };
+    (keys, values)
+}
+
+unsafe fn read_gos_map_keys_values_str_str(p: *const GosMap) -> (Vec<String>, Vec<String>) {
+    if p.is_null() {
+        return (Vec::new(), Vec::new());
+    }
+    let m = unsafe { &*p };
+    let keys = unsafe { read_gos_vec_strings(m.keys) };
+    let values = unsafe { read_gos_vec_strings(m.values) };
+    (keys, values)
+}
+
+unsafe fn read_gos_map_keys_values_str_i64(p: *const GosMap) -> (Vec<String>, Vec<i64>) {
+    if p.is_null() {
+        return (Vec::new(), Vec::new());
+    }
+    let m = unsafe { &*p };
+    let keys = unsafe { read_gos_vec_strings(m.keys) };
+    let values = unsafe { read_gos_vec_i64(m.values) };
+    (keys, values)
+}
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface; binding receives a freshly built HashMap."
+)]
+impl BindingAbi for std::collections::HashMap<i64, i64> {
+    type Input = *const GosMap;
+    type Output = *mut GosMap;
+    const TYPE: Type = Type::Map(&Type::I64, &Type::I64);
+
+    unsafe fn from_input(input: *const GosMap) -> Self {
+        let (keys, values) = unsafe { read_gos_map_keys_values_i64(input) };
+        let mut out = HashMap::with_capacity(keys.len());
+        for (k, v) in keys.into_iter().zip(values) {
+            out.entry(k).or_insert(v);
+        }
+        out
+    }
+
+    fn to_output(self) -> *mut GosMap {
+        let mut keys: Vec<i64> = Vec::with_capacity(self.len());
+        let mut values: Vec<i64> = Vec::with_capacity(self.len());
+        for (k, v) in self {
+            keys.push(k);
+            values.push(v);
+        }
+        make_gos_map(&keys, &values)
+    }
+}
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface; binding receives a freshly built HashMap."
+)]
+impl BindingAbi for std::collections::HashMap<String, String> {
+    type Input = *const GosMap;
+    type Output = *mut GosMap;
+    const TYPE: Type = Type::Map(&Type::String, &Type::String);
+
+    unsafe fn from_input(input: *const GosMap) -> Self {
+        let (keys, values) = unsafe { read_gos_map_keys_values_str_str(input) };
+        let mut out = HashMap::with_capacity(keys.len());
+        for (k, v) in keys.into_iter().zip(values) {
+            out.entry(k).or_insert(v);
+        }
+        out
+    }
+
+    fn to_output(self) -> *mut GosMap {
+        let mut key_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
+        let mut val_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
+        for (k, v) in self {
+            key_ptrs.push(k.to_output());
+            val_ptrs.push(v.to_output());
+        }
+        make_gos_map(&key_ptrs, &val_ptrs)
+    }
+}
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface; binding receives a freshly built HashMap."
+)]
+impl BindingAbi for std::collections::HashMap<String, i64> {
+    type Input = *const GosMap;
+    type Output = *mut GosMap;
+    const TYPE: Type = Type::Map(&Type::String, &Type::I64);
+
+    unsafe fn from_input(input: *const GosMap) -> Self {
+        let (keys, values) = unsafe { read_gos_map_keys_values_str_i64(input) };
+        let mut out = HashMap::with_capacity(keys.len());
+        for (k, v) in keys.into_iter().zip(values) {
+            out.entry(k).or_insert(v);
+        }
+        out
+    }
+
+    fn to_output(self) -> *mut GosMap {
+        let mut key_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
+        let mut values: Vec<i64> = Vec::with_capacity(self.len());
+        for (k, v) in self {
+            key_ptrs.push(k.to_output());
+            values.push(v);
+        }
+        make_gos_map(&key_ptrs, &values)
+    }
+}
+
+// --- ABI 0.4: Variant (DynValue) -------------------------------------
+
+fn arena_cstr(s: &str) -> *const c_char {
+    let bytes = s.as_bytes();
+    // Strip interior NULs for safe C-string round-trip.
+    let clean: Vec<u8> = bytes.iter().copied().filter(|b| *b != 0).collect();
+    let total = clean.len() + 1;
+    let p = arena_alloc(total);
+    if p.is_null() {
+        return std::ptr::null();
+    }
+    // SAFETY: arena allocation is `total` bytes; we write exactly
+    // `clean.len()` payload bytes plus one NUL.
+    unsafe {
+        std::ptr::copy_nonoverlapping(clean.as_ptr(), p, clean.len());
+        *p.add(clean.len()) = 0;
+    }
+    p.cast::<c_char>()
+}
+
+fn dyn_to_variant_value(d: &DynValue) -> GosVariantValue {
+    match d {
+        DynValue::Nil => GosVariantValue {
+            tag: 0,
+            data: GosVariantPayload { i64_: 0 },
+        },
+        DynValue::Bool(b) => GosVariantValue {
+            tag: 2,
+            data: GosVariantPayload { bool_: *b },
+        },
+        DynValue::Int(i) => GosVariantValue {
+            tag: 0,
+            data: GosVariantPayload { i64_: *i },
+        },
+        DynValue::Float(f) => GosVariantValue {
+            tag: 1,
+            data: GosVariantPayload { f64_: *f },
+        },
+        DynValue::Char(c) => GosVariantValue {
+            tag: 3,
+            data: GosVariantPayload { char_: *c as u32 },
+        },
+        DynValue::String(s) => GosVariantValue {
+            tag: 4,
+            data: GosVariantPayload {
+                string: s.clone().to_output(),
+            },
+        },
+        DynValue::Bytes(buf) => {
+            // Bytes route through the i64-array vec for v0.4 wire
+            // compatibility; the runtime sees them as a typed
+            // packed `Vec<i64>` on the interp tier and as a
+            // `GosBytes` on the compiled tier (via the Bytes
+            // BindingAbi). Here, inside a DynValue payload, we
+            // pack them as a nested vec.
+            let widened: Vec<i64> = buf.iter().map(|b| i64::from(*b)).collect();
+            let vec = make_gos_vec(&widened);
+            GosVariantValue {
+                tag: 5,
+                data: GosVariantPayload { vec },
+            }
+        }
+        DynValue::List(items) => {
+            let payload: Vec<GosVariantValue> = items.iter().map(dyn_to_variant_value).collect();
+            // For variant-of-variant nesting, we wrap the list
+            // as a tuple-shape payload.
+            let len = i32::try_from(payload.len()).unwrap_or(0);
+            let fields_ptr: *mut GosVariantValue = if payload.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                let bytes = std::mem::size_of_val(payload.as_slice());
+                let buf = arena_alloc(bytes).cast::<GosVariantValue>();
+                if !buf.is_null() {
+                    // SAFETY: fresh arena buffer, payload slice
+                    // owned by this call; non-overlapping.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(payload.as_ptr(), buf, payload.len());
+                    }
+                }
+                buf
+            };
+            let tuple = arena_box(GosTuple {
+                len,
+                fields: fields_ptr,
+            });
+            GosVariantValue {
+                tag: 7,
+                data: GosVariantPayload { tuple },
+            }
+        }
+        DynValue::Map(entries) => {
+            // A map inside a DynValue payload is reified as a
+            // tuple of (keys-tuple, values-tuple). The reader
+            // unflattens it via the `value_to_dyn` walker.
+            let keys: Vec<GosVariantValue> = entries
+                .iter()
+                .map(|(k, _)| dyn_to_variant_value(k))
+                .collect();
+            let values: Vec<GosVariantValue> = entries
+                .iter()
+                .map(|(_, v)| dyn_to_variant_value(v))
+                .collect();
+            let pair: Vec<GosVariantValue> = vec![
+                tuple_to_variant_value(&keys),
+                tuple_to_variant_value(&values),
+            ];
+            tuple_to_variant_value(&pair)
+        }
+        DynValue::Tagged { name, payload } => {
+            let arm_payload: Vec<GosVariantValue> =
+                payload.iter().map(dyn_to_variant_value).collect();
+            let inner = make_dyn_variant(name, arm_payload);
+            GosVariantValue {
+                tag: 6,
+                data: GosVariantPayload {
+                    variant: inner.cast::<GosVariant>(),
+                },
+            }
+        }
+    }
+}
+
+fn tuple_to_variant_value(items: &[GosVariantValue]) -> GosVariantValue {
+    let len = i32::try_from(items.len()).unwrap_or(0);
+    let fields_ptr: *mut GosVariantValue = if items.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        let bytes = std::mem::size_of_val(items);
+        let buf = arena_alloc(bytes).cast::<GosVariantValue>();
+        if !buf.is_null() {
+            // SAFETY: fresh arena buffer; items slice owned by
+            // the caller; non-overlapping.
+            unsafe {
+                std::ptr::copy_nonoverlapping(items.as_ptr(), buf, items.len());
+            }
+        }
+        buf
+    };
+    let tuple = arena_box(GosTuple {
+        len,
+        fields: fields_ptr,
+    });
+    GosVariantValue {
+        tag: 7,
+        data: GosVariantPayload { tuple },
+    }
+}
+
+/// Builds a `GosDynVariant` (an arm-named variant) on the arena.
+fn make_dyn_variant(name: &str, payload: Vec<GosVariantValue>) -> *mut GosDynVariant {
+    let name_ptr = arena_cstr(name);
+    let payload_len = i32::try_from(payload.len()).unwrap_or(0);
+    let payload_ptr: *mut GosVariantValue = if payload.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        let bytes = std::mem::size_of_val(payload.as_slice());
+        let buf = arena_alloc(bytes).cast::<GosVariantValue>();
+        if !buf.is_null() {
+            // SAFETY: fresh arena buffer, payload slice owned by
+            // this call; non-overlapping.
+            unsafe {
+                std::ptr::copy_nonoverlapping(payload.as_ptr(), buf, payload.len());
+            }
+        }
+        buf
+    };
+    arena_box(GosDynVariant {
+        name: name_ptr,
+        payload_len,
+        pad: 0,
+        payload: payload_ptr,
+    })
+}
+
+unsafe fn read_dyn_variant(p: *const GosDynVariant) -> DynValue {
+    if p.is_null() {
+        return DynValue::Nil;
+    }
+    let v = unsafe { &*p };
+    let name = if v.name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(v.name) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    let payload_len = usize::try_from(v.payload_len.max(0)).unwrap_or(0);
+    let payload: Vec<DynValue> = if payload_len == 0 || v.payload.is_null() {
+        Vec::new()
+    } else {
+        let slice = unsafe { std::slice::from_raw_parts(v.payload, payload_len) };
+        slice.iter().map(read_variant_value).collect()
+    };
+    DynValue::Tagged { name, payload }
+}
+
+fn read_variant_value(v: &GosVariantValue) -> DynValue {
+    // SAFETY: we honour the `tag` discriminant to pick the live
+    // union field; tags outside the documented range are coerced
+    // to Nil.
+    unsafe {
+        match v.tag {
+            0 => DynValue::Int(v.data.i64_),
+            1 => DynValue::Float(v.data.f64_),
+            2 => DynValue::Bool(v.data.bool_),
+            3 => char::from_u32(v.data.char_).map_or(DynValue::Nil, DynValue::Char),
+            4 => {
+                if v.data.string.is_null() {
+                    DynValue::String(String::new())
+                } else {
+                    DynValue::String(CStr::from_ptr(v.data.string).to_string_lossy().into_owned())
+                }
+            }
+            5 => {
+                let vec = v.data.vec;
+                let items = read_gos_vec_i64(vec);
+                // Heuristic: an i64-vec whose every element is in
+                // u8 range is treated as Bytes — matching the
+                // interp-tier policy in `conv.rs::value_to_dyn`.
+                if items.iter().all(|x| (0..=255).contains(x)) {
+                    DynValue::Bytes(items.iter().map(|x| *x as u8).collect())
+                } else {
+                    DynValue::List(items.into_iter().map(DynValue::Int).collect())
+                }
+            }
+            6 => read_dyn_variant(v.data.variant.cast::<GosDynVariant>()),
+            7 => {
+                let t = v.data.tuple;
+                if t.is_null() {
+                    return DynValue::List(Vec::new());
+                }
+                let header = &*t;
+                let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+                if header.fields.is_null() || len == 0 {
+                    return DynValue::List(Vec::new());
+                }
+                let slice = std::slice::from_raw_parts(header.fields, len);
+                DynValue::List(slice.iter().map(read_variant_value).collect())
+            }
+            _ => DynValue::Nil,
+        }
+    }
+}
+
+impl BindingAbi for DynValue {
+    type Input = *const GosDynVariant;
+    type Output = *mut GosDynVariant;
+    const TYPE: Type = Type::Variant(&[]);
+
+    unsafe fn from_input(input: *const GosDynVariant) -> Self {
+        unsafe { read_dyn_variant(input) }
+    }
+
+    fn to_output(self) -> *mut GosDynVariant {
+        // The DynValue is always emitted as a tagged variant on
+        // the wire. Non-Tagged variants (Nil, Bool, ...) wrap in
+        // a synthetic arm name that matches the source-level
+        // sentinel; downstream Gossamer code can pattern-match.
+        match self {
+            DynValue::Tagged { name, payload } => {
+                let arm_payload: Vec<GosVariantValue> =
+                    payload.iter().map(dyn_to_variant_value).collect();
+                make_dyn_variant(&name, arm_payload)
+            }
+            DynValue::Nil => make_dyn_variant("Nil", Vec::new()),
+            DynValue::Bool(b) => {
+                make_dyn_variant("Bool", vec![dyn_to_variant_value(&DynValue::Bool(b))])
+            }
+            DynValue::Int(i) => {
+                make_dyn_variant("Int", vec![dyn_to_variant_value(&DynValue::Int(i))])
+            }
+            DynValue::Float(f) => {
+                make_dyn_variant("Float", vec![dyn_to_variant_value(&DynValue::Float(f))])
+            }
+            DynValue::Char(c) => {
+                make_dyn_variant("Char", vec![dyn_to_variant_value(&DynValue::Char(c))])
+            }
+            DynValue::String(s) => {
+                make_dyn_variant("String", vec![dyn_to_variant_value(&DynValue::String(s))])
+            }
+            DynValue::Bytes(b) => {
+                make_dyn_variant("Bytes", vec![dyn_to_variant_value(&DynValue::Bytes(b))])
+            }
+            DynValue::List(items) => {
+                make_dyn_variant("List", items.iter().map(dyn_to_variant_value).collect())
+            }
+            DynValue::Map(entries) => {
+                make_dyn_variant("Map", vec![dyn_to_variant_value(&DynValue::Map(entries))])
+            }
+        }
+    }
+}
+
+// --- ABI 0.4: Callback (compiled-tier) -------------------------------
+//
+// On the compiled tier, a Gossamer-side callable is represented
+// as a u64 handle into a per-call dispatch table. The codegen
+// emits the registration before the binding call and the cleanup
+// after — bindings receive only the handle.
+//
+// For ABI 0.4, the compiled-tier invocation surface is the
+// runtime helper `gos_rt_callback_invoke` declared below. Calling
+// it from inside a binding requires the binding to use the
+// returned handle to thread back into the Gossamer scheduler.
+// The handle is INVALID after the binding fn returns; bindings
+// MUST NOT retain it.
+
+unsafe extern "C" {
+    /// Compiled-tier callback dispatcher. Returns 0 on success,
+    /// non-zero on error. Result is written into `result_out`
+    /// (caller-allocated `GosVariantValue`).
+    #[allow(dead_code)]
+    fn gos_rt_callback_invoke(
+        handle: u64,
+        args: *const GosVariantValue,
+        args_len: u32,
+        result_out: *mut GosVariantValue,
+    ) -> i32;
+}
+
+/// Compiled-tier handle to a Gossamer-side callback. ABI 0.4
+/// passes this as a `u64` over the wire.
+///
+/// This is the compiled-tier counterpart to
+/// [`crate::conv::BindingCallback`] (the interp-tier wrapper).
+/// Binding code that needs to work in both tiers should accept
+/// `BindingCallback` for the interp path and use this type via
+/// the `BindingAbi` impl for the compiled path.
+#[derive(Debug, Clone, Copy)]
+pub struct NativeCallback {
+    /// Opaque dispatch-table handle.
+    pub handle: u64,
+}
+
+impl NativeCallback {
+    /// Invokes the callback with `args` and returns the result.
+    ///
+    /// # Safety
+    /// `self.handle` must be a valid handle handed to the
+    /// binding by the codegen during the current binding call.
+    /// Calling after the binding fn returns is undefined
+    /// behaviour.
+    pub unsafe fn invoke_raw(&self, args: &[GosVariantValue]) -> Result<GosVariantValue, i32> {
+        let mut result = GosVariantValue {
+            tag: 0,
+            data: GosVariantPayload { i64_: 0 },
+        };
+        let args_ptr = if args.is_empty() {
+            std::ptr::null()
+        } else {
+            args.as_ptr()
+        };
+        let args_len = u32::try_from(args.len()).unwrap_or(0);
+        // SAFETY: the contract above plus the codegen's guarantee
+        // that gos_rt_callback_invoke is reachable in the runtime.
+        let rc =
+            unsafe { gos_rt_callback_invoke(self.handle, args_ptr, args_len, &raw mut result) };
+        if rc == 0 { Ok(result) } else { Err(rc) }
+    }
+}
+
+impl BindingAbi for NativeCallback {
+    type Input = u64;
+    type Output = u64;
+    const TYPE: Type = Type::Callback(&[], &Type::Any);
+
+    unsafe fn from_input(input: u64) -> Self {
+        Self { handle: input }
+    }
+
+    fn to_output(self) -> u64 {
+        self.handle
+    }
+}
+
+// `NativeCallback` is a compiled-tier-only handle. The interp
+// path materialises it from a `Value::Int(handle as i64)` and
+// returns it as the same shape. Bindings that want a true
+// interp-side callable should declare `BindingCallback` instead.
+impl crate::conv::FromGos for NativeCallback {
+    fn from_gos(
+        value: &gossamer_interp::value::Value,
+    ) -> gossamer_interp::value::RuntimeResult<Self> {
+        match value {
+            gossamer_interp::value::Value::Int(i) => Ok(Self { handle: *i as u64 }),
+            gossamer_interp::value::Value::Uint(u) => Ok(Self { handle: *u }),
+            other => Err(gossamer_interp::value::RuntimeError::Type(format!(
+                "expected callback handle (u64), found {other:?}"
+            ))),
+        }
+    }
+}
+
+impl crate::conv::ToGos for NativeCallback {
+    fn to_gos(self) -> gossamer_interp::value::Value {
+        gossamer_interp::value::Value::Int(self.handle as i64)
+    }
+}
+
+impl crate::sig::SigType for NativeCallback {
+    const TYPE: Type = Type::Callback(&[], &Type::Any);
+}
+
+// --- ABI 0.4: Vec<u8> as a plain byte vec (non-Bytes path) ---------
+
+impl BindingAbi for Vec<u8> {
+    type Input = *const GosVec;
+    type Output = *mut GosVec;
+    const TYPE: Type = Type::Vec(&Type::I64);
+
+    unsafe fn from_input(input: *const GosVec) -> Self {
+        // Reuse the existing byte-pack path (same as Vec<bool>);
+        // bytes are stored 1-byte-per-element in the GosVec data
+        // buffer.
+        unsafe { read_gos_vec_u8(input) }
+    }
+
+    fn to_output(self) -> *mut GosVec {
+        make_gos_vec(&self)
+    }
+}
+
+unsafe fn read_gos_vec_u8(p: *const GosVec) -> Vec<u8> {
+    if p.is_null() {
+        return Vec::new();
+    }
+    let header = unsafe { &*p };
+    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    if header.ptr.is_null() || len == 0 {
+        return Vec::new();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(header.ptr, len) };
+    slice.to_vec()
+}
+
+// --- Default impls for Output types ---------------------------------
+//
+// The macro-generated thunk's panic-catch path needs a
+// `Default::default()` for every `Output` type. Pointer outputs
+// already have one (null ptr). The non-pointer outputs (i64, etc.)
+// also already have one. The new shapes here all return pointers
+// or `u64`, both `Default`. No additional code needed.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,5 +1362,129 @@ mod tests {
         let err_raw = Err::<i64, _>("nope".to_string()).to_output();
         let back = unsafe { <Result<i64, String> as BindingAbi>::from_input(err_raw) };
         assert_eq!(back, Err("nope".to_string()));
+    }
+
+    // --- ABI 0.4 round-trip coverage -------------------------------
+
+    #[test]
+    fn bytes_round_trip() {
+        let payload: Vec<u8> = (0..=255u8).collect();
+        let bytes = Bytes::new(payload.clone());
+        let raw = bytes.to_output();
+        let back = unsafe { <Bytes as BindingAbi>::from_input(raw) };
+        assert_eq!(back.as_slice(), payload.as_slice());
+    }
+
+    #[test]
+    fn bytes_empty_round_trip() {
+        let bytes = Bytes::default();
+        let raw = bytes.to_output();
+        let back = unsafe { <Bytes as BindingAbi>::from_input(raw) };
+        assert!(back.is_empty());
+    }
+
+    #[test]
+    fn bytes_large_round_trip() {
+        let payload: Vec<u8> = (0..16 * 1024).map(|i| (i % 256) as u8).collect();
+        let bytes = Bytes::new(payload.clone());
+        let raw = bytes.to_output();
+        let back = unsafe { <Bytes as BindingAbi>::from_input(raw) };
+        assert_eq!(back.len(), payload.len());
+        assert_eq!(back.as_slice(), payload.as_slice());
+    }
+
+    #[test]
+    fn vec_u8_round_trip() {
+        let payload: Vec<u8> = vec![0, 1, 127, 200, 255];
+        let raw = payload.clone().to_output();
+        let back = unsafe { <Vec<u8> as BindingAbi>::from_input(raw) };
+        assert_eq!(back, payload);
+    }
+
+    #[test]
+    fn hash_map_i64_i64_round_trip() {
+        let mut m: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        m.insert(1, 100);
+        m.insert(2, 200);
+        m.insert(3, 300);
+        let raw = m.clone().to_output();
+        let back = unsafe { <std::collections::HashMap<i64, i64> as BindingAbi>::from_input(raw) };
+        assert_eq!(back, m);
+    }
+
+    #[test]
+    fn hash_map_string_string_round_trip() {
+        let mut m: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        m.insert("content-type".into(), "application/json".into());
+        m.insert("x-request-id".into(), "abc123".into());
+        let raw = m.clone().to_output();
+        let back =
+            unsafe { <std::collections::HashMap<String, String> as BindingAbi>::from_input(raw) };
+        assert_eq!(back, m);
+    }
+
+    #[test]
+    fn hash_map_empty_round_trip() {
+        let m: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        let raw = m.to_output();
+        let back = unsafe { <std::collections::HashMap<i64, i64> as BindingAbi>::from_input(raw) };
+        assert!(back.is_empty());
+    }
+
+    #[test]
+    fn dyn_value_nil_round_trip() {
+        let raw = DynValue::Nil.to_output();
+        let back = unsafe { <DynValue as BindingAbi>::from_input(raw) };
+        // Nil wraps in a synthetic "Nil" arm on the wire.
+        assert!(matches!(back, DynValue::Tagged { ref name, .. } if name == "Nil"));
+    }
+
+    #[test]
+    fn dyn_value_tagged_round_trip() {
+        let v = DynValue::Tagged {
+            name: "Integer".to_string(),
+            payload: vec![DynValue::Int(42)],
+        };
+        let raw = v.clone().to_output();
+        let back = unsafe { <DynValue as BindingAbi>::from_input(raw) };
+        let DynValue::Tagged { name, payload } = back else {
+            panic!("expected Tagged");
+        };
+        assert_eq!(name, "Integer");
+        assert_eq!(payload, vec![DynValue::Int(42)]);
+    }
+
+    #[test]
+    fn dyn_value_redis_resp_array_shape() {
+        // Mirrors a Redis RESP array of mixed types: an integer
+        // followed by a bulk-string-encoded byte payload.
+        let v = DynValue::Tagged {
+            name: "Array".to_string(),
+            payload: vec![
+                DynValue::Tagged {
+                    name: "Integer".to_string(),
+                    payload: vec![DynValue::Int(7)],
+                },
+                DynValue::Tagged {
+                    name: "BulkString".to_string(),
+                    payload: vec![DynValue::Bytes(b"hello".to_vec())],
+                },
+            ],
+        };
+        let raw = v.clone().to_output();
+        let back = unsafe { <DynValue as BindingAbi>::from_input(raw) };
+        let DynValue::Tagged { name, payload } = back else {
+            panic!("expected Tagged");
+        };
+        assert_eq!(name, "Array");
+        assert_eq!(payload.len(), 2);
+    }
+
+    #[test]
+    fn native_callback_passes_handle_through() {
+        let cb = NativeCallback { handle: 42 };
+        let raw = cb.to_output();
+        let back = unsafe { <NativeCallback as BindingAbi>::from_input(raw) };
+        assert_eq!(back.handle, 42);
     }
 }

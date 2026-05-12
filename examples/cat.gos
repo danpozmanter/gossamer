@@ -1,0 +1,20 @@
+/*
+ * cat — concatenate files to stdout.
+ *
+ * Demonstrates grouped `use`, `Result` + `|>` pipeline style,
+ * `result::map` for the ok-path, `result::default_with` to
+ * handle errors in the pipe, and `{name}` named-capture.
+ *
+ * Run:
+ *     gos run examples/cat.gos -- examples/cat.gos
+ */
+
+use std::{errors, iter, os, result}
+
+fn cat(f: &String) -> Result<(), errors::Error> {
+    os::read_file_to_string(f) |> result::map(|s| print!("{}", s))
+}
+
+fn main() {
+    os::args() |> iter::for_each(|f| cat(&f) |> result::default_with(|e| eprintln!("{f}: {e}")))
+}

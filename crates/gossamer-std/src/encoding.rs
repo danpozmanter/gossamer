@@ -12,9 +12,7 @@ pub mod ascii85;
 /// RFC 4648 Base32 (standard and hex alphabets).
 pub mod base32;
 /// XML parsing and encoding via quick-xml.
-#[cfg(feature = "xml")]
 pub mod xml;
-#[cfg(feature = "yaml")]
 pub mod yaml;
 
 pub mod base64 {

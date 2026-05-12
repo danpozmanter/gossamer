@@ -44,6 +44,7 @@ fn run(file: &PathBuf, mode: RunMode, forwarded: &[String]) -> Result<()> {
     // business reaching the VM — execution would either crash
     // or produce unsound output.
     let (program, mut tcx) = load_and_check(&source, file_id, &map)?;
+    gossamer_interp::set_program_name(&file.to_string_lossy());
     gossamer_interp::set_program_args(forwarded);
     if mode == RunMode::TreeWalker {
         return run_tree_walker(&program);

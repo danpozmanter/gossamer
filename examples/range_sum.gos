@@ -6,23 +6,21 @@
  * the helper; the call site stays immutable.
  */
 
+use std::iter
+
 fn sum(xs: &[i64]) -> i64 {
-    let mut acc: i64 = 0
-    for n in xs.iter() { acc += *n }
-    acc
+    xs |> iter::sum_by(|n: i64| n)
 }
 
 fn product(xs: &[i64]) -> i64 {
-    let mut acc: i64 = 1
-    for n in xs.iter() { acc *= *n }
-    acc
+    xs |> iter::fold(1, |acc, n| acc * n)
 }
 
 fn maximum(xs: &[i64]) -> Option<i64> {
     if xs.len() == 0 { return None }
     let mut best = xs[0]
-    for n in xs.iter() {
-        if *n > best { best = *n }
+    for n in xs {
+        if n > best { best = n }
     }
     Some(best)
 }

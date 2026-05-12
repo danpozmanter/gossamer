@@ -73,6 +73,15 @@ impl ServerConfig {
 #[derive(Clone)]
 pub struct ClientConfig {
     inner: Arc<rustls::ClientConfig>,
+    // Source PEM bytes preserved for cross-stack bridging. The
+    // HTTP client implementation (currently ureq-backed) builds
+    // its own rustls config internally from PEM, so we keep the
+    // PEM bytes around to feed it. Optional because the default
+    // Mozilla-roots config doesn't carry caller-supplied PEM.
+    extra_roots_pem: Option<Arc<Vec<u8>>>,
+    client_cert_pem: Option<Arc<Vec<u8>>>,
+    client_key_pem: Option<Arc<Vec<u8>>>,
+    alpn_protocols: Vec<Vec<u8>>,
 }
 
 impl std::fmt::Debug for ClientConfig {
@@ -95,6 +104,33 @@ impl ClientConfig {
             .map_err(|e| wrap_err("server name", e))?;
         ClientConnection::new(Arc::clone(&self.inner), name)
             .map_err(|e| wrap_err("new_connection", e))
+    }
+
+    /// Returns PEM bytes for extra trust roots beyond the bundled
+    /// Mozilla set, if the config was built with any.
+    #[must_use]
+    pub fn extra_roots_pem(&self) -> Option<&[u8]> {
+        self.extra_roots_pem.as_deref().map(Vec::as_slice)
+    }
+
+    /// Returns the client-cert chain PEM if the config carries
+    /// client-auth credentials.
+    #[must_use]
+    pub fn client_cert_pem(&self) -> Option<&[u8]> {
+        self.client_cert_pem.as_deref().map(Vec::as_slice)
+    }
+
+    /// Returns the client private-key PEM if the config carries
+    /// client-auth credentials.
+    #[must_use]
+    pub fn client_key_pem(&self) -> Option<&[u8]> {
+        self.client_key_pem.as_deref().map(Vec::as_slice)
+    }
+
+    /// Returns the ALPN protocol list configured for this client.
+    #[must_use]
+    pub fn alpn_protocols(&self) -> &[Vec<u8>] {
+        &self.alpn_protocols
     }
 }
 
@@ -181,6 +217,10 @@ pub fn client_config() -> Result<ClientConfig, Error> {
         .with_no_client_auth();
     Ok(ClientConfig {
         inner: Arc::new(config),
+        extra_roots_pem: None,
+        client_cert_pem: None,
+        client_key_pem: None,
+        alpn_protocols: Vec::new(),
     })
 }
 
@@ -212,6 +252,10 @@ pub fn client_config_with_certificate(
         .map_err(|e| wrap_err("build client config", e))?;
     Ok(ClientConfig {
         inner: Arc::new(config),
+        extra_roots_pem: extra_roots_pem.map(|pem| Arc::new(pem.to_vec())),
+        client_cert_pem: Some(Arc::new(cert.cert_pem.clone())),
+        client_key_pem: Some(Arc::new(cert.key_pem.clone())),
+        alpn_protocols: Vec::new(),
     })
 }
 
@@ -219,9 +263,14 @@ pub fn client_config_with_certificate(
 #[must_use]
 pub fn client_with_alpn(config: ClientConfig, protocols: &[&[u8]]) -> ClientConfig {
     let mut inner = (*config.inner).clone();
-    inner.alpn_protocols = protocols.iter().map(|p| p.to_vec()).collect();
+    let alpn: Vec<Vec<u8>> = protocols.iter().map(|p| p.to_vec()).collect();
+    inner.alpn_protocols.clone_from(&alpn);
     ClientConfig {
         inner: Arc::new(inner),
+        extra_roots_pem: config.extra_roots_pem,
+        client_cert_pem: config.client_cert_pem,
+        client_key_pem: config.client_key_pem,
+        alpn_protocols: alpn,
     }
 }
 

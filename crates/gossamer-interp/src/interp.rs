@@ -505,6 +505,22 @@ impl Interpreter {
             Value::Variant(inner) if inner.fields.is_empty() => {
                 Ok(Value::variant(inner.name, Arc::new(args)))
             }
+            // Fn-name surrogate. The bytecode VM emits
+            // `Value::String(name)` when a top-level function appears
+            // as a value (because the underlying `Global::Fn(chunk)`
+            // can't safely cross the dynamic-Value boundary). When
+            // such a surrogate reaches the tree-walker through
+            // `NativeDispatch::call_value` (e.g.
+            // `iter::for_each(named_fn, xs)`), resolve the global
+            // and apply it directly. Without this, every "pass a
+            // bare fn as an argument" pattern silently no-ops on the
+            // VM path.
+            Value::String(name) => {
+                if let Some(value) = self.globals.get(name.as_str()).cloned() {
+                    return self.apply(&value, args);
+                }
+                Ok(Value::Unit)
+            }
             // Calling through any other stub-shaped value — treat as
             // a no-op so programs that thread partially-unresolved
             // paths through calls still terminate.
@@ -769,7 +785,10 @@ impl Interpreter {
         let callee_value = self.eval_expr_to_value(callee, env)?;
         let mut arg_values = Vec::with_capacity(args.len());
         for arg in args {
-            arg_values.push(self.eval_expr_to_value(arg, env)?);
+            match self.eval_expr(arg, env)? {
+                Flow::Value(v) => arg_values.push(v),
+                early => return Ok(early),
+            }
         }
         let label = callee_label(callee);
         if let Some(name) = &label {
@@ -797,7 +816,10 @@ impl Interpreter {
         let receiver_value = self.eval_expr_to_value(receiver, env)?;
         let mut arg_values = Vec::with_capacity(args.len() + 1);
         for arg in args {
-            arg_values.push(self.eval_expr_to_value(arg, env)?);
+            match self.eval_expr(arg, env)? {
+                Flow::Value(v) => arg_values.push(v),
+                early => return Ok(early),
+            }
         }
         // Qualified-first dispatch. Try `TypeName::method` before
         // the bare method name so a user impl never collides with

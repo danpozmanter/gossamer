@@ -3,8 +3,6 @@
 #![forbid(unsafe_code)]
 
 /// Tar archive reader and writer.
-#[cfg(feature = "archive")]
 pub mod tar;
 /// ZIP archive reader and writer.
-#[cfg(feature = "archive")]
 pub mod zip;

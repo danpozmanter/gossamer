@@ -1,0 +1,12 @@
+# `std::net::url`
+
+URL parsing, rendering, and query escaping.
+
+## Public items
+
+| Name | Kind | Description |
+|---|---|---|
+| `Url` | type | Parsed URL. |
+| `query_escape` | fn | Percent-encodes a query parameter. |
+| `query_unescape` | fn | Inverse of `query_escape`. |
+

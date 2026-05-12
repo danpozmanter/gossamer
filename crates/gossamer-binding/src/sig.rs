@@ -70,3 +70,32 @@ impl SigType for crate::Value {
     /// accepts anything in this slot.
     const TYPE: Type = Type::Any;
 }
+
+// --- ABI 0.4 new shapes ------------------------------------------------
+
+// `Bytes` is a transparent `Vec<u8>` newtype; binding authors
+// reach for it when they want `Type::Bytes` instead of
+// `Type::Vec(&Type::I64)`. Rust stable doesn't have
+// specialization, so we can't have `Vec<u8>` → `Bytes` automatic;
+// the newtype is the explicit opt-in.
+impl SigType for crate::conv::Bytes {
+    const TYPE: Type = Type::Bytes;
+}
+
+impl SigType for crate::conv::DynValue {
+    /// `DynValue` is the variant-erasure type. Its `Type` slot
+    /// is filled by the binding author at call site via a const
+    /// `VariantArm` table; the default `TYPE` is a permissive
+    /// `Variant(&[])` (accepts any arm). Bindings that want
+    /// strict typechecking should declare a concrete signature
+    /// via a custom `SigType` wrapper.
+    const TYPE: Type = Type::Variant(&[]);
+}
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface — declared signature is hasher-agnostic."
+)]
+impl<K: SigType, V: SigType> SigType for std::collections::HashMap<K, V> {
+    const TYPE: Type = Type::Map(&K::TYPE, &V::TYPE);
+}

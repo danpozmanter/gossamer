@@ -1200,21 +1200,36 @@ fn lower_fn(
         builder.param_locals.insert(local);
         if let HirPatKind::Binding { name, .. } = &param.pattern.kind {
             builder.bind_local(&name.name, local);
-            // Heuristic: parameters named with stdlib-shape-
-            // identifying names get a runtime-kind tag so
-            // method dispatch on them lands on the right
-            // helper. Without this, impl-method params
-            // typed `http::Request` (whose Ty resolves to
-            // Var since stdlib types aren't user-defined
-            // structs) lose their surface kind.
-            let runtime_kind: Option<&'static str> = match name.name.as_str() {
-                "request" | "req" => Some("http::Request"),
-                "response" | "resp" => Some("http::Response"),
+            // First-priority signal for the runtime-kind tag: the
+            // rendered type of the parameter. Stdlib types like
+            // `http::Request` resolve to a `TyKind` whose printer
+            // form retains the path, even when the type isn't a
+            // user-declared struct (so `struct_name_of` below
+            // can't pick it up). Match on the last `::`-segment
+            // so the fully-qualified `http::Request` and the
+            // short-name `Request` both light up.
+            let rendered = gossamer_types::printer::render_ty(builder.tcx, param.ty);
+            let last_segment = rendered.rsplit("::").next().unwrap_or(&rendered);
+            let runtime_kind_from_type: Option<&'static str> = match last_segment {
+                "Request" => Some("http::Request"),
+                "Response" => Some("http::Response"),
+                "Scanner" => Some("bufio::Scanner"),
+                "Client" => Some("http::Client"),
+                _ => None,
+            };
+            // Secondary fallback: parameters named with stdlib-
+            // shape-identifying names get the same tag. Covers
+            // the case where the type renders as a Var (e.g.
+            // when type inference hasn't pinned the parameter to
+            // a concrete shape).
+            let runtime_kind_from_name: Option<&'static str> = match name.name.as_str() {
+                "request" | "req" | "r" | "rq" => Some("http::Request"),
+                "response" | "resp" | "rsp" => Some("http::Response"),
                 "scanner" => Some("bufio::Scanner"),
                 "client" => Some("http::Client"),
                 _ => None,
             };
-            if let Some(rk) = runtime_kind {
+            if let Some(rk) = runtime_kind_from_type.or(runtime_kind_from_name) {
                 builder.local_runtime_kind.insert(local, rk);
             }
         }
@@ -1642,50 +1657,40 @@ impl<'a> Builder<'a> {
             TyKind::Ref { inner, .. } => self.tcx.kind_of(*inner).clone(),
             other => other.clone(),
         };
-        let elem_kind = match &recv_kind {
-            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
-                self.tcx.kind_of(*elem).clone()
-            }
+        let elem_ty_concrete = match &recv_kind {
+            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => *elem,
             _ => return None,
         };
-        // String pointers are word-sized like i64, so the same
-        // gos_rt_arr/vec_sort_by_i64 helpers work for both.
-        let elem_is_sortable = matches!(
+        let elem_kind = self.tcx.kind_of(elem_ty_concrete).clone();
+        // Single-slot scalar elements (i64, String pointers, bools)
+        // sort through the by-value i64 helpers; multi-slot
+        // aggregates (Tuple / Adt) sort through the byte-stride
+        // helpers that hand the comparator pointers to each
+        // element. Arrays-of-T as elements aren't sortable —
+        // their content fan-out makes the comparator ABI
+        // ambiguous; bail out.
+        let elem_is_scalar = matches!(
             elem_kind,
             TyKind::Int(IntTy::I64) | TyKind::String | TyKind::Bool
         );
-        if !elem_is_sortable {
-            // Other element types route through their own helper
-            // when the runtime grows one; for now bail out rather
-            // than miscompile via the i64 dispatch.
+        let elem_is_aggregate = matches!(elem_kind, TyKind::Tuple(_) | TyKind::Adt { .. });
+        if !elem_is_scalar && !elem_is_aggregate {
             return None;
         }
         let raw_closure_local = self.lower_expr(closure_arg)?;
-        // The runtime helper loads `env[0]` as the fn pointer it
-        // calls back. For a capturing closure that's already the
-        // body's address; for a non-capturing closure (a bare fn
-        // item path), the closure value is a string-table pointer
-        // — we have to wrap it via the per-shape thunk so the
-        // helper sees a real env layout. Synthesise a FnTrait Ty
-        // matching the runtime callback shape `Fn(i64, i64) -> i64`
-        // and route through the standard coerce path. Element values
-        // are passed by value (not reference) because the typeck
-        // currently leaves the closure params as plain `i64` rather
-        // than `&i64`, so the runtime helper dereferences before
-        // invoking the comparator.
+        // For scalar elements the closure receives values
+        // directly. For aggregate elements the cranelift ABI
+        // already passes aggregates as pointers (see
+        // `cl_type_of`), so declaring the comparator inputs as
+        // the concrete element type produces the right shape:
+        // the runtime hands two element pointers, the closure
+        // body's field-access projections walk off those
+        // pointers correctly, no auto-deref needed.
         let i64_ty = self.tcx.int_ty(IntTy::I64);
-        // Use the actual element type for the comparator signature so
-        // thunk mangling matches the closure's declared parameter types.
-        let elem_ty = match &recv_kind {
-            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
-                let k = self.tcx.kind_of(*elem).clone();
-                if matches!(k, TyKind::Int(IntTy::I64) | TyKind::String | TyKind::Bool) {
-                    *elem
-                } else {
-                    i64_ty
-                }
-            }
-            _ => i64_ty,
+        let elem_ty = if elem_is_scalar || elem_is_aggregate {
+            elem_ty_concrete
+        } else {
+            i64_ty
         };
         let cmp_sig = gossamer_types::FnSig {
             inputs: vec![elem_ty, elem_ty],
@@ -1695,12 +1700,22 @@ impl<'a> Builder<'a> {
         let closure_local =
             self.coerce_to_fn_trait_if_needed(raw_closure_local, cmp_trait_ty, span);
         let unit_ty = self.tcx.unit();
+        let vec_helper = if elem_is_aggregate {
+            "gos_rt_vec_sort_by_aggr"
+        } else {
+            "gos_rt_vec_sort_by_i64"
+        };
+        let arr_helper = if elem_is_aggregate {
+            "gos_rt_arr_sort_by_aggr"
+        } else {
+            "gos_rt_arr_sort_by_i64"
+        };
         match &recv_kind {
             TyKind::Vec(_) | TyKind::Slice(_) => {
                 let dest = self.fresh(unit_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_sort_by_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(vec_helper.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(recv_place.local)),
                         Operand::Copy(Place::local(closure_local)),
@@ -1719,15 +1734,30 @@ impl<'a> Builder<'a> {
                     Rvalue::Use(Operand::Const(ConstValue::Int(len_i128))),
                     span,
                 );
+                let mut args = vec![
+                    Operand::Copy(Place::local(recv_place.local)),
+                    Operand::Copy(Place::local(len_local)),
+                ];
+                if elem_is_aggregate {
+                    // Stride helper needs the element width in
+                    // bytes so it can advance the cursor between
+                    // elements. The bytes value uses the same
+                    // `type_slot_bytes` rule as Vec layouts.
+                    let bytes_local = self.fresh(i64_ty);
+                    let elem_bytes = i128::from(self.type_slot_bytes(elem_ty_concrete).max(8));
+                    self.emit_assign(
+                        Place::local(bytes_local),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(elem_bytes))),
+                        span,
+                    );
+                    args.push(Operand::Copy(Place::local(bytes_local)));
+                }
+                args.push(Operand::Copy(Place::local(closure_local)));
                 let dest = self.fresh(unit_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_arr_sort_by_i64".to_string())),
-                    args: vec![
-                        Operand::Copy(Place::local(recv_place.local)),
-                        Operand::Copy(Place::local(len_local)),
-                        Operand::Copy(Place::local(closure_local)),
-                    ],
+                    callee: Operand::Const(ConstValue::Str(arr_helper.to_string())),
+                    args,
                     destination: Place::local(dest),
                     target: Some(next),
                 });
@@ -2273,6 +2303,7 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_time_format_rfc3339", result_ty)
             }
+            "os::program_name" => ("gos_rt_os_program_name", self.tcx.string_ty()),
             "os::env" => ("gos_rt_os_env", self.option_string_adt_ty()),
             "os::exists" | "fs::exists" => ("gos_rt_os_exists", self.tcx.bool_ty()),
             "os::is_file" | "fs::is_file" => ("gos_rt_os_is_file", self.tcx.bool_ty()),
@@ -2328,7 +2359,7 @@ impl<'a> Builder<'a> {
             // so `r.status` / `r.body` / `r.content_type` /
             // `r.location` projections find the right field index
             // via `stdlib_struct_shapes`.
-            "http::get" => {
+            "http::get" | "http::native_client::get" | "native_client::get" => {
                 let resp_def = gossamer_resolve::DefId::local(u32::MAX - 5);
                 let resp_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
                     def: resp_def,
@@ -2449,6 +2480,70 @@ impl<'a> Builder<'a> {
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             "http::serve" => ("gos_rt_http_serve", self.tcx.unit()),
+            "http2::bind_and_run_h2c" => ("gos_rt_http2_bind_and_run_h2c", self.tcx.unit()),
+            // 0.4.0 HTTP-module bridges (compiled tier free-fn surface).
+            // Stateful types (router::new, etc.) are interp-only and not
+            // listed here — calling them in compiled mode emits an
+            // "unsupported call" diagnostic via the generic fallback.
+            "http::chunked::encode" | "chunked::encode" => {
+                ("gos_rt_chunked_encode", self.tcx.string_ty())
+            }
+            "http::chunked::decode" | "chunked::decode" => {
+                ("gos_rt_chunked_decode", self.tcx.string_ty())
+            }
+            "http::sse::encode_event" | "sse::encode_event" => {
+                ("gos_rt_sse_encode_event", self.tcx.string_ty())
+            }
+            "http::sse::encode_comment" | "sse::encode_comment" => {
+                ("gos_rt_sse_encode_comment", self.tcx.string_ty())
+            }
+            "http::sse::encode_retry" | "sse::encode_retry" => {
+                ("gos_rt_sse_encode_retry", self.tcx.string_ty())
+            }
+            "http::middleware::new_request_id" | "middleware::new_request_id" => {
+                ("gos_rt_mw_new_request_id", self.tcx.string_ty())
+            }
+            "http::middleware::accepts_gzip" | "middleware::accepts_gzip" => {
+                ("gos_rt_mw_accepts_gzip", self.tcx.bool_ty())
+            }
+            "http::websocket::accept_key" | "websocket::accept_key" => {
+                ("gos_rt_ws_accept_key", self.tcx.string_ty())
+            }
+            "http::static_files::mime_for_path" | "static_files::mime_for_path" => {
+                ("gos_rt_static_mime_for_path", self.tcx.string_ty())
+            }
+            // Stateful constructors. The MIR call-path emits the
+            // bare runtime symbol; user code does `Router::new()`
+            // → constructor handle. Returns `*mut T` (Ptr) which
+            // the caller treats as the receiver of subsequent
+            // method calls.
+            "http::router::Router::new"
+            | "router::Router::new"
+            | "Router::new"
+            | "http::router::new"
+            | "router::new" => (
+                "gos_rt_router_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "http::websocket::ws_frame_text" | "websocket::ws_frame_text" => {
+                ("gos_rt_ws_frame_text", self.tcx.string_ty())
+            }
+            "http::native_client::Client::new"
+            | "native_client::Client::new"
+            | "NativeClient::new" => (
+                "gos_rt_native_client_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "http::static_files::FileServer::new"
+            | "static_files::FileServer::new"
+            | "FileServer::new" => (
+                "gos_rt_file_server_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "http::proxy::Proxy::new" | "proxy::Proxy::new" | "Proxy::new" => (
+                "gos_rt_proxy_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             "gzip::encode" | "compress::gzip::encode" => {
                 ("gos_rt_gzip_encode", self.tcx.string_ty())
             }
@@ -2530,6 +2625,11 @@ impl<'a> Builder<'a> {
             "gos_rt_regex_compile" => Some("regex::Pattern"),
             "gos_rt_set_new" => Some("collections::HashSet"),
             "gos_rt_btmap_new" => Some("collections::BTreeMap"),
+            // 0.4.0 stateful HTTP types.
+            "gos_rt_router_new" => Some("http::Router"),
+            "gos_rt_file_server_new" => Some("http::FileServer"),
+            "gos_rt_native_client_new" => Some("http::NativeClient"),
+            "gos_rt_proxy_new" => Some("http::Proxy"),
             _ => None,
         };
         if let Some(rk) = runtime_kind {
@@ -2869,16 +2969,28 @@ impl<'a> Builder<'a> {
             B::F64 => self.tcx.float_ty(gossamer_types::FloatTy::F64),
             B::Char => self.tcx.char_ty(),
             B::String => self.tcx.string_ty(),
+            B::Bytes => {
+                // Bytes is `[u8]` at the source level; the runtime
+                // represents it through the same IntArray path as
+                // `[i64]` so the MIR shape is `Vec<i64>`.
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                self.tcx.intern(TyKind::Vec(u8_ty))
+            }
             B::Vec(inner) => {
                 let inner_ty = self.binding_type_to_mir(inner);
                 self.tcx.intern(TyKind::Vec(inner_ty))
             }
-            // Option / Result map to the runtime's tagged-union
-            // pointer; the codegen treats them as ptr-sized.
-            B::Option(_) | B::Result(_, _) => self.tcx.int_ty(gossamer_types::IntTy::I64),
-            // Tuple / Opaque / Any all flow through as ptr-sized
-            // values (handles or untyped passthroughs).
-            B::Tuple(_) | B::Opaque(_) | B::Any => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            // Option / Result / Variant map to the runtime's
+            // tagged-union pointer; the codegen treats them as
+            // ptr-sized.
+            B::Option(_) | B::Result(_, _) | B::Variant(_) => {
+                self.tcx.int_ty(gossamer_types::IntTy::I64)
+            }
+            // Map / Callback / Tuple / Opaque / Any all flow as
+            // ptr-sized values (handles or untyped passthroughs).
+            B::Map(_, _) | B::Callback(_, _) | B::Tuple(_) | B::Opaque(_) | B::Any => {
+                self.tcx.int_ty(gossamer_types::IntTy::I64)
+            }
         }
     }
 
@@ -4534,6 +4646,16 @@ impl<'a> Builder<'a> {
                     return Some(local);
                 }
             }
+            // `http2::bind_and_run_h2c(addr, handler, config)` —
+            // ignore the config argument in compiled mode and use
+            // the runtime default; reuses the same handler-fn-ptr
+            // dispatch as http::serve.
+            if joined == "http2::bind_and_run_h2c" && args.len() >= 2 {
+                if let Some(local) = self.lower_http2_bind_and_run_h2c(&args[0], &args[1], ty, span)
+                {
+                    return Some(local);
+                }
+            }
             // `flag::define(name, [flag::int(...), flag::string(...),
             // flag::bool(...)])` — declarative one-shot construction.
             // Expand to the imperative `flag::Set` builder pattern at
@@ -4601,6 +4723,21 @@ impl<'a> Builder<'a> {
                 && let Some((_, idx)) = self.enums.lookup(segments)
             {
                 return self.lower_user_enum_ctor(u32::try_from(idx).unwrap_or(0), args, ty, span);
+            }
+            // F#-style iter / option / result combinator surface
+            // (SPEC §10.4 / §10.4a / §10.4b). Data-last; closures
+            // pass through `coerce_to_fn_trait_if_needed` so the
+            // unified callable infra builds a real env pointer.
+            let joined: String = segments
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            if let Some(local) = self.try_lower_iter_call(&joined, args, ty, span) {
+                return Some(local);
+            }
+            if let Some(local) = self.try_lower_option_call(&joined, args, ty, span) {
+                return Some(local);
             }
         }
         // When the callee's `DefId` is known and its declared
@@ -7884,6 +8021,19 @@ impl<'a> Builder<'a> {
                 (Some("flag::Set"), "short") => Some("gos_rt_flag_set_short"),
                 (Some("flag::Set"), "usage") => Some("gos_rt_flag_set_usage"),
                 (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
+                // 0.4.0 stateful HTTP types — method-call dispatch.
+                (Some("http::Router"), "add") => Some("gos_rt_router_add"),
+                (Some("http::Router"), "get") => Some("gos_rt_router_get"),
+                (Some("http::Router"), "post") => Some("gos_rt_router_post"),
+                (Some("http::Router"), "put") => Some("gos_rt_router_put"),
+                (Some("http::Router"), "delete") => Some("gos_rt_router_delete"),
+                (Some("http::Router"), "patch") => Some("gos_rt_router_patch"),
+                (Some("http::Router"), "head") => Some("gos_rt_router_head"),
+                (Some("http::Router"), "options") => Some("gos_rt_router_options"),
+                (Some("http::Router"), "serve") => Some("gos_rt_router_serve"),
+                (Some("http::FileServer"), "serve") => Some("gos_rt_file_server_serve"),
+                (Some("http::NativeClient"), "get") => Some("gos_rt_native_client_get"),
+                (Some("http::Proxy"), "forward") => Some("gos_rt_proxy_forward"),
                 (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
                 (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
                 (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
@@ -7920,9 +8070,50 @@ impl<'a> Builder<'a> {
             let receiver_local = self.lower_expr(receiver)?;
             let mut arg_operands = Vec::with_capacity(args.len() + 1);
             arg_operands.push(Operand::Copy(Place::local(receiver_local)));
-            for arg in args {
-                let a = self.lower_expr(arg)?;
-                arg_operands.push(Operand::Copy(Place::local(a)));
+            // Router HTTP-verb methods take (router, pattern,
+            // env, fn_addr) — synthesize the handler's env+fn_addr
+            // from the trailing user argument (must be a struct
+            // whose impl Handler { fn serve(...) }).
+            let router_handler_method = matches!(
+                rt,
+                "gos_rt_router_get"
+                    | "gos_rt_router_post"
+                    | "gos_rt_router_put"
+                    | "gos_rt_router_delete"
+                    | "gos_rt_router_patch"
+                    | "gos_rt_router_head"
+                    | "gos_rt_router_options"
+                    | "gos_rt_router_add"
+            );
+            if router_handler_method && !args.is_empty() {
+                let handler_idx = args.len() - 1;
+                for arg in &args[..handler_idx] {
+                    let a = self.lower_expr(arg)?;
+                    arg_operands.push(Operand::Copy(Place::local(a)));
+                }
+                let handler_local = self.lower_expr(&args[handler_idx])?;
+                arg_operands.push(Operand::Copy(Place::local(handler_local)));
+                let handler_ty = self.locals[handler_local.0 as usize].ty;
+                let handler_struct = self
+                    .struct_name_of(handler_ty)
+                    .unwrap_or_else(|| "Handler".to_string());
+                let serve_fn_name = format!("{handler_struct}::serve");
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let fn_addr_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(fn_addr_local),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_fn_addr",
+                        args: vec![Operand::Const(ConstValue::Str(serve_fn_name))],
+                    },
+                    span,
+                );
+                arg_operands.push(Operand::Copy(Place::local(fn_addr_local)));
+            } else {
+                for arg in args {
+                    let a = self.lower_expr(arg)?;
+                    arg_operands.push(Operand::Copy(Place::local(a)));
+                }
             }
             let pinned: Ty = match rt {
                 "gos_rt_error_message"
@@ -7945,6 +8136,14 @@ impl<'a> Builder<'a> {
                 | "gos_rt_btmap_len"
                 | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                 "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
+                "gos_rt_router_add"
+                | "gos_rt_router_get"
+                | "gos_rt_router_post"
+                | "gos_rt_router_put"
+                | "gos_rt_router_delete"
+                | "gos_rt_router_patch"
+                | "gos_rt_router_head"
+                | "gos_rt_router_options" => self.tcx.unit(),
                 "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
                     let s = self.tcx.string_ty();
                     self.tcx.intern(gossamer_types::TyKind::Vec(s))
@@ -8041,6 +8240,19 @@ impl<'a> Builder<'a> {
             (Some("flag::Set"), "short") => Some("gos_rt_flag_set_short"),
             (Some("flag::Set"), "usage") => Some("gos_rt_flag_set_usage"),
             (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
+            // 0.4.0 stateful HTTP types — method-call dispatch.
+            (Some("http::Router"), "add") => Some("gos_rt_router_add"),
+            (Some("http::Router"), "get") => Some("gos_rt_router_get"),
+            (Some("http::Router"), "post") => Some("gos_rt_router_post"),
+            (Some("http::Router"), "put") => Some("gos_rt_router_put"),
+            (Some("http::Router"), "delete") => Some("gos_rt_router_delete"),
+            (Some("http::Router"), "patch") => Some("gos_rt_router_patch"),
+            (Some("http::Router"), "head") => Some("gos_rt_router_head"),
+            (Some("http::Router"), "options") => Some("gos_rt_router_options"),
+            (Some("http::Router"), "serve") => Some("gos_rt_router_serve"),
+            (Some("http::FileServer"), "serve") => Some("gos_rt_file_server_serve"),
+            (Some("http::NativeClient"), "get") => Some("gos_rt_native_client_get"),
+            (Some("http::Proxy"), "forward") => Some("gos_rt_proxy_forward"),
             (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
             (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
             (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
@@ -8074,9 +8286,54 @@ impl<'a> Builder<'a> {
         if let Some(rt) = lowered_kind_dispatch {
             let mut arg_operands = Vec::with_capacity(args.len() + 1);
             arg_operands.push(Operand::Copy(Place::local(receiver_local)));
-            for arg in args {
-                let a = self.lower_expr(arg)?;
-                arg_operands.push(Operand::Copy(Place::local(a)));
+            // Router HTTP-verb methods take (router, pattern,
+            // env, fn_addr) — synthesize the handler's env+fn_addr
+            // from the last user argument (must be a struct whose
+            // impl Handler { fn serve(...) }).
+            let router_handler_method = matches!(
+                rt,
+                "gos_rt_router_get"
+                    | "gos_rt_router_post"
+                    | "gos_rt_router_put"
+                    | "gos_rt_router_delete"
+                    | "gos_rt_router_patch"
+                    | "gos_rt_router_head"
+                    | "gos_rt_router_options"
+                    | "gos_rt_router_add"
+            );
+            if router_handler_method && !args.is_empty() {
+                let handler_idx = args.len() - 1;
+                // Lower non-handler args (method-name for add,
+                // pattern for verb methods).
+                for arg in &args[..handler_idx] {
+                    let a = self.lower_expr(arg)?;
+                    arg_operands.push(Operand::Copy(Place::local(a)));
+                }
+                // Handler env: pass the struct value as a pointer.
+                let handler_local = self.lower_expr(&args[handler_idx])?;
+                arg_operands.push(Operand::Copy(Place::local(handler_local)));
+                // Synthesize fn_addr via gos_fn_addr intrinsic.
+                let handler_ty = self.locals[handler_local.0 as usize].ty;
+                let handler_struct = self
+                    .struct_name_of(handler_ty)
+                    .unwrap_or_else(|| "Handler".to_string());
+                let serve_fn_name = format!("{handler_struct}::serve");
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let fn_addr_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(fn_addr_local),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_fn_addr",
+                        args: vec![Operand::Const(ConstValue::Str(serve_fn_name))],
+                    },
+                    span,
+                );
+                arg_operands.push(Operand::Copy(Place::local(fn_addr_local)));
+            } else {
+                for arg in args {
+                    let a = self.lower_expr(arg)?;
+                    arg_operands.push(Operand::Copy(Place::local(a)));
+                }
             }
             let pinned: Ty = match rt {
                 "gos_rt_error_message"
@@ -8099,6 +8356,14 @@ impl<'a> Builder<'a> {
                 | "gos_rt_btmap_len"
                 | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                 "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
+                "gos_rt_router_add"
+                | "gos_rt_router_get"
+                | "gos_rt_router_post"
+                | "gos_rt_router_put"
+                | "gos_rt_router_delete"
+                | "gos_rt_router_patch"
+                | "gos_rt_router_head"
+                | "gos_rt_router_options" => self.tcx.unit(),
                 "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
                     let s = self.tcx.string_ty();
                     self.tcx.intern(gossamer_types::TyKind::Vec(s))
@@ -9214,6 +9479,63 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         let addr_local = self.lower_expr(addr_expr)?;
         let handler_local = self.lower_expr(handler_expr)?;
+        // If the handler is a stateful runtime type (Router /
+        // FileServer / Proxy), its `serve` method lives in
+        // gossamer-runtime, not in user code. Pick the matching
+        // gos_rt_* runtime symbol; otherwise fall back to the
+        // user-defined `{T}::serve` lookup.
+        let handler_runtime_kind = self.local_runtime_kind.get(&handler_local).copied();
+        let serve_fn_name = match handler_runtime_kind {
+            Some("http::Router") => "gos_rt_router_serve".to_string(),
+            Some("http::FileServer") => "gos_rt_file_server_serve".to_string(),
+            Some("http::Proxy") => "gos_rt_proxy_forward".to_string(),
+            _ => {
+                let handler_ty = self.locals[handler_local.0 as usize].ty;
+                let handler_struct = self.struct_name_of(handler_ty)?;
+                format!("{handler_struct}::serve")
+            }
+        };
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let fn_addr_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(fn_addr_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_fn_addr",
+                args: vec![Operand::Const(ConstValue::Str(serve_fn_name))],
+            },
+            span,
+        );
+        let unit_ty = self.tcx.unit();
+        let dest = self.fresh(unit_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_http_serve".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(addr_local)),
+                Operand::Copy(Place::local(handler_local)),
+                Operand::Copy(Place::local(fn_addr_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Lowers `http2::bind_and_run_h2c(addr, handler, config?)`
+    /// to `gos_rt_http2_bind_and_run_h2c(addr, handler_env, fn_addr)`
+    /// — same handler-fn-ptr dispatch as `http::serve`. The
+    /// runtime ignores the optional `config` arg in v0.4.0 and
+    /// uses the default `http_h2::Config`.
+    fn lower_http2_bind_and_run_h2c(
+        &mut self,
+        addr_expr: &HirExpr,
+        handler_expr: &HirExpr,
+        _ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let addr_local = self.lower_expr(addr_expr)?;
+        let handler_local = self.lower_expr(handler_expr)?;
         let handler_ty = self.locals[handler_local.0 as usize].ty;
         let handler_struct = self.struct_name_of(handler_ty)?;
         let serve_fn_name = format!("{handler_struct}::serve");
@@ -9231,7 +9553,7 @@ impl<'a> Builder<'a> {
         let dest = self.fresh(unit_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_http_serve".to_string())),
+            callee: Operand::Const(ConstValue::Str("gos_rt_http2_bind_and_run_h2c".to_string())),
             args: vec![
                 Operand::Copy(Place::local(addr_local)),
                 Operand::Copy(Place::local(handler_local)),
@@ -9570,6 +9892,532 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// Lower an `iter::*` free-function call to the matching
+    /// `gos_rt_iter_*` runtime helper. Returns `None` for paths this
+    /// dispatcher doesn't handle, so the caller falls through to the
+    /// generic call lowering. SPEC §10.4 / data-last argument order.
+    ///
+    /// Closure-taking helpers route through the same
+    /// `coerce_to_fn_trait_if_needed` machinery that `xs.sort_by`
+    /// uses (§7280 ish): the closure local is coerced to a
+    /// `FnTrait(env, ...)` shape so the unified callable infra
+    /// builds the env-ptr that the runtime helper transmutes back
+    /// into a typed fn pointer.
+    fn try_lower_iter_call(
+        &mut self,
+        joined: &str,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::{IntTy, TyKind};
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let unit_ty = self.tcx.unit();
+
+        match (joined, args.len()) {
+            // Non-closure constructors / accessors.
+            ("iter::count", 1) => {
+                let v = self.lower_iter_vec_arg(&args[0])?;
+                let dest = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_count".to_string())),
+                    args: vec![Operand::Copy(Place::local(v))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::sum", 1) => {
+                // Element-type dispatch: f64 vec → sum_f64, otherwise sum_i64.
+                let v = self.lower_iter_vec_arg(&args[0])?;
+                let elem_is_f64 =
+                    matches!(self.iter_element_kind(args[0].ty), Some(TyKind::Float(_)));
+                let helper = if elem_is_f64 {
+                    "gos_rt_iter_sum_f64"
+                } else {
+                    "gos_rt_iter_sum_i64"
+                };
+                let dest_ty = if elem_is_f64 {
+                    self.tcx.float_ty(gossamer_types::FloatTy::F64)
+                } else {
+                    i64_ty
+                };
+                let dest = self.fresh(dest_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
+                    args: vec![Operand::Copy(Place::local(v))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::product", 1) => {
+                let v = self.lower_iter_vec_arg(&args[0])?;
+                let elem_is_f64 =
+                    matches!(self.iter_element_kind(args[0].ty), Some(TyKind::Float(_)));
+                let helper = if elem_is_f64 {
+                    "gos_rt_iter_product_f64"
+                } else {
+                    "gos_rt_iter_product_i64"
+                };
+                let dest_ty = if elem_is_f64 {
+                    self.tcx.float_ty(gossamer_types::FloatTy::F64)
+                } else {
+                    i64_ty
+                };
+                let dest = self.fresh(dest_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
+                    args: vec![Operand::Copy(Place::local(v))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::min", 1) => self.lower_iter_simple_vec_i64("gos_rt_iter_min_i64", args, span),
+            ("iter::max", 1) => self.lower_iter_simple_vec_i64("gos_rt_iter_max_i64", args, span),
+            ("iter::range", 2) => {
+                let a = self.lower_expr(&args[0])?;
+                let b = self.lower_expr(&args[1])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_range".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(a)),
+                        Operand::Copy(Place::local(b)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::range_inclusive", 2) => {
+                let a = self.lower_expr(&args[0])?;
+                let b = self.lower_expr(&args[1])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "gos_rt_iter_range_inclusive".to_string(),
+                    )),
+                    args: vec![
+                        Operand::Copy(Place::local(a)),
+                        Operand::Copy(Place::local(b)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::repeat", 2) => {
+                let v = self.lower_expr(&args[0])?;
+                let n = self.lower_expr(&args[1])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_repeat_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(v)),
+                        Operand::Copy(Place::local(n)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::take", 2) => {
+                let n = self.lower_expr(&args[0])?;
+                let v = self.lower_iter_vec_arg(&args[1])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_take_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(n)),
+                        Operand::Copy(Place::local(v)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::skip", 2) => {
+                let n = self.lower_expr(&args[0])?;
+                let v = self.lower_iter_vec_arg(&args[1])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_skip_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(n)),
+                        Operand::Copy(Place::local(v)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::reversed", 1) => {
+                self.lower_iter_simple_vec_in_vec_out("gos_rt_iter_reversed_i64", args, ty, span)
+            }
+            ("iter::chain", 2) => {
+                let a = self.lower_iter_vec_arg(&args[0])?;
+                let b = self.lower_iter_vec_arg(&args[1])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_chain_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(a)),
+                        Operand::Copy(Place::local(b)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            // Closure-taking helpers. Args are `(f, ..., xs)`; coerce
+            // the closure to its callback FnTrait shape so the
+            // unified callable infra ships an env pointer with the
+            // body address at env[0].
+            ("iter::for_each", 2) => {
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest = self.fresh(unit_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_for_each_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(self.lower_unit(span))
+            }
+            ("iter::map", 2) => {
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_map_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::filter", 2) => {
+                let bool_ty = self.tcx.bool_ty();
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_filter_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::fold", 3) => {
+                let init_local = self.lower_expr(&args[0])?;
+                let closure_local =
+                    self.lower_iter_closure(&args[1], &[i64_ty, i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[2])?;
+                let dest = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_fold_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(init_local)),
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::sum_by", 2) => {
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_sum_by_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::any", 2) => {
+                let bool_ty = self.tcx.bool_ty();
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_any_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::all", 2) => {
+                let bool_ty = self.tcx.bool_ty();
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_all_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            ("iter::find", 2) => {
+                // Build an Option<i64> from a (flag, value) pair so
+                // pattern matching on the result keeps working.
+                let bool_ty = self.tcx.bool_ty();
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let value = self.fresh(i64_ty);
+                let after_value = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_find_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    destination: Place::local(value),
+                    target: Some(after_value),
+                });
+                self.set_current(after_value);
+                let flag = self.fresh(i64_ty);
+                let after_flag = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "gos_rt_iter_find_i64_flag".to_string(),
+                    )),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    destination: Place::local(flag),
+                    target: Some(after_flag),
+                });
+                self.set_current(after_flag);
+                // Convert flag (0/1) → disc (0 for Some, 1 for None).
+                let disc = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(disc),
+                    Rvalue::BinaryOp {
+                        op: crate::BinOp::Sub,
+                        lhs: Operand::Const(ConstValue::Int(1)),
+                        rhs: Operand::Copy(Place::local(flag)),
+                    },
+                    span,
+                );
+                let dest = self.fresh(ty);
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_rt_result_new",
+                        args: vec![
+                            Operand::Copy(Place::local(disc)),
+                            Operand::Copy(Place::local(value)),
+                        ],
+                    },
+                    span,
+                );
+                Some(dest)
+            }
+            _ => None,
+        }
+    }
+
+    /// Lower an `option::*` free-function call to the matching
+    /// `gos_rt_option_*` runtime helper (SPEC §10.4a). The
+    /// closure-taking helpers (`option::map`, `and_then`, etc.) need
+    /// per-shape thunks across every inner type, so they stay in the
+    /// interp VM for now; only the non-closure accessors land here.
+    fn try_lower_option_call(
+        &mut self,
+        joined: &str,
+        args: &[HirExpr],
+        _ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::IntTy;
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        match (joined, args.len()) {
+            ("option::is_some", 1) => {
+                self.lower_iter_simple_vec_i64("gos_rt_option_is_some", args, span)
+            }
+            ("option::is_none", 1) => {
+                self.lower_iter_simple_vec_i64("gos_rt_option_is_none", args, span)
+            }
+            ("option::default", 2) => {
+                let fallback = self.lower_expr(&args[0])?;
+                let opt = self.lower_expr(&args[1])?;
+                let dest = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "gos_rt_option_default_i64".to_string(),
+                    )),
+                    args: vec![
+                        Operand::Copy(Place::local(fallback)),
+                        Operand::Copy(Place::local(opt)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            _ => None,
+        }
+    }
+
+    /// Helper: emit a one-arg `gos_rt_*` call taking a Vec/Option ptr
+    /// and returning i64.
+    fn lower_iter_simple_vec_i64(
+        &mut self,
+        helper: &str,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let v = self.lower_iter_vec_arg(&args[0])?;
+        let dest = self.fresh(i64_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args: vec![Operand::Copy(Place::local(v))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Helper: emit a one-arg `gos_rt_*` call taking a Vec ptr and
+    /// returning a new Vec ptr.
+    fn lower_iter_simple_vec_in_vec_out(
+        &mut self,
+        helper: &str,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let v = self.lower_iter_vec_arg(&args[0])?;
+        let dest = self.fresh(ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args: vec![Operand::Copy(Place::local(v))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Helper: coerce a closure argument to a `FnTrait` matching the
+    /// runtime callback's expected `(env, args...) -> ret` shape.
+    /// Mirrors the pattern in `try_lower_sort_by`.
+    fn lower_iter_closure(
+        &mut self,
+        closure_arg: &HirExpr,
+        inputs: &[Ty],
+        output: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let raw = self.lower_expr(closure_arg)?;
+        let cb_sig = gossamer_types::FnSig {
+            inputs: inputs.to_vec(),
+            output,
+        };
+        let cb_trait_ty = self.tcx.intern(gossamer_types::TyKind::FnTrait(cb_sig));
+        Some(self.coerce_to_fn_trait_if_needed(raw, cb_trait_ty, span))
+    }
+
+    /// Returns the element `TyKind` of a `Vec<T>` / `[T]` / `[T; N]`
+    /// type, looking through one layer of `&`. Used to pick between
+    /// i64 and f64 specializations for `iter::sum` / `iter::product`.
+    fn iter_element_kind(&self, ty: Ty) -> Option<gossamer_types::TyKind> {
+        use gossamer_types::TyKind;
+        let kind = self.tcx.kind_of(ty).clone();
+        let kind = match kind {
+            TyKind::Ref { inner, .. } => self.tcx.kind_of(inner).clone(),
+            other => other,
+        };
+        match kind {
+            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                Some(self.tcx.kind_of(elem).clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Lower an `iter::*`-style Vec argument, promoting a fixed-size
+    /// `[T; N]` literal to a heap `GosVec` so the runtime helper
+    /// sees a real header (`len`/`cap`/`elem_bytes`/`ptr`) at offset 0.
+    /// Vec / Slice operands pass through unchanged.
+    fn lower_iter_vec_arg(&mut self, arg: &HirExpr) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let raw = self.lower_expr(arg)?;
+        let raw_ty = self.locals[raw.0 as usize].ty;
+        if let TyKind::Array { elem, len } = self.tcx.kind_of(raw_ty).clone() {
+            return Some(self.coerce_array_to_vec(raw, elem, len, arg.span));
+        }
+        Some(raw)
+    }
+
     fn lower_result_ctor(
         &mut self,
         disc: i64,
@@ -9611,10 +10459,26 @@ impl<'a> Builder<'a> {
     fn lower_let_array_as_vec(&mut self, local: Local, elems: &[HirExpr], span: Span) -> bool {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let unit_ty = self.tcx.unit();
+        // Size the vec slot by its declared element type. An empty
+        // `let xs: [(String, i64)] = []` would otherwise pass 8 to
+        // `Vec::new`, which makes the byte-erased `gos_rt_vec_push`
+        // copy only the first 8 bytes of each tuple — every i64 in
+        // a `(String, i64)` element is then lost on push and reread
+        // as the next entry's String pointer on iteration. Extract
+        // the inner element type from the binding's `Vec(_)` /
+        // `Slice(_)` kind and route through `elem_bytes_of` (which
+        // sums the slot bytes of compound types correctly).
+        let binding_ty = self.locals[local.0 as usize].ty;
+        let elem_bytes_val: i128 = match self.tcx.kind_of(binding_ty) {
+            gossamer_types::TyKind::Vec(elem) | gossamer_types::TyKind::Slice(elem) => {
+                i128::from(self.elem_bytes_of(*elem).max(8))
+            }
+            _ => 8,
+        };
         let elem_bytes = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(elem_bytes),
-            Rvalue::Use(Operand::Const(ConstValue::Int(8))),
+            Rvalue::Use(Operand::Const(ConstValue::Int(elem_bytes_val))),
             span,
         );
         // `Vec::new` is the codegen-side intrinsic name that

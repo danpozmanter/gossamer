@@ -24,27 +24,44 @@ id      = "example.com/widget"
 version = "0.1.0"
 authors = ["Jane Roe <jane@example.com>"]
 license = "Apache-2.0"
-# Optional: override the `gos build` output path. Relative paths
-# resolve against the manifest directory.
-output  = "bin/widget"
 
 [dependencies]
 "example.org/lib" = "1.2.3"
 
 [registries]
 default = "https://registry.gossamer-lang.org"
+
+# Optional: explicit binary targets. Without this section, the
+# default is one binary named after the project id whose entry
+# point is `src/main.gos`.
+[[bin]]
+name = "widget"
+path = "src/main.gos"
+
+# Optional: a library target alongside / in place of a binary.
+# Without this section, presence of `src/lib.gos` is enough to
+# build the library by convention.
+[lib]
+name = "widget"
+path = "src/lib.gos"
 ```
 
 `gos add example.org/lib@1.2.3` appends the dependency.
 `gos remove example.org/lib` drops it. `gos tidy` re-serialises
 the file in canonical form.
 
+The default convention is still: `src/main.gos` ⇒ binary,
+`src/lib.gos` ⇒ library, project id ⇒ output name. The
+`[[bin]]` / `[lib]` sections let you override the entry-point
+path, rename the output, or ship multiple binaries from one
+project.
+
 ## Module layout
 
 ```
 src/
-├── main.gos       # binary entry
-├── lib.gos        # library root (optional)
+├── main.gos       # binary entry  (default; override via [[bin]].path)
+├── lib.gos        # library root  (default; override via [lib].path)
 ├── widget.gos     # submodule `widget`
 └── sub/
     └── mod.gos    # submodule `sub`

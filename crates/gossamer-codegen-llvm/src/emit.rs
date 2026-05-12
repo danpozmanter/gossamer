@@ -83,7 +83,7 @@ pub struct CompileOutcome {
 /// flag.
 pub fn compile_to_object(bodies: &[Body], tcx: &TyCtxt) -> Result<NativeObject> {
     if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
-        dump_mir(bodies);
+        dump_mir(bodies, tcx);
     }
     let triple = host_triple();
     let tmp_dir = pipeline_tmp_dir()?;
@@ -112,7 +112,7 @@ pub fn compile_to_object_at_path(
     obj_out: &std::path::Path,
 ) -> Result<String> {
     if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
-        dump_mir(bodies);
+        dump_mir(bodies, tcx);
     }
     let triple = host_triple();
     let tmp_dir = pipeline_tmp_dir()?;
@@ -128,7 +128,7 @@ pub fn compile_to_object_at_path(
     Ok(triple)
 }
 
-fn dump_mir(bodies: &[Body]) {
+fn dump_mir(bodies: &[Body], _tcx: &TyCtxt) {
     for body in bodies {
         eprintln!("=== MIR {} ===", body.name);
         for (i, block) in body.blocks.iter().enumerate() {
@@ -150,7 +150,7 @@ fn dump_mir(bodies: &[Body]) {
 /// Cranelift-built companion object.
 pub fn compile_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<CompileOutcome> {
     if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
-        dump_mir(bodies);
+        dump_mir(bodies, tcx);
     }
     let triple = host_triple();
     let tmp_dir = pipeline_tmp_dir()?;
@@ -183,7 +183,7 @@ pub fn compile_with_fallback_at_path(
     obj_out: &std::path::Path,
 ) -> Result<(String, Vec<String>)> {
     if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
-        dump_mir(bodies);
+        dump_mir(bodies, tcx);
     }
     let triple = host_triple();
     let tmp_dir = pipeline_tmp_dir()?;

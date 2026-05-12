@@ -95,6 +95,8 @@ fn http_server_survives_concurrent_load_without_panicking() {
         shutdown: Arc::clone(&shutdown),
         max_header_bytes: 8 * 1024,
         max_body_bytes: 1024 * 1024,
+        server_name: Some("gossamer-test".to_string()),
+        ..Config::default()
     };
 
     let request_count = Arc::new(AtomicUsize::new(0));

@@ -238,6 +238,21 @@ impl<'src> Parser<'src> {
         }
         &self.source[start..end]
     }
+
+    /// Returns `true` when at least one newline appears in the source
+    /// between the most recently consumed token and the current peek
+    /// token. Used by the Pratt loop to break statement continuation
+    /// for the unary-startable operators `&`, `*`, and `-` so that
+    /// `let x = expr\n&y` parses as two statements, not `expr & y`.
+    #[must_use]
+    pub(crate) fn newline_before_peek(&self) -> bool {
+        let last_end = self.last_span().end as usize;
+        let peek_start = self.peek_span().start as usize;
+        if peek_start <= last_end || peek_start > self.source.len() {
+            return false;
+        }
+        self.source[last_end..peek_start].contains('\n')
+    }
 }
 
 /// Returns a short human-readable rendering of a token for diagnostics.

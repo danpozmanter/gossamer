@@ -387,10 +387,10 @@ a small test when unsure.
 ## 13. Project layout
 
 ```
-project.toml       # manifest: [project], [dependencies], [registries]
+project.toml       # manifest: [project], [dependencies], [registries], optional [[bin]] / [lib]
 src/
-├── main.gos       # binary entry
-├── lib.gos        # library root (optional)
+├── main.gos       # default binary entry  (override via [[bin]].path)
+├── lib.gos        # default library root  (override via [lib].path)
 └── subdir/
     └── mod.gos    # module `subdir`
 tests/             # integration tests
@@ -407,6 +407,18 @@ license = "Apache-2.0"
 
 [dependencies]
 "example.org/lib" = "1.2.3"
+
+# Optional. Without this section, the default is one binary
+# named after the project id whose entry point is src/main.gos.
+[[bin]]
+name = "widget"
+path = "src/main.gos"
+
+# Optional. Without this section, presence of src/lib.gos is
+# enough to build the library by convention.
+[lib]
+name = "widget"
+path = "src/lib.gos"
 ```
 
 ## 14. Worked examples
@@ -476,6 +488,25 @@ fn main() -> Result<(), http::Error> {
   self-evident code. Gossamer has no `///` / `//!` form.
 - **Pipe aggressively** — if a value flows through more
   than one call, use `|>`.
+- **`iter::*` over hand-rolled `for` loops for transformations.**
+  `xs |> iter::for_each(handle)` instead of
+  `for x in xs { handle(x) }` when the body is a single call.
+  `xs |> iter::sum_by(|n| n*n)` instead of a
+  `let mut total=0; for n in xs { ... }`. The combinators (`map`,
+  `filter`, `filter_map`, `fold`, `reduce`, `for_each`, `find`,
+  `group_by`, `partition`, …) live as free functions in
+  `std::iter` with data-last argument order so they thread through
+  `|>`. Keep `for` for side-effect loops with complex state,
+  `break`/`continue`, or early-return.
+- **`option::*` / `result::*` for in-pipeline chaining.**
+  `parse(s) |> result::map(render) |> result::default("")`
+  instead of a `match` when each arm is extract-or-default.
+  `?` remains the right tool for short-circuit propagation.
+- **Free functions in `std::iter`, not methods on collections.**
+  `Vec<T>` / `HashMap` / `HashSet` do not carry `.map` /
+  `.filter` / `.fold` methods. Mutating helpers like `xs.push`,
+  `xs.sort`, `m.inc`, `m.or_insert` stay as methods because they
+  operate by side-effect on the receiver.
 - **One statement per line;** omit semicolons.
 - **Derive `Debug`, `Clone`, `PartialEq`** when cheap and
   meaningful; derive `Default` for zero-valued types.

@@ -66,3 +66,40 @@ let value = match risky() {
     Err(e) => { log(&e); default },
 }
 ```
+
+## List comprehensions become `|>` chains
+
+Python:
+
+```python
+total = sum(n * n for n in range(1, 11) if n % 2 == 0)
+```
+
+Gossamer:
+
+```gos
+let total = iter::range_inclusive(1, 10)
+    |> iter::filter(|n: i64| n % 2 == 0)
+    |> iter::sum_by(|n: i64| n * n)
+```
+
+Python:
+
+```python
+names = sorted({name.lower() for name in users if name})
+```
+
+Gossamer (rough mirror — `|>` threads each stage):
+
+```gos
+let names = users
+    |> iter::filter(|n: String| n.len() > 0)
+    |> iter::map(|n: String| n.to_lowercase())
+    |> iter::sort_by_key(|n: String| n.len())
+```
+
+The `iter::*` module is small and uniform: combinators take the
+data value as the last positional parameter so `xs |> iter::map(f)`
+desugars to `iter::map(f, xs)` (SPEC §4.6). For the optional /
+fallible cases there are matching `std::option` and `std::result`
+modules.

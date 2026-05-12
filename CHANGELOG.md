@@ -1,5 +1,294 @@
 # Changelog
 
+## 0.4.0
+
+### Binding ABI
+
+Four new shapes in the Rust-binding system; every 0.3 binding crate
+recompiles unchanged.
+
+- **`Type::Bytes`** — first-class byte payload, distinct from
+  `Vec<i64>` at the source level. Rust shape is the new
+  `gossamer_binding::Bytes` newtype (transparent `Vec<u8>`).
+  Compiled tier uses a `GosBytes { len, cap, ptr }` C-ABI struct;
+  interp tier stores as `Value::IntArray`.
+- **`Type::Map<K, V>`** — keyed collection backed by `HashMap<K, V>`.
+  Compiled tier uses `GosMap { keys, values }` parallel-vec headers.
+  Concrete impls for `HashMap<String, String>`,
+  `HashMap<String, i64>`, `HashMap<i64, i64>`.
+- **`Type::Variant<arms...>`** — tagged-union return backed by the
+  new `gossamer_binding::DynValue` enum (Nil, Bool, Int, Float,
+  Char, String, Bytes, List, Map, Tagged). Compiled tier uses
+  `GosDynVariant { name, payload_len, payload }` with arena-
+  allocated arm names.
+- **`Type::Callback(args, ret)`** — Gossamer-side callable that
+  bindings may invoke during their call. `BindingCallback` for
+  interp (wraps a `Value`), `NativeCallback` for compiled (wraps a
+  `u64` handle). Lifetime is strictly call-scoped — retaining past
+  the binding return is undefined behaviour.
+
+`gossamer_resolve::BindingType`, `gossamer_driver::DumpedType`,
+`gossamer_runner_template/sigs_dump.rs.tmpl`, and
+`gossamer_mir::lower::binding_type_to_mir` all extended to handle
+the new shapes. Architecture spec at
+`crates/gossamer-binding/ABI_0_4.md`.
+
+### Language / parser
+
+- **Statement boundary for leading `&` / `*` / `-`.** A newline
+  followed by one of these three operators now ends the previous
+  statement, so `let s = read(p)?\n&s |> ...` parses as two
+  statements instead of `let s = read(p)? & s |> ...`. Multi-line
+  continuation still works when the operator sits at the end of
+  the previous line (`let x = a -\n  b`) or inside parentheses;
+  all other binary operators continue across newlines
+  unconditionally. SPEC §2.7.
+- **`?` in macro argument position propagates early-return.**
+  `print!("{}", expr?)` correctly returns `Err(e)` from the
+  enclosing function when `expr` is `Err`; previously the result
+  was silently passed to `__concat`.
+
+### Manifest
+
+- **Explicit `[[bin]]` and `[lib]` tables in `project.toml`.**
+  Array-of-tables for `bin`, single-table for `lib`. Duplicate
+  bin names rejected. Implicit filesystem convention
+  (`src/main.gos` / `src/lib.gos`) still works when neither is
+  present.
+
+### HTTP — wire correctness
+
+- **`Client::builder().tls(...)` and `.cookies(...)` now work.**
+  Previous behaviour silently dropped both. `ClientConfig` retains
+  the source PEM bytes so the ureq bridge can rebuild TLS state.
+- **`Date` and `Server` headers auto-inserted on every response**
+  per RFC 9110 §6.6.1. `Server` value is configurable via
+  `Config.server_name` (default `gossamer/0.4.0`); handler-supplied
+  `Date` / `Server` headers are preserved without duplication.
+  New `std::time::format_rfc1123_gmt` helper.
+- **Chunked transfer encoding** (RFC 7230 §4.1) for both inbound
+  request bodies and outbound responses. New `std::http_chunked`
+  module (`ChunkedReader` + `ChunkedWriter`) with malformed-input
+  hardening (bad hex, premature EOF, missing CRLF, oversize
+  length, chunk-extensions). Trailer headers on inbound chunked
+  bodies merge into `request.headers`. Outbound chunked is
+  triggered by the handler setting `Transfer-Encoding: chunked`;
+  `Content-Length` is stripped when both are present. Combination
+  of chunked + `Content-Length` on the request is rejected with
+  `400`.
+- **`Expect: 100-continue`** support (RFC 7231 §5.1.1) on both
+  plain-TCP and TLS paths. The HTTP parser is split into
+  `parse_request_head_generic` and `finish_request` so the server
+  can write the interim response between head parse and body read.
+- **Path / query split.** `Request.path` is now the URL path alone
+  (Go's `URL.Path` semantics); `Request.query` carries the raw
+  query string (no leading `?`). New helpers: `Request::query()`,
+  `Request::request_uri()`, `Request::query_pairs()` (percent-
+  decoding), and `std::http::split_path_query()`.
+- **`Headers::remove(name)`** added.
+- **Unified HTTP/1.1 parser.** The TLS and plain-TCP paths now
+  share a single generic `parse_request_head_generic` +
+  `finish_request` implementation.
+
+### HTTP — timeouts and graceful shutdown
+
+- **Timeout taxonomy.** `Config` gains `read_header_timeout`
+  (10 s default, slowloris guard), `read_body_timeout` (30 s),
+  `write_timeout` (30 s), `idle_timeout` (75 s). The legacy
+  `read_timeout` knob still works as a blanket fallback. Per-phase
+  deadlines enforced via `Instant`-based total-elapsed checks in
+  the parser and body reader; per-syscall timeouts via
+  `set_read_timeout` / `set_write_timeout` switching across the
+  idle → header → body → write phases.
+- **`Server::shutdown(&Config, Option<Duration>) -> bool`** —
+  flips the shutdown flag, blocks until `Config.in_flight` drains
+  to zero or the deadline elapses. Returns `true` on clean drain,
+  `false` on timeout. Worker loop polls the flag between
+  keep-alive requests so idle connections close promptly.
+- **Per-request `Context` cancellation.** A watcher fires the
+  cancel handle when `Config.shutdown` trips, so long-running
+  handlers observe `request.context().is_cancelled() == true`.
+
+### HTTP — router, middleware, static files, proxy
+
+- **`http_router`** — Go 1.22-class `ServeMux` with `{name}`
+  captures, `{rest...}` trailing captures, `*` wildcard, method
+  gating (`get` / `post` / `put` / `delete` / `patch` / `head` /
+  `options`). Precedence: method-specific beats method-agnostic;
+  more-specific pattern wins; insertion-order breaks ties. Default
+  404 / 405 responses with overridable hooks.
+- **`http_middleware`** — Logger, Recoverer
+  (`std::panic::catch_unwind`), RequestId (`X-Request-Id` stamping
+  with carry-through), CORS (preflight + per-response headers),
+  BasicAuth (RFC 7617), Compress (gzip body framing gated on
+  `Accept-Encoding`, with min-bytes threshold).
+- **`http_static_files`** — `FileServer` with configurable `etag`,
+  `last_modified`, `range_support`, `max_file_bytes`. Path-
+  traversal guard (`fs::canonicalize` + prefix check). 200 / 206
+  / 304 / 404 / 416 response shaping. ETag from `mtime + size`,
+  RFC 1123 GMT `Last-Modified`. MIME table covers 25 common
+  extensions. `index.html` auto-served on directory hits.
+- **`http_proxy`** (behind `http-client` feature) — `ReverseProxy`
+  with caller-supplied `director`, `modify_response`,
+  `error_handler`. `ReverseProxy::single_host` forwards path +
+  query verbatim. Hop-by-hop header stripping per RFC 7230 §6.1.
+  Auto-appends `X-Forwarded-For`, `X-Forwarded-Host`,
+  `X-Forwarded-Proto`.
+
+### HTTP — WebSocket and SSE
+
+- **`http_websocket`** — RFC 6455 from scratch. `accept` performs
+  the handshake (validates Upgrade / Connection /
+  Sec-WebSocket-Version=13 / Sec-WebSocket-Key, computes
+  Sec-WebSocket-Accept via inline SHA-1 + base64). `WebSocket`
+  exposes `send_text` / `send_binary` / `send_ping` / `send_pong`
+  / `send_close` / `receive` over any `Read + Write` stream.
+  Auto-pong on inbound ping. Fragmented frame reassembly via
+  continuation opcodes. Server-mode requires client masking;
+  client-mode masks outbound frames. Length encoding handles
+  7-bit, 16-bit, and 64-bit forms. Inline SHA-1 + base64
+  implementations (no extra deps).
+- **`http_sse`** — Server-Sent Events (`text/event-stream`)
+  encoder: `SseStream::send` (event name / id / data lines),
+  `send_retry`, `send_comment` (heartbeat). `event_stream_headers()`
+  + `response_skeleton()` helpers.
+
+### HTTP/2 server
+
+- **`std::http2::bind_and_run_h2c`** in both `gos run` and
+  `gos build`. The `h2` crate runs on Gossamer's own goroutine
+  scheduler via `runtime_future::drive` (a future-pump) +
+  `async_tcp::AsyncTcpStream` (mio-bridge over non-blocking TCP).
+  Tokio is consumed only for its `AsyncRead` / `AsyncWrite` trait
+  surface.
+- Bounded `Handler` (`fn serve(req) -> Response`) and chunked
+  `StreamingHandler` (`fn serve(req, ResponseWriter)`) shapes
+  both supported. `ResponseWriter::write_chunk` flushes the
+  response head on first call and emits one `DATA` frame per
+  call; `finish` (or `Drop`) sends the terminating `END_STREAM`.
+- **ALPN-driven HTTPS dispatch** via `bind_and_run_tls_h2`
+  (tokio-rustls trait-only).
+- Architecture documented at `crates/gossamer-std/HTTP_H2_ARCH.md`.
+
+### Native HTTP/1 client
+
+- **`http_native_client`** built on `std::net::TcpStream`.
+  `NativeClient::{get, post, put, delete, request}` with per-
+  client connection pool (keyed by host:port), configurable
+  redirect policy (default 10 hops), chunked response decoding,
+  user-agent / timeout / max-body-bytes config. HTTPS not yet
+  supported; TLS stays on the existing ureq path.
+
+### HTTP module bridges — interp + compiled parity
+
+Eight stdlib HTTP modules now callable from Gossamer source in
+both tiers, byte-identical across `gos run` and `gos build`.
+
+- **router / FileServer / NativeClient / Proxy** — stateful,
+  method-chain dispatch. `Router::new()`, `r.get(path, Handler {})`,
+  `r.serve(req)` and the rest of the verb chain work end-to-end.
+  22 new `gos_rt_*` runtime symbols. MIR auto-synthesises
+  `gos_fn_addr("{Handler}::serve")` for HTTP-verb methods so the
+  runtime can transmute and invoke user handlers through the same
+  fn-pointer ABI as `gos_rt_http_serve`. `gos_fn_addr` now
+  resolves to `intrinsics.externs` for runtime symbols.
+- **chunked / sse / middleware / websocket-accept-key /
+  static_files-mime** — stateless free-fn shapes.
+  `chunked::encode` / `decode`, `sse::encode_event` / `comment` /
+  `retry`, `middleware::new_request_id` / `accepts_gzip`,
+  `websocket::accept_key`, `static_files::mime_for_path`. Self-
+  contained SHA-1 + base64 in the runtime for the WS accept-key
+  derivation.
+- **MIR runtime-kind tag from rendered type** — `lower_fn`'s
+  parameter binding now reads the rendered type of the param (in
+  addition to the binding name), so `r: http::Request` resolves
+  the same as `request: http::Request`. Fixes garbage reads on
+  `r.path` / `r.body` for handler params named anything other than
+  `request` / `req`.
+
+### Netpoller latency
+
+- Tightened the `globals().poller.lock()` hold during
+  `mio::Poll::poll()` so registering goroutines no longer wait up
+  to 50 ms per IO op. New `mio::Waker` interrupts in-flight polls
+  when `with_poller` mutates state; poll cycle dropped to 1 ms.
+  Multiplexed h2c: 3.7 ms/req, was 100 ms.
+
+### Networking
+
+- **`net::TcpStream::set_keepalive(Option<Duration>)`** — socket2-
+  backed `SO_KEEPALIVE` toggle.
+- **`net::TcpStream::connect_happy_eyeballs(addrs, stagger,
+  timeout)`** — Go 1.21-style v6/v4-interleaved race with per-
+  candidate staggered start.
+- **`net::UnixListener` / `net::UnixStream`** (Unix-only) — bind /
+  accept / connect / read / write / shutdown.
+- **`net::IpNet`** — RFC 4632 prefix parsing for IPv4 and IPv6,
+  `contains(&Ip)` predicate, `prefix_len()`, `render()`. Cross-
+  family addresses are rejected.
+- **`net::url`** — `path_escape` / `path_unescape`,
+  `UserInfo { username, password: Option<String> }` (parse +
+  render with percent-encoding), `Values` (Go's `url.Values`:
+  `add` / `set` / `get` / `get_all` / `delete` / `encode` /
+  `parse`).
+- New `socket2 = "0.5"` dependency in `gossamer-std`.
+
+### Stdlib
+
+- **`std::io`** — `copy`, `copy_n`, `read_all`, `LimitReader`,
+  `TeeReader`, `MultiReader`, `pipe` (paired `PipeReader` +
+  `PipeWriter` with cross-thread blocking semantics).
+- **`std::log`** (new) — Go-style flat logger: `println`,
+  `printf`, `fatal`, `panic_msg`; `set_output`, `set_prefix`,
+  `set_flags`; flag constants `L_DATE`, `L_TIME`, `L_MICROSECONDS`,
+  `L_JSON`, etc. Global process-wide sink protected by
+  `parking_lot::Mutex`.
+- **`std::time`** — `Ticker` (recurring callback every interval;
+  `stop()` / Drop-safe), `after_func` (one-shot timer returning a
+  cancellable `TimerHandle`), `SystemTime::from_std` / `as_std` /
+  `unix_seconds`.
+- **`std::sync`** — `SyncMap<K, V>` (read-heavy `RwLock`-backed
+  concurrent map: `store` / `load` / `load_or_store` / `delete` /
+  `contains` / `range`), `Pool<T>` (factory-backed freelist),
+  `Cond` (`parking_lot::Condvar` wrapper for `signal` /
+  `broadcast` / `wait`).
+- **`std::path`** — Go `path/filepath` parity: `glob(pattern)`
+  (literal, `*`, `?`, `[class]`, `**` recursive), `matches(pattern,
+  name)` segment matcher (no `/` crossing), `walk(root, visit)`
+  with `SKIP_DIR` / `SKIP_ALL` sentinels, `eval_symlinks(path)`.
+- **`std::crypto::cipher`** — `aes_ctr_xor` (in-place encrypt/
+  decrypt for 128/192/256-bit keys), `aes_cbc_encrypt` +
+  `aes_cbc_decrypt` with PKCS#7 padding. Bad key sizes and bad
+  IVs return typed errors.
+- **`std::runtime`** — `caller(skip)` returns
+  `Option<StackFrame>`, `stack()` returns `Vec<StackFrame>` (both
+  backed by the `backtrace` crate). `set_finalizer(arc, fn)`
+  returns a `Finalizer<T>` guard with `cancel()` and Arc-aware
+  drop semantics — fires only when the last clone goes away.
+- **`std::text::template`** — `FuncMap` registry with default
+  helpers (`upper`, `lower`, `trim`, `len`, `default`,
+  `html_escape`); pipelines (`{{ .x | upper | trim }}`);
+  `Template::render_with_funcs(data, funcs)` and free
+  `render_with_funcs(source, data, funcs)`. Unknown function names
+  raise `Error::Parse`.
+
+### Stdlib feature gates removed
+
+`gossamer-std` no longer ships behind feature flags — every
+module (regex, tls, crypto, compress, archive, http2, templates,
+sql, ureq, …) is unconditionally compiled. The `[features]`
+table is gone; consumers depend on the crate plain. 58
+`#[cfg(feature = …)]` sites stripped.
+
+### Tooling
+
+- **`gos doc --emit-stdlib DIR`** — walks `manifest::ALL_MODULES`
+  and emits one Markdown page per module under `DIR` plus an
+  `index.md` landing page. `--check` mode compares disk against
+  generated output and fails the build on drift. Wired into
+  `check.sh` and the `stdlib-docs-drift` GitHub Actions job. 79
+  stdlib pages committed under `docs_src/stdlib/`.
+
 ## 0.3.0
 
 ### Added

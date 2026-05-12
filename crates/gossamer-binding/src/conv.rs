@@ -6,9 +6,10 @@
 //! these traits, so binding authors write idiomatic Rust
 //! signatures and never touch `Value` directly.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use gossamer_interp::value::{RuntimeError, RuntimeResult, SmolStr, Value};
+use gossamer_interp::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
 
 /// Materialises a typed Rust value out of a Gossamer [`Value`].
 pub trait FromGos: Sized {
@@ -278,6 +279,9 @@ impl<T: FromGos> FromGos for Vec<T> {
     fn from_gos(value: &Value) -> RuntimeResult<Self> {
         let items: &[Value] = match value {
             Value::Array(arc) | Value::Tuple(arc) => arc.as_slice(),
+            Value::IntArray(arc) => {
+                return arc.iter().map(|i| T::from_gos(&Value::Int(*i))).collect();
+            }
             other => return type_err("[T]", other),
         };
         items.iter().map(T::from_gos).collect()
@@ -288,6 +292,506 @@ impl<T: ToGos> ToGos for Vec<T> {
     fn to_gos(self) -> Value {
         let items: Vec<Value> = self.into_iter().map(ToGos::to_gos).collect();
         Value::Array(Arc::new(items))
+    }
+}
+
+// --- ABI 0.4: Bytes ----------------------------------------------------
+
+/// Transparent newtype around `Vec<u8>` that the binding system
+/// recognises as the [`crate::Type::Bytes`] shape.
+///
+/// Rust authors prefer this when their binding fn takes or
+/// returns a byte payload; the macro picks `Type::Bytes` for the
+/// signature instead of `Type::Vec(&Type::I64)`.
+///
+/// # ABI invariants
+///
+/// - **Ownership**: the binding owns the inner `Vec<u8>`. Returned
+///   from a binding fn, the bytes are copied into a fresh
+///   `Value::IntArray` (interp tier) or a fresh
+///   [`crate::native::GosBytes`] (compiled tier). The original
+///   `Vec` is moved into the conversion and then dropped.
+/// - **Lifetime**: a `Bytes` materialised via [`FromGos`] /
+///   [`crate::native::BindingAbi::from_input`] outlives the
+///   binding call. Binding authors may keep it across goroutine
+///   boundaries (it is `Send + Sync`).
+/// - **Pinning**: the underlying buffer is heap-allocated and
+///   does NOT pin; binding authors must not pass the inner
+///   `&[u8]` to FFI consumers that require a stable address
+///   beyond the borrow.
+/// - **GC**: the buffer is GC-tracked when stored as a
+///   `Value::IntArray` (interp tier) — the same as `Vec<i64>`.
+///   On the compiled tier, the [`crate::native::GosBytes`]
+///   header lives on the arena and is reclaimed at the next
+///   `gos_rt_gc_reset` tick.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct Bytes(pub Vec<u8>);
+
+impl Bytes {
+    /// Wraps an existing buffer.
+    #[must_use]
+    pub const fn new(buf: Vec<u8>) -> Self {
+        Self(buf)
+    }
+
+    /// Consumes `self` and returns the inner buffer.
+    #[must_use]
+    pub fn into_inner(self) -> Vec<u8> {
+        self.0
+    }
+
+    /// Returns a borrow of the inner buffer.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Returns the buffer length in bytes.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns `true` if the buffer is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<Vec<u8>> for Bytes {
+    fn from(v: Vec<u8>) -> Self {
+        Self(v)
+    }
+}
+
+impl From<&[u8]> for Bytes {
+    fn from(s: &[u8]) -> Self {
+        Self(s.to_vec())
+    }
+}
+
+impl From<Bytes> for Vec<u8> {
+    fn from(b: Bytes) -> Self {
+        b.0
+    }
+}
+
+impl std::ops::Deref for Bytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl FromGos for Bytes {
+    fn from_gos(value: &Value) -> RuntimeResult<Self> {
+        match value {
+            Value::IntArray(arc) => {
+                let mut out = Vec::with_capacity(arc.len());
+                for v in arc.iter() {
+                    let b = u8::try_from(*v).map_err(|_| {
+                        RuntimeError::Type(format!("Bytes element out of u8 range: {v}"))
+                    })?;
+                    out.push(b);
+                }
+                Ok(Bytes(out))
+            }
+            Value::Array(arc) => {
+                let mut out = Vec::with_capacity(arc.len());
+                for v in arc.iter() {
+                    let i = match v {
+                        Value::Int(i) => *i,
+                        Value::Uint(u) => i64::try_from(*u).unwrap_or(i64::MAX),
+                        other => return type_err("Bytes element (u8)", other),
+                    };
+                    let b = u8::try_from(i).map_err(|_| {
+                        RuntimeError::Type(format!("Bytes element out of u8 range: {i}"))
+                    })?;
+                    out.push(b);
+                }
+                Ok(Bytes(out))
+            }
+            // Common ergonomic: bindings that get a String where
+            // Bytes was declared receive its UTF-8 bytes.
+            Value::String(s) => Ok(Bytes(s.as_str().as_bytes().to_vec())),
+            other => type_err("Bytes", other),
+        }
+    }
+}
+
+impl ToGos for Bytes {
+    fn to_gos(self) -> Value {
+        let widened: Vec<i64> = self.0.into_iter().map(i64::from).collect();
+        Value::IntArray(Arc::new(widened))
+    }
+}
+
+// --- ABI 0.4: HashMap --------------------------------------------------
+//
+// The HashMap impls below are intentionally specialised to
+// `RandomState` (the default hasher). The ABI shape is fixed and
+// the binding receives a freshly-constructed HashMap; we don't
+// want to thread a hasher type parameter through every binding
+// signature. The `implicit_hasher` lint is allowed on each impl
+// with this rationale.
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface; bindings receive freshly-built HashMaps."
+)]
+impl<K, V> FromGos for HashMap<K, V>
+where
+    K: FromGos + std::hash::Hash + Eq,
+    V: FromGos,
+{
+    fn from_gos(value: &Value) -> RuntimeResult<Self> {
+        match value {
+            Value::Map(m) => {
+                let guard = m.lock();
+                let mut out = HashMap::with_capacity(guard.len());
+                for (k, v) in guard.iter() {
+                    let key_val = map_key_to_value(k);
+                    out.insert(K::from_gos(&key_val)?, V::from_gos(v)?);
+                }
+                Ok(out)
+            }
+            Value::IntMap(m) => {
+                let guard = m.lock();
+                let mut out = HashMap::with_capacity(guard.len());
+                for (k, v) in guard.iter() {
+                    out.insert(K::from_gos(&Value::Int(*k))?, V::from_gos(&Value::Int(*v))?);
+                }
+                Ok(out)
+            }
+            // Accept Vec<(K, V)> as a builder-friendly alias.
+            Value::Array(arr) => {
+                let mut out = HashMap::with_capacity(arr.len());
+                for entry in arr.iter() {
+                    let Value::Tuple(pair) = entry else {
+                        return type_err("Map<K, V> as [(K, V)]", entry);
+                    };
+                    if pair.len() != 2 {
+                        return Err(RuntimeError::Type(
+                            "Map<K, V> tuple entry must have 2 elements".to_string(),
+                        ));
+                    }
+                    out.insert(K::from_gos(&pair[0])?, V::from_gos(&pair[1])?);
+                }
+                Ok(out)
+            }
+            other => type_err("Map<K, V>", other),
+        }
+    }
+}
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface; bindings receive freshly-built HashMaps."
+)]
+impl<K, V> ToGos for HashMap<K, V>
+where
+    K: ToGos + Clone,
+    V: ToGos,
+{
+    fn to_gos(self) -> Value {
+        let mut out: rustc_hash::FxHashMap<MapKey, Value> =
+            rustc_hash::FxHashMap::with_capacity_and_hasher(self.len(), rustc_hash::FxBuildHasher);
+        for (k, v) in self {
+            let key_value = k.to_gos();
+            let key = value_to_map_key(&key_value);
+            out.insert(key, v.to_gos());
+        }
+        Value::Map(Arc::new(parking_lot::Mutex::new(out)))
+    }
+}
+
+fn map_key_to_value(k: &MapKey) -> Value {
+    match k {
+        MapKey::NonHashable => Value::Unit,
+        MapKey::Bool(b) => Value::Bool(*b),
+        MapKey::Int(i) => Value::Int(*i),
+        MapKey::Char(c) => Value::Char(*c),
+        MapKey::Str(s) => Value::String(s.clone()),
+    }
+}
+
+fn value_to_map_key(v: &Value) -> MapKey {
+    match v {
+        Value::Bool(b) => MapKey::Bool(*b),
+        Value::Int(i) => MapKey::Int(*i),
+        Value::Uint(u) => MapKey::Int(i64::try_from(*u).unwrap_or(i64::MAX)),
+        Value::Char(c) => MapKey::Char(*c),
+        Value::String(s) => MapKey::Str(s.clone()),
+        _ => MapKey::NonHashable,
+    }
+}
+
+// --- ABI 0.4: DynValue (tagged-union returns) --------------------------
+
+/// Type-erased value used for binding fns whose return shape is
+/// dynamically variant (Redis RESP, Postgres typed columns,
+/// `OpenTelemetry` attribute values).
+///
+/// Bindings authoring a [`crate::Type::Variant`] return hand back
+/// a `DynValue` whose runtime tag picks the live arm. The
+/// macro-generated thunk routes it to a [`Value::Variant`] (interp
+/// tier) or a [`crate::native::GosVariant`] (compiled tier).
+///
+/// # Invariants
+///
+/// - `DynValue::Tagged { name, payload }` must declare a `name`
+///   that matches one of the [`crate::types::VariantArm::name`]s
+///   in the binding signature. Names mismatching the declaration
+///   are accepted at the boundary but the type checker will not
+///   know about them; downstream Gossamer code will pattern-match
+///   on the literal arm name string.
+/// - All payload elements in a `Tagged` arm carry their concrete
+///   runtime type; the boundary does not validate them against
+///   the declared payload types. Authors are responsible for
+///   matching their declared signature.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DynValue {
+    /// `Nil` / absent value.
+    Nil,
+    /// `bool`.
+    Bool(bool),
+    /// `i64`.
+    Int(i64),
+    /// `f64`.
+    Float(f64),
+    /// `char`.
+    Char(char),
+    /// `String`.
+    String(String),
+    /// Byte buffer.
+    Bytes(Vec<u8>),
+    /// Heterogeneous list.
+    List(Vec<DynValue>),
+    /// Heterogeneous key/value pairs (preserves insertion order).
+    Map(Vec<(DynValue, DynValue)>),
+    /// Tagged arm — name + positional payload.
+    Tagged {
+        /// Variant arm name.
+        name: String,
+        /// Positional payload values.
+        payload: Vec<DynValue>,
+    },
+}
+
+impl DynValue {
+    /// Returns `true` when `self` is the `Nil` sentinel.
+    #[must_use]
+    pub fn is_nil(&self) -> bool {
+        matches!(self, Self::Nil)
+    }
+}
+
+impl FromGos for DynValue {
+    fn from_gos(value: &Value) -> RuntimeResult<Self> {
+        Ok(value_to_dyn(value))
+    }
+}
+
+impl ToGos for DynValue {
+    fn to_gos(self) -> Value {
+        dyn_to_value(self)
+    }
+}
+
+fn value_to_dyn(value: &Value) -> DynValue {
+    match value {
+        Value::Unit | Value::Void => DynValue::Nil,
+        Value::Bool(b) => DynValue::Bool(*b),
+        Value::Int(i) => DynValue::Int(*i),
+        Value::Uint(u) => DynValue::Int(i64::try_from(*u).unwrap_or(i64::MAX)),
+        Value::Float(f) => DynValue::Float(*f),
+        Value::Char(c) => DynValue::Char(*c),
+        Value::String(s) => DynValue::String(s.as_str().to_string()),
+        Value::IntArray(arc) => {
+            // Heuristic: an IntArray whose every element is in
+            // `u8` range is treated as Bytes (the natural Gossamer
+            // representation for byte payloads). Otherwise it's a
+            // List of Ints.
+            if arc.iter().all(|v| (0..=255).contains(v)) {
+                DynValue::Bytes(arc.iter().map(|v| *v as u8).collect())
+            } else {
+                DynValue::List(arc.iter().map(|v| DynValue::Int(*v)).collect())
+            }
+        }
+        Value::FloatVec(arc) => DynValue::List(arc.iter().map(|v| DynValue::Float(*v)).collect()),
+        Value::Array(arc) | Value::Tuple(arc) => {
+            DynValue::List(arc.iter().map(value_to_dyn).collect())
+        }
+        Value::FloatArray(_) => DynValue::Nil,
+        Value::Map(m) => {
+            let guard = m.lock();
+            DynValue::Map(
+                guard
+                    .iter()
+                    .map(|(k, v)| (value_to_dyn(&map_key_to_value(k)), value_to_dyn(v)))
+                    .collect(),
+            )
+        }
+        Value::IntMap(m) => {
+            let guard = m.lock();
+            DynValue::Map(
+                guard
+                    .iter()
+                    .map(|(k, v)| (DynValue::Int(*k), DynValue::Int(*v)))
+                    .collect(),
+            )
+        }
+        Value::Variant(inner) => DynValue::Tagged {
+            name: inner.name.to_string(),
+            payload: inner.fields.iter().map(value_to_dyn).collect(),
+        },
+        Value::Struct(_)
+        | Value::Closure(_)
+        | Value::Builtin(_)
+        | Value::Native(_)
+        | Value::Channel(_) => DynValue::Nil,
+    }
+}
+
+fn dyn_to_value(d: DynValue) -> Value {
+    match d {
+        DynValue::Nil => Value::Unit,
+        DynValue::Bool(b) => Value::Bool(b),
+        DynValue::Int(i) => Value::Int(i),
+        DynValue::Float(f) => Value::Float(f),
+        DynValue::Char(c) => Value::Char(c),
+        DynValue::String(s) => Value::String(SmolStr::from_string(s)),
+        DynValue::Bytes(buf) => {
+            let widened: Vec<i64> = buf.into_iter().map(i64::from).collect();
+            Value::IntArray(Arc::new(widened))
+        }
+        DynValue::List(items) => {
+            let inner: Vec<Value> = items.into_iter().map(dyn_to_value).collect();
+            Value::Array(Arc::new(inner))
+        }
+        DynValue::Map(entries) => {
+            let mut out: rustc_hash::FxHashMap<MapKey, Value> =
+                rustc_hash::FxHashMap::with_capacity_and_hasher(
+                    entries.len(),
+                    rustc_hash::FxBuildHasher,
+                );
+            for (k, v) in entries {
+                let key_value = dyn_to_value(k);
+                let key = value_to_map_key(&key_value);
+                out.insert(key, dyn_to_value(v));
+            }
+            Value::Map(Arc::new(parking_lot::Mutex::new(out)))
+        }
+        DynValue::Tagged { name, payload } => {
+            let fields: Vec<Value> = payload.into_iter().map(dyn_to_value).collect();
+            // We need a `&'static str` for the variant name slot;
+            // intern it through a process-global string pool.
+            Value::variant(intern_arm_name(&name), Arc::new(fields))
+        }
+    }
+}
+
+// `Value::variant` takes `&'static str` for the arm name. The
+// binding can produce arbitrary runtime strings via
+// `DynValue::Tagged { name, .. }`, so we intern them in a
+// process-global pool. The pool is intentionally one-way; entries
+// are never reclaimed (variant names are a small, stable set per
+// binding crate, so leakage is bounded).
+fn intern_arm_name(name: &str) -> &'static str {
+    use parking_lot::RwLock;
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static POOL: OnceLock<RwLock<HashMap<String, &'static str>>> = OnceLock::new();
+    let pool = POOL.get_or_init(|| RwLock::new(HashMap::new()));
+    if let Some(s) = pool.read().get(name) {
+        return s;
+    }
+    let mut guard = pool.write();
+    if let Some(s) = guard.get(name) {
+        return s;
+    }
+    let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+    guard.insert(name.to_string(), leaked);
+    leaked
+}
+
+// --- ABI 0.4: BindingCallback (Gossamer-side callable) -----------------
+
+/// Handle to a Gossamer-side callable the binding may invoke
+/// during its call.
+///
+/// # Lifetime
+///
+/// **Call-scoped.** The handle is valid only for the duration of
+/// the binding fn that received it. Storing it past the return
+/// (e.g. spawning a background goroutine that later invokes it)
+/// is forbidden and will yield a typed runtime error on
+/// `invoke()`. Long-lived callbacks ride on `Type::Opaque` with a
+/// binding-specific registry.
+///
+/// # Coroutine safety
+///
+/// `invoke` re-enters the interpreter through the same
+/// [`crate::NativeDispatch`] the binding received. The
+/// interpreter's preemption + scheduler integration handles
+/// goroutine yielding inside the callback. Re-entrancy depth is
+/// bounded only by the interpreter's call-stack limit.
+#[derive(Debug, Clone)]
+pub struct BindingCallback {
+    inner: Value,
+}
+
+impl BindingCallback {
+    /// Builds a `BindingCallback` from the underlying [`Value`].
+    /// Used by the macro-generated thunk; binding authors should
+    /// not call this directly.
+    #[must_use]
+    pub fn from_value(v: Value) -> Self {
+        Self { inner: v }
+    }
+
+    /// Returns the wrapped callable, useful for stashing into an
+    /// opaque registry.
+    #[must_use]
+    pub fn into_value(self) -> Value {
+        self.inner
+    }
+
+    /// Invokes the callback with `args`, re-entering the
+    /// interpreter through `dispatch`. The interp side blocks
+    /// until the callback returns; goroutine yielding inside the
+    /// callback is handled by the interpreter's scheduler hooks.
+    pub fn invoke(
+        &self,
+        dispatch: &mut dyn gossamer_interp::value::NativeDispatch,
+        args: Vec<Value>,
+    ) -> RuntimeResult<Value> {
+        dispatch.call_value(&self.inner, args)
+    }
+
+    /// Returns a reference to the wrapped callable for
+    /// inspection. Binding authors should prefer `invoke`.
+    #[must_use]
+    pub fn as_value(&self) -> &Value {
+        &self.inner
+    }
+}
+
+impl FromGos for BindingCallback {
+    fn from_gos(value: &Value) -> RuntimeResult<Self> {
+        match value {
+            Value::Closure(_) | Value::Native(_) | Value::Builtin(_) => Ok(Self {
+                inner: value.clone(),
+            }),
+            other => type_err("Fn(...)", other),
+        }
+    }
+}
+
+impl ToGos for BindingCallback {
+    fn to_gos(self) -> Value {
+        self.inner
     }
 }
 
@@ -338,6 +842,114 @@ mod tests {
     fn type_mismatch_returns_typed_error() {
         let v: Value = "hello".to_gos();
         let err = i64::from_gos(&v).unwrap_err();
+        assert!(matches!(err, RuntimeError::Type(_)));
+    }
+
+    // --- ABI 0.4 conv tests --------------------------------------
+
+    #[test]
+    fn bytes_to_gos_then_from() {
+        let payload: Vec<u8> = b"hello world".to_vec();
+        let v: Value = Bytes::new(payload.clone()).to_gos();
+        let back = Bytes::from_gos(&v).unwrap();
+        assert_eq!(back.as_slice(), payload.as_slice());
+    }
+
+    #[test]
+    fn bytes_accepts_string() {
+        let v: Value = "hello".to_gos();
+        let back = Bytes::from_gos(&v).unwrap();
+        assert_eq!(back.as_slice(), b"hello");
+    }
+
+    #[test]
+    fn bytes_rejects_oversize_element() {
+        let v = Value::Array(Arc::new(vec![Value::Int(300)]));
+        let err = Bytes::from_gos(&v).unwrap_err();
+        assert!(matches!(err, RuntimeError::Type(_)));
+    }
+
+    #[test]
+    fn hash_map_string_string_round_trip() {
+        let mut m: HashMap<String, String> = HashMap::new();
+        m.insert("a".into(), "1".into());
+        m.insert("b".into(), "2".into());
+        let v: Value = m.clone().to_gos();
+        let back: HashMap<String, String> = HashMap::from_gos(&v).unwrap();
+        assert_eq!(back, m);
+    }
+
+    #[test]
+    fn hash_map_i64_i64_round_trip_via_intmap() {
+        let mut intmap: rustc_hash::FxHashMap<i64, i64> = rustc_hash::FxHashMap::default();
+        intmap.insert(1, 100);
+        intmap.insert(2, 200);
+        let v = Value::IntMap(Arc::new(parking_lot::Mutex::new(intmap)));
+        let back: HashMap<i64, i64> = HashMap::from_gos(&v).unwrap();
+        assert_eq!(back.get(&1), Some(&100));
+        assert_eq!(back.get(&2), Some(&200));
+    }
+
+    #[test]
+    fn hash_map_accepts_array_of_tuples() {
+        let entries = vec![
+            Value::Tuple(Arc::new(vec![
+                Value::String(SmolStr::from_str("k1")),
+                Value::Int(1),
+            ])),
+            Value::Tuple(Arc::new(vec![
+                Value::String(SmolStr::from_str("k2")),
+                Value::Int(2),
+            ])),
+        ];
+        let v = Value::Array(Arc::new(entries));
+        let back: HashMap<String, i64> = HashMap::from_gos(&v).unwrap();
+        assert_eq!(back.get("k1"), Some(&1));
+        assert_eq!(back.get("k2"), Some(&2));
+    }
+
+    #[test]
+    fn dyn_value_int_round_trip() {
+        let v: Value = DynValue::Int(42).to_gos();
+        let back = DynValue::from_gos(&v).unwrap();
+        assert_eq!(back, DynValue::Int(42));
+    }
+
+    #[test]
+    fn dyn_value_tagged_round_trip() {
+        let original = DynValue::Tagged {
+            name: "Integer".to_string(),
+            payload: vec![DynValue::Int(7)],
+        };
+        let v: Value = original.clone().to_gos();
+        let back = DynValue::from_gos(&v).unwrap();
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn dyn_value_bytes_via_intarray() {
+        let original = DynValue::Bytes(b"hi".to_vec());
+        let v: Value = original.clone().to_gos();
+        let back = DynValue::from_gos(&v).unwrap();
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn dyn_value_list_of_mixed() {
+        let original = DynValue::List(vec![
+            DynValue::Int(1),
+            DynValue::String("two".to_string()),
+            DynValue::Bool(true),
+        ]);
+        let v: Value = original.clone().to_gos();
+        let back = DynValue::from_gos(&v).unwrap();
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn binding_callback_rejects_non_callable() {
+        let v: Value = "not a fn".to_gos();
+        let err = BindingCallback::from_gos(&v).unwrap_err();
         assert!(matches!(err, RuntimeError::Type(_)));
     }
 }

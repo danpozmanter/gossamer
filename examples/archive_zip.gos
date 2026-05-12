@@ -1,0 +1,25 @@
+/*
+ * In-memory zip round-trip with std::archive::zip.
+ *
+ * Builds a zip containing two text files in memory, then reads
+ * them back and prints the sizes. No filesystem writes.
+ *
+ * Run:
+ *     gos run examples/archive_zip.gos
+ */
+
+use std::archive
+
+fn main() {
+    let files = [
+        ("hello.txt", "hello, world\n".as_bytes()),
+        ("readme.md", "# demo\n\nA tiny archive.\n".as_bytes()),
+    ]
+    let bytes = archive::zip::write(&files).unwrap()
+    println!("zip size: {} bytes", bytes.len())
+
+    let entries = archive::zip::read(&bytes).unwrap()
+    for entry in entries.iter() {
+        println!("- {}: {} bytes", entry.name, entry.data.len())
+    }
+}

@@ -71,9 +71,10 @@ gossamer-types = { workspace = true }
 rustyline = { version = "14", default-features = false, features = ["with-file-history"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 
+gossamer-std = { workspace = true }
+
 [dev-dependencies]
 gossamer-abi = { workspace = true }
-gossamer-std = { workspace = true }
 
 [features]
 # Opt-in flag the integration suites consult to enable their full

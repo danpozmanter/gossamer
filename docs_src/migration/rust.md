@@ -60,3 +60,38 @@ struct Server { handler: fn(http::Request) -> http::Response }
 
 (Trait objects stay available but rarely needed — concrete closure
 types are preferred and the GC keeps their captures alive.)
+
+## Collection combinators (one obvious way)
+
+Rust:
+
+```rust
+let total: i64 = xs.iter()
+    .filter(|n| **n % 2 == 0)
+    .map(|n| n * n)
+    .sum();
+```
+
+Gossamer:
+
+```gos
+let total = xs
+    |> iter::filter(|n: i64| n % 2 == 0)
+    |> iter::sum_by(|n: i64| n * n)
+```
+
+`Vec<T>`, `HashMap<K, V>`, and `HashSet<T>` deliberately **do not**
+carry `.map` / `.filter` / `.fold` methods in Gossamer. The
+free-function form in `std::iter` is the one obvious way to chain
+transformations, and the `|>` operator (SPEC §4.6) threads each
+value through with the data-last convention. Mutating helpers like
+`xs.push`, `xs.sort`, `m.inc`, `m.or_insert` stay as methods —
+they operate by side-effect on the receiver and don't compose
+through `|>`.
+
+The same pattern applies to `Option<T>` / `Result<T, E>` chaining:
+Rust-style methods (`opt.map`, `opt.unwrap_or`, `result.map_err`)
+remain available, but the free-function siblings in `std::option`
+and `std::result` are the pipe-friendly form. `?` stays the right
+tool for short-circuit propagation; the combinators are for
+in-pipeline transformation.

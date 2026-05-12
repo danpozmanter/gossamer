@@ -27,6 +27,15 @@ const NATIVE_PATH: &str = "src/native.rs";
 /// dispatch grows them.
 const PREFIX_HANDLED: &[&str] = &[
     "gos_rt_fn_tramp_", // 0..=8 trampolines, dispatched as a family
+    // F#-parity Phase 1b: every `gos_rt_iter_*` / `gos_rt_option_*` /
+    // `gos_rt_result_*` helper is dispatched through the generic
+    // registry-lookup branch in `native.rs` (`if name.starts_with
+    // ("gos_rt_") { gossamer_abi::lookup(name) → extern_fn_by_name }`)
+    // and via per-call `declare_rt(name)` in `gossamer-codegen-llvm/
+    // src/lower.rs`. No per-name match arm needed.
+    "gos_rt_iter_",
+    "gos_rt_option_",
+    "gos_rt_result_",
 ];
 
 /// Helpers that are deliberately Rust-only (used inside the runtime
@@ -75,6 +84,9 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_u64_to_str",
     "gos_rt_wg_error",
     "gos_rt_wg_error_clear",
+    // Called from Rust (gossamer-interp) to override argv[0], not
+    // emitted from MIR.
+    "gos_rt_set_program_name",
 ];
 
 fn read_to_string(rel: &str) -> String {

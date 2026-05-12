@@ -267,7 +267,6 @@ pub fn abs_i64(x: i64) -> i64 {
 }
 
 /// Arbitrary-precision signed/unsigned integers.
-#[cfg(feature = "bigint")]
 pub mod big;
 
 /// Integer bit-manipulation operations on `u64` values.

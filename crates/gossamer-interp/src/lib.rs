@@ -32,7 +32,7 @@ mod vm;
 
 pub use builtins::{
     TestTally, reset_test_tally, set_assertion_location, set_http_max_requests, set_program_args,
-    set_stderr_writer, set_stdout_writer, set_struct_layouts, take_test_tally,
+    set_program_name, set_stderr_writer, set_stdout_writer, set_struct_layouts, take_test_tally,
 };
 pub use jit_call::force_jit_disabled as set_jit_disabled;
 
@@ -95,6 +95,26 @@ pub(crate) fn set_runtime_args(args: &[String]) {
     // pointer values; dropping the prior CStrings now is safe.
     owned.0 = all;
     owned.1 = ptrs;
+}
+
+/// Pushes the program name into `PROGRAM_NAME_PTR` in the runtime so
+/// JIT-compiled `gos_rt_os_program_name` calls see the script path
+/// rather than the synthetic `"gos"` placeholder. Mirrors the same
+/// pattern as [`set_runtime_args`].
+pub(crate) fn set_runtime_program_name(name: &str) {
+    use std::ffi::CString;
+
+    let cstr = CString::new(name.as_bytes()).unwrap_or_else(|_| {
+        let cleaned: Vec<u8> = name.bytes().filter(|b| *b != 0).collect();
+        CString::new(cleaned).expect("cleaned bytes have no NUL")
+    });
+    // SAFETY: `gos_rt_set_program_name` copies the bytes into a
+    // leaked CString; the temporary `cstr` can be dropped after the
+    // call returns.
+    #[allow(unsafe_code)]
+    unsafe {
+        gossamer_runtime::c_abi::gos_rt_set_program_name(cstr.as_ptr());
+    }
 }
 
 /// Flushes any data the JIT-compiled code has written to the

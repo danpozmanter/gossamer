@@ -25,11 +25,11 @@ pub mod registry;
 mod sig;
 pub mod types;
 
-pub use crate::conv::{FromGos, ToGos};
+pub use crate::conv::{BindingCallback, Bytes, DynValue, FromGos, ToGos};
 pub use crate::opaque::Registry;
 pub use crate::registry::{ItemFn, Module, NativeCall, REGISTRY, Signature};
 pub use crate::sig::SigType;
-pub use crate::types::Type;
+pub use crate::types::{Type, VariantArm};
 
 /// Renders the C-ABI export symbol for a binding item.
 ///
@@ -331,7 +331,7 @@ const AMBIG_DISPATCH_TABLE: [gossamer_interp::value::NativeCall; AMBIG_POOL_SIZE
 
 fn lower_type(t: &crate::types::Type) -> gossamer_resolve::BindingType {
     use crate::types::Type;
-    use gossamer_resolve::BindingType as R;
+    use gossamer_resolve::{BindingType as R, BindingVariantArm};
     match t {
         Type::Unit => R::Unit,
         Type::Bool => R::Bool,
@@ -339,10 +339,24 @@ fn lower_type(t: &crate::types::Type) -> gossamer_resolve::BindingType {
         Type::F64 => R::F64,
         Type::Char => R::Char,
         Type::String => R::String,
+        Type::Bytes => R::Bytes,
         Type::Tuple(ts) => R::Tuple(ts.iter().map(lower_type).collect()),
         Type::Vec(inner) => R::Vec(Box::new(lower_type(inner))),
         Type::Option(inner) => R::Option(Box::new(lower_type(inner))),
         Type::Result(ok, err) => R::Result(Box::new(lower_type(ok)), Box::new(lower_type(err))),
+        Type::Map(k, v) => R::Map(Box::new(lower_type(k)), Box::new(lower_type(v))),
+        Type::Variant(arms) => R::Variant(
+            arms.iter()
+                .map(|a| BindingVariantArm {
+                    name: a.name.to_string(),
+                    payload: a.payload.iter().map(lower_type).collect(),
+                })
+                .collect(),
+        ),
+        Type::Callback(args, ret) => R::Callback(
+            args.iter().map(lower_type).collect(),
+            Box::new(lower_type(ret)),
+        ),
         Type::Opaque(name) => R::Opaque((*name).to_string()),
         Type::Any => R::Any,
     }

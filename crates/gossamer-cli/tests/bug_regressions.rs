@@ -84,16 +84,25 @@ fn is_executable(p: &Path) -> bool {
 }
 
 fn build_native(src: &Path, scratch: &Path) -> Result<PathBuf, String> {
-    let out = Command::new(gos_bin())
-        .arg("build")
-        .arg("--out-dir")
-        .arg(scratch)
-        .arg(src)
-        .output()
-        .expect("spawn gos build");
+    build_native_with_flag(src, scratch, /*release=*/ false)
+}
+
+fn build_native_release(src: &Path, scratch: &Path) -> Result<PathBuf, String> {
+    build_native_with_flag(src, scratch, /*release=*/ true)
+}
+
+fn build_native_with_flag(src: &Path, scratch: &Path, release: bool) -> Result<PathBuf, String> {
+    let mut cmd = Command::new(gos_bin());
+    cmd.arg("build");
+    if release {
+        cmd.arg("--release");
+    }
+    cmd.arg("--out-dir").arg(scratch).arg(src);
+    let out = cmd.output().expect("spawn gos build");
     if !out.status.success() {
         return Err(format!(
-            "gos build failed:\n  stderr: {}",
+            "gos build{} failed:\n  stderr: {}",
+            if release { " --release" } else { "" },
             String::from_utf8_lossy(&out.stderr),
         ));
     }
@@ -924,4 +933,222 @@ fn main() {
     let _ = fs::remove_dir_all(&dir);
     assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
     assert_eq!(native.0, expected, "native: got {:?}", native.0);
+}
+
+#[test]
+fn unary_prefix_at_line_start_breaks_statement() {
+    // `&s`, `*p`, `-n` at the start of a line after a
+    // semicolonless statement must parse as a new statement, not
+    // as a binary continuation of the prior expression. Before the
+    // fix, `let s = "hi"\n&s |> ...` was glued into `let s = "hi" &
+    // s |> ...` and resolution failed with "cannot find `s` in
+    // this scope".
+    let src = r#"
+use std::{iter, strings}
+
+fn main() {
+    let s = "alpha\nbeta"
+    &s |> strings::lines |> iter::for_each(|l| println!("{}", l))
+
+    let n = 5
+    -n
+    println!("post-neg")
+
+    let v = 42
+    let p = &v
+    *p
+    println!("post-deref={}", *p)
+}
+"#;
+    let expected = "alpha\nbeta\npost-neg\npost-deref=42\n";
+    let dir = fresh_dir("unary_line_start");
+    let path = write_source(&dir, "unary_line_start", src);
+    let run = run_vm(&path);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(run.0, expected, "vm: got {:?}", run.0);
+}
+
+#[test]
+fn try_operator_in_macro_arg_propagates_early_return() {
+    // `?` inside a macro argument — e.g. `print!("{}", expr?)` —
+    // must propagate the early-return from the enclosing function,
+    // not silently pass the `Err(...)` value through to the macro.
+    // The bug: eval_expr_to_value was converting Flow::Return(v)
+    // to Ok(v), so the Err value was passed to __concat / print
+    // instead of returning early from `cat`.
+    let src = r#"
+use std::{errors, os}
+
+fn cat(f: &String) -> Result<(), errors::Error> {
+    Ok(print!("{}", os::read_file_to_string(f)?))
+}
+
+fn main() {
+    if let Err(e) = cat(&"/nonexistent-regression") {
+        println!("caught: {e}")
+    }
+}
+"#;
+    let expected = "caught: not found: /nonexistent-regression\n";
+    let dir = fresh_dir("try_in_macro_arg");
+    let path = write_source(&dir, "try_in_macro_arg", src);
+    let run = run_vm(&path);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(run.0, expected, "vm: got {:?}", run.0);
+}
+
+#[test]
+fn llvm_named_fn_passed_to_sort_by_emits_typed_store() {
+    // `Operand::FnRef` in the LLVM lowerer used to always emit
+    // `ptrtoint ptr @"name" to i64`, but the destination slot is
+    // ptr-typed when `FnDef → ptr` (e.g. when a named fn is passed
+    // as a `Fn(i64,i64)->i64` arg to `sort_by`). The emitted
+    // `store ptr %i64_value, ptr %slot` then fails opt validation
+    // and the whole module silently falls back to Cranelift.
+    let src = r#"
+fn cmp(a: i64, b: i64) -> i64 { a - b }
+fn main() {
+    let mut xs = [5, 2, 4, 1, 3].to_vec()
+    xs.sort_by(cmp)
+    for x in xs.iter() { println!("{}", *x) }
+}
+"#;
+    let dir = fresh_dir("llvm_sortby_named_fn");
+    let path = write_source(&dir, "llvm_sortby_named_fn", src);
+    let scratch = dir.join("rel");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("llvm release build");
+    let out = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "native: stderr: {}", out.1);
+    assert_eq!(out.0, "1\n2\n3\n4\n5\n");
+}
+
+#[test]
+fn llvm_vec_of_tuples_index_returns_both_fields() {
+    // `Vec<(i64, f64)>`-style tuple element types used to leave
+    // the operand of `xs.push((1, 1.5))` typed as
+    // `(Var, Var)` in MIR. The LLVM lowerer's `slot_count` for
+    // a tuple with `Var` elements returned `None`, the alloca
+    // shrank to 1 slot, the second-slot store overflowed, and
+    // the subsequent `gos_rt_vec_get_ptr → memcpy` round-trip
+    // surfaced garbage in the f64 field.
+    let src = r#"
+fn main() {
+    let mut xs: [(i64, f64)] = [].to_vec()
+    xs.push((1, 1.5))
+    xs.push((2, 2.5))
+    let i: i64 = 1
+    let p = xs[i]
+    println!("{} {}", p.0, p.1)
+}
+"#;
+    let dir = fresh_dir("llvm_vec_tuple_index");
+    let path = write_source(&dir, "llvm_vec_tuple_index", src);
+    let scratch = dir.join("rel");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("llvm release build");
+    let out = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "native: stderr: {}", out.1);
+    assert_eq!(out.0, "2 2.5\n");
+}
+
+#[test]
+fn llvm_tuple_return_array_then_scalar_preserves_both() {
+    // Returning an `([f64; N], f64)` tuple used to corrupt every
+    // slot past the first: the temporary tuple local was typed
+    // `([Var; 4], Var)`, `slot_count` collapsed to `None`, and
+    // the alloca undersized to 1 slot. The aggregate-store then
+    // overflowed and the subsequent memcpy into the return slot
+    // copied stack garbage.
+    let src = r#"
+fn make() -> ([f64; 4], f64) {
+    ([1.5, 2.5, 3.5, 4.5], 99.0)
+}
+fn main() {
+    let pair = make()
+    println!("{} {} {} {} | {}", pair.0[0], pair.0[1], pair.0[2], pair.0[3], pair.1)
+}
+"#;
+    let dir = fresh_dir("llvm_tuple_arr_scalar");
+    let path = write_source(&dir, "llvm_tuple_arr_scalar", src);
+    let scratch = dir.join("rel");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("llvm release build");
+    let out = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "native: stderr: {}", out.1);
+    assert_eq!(out.0, "1.5 2.5 3.5 4.5 | 99\n");
+}
+
+#[test]
+fn llvm_tuple_return_from_nested_loop_keeps_second_slot() {
+    // `return (a, b)` from inside a nested loop used to drop the
+    // second slot — the temporary `(Var, Var)` tuple's alloca
+    // sized to one slot, so the aggregate-store overflowed and
+    // the memcpy into the return slot only carried 8 valid bytes.
+    // fannkuch-shaped programs lost the checksum value (always 0).
+    let src = r#"
+fn fannkuch(_n: i64) -> (i64, i64) {
+    let mut perm = [0, 1, 2, 3, 4]
+    let mut max_flips = 0
+    let mut checksum = 0
+    let mut sign = true
+    let mut nperm = 0
+    loop {
+        let mut flips = 0
+        let mut k = perm[0]
+        while k != 0 {
+            let mut i = 0
+            let mut j = k
+            while i < j {
+                let t = perm[i]
+                perm[i] = perm[j]
+                perm[j] = t
+                i += 1
+                j -= 1
+            }
+            k = perm[0]
+            flips += 1
+        }
+        if flips > max_flips { max_flips = flips }
+        checksum += if sign { flips } else { -flips }
+        if nperm >= 30 {
+            return (max_flips, checksum)
+        }
+        nperm += 1
+        if sign {
+            let t = perm[0]
+            perm[0] = perm[1]
+            perm[1] = t
+            sign = false
+        } else {
+            let t = perm[1]
+            perm[1] = perm[2]
+            perm[2] = t
+            sign = true
+        }
+    }
+}
+fn main() {
+    let r = fannkuch(5)
+    println!("max={} checksum={}", r.0, r.1)
+}
+"#;
+    let dir = fresh_dir("llvm_nested_loop_tuple_ret");
+    let path = write_source(&dir, "llvm_nested_loop_tuple_ret", src);
+    let scratch = dir.join("rel");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("llvm release build");
+    let out = run_native(&bin);
+    let vm = run_vm(&path);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "native: stderr: {}", out.1);
+    assert_eq!(out.0, vm.0, "native diverged from VM");
+    // The exact value can't be 0 — that's the bug shape we're
+    // guarding against.
+    assert!(!out.0.contains("checksum=0\n"), "second slot dropped");
 }

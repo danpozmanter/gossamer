@@ -96,6 +96,31 @@ impl SystemTime {
             .map_or(0, |d| d.as_millis())
     }
 
+    /// Wraps a `std::time::SystemTime` into the Gossamer-native
+    /// `SystemTime` type. Useful when bridging from filesystem
+    /// metadata (`fs::Metadata::modified()` etc.) into formatters
+    /// like [`format_rfc1123_gmt`].
+    #[must_use]
+    pub fn from_std(t: StdSystemTime) -> Self {
+        Self(t)
+    }
+
+    /// Returns the underlying `std::time::SystemTime`.
+    #[must_use]
+    pub fn as_std(self) -> StdSystemTime {
+        self.0
+    }
+
+    /// Returns seconds since the Unix epoch (negative for
+    /// pre-1970 instants).
+    #[must_use]
+    pub fn unix_seconds(self) -> i64 {
+        match self.0.duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs() as i64,
+            Err(e) => -(e.duration().as_secs() as i64),
+        }
+    }
+
     /// Constructs a `SystemTime` from a millisecond offset relative
     /// to the Unix epoch. Negative offsets refer to pre-1970 times.
     /// Mirrors Go's `time.UnixMilli`.
@@ -137,6 +162,44 @@ pub enum FormatError {
     /// Time fell outside the representable Gregorian range.
     #[error("time::format: {0}")]
     OutOfRange(String),
+}
+
+/// Renders a wall-clock instant in RFC 1123 (HTTP date) form
+/// (`Sun, 06 Nov 1994 08:49:37 GMT`). Always GMT — this is the
+/// canonical encoding for HTTP `Date`, `Last-Modified`, and
+/// `If-Modified-Since` headers.
+pub fn format_rfc1123_gmt(when: SystemTime) -> Result<String, FormatError> {
+    let secs = match when.0.duration_since(std::time::UNIX_EPOCH) {
+        Ok(dur) => i128::from(dur.as_secs()),
+        Err(err) => -i128::from(err.duration().as_secs()),
+    };
+    if secs > i128::from(i64::MAX) || secs < i128::from(i64::MIN) {
+        return Err(FormatError::OutOfRange(format!(
+            "{secs} seconds out of range"
+        )));
+    }
+    let civil = unix_to_civil(secs)?;
+    // Day-of-week from days-since-1970-01-01 (a Thursday).
+    let days = (secs as i64).div_euclid(86_400);
+    let dow_idx = ((days + 4).rem_euclid(7)) as usize;
+    let dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow_idx];
+    let month_names = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let mo_idx = (civil.month as usize)
+        .checked_sub(1)
+        .ok_or_else(|| FormatError::OutOfRange(format!("month {} out of range", civil.month)))?;
+    let mo = month_names
+        .get(mo_idx)
+        .ok_or_else(|| FormatError::OutOfRange(format!("month {} out of range", civil.month)))?;
+    Ok(format!(
+        "{dow}, {day:02} {mo} {year:04} {hour:02}:{min:02}:{sec:02} GMT",
+        day = civil.day,
+        year = civil.year,
+        hour = civil.hour,
+        min = civil.minute,
+        sec = civil.second,
+    ))
 }
 
 /// Renders a wall-clock instant in RFC 3339 form
@@ -357,11 +420,129 @@ fn days_to_civil(days: i64) -> CivilDate {
     }
 }
 
+// --- Ticker / AfterFunc (Go's time.Ticker / time.AfterFunc) -------
+
+/// Recurring timer. Calls `tick` on each interval until the
+/// `stop` flag flips. The callback runs on the ticker's own
+/// thread; long-running callbacks block subsequent ticks.
+///
+/// Returned [`Ticker`] handle is `Drop`-safe — dropping it
+/// signals stop and joins the worker thread.
+pub struct Ticker {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Ticker {
+    /// Starts a new ticker that invokes `tick` every `interval`.
+    pub fn start(interval: Duration, mut tick: impl FnMut() + Send + 'static) -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_for_thread = std::sync::Arc::clone(&stop);
+        let std_interval = interval.0;
+        let handle = std::thread::spawn(move || {
+            let mut next = std::time::Instant::now() + std_interval;
+            while !stop_for_thread.load(std::sync::atomic::Ordering::Acquire) {
+                let now = std::time::Instant::now();
+                if now < next {
+                    let remaining = next - now;
+                    // Sleep in short slices so we observe stop
+                    // promptly without busy-looping.
+                    let slice = std::cmp::min(remaining, std::time::Duration::from_millis(100));
+                    std::thread::sleep(slice);
+                    continue;
+                }
+                tick();
+                next += std_interval;
+            }
+        });
+        Self {
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    /// Stops the ticker and waits for the worker thread to
+    /// finish. Idempotent — subsequent calls are no-ops.
+    pub fn stop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+impl Drop for Ticker {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// One-shot timer (Go's `time.AfterFunc`). Schedules `f` to run
+/// after `delay` on a background thread. The returned
+/// [`TimerHandle`] can cancel the timer before it fires.
+pub fn after_func(delay: Duration, f: impl FnOnce() + Send + 'static) -> TimerHandle {
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancelled_for_thread = std::sync::Arc::clone(&cancelled);
+    let std_delay = delay.0;
+    let handle = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std_delay;
+        loop {
+            if cancelled_for_thread.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            let slice = std::cmp::min(deadline - now, std::time::Duration::from_millis(100));
+            std::thread::sleep(slice);
+        }
+        if !cancelled_for_thread.load(std::sync::atomic::Ordering::Acquire) {
+            f();
+        }
+    });
+    TimerHandle {
+        cancelled,
+        handle: Some(handle),
+    }
+}
+
+/// Handle returned by [`after_func`].
+pub struct TimerHandle {
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TimerHandle {
+    /// Cancels the timer (no-op if it has already fired).
+    /// Returns `true` if the cancel happened before the timer
+    /// fired.
+    pub fn cancel(&mut self) -> bool {
+        let was = self
+            .cancelled
+            .swap(true, std::sync::atomic::Ordering::AcqRel);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+        !was
+    }
+}
+
+impl Drop for TimerHandle {
+    fn drop(&mut self) {
+        // Don't auto-cancel on drop — callers that fire-and-
+        // forget the handle expect the timer to still fire.
+        // We just detach the worker thread.
+        if let Some(h) = self.handle.take() {
+            let _ = h;
+        }
+    }
+}
+
 /// IANA timezone-aware operations. Gated on the `tz` feature so the
 /// stdlib stays slim by default; once the feature is on, callers
 /// can construct a [`Location`] from any IANA name and convert
 /// `SystemTime`s into local civil time and back.
-#[cfg(feature = "tz")]
 pub mod tz {
 
     use std::str::FromStr;
@@ -671,6 +852,38 @@ mod tests {
     }
 
     #[test]
+    fn rfc1123_epoch() {
+        let formatted = format_rfc1123_gmt(SystemTime(std::time::UNIX_EPOCH)).unwrap();
+        // 1970-01-01 is a Thursday.
+        assert_eq!(formatted, "Thu, 01 Jan 1970 00:00:00 GMT");
+    }
+
+    #[test]
+    fn rfc1123_known_timestamp() {
+        // 1994-11-06 was a Sunday (canonical example from RFC 7231).
+        let t = parse_rfc3339("1994-11-06T08:49:37Z").unwrap();
+        let formatted = format_rfc1123_gmt(t).unwrap();
+        assert_eq!(formatted, "Sun, 06 Nov 1994 08:49:37 GMT");
+    }
+
+    #[test]
+    fn rfc1123_weekday_rotation_across_seven_days() {
+        // 1970-01-01 = Thu, so 01..=07 covers all 7 weekday names.
+        let expected = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+        for (i, exp_dow) in expected.iter().enumerate() {
+            let day = i + 1;
+            let iso = format!("1970-01-0{day}T00:00:00Z");
+            let t = parse_rfc3339(&iso).unwrap();
+            let formatted = format_rfc1123_gmt(t).unwrap();
+            let actual_dow = &formatted[..3];
+            assert_eq!(
+                actual_dow, *exp_dow,
+                "1970-01-0{day} should be {exp_dow}, got {actual_dow} ({formatted})"
+            );
+        }
+    }
+
+    #[test]
     fn parse_accepts_offset_then_normalises_to_utc() {
         let t = parse_rfc3339("2026-04-25T18:30:00+02:00").unwrap();
         let formatted = format_rfc3339(t).unwrap();
@@ -704,5 +917,61 @@ mod tests {
         let d = Duration::from_secs(42);
         assert_eq!(d.as_secs(), 42);
         assert_eq!(d.as_millis(), 42_000);
+    }
+
+    #[test]
+    fn ticker_fires_repeatedly_until_stopped() {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter_for_tick = std::sync::Arc::clone(&counter);
+        let mut t = Ticker::start(Duration::from_millis(20), move || {
+            counter_for_tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        t.stop();
+        let n = counter.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(n >= 4, "expected >=4 ticks in 150ms, got {n}");
+        assert!(n <= 15, "expected <=15 ticks in 150ms, got {n}");
+    }
+
+    #[test]
+    fn ticker_stops_on_drop() {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter_for_tick = std::sync::Arc::clone(&counter);
+        {
+            let _t = Ticker::start(Duration::from_millis(10), move || {
+                counter_for_tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            });
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+        // After drop, no more ticks should land.
+        let snapshot = counter.load(std::sync::atomic::Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let post = counter.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(snapshot, post, "ticker should stop on drop");
+    }
+
+    #[test]
+    fn after_func_fires_after_delay() {
+        let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fired_for_cb = std::sync::Arc::clone(&fired);
+        let _handle = after_func(Duration::from_millis(30), move || {
+            fired_for_cb.store(true, std::sync::atomic::Ordering::Release);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        assert!(fired.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn after_func_cancel_prevents_firing() {
+        let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fired_for_cb = std::sync::Arc::clone(&fired);
+        let mut handle = after_func(Duration::from_millis(200), move || {
+            fired_for_cb.store(true, std::sync::atomic::Ordering::Release);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let before_fire = handle.cancel();
+        assert!(before_fire);
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        assert!(!fired.load(std::sync::atomic::Ordering::Acquire));
     }
 }

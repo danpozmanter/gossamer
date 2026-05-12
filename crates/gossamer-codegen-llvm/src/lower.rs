@@ -483,6 +483,16 @@ impl<'a> Lowerer<'a> {
         let leaf_ty = self.place_leaf_ty(place);
         let leaf_llvm = render_ty(self.tcx, leaf_ty);
         let value = self.lower_rvalue(rvalue, place.local)?;
+        // `Use(FnRef)` returns a `ptr` literal (the function's
+        // global symbol). When the destination slot is integer-
+        // shaped (the goroutine-spawn path stores fn addresses
+        // into `i64` locals), coerce ptr → leaf_llvm so the
+        // emitted `store` types match.
+        let value = if matches!(rvalue, Rvalue::Use(Operand::FnRef { .. })) && leaf_llvm != "ptr" {
+            self.coerce_llvm_value(&value, "ptr", &leaf_llvm)
+        } else {
+            value
+        };
         let addr = if place.projection.is_empty() {
             local_slot(place.local)
         } else {
@@ -864,19 +874,17 @@ impl<'a> Lowerer<'a> {
             }
             Operand::Const(value) => Ok(render_const(value)),
             Operand::FnRef { def, .. } => {
-                // `Operand::FnRef` as an *argument* — the
-                // address of the named function. The MIR
-                // lowerer types its containing local as
-                // `i64` (`go expr` stuffs the address into a
-                // register-sized scalar to pass through
-                // `gos_rt_go_spawn_call_N`). LLVM globals are
-                // pointer-typed, so we have to `ptrtoint` the
-                // global to an i64 before the surrounding
-                // `store` / `call` consumes it.
+                // Emit the function symbol as a `ptr` value — that
+                // matches `operand_llvm_ty(FnRef) = "ptr"` and the
+                // `FnDef → ptr` rendering of the destination slot.
+                // The MIR lowerer also stuffs fn addresses into
+                // `i64` slots for the goroutine-spawn path; the
+                // assignment-store branch in `lower_assign` coerces
+                // ptr → i64 (`ptrtoint`) when the destination's
+                // leaf type is integer-shaped, so both shapes get a
+                // well-typed `store`.
                 if let Some(name) = self.fn_name_by_def.get(&def.local).cloned() {
-                    let tmp = self.fresh();
-                    writeln!(self.out, "  {tmp} = ptrtoint ptr @\"{name}\" to i64").unwrap();
-                    return Ok(tmp);
+                    return Ok(format!("@\"{name}\""));
                 }
                 Err(BuildError::Unsupported("FnRef operand not yet lowered"))
             }
@@ -3377,6 +3385,41 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {tmp} = inttoptr {vec_ty} {vec_v} to ptr").unwrap();
             tmp
         };
+        // Aggregate-element push (`xs.push((a, b))` where the
+        // element type is a tuple/struct/array): the runtime
+        // `gos_rt_vec_push(vec, ptr)` memcpys `vec.elem_bytes`
+        // bytes from `ptr`. The scalar path below spills a
+        // pointer-sized value into an `alloca i64` and would
+        // copy `elem_bytes` from a too-small slot, clobbering
+        // the vec's storage. Pass the operand's slot address
+        // directly so the memcpy reads the full aggregate.
+        if let Operand::Copy(p) = &args[1]
+            && is_aggregate(self.tcx, self.place_leaf_ty(p))
+        {
+            let val_addr = if p.projection.is_empty() {
+                local_slot(p.local)
+            } else {
+                self.lower_place_address(p)
+            };
+            declare_rt(&mut self.runtime_refs, "gos_rt_vec_push");
+            writeln!(
+                self.out,
+                "  call void @gos_rt_vec_push(ptr {vec_ptr}, ptr {val_addr})"
+            )
+            .unwrap();
+            if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+                let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+                let dslot = local_slot(destination.local);
+                let zero = match dest_ty.as_str() {
+                    "ptr" => "null".to_string(),
+                    "double" | "float" => "0.0".to_string(),
+                    _ => "0".to_string(),
+                };
+                writeln!(self.out, "  store {dest_ty} {zero}, ptr {dslot}").unwrap();
+            }
+            emit_terminator_branch(&mut self.out, target);
+            return Ok(());
+        }
         let val_v = self.lower_operand(&args[1])?;
         let val_ty = self.operand_llvm_ty(&args[1]);
         // 8-byte slot — every scalar / GC pointer fits in one
@@ -3844,6 +3887,7 @@ fn map_prelude_symbol(name: &str) -> &str {
         "println" | "print" | "eprintln" | "eprint" => "gos_rt_print_str",
         "panic" => "gos_rt_panic",
         "os::args" => "gos_rt_os_args",
+        "os::program_name" => "gos_rt_os_program_name",
         "os::exit" => "gos_rt_exit",
         "io::stdout" | "os::stdout" => "gos_rt_io_stdout",
         "io::stderr" | "os::stderr" => "gos_rt_io_stderr",

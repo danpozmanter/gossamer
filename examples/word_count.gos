@@ -21,8 +21,8 @@ fn analyse(text: &String) -> Stats {
     let mut chars: i64 = 0
     let mut words: i64 = 0
     let mut in_token = false
-    for byte in text.as_bytes().iter() {
-        let b = *byte as i64
+    for byte in text.as_bytes() {
+        let b = byte as i64
         chars += 1
         if is_space(b) {
             in_token = false

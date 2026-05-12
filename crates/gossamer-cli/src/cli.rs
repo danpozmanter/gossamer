@@ -214,12 +214,23 @@ enum Command {
     },
     /// Emit an item listing derived from doc comments / signatures.
     Doc {
-        /// Path to a `.gos` source file.
-        file: PathBuf,
+        /// Path to a `.gos` source file. Optional when using
+        /// `--emit-stdlib`.
+        file: Option<PathBuf>,
         /// Write an HTML page to this path instead of printing a
         /// plain-text index to stdout.
         #[arg(long)]
         html: Option<PathBuf>,
+        /// Emit one Markdown page per stdlib module under the
+        /// supplied output directory. Walks
+        /// `gossamer_std::manifest::ALL_MODULES`. The page set
+        /// matches what's published to the GitHub Pages site.
+        #[arg(long, value_name = "DIR")]
+        emit_stdlib: Option<PathBuf>,
+        /// Verify that committed docs match the manifest. Fails
+        /// with non-zero exit when any page is missing or stale.
+        #[arg(long, requires = "emit_stdlib")]
+        check: bool,
     },
     /// Discover and run `#[test]` functions.
     ///
@@ -432,7 +443,22 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
         Some(Command::Fetch { manifest, offline }) => cmd::pkg::fetch(manifest, offline),
         Some(Command::Vendor { manifest, out }) => cmd::pkg::vendor(manifest, out),
         Some(Command::Fmt { file, check }) => cmd::fmt_cmd::dispatch(file, check),
-        Some(Command::Doc { file, html }) => doc::cmd_doc(&file, html.as_deref()),
+        Some(Command::Doc {
+            file,
+            html,
+            emit_stdlib,
+            check,
+        }) => {
+            if let Some(out) = emit_stdlib {
+                doc::cmd_emit_stdlib(&out, check)
+            } else if let Some(f) = file {
+                doc::cmd_doc(&f, html.as_deref())
+            } else {
+                Err(anyhow::anyhow!(
+                    "gos doc: pass a source file or --emit-stdlib DIR"
+                ))
+            }
+        }
         Some(Command::Test {
             path,
             run,

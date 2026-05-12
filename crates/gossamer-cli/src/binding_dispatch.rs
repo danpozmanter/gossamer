@@ -271,6 +271,7 @@ fn dumped_to_binding(t: &DumpedType) -> BindingType {
         DumpedType::F64 => BindingType::F64,
         DumpedType::Char => BindingType::Char,
         DumpedType::String => BindingType::String,
+        DumpedType::Bytes => BindingType::Bytes,
         DumpedType::Tuple { items } => {
             BindingType::Tuple(items.iter().map(dumped_to_binding).collect())
         }
@@ -279,6 +280,22 @@ fn dumped_to_binding(t: &DumpedType) -> BindingType {
         DumpedType::Result { ok, err } => BindingType::Result(
             Box::new(dumped_to_binding(ok)),
             Box::new(dumped_to_binding(err)),
+        ),
+        DumpedType::Map { key, value } => BindingType::Map(
+            Box::new(dumped_to_binding(key)),
+            Box::new(dumped_to_binding(value)),
+        ),
+        DumpedType::Variant { arms } => BindingType::Variant(
+            arms.iter()
+                .map(|a| gossamer_resolve::BindingVariantArm {
+                    name: a.name.clone(),
+                    payload: a.payload.iter().map(dumped_to_binding).collect(),
+                })
+                .collect(),
+        ),
+        DumpedType::Callback { args, ret } => BindingType::Callback(
+            args.iter().map(dumped_to_binding).collect(),
+            Box::new(dumped_to_binding(ret)),
         ),
         DumpedType::Opaque { name } => BindingType::Opaque(name.clone()),
         DumpedType::Any => BindingType::Any,

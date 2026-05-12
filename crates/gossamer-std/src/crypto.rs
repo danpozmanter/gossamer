@@ -558,7 +558,6 @@ pub mod kdf {
 }
 
 /// Legacy/insecure hashes (MD5, SHA-1). Feature-gated; must not be used for security.
-#[cfg(feature = "insecure-crypto")]
 pub mod insecure;
 
 #[inline]
@@ -567,6 +566,133 @@ fn nibble_char(n: u8) -> char {
         0..=9 => (b'0' + n) as char,
         10..=15 => (b'a' + n - 10) as char,
         _ => '?',
+    }
+}
+
+/// Block-cipher modes: AES-CTR, AES-CBC. Mirrors Go's
+/// `crypto/cipher` surface — `Stream` / `Block` primitives so
+/// downstream code can compose modes that Gossamer doesn't
+/// ship directly (e.g. AES-OFB layered on the same Block).
+pub mod cipher {
+    use crate::errors::Error;
+    use cipher::{
+        BlockDecryptMut, BlockEncryptMut, BlockSizeUser, KeyIvInit, StreamCipher,
+        block_padding::Pkcs7,
+    };
+
+    /// AES key sizes accepted by [`aes_block_size`] and the
+    /// stream-mode constructors below.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum AesKeySize {
+        /// 128-bit key.
+        K128,
+        /// 192-bit key.
+        K192,
+        /// 256-bit key.
+        K256,
+    }
+
+    /// Returns the AES block size in bytes (always 16).
+    #[must_use]
+    pub fn aes_block_size() -> usize {
+        16
+    }
+
+    /// Detects the AES key size from a byte slice. Returns
+    /// `Err` for any length other than 16 / 24 / 32.
+    pub fn aes_key_size(key: &[u8]) -> Result<AesKeySize, Error> {
+        match key.len() {
+            16 => Ok(AesKeySize::K128),
+            24 => Ok(AesKeySize::K192),
+            32 => Ok(AesKeySize::K256),
+            n => Err(Error::new(format!(
+                "AES key must be 16/24/32 bytes, got {n}"
+            ))),
+        }
+    }
+
+    /// In-place AES-CTR. The same call both encrypts and
+    /// decrypts (CTR is symmetric). `iv` must be exactly
+    /// [`aes_block_size`] bytes; reusing a `(key, iv)` pair on
+    /// distinct plaintexts is catastrophic — pick a fresh `iv`
+    /// per message.
+    pub fn aes_ctr_xor(key: &[u8], iv: &[u8], buf: &mut [u8]) -> Result<(), Error> {
+        if iv.len() != aes_block_size() {
+            return Err(Error::new(format!(
+                "AES-CTR iv must be {} bytes, got {}",
+                aes_block_size(),
+                iv.len()
+            )));
+        }
+        match aes_key_size(key)? {
+            AesKeySize::K128 => {
+                let mut c = ctr::Ctr128BE::<aes::Aes128>::new(key.into(), iv.into());
+                c.apply_keystream(buf);
+            }
+            AesKeySize::K192 => {
+                let mut c = ctr::Ctr128BE::<aes::Aes192>::new(key.into(), iv.into());
+                c.apply_keystream(buf);
+            }
+            AesKeySize::K256 => {
+                let mut c = ctr::Ctr128BE::<aes::Aes256>::new(key.into(), iv.into());
+                c.apply_keystream(buf);
+            }
+        }
+        Ok(())
+    }
+
+    /// Encrypts `plaintext` with AES-CBC + PKCS#7 padding.
+    /// Returns the ciphertext; the IV is NOT prepended — pass
+    /// it alongside ciphertext on the wire.
+    pub fn aes_cbc_encrypt(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, Error> {
+        if iv.len() != aes_block_size() {
+            return Err(Error::new(format!(
+                "AES-CBC iv must be {} bytes",
+                aes_block_size()
+            )));
+        }
+        let block_size = aes_block_size();
+        let mut buf = vec![0u8; plaintext.len() + block_size];
+        let ct_len = match aes_key_size(key)? {
+            AesKeySize::K128 => cbc::Encryptor::<aes::Aes128>::new(key.into(), iv.into())
+                .encrypt_padded_b2b_mut::<Pkcs7>(plaintext, &mut buf)
+                .map(<[u8]>::len)
+                .map_err(|e| Error::new(format!("AES-CBC encrypt: {e}")))?,
+            AesKeySize::K192 => cbc::Encryptor::<aes::Aes192>::new(key.into(), iv.into())
+                .encrypt_padded_b2b_mut::<Pkcs7>(plaintext, &mut buf)
+                .map(<[u8]>::len)
+                .map_err(|e| Error::new(format!("AES-CBC encrypt: {e}")))?,
+            AesKeySize::K256 => cbc::Encryptor::<aes::Aes256>::new(key.into(), iv.into())
+                .encrypt_padded_b2b_mut::<Pkcs7>(plaintext, &mut buf)
+                .map(<[u8]>::len)
+                .map_err(|e| Error::new(format!("AES-CBC encrypt: {e}")))?,
+        };
+        buf.truncate(ct_len);
+        Ok(buf)
+    }
+
+    /// Inverts [`aes_cbc_encrypt`]. Strips PKCS#7 padding.
+    pub fn aes_cbc_decrypt(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, Error> {
+        if iv.len() != aes_block_size() {
+            return Err(Error::new(format!(
+                "AES-CBC iv must be {} bytes",
+                aes_block_size()
+            )));
+        }
+        let _ = <aes::Aes128 as BlockSizeUser>::block_size();
+        let mut buf = ciphertext.to_vec();
+        let pt: &[u8] = match aes_key_size(key)? {
+            AesKeySize::K128 => cbc::Decryptor::<aes::Aes128>::new(key.into(), iv.into())
+                .decrypt_padded_mut::<Pkcs7>(&mut buf)
+                .map_err(|e| Error::new(format!("AES-CBC decrypt: {e}")))?,
+            AesKeySize::K192 => cbc::Decryptor::<aes::Aes192>::new(key.into(), iv.into())
+                .decrypt_padded_mut::<Pkcs7>(&mut buf)
+                .map_err(|e| Error::new(format!("AES-CBC decrypt: {e}")))?,
+            AesKeySize::K256 => cbc::Decryptor::<aes::Aes256>::new(key.into(), iv.into())
+                .decrypt_padded_mut::<Pkcs7>(&mut buf)
+                .map_err(|e| Error::new(format!("AES-CBC decrypt: {e}")))?,
+        };
+        Ok(pt.to_vec())
     }
 }
 
@@ -677,6 +803,88 @@ mod tests {
         let phc = kdf::argon2id_hash(b"correct horse").unwrap();
         assert!(kdf::argon2id_verify(b"correct horse", &phc).unwrap());
         assert!(!kdf::argon2id_verify(b"wrong", &phc).unwrap());
+    }
+
+    #[test]
+    fn aes_ctr_round_trip_128() {
+        let key = [0x42u8; 16];
+        let iv = [0x11u8; 16];
+        let pt = b"the quick brown fox jumps over the lazy dog";
+        let mut buf = pt.to_vec();
+        cipher::aes_ctr_xor(&key, &iv, &mut buf).unwrap();
+        assert_ne!(buf, pt);
+        cipher::aes_ctr_xor(&key, &iv, &mut buf).unwrap();
+        assert_eq!(buf, pt);
+    }
+
+    #[test]
+    fn aes_ctr_round_trip_192_256() {
+        for key_len in [24, 32] {
+            let key = vec![0x42u8; key_len];
+            let iv = [0x99u8; 16];
+            let pt = b"another payload to test 192/256-bit AES-CTR".to_vec();
+            let mut buf = pt.clone();
+            cipher::aes_ctr_xor(&key, &iv, &mut buf).unwrap();
+            cipher::aes_ctr_xor(&key, &iv, &mut buf).unwrap();
+            assert_eq!(buf, pt);
+        }
+    }
+
+    #[test]
+    fn aes_cbc_round_trip() {
+        let key = [0x33u8; 16];
+        let iv = [0x55u8; 16];
+        let pt = b"AES-CBC needs PKCS#7 padding";
+        let ct = cipher::aes_cbc_encrypt(&key, &iv, pt).unwrap();
+        assert_ne!(ct, pt);
+        let back = cipher::aes_cbc_decrypt(&key, &iv, &ct).unwrap();
+        assert_eq!(back, pt);
+    }
+
+    #[test]
+    fn aes_cbc_block_aligned_payload() {
+        let key = [0u8; 32];
+        let iv = [1u8; 16];
+        let pt = b"exactly sixteen!"; // 16 bytes — full block
+        assert_eq!(pt.len(), 16);
+        let ct = cipher::aes_cbc_encrypt(&key, &iv, pt).unwrap();
+        // PKCS#7 adds a full padding block on aligned inputs.
+        assert_eq!(ct.len(), 32);
+        let back = cipher::aes_cbc_decrypt(&key, &iv, &ct).unwrap();
+        assert_eq!(back, pt);
+    }
+
+    #[test]
+    fn aes_ctr_rejects_bad_key_size() {
+        let bad_key = [0u8; 17];
+        let iv = [0u8; 16];
+        let mut buf = [0u8; 8];
+        assert!(cipher::aes_ctr_xor(&bad_key, &iv, &mut buf).is_err());
+    }
+
+    #[test]
+    fn aes_ctr_rejects_bad_iv() {
+        let key = [0u8; 16];
+        let bad_iv = [0u8; 12];
+        let mut buf = [0u8; 8];
+        assert!(cipher::aes_ctr_xor(&key, &bad_iv, &mut buf).is_err());
+    }
+
+    #[test]
+    fn aes_key_size_detection() {
+        assert_eq!(
+            cipher::aes_key_size(&[0u8; 16]).unwrap(),
+            cipher::AesKeySize::K128
+        );
+        assert_eq!(
+            cipher::aes_key_size(&[0u8; 24]).unwrap(),
+            cipher::AesKeySize::K192
+        );
+        assert_eq!(
+            cipher::aes_key_size(&[0u8; 32]).unwrap(),
+            cipher::AesKeySize::K256
+        );
+        assert!(cipher::aes_key_size(&[0u8; 31]).is_err());
     }
 
     fn to_hex(bytes: &[u8]) -> String {

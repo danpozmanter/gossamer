@@ -34,6 +34,8 @@ pub enum BindingType {
     Char,
     /// `String`.
     String,
+    /// `Bytes` — opaque byte buffer (ABI 0.4+).
+    Bytes,
     /// `(T1, T2, ...)`.
     Tuple(Vec<BindingType>),
     /// `[T]`.
@@ -42,10 +44,25 @@ pub enum BindingType {
     Option(Box<BindingType>),
     /// `Result<T, E>`.
     Result(Box<BindingType>, Box<BindingType>),
+    /// `Map<K, V>` (ABI 0.4+).
+    Map(Box<BindingType>, Box<BindingType>),
+    /// `Variant<...>` — tagged-union (ABI 0.4+).
+    Variant(Vec<BindingVariantArm>),
+    /// `Fn(args...) -> ret` callback (ABI 0.4+).
+    Callback(Vec<BindingType>, Box<BindingType>),
     /// User-defined opaque struct/enum, identified by name.
     Opaque(String),
     /// `_` — type checker accepts anything.
     Any,
+}
+
+/// One arm of a [`BindingType::Variant`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingVariantArm {
+    /// Arm name.
+    pub name: String,
+    /// Positional payload types.
+    pub payload: Vec<BindingType>,
 }
 
 impl BindingType {
@@ -59,6 +76,7 @@ impl BindingType {
             Self::F64 => "f64".to_string(),
             Self::Char => "char".to_string(),
             Self::String => "String".to_string(),
+            Self::Bytes => "Bytes".to_string(),
             Self::Tuple(ts) => {
                 let inner = ts
                     .iter()
@@ -70,6 +88,35 @@ impl BindingType {
             Self::Vec(t) => format!("[{}]", t.to_source()),
             Self::Option(t) => format!("Option<{}>", t.to_source()),
             Self::Result(t, e) => format!("Result<{}, {}>", t.to_source(), e.to_source()),
+            Self::Map(k, v) => format!("Map<{}, {}>", k.to_source(), v.to_source()),
+            Self::Variant(arms) => {
+                let body = arms
+                    .iter()
+                    .map(|a| {
+                        if a.payload.is_empty() {
+                            a.name.clone()
+                        } else {
+                            let payload = a
+                                .payload
+                                .iter()
+                                .map(Self::to_source)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!("{}({payload})", a.name)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                format!("Variant<{body}>")
+            }
+            Self::Callback(args, ret) => {
+                let params = args
+                    .iter()
+                    .map(Self::to_source)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("Fn({params}) -> {}", ret.to_source())
+            }
             Self::Opaque(name) => name.clone(),
             Self::Any => "_".to_string(),
         }

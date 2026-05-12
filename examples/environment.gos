@@ -6,7 +6,7 @@
  * missing.
  */
 
-use std::os
+use std::{iter, os}
 
 fn report_env(name: &String) {
     match os::env(name) {
@@ -23,9 +23,8 @@ fn main() {
     }
 
     println!("\nenvironment (selected):")
-    for name in ["PATH", "HOME", "USER", "GOSSAMER_DEBUG"].iter() {
-        report_env(name)
-    }
+    let env_vars = ["PATH", "HOME", "USER", "GOSSAMER_DEBUG"]
+    env_vars |> iter::for_each(|name| report_env(&name))
 
     match os::cwd() {
         Ok(dir) => println!("\ncwd: {dir}"),
