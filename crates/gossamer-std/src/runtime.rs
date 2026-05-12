@@ -93,15 +93,16 @@ pub struct MemStats {
 #[must_use]
 pub fn mem_stats() -> MemStats {
     let stats = gossamer_runtime::gc::stats();
+    let next_gc = (stats.bytes_allocated as f64 * 1.5) as u64;
     MemStats {
         bytes_allocated: u64::try_from(stats.bytes_allocated).unwrap_or(u64::MAX),
-        live_bytes: 0,
+        live_bytes: u64::try_from(stats.live_bytes).unwrap_or(u64::MAX),
         cycles: stats.cycles,
         last_pause_nanos: stats.last_pause_nanos,
         max_pause_nanos: stats.max_pause_nanos,
         live_objects: u64::try_from(stats.live).unwrap_or(u64::MAX),
         total_pause_nanos: u64::try_from(stats.total_pause_nanos).unwrap_or(u64::MAX),
-        next_gc_bytes: 0,
+        next_gc_bytes: next_gc,
     }
 }
 

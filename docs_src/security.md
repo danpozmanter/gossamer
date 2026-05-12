@@ -41,10 +41,9 @@ know:
   happens-before analysis. CI gating on `--race` is
   recommended for any code that touches goroutines.
 
-Open caveats tracked in
-[`docs_src/non_goals_v1.md`](non_goals_v1.md):
+Open caveats:
 
-- HTTP/2 + WebSockets are deferred.
+- HTTP/2 + WebSockets are deferred to v1.x.
 - Per-line coverage instrumentation (Phase 2 follow-up) —
   the `--coverage` output today is at the test-file
   granularity.

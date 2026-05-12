@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/migration/kotlin/" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>From Kotlin - Gossamer</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "From Kotlin";
+        var mkdocs_page_input_path = "migration/kotlin.md";
+        var mkdocs_page_url = "/gossamer/docs/migration/kotlin/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../codegen_abi/">Codegen ABI</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../python/">From Python</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../fsharp/">From F#</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">From Kotlin</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#tldr">TL;DR</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#syntax-cheat-sheet">Syntax cheat-sheet</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#null-safety-option">Null safety → Option</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#data-classes-structs">Data classes → structs</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#sealed-classes-enums">Sealed classes → enums</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#collections-and-iteration">Collections and iteration</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#string-interpolation">String interpolation</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#coroutines-goroutines">Coroutines → goroutines</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#extension-functions">Extension functions</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#companion-objects-associated-functions">Companion objects → associated functions</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#exceptions-result">Exceptions → Result</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#standard-library-mapping-kotlin-jvm-gossamer">Standard library mapping (Kotlin / JVM → Gossamer)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#cross-references">Cross-references</a>
+    </li>
+    </ul>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/selfhosting/">Self-hosting study</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Migrating</li>
+      <li class="breadcrumb-item active">From Kotlin</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="migrating-from-kotlin-to-gossamer">Migrating from Kotlin to Gossamer<a class="headerlink" href="#migrating-from-kotlin-to-gossamer" title="Permanent link">&para;</a></h1>
+<p>Kotlin and Gossamer share several ideas: null safety maps to
+<code>Option&lt;T&gt;</code>, <code>val</code>/<code>var</code> maps to <code>let</code>/<code>let mut</code>, <code>when</code>
+expressions map to <code>match</code>, data classes map to structs, and
+coroutines map to goroutines. The main shift is from JVM-hosted
+OO with nullable types to a GC-managed systems language where
+every absent value is explicit and every blocking call is safe.</p>
+<h2 id="tldr">TL;DR<a class="headerlink" href="#tldr" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>What transfers:</strong> <code>val/var</code> → <code>let/let mut</code>, <code>when</code> → <code>match</code>,
+  data classes → structs, sealed classes → enums, lambdas → closures,
+  interfaces → traits, <code>T?</code> → <code>Option&lt;T&gt;</code>, coroutines → goroutines.</li>
+<li><strong>What changes:</strong> method-chaining collections vs. <code>iter::*</code> +
+  <code>|&gt;</code>, <code>suspend</code> vs. <code>go expr</code>, string templates vs. <code>format!</code>,
+  companion objects vs. associated functions, exceptions vs.
+  <code>Result&lt;T, E&gt;</code>.</li>
+<li><strong>What's absent:</strong> <code>@</code> annotations as user-extensible metadata,
+  reflection, JVM interop, <code>inline</code>/<code>reified</code> generics, Kotlin
+  DSLs.</li>
+</ul>
+<h2 id="syntax-cheat-sheet">Syntax cheat-sheet<a class="headerlink" href="#syntax-cheat-sheet" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Kotlin</th>
+<th>Gossamer</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>val x = 5</code></td>
+<td><code>let x = 5</code></td>
+<td>Immutable binding.</td>
+</tr>
+<tr>
+<td><code>var x = 5</code></td>
+<td><code>let mut x = 5</code></td>
+<td>Mutable binding.</td>
+</tr>
+<tr>
+<td><code>fun f(x: Int): Int = x + 1</code></td>
+<td><code>fn f(x: i64) -&gt; i64 { x + 1 }</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>{ x: Int -&gt; x + 1 }</code></td>
+<td><code>\|x: i64\| x + 1</code></td>
+<td>Lambda / closure.</td>
+</tr>
+<tr>
+<td><code>if (cond) a else b</code></td>
+<td><code>if cond { a } else { b }</code></td>
+<td>No parens required.</td>
+</tr>
+<tr>
+<td><code>when (x) { 1 -&gt; … else -&gt; … }</code></td>
+<td><code>match x { 1 =&gt; …, _ =&gt; … }</code></td>
+<td>Exhaustive.</td>
+</tr>
+<tr>
+<td><code>data class Point(val x: Int, val y: Int)</code></td>
+<td><code>struct Point { x: i64, y: i64 }</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>sealed class Shape</code></td>
+<td><code>enum Shape { … }</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>println("$name is $age")</code></td>
+<td><code>println!("{name} is {age}")</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>"$name".length</code></td>
+<td><code>name.len()</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>listOf(1, 2, 3)</code></td>
+<td><code>[1, 2, 3]</code></td>
+<td><code>Vec&lt;i64&gt;</code>.</td>
+</tr>
+<tr>
+<td><code>mapOf("a" to 1)</code></td>
+<td><code>HashMap::from([("a", 1)])</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>x?.method()</code></td>
+<td><code>if let Some(v) = x { v.method() }</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>x ?: default</code></td>
+<td><code>x.unwrap_or(default)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>x!!</code></td>
+<td><code>x.unwrap()</code></td>
+<td>Panics on None.</td>
+</tr>
+<tr>
+<td><code>launch { … }</code></td>
+<td><code>go fn() { … }()</code></td>
+<td>Goroutine.</td>
+</tr>
+<tr>
+<td><code>async { … }.await</code></td>
+<td>channel send/recv, or direct call</td>
+<td></td>
+</tr>
+<tr>
+<td><code>try { … } catch (e: …) { … }</code></td>
+<td><code>match f() { Ok(v) =&gt; …, Err(e) =&gt; … }</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>throw Exception("msg")</code></td>
+<td><code>return Err(errors::new("msg"))</code></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h2 id="null-safety-option">Null safety → Option<T><a class="headerlink" href="#null-safety-option" title="Permanent link">&para;</a></h2>
+<p>Kotlin's <code>T?</code> has four operators: <code>?.</code> (safe call), <code>?:</code>
+(Elvis), <code>!!</code> (force unwrap), and smart casts after null checks.
+Gossamer uses <code>Option&lt;T&gt;</code> with explicit unwrapping:</p>
+<p>Kotlin:</p>
+<pre><code class="language-kotlin">val len: Int? = name?.length
+val display = name ?: &quot;anonymous&quot;
+val forced = name!!.uppercase()
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let len: Option&lt;i64&gt; = name.as_ref().map(|s: &amp;String| s.len() as i64)
+let display = name.as_deref().unwrap_or(&quot;anonymous&quot;)
+let forced = name.as_ref().unwrap().to_uppercase()
+</code></pre>
+<p>For conditional access, <code>if let</code> is idiomatic:</p>
+<pre><code class="language-gos">if let Some(n) = name {
+    println!(&quot;hello, {n}&quot;)
+}
+</code></pre>
+<h2 id="data-classes-structs">Data classes → structs<a class="headerlink" href="#data-classes-structs" title="Permanent link">&para;</a></h2>
+<p>Kotlin:</p>
+<pre><code class="language-kotlin">data class User(val name: String, val age: Int)
+val u = User(&quot;Ada&quot;, 36)
+val older = u.copy(age = 37)
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">struct User { name: String, age: i64 }
+
+let u = User { name: &quot;Ada&quot;, age: 36 }
+let older = User { age: 37, ..u }
+</code></pre>
+<p>Deriving <code>Debug</code>, <code>Clone</code>, and <code>PartialEq</code> is the Gossamer
+equivalent of data class's auto-generated <code>toString</code> /
+<code>equals</code> / <code>hashCode</code>:</p>
+<pre><code class="language-gos">#[derive(Debug, Clone, PartialEq)]
+struct User { name: String, age: i64 }
+</code></pre>
+<h2 id="sealed-classes-enums">Sealed classes → enums<a class="headerlink" href="#sealed-classes-enums" title="Permanent link">&para;</a></h2>
+<p>Kotlin:</p>
+<pre><code class="language-kotlin">sealed class Result&lt;out T&gt;
+data class Success&lt;T&gt;(val value: T) : Result&lt;T&gt;()
+data class Failure(val error: Throwable) : Result&lt;Nothing&gt;()
+
+when (result) {
+    is Success -&gt; println(result.value)
+    is Failure -&gt; println(result.error.message)
+}
+</code></pre>
+<p>Gossamer uses the built-in <code>Result&lt;T, E&gt;</code> or a user enum:</p>
+<pre><code class="language-gos">enum Outcome {
+    Win(String),
+    Loss(String),
+    Draw,
+}
+
+match outcome {
+    Outcome::Win(msg) =&gt; println!(&quot;{msg}&quot;),
+    Outcome::Loss(msg) =&gt; eprintln!(&quot;{msg}&quot;),
+    Outcome::Draw =&gt; println!(&quot;tied&quot;),
+}
+</code></pre>
+<h2 id="collections-and-iteration">Collections and iteration<a class="headerlink" href="#collections-and-iteration" title="Permanent link">&para;</a></h2>
+<p>Kotlin collections carry <code>.map</code>, <code>.filter</code>, <code>.fold</code> as methods.
+Gossamer separates these into free functions in <code>std::iter</code> (data
+last, piped with <code>|&gt;</code>). Mutating helpers (<code>push</code>, <code>sort</code>,
+<code>remove</code>) stay as methods.</p>
+<p>Kotlin:</p>
+<pre><code class="language-kotlin">val total = listOf(1, 2, 3, 4, 5)
+    .filter { it % 2 == 0 }
+    .sumOf { it * it }
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let total = [1, 2, 3, 4, 5]
+    |&gt; iter::filter(|n: i64| n % 2 == 0)
+    |&gt; iter::sum_by(|n: i64| n * n)
+</code></pre>
+<p>Kotlin:</p>
+<pre><code class="language-kotlin">val words = sentence.split(&quot; &quot;).map { it.trim() }.filter { it.isNotEmpty() }
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let words = strings::split(&amp;sentence, &quot; &quot;)
+    |&gt; iter::map(|s: String| strings::trim(&amp;s))
+    |&gt; iter::filter(|s: String| s.len() &gt; 0)
+    |&gt; iter::collect()
+</code></pre>
+<h2 id="string-interpolation">String interpolation<a class="headerlink" href="#string-interpolation" title="Permanent link">&para;</a></h2>
+<p>Kotlin uses <code>"$variable"</code> and <code>"${expression}"</code>. Gossamer uses
+<code>format!</code> / <code>println!</code> with <code>{identifier}</code> or positional <code>{}</code>:</p>
+<p>Kotlin:</p>
+<pre><code class="language-kotlin">val msg = &quot;Hello, $name! You are ${age + 1} next year.&quot;
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let msg = format!(&quot;Hello, {name}! You are {} next year.&quot;, age + 1)
+</code></pre>
+<h2 id="coroutines-goroutines">Coroutines → goroutines<a class="headerlink" href="#coroutines-goroutines" title="Permanent link">&para;</a></h2>
+<p>Kotlin coroutines are cooperative and tied to a <code>CoroutineScope</code>.
+Gossamer goroutines are stackful and scheduled by an M:N
+work-stealing runtime — blocking IO doesn't block the OS thread.</p>
+<p>Kotlin:</p>
+<pre><code class="language-kotlin">fun main() = runBlocking {
+    val result = async { fetchData(url) }
+    println(result.await())
+}
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">fn main() {
+    let (tx, rx) = channel()
+    go fn() {
+        tx.send(fetch_data(&amp;url))
+    }()
+    println!(&quot;{}&quot;, rx.recv().unwrap())
+}
+</code></pre>
+<p>For fan-out + fan-in, WaitGroup is the Go-shaped idiom:</p>
+<pre><code class="language-gos">let wg = sync::WaitGroup::new()
+let (tx, rx) = channel()
+
+for url in urls {
+    wg.add(1)
+    let tx = tx.clone()
+    go fn() {
+        defer wg.done()
+        tx.send(fetch_data(&amp;url))
+    }()
+}
+
+go fn() {
+    wg.wait()
+    drop(tx)
+}()
+
+while let Some(result) = rx.recv() {
+    process(result)
+}
+</code></pre>
+<h2 id="extension-functions">Extension functions<a class="headerlink" href="#extension-functions" title="Permanent link">&para;</a></h2>
+<p>Kotlin extension functions add methods to existing types:</p>
+<pre><code class="language-kotlin">fun String.shout(): String = this.uppercase() + &quot;!&quot;
+</code></pre>
+<p>Gossamer uses <code>impl</code> blocks or standalone free functions:</p>
+<pre><code class="language-gos">fn shout(s: &amp;String) -&gt; String {
+    strings::to_upper(s) + &quot;!&quot;
+}
+</code></pre>
+<p>If the method belongs logically to a type you own, use <code>impl</code>:</p>
+<pre><code class="language-gos">impl MyType {
+    pub fn shout(&amp;self) -&gt; String {
+        strings::to_upper(&amp;self.name) + &quot;!&quot;
+    }
+}
+</code></pre>
+<h2 id="companion-objects-associated-functions">Companion objects → associated functions<a class="headerlink" href="#companion-objects-associated-functions" title="Permanent link">&para;</a></h2>
+<p>Kotlin companion objects hold factory methods and constants:</p>
+<pre><code class="language-kotlin">class Connection private constructor(val host: String) {
+    companion object {
+        fun local() = Connection(&quot;localhost&quot;)
+        const val DEFAULT_PORT = 5432
+    }
+}
+</code></pre>
+<p>Gossamer uses associated functions on <code>impl</code>:</p>
+<pre><code class="language-gos">struct Connection { host: String }
+
+impl Connection {
+    pub fn local() -&gt; Connection {
+        Connection { host: &quot;localhost&quot; }
+    }
+}
+
+const DEFAULT_PORT: i64 = 5432
+</code></pre>
+<h2 id="exceptions-result">Exceptions → Result<a class="headerlink" href="#exceptions-result" title="Permanent link">&para;</a></h2>
+<p>Kotlin uses exceptions for errors. Gossamer uses <code>Result&lt;T, E&gt;</code>
+with <code>?</code> for propagation:</p>
+<p>Kotlin:</p>
+<pre><code class="language-kotlin">fun readConfig(path: String): Config {
+    val text = File(path).readText()  // throws IOException
+    return parseConfig(text)         // throws ParseException
+}
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">fn read_config(path: &amp;String) -&gt; Result&lt;Config, errors::Error&gt; {
+    let text = fs::read_to_string(path)?
+    parse_config(&amp;text)
+}
+</code></pre>
+<p><code>?</code> unwraps <code>Ok(v)</code> or returns <code>Err(e)</code> from the enclosing
+function. Combine errors with <code>errors::wrap</code>:</p>
+<pre><code class="language-gos">fn read_config(path: &amp;String) -&gt; Result&lt;Config, errors::Error&gt; {
+    let text = fs::read_to_string(path)
+        .map_err(|e| errors::wrap(e, format!(&quot;reading {path}&quot;)))?
+    parse_config(&amp;text)
+}
+</code></pre>
+<h2 id="standard-library-mapping-kotlin-jvm-gossamer">Standard library mapping (Kotlin / JVM → Gossamer)<a class="headerlink" href="#standard-library-mapping-kotlin-jvm-gossamer" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Kotlin / JVM</th>
+<th>Gossamer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>File(path).readText()</code></td>
+<td><code>fs::read_to_string(path)</code></td>
+</tr>
+<tr>
+<td><code>File(path).writeText(s)</code></td>
+<td><code>fs::write(path, s)</code></td>
+</tr>
+<tr>
+<td><code>File(path).delete()</code></td>
+<td><code>fs::remove_file(path)</code></td>
+</tr>
+<tr>
+<td><code>File(path).mkdirs()</code></td>
+<td><code>fs::create_dir_all(path)</code></td>
+</tr>
+<tr>
+<td><code>System.getenv("X")</code></td>
+<td><code>env::var("X")</code></td>
+</tr>
+<tr>
+<td><code>System.exit(0)</code></td>
+<td><code>process::exit(0)</code></td>
+</tr>
+<tr>
+<td><code>ProcessBuilder(cmd).start()</code></td>
+<td><code>process::Command::new(cmd).spawn()</code></td>
+</tr>
+<tr>
+<td><code>println(x)</code></td>
+<td><code>println!("{x}")</code></td>
+</tr>
+<tr>
+<td><code>System.currentTimeMillis()</code></td>
+<td><code>time::now().as_millis()</code></td>
+</tr>
+<tr>
+<td><code>Thread.sleep(ms)</code></td>
+<td><code>time::sleep(ms)</code></td>
+</tr>
+<tr>
+<td><code>Regex(pattern).matches(s)</code></td>
+<td><code>regex::compile(pattern)?.is_match(&amp;s)</code></td>
+</tr>
+<tr>
+<td><code>s.split(delim)</code></td>
+<td><code>strings::split(&amp;s, delim)</code></td>
+</tr>
+<tr>
+<td><code>s.trim()</code></td>
+<td><code>strings::trim(&amp;s)</code></td>
+</tr>
+<tr>
+<td><code>s.uppercase()</code></td>
+<td><code>strings::to_upper(&amp;s)</code></td>
+</tr>
+<tr>
+<td><code>s.toInt()</code></td>
+<td><code>strconv::parse_i64(&amp;s)</code></td>
+</tr>
+<tr>
+<td><code>n.toString()</code></td>
+<td><code>strconv::format_i64(n)</code></td>
+</tr>
+<tr>
+<td><code>listOf(...)</code></td>
+<td><code>[...]</code> (<code>Vec&lt;T&gt;</code>)</td>
+</tr>
+<tr>
+<td><code>mutableListOf(...)</code></td>
+<td><code>let mut xs = [...]</code></td>
+</tr>
+<tr>
+<td><code>mapOf(k to v)</code></td>
+<td><code>HashMap::from([(k, v)])</code></td>
+</tr>
+<tr>
+<td><code>setOf(...)</code></td>
+<td><code>HashSet::from([...])</code></td>
+</tr>
+<tr>
+<td><code>list.map { }</code></td>
+<td><code>list \|&gt; iter::map(\|x\| …)</code></td>
+</tr>
+<tr>
+<td><code>list.filter { }</code></td>
+<td><code>list \|&gt; iter::filter(\|x\| …)</code></td>
+</tr>
+<tr>
+<td><code>list.fold(init) { acc, x -&gt; }</code></td>
+<td><code>list \|&gt; iter::fold(init, \|acc, x\| …)</code></td>
+</tr>
+<tr>
+<td><code>list.sortedBy { }</code></td>
+<td><code>xs.sort_by(\|a, b\| …)</code></td>
+</tr>
+<tr>
+<td><code>OkHttp / Ktor HttpClient</code></td>
+<td><code>http::Client::new()</code></td>
+</tr>
+<tr>
+<td><code>ktor server { }</code></td>
+<td><code>http::serve(addr, handler)</code></td>
+</tr>
+<tr>
+<td><code>kotlinx.serialization</code></td>
+<td><code>encoding::json::encode(v)</code></td>
+</tr>
+<tr>
+<td><code>Gson / Jackson</code></td>
+<td><code>encoding::json::decode::&lt;T&gt;(s)</code></td>
+</tr>
+<tr>
+<td><code>kotlinx.coroutines.launch</code></td>
+<td><code>go fn() { … }()</code></td>
+</tr>
+<tr>
+<td><code>Mutex()</code></td>
+<td><code>sync::Mutex::new()</code></td>
+</tr>
+<tr>
+<td><code>CountDownLatch(n)</code></td>
+<td><code>sync::WaitGroup::new()</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../syntax/"><code>../syntax.md</code></a> — full language tour.</li>
+<li><a href="../../stdlib_coverage/"><code>../stdlib_coverage.md</code></a> — every
+  stdlib module, support state.</li>
+<li><a href="../../codegen_abi/"><code>../codegen_abi.md</code></a> — generic
+  instantiation constraints in v1.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../fsharp/" class="btn btn-neutral float-left" title="From F#"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../../design/diagnostics/" class="btn btn-neutral float-right" title="Diagnostics style">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/danpozmanter/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> danpozmanter/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../fsharp/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../../design/diagnostics/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../js/hljs_gossamer.js"></script>
+      <script src="../../js/repo_button.js"></script>
+      <script src="../../js/scroll_top.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

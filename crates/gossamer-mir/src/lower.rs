@@ -2465,6 +2465,16 @@ impl<'a> Builder<'a> {
             "exec::kill" | "os::exec::kill" | "process::kill" => {
                 ("gos_rt_exec_kill", self.tcx.bool_ty())
             }
+            // `signal::on(sig_raw) -> i64` — registers a notifier.
+            "signal::on" | "os::signal::on" => {
+                ("gos_rt_signal_on", self.tcx.int_ty(gossamer_types::IntTy::I64))
+            }
+            // `Notifier::wait(handle)` — blocks until signal fires.
+            "signal_wait" | "Notifier::wait" => ("gos_rt_signal_wait", self.tcx.unit()),
+            // `Notifier::try_wait(handle) -> bool`.
+            "signal_try_wait" | "Notifier::try_wait" => {
+                ("gos_rt_signal_try_wait", self.tcx.bool_ty())
+            }
             "flag::Set::new" => (
                 "gos_rt_flag_set_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),

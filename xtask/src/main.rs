@@ -586,17 +586,17 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
     ),
     item(
         "std::os::exec",
-        Coverage::Partial,
-        Coverage::Partial,
         Coverage::Full,
-        "Command builder + output / status / spawn / kill / wait. Stdlib + tests; interp/MIR wiring pending.",
+        Coverage::Full,
+        Coverage::Full,
+        "Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI.",
     ),
     item(
         "std::os::signal",
-        Coverage::Partial,
-        Coverage::Partial,
         Coverage::Full,
-        "on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT). Stdlib + tests; runtime signal-handler bridge pending.",
+        Coverage::Full,
+        Coverage::Full,
+        "on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI.",
     ),
     item(
         "std::strings",
@@ -656,10 +656,10 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
     ),
     item(
         "std::encoding::binary",
-        Coverage::Partial,
-        Coverage::Partial,
-        Coverage::Partial,
-        "put_u16_be, put_u32_be only — get_*, le variants pending.",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "put_u16/u32/u64/i16/i32/i64 and get_u16/u32/u64/i16/i32/i64, both be and le variants.",
     ),
     item(
         "std::sync",
@@ -810,10 +810,10 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
     ),
     item(
         "std::runtime",
-        Coverage::Partial,
-        Coverage::Partial,
-        Coverage::Partial,
-        "max_procs, set_max_procs, num_cpus. mem_stats partial.",
+        Coverage::Full,
+        Coverage::Full,
+        Coverage::Full,
+        "max_procs, set_max_procs, num_cpus, mem_stats (live_bytes and next_gc_bytes fully populated), caller, stack, set_finalizer.",
     ),
     item(
         "std::tls",
@@ -831,10 +831,10 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
     ),
     item(
         "std::compress::gzip",
-        Coverage::Partial,
-        Coverage::Partial,
         Coverage::Full,
-        "encode/decode + Level. Stdlib + tests via flate2; interp/MIR wiring pending.",
+        Coverage::Full,
+        Coverage::Full,
+        "encode/decode + Level. Wired through builtins, MIR lower, and C ABI.",
     ),
 ];
 
@@ -931,9 +931,7 @@ fn render_stdlib_coverage_page(items: &[StdlibSupport]) -> String {
         out,
         "- [`stdlib.md`](stdlib.md) — module index with summaries.\n\
          - [`method_support.md`](method_support.md) — per-method\n\
-           reference for shipped types.\n\
-         - [`non_goals_v1.md`](non_goals_v1.md) — what's deferred to\n\
-           v1.x."
+           reference for shipped types."
     )
     .unwrap();
     out

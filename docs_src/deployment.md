@@ -348,7 +348,4 @@ and ship alongside a CycloneDX SBOM.
 
 ## Cross-references
 
-- [`non_goals_v1.md`](non_goals_v1.md) — what's deferred.
-- [`perf_characteristics.md`](perf_characteristics.md) — GC,
-  goroutine memory, scheduler under load.
 - [`stdlib.md`](stdlib.md) — `slog`, `http`, `os`.

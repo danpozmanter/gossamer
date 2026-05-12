@@ -18,8 +18,8 @@ Glyphs: ✓ supported · ◑ partial · ✗ missing.
 | `std::fmt` | ✓ | ✓ | ✓ | println / print / eprintln / eprint / format / write / writeln. |
 | `std::io` | ✓ | ✓ | ✓ | stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string. |
 | `std::os` | ✓ | ✓ | ✓ | args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir. |
-| `std::os::exec` | ◑ | ◑ | ✓ | Command builder + output / status / spawn / kill / wait. Stdlib + tests; interp/MIR wiring pending. |
-| `std::os::signal` | ◑ | ◑ | ✓ | on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT). Stdlib + tests; runtime signal-handler bridge pending. |
+| `std::os::exec` | ✓ | ✓ | ✓ | Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI. |
+| `std::os::signal` | ✓ | ✓ | ✓ | on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI. |
 | `std::strings` | ✓ | ✓ | ✓ | split, trim, contains, find, replace, to_lowercase, to_uppercase, starts_with, ends_with. |
 | `std::strconv` | ✓ | ✓ | ✓ | parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64. |
 | `std::collections` | ✓ | ✓ | ✓ | Vec, HashMap. VecDeque/BTreeMap/HashSet/BTreeSet declared. |
@@ -28,7 +28,7 @@ Glyphs: ✓ supported · ◑ partial · ✗ missing.
 | `std::encoding::json` | ✓ | ✓ | ✓ | encode + decode + Value. |
 | `std::encoding::base64` | ✓ | ✓ | ✓ | encode + decode. |
 | `std::encoding::hex` | ✓ | ✓ | ✓ | encode + decode. |
-| `std::encoding::binary` | ◑ | ◑ | ◑ | put_u16_be, put_u32_be only — get_*, le variants pending. |
+| `std::encoding::binary` | ✓ | ✓ | ✓ | put_u16/u32/u64/i16/i32/i64 and get_u16/u32/u64/i16/i32/i64, both be and le variants. |
 | `std::sync` | ✓ | ✓ | ✓ | Mutex, WaitGroup, AtomicI64. RwLock, Once partial. |
 | `std::time` | ✓ | ✓ | ✓ | now, sleep, format_rfc3339, parse_rfc3339. |
 | `std::panic` | ✓ | ✓ | ✓ | panic + catch_unwind. |
@@ -50,10 +50,10 @@ Glyphs: ✓ supported · ◑ partial · ✗ missing.
 | `std::utf8` | ✓ | ✓ | ✓ | is_valid, rune_count. |
 | `std::math::rand` | ✓ | ✓ | ✓ | Rng (SplitMix64). |
 | `std::testing` | ✓ | ✓ | ✓ | Runner, check, check_eq, check_ok. |
-| `std::runtime` | ◑ | ◑ | ◑ | max_procs, set_max_procs, num_cpus. mem_stats partial. |
+| `std::runtime` | ✓ | ✓ | ✓ | max_procs, set_max_procs, num_cpus, mem_stats (live_bytes and next_gc_bytes fully populated), caller, stack, set_finalizer. |
 | `std::tls` | ✓ | ✓ | ✓ | rustls-backed; ServerConfig, ClientConfig. |
 | `std::regex` | ✓ | ✓ | ✓ | compile, is_match, find, find_all, captures, replace, split. |
-| `std::compress::gzip` | ◑ | ◑ | ✓ | encode/decode + Level. Stdlib + tests via flate2; interp/MIR wiring pending. |
+| `std::compress::gzip` | ✓ | ✓ | ✓ | encode/decode + Level. Wired through builtins, MIR lower, and C ABI. |
 
 ## How to regenerate this page
 
@@ -84,5 +84,3 @@ integration / parity / phase test exercises it.
 - [`stdlib.md`](stdlib.md) — module index with summaries.
 - [`method_support.md`](method_support.md) — per-method
 reference for shipped types.
-- [`non_goals_v1.md`](non_goals_v1.md) — what's deferred to
-v1.x.

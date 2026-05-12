@@ -18,8 +18,7 @@ The full style guide is in
   describing the compiler phase it belongs to.
 - Design notes live under
   [`docs/`](https://github.com/danpozmanter/gossamer/tree/main/docs)
-  (perf baseline, binary-size baseline, diagnostics style guide,
-  self-hosting study, incremental-compile rollout).
+  (diagnostics style guide, runtime internals, self-hosting study).
 
 ## Picking an issue
 
@@ -51,7 +50,7 @@ cargo test -p gossamer-std --lib
 Release benches:
 
 ```sh
-cargo test -p gossamer-interp --test perf_baseline --release -- --nocapture
+cargo bench -p gossamer-interp
 ```
 
 ## Docs

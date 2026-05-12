@@ -18,11 +18,7 @@ the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPE
   no implicit numeric coercion (`as` is explicit).
 - **What's missing today:** HTTP/2, gRPC, WebSockets, Postgres /
   MySQL drivers (drivers belong with the package ecosystem,
-  same as Go pre-2009), real package registry. M:N scheduling
-  with work stealing, the netpoller, async preemption, GC
-  safepoints, and goroutine-aware sync primitives all shipped
-  in the production-readiness pass — see
-  [`/perf_characteristics.md`](../perf_characteristics.md).
+  same as Go pre-2009), real package registry.
   `database/sql` ships with a bundled SQLite driver; other
   drivers come through the package manager.
 
@@ -174,8 +170,8 @@ fn severity_to_int(s: Severity) -> i64 {
 
 Goroutine and channel syntax is the same. Behavioural notes:
 
-- Each goroutine is a real OS thread in v1. M:N scheduling
-  arrives in v1.x. See [`perf_characteristics.md`](../perf_characteristics.md).
+- The M:N work-stealing scheduler is live; goroutines are parked by the
+  netpoller when blocked on I/O.
 - Channels are unbounded by default (like Go's `make(chan T)`
   without a buffer size — wait, actually Go's *unbuffered*
   channels block on send until a receiver is ready;
@@ -494,10 +490,8 @@ logger.info("started", &[slog::field("port", 8080)])
 
 - [`../syntax.md`](../syntax.md) — the language tour.
 - [`../codegen_abi.md`](../codegen_abi.md) — what generics fail.
-- [`../non_goals_v1.md`](../non_goals_v1.md) — deferred features.
 - [`../stdlib_coverage.md`](../stdlib_coverage.md) — every
   stdlib item, support state.
-  / `--race` recipes.
 
 ## Standard library mapping (Go → Gossamer)
 

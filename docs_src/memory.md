@@ -38,7 +38,7 @@ layer on:
 - **Pause histogram** — `GcStats.{last_pause_nanos,
   total_pause_nanos, max_pause_nanos}` are populated on every
   `Heap::collect` call. See
-  [`docs/perf_baseline.md`](design/perf_baseline.md) for
+  `gos bench` for
   reference numbers.
 - **Weak references** — `gossamer_gc::weak::WeakTable` lets code
   observe an allocation without rooting it.

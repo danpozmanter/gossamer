@@ -96,11 +96,7 @@
               <ul>
                   <li class="toctree-l1"><a class="reference internal" href="../../deployment/">Deployment</a>
                   </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../../perf_characteristics/">Performance</a>
-                  </li>
                   <li class="toctree-l1"><a class="reference internal" href="../../codegen_abi/">Codegen ABI</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../../non_goals_v1/">v1 non-goals</a>
                   </li>
               </ul>
               <p class="caption"><span class="caption-text">Migrating</span></p>
@@ -169,20 +165,18 @@
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../python/">From Python</a>
                   </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../fsharp/">From F#</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../kotlin/">From Kotlin</a>
+                  </li>
               </ul>
               <p class="caption"><span class="caption-text">Design notes</span></p>
               <ul>
                   <li class="toctree-l1"><a class="reference internal" href="../../design/diagnostics/">Diagnostics style</a>
                   </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../../design/perf_baseline/">Performance baseline</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../../design/binary_size_baseline/">Binary-size baseline</a>
-                  </li>
                   <li class="toctree-l1"><a class="reference internal" href="../../design/runtime/">Runtime internals</a>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../../design/selfhosting/">Self-hosting study</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../../design/incremental/">Incremental compilation</a>
                   </li>
               </ul>
               <ul>
@@ -238,11 +232,7 @@ the spec, see <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.m
   no implicit numeric coercion (<code>as</code> is explicit).</li>
 <li><strong>What's missing today:</strong> HTTP/2, gRPC, WebSockets, Postgres /
   MySQL drivers (drivers belong with the package ecosystem,
-  same as Go pre-2009), real package registry. M:N scheduling
-  with work stealing, the netpoller, async preemption, GC
-  safepoints, and goroutine-aware sync primitives all shipped
-  in the production-readiness pass — see
-  <a href="../../perf_characteristics/"><code>/perf_characteristics.md</code></a>.
+  same as Go pre-2009), real package registry.
   <code>database/sql</code> ships with a bundled SQLite driver; other
   drivers come through the package manager.</li>
 </ul>
@@ -432,8 +422,8 @@ write the conversion table out by hand:</p>
 <h3 id="concurrency">Concurrency<a class="headerlink" href="#concurrency" title="Permanent link">&para;</a></h3>
 <p>Goroutine and channel syntax is the same. Behavioural notes:</p>
 <ul>
-<li>Each goroutine is a real OS thread in v1. M:N scheduling
-  arrives in v1.x. See <a href="../../perf_characteristics/"><code>perf_characteristics.md</code></a>.</li>
+<li>The M:N work-stealing scheduler is live; goroutines are parked by the
+  netpoller when blocked on I/O.</li>
 <li>Channels are unbounded by default (like Go's <code>make(chan T)</code>
   without a buffer size — wait, actually Go's <em>unbuffered</em>
   channels block on send until a receiver is ready;
@@ -867,10 +857,8 @@ logger.info(&quot;started&quot;, &amp;[slog::field(&quot;port&quot;, 8080)])
 <ul>
 <li><a href="../../syntax/"><code>../syntax.md</code></a> — the language tour.</li>
 <li><a href="../../codegen_abi/"><code>../codegen_abi.md</code></a> — what generics fail.</li>
-<li><a href="../../non_goals_v1/"><code>../non_goals_v1.md</code></a> — deferred features.</li>
 <li><a href="../../stdlib_coverage/"><code>../stdlib_coverage.md</code></a> — every
-  stdlib item, support state.
-  / <code>--race</code> recipes.</li>
+  stdlib item, support state.</li>
 </ul>
 <h2 id="standard-library-mapping-go-gossamer">Standard library mapping (Go → Gossamer)<a class="headerlink" href="#standard-library-mapping-go-gossamer" title="Permanent link">&para;</a></h2>
 <p>Most of Go's <code>net/</code>, <code>encoding/</code>, <code>compress/</code>, <code>archive/</code>, <code>crypto/</code>,

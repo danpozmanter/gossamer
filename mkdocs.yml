@@ -51,20 +51,17 @@ nav:
   - Examples: examples.md
   - Production:
       - Deployment: deployment.md
-      - Performance: perf_characteristics.md
       - Codegen ABI: codegen_abi.md
-      - v1 non-goals: non_goals_v1.md
   - Migrating:
       - From Rust: migration/rust.md
       - From Go: migration/go.md
       - From Python: migration/python.md
+      - From F#: migration/fsharp.md
+      - From Kotlin: migration/kotlin.md
   - Design notes:
       - Diagnostics style: design/diagnostics.md
-      - Performance baseline: design/perf_baseline.md
-      - Binary-size baseline: design/binary_size_baseline.md
       - Runtime internals: design/runtime.md
       - Self-hosting study: design/selfhosting.md
-      - Incremental compilation: design/incremental.md
   - Skill card: skill_card.md
   - Security: security.md
   - Contributing: contributing.md

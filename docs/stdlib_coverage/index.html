@@ -104,11 +104,7 @@
               <ul>
                   <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
                   </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
-                  </li>
                   <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
                   </li>
               </ul>
               <p class="caption"><span class="caption-text">Migrating</span></p>
@@ -119,20 +115,18 @@
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
                   </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/fsharp/">From F#</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/kotlin/">From Kotlin</a>
+                  </li>
               </ul>
               <p class="caption"><span class="caption-text">Design notes</span></p>
               <ul>
                   <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
                   </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
-                  </li>
                   <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../design/incremental/">Incremental compilation</a>
                   </li>
               </ul>
               <ul>
@@ -217,17 +211,17 @@ module.</p>
 </tr>
 <tr>
 <td><code>std::os::exec</code></td>
-<td style="text-align: center;">◑</td>
-<td style="text-align: center;">◑</td>
 <td style="text-align: center;">✓</td>
-<td>Command builder + output / status / spawn / kill / wait. Stdlib + tests; interp/MIR wiring pending.</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI.</td>
 </tr>
 <tr>
 <td><code>std::os::signal</code></td>
-<td style="text-align: center;">◑</td>
-<td style="text-align: center;">◑</td>
 <td style="text-align: center;">✓</td>
-<td>on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT). Stdlib + tests; runtime signal-handler bridge pending.</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI.</td>
 </tr>
 <tr>
 <td><code>std::strings</code></td>
@@ -287,10 +281,10 @@ module.</p>
 </tr>
 <tr>
 <td><code>std::encoding::binary</code></td>
-<td style="text-align: center;">◑</td>
-<td style="text-align: center;">◑</td>
-<td style="text-align: center;">◑</td>
-<td>put_u16_be, put_u32_be only — get_*, le variants pending.</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>put_u16/u32/u64/i16/i32/i64 and get_u16/u32/u64/i16/i32/i64, both be and le variants.</td>
 </tr>
 <tr>
 <td><code>std::sync</code></td>
@@ -441,10 +435,10 @@ module.</p>
 </tr>
 <tr>
 <td><code>std::runtime</code></td>
-<td style="text-align: center;">◑</td>
-<td style="text-align: center;">◑</td>
-<td style="text-align: center;">◑</td>
-<td>max_procs, set_max_procs, num_cpus. mem_stats partial.</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>max_procs, set_max_procs, num_cpus, mem_stats (live_bytes and next_gc_bytes fully populated), caller, stack, set_finalizer.</td>
 </tr>
 <tr>
 <td><code>std::tls</code></td>
@@ -462,10 +456,10 @@ module.</p>
 </tr>
 <tr>
 <td><code>std::compress::gzip</code></td>
-<td style="text-align: center;">◑</td>
-<td style="text-align: center;">◑</td>
 <td style="text-align: center;">✓</td>
-<td>encode/decode + Level. Stdlib + tests via flate2; interp/MIR wiring pending.</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>encode/decode + Level. Wired through builtins, MIR lower, and C ABI.</td>
 </tr>
 </tbody>
 </table>
@@ -499,8 +493,6 @@ integration / parity / phase test exercises it.</p>
 <li><a href="../stdlib/"><code>stdlib.md</code></a> — module index with summaries.</li>
 <li><a href="../method_support/"><code>method_support.md</code></a> — per-method
 reference for shipped types.</li>
-<li><a href="../non_goals_v1/"><code>non_goals_v1.md</code></a> — what's deferred to
-v1.x.</li>
 </ul>
               
             </div>

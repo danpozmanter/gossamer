@@ -3113,6 +3113,109 @@ pub unsafe extern "C" fn gos_rt_exec_kill(pid: i64) -> i64 {
     }
 }
 
+// ---------------------------------------------------------------
+// Signal notifier table — `os::signal::on` / `Notifier::wait`
+// ---------------------------------------------------------------
+
+struct SignalNotifier {
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    waiter: std::sync::Arc<SignalWaiter>,
+}
+
+#[derive(Default)]
+struct SignalWaiter {
+    mu: parking_lot::Mutex<()>,
+    cv: parking_lot::Condvar,
+}
+
+struct SignalRegistry {
+    notifiers: parking_lot::Mutex<Vec<Option<SignalNotifier>>>,
+}
+
+fn signal_registry() -> &'static SignalRegistry {
+    static REGISTRY: std::sync::OnceLock<SignalRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| SignalRegistry {
+        notifiers: parking_lot::Mutex::new(Vec::new()),
+    })
+}
+
+// One relay thread per watched signal: blocks in signal-hook,
+// then flips the flag and wakes the condvar for that notifier.
+#[cfg(unix)]
+fn install_signal_relay(
+    sig_raw: i32,
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    waiter: std::sync::Arc<SignalWaiter>,
+) {
+    use signal_hook::iterator::Signals;
+    let Ok(mut signals) = Signals::new([sig_raw]) else {
+        return;
+    };
+    std::thread::Builder::new()
+        .name(format!("gos-sig-{sig_raw}"))
+        .spawn(move || {
+            for _ in signals.forever() {
+                flag.store(true, Ordering::Release);
+                let _g = waiter.mu.lock();
+                waiter.cv.notify_all();
+            }
+        })
+        .ok();
+}
+
+/// `signal::on(sig_raw) -> i64` — registers a notifier for the
+/// given raw signal number and returns an opaque handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_signal_on(sig_raw: i32) -> i64 {
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let waiter = std::sync::Arc::new(SignalWaiter::default());
+    #[cfg(unix)]
+    install_signal_relay(
+        sig_raw,
+        std::sync::Arc::clone(&flag),
+        std::sync::Arc::clone(&waiter),
+    );
+    let notifier = SignalNotifier {
+        flag,
+        waiter,
+    };
+    let mut notifiers = signal_registry().notifiers.lock();
+    notifiers.push(Some(notifier));
+    i64::try_from(notifiers.len() - 1).unwrap_or(-1)
+}
+
+/// `signal::wait(handle)` — blocks until the registered signal fires.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_signal_wait(handle: i64) {
+    let notifiers = signal_registry().notifiers.lock();
+    let Some(Some(n)) = notifiers.get(handle as usize) else {
+        return;
+    };
+    let flag = std::sync::Arc::clone(&n.flag);
+    let waiter = std::sync::Arc::clone(&n.waiter);
+    drop(notifiers);
+    let mut g = waiter.mu.lock();
+    loop {
+        if flag.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        waiter.cv.wait(&mut g);
+    }
+}
+
+/// `signal::try_wait(handle) -> i32` — returns 1 if the signal
+/// fired since the last check, 0 otherwise. Non-blocking.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_signal_try_wait(handle: i64) -> i32 {
+    let notifiers = signal_registry().notifiers.lock();
+    let Some(Some(n)) = notifiers.get(handle as usize) else {
+        return 0;
+    };
+    let flag = std::sync::Arc::clone(&n.flag);
+    drop(notifiers);
+    i32::from(flag.swap(false, Ordering::AcqRel))
+}
+
 /// Sorts a flat `[i64; len]` buffer in place using the closure
 /// callback at `env`. The env's first word is the closure body
 /// address; the body has signature `(env, i64, i64) -> i64`

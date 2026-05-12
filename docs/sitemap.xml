@@ -37,14 +37,6 @@
          <lastmod>2026-05-12</lastmod>
     </url>
     <url>
-         <loc>https://danpozmanter.github.io/gossamer/docs/non_goals_v1/</loc>
-         <lastmod>2026-05-12</lastmod>
-    </url>
-    <url>
-         <loc>https://danpozmanter.github.io/gossamer/docs/perf_characteristics/</loc>
-         <lastmod>2026-05-12</lastmod>
-    </url>
-    <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/running/</loc>
          <lastmod>2026-05-12</lastmod>
     </url>
@@ -73,19 +65,7 @@
          <lastmod>2026-05-12</lastmod>
     </url>
     <url>
-         <loc>https://danpozmanter.github.io/gossamer/docs/design/binary_size_baseline/</loc>
-         <lastmod>2026-05-12</lastmod>
-    </url>
-    <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/diagnostics/</loc>
-         <lastmod>2026-05-12</lastmod>
-    </url>
-    <url>
-         <loc>https://danpozmanter.github.io/gossamer/docs/design/incremental/</loc>
-         <lastmod>2026-05-12</lastmod>
-    </url>
-    <url>
-         <loc>https://danpozmanter.github.io/gossamer/docs/design/perf_baseline/</loc>
          <lastmod>2026-05-12</lastmod>
     </url>
     <url>
@@ -97,7 +77,15 @@
          <lastmod>2026-05-12</lastmod>
     </url>
     <url>
+         <loc>https://danpozmanter.github.io/gossamer/docs/migration/fsharp/</loc>
+         <lastmod>2026-05-12</lastmod>
+    </url>
+    <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/migration/go/</loc>
+         <lastmod>2026-05-12</lastmod>
+    </url>
+    <url>
+         <loc>https://danpozmanter.github.io/gossamer/docs/migration/kotlin/</loc>
          <lastmod>2026-05-12</lastmod>
     </url>
     <url>

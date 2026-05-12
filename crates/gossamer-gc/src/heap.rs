@@ -125,6 +125,8 @@ pub struct GcStats {
     pub last_freed: usize,
     /// Number of live objects after the most recent sweep.
     pub live: usize,
+    /// Sum of `Obj::size` for every live object after the most recent sweep.
+    pub live_bytes: usize,
     /// Wall-clock duration of the most recent `collect` (Stream F.1).
     pub last_pause_nanos: u64,
     /// Sum of every pause duration recorded so far (Stream F.1).
@@ -343,11 +345,14 @@ impl Heap {
 
     fn sweep(&mut self) -> usize {
         let mut freed = 0;
+        let mut live_bytes = 0usize;
         for (index, obj) in self.objects.iter_mut().enumerate() {
             if !obj.alive {
                 continue;
             }
-            if !obj.marked {
+            if obj.marked {
+                live_bytes = live_bytes.saturating_add(obj.size);
+            } else {
                 obj.alive = false;
                 obj.children = None;
                 self.free_list
@@ -355,6 +360,7 @@ impl Heap {
                 freed += 1;
             }
         }
+        self.stats.live_bytes = live_bytes;
         freed
     }
 

@@ -114,8 +114,6 @@ deliberately willing to accept compile-time pain to avoid.
 
 ## See also
 
-- [`non_goals_v1.md`](non_goals_v1.md) — the broader v1
-  deferred-features list.
 - `gos explain GT0042` — full long-form diagnostic text.
 - Internal notes: `parity.md` §P4 and
   `compiler_tier_plan.md`.

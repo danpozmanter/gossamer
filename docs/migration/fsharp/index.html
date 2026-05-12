@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/migration/fsharp/" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>From F# - Gossamer</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "From F#";
+        var mkdocs_page_input_path = "migration/fsharp.md";
+        var mkdocs_page_url = "/gossamer/docs/migration/fsharp/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../codegen_abi/">Codegen ABI</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../python/">From Python</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">From F#</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#tldr">TL;DR</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#pipe-operator-semantics">Pipe operator semantics</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#syntax-cheat-sheet">Syntax cheat-sheet</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#discriminated-unions-enums">Discriminated unions → enums</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#records-structs">Records → structs</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#option-and-result">Option and Result</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#async-concurrency">Async / concurrency</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#interfaces-traits">Interfaces → traits</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#modules">Modules</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#curried-functions">Curried functions</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#sequence-expressions">Sequence expressions</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#what-f-has-that-gossamer-doesnt">What F# has that Gossamer doesn't</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#standard-library-mapping-f-net-gossamer">Standard library mapping (F# / .NET → Gossamer)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#cross-references">Cross-references</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../kotlin/">From Kotlin</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../design/selfhosting/">Self-hosting study</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Migrating</li>
+      <li class="breadcrumb-item active">From F#</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="migrating-from-f-to-gossamer">Migrating from F# to Gossamer<a class="headerlink" href="#migrating-from-f-to-gossamer" title="Permanent link">&para;</a></h1>
+<p>F# developers will find Gossamer familiar in structure: both
+languages default to immutable bindings, use <code>|&gt;</code> for
+left-to-right dataflow, and treat <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code>
+as the standard vocabulary for absent values and fallible
+operations. The main shifts are concurrency model, pipe
+semantics, and the absence of higher-kinded types or
+computation expressions.</p>
+<h2 id="tldr">TL;DR<a class="headerlink" href="#tldr" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>What transfers directly:</strong> <code>let</code> bindings, <code>|&gt;</code>, pattern
+  matching, discriminated unions → enums, records → structs,
+  <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code>, module-level functions.</li>
+<li><strong>What changes:</strong> pipe threading (data-last vs. data-first),
+  <code>go expr</code> replaces <code>async</code> / <code>Task</code>, traits replace interfaces,
+  no curried functions, no computation expressions.</li>
+<li><strong>What's absent:</strong> higher-kinded types, type providers,
+  active patterns, units of measure, <code>printf</code>-style format
+  specifiers.</li>
+</ul>
+<h2 id="pipe-operator-semantics">Pipe operator semantics<a class="headerlink" href="#pipe-operator-semantics" title="Permanent link">&para;</a></h2>
+<p>This is the most important difference. Both languages have <code>|&gt;</code>,
+but the argument position differs:</p>
+<table>
+<thead>
+<tr>
+<th>Language</th>
+<th>Desugaring</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F#</td>
+<td><code>x \|&gt; f</code> → <code>f x</code> (data is <strong>first</strong> arg)</td>
+</tr>
+<tr>
+<td>Gossamer</td>
+<td><code>x \|&gt; f</code> → <code>f(x)</code> where x fills the <strong>last</strong> positional slot</td>
+</tr>
+</tbody>
+</table>
+<p>F#:</p>
+<pre><code class="language-fsharp">[1; 2; 3; 4]
+|&gt; List.filter (fun n -&gt; n % 2 = 0)
+|&gt; List.map (fun n -&gt; n * n)
+|&gt; List.sum
+</code></pre>
+<p>Gossamer (data-last — each combinator's collection arg is last):</p>
+<pre><code class="language-gos">[1, 2, 3, 4]
+    |&gt; iter::filter(|n: i64| n % 2 == 0)
+    |&gt; iter::sum_by(|n: i64| n * n)
+</code></pre>
+<p><code>List.filter f xs</code> in F# becomes <code>iter::filter(f, xs)</code> in
+Gossamer (data last), but the <code>|&gt;</code> threading is the same
+left-to-right visual shape.</p>
+<h2 id="syntax-cheat-sheet">Syntax cheat-sheet<a class="headerlink" href="#syntax-cheat-sheet" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>F#</th>
+<th>Gossamer</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>let x = 5</code></td>
+<td><code>let x = 5</code></td>
+<td>Same.</td>
+</tr>
+<tr>
+<td><code>let mutable x = 5</code></td>
+<td><code>let mut x = 5</code></td>
+<td>Same meaning.</td>
+</tr>
+<tr>
+<td><code>let f x y = x + y</code></td>
+<td><code>fn f(x: i64, y: i64) -&gt; i64 { x + y }</code></td>
+<td>Named params, explicit types.</td>
+</tr>
+<tr>
+<td><code>fun x -&gt; x + 1</code></td>
+<td><code>\|x: i64\| x + 1</code></td>
+<td>Closure syntax.</td>
+</tr>
+<tr>
+<td><code>if cond then a else b</code></td>
+<td><code>if cond { a } else { b }</code></td>
+<td>Braces required.</td>
+</tr>
+<tr>
+<td><code>match x with \| A -&gt; … \| B -&gt; …</code></td>
+<td><code>match x { A =&gt; …, B =&gt; … }</code></td>
+<td>Exhaustive.</td>
+</tr>
+<tr>
+<td><code>type Point = { X: int; Y: int }</code></td>
+<td><code>struct Point { x: i64, y: i64 }</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>type Shape = Circle of float \| Rect of float * float</code></td>
+<td><code>enum Shape { Circle(f64), Rect(f64, f64) }</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>printfn "%d" n</code></td>
+<td><code>println!("{n}")</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>sprintf "%s world" "hello"</code></td>
+<td><code>format!("{s} world", s="hello")</code> or <code>format!("hello world")</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>[1; 2; 3]</code></td>
+<td><code>[1, 2, 3]</code></td>
+<td>Growable <code>Vec&lt;i64&gt;</code>.</td>
+</tr>
+<tr>
+<td><code>Map.ofList [("a", 1)]</code></td>
+<td><code>HashMap::from([("a", 1)])</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>async { … }</code></td>
+<td><code>go fn() { … }()</code></td>
+<td>Goroutine.</td>
+</tr>
+<tr>
+<td><code>let! x = task</code></td>
+<td><code>let (tx, rx) = channel(); let x = rx.recv()</code></td>
+<td>Channel receive.</td>
+</tr>
+<tr>
+<td><code>do!</code> / <code>return!</code></td>
+<td>—</td>
+<td>Not applicable; goroutines block freely.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="discriminated-unions-enums">Discriminated unions → enums<a class="headerlink" href="#discriminated-unions-enums" title="Permanent link">&para;</a></h2>
+<p>F#:</p>
+<pre><code class="language-fsharp">type Tree =
+    | Leaf
+    | Node of int * Tree * Tree
+
+let rec sum = function
+    | Leaf -&gt; 0
+    | Node(v, l, r) -&gt; v + sum l + sum r
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">enum Tree {
+    Leaf,
+    Node(i64, Box&lt;Tree&gt;, Box&lt;Tree&gt;),
+}
+
+fn sum(t: &amp;Tree) -&gt; i64 {
+    match t {
+        Tree::Leaf =&gt; 0,
+        Tree::Node(v, l, r) =&gt; v + sum(l) + sum(r),
+    }
+}
+</code></pre>
+<p><code>Box&lt;Tree&gt;</code> spells out what F# infers for recursive variants.
+The GC owns every allocation; <code>Box</code> is a naming convention, not
+a distinct heap strategy.</p>
+<h2 id="records-structs">Records → structs<a class="headerlink" href="#records-structs" title="Permanent link">&para;</a></h2>
+<p>F#:</p>
+<pre><code class="language-fsharp">type Config = {
+    Host: string
+    Port: int
+    Verbose: bool
+}
+
+let cfg = { Host = &quot;localhost&quot;; Port = 8080; Verbose = false }
+let updated = { cfg with Port = 9090 }
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">struct Config {
+    host: String,
+    port: i64,
+    verbose: bool,
+}
+
+let cfg = Config { host: &quot;localhost&quot;, port: 8080, verbose: false }
+let updated = Config { port: 9090, ..cfg }
+</code></pre>
+<p>Struct update syntax (<code>..base</code>) is supported.</p>
+<h2 id="option-and-result">Option and Result<a class="headerlink" href="#option-and-result" title="Permanent link">&para;</a></h2>
+<p>Both languages share <code>Option&lt;T&gt;</code> (Some / None) and <code>Result&lt;T, E&gt;</code>
+(Ok / Err). Two surface differences:</p>
+<ul>
+<li>F# uses <code>Result.Error</code> as the error constructor; Gossamer uses <code>Err</code>.</li>
+<li>F# uses <code>Option.bind</code>, <code>Option.map</code> as free functions with the
+  option as the last arg (F# currying). Gossamer uses the same
+  free-function shape but threads through <code>|&gt;</code>:</li>
+</ul>
+<p>F#:</p>
+<pre><code class="language-fsharp">let parsed = input |&gt; Option.bind tryParse |&gt; Option.defaultValue 0
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let parsed = input
+    |&gt; option::and_then(try_parse)
+    |&gt; option::unwrap_or(0)
+</code></pre>
+<p><code>?</code> works for <code>Result</code> propagation exactly as in Rust.</p>
+<h2 id="async-concurrency">Async / concurrency<a class="headerlink" href="#async-concurrency" title="Permanent link">&para;</a></h2>
+<p>F# has <code>async { }</code> workflows and <code>Task</code> for .NET TPL interop.
+Gossamer has goroutines — stackful coroutines scheduled by the
+M:N runtime. Blocking IO doesn't block the OS thread.</p>
+<p>F#:</p>
+<pre><code class="language-fsharp">let work = async {
+    let! data = fetchAsync url
+    return process data
+}
+Async.RunSynchronously work
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">fn work(url: &amp;String) -&gt; Result&lt;String, errors::Error&gt; {
+    let resp = http::get(url, &amp;[])?
+    Ok(process(&amp;resp.body))
+}
+
+fn main() {
+    let result = work(&amp;url)
+}
+</code></pre>
+<p>For fan-out, use goroutines + channels:</p>
+<p>F#:</p>
+<pre><code class="language-fsharp">let results =
+    urls
+    |&gt; List.map (fun url -&gt; async { return! fetchAsync url })
+    |&gt; Async.Parallel
+    |&gt; Async.RunSynchronously
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let (tx, rx) = channel()
+for url in urls {
+    let tx = tx.clone()
+    go fn() {
+        tx.send(http::get(&amp;url, &amp;[]))
+    }()
+}
+
+let mut results = []
+for _ in urls {
+    results.push(rx.recv())
+}
+</code></pre>
+<h2 id="interfaces-traits">Interfaces → traits<a class="headerlink" href="#interfaces-traits" title="Permanent link">&para;</a></h2>
+<p>F# uses structural typing for interfaces; any type with the right
+methods satisfies the interface automatically.</p>
+<p>Gossamer traits are nominal — you explicitly write <code>impl Trait
+for Type { … }</code>:</p>
+<p>F#:</p>
+<pre><code class="language-fsharp">type IArea =
+    abstract member Area: unit -&gt; float
+
+type Circle(r: float) =
+    interface IArea with
+        member _.Area() = System.Math.PI * r * r
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">trait Area {
+    fn area(&amp;self) -&gt; f64;
+}
+
+struct Circle { r: f64 }
+
+impl Area for Circle {
+    fn area(&amp;self) -&gt; f64 { 3.14159 * self.r * self.r }
+}
+</code></pre>
+<h2 id="modules">Modules<a class="headerlink" href="#modules" title="Permanent link">&para;</a></h2>
+<p>F# modules are files (or <code>module</code> blocks) and open implicitly
+inside the file. Gossamer modules use explicit <code>use</code> imports.
+The directory layout mirrors Go: each subdirectory is a module,
+and <code>mod.gos</code> is its root.</p>
+<p>F#:</p>
+<pre><code class="language-fsharp">module Math =
+    let square x = x * x
+    let cube x = x * x * x
+</code></pre>
+<p>Gossamer (<code>src/math/mod.gos</code>):</p>
+<pre><code class="language-gos">pub fn square(x: i64) -&gt; i64 { x * x }
+pub fn cube(x: i64) -&gt; i64 { x * x * x }
+</code></pre>
+<p>Consumer:</p>
+<pre><code class="language-gos">use math
+
+fn main() {
+    println!(&quot;{}&quot;, math::square(4))
+}
+</code></pre>
+<h2 id="curried-functions">Curried functions<a class="headerlink" href="#curried-functions" title="Permanent link">&para;</a></h2>
+<p>F# functions are curried by default: <code>let add x y = x + y</code> is
+actually <code>int -&gt; int -&gt; int</code> and can be partially applied as
+<code>let add5 = add 5</code>.</p>
+<p>Gossamer functions are not curried. Partial application uses
+closures:</p>
+<pre><code class="language-gos">fn add(x: i64, y: i64) -&gt; i64 { x + y }
+let add5 = |y: i64| add(5, y)
+</code></pre>
+<h2 id="sequence-expressions">Sequence expressions<a class="headerlink" href="#sequence-expressions" title="Permanent link">&para;</a></h2>
+<p>F# <code>seq { … }</code> and <code>yield</code> build lazy sequences. Gossamer has no
+lazy sequences. Use <code>Vec&lt;T&gt;</code> built with <code>iter::*</code> combinators or
+<code>for</code> loops:</p>
+<p>F#:</p>
+<pre><code class="language-fsharp">let evens = seq { for n in 0..100 do if n % 2 = 0 then yield n }
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let evens = iter::range_inclusive(0, 100)
+    |&gt; iter::filter(|n: i64| n % 2 == 0)
+    |&gt; iter::collect()
+</code></pre>
+<h2 id="what-f-has-that-gossamer-doesnt">What F# has that Gossamer doesn't<a class="headerlink" href="#what-f-has-that-gossamer-doesnt" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Computation expressions / monadic workflows.</strong> Use goroutines</li>
+<li>channels for sequencing async work, <code>iter::*</code> for
+  collection pipelines.</li>
+<li><strong>Type providers.</strong> No metaprogramming surface; JSON / SQL
+  schemas are accessed through stdlib APIs.</li>
+<li><strong>Active patterns.</strong> Use <code>fn</code>-based extractors + <code>match</code> guards.</li>
+<li><strong>Units of measure.</strong> No type-level unit tracking; enforce
+  units through distinct newtype wrappers.</li>
+<li><strong>Higher-kinded types.</strong> Generic parameters are flat 64-bit
+  slots in v1. See <a href="../../codegen_abi/"><code>codegen_abi.md</code></a>.</li>
+</ul>
+<h2 id="standard-library-mapping-f-net-gossamer">Standard library mapping (F# / .NET → Gossamer)<a class="headerlink" href="#standard-library-mapping-f-net-gossamer" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>F# / .NET</th>
+<th>Gossamer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>System.IO.File.ReadAllText</code></td>
+<td><code>fs::read_to_string(path)</code></td>
+</tr>
+<tr>
+<td><code>System.IO.File.WriteAllText</code></td>
+<td><code>fs::write(path, data)</code></td>
+</tr>
+<tr>
+<td><code>System.Environment.GetEnvironmentVariable</code></td>
+<td><code>env::var(name)</code></td>
+</tr>
+<tr>
+<td><code>System.Environment.GetCommandLineArgs</code></td>
+<td><code>env::args()</code></td>
+</tr>
+<tr>
+<td><code>System.Console.WriteLine</code></td>
+<td><code>println!(...)</code></td>
+</tr>
+<tr>
+<td><code>printfn "%d" n</code></td>
+<td><code>println!("{n}")</code></td>
+</tr>
+<tr>
+<td><code>sprintf "%s %d" s n</code></td>
+<td><code>format!("{s} {n}")</code></td>
+</tr>
+<tr>
+<td><code>List.map f xs</code></td>
+<td><code>xs \|&gt; iter::map(f)</code></td>
+</tr>
+<tr>
+<td><code>List.filter f xs</code></td>
+<td><code>xs \|&gt; iter::filter(f)</code></td>
+</tr>
+<tr>
+<td><code>List.fold f init xs</code></td>
+<td><code>xs \|&gt; iter::fold(init, f)</code></td>
+</tr>
+<tr>
+<td><code>List.sum xs</code></td>
+<td><code>xs \|&gt; iter::sum()</code></td>
+</tr>
+<tr>
+<td><code>Seq.length xs</code></td>
+<td><code>xs.len()</code></td>
+</tr>
+<tr>
+<td><code>Map.find k m</code></td>
+<td><code>m.get(&amp;k)</code> (returns <code>Option&lt;&amp;V&gt;</code>)</td>
+</tr>
+<tr>
+<td><code>Set.contains x s</code></td>
+<td><code>s.contains(&amp;x)</code></td>
+</tr>
+<tr>
+<td><code>String.length s</code></td>
+<td><code>s.len()</code></td>
+</tr>
+<tr>
+<td><code>String.split sep s</code></td>
+<td><code>strings::split(&amp;s, sep)</code></td>
+</tr>
+<tr>
+<td><code>String.trim s</code></td>
+<td><code>strings::trim(&amp;s)</code></td>
+</tr>
+<tr>
+<td><code>int.Parse s</code></td>
+<td><code>strconv::parse_i64(&amp;s)</code></td>
+</tr>
+<tr>
+<td><code>float.Parse s</code></td>
+<td><code>strconv::parse_f64(&amp;s)</code></td>
+</tr>
+<tr>
+<td><code>System.Threading.Tasks.Task.Run</code></td>
+<td><code>go fn() { … }()</code></td>
+</tr>
+<tr>
+<td><code>System.Threading.Thread.Sleep</code></td>
+<td><code>time::sleep(ms)</code></td>
+</tr>
+<tr>
+<td><code>System.Net.Http.HttpClient.GetAsync</code></td>
+<td><code>http::get(url, headers)</code></td>
+</tr>
+<tr>
+<td><code>System.Text.RegularExpressions.Regex</code></td>
+<td><code>regex::compile(pattern)</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../syntax/"><code>../syntax.md</code></a> — full language tour.</li>
+<li><a href="../../stdlib_coverage/"><code>../stdlib_coverage.md</code></a> — every
+  stdlib module, support state.</li>
+<li><a href="../../codegen_abi/"><code>../codegen_abi.md</code></a> — generic
+  instantiation constraints in v1.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../python/" class="btn btn-neutral float-left" title="From Python"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../kotlin/" class="btn btn-neutral float-right" title="From Kotlin">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/danpozmanter/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> danpozmanter/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../python/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../kotlin/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../js/hljs_gossamer.js"></script>
+      <script src="../../js/repo_button.js"></script>
+      <script src="../../js/scroll_top.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

@@ -96,11 +96,7 @@
               <ul>
                   <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
                   </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../perf_characteristics/">Performance</a>
-                  </li>
                   <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../non_goals_v1/">v1 non-goals</a>
                   </li>
               </ul>
               <p class="caption"><span class="caption-text">Migrating</span></p>
@@ -111,20 +107,18 @@
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
                   </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/fsharp/">From F#</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/kotlin/">From Kotlin</a>
+                  </li>
               </ul>
               <p class="caption"><span class="caption-text">Design notes</span></p>
               <ul>
                   <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
                   </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../design/perf_baseline/">Performance baseline</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../design/binary_size_baseline/">Binary-size baseline</a>
-                  </li>
                   <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../design/incremental/">Incremental compilation</a>
                   </li>
               </ul>
               <ul>
@@ -192,8 +186,7 @@
   describing the compiler phase it belongs to.</li>
 <li>Design notes live under
   <a href="https://github.com/danpozmanter/gossamer/tree/main/docs"><code>docs/</code></a>
-  (perf baseline, binary-size baseline, diagnostics style guide,
-  self-hosting study, incremental-compile rollout).</li>
+  (diagnostics style guide, runtime internals, self-hosting study).</li>
 </ul>
 <h2 id="picking-an-issue">Picking an issue<a class="headerlink" href="#picking-an-issue" title="Permanent link">&para;</a></h2>
 <p>Streams ordered by impact, smallest to biggest:</p>
@@ -216,7 +209,7 @@
 cargo test -p gossamer-std --lib
 </code></pre>
 <p>Release benches:</p>
-<pre><code class="language-sh">cargo test -p gossamer-interp --test perf_baseline --release -- --nocapture
+<pre><code class="language-sh">cargo bench -p gossamer-interp
 </code></pre>
 <h2 id="docs">Docs<a class="headerlink" href="#docs" title="Permanent link">&para;</a></h2>
 <pre><code class="language-sh">pip install mkdocs

@@ -14,6 +14,7 @@ use gossamer_ast::Ident;
 use gossamer_std::compress::gzip as gzip_std;
 use gossamer_std::env as env_std;
 use gossamer_std::exec as exec_std;
+use gossamer_std::signal as signal_std;
 use gossamer_std::fs as fs_std;
 use gossamer_std::http as http_std;
 use gossamer_std::json as json_std;
@@ -539,6 +540,18 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    install_module(
+        "signal",
+        &[("on", builtin_signal_on)],
+        globals,
+    );
+    install_module(
+        "os::signal",
+        &[("on", builtin_signal_on)],
+        globals,
+    );
+    globals.push(("signal_wait", builtin("signal_wait", builtin_signal_wait)));
+    globals.push(("signal_try_wait", builtin("signal_try_wait", builtin_signal_try_wait)));
     install_module(
         "fs",
         &[
@@ -2973,6 +2986,72 @@ fn builtin_exec_kill(args: &[Value]) -> RuntimeResult<Value> {
         let _ = pid;
         Ok(Value::Bool(false))
     }
+}
+
+// ---------------------------------------------------------------
+// signal::on / Notifier::wait / Notifier::try_wait
+// ---------------------------------------------------------------
+
+fn signal_notifier_table() -> &'static parking_lot::Mutex<Vec<signal_std::Notifier>> {
+    static TABLE: std::sync::OnceLock<parking_lot::Mutex<Vec<signal_std::Notifier>>> =
+        std::sync::OnceLock::new();
+    TABLE.get_or_init(|| parking_lot::Mutex::new(Vec::new()))
+}
+
+fn raw_to_signal(raw: i64) -> signal_std::Signal {
+    match raw {
+        2 => signal_std::sigs::SIGINT,
+        15 => signal_std::sigs::SIGTERM,
+        1 => signal_std::sigs::SIGHUP,
+        10 => signal_std::sigs::SIGUSR1,
+        12 => signal_std::sigs::SIGUSR2,
+        3 => signal_std::sigs::SIGQUIT,
+        _ => signal_std::Signal("SIGOTHER"),
+    }
+}
+
+/// `signal::on(sig_raw) -> i64` — registers a notifier and returns
+/// an opaque handle for use with `signal_wait` / `signal_try_wait`.
+fn builtin_signal_on(args: &[Value]) -> RuntimeResult<Value> {
+    let raw = match args.first() {
+        Some(Value::Int(n)) => *n,
+        _ => return Ok(Value::Int(-1)),
+    };
+    let sig = raw_to_signal(raw);
+    let notifier = signal_std::on(sig);
+    let mut table = signal_notifier_table().lock();
+    let handle = i64::try_from(table.len()).unwrap_or(-1);
+    table.push(notifier);
+    Ok(Value::Int(handle))
+}
+
+/// `signal_wait(handle)` — blocks until the registered signal fires.
+fn builtin_signal_wait(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Int(handle)) = args.first() else {
+        return Ok(Value::Unit);
+    };
+    let table = signal_notifier_table().lock();
+    let Some(notifier) = table.get(*handle as usize) else {
+        return Ok(Value::Unit);
+    };
+    let notifier = notifier.clone();
+    drop(table);
+    notifier.wait();
+    Ok(Value::Unit)
+}
+
+/// `signal_try_wait(handle) -> bool` — non-blocking check.
+fn builtin_signal_try_wait(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Int(handle)) = args.first() else {
+        return Ok(Value::Bool(false));
+    };
+    let table = signal_notifier_table().lock();
+    let Some(notifier) = table.get(*handle as usize) else {
+        return Ok(Value::Bool(false));
+    };
+    let notifier = notifier.clone();
+    drop(table);
+    Ok(Value::Bool(notifier.try_wait()))
 }
 
 /// `fs::list_dir(path: String) -> Result<[DirInfo], String>` — direct-children
