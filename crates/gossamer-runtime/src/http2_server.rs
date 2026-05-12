@@ -33,7 +33,6 @@
 
 use std::future::Future;
 use std::io;
-use std::os::fd::AsRawFd;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -347,8 +346,4 @@ fn arm_io_wake(
         }),
     );
     let _ = sched_global::with_poller(|p| p.register_io(stream, interest, gid));
-    // Keep `as_raw_fd` import live on platforms that don't grow
-    // the trait method (no-op call); silences an unused-import
-    // warning when AsyncTcpStream is the only consumer.
-    let _ = stream.as_raw_fd();
 }
