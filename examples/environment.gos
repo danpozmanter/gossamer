@@ -1,15 +1,15 @@
 /*
  * Process environment — env vars, args, working directory.
  *
- * Demonstrates the `std::os` surface for inspecting the
+ * Demonstrates the `std::env` surface for inspecting the
  * process state. Falls back gracefully when an env var is
  * missing.
  */
 
-use std::{iter, os}
+use std::{env, iter}
 
 fn report_env(name: &String) {
-    match os::env(name) {
+    match env::var(name) {
         Some(v) => println!("  {name} = {v}"),
         None => println!("  {name} (unset)"),
     }
@@ -17,7 +17,7 @@ fn report_env(name: &String) {
 
 fn main() {
     println!("argv:")
-    let args = os::args()
+    let args = env::args()
     for i in 0..args.len() {
         println!("  argv[{i}] = {}", args[i])
     }
@@ -26,7 +26,7 @@ fn main() {
     let env_vars = ["PATH", "HOME", "USER", "GOSSAMER_DEBUG"]
     env_vars |> iter::for_each(|name| report_env(&name))
 
-    match os::cwd() {
+    match env::current_dir() {
         Ok(dir) => println!("\ncwd: {dir}"),
         Err(e) => println!("\ncwd error: {e}"),
     }

@@ -9,6 +9,19 @@
 
 use std::collections::BTreeMap;
 
+// HTTP/2 surface is integrated into std::http following the Go
+// model: callers use `http::serve_h2c`, `http::Http2Config`, etc.
+// The implementation lives in the internal `http_h2` Rust module
+// because the h2 crate carries enough machinery to deserve its
+// own file; user-facing names land here.
+pub use crate::http_h2::{
+    Config as Http2Config, Error as Http2Error, Handler as Http2Handler,
+    ResponseWriter as StreamingResponseWriter, ServerHandle as Http2ServerHandle,
+    StreamingHandler as Http2StreamingHandler, bind_and_run_h2c as serve_h2c,
+    bind_and_run_h2c_streaming as serve_h2c_streaming, serve_connection as serve_h2_connection,
+    serve_connection_streaming as serve_h2_connection_streaming,
+};
+
 /// HTTP method enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Method {

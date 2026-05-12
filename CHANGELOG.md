@@ -2,6 +2,93 @@
 
 ## 0.4.0
 
+### Stdlib reorganization (Rust-style `fs` / `env` / `process`, Go-style HTTP/2)
+
+The standard library's process-level surface was restructured for
+intuitiveness. Filesystem ops moved out of `os`, environment +
+argv split into `env`, child processes into `process`. HTTP/2 was
+dissolved into `std::http` exactly as Go does in `net/http` — no
+separate `std::http2` namespace.
+
+**New modules:**
+
+- **`std::env`** — `args`, `program_name`, `var`, `set_var`,
+  `unset_var`, `current_dir`, `set_current_dir`, `home_dir`,
+  `temp_dir`. Mirrors Rust's `std::env`.
+- **`std::process`** — `Command`, `Output`, `Stdio`, `ExitStatus`,
+  `Child`, `run`, `spawn`, `kill`, `exit`, `id`, `abort`. Mirrors
+  Rust's `std::process`.
+
+**Expanded `std::fs`** with the full filesystem surface, no longer
+sparse: `read`, `read_to_string`, `write`, `read_dir`, `walk_dir`,
+`create_dir`, `create_dir_all`, `remove_file`, `remove_dir`,
+`remove_dir_all`, `remove_all`, `copy`, `rename`, `exists`,
+`is_file`, `is_dir`, `is_symlink`, `file_size`, `metadata`,
+`canonicalize`, `glob`, `eval_symlinks`. `fs::is_file`,
+`fs::is_dir`, `fs::is_symlink`, `fs::file_size` are wired through
+the compiled tier with new `gos_rt_os_is_symlink` /
+`gos_rt_os_file_size` runtime helpers.
+
+**HTTP/2 folded into `std::http`** (Go-style). `std::http2` is
+gone. Renamed entry points live under `std::http`:
+
+| Old (`std::http2::*`) | New (`std::http::*`) |
+| --- | --- |
+| `bind_and_run_h2c` | `serve_h2c` |
+| `bind_and_run_h2c_streaming` | `serve_h2c_streaming` |
+| `serve_connection` | `serve_h2_connection` |
+| `serve_connection_streaming` | `serve_h2_connection_streaming` |
+| `Handler` | `Http2Handler` |
+| `StreamingHandler` | `Http2StreamingHandler` |
+| `ResponseWriter` | `StreamingResponseWriter` |
+| `Config` | `Http2Config` |
+| `ServerHandle` | `Http2ServerHandle` |
+| `Error` | `Http2Error` |
+
+**`std::path` is now I/O-free.** `path::walk` was removed
+(`fs::walk_dir` is canonical); `glob` and `eval_symlinks` moved to
+`fs::glob` / `fs::eval_symlinks`.
+
+**`std::os` shrunk to OS identity.** New: `os::family()`
+(`"unix"`/`"windows"`), `os::arch()` (CPU triple component). The
+old filesystem/env/process functions stay callable for one minor
+release as deprecated re-exports — every entry in the `os::`
+manifest now says "Deprecated: use ...".
+
+**New documented modules:** `std::log` (Go-style flat log shape)
+and `std::thread` (native OS threads) both existed in source but
+were absent from the manifest; both now documented.
+
+**Naming aliases (no behavior change):**
+
+- `strings::to_lower` / `to_upper` — short alias for
+  `to_lowercase` / `to_uppercase`, matching SKILL.md and Go.
+- `strconv::parse_int` / `atoi` / `parse_float` / `format_int` /
+  `itoa` / `format_float` — Go-style aliases for the existing
+  `parse_i64` / `parse_f64` / `format_i64` / `format_f64`.
+
+**Manifest dedup:** the split `ENCODING_BINARY` /
+`ENCODING_BINARY_FULL` entries collapsed into a single
+`std::encoding::binary` block.
+
+**Dropped bare-module aliases:** `gzip::*` was a back-compat alias
+for `compress::gzip::*` — removed; the canonical path was already
+the dispatch shape every example used. Bare `exec::*` retained
+for back-compat alongside the new `process::*`.
+
+**Migration:** `docs_src/migration/rust.md` and
+`docs_src/migration/go.md` now ship a "Standard library mapping"
+table each, calling out the Rust → Gossamer and Go → Gossamer
+shape of every common entry. `examples/cat.gos`, `grep.gos`,
+`environment.gos`, `cli_args.gos`, `simple_cli_args.gos`,
+`list_dir.gos`, `http2_server.gos`, and
+`projects/web_service_full/src/main.gos` all rewritten to the
+canonical names.
+
+A new `stdlib_surface_snapshot` regression test in
+`crates/gossamer-std/tests/` pins the documented item count so
+future drops require a deliberate floor adjustment.
+
 ### Binding ABI
 
 Four new shapes in the Rust-binding system; every 0.3 binding crate
@@ -32,6 +119,18 @@ recompiles unchanged.
 `gossamer_mir::lower::binding_type_to_mir` all extended to handle
 the new shapes. Architecture spec at
 `crates/gossamer-binding/ABI_0_4.md`.
+
+### CI test reliability
+
+- **Port-bind race in HTTP tests fixed.** The `pick_port()` helper
+  in `gossamer-std`'s `http_server`, `http_proxy`, and
+  `http_native_client` test modules bound `127.0.0.1:0`, read the
+  assigned port, **dropped the listener**, then expected the test
+  to re-bind the same port. On Windows CI agents and busy hosts
+  the gap was reliably exploited, producing intermittent
+  `AddrInUse` panics and `gossamer-std --lib` / `--test http_server`
+  failures with exit code 101. Replaced with `bind_loopback() ->
+  (TcpListener, SocketAddr)` that hands the live listener back.
 
 ### Language / parser
 
@@ -155,17 +254,20 @@ the new shapes. Architecture spec at
 
 ### HTTP/2 server
 
-- **`std::http2::bind_and_run_h2c`** in both `gos run` and
-  `gos build`. The `h2` crate runs on Gossamer's own goroutine
-  scheduler via `runtime_future::drive` (a future-pump) +
-  `async_tcp::AsyncTcpStream` (mio-bridge over non-blocking TCP).
-  Tokio is consumed only for its `AsyncRead` / `AsyncWrite` trait
-  surface.
-- Bounded `Handler` (`fn serve(req) -> Response`) and chunked
-  `StreamingHandler` (`fn serve(req, ResponseWriter)`) shapes
-  both supported. `ResponseWriter::write_chunk` flushes the
-  response head on first call and emits one `DATA` frame per
-  call; `finish` (or `Drop`) sends the terminating `END_STREAM`.
+- **`std::http::serve_h2c`** in both `gos run` and `gos build`.
+  (Renamed from `std::http2::bind_and_run_h2c` during 0.4.0 dev —
+  HTTP/2 is now folded into `std::http` per the Go model; see
+  "Stdlib reorganization" above.) The `h2` crate runs on
+  Gossamer's own goroutine scheduler via `runtime_future::drive`
+  (a future-pump) + `async_tcp::AsyncTcpStream` (mio-bridge over
+  non-blocking TCP). Tokio is consumed only for its `AsyncRead` /
+  `AsyncWrite` trait surface.
+- Bounded `Http2Handler` (`fn serve(req) -> Response`) and chunked
+  `Http2StreamingHandler` (`fn serve(req, StreamingResponseWriter)`)
+  shapes both supported. `StreamingResponseWriter::write_chunk`
+  flushes the response head on first call and emits one `DATA`
+  frame per call; `finish` (or `Drop`) sends the terminating
+  `END_STREAM`.
 - **ALPN-driven HTTPS dispatch** via `bind_and_run_tls_h2`
   (tokio-rustls trait-only).
 - Architecture documented at `crates/gossamer-std/HTTP_H2_ARCH.md`.

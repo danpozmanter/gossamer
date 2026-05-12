@@ -3,9 +3,9 @@
 <head>
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/migration/python/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/thread/" />
       <link rel="shortcut icon" href="../../img/favicon.ico" />
-    <title>From Python - Gossamer</title>
+    <title>std::thread - Gossamer</title>
     <link rel="stylesheet" href="../../css/theme.css" />
     <link rel="stylesheet" href="../../css/theme_extra.css" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
@@ -13,9 +13,9 @@
     
       <script>
         // Current page data
-        var mkdocs_page_name = "From Python";
-        var mkdocs_page_input_path = "migration/python.md";
-        var mkdocs_page_url = "/gossamer/docs/migration/python/";
+        var mkdocs_page_name = "std::thread";
+        var mkdocs_page_input_path = "stdlib/thread.md";
+        var mkdocs_page_url = "/gossamer/docs/stdlib/thread/";
       </script>
     
     <!--[if lt IE 9]>
@@ -72,7 +72,7 @@
               </ul>
               <p class="caption"><span class="caption-text">Standard library</span></p>
               <ul>
-                  <li class="toctree-l1"><a class="reference internal" href="../../stdlib/">Overview</a>
+                  <li class="toctree-l1"><a class="reference internal" href="../">Overview</a>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../../method_support/">Method support</a>
                   </li>
@@ -104,22 +104,12 @@
                   </li>
               </ul>
               <p class="caption"><span class="caption-text">Migrating</span></p>
-              <ul class="current">
-                  <li class="toctree-l1"><a class="reference internal" href="../rust/">From Rust</a>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/rust/">From Rust</a>
                   </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../go/">From Go</a>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/go/">From Go</a>
                   </li>
-                  <li class="toctree-l1 current"><a class="reference internal current" href="#">From Python</a>
-    <ul class="current">
-    <li class="toctree-l2"><a class="reference internal" href="#differences-that-matter">Differences that matter</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#what-stays-the-same">What stays the same</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#translation-examples">Translation examples</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#list-comprehensions-become-chains">List comprehensions become |&gt; chains</a>
-    </li>
-    </ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../migration/python/">From Python</a>
                   </li>
               </ul>
               <p class="caption"><span class="caption-text">Design notes</span></p>
@@ -163,8 +153,7 @@
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
     <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
-          <li class="breadcrumb-item">Migrating</li>
-      <li class="breadcrumb-item active">From Python</li>
+      <li class="breadcrumb-item active">std::thread</li>
     <li class="wy-breadcrumbs-aside">
     </li>
   </ul>
@@ -173,123 +162,48 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
             <div class="section" itemprop="articleBody">
               
-                <h1 id="migrating-from-python-to-gossamer">Migrating from Python to Gossamer<a class="headerlink" href="#migrating-from-python-to-gossamer" title="Permanent link">&para;</a></h1>
-<p>Python programs map well to Gossamer once you commit to three shifts:
-static types, no implicit <code>None</code>, and pattern matching instead of
-<code>isinstance</code> / duck-typing.</p>
-<h2 id="differences-that-matter">Differences that matter<a class="headerlink" href="#differences-that-matter" title="Permanent link">&para;</a></h2>
+                <h1 id="stdthread"><code>std::thread</code><a class="headerlink" href="#stdthread" title="Permanent link">&para;</a></h1>
+<p>Native OS threads. For goroutines use the <code>go expr</code> syntax.</p>
+<h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Python</th>
-<th>Gossamer</th>
+<th>Name</th>
+<th>Kind</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Dynamic typing, runtime <code>TypeError</code>.</td>
-<td>Static typing checked by <code>gos check</code>; most type errors are caught before run.</td>
+<td><code>spawn</code></td>
+<td>fn</td>
+<td>Spawns a new OS thread; returns a JoinHandle.</td>
 </tr>
 <tr>
-<td><code>None</code> is implicit and pervasive.</td>
-<td><code>Option&lt;T&gt;</code> is explicit. <code>None</code> exists only for <code>Option</code>.</td>
+<td><code>JoinHandle</code></td>
+<td>type</td>
+<td>Owned handle to a spawned OS thread.</td>
 </tr>
 <tr>
-<td><code>try / except</code>.</td>
-<td><code>Result&lt;T, E&gt;</code> + <code>?</code>. No exception-style control flow.</td>
+<td><code>join</code></td>
+<td>fn</td>
+<td>Waits for the thread to finish; returns its result.</td>
 </tr>
 <tr>
-<td>Duck typing via <code>__dunder__</code> methods.</td>
-<td>Traits (<code>impl Iterator for T</code>, <code>impl Display for T</code>).</td>
+<td><code>yield_now</code></td>
+<td>fn</td>
+<td>Hints to the scheduler to switch to another runnable thread.</td>
 </tr>
 <tr>
-<td><code>str</code> is a sequence of code points; indexing is cheap.</td>
-<td><code>String</code> is UTF-8; indexing returns the byte at that offset. Use <code>std::utf8</code> helpers for code-point iteration.</td>
-</tr>
-<tr>
-<td><code>dict</code>, <code>list</code>, <code>set</code> are built-ins.</td>
-<td><code>std::collections::HashMap</code>, <code>Vec&lt;T&gt;</code> (spelled <code>[T]</code> in types), <code>HashSet&lt;T&gt;</code>.</td>
-</tr>
-<tr>
-<td>Decorators, metaclasses.</td>
-<td>Attributes (<code>#[test]</code>, <code>#[cfg(...)]</code>, <code>#[lint(allow(...))]</code>). Not user-extensible.</td>
-</tr>
-<tr>
-<td>Indentation is syntax.</td>
-<td>Braces <code>{ }</code> are syntax; <code>gos fmt</code> enforces a consistent shape.</td>
-</tr>
-<tr>
-<td><code>async def</code> / <code>await</code>.</td>
-<td><code>go expr</code> spawns a goroutine; blocking IO is fine.</td>
+<td><code>num_cpus</code></td>
+<td>fn</td>
+<td>Returns the number of logical CPUs available.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="what-stays-the-same">What stays the same<a class="headerlink" href="#what-stays-the-same" title="Permanent link">&para;</a></h2>
-<ul>
-<li>List / dict / set comprehensions have direct iterator equivalents (<code>xs.filter(...).map(...).collect()</code>).</li>
-<li><code>print("a", "b")</code> → <code>println("a", "b")</code>.</li>
-<li>Named arguments → struct-literal call style: <code>Handler { log: true }</code>.</li>
-</ul>
-<h2 id="translation-examples">Translation examples<a class="headerlink" href="#translation-examples" title="Permanent link">&para;</a></h2>
-<p>Python:</p>
-<pre><code class="language-python">def parse(line):
-    parts = line.strip().split(&quot;,&quot;)
-    return [int(p) for p in parts]
-</code></pre>
-<p>Gossamer:</p>
-<pre><code class="language-gos">fn parse(line: &amp;str) -&gt; Result&lt;[i64], errors::Error&gt; {
-    let mut out: [i64] = []
-    for piece in line.trim().split(',') {
-        let n: i64 = piece.trim().parse()
-            .map_err(|_| errors::new(format!(&quot;bad number: {piece}&quot;)))?
-        out.push(n)
-    }
-    Ok(out)
-}
-</code></pre>
-<p>Python:</p>
-<pre><code class="language-python">try:
-    value = risky()
-except ValueError as e:
-    log(e)
-    value = default
-</code></pre>
-<p>Gossamer:</p>
-<pre><code class="language-gos">let value = match risky() {
-    Ok(v) =&gt; v,
-    Err(e) =&gt; { log(&amp;e); default },
-}
-</code></pre>
-<h2 id="list-comprehensions-become-chains">List comprehensions become <code>|&gt;</code> chains<a class="headerlink" href="#list-comprehensions-become-chains" title="Permanent link">&para;</a></h2>
-<p>Python:</p>
-<pre><code class="language-python">total = sum(n * n for n in range(1, 11) if n % 2 == 0)
-</code></pre>
-<p>Gossamer:</p>
-<pre><code class="language-gos">let total = iter::range_inclusive(1, 10)
-    |&gt; iter::filter(|n: i64| n % 2 == 0)
-    |&gt; iter::sum_by(|n: i64| n * n)
-</code></pre>
-<p>Python:</p>
-<pre><code class="language-python">names = sorted({name.lower() for name in users if name})
-</code></pre>
-<p>Gossamer (rough mirror — <code>|&gt;</code> threads each stage):</p>
-<pre><code class="language-gos">let names = users
-    |&gt; iter::filter(|n: String| n.len() &gt; 0)
-    |&gt; iter::map(|n: String| n.to_lowercase())
-    |&gt; iter::sort_by_key(|n: String| n.len())
-</code></pre>
-<p>The <code>iter::*</code> module is small and uniform: combinators take the
-data value as the last positional parameter so <code>xs |&gt; iter::map(f)</code>
-desugars to <code>iter::map(f, xs)</code> (SPEC §4.6). For the optional /
-fallible cases there are matching <code>std::option</code> and <code>std::result</code>
-modules.</p>
               
             </div>
           </div><footer>
-    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
-        <a href="../go/" class="btn btn-neutral float-left" title="From Go"><span class="icon icon-circle-arrow-left"></span> Previous</a>
-        <a href="../../design/diagnostics/" class="btn btn-neutral float-right" title="Diagnostics style">Next <span class="icon icon-circle-arrow-right"></span></a>
-    </div>
 
   <hr/>
 
@@ -315,10 +229,6 @@ modules.</p>
         </span>
     
     
-      <span><a href="../go/" style="color: #fcfcfc">&laquo; Previous</a></span>
-    
-    
-      <span><a href="../../design/diagnostics/" style="color: #fcfcfc">Next &raquo;</a></span>
     
   </span>
 </div>

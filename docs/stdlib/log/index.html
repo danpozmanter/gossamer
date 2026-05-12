@@ -3,9 +3,9 @@
 <head>
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/http2/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/log/" />
       <link rel="shortcut icon" href="../../img/favicon.ico" />
-    <title>std::http2 - Gossamer</title>
+    <title>std::log - Gossamer</title>
     <link rel="stylesheet" href="../../css/theme.css" />
     <link rel="stylesheet" href="../../css/theme_extra.css" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
@@ -13,9 +13,9 @@
     
       <script>
         // Current page data
-        var mkdocs_page_name = "std::http2";
-        var mkdocs_page_input_path = "stdlib/http2.md";
-        var mkdocs_page_url = "/gossamer/docs/stdlib/http2/";
+        var mkdocs_page_name = "std::log";
+        var mkdocs_page_input_path = "stdlib/log.md";
+        var mkdocs_page_url = "/gossamer/docs/stdlib/log/";
       </script>
     
     <!--[if lt IE 9]>
@@ -153,7 +153,7 @@
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
     <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
-      <li class="breadcrumb-item active">std::http2</li>
+      <li class="breadcrumb-item active">std::log</li>
     <li class="wy-breadcrumbs-aside">
     </li>
   </ul>
@@ -162,8 +162,8 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
             <div class="section" itemprop="articleBody">
               
-                <h1 id="stdhttp2"><code>std::http2</code><a class="headerlink" href="#stdhttp2" title="Permanent link">&para;</a></h1>
-<p>HTTP/2 server (h2 crate over goroutine future-driver). Bounded and streaming handler shapes; ALPN-aware HTTPS dispatch via http::server::bind_and_run_tls_h2.</p>
+                <h1 id="stdlog"><code>std::log</code><a class="headerlink" href="#stdlog" title="Permanent link">&para;</a></h1>
+<p>Flat line-oriented logging (Go's <code>log</code> shape).</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -175,54 +175,39 @@
 </thead>
 <tbody>
 <tr>
-<td><code>Handler</code></td>
-<td>trait</td>
-<td>Bounded-body handler: serve(Request) -&gt; Response.</td>
-</tr>
-<tr>
-<td><code>StreamingHandler</code></td>
-<td>trait</td>
-<td>Chunked-body handler: serve(Request, ResponseWriter) -&gt; Result&lt;(), Error&gt;.</td>
-</tr>
-<tr>
-<td><code>ResponseWriter</code></td>
-<td>type</td>
-<td>Streaming response writer; set_status / header / write_chunk / finish.</td>
-</tr>
-<tr>
-<td><code>Config</code></td>
-<td>type</td>
-<td>Per-connection h2 tuning (window sizes, max concurrent streams, frame caps).</td>
-</tr>
-<tr>
-<td><code>ServerHandle</code></td>
-<td>type</td>
-<td>Handle returned by serve_connection to inspect in-flight count and trigger graceful shutdown.</td>
-</tr>
-<tr>
-<td><code>Error</code></td>
-<td>type</td>
-<td>h2 server error: Io, Protocol, Handler.</td>
-</tr>
-<tr>
-<td><code>serve_connection</code></td>
+<td><code>println</code></td>
 <td>fn</td>
-<td>Drive an HTTP/2 connection on the calling goroutine (bounded Handler).</td>
+<td>Logs a line to the configured output.</td>
 </tr>
 <tr>
-<td><code>serve_connection_streaming</code></td>
+<td><code>printf</code></td>
 <td>fn</td>
-<td>Same shape for StreamingHandler.</td>
+<td>Logs a pre-formatted line to the configured output.</td>
 </tr>
 <tr>
-<td><code>bind_and_run_h2c</code></td>
+<td><code>fatal</code></td>
 <td>fn</td>
-<td>Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext).</td>
+<td>Logs and exits the process with status 1.</td>
 </tr>
 <tr>
-<td><code>bind_and_run_h2c_streaming</code></td>
+<td><code>set_output</code></td>
 <td>fn</td>
-<td>Same shape for StreamingHandler.</td>
+<td>Redirects log output to a writer.</td>
+</tr>
+<tr>
+<td><code>set_prefix</code></td>
+<td>fn</td>
+<td>Sets a prefix prepended to every log line.</td>
+</tr>
+<tr>
+<td><code>set_flags</code></td>
+<td>fn</td>
+<td>Configures timestamp / file:line decoration bits.</td>
+</tr>
+<tr>
+<td><code>flags</code></td>
+<td>fn</td>
+<td>Returns the current decoration flag set.</td>
 </tr>
 </tbody>
 </table>

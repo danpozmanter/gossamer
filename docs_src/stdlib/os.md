@@ -1,25 +1,28 @@
 # `std::os`
 
-Operating-system primitives: filesystem, env, process.
+Operating-system identity and deprecated re-exports of env/process/fs.
 
 ## Public items
 
 | Name | Kind | Description |
 |---|---|---|
-| `args` | fn | Returns the program's command-line arguments. |
-| `program_name` | fn | Returns the path used to invoke the program (argv[0]). |
-| `env` | fn | Returns the value of an environment variable. |
-| `set_env` | fn | Sets an environment variable in the current process. |
-| `exit` | fn | Exits the process with the given status code. |
-| `open` | fn | Opens a file for reading. |
-| `create` | fn | Creates or truncates a file for writing. |
-| `read_file` | fn | Reads an entire file into memory. |
-| `write_file` | fn | Writes the given bytes to a file, creating it if needed. |
-| `remove_file` | fn | Removes a file from the filesystem. |
-| `rename` | fn | Renames a file or directory. |
-| `exists` | fn | Returns whether a path exists. |
-| `mkdir` | fn | Creates a single directory. |
-| `mkdir_all` | fn | Creates a directory and any required parents. |
-| `read_dir` | fn | Iterates the entries of a directory. |
-| `File` | type | Open file handle supporting read/write/seek/close. |
+| `family` | fn | Returns "unix" or "windows" for the running OS family. |
+| `arch` | fn | Returns the target CPU architecture (e.g. "x86_64"). |
+| `args` | fn | Deprecated: use env::args. |
+| `program_name` | fn | Deprecated: use env::program_name. |
+| `env` | fn | Deprecated: use env::var. |
+| `set_env` | fn | Deprecated: use env::set_var. |
+| `exit` | fn | Deprecated: use process::exit. |
+| `open` | fn | Deprecated: use fs::open. |
+| `create` | fn | Deprecated: use fs::create. |
+| `read_file` | fn | Deprecated: use fs::read. |
+| `read_file_to_string` | fn | Deprecated: use fs::read_to_string. |
+| `write_file` | fn | Deprecated: use fs::write. |
+| `remove_file` | fn | Deprecated: use fs::remove_file. |
+| `rename` | fn | Deprecated: use fs::rename. |
+| `exists` | fn | Deprecated: use fs::exists. |
+| `mkdir` | fn | Deprecated: use fs::create_dir. |
+| `mkdir_all` | fn | Deprecated: use fs::create_dir_all. |
+| `read_dir` | fn | Deprecated: use fs::read_dir. |
+| `File` | type | Deprecated: use fs::File. |
 

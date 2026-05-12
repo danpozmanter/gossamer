@@ -95,3 +95,35 @@ remain available, but the free-function siblings in `std::option`
 and `std::result` are the pipe-friendly form. `?` stays the right
 tool for short-circuit propagation; the combinators are for
 in-pipeline transformation.
+
+## Standard library mapping (Rust → Gossamer)
+
+The Gossamer stdlib follows Rust's `fs`/`env`/`process` split for
+process-level primitives, and Go's flat `strings`/`strconv`/`bytes`
+shape for text and numeric formatting. Filesystem entry points are
+all in `fs::*`, environment and CLI in `env::*`, child processes
+and exit in `process::*`.
+
+| Rust | Gossamer |
+| --- | --- |
+| `std::fs::read_to_string` | `fs::read_to_string` |
+| `std::fs::read` | `fs::read` |
+| `std::fs::write` | `fs::write` |
+| `std::fs::remove_file` | `fs::remove_file` |
+| `std::fs::create_dir_all` | `fs::create_dir_all` |
+| `std::fs::read_dir` | `fs::read_dir` (returns `Vec<DirInfo>`) |
+| `std::fs::copy` | `fs::copy` |
+| `std::env::args` | `env::args` |
+| `std::env::var(name).ok()` | `env::var(name)` |
+| `std::env::current_dir` | `env::current_dir` |
+| `std::env::temp_dir` | `env::temp_dir` |
+| `std::process::Command::new(...)` | `process::Command::new(...)` |
+| `std::process::exit` | `process::exit` |
+| `std::path::Path::new(p).join(...)` | `path::join(p, ...)` |
+| `std::sync::Mutex` | `sync::Mutex` |
+| `std::time::Duration::from_millis` | `time::Duration::from_millis` |
+| `std::thread::spawn` | `go expr` (goroutine) or `thread::spawn` (OS thread) |
+
+HTTP/2 is integrated into `std::http` directly (Go-style) —
+`http::serve_h2c` for cleartext h2c, automatic ALPN negotiation
+when serving over TLS. There is no separate `std::http2`.

@@ -179,10 +179,15 @@
 directory ships a handful of worked programs.</p>
 <h2 id="a-friendly-taste">A friendly taste<a class="headerlink" href="#a-friendly-taste" title="Permanent link">&para;</a></h2>
 <p><code>examples/function_piping.gos</code> walks through the <code>|&gt;</code> forward-pipe
-operator, the feature most likely to surprise readers coming from
-Rust or Go. It straightens out nested calls so the data flow reads
-left-to-right:</p>
-<pre><code class="language-gossamer">fn double(x: i64) -&gt; i64 { x * 2 }
+operator and the F#-style combinator surface in <code>std::iter</code> /
+<code>std::option</code> (SPEC §10.4 / §10.4a). <code>|&gt;</code> straightens out nested
+calls so the data flow reads left-to-right; the combinators take
+the data value as the last positional parameter so each call
+threads naturally:</p>
+<pre><code class="language-gossamer">use std::iter
+use std::option
+
+fn double(x: i64) -&gt; i64 { x * 2 }
 fn add(a: i64, b: i64) -&gt; i64 { a + b }
 fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
     if x &lt; lo { lo } else if x &gt; hi { hi } else { x }
@@ -190,7 +195,18 @@ fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
 
 fn main() {
     let n = 3 |&gt; double |&gt; add(10) |&gt; clamp(0, 100)
-    println(&quot;arithmetic:&quot;, n)
+    println!(&quot;arithmetic: {n}&quot;)
+
+    let total = iter::range_inclusive(1, 10)
+        |&gt; iter::filter(|n: i64| n % 2 == 0)
+        |&gt; iter::sum_by(|n: i64| n * n)
+    println!(&quot;sum of even squares: {total}&quot;)
+
+    let xs = [1, 3, 5, 9, 14, 21]
+    let first_big = xs
+        |&gt; iter::find(|n: i64| n &gt; 10)
+        |&gt; option::default(-1)
+    println!(&quot;first &gt; 10 (or -1): {first_big}&quot;)
 }
 </code></pre>
 <h2 id="running-today">Running today<a class="headerlink" href="#running-today" title="Permanent link">&para;</a></h2>
@@ -198,7 +214,11 @@ fn main() {
 <li><strong><code>hello_world.gos</code></strong> — one-liner that prints via <code>fmt::println</code>.
   Runs under <code>gos run</code>.</li>
 <li><strong><code>function_piping.gos</code></strong> — tour of the <code>|&gt;</code> forward-pipe
-  operator, both arithmetic chains and method pipelines.</li>
+  operator plus the <code>std::iter</code> / <code>std::option</code> combinator
+  surface (<code>filter</code>, <code>sum_by</code>, <code>find</code>, <code>option::default</code>, …).
+  Runs under <code>gos run</code>, <code>gos build</code> (cranelift), and
+  <code>gos build --release</code> (LLVM); the tier_parity test confirms
+  identical output across all three.</li>
 <li><strong><code>go_spawn.gos</code></strong> — goroutine fan-out with no channels.
   Every construct lowers through native codegen, so <code>gos build</code>
   produces a working binary.</li>

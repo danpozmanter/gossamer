@@ -9,15 +9,15 @@
  *     gos run examples/cli_args.gos -- --name jane --verbose --port 9000 alpha beta
  */
 
+use std::env
 use std::flag
-use std::os
 
 fn main() -> Result<(), flag::Error> {
     let mut fs = flag::Set::new("cli_args")
     let name = fs.string("name", "world", "greeting target")
     let port = fs.uint("port", 8080, "listen port")
     let verbose = fs.bool("verbose", false, "enable chatty output")
-    let positional = fs.parse(os::args())?
+    let positional = fs.parse(env::args())?
 
     println!("hello, {}!", *name)
     if *verbose {

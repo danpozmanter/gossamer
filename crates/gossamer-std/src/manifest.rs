@@ -81,10 +81,11 @@ pub fn module_slug(path: &str) -> String {
 /// Returns every `(slug, markdown)` pair for the docs site.
 /// Includes the `index` page plus one page per module.
 ///
-/// Multiple manifest entries sharing the same module path
-/// (e.g. an initial `ENCODING_BINARY` plus a later
-/// `ENCODING_BINARY_FULL` that extends it) are merged into one
-/// page with the union of their item lists.
+/// Multiple manifest entries sharing the same module path are
+/// merged into one page with the union of their item lists. The
+/// historical reason was a split `ENCODING_BINARY` /
+/// `ENCODING_BINARY_FULL` pair; that's gone but the merge logic
+/// is cheap and stays as a safety net for future additions.
 #[must_use]
 pub fn render_all_docs() -> Vec<(String, String)> {
     use std::collections::BTreeMap;
@@ -130,6 +131,10 @@ pub const ALL_MODULES: &[StdModule] = &[
     OS,
     OS_EXEC,
     OS_SIGNAL,
+    ENV,
+    PROCESS,
+    LOG,
+    THREAD,
     STRINGS,
     STRCONV,
     COLLECTIONS,
@@ -183,13 +188,12 @@ pub const ALL_MODULES: &[StdModule] = &[
     UNICODE,
     ENCODING_CSV,
     ENCODING_PEM,
-    ENCODING_BINARY_FULL,
     // P0 gap-fill: utf16, iter.
     UTF16,
     ITER,
-    // 0.4.0 — HTTP/2 + extended HTTP surface, archives, big-int,
-    // FNV, XML, base32 / ascii85, insecure crypto, cipher modes.
-    HTTP2,
+    // 0.4.0 — HTTP/2 folded into HTTP per the Go model;
+    // extended HTTP surface, archives, big-int, FNV, XML, base32 /
+    // ascii85, insecure crypto, cipher modes.
     HTTP_ROUTER,
     HTTP_MIDDLEWARE,
     HTTP_STATIC_FILES,
@@ -445,11 +449,6 @@ const PATH: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Collapses `.`, `..`, and duplicate separators.",
         },
-        StdItem {
-            name: "walk",
-            kind: StdItemKind::Function,
-            doc: "Recursive directory walk; returns Result<[String], String> of every descendant path. Aliases fs::walk_dir.",
-        },
     ],
 };
 
@@ -487,8 +486,23 @@ const PATH_NATIVE: StdModule = StdModule {
 
 const FS: StdModule = StdModule {
     path: "std::fs",
-    summary: "Filesystem walking and mutation helpers.",
+    summary: "Filesystem reading, writing, and traversal (Rust std::fs shape).",
     items: &[
+        StdItem {
+            name: "read",
+            kind: StdItemKind::Function,
+            doc: "Reads an entire file into memory as bytes.",
+        },
+        StdItem {
+            name: "read_to_string",
+            kind: StdItemKind::Function,
+            doc: "Reads an entire file into memory as UTF-8 text.",
+        },
+        StdItem {
+            name: "write",
+            kind: StdItemKind::Function,
+            doc: "Writes bytes to a file, creating or truncating it.",
+        },
         StdItem {
             name: "read_dir",
             kind: StdItemKind::Function,
@@ -500,9 +514,29 @@ const FS: StdModule = StdModule {
             doc: "Recursively visits every descendant entry.",
         },
         StdItem {
+            name: "create_dir",
+            kind: StdItemKind::Function,
+            doc: "Creates a single directory. Fails if any parent is missing.",
+        },
+        StdItem {
             name: "create_dir_all",
             kind: StdItemKind::Function,
-            doc: "Creates a path and any missing ancestors.",
+            doc: "Creates a directory and any missing ancestors.",
+        },
+        StdItem {
+            name: "remove_file",
+            kind: StdItemKind::Function,
+            doc: "Removes a single file.",
+        },
+        StdItem {
+            name: "remove_dir",
+            kind: StdItemKind::Function,
+            doc: "Removes an empty directory.",
+        },
+        StdItem {
+            name: "remove_dir_all",
+            kind: StdItemKind::Function,
+            doc: "Recursively removes a directory and its contents.",
         },
         StdItem {
             name: "remove_all",
@@ -518,6 +552,51 @@ const FS: StdModule = StdModule {
             name: "rename",
             kind: StdItemKind::Function,
             doc: "Renames a file or directory.",
+        },
+        StdItem {
+            name: "exists",
+            kind: StdItemKind::Function,
+            doc: "Returns whether a path exists on the filesystem.",
+        },
+        StdItem {
+            name: "is_file",
+            kind: StdItemKind::Function,
+            doc: "Returns whether a path exists and is a regular file.",
+        },
+        StdItem {
+            name: "is_dir",
+            kind: StdItemKind::Function,
+            doc: "Returns whether a path exists and is a directory.",
+        },
+        StdItem {
+            name: "is_symlink",
+            kind: StdItemKind::Function,
+            doc: "Returns whether a path exists and is a symbolic link.",
+        },
+        StdItem {
+            name: "file_size",
+            kind: StdItemKind::Function,
+            doc: "Returns the file's size in bytes; 0 on error.",
+        },
+        StdItem {
+            name: "metadata",
+            kind: StdItemKind::Function,
+            doc: "Returns filesystem metadata for a path.",
+        },
+        StdItem {
+            name: "canonicalize",
+            kind: StdItemKind::Function,
+            doc: "Resolves a path to an absolute, symlink-free canonical form.",
+        },
+        StdItem {
+            name: "glob",
+            kind: StdItemKind::Function,
+            doc: "Returns paths matching a glob pattern (*, ?, [abc], **).",
+        },
+        StdItem {
+            name: "eval_symlinks",
+            kind: StdItemKind::Function,
+            doc: "Resolves all symlinks along a path; mirrors Go's filepath.EvalSymlinks.",
         },
     ],
 };
@@ -680,23 +759,6 @@ const ENCODING_HEX: StdModule = StdModule {
             name: "decode",
             kind: StdItemKind::Function,
             doc: "Decodes a hex string.",
-        },
-    ],
-};
-
-const ENCODING_BINARY: StdModule = StdModule {
-    path: "std::encoding::binary",
-    summary: "Big-endian / little-endian integer packing.",
-    items: &[
-        StdItem {
-            name: "put_u16_be",
-            kind: StdItemKind::Function,
-            doc: "Writes a big-endian u16.",
-        },
-        StdItem {
-            name: "put_u32_be",
-            kind: StdItemKind::Function,
-            doc: "Writes a big-endian u32.",
         },
     ],
 };
@@ -1273,7 +1335,245 @@ const IO: StdModule = StdModule {
 
 const OS: StdModule = StdModule {
     path: "std::os",
-    summary: "Operating-system primitives: filesystem, env, process.",
+    summary: "Operating-system identity and deprecated re-exports of env/process/fs.",
+    items: &[
+        StdItem {
+            name: "family",
+            kind: StdItemKind::Function,
+            doc: "Returns \"unix\" or \"windows\" for the running OS family.",
+        },
+        StdItem {
+            name: "arch",
+            kind: StdItemKind::Function,
+            doc: "Returns the target CPU architecture (e.g. \"x86_64\").",
+        },
+        StdItem {
+            name: "args",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use env::args.",
+        },
+        StdItem {
+            name: "program_name",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use env::program_name.",
+        },
+        StdItem {
+            name: "env",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use env::var.",
+        },
+        StdItem {
+            name: "set_env",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use env::set_var.",
+        },
+        StdItem {
+            name: "exit",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use process::exit.",
+        },
+        StdItem {
+            name: "open",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::open.",
+        },
+        StdItem {
+            name: "create",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::create.",
+        },
+        StdItem {
+            name: "read_file",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::read.",
+        },
+        StdItem {
+            name: "read_file_to_string",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::read_to_string.",
+        },
+        StdItem {
+            name: "write_file",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::write.",
+        },
+        StdItem {
+            name: "remove_file",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::remove_file.",
+        },
+        StdItem {
+            name: "rename",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::rename.",
+        },
+        StdItem {
+            name: "exists",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::exists.",
+        },
+        StdItem {
+            name: "mkdir",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::create_dir.",
+        },
+        StdItem {
+            name: "mkdir_all",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::create_dir_all.",
+        },
+        StdItem {
+            name: "read_dir",
+            kind: StdItemKind::Function,
+            doc: "Deprecated: use fs::read_dir.",
+        },
+        StdItem {
+            name: "File",
+            kind: StdItemKind::Type,
+            doc: "Deprecated: use fs::File.",
+        },
+    ],
+};
+
+const PROCESS: StdModule = StdModule {
+    path: "std::process",
+    summary: "Spawn child processes, exit the current process (Rust std::process shape).",
+    items: &[
+        StdItem {
+            name: "Command",
+            kind: StdItemKind::Type,
+            doc: "Builder for spawning a child process.",
+        },
+        StdItem {
+            name: "Stdio",
+            kind: StdItemKind::Type,
+            doc: "Inherit / Piped / Null wiring for stdin/stdout/stderr.",
+        },
+        StdItem {
+            name: "Output",
+            kind: StdItemKind::Type,
+            doc: "Captured stdout, stderr, and exit status from a finished child.",
+        },
+        StdItem {
+            name: "ExitStatus",
+            kind: StdItemKind::Type,
+            doc: "Numeric exit code (None when killed by signal).",
+        },
+        StdItem {
+            name: "Child",
+            kind: StdItemKind::Type,
+            doc: "Handle to a still-running child supporting wait / kill.",
+        },
+        StdItem {
+            name: "run",
+            kind: StdItemKind::Function,
+            doc: "One-shot: runs a program with args, captures stdout/stderr, returns Output.",
+        },
+        StdItem {
+            name: "spawn",
+            kind: StdItemKind::Function,
+            doc: "Spawns a child process and returns a Child handle.",
+        },
+        StdItem {
+            name: "kill",
+            kind: StdItemKind::Function,
+            doc: "Sends SIGKILL (or equivalent) to a Child.",
+        },
+        StdItem {
+            name: "exit",
+            kind: StdItemKind::Function,
+            doc: "Exits the current process with the given status code.",
+        },
+        StdItem {
+            name: "id",
+            kind: StdItemKind::Function,
+            doc: "Returns the current process ID.",
+        },
+        StdItem {
+            name: "abort",
+            kind: StdItemKind::Function,
+            doc: "Aborts the current process without unwinding.",
+        },
+    ],
+};
+
+const LOG: StdModule = StdModule {
+    path: "std::log",
+    summary: "Flat line-oriented logging (Go's `log` shape).",
+    items: &[
+        StdItem {
+            name: "println",
+            kind: StdItemKind::Function,
+            doc: "Logs a line to the configured output.",
+        },
+        StdItem {
+            name: "printf",
+            kind: StdItemKind::Function,
+            doc: "Logs a pre-formatted line to the configured output.",
+        },
+        StdItem {
+            name: "fatal",
+            kind: StdItemKind::Function,
+            doc: "Logs and exits the process with status 1.",
+        },
+        StdItem {
+            name: "set_output",
+            kind: StdItemKind::Function,
+            doc: "Redirects log output to a writer.",
+        },
+        StdItem {
+            name: "set_prefix",
+            kind: StdItemKind::Function,
+            doc: "Sets a prefix prepended to every log line.",
+        },
+        StdItem {
+            name: "set_flags",
+            kind: StdItemKind::Function,
+            doc: "Configures timestamp / file:line decoration bits.",
+        },
+        StdItem {
+            name: "flags",
+            kind: StdItemKind::Function,
+            doc: "Returns the current decoration flag set.",
+        },
+    ],
+};
+
+const THREAD: StdModule = StdModule {
+    path: "std::thread",
+    summary: "Native OS threads. For goroutines use the `go expr` syntax.",
+    items: &[
+        StdItem {
+            name: "spawn",
+            kind: StdItemKind::Function,
+            doc: "Spawns a new OS thread; returns a JoinHandle.",
+        },
+        StdItem {
+            name: "JoinHandle",
+            kind: StdItemKind::Type,
+            doc: "Owned handle to a spawned OS thread.",
+        },
+        StdItem {
+            name: "join",
+            kind: StdItemKind::Function,
+            doc: "Waits for the thread to finish; returns its result.",
+        },
+        StdItem {
+            name: "yield_now",
+            kind: StdItemKind::Function,
+            doc: "Hints to the scheduler to switch to another runnable thread.",
+        },
+        StdItem {
+            name: "num_cpus",
+            kind: StdItemKind::Function,
+            doc: "Returns the number of logical CPUs available.",
+        },
+    ],
+};
+
+const ENV: StdModule = StdModule {
+    path: "std::env",
+    summary: "Process environment, command-line arguments, working directory.",
     items: &[
         StdItem {
             name: "args",
@@ -1286,74 +1586,39 @@ const OS: StdModule = StdModule {
             doc: "Returns the path used to invoke the program (argv[0]).",
         },
         StdItem {
-            name: "env",
+            name: "var",
             kind: StdItemKind::Function,
             doc: "Returns the value of an environment variable.",
         },
         StdItem {
-            name: "set_env",
+            name: "set_var",
             kind: StdItemKind::Function,
             doc: "Sets an environment variable in the current process.",
         },
         StdItem {
-            name: "exit",
+            name: "unset_var",
             kind: StdItemKind::Function,
-            doc: "Exits the process with the given status code.",
+            doc: "Removes an environment variable from the current process.",
         },
         StdItem {
-            name: "open",
+            name: "current_dir",
             kind: StdItemKind::Function,
-            doc: "Opens a file for reading.",
+            doc: "Returns the current working directory.",
         },
         StdItem {
-            name: "create",
+            name: "set_current_dir",
             kind: StdItemKind::Function,
-            doc: "Creates or truncates a file for writing.",
+            doc: "Changes the current working directory.",
         },
         StdItem {
-            name: "read_file",
+            name: "home_dir",
             kind: StdItemKind::Function,
-            doc: "Reads an entire file into memory.",
+            doc: "Returns the calling user's home directory if known.",
         },
         StdItem {
-            name: "write_file",
+            name: "temp_dir",
             kind: StdItemKind::Function,
-            doc: "Writes the given bytes to a file, creating it if needed.",
-        },
-        StdItem {
-            name: "remove_file",
-            kind: StdItemKind::Function,
-            doc: "Removes a file from the filesystem.",
-        },
-        StdItem {
-            name: "rename",
-            kind: StdItemKind::Function,
-            doc: "Renames a file or directory.",
-        },
-        StdItem {
-            name: "exists",
-            kind: StdItemKind::Function,
-            doc: "Returns whether a path exists.",
-        },
-        StdItem {
-            name: "mkdir",
-            kind: StdItemKind::Function,
-            doc: "Creates a single directory.",
-        },
-        StdItem {
-            name: "mkdir_all",
-            kind: StdItemKind::Function,
-            doc: "Creates a directory and any required parents.",
-        },
-        StdItem {
-            name: "read_dir",
-            kind: StdItemKind::Function,
-            doc: "Iterates the entries of a directory.",
-        },
-        StdItem {
-            name: "File",
-            kind: StdItemKind::Type,
-            doc: "Open file handle supporting read/write/seek/close.",
+            doc: "Returns the system's temporary directory.",
         },
     ],
 };
@@ -1393,14 +1658,24 @@ const STRINGS: StdModule = StdModule {
             doc: "Replaces every occurrence of `from` with `to`.",
         },
         StdItem {
-            name: "to_lowercase",
+            name: "to_lower",
             kind: StdItemKind::Function,
             doc: "Lowercases every character.",
         },
         StdItem {
-            name: "to_uppercase",
+            name: "to_upper",
             kind: StdItemKind::Function,
             doc: "Uppercases every character.",
+        },
+        StdItem {
+            name: "to_lowercase",
+            kind: StdItemKind::Function,
+            doc: "Alias for to_lower (Rust-style name).",
+        },
+        StdItem {
+            name: "to_uppercase",
+            kind: StdItemKind::Function,
+            doc: "Alias for to_upper (Rust-style name).",
         },
         StdItem {
             name: "starts_with",
@@ -1448,6 +1723,37 @@ const STRCONV: StdModule = StdModule {
             name: "format_f64",
             kind: StdItemKind::Function,
             doc: "Renders an `f64` as a decimal string.",
+        },
+        // Shorter aliases — SKILL.md and Go's `strconv` use these.
+        StdItem {
+            name: "parse_int",
+            kind: StdItemKind::Function,
+            doc: "Alias for parse_i64.",
+        },
+        StdItem {
+            name: "atoi",
+            kind: StdItemKind::Function,
+            doc: "Alias for parse_i64 (Go-style spelling).",
+        },
+        StdItem {
+            name: "parse_float",
+            kind: StdItemKind::Function,
+            doc: "Alias for parse_f64.",
+        },
+        StdItem {
+            name: "format_int",
+            kind: StdItemKind::Function,
+            doc: "Alias for format_i64.",
+        },
+        StdItem {
+            name: "itoa",
+            kind: StdItemKind::Function,
+            doc: "Alias for format_i64 (Go-style spelling).",
+        },
+        StdItem {
+            name: "format_float",
+            kind: StdItemKind::Function,
+            doc: "Alias for format_f64.",
         },
     ],
 };
@@ -1518,7 +1824,7 @@ const NET: StdModule = StdModule {
 
 const HTTP: StdModule = StdModule {
     path: "std::http",
-    summary: "HTTP/1.1 client and server.",
+    summary: "HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.",
     items: &[
         StdItem {
             name: "Request",
@@ -1559,6 +1865,57 @@ const HTTP: StdModule = StdModule {
             name: "Client",
             kind: StdItemKind::Type,
             doc: "HTTP client capable of GET/POST/PUT/DELETE.",
+        },
+        // HTTP/2 surface — folded in per the Go model.
+        StdItem {
+            name: "Http2Handler",
+            kind: StdItemKind::Trait,
+            doc: "Bounded-body HTTP/2 handler: serve(Request) -> Response.",
+        },
+        StdItem {
+            name: "Http2StreamingHandler",
+            kind: StdItemKind::Trait,
+            doc: "Chunked-body HTTP/2 handler: serve(Request, StreamingResponseWriter) -> Result.",
+        },
+        StdItem {
+            name: "StreamingResponseWriter",
+            kind: StdItemKind::Type,
+            doc: "Streaming HTTP/2 response writer; set_status / header / write_chunk / finish.",
+        },
+        StdItem {
+            name: "Http2Config",
+            kind: StdItemKind::Type,
+            doc: "Per-connection HTTP/2 tuning (window sizes, max concurrent streams, frame caps).",
+        },
+        StdItem {
+            name: "Http2ServerHandle",
+            kind: StdItemKind::Type,
+            doc: "Handle to a running HTTP/2 connection for shutdown / in-flight counts.",
+        },
+        StdItem {
+            name: "Http2Error",
+            kind: StdItemKind::Type,
+            doc: "HTTP/2 server error: Io, Protocol, Handler.",
+        },
+        StdItem {
+            name: "serve_h2_connection",
+            kind: StdItemKind::Function,
+            doc: "Drive an HTTP/2 connection on the calling goroutine (bounded handler).",
+        },
+        StdItem {
+            name: "serve_h2_connection_streaming",
+            kind: StdItemKind::Function,
+            doc: "Same shape for Http2StreamingHandler.",
+        },
+        StdItem {
+            name: "serve_h2c",
+            kind: StdItemKind::Function,
+            doc: "Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext).",
+        },
+        StdItem {
+            name: "serve_h2c_streaming",
+            kind: StdItemKind::Function,
+            doc: "Same shape for Http2StreamingHandler.",
         },
     ],
 };
@@ -2131,9 +2488,9 @@ const ENCODING_PEM: StdModule = StdModule {
     ],
 };
 
-const ENCODING_BINARY_FULL: StdModule = StdModule {
+const ENCODING_BINARY: StdModule = StdModule {
     path: "std::encoding::binary",
-    summary: "Complete big/little-endian integer packing and varint codecs.",
+    summary: "Big/little-endian integer packing and varint codecs.",
     items: &[
         StdItem {
             name: "get_u8",
@@ -2372,63 +2729,6 @@ const ITER: StdModule = StdModule {
 // proxy, native client, chunked transfer, archives, extended compress,
 // XML / base32 / ascii85, FNV, big-int, insecure / cipher crypto.
 // ---------------------------------------------------------------------------
-
-const HTTP2: StdModule = StdModule {
-    path: "std::http2",
-    summary: "HTTP/2 server (h2 crate over goroutine future-driver). Bounded and streaming handler shapes; ALPN-aware HTTPS dispatch via http::server::bind_and_run_tls_h2.",
-    items: &[
-        StdItem {
-            name: "Handler",
-            kind: StdItemKind::Trait,
-            doc: "Bounded-body handler: serve(Request) -> Response.",
-        },
-        StdItem {
-            name: "StreamingHandler",
-            kind: StdItemKind::Trait,
-            doc: "Chunked-body handler: serve(Request, ResponseWriter) -> Result<(), Error>.",
-        },
-        StdItem {
-            name: "ResponseWriter",
-            kind: StdItemKind::Type,
-            doc: "Streaming response writer; set_status / header / write_chunk / finish.",
-        },
-        StdItem {
-            name: "Config",
-            kind: StdItemKind::Type,
-            doc: "Per-connection h2 tuning (window sizes, max concurrent streams, frame caps).",
-        },
-        StdItem {
-            name: "ServerHandle",
-            kind: StdItemKind::Type,
-            doc: "Handle returned by serve_connection to inspect in-flight count and trigger graceful shutdown.",
-        },
-        StdItem {
-            name: "Error",
-            kind: StdItemKind::Type,
-            doc: "h2 server error: Io, Protocol, Handler.",
-        },
-        StdItem {
-            name: "serve_connection",
-            kind: StdItemKind::Function,
-            doc: "Drive an HTTP/2 connection on the calling goroutine (bounded Handler).",
-        },
-        StdItem {
-            name: "serve_connection_streaming",
-            kind: StdItemKind::Function,
-            doc: "Same shape for StreamingHandler.",
-        },
-        StdItem {
-            name: "bind_and_run_h2c",
-            kind: StdItemKind::Function,
-            doc: "Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext).",
-        },
-        StdItem {
-            name: "bind_and_run_h2c_streaming",
-            kind: StdItemKind::Function,
-            doc: "Same shape for StreamingHandler.",
-        },
-    ],
-};
 
 const HTTP_ROUTER: StdModule = StdModule {
     path: "std::http::router",

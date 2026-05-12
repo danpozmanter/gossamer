@@ -3728,6 +3728,8 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_os_exists" => Some("gos_rt_os_exists"),
         "gos_rt_os_is_file" => Some("gos_rt_os_is_file"),
         "gos_rt_os_is_dir" => Some("gos_rt_os_is_dir"),
+        "gos_rt_os_is_symlink" => Some("gos_rt_os_is_symlink"),
+        "gos_rt_os_file_size" => Some("gos_rt_os_file_size"),
         "gos_rt_os_remove_file" => Some("gos_rt_os_remove_file"),
         "gos_rt_result_map_bare" => Some("gos_rt_result_map_bare"),
         "gos_rt_result_map_err_bare" => Some("gos_rt_result_map_err_bare"),
@@ -3922,6 +3924,8 @@ fn lower_generic_rt_call(
         "gos_rt_os_exists" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_os_is_file" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_os_is_dir" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_os_is_symlink" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_os_file_size" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_os_remove_file" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_result_map_bare" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_result_map_err_bare" => (&[ptr_ty, types::I64], Some(ptr_ty)),
@@ -6086,11 +6090,12 @@ fn lower_intrinsic_call(
             );
             Ok(true)
         }
-        // `std::os::exit(code)` — route through `gos_rt_exit`
-        // (which calls `std::process::exit` — identical behavior
-        // to libc's `exit`, but keeps every syscall that touches
-        // process state inside the runtime crate).
-        "os::exit" => {
+        // `os::exit(code)` / `process::exit(code)` — both spellings
+        // route through `gos_rt_exit` (which calls
+        // `std::process::exit` — identical behavior to libc's
+        // `exit`, but keeps every syscall that touches process
+        // state inside the runtime crate).
+        "os::exit" | "process::exit" => {
             let exit = intrinsics.extern_fn_by_name(module, "gos_rt_exit")?;
             let exit_ref = module.declare_func_in_func(exit, builder.func);
             let code = match args.first() {
@@ -6103,6 +6108,39 @@ fn lower_intrinsic_call(
                 _ => code,
             };
             let _ = builder.ins().call(exit_ref, &[code32]);
+            let zero = builder.ins().iconst(types::I64, 0);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                zero,
+            );
+            Ok(true)
+        }
+        // `process::id()` -> u32. Calls the runtime helper that
+        // wraps `std::process::id`. Width-widen to i64 for the
+        // destination since the local slots are 8 bytes.
+        "process::id" => {
+            let id_fn = intrinsics.extern_fn_by_name(module, "gos_rt_process_id")?;
+            let id_ref = module.declare_func_in_func(id_fn, builder.func);
+            let call = builder.ins().call(id_ref, &[]);
+            let result = builder.inst_results(call)[0];
+            let widened = builder.ins().uextend(types::I64, result);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                widened,
+            );
+            Ok(true)
+        }
+        // `process::abort()` -> !. Routes through gos_rt_process_abort.
+        "process::abort" => {
+            let abort_fn = intrinsics.extern_fn_by_name(module, "gos_rt_process_abort")?;
+            let abort_ref = module.declare_func_in_func(abort_fn, builder.func);
+            let _ = builder.ins().call(abort_ref, &[]);
             let zero = builder.ins().iconst(types::I64, 0);
             define_var_to(
                 builder,

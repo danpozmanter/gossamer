@@ -5,10 +5,10 @@
   *     gos run examples/simple_cli_args.gos -- alpha beta
   */
 
-use std::{iter, os}
+use std::{env, iter}
 
 fn main() {
-  println!("program: {}", os::program_name())
-  os::args() |> iter::for_each(|a| println!("arg: {}", a))
+  println!("program: {}", env::program_name())
+  env::args() |> iter::for_each(|a| println!("arg: {}", a))
 }
 

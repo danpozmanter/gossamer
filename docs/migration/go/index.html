@@ -127,6 +127,8 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#concurrency">Concurrency</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#functional-combinators-replace-per-loop-accumulators">Functional combinators replace per-loop accumulators</a>
+    </li>
         </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#stdlib-equivalents">Stdlib equivalents</a>
@@ -160,6 +162,8 @@
         </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#cross-references">Cross-references</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#standard-library-mapping-go-gossamer">Standard library mapping (Go → Gossamer)</a>
     </li>
     </ul>
                   </li>
@@ -445,6 +449,33 @@ write the conversion table out by hand:</p>
     default =&gt; println(&quot;would block&quot;),
 }
 </code></pre>
+<h3 id="functional-combinators-replace-per-loop-accumulators">Functional combinators replace per-loop accumulators<a class="headerlink" href="#functional-combinators-replace-per-loop-accumulators" title="Permanent link">&para;</a></h3>
+<p>Go:</p>
+<pre><code class="language-go">total := 0
+for _, n := range xs {
+    if n%2 == 0 {
+        total += n * n
+    }
+}
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let total = xs
+    |&gt; iter::filter(|n: i64| n % 2 == 0)
+    |&gt; iter::sum_by(|n: i64| n * n)
+</code></pre>
+<p><code>std::iter</code> (SPEC §10.4) ships F#-style chaining combinators —
+<code>map</code>, <code>filter</code>, <code>for_each</code>, <code>fold</code>, <code>sum_by</code>, <code>find</code>, <code>any</code>, <code>all</code>,
+<code>take</code>, <code>skip</code>, <code>range</code>/<code>range_inclusive</code>, <code>chain</code>, <code>reversed</code>,
+plus closure-taking siblings. Argument order is data-last so each
+combinator threads naturally through <code>|&gt;</code>. Mirror modules for
+<code>Option&lt;T&gt;</code> (<code>std::option</code>) and <code>Result&lt;T, E&gt;</code> (<code>std::result</code>)
+cover the absent-or-default and error-mapping cases without a
+<code>match</code> block.</p>
+<p>The <code>for</code> loop stays in the language and stays idiomatic — for
+side-effect loops with <code>break</code> / <code>continue</code>, for state machines
+(running flag, accumulator pair, etc.), and for loops that need
+to early-return. <code>iter::*</code> is for the <em>transformation</em> cases that
+otherwise spawn a <code>let mut acc = 0; for x in xs { acc += … }</code>.</p>
 <h2 id="stdlib-equivalents">Stdlib equivalents<a class="headerlink" href="#stdlib-equivalents" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -841,6 +872,97 @@ logger.info(&quot;started&quot;, &amp;[slog::field(&quot;port&quot;, 8080)])
   stdlib item, support state.
   / <code>--race</code> recipes.</li>
 </ul>
+<h2 id="standard-library-mapping-go-gossamer">Standard library mapping (Go → Gossamer)<a class="headerlink" href="#standard-library-mapping-go-gossamer" title="Permanent link">&para;</a></h2>
+<p>Most of Go's <code>net/</code>, <code>encoding/</code>, <code>compress/</code>, <code>archive/</code>, <code>crypto/</code>,
+<code>hash/</code>, and <code>database/</code> namespace is mirrored 1:1 in Gossamer. Where
+Gossamer diverges, it does so toward Rust's <code>fs</code>/<code>env</code>/<code>process</code>
+split for OS primitives — <code>os.ReadFile</code> → <code>fs::read</code>, <code>os.Args</code> →
+<code>env::args</code>, <code>os.Exit</code> → <code>process::exit</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Go</th>
+<th>Gossamer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>os.ReadFile</code></td>
+<td><code>fs::read</code></td>
+</tr>
+<tr>
+<td><code>os.WriteFile</code></td>
+<td><code>fs::write</code></td>
+</tr>
+<tr>
+<td><code>os.Remove</code></td>
+<td><code>fs::remove_file</code></td>
+</tr>
+<tr>
+<td><code>os.MkdirAll</code></td>
+<td><code>fs::create_dir_all</code></td>
+</tr>
+<tr>
+<td><code>os.ReadDir</code></td>
+<td><code>fs::read_dir</code></td>
+</tr>
+<tr>
+<td><code>os.Args</code></td>
+<td><code>env::args()</code></td>
+</tr>
+<tr>
+<td><code>os.Getenv</code></td>
+<td><code>env::var</code></td>
+</tr>
+<tr>
+<td><code>os.Setenv</code></td>
+<td><code>env::set_var</code></td>
+</tr>
+<tr>
+<td><code>os.Getwd</code></td>
+<td><code>env::current_dir</code></td>
+</tr>
+<tr>
+<td><code>os.TempDir</code></td>
+<td><code>env::temp_dir</code></td>
+</tr>
+<tr>
+<td><code>os.Exit</code></td>
+<td><code>process::exit</code></td>
+</tr>
+<tr>
+<td><code>os/exec.Command(...)</code></td>
+<td><code>process::Command::new(...)</code></td>
+</tr>
+<tr>
+<td><code>path/filepath.Join</code></td>
+<td><code>path::join</code></td>
+</tr>
+<tr>
+<td><code>path/filepath.Walk</code></td>
+<td><code>fs::walk_dir</code></td>
+</tr>
+<tr>
+<td><code>path/filepath.Glob</code></td>
+<td><code>fs::glob</code></td>
+</tr>
+<tr>
+<td><code>sync.Mutex</code></td>
+<td><code>sync::Mutex</code></td>
+</tr>
+<tr>
+<td><code>time.Sleep</code></td>
+<td><code>time::sleep</code></td>
+</tr>
+<tr>
+<td><code>go fn()</code></td>
+<td><code>go expr</code></td>
+</tr>
+</tbody>
+</table>
+<p>HTTP/2 is integrated into <code>std::http</code> directly — exactly the
+shape of Go's <code>net/http</code>. <code>http::serve_h2c</code> is the cleartext h2c
+entry point; HTTP/2 over TLS auto-negotiates via ALPN.</p>
               
             </div>
           </div><footer>

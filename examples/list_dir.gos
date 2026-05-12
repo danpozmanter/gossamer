@@ -1,6 +1,6 @@
+use std::env
 use std::errors
 use std::fs
-use std::os
 use std::time
 
 fn kind_tag(entry: &fs::DirInfo) -> String {
@@ -62,7 +62,7 @@ fn render_modified(unix_ms: i64) -> String {
 }
 
 fn main() -> Result<(), errors::Error> {
-    let args = os::args()
+    let args = env::args()
     let target = if args.len() >= 1 {
         args[0].clone()
     } else {

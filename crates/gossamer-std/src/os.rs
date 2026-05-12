@@ -183,3 +183,18 @@ pub fn home() -> Option<String> {
 pub fn temp_dir() -> String {
     std::env::temp_dir().to_string_lossy().into_owned()
 }
+
+/// Returns the OS family — `"unix"` or `"windows"`. Mirrors
+/// Go's `runtime.GOOS` and the family component of Rust's
+/// `std::env::consts::FAMILY`.
+#[must_use]
+pub fn family() -> &'static str {
+    std::env::consts::FAMILY
+}
+
+/// Returns the target CPU architecture, e.g. `"x86_64"` or
+/// `"aarch64"`. Mirrors Go's `runtime.GOARCH`.
+#[must_use]
+pub fn arch() -> &'static str {
+    std::env::consts::ARCH
+}

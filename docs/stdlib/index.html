@@ -282,7 +282,7 @@
 </tr>
 <tr>
 <td><a href="encoding_binary/"><code>std::encoding::binary</code></a></td>
-<td>Big-endian / little-endian integer packing.</td>
+<td>Big/little-endian integer packing and varint codecs.</td>
 </tr>
 <tr>
 <td><a href="encoding_csv/"><code>std::encoding::csv</code></a></td>
@@ -309,6 +309,10 @@
 <td>YAML 1.2 parser/emitter (serde_yaml-backed).</td>
 </tr>
 <tr>
+<td><a href="env/"><code>std::env</code></a></td>
+<td>Process environment, command-line arguments, working directory.</td>
+</tr>
+<tr>
 <td><a href="errors/"><code>std::errors</code></a></td>
 <td>Error construction, wrapping, and chain traversal.</td>
 </tr>
@@ -322,7 +326,7 @@
 </tr>
 <tr>
 <td><a href="fs/"><code>std::fs</code></a></td>
-<td>Filesystem walking and mutation helpers.</td>
+<td>Filesystem reading, writing, and traversal (Rust std::fs shape).</td>
 </tr>
 <tr>
 <td><a href="hash_fnv/"><code>std::hash::fnv</code></a></td>
@@ -334,11 +338,7 @@
 </tr>
 <tr>
 <td><a href="http/"><code>std::http</code></a></td>
-<td>HTTP/1.1 client and server.</td>
-</tr>
-<tr>
-<td><a href="http2/"><code>std::http2</code></a></td>
-<td>HTTP/2 server (h2 crate over goroutine future-driver). Bounded and streaming handler shapes; ALPN-aware HTTPS dispatch via http::server::bind_and_run_tls_h2.</td>
+<td>HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.</td>
 </tr>
 <tr>
 <td><a href="http_chunked/"><code>std::http::chunked</code></a></td>
@@ -381,6 +381,10 @@
 <td>Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.</td>
 </tr>
 <tr>
+<td><a href="log/"><code>std::log</code></a></td>
+<td>Flat line-oriented logging (Go's <code>log</code> shape).</td>
+</tr>
+<tr>
 <td><a href="math/"><code>std::math</code></a></td>
 <td>Mathematical constants and f64 functions (Go's math package shape).</td>
 </tr>
@@ -406,7 +410,7 @@
 </tr>
 <tr>
 <td><a href="os/"><code>std::os</code></a></td>
-<td>Operating-system primitives: filesystem, env, process.</td>
+<td>Operating-system identity and deprecated re-exports of env/process/fs.</td>
 </tr>
 <tr>
 <td><a href="os_exec/"><code>std::os::exec</code></a></td>
@@ -427,6 +431,10 @@
 <tr>
 <td><a href="path_native/"><code>std::path::native</code></a></td>
 <td>Native-separator wrappers over <code>std::path</code> (backslash on Windows).</td>
+</tr>
+<tr>
+<td><a href="process/"><code>std::process</code></a></td>
+<td>Spawn child processes, exit the current process (Rust std::process shape).</td>
 </tr>
 <tr>
 <td><a href="regex/"><code>std::regex</code></a></td>
@@ -463,6 +471,10 @@
 <tr>
 <td><a href="text_template/"><code>std::text::template</code></a></td>
 <td>Plain-text templates (no escaping).</td>
+</tr>
+<tr>
+<td><a href="thread/"><code>std::thread</code></a></td>
+<td>Native OS threads. For goroutines use the <code>go expr</code> syntax.</td>
 </tr>
 <tr>
 <td><a href="time/"><code>std::time</code></a></td>

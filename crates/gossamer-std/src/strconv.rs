@@ -75,6 +75,43 @@ pub fn format_f64(value: f64) -> String {
     out
 }
 
+// Compatibility aliases — SKILL.md and Go's `strconv` use these
+// shorter names. The canonical entry points are `parse_i64` /
+// `format_i64` etc.; these forward.
+
+/// Alias for [`parse_i64`].
+pub fn parse_int(text: &str) -> Result<i64, ParseError> {
+    parse_i64(text)
+}
+
+/// Alias for [`parse_i64`] — Go-style spelling.
+pub fn atoi(text: &str) -> Result<i64, ParseError> {
+    parse_i64(text)
+}
+
+/// Alias for [`parse_f64`].
+pub fn parse_float(text: &str) -> Result<f64, ParseError> {
+    parse_f64(text)
+}
+
+/// Alias for [`format_i64`].
+#[must_use]
+pub fn format_int(value: i64) -> String {
+    format_i64(value)
+}
+
+/// Alias for [`format_i64`] — Go-style spelling.
+#[must_use]
+pub fn itoa(value: i64) -> String {
+    format_i64(value)
+}
+
+/// Alias for [`format_f64`].
+#[must_use]
+pub fn format_float(value: f64) -> String {
+    format_f64(value)
+}
+
 fn classify(err: std::num::ParseIntError, text: &str) -> ParseError {
     use std::num::IntErrorKind;
     match err.kind() {

@@ -23,6 +23,9 @@ pub mod context;
 pub mod crypto;
 pub mod database;
 pub mod encoding;
+/// Process environment, command-line arguments, working directory
+/// (Rust `std::env` shape).
+pub mod env;
 pub mod errors;
 pub mod exec;
 pub mod ffi;
@@ -81,6 +84,8 @@ pub mod os;
 pub mod panic;
 pub mod path;
 pub mod pprof;
+/// Child processes and process control (Rust `std::process` shape).
+pub mod process;
 pub mod regex;
 pub mod registry;
 pub mod runtime;

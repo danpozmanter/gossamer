@@ -163,7 +163,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="stdfs"><code>std::fs</code><a class="headerlink" href="#stdfs" title="Permanent link">&para;</a></h1>
-<p>Filesystem walking and mutation helpers.</p>
+<p>Filesystem reading, writing, and traversal (Rust std::fs shape).</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -175,6 +175,21 @@
 </thead>
 <tbody>
 <tr>
+<td><code>read</code></td>
+<td>fn</td>
+<td>Reads an entire file into memory as bytes.</td>
+</tr>
+<tr>
+<td><code>read_to_string</code></td>
+<td>fn</td>
+<td>Reads an entire file into memory as UTF-8 text.</td>
+</tr>
+<tr>
+<td><code>write</code></td>
+<td>fn</td>
+<td>Writes bytes to a file, creating or truncating it.</td>
+</tr>
+<tr>
 <td><code>read_dir</code></td>
 <td>fn</td>
 <td>Returns the immediate children of a directory.</td>
@@ -185,9 +200,29 @@
 <td>Recursively visits every descendant entry.</td>
 </tr>
 <tr>
+<td><code>create_dir</code></td>
+<td>fn</td>
+<td>Creates a single directory. Fails if any parent is missing.</td>
+</tr>
+<tr>
 <td><code>create_dir_all</code></td>
 <td>fn</td>
-<td>Creates a path and any missing ancestors.</td>
+<td>Creates a directory and any missing ancestors.</td>
+</tr>
+<tr>
+<td><code>remove_file</code></td>
+<td>fn</td>
+<td>Removes a single file.</td>
+</tr>
+<tr>
+<td><code>remove_dir</code></td>
+<td>fn</td>
+<td>Removes an empty directory.</td>
+</tr>
+<tr>
+<td><code>remove_dir_all</code></td>
+<td>fn</td>
+<td>Recursively removes a directory and its contents.</td>
 </tr>
 <tr>
 <td><code>remove_all</code></td>
@@ -203,6 +238,51 @@
 <td><code>rename</code></td>
 <td>fn</td>
 <td>Renames a file or directory.</td>
+</tr>
+<tr>
+<td><code>exists</code></td>
+<td>fn</td>
+<td>Returns whether a path exists on the filesystem.</td>
+</tr>
+<tr>
+<td><code>is_file</code></td>
+<td>fn</td>
+<td>Returns whether a path exists and is a regular file.</td>
+</tr>
+<tr>
+<td><code>is_dir</code></td>
+<td>fn</td>
+<td>Returns whether a path exists and is a directory.</td>
+</tr>
+<tr>
+<td><code>is_symlink</code></td>
+<td>fn</td>
+<td>Returns whether a path exists and is a symbolic link.</td>
+</tr>
+<tr>
+<td><code>file_size</code></td>
+<td>fn</td>
+<td>Returns the file's size in bytes; 0 on error.</td>
+</tr>
+<tr>
+<td><code>metadata</code></td>
+<td>fn</td>
+<td>Returns filesystem metadata for a path.</td>
+</tr>
+<tr>
+<td><code>canonicalize</code></td>
+<td>fn</td>
+<td>Resolves a path to an absolute, symlink-free canonical form.</td>
+</tr>
+<tr>
+<td><code>glob</code></td>
+<td>fn</td>
+<td>Returns paths matching a glob pattern (<em>, ?, [abc], </em>*).</td>
+</tr>
+<tr>
+<td><code>eval_symlinks</code></td>
+<td>fn</td>
+<td>Resolves all symlinks along a path; mirrors Go's filepath.EvalSymlinks.</td>
 </tr>
 </tbody>
 </table>

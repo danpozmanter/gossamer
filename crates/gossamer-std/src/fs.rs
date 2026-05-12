@@ -136,6 +136,77 @@ pub fn exists(path: impl AsRef<Path>) -> bool {
     path.as_ref().exists()
 }
 
+/// Reads the entire contents of `path` into a byte vector.
+pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
+    let path = path.as_ref().to_path_buf();
+    crate::blocking_pool::run(move || stdfs::read(&path))
+}
+
+/// `true` iff `path` exists and is a regular file.
+#[must_use]
+pub fn is_file(path: impl AsRef<Path>) -> bool {
+    path.as_ref().is_file()
+}
+
+/// `true` iff `path` exists and is a directory.
+#[must_use]
+pub fn is_dir(path: impl AsRef<Path>) -> bool {
+    path.as_ref().is_dir()
+}
+
+/// `true` iff `path` exists and is a symbolic link.
+#[must_use]
+pub fn is_symlink(path: impl AsRef<Path>) -> bool {
+    stdfs::symlink_metadata(path.as_ref()).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// File size in bytes, or 0 if `path` cannot be stat'd.
+#[must_use]
+pub fn file_size(path: impl AsRef<Path>) -> u64 {
+    stdfs::metadata(path).map_or(0, |m| m.len())
+}
+
+/// Resolves `path` to an absolute, symlink-free form.
+pub fn canonicalize(path: impl AsRef<Path>) -> io::Result<String> {
+    stdfs::canonicalize(path).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Creates a single directory at `path`. Fails if a parent is
+/// missing — use [`create_dir_all`] for the recursive form.
+pub fn create_dir(path: impl AsRef<Path>) -> io::Result<()> {
+    stdfs::create_dir(path)
+}
+
+/// Removes a single file.
+pub fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
+    stdfs::remove_file(path)
+}
+
+/// Removes an empty directory.
+pub fn remove_dir(path: impl AsRef<Path>) -> io::Result<()> {
+    stdfs::remove_dir(path)
+}
+
+/// Recursively removes a directory and its contents.
+pub fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
+    stdfs::remove_dir_all(path)
+}
+
+/// Returns paths matching the glob `pattern`. Supports `*`, `?`,
+/// `[abc]`, and `**` (recursive directory match). The pattern is
+/// rooted at the current working directory unless it begins
+/// with `/`.
+pub fn glob(pattern: &str) -> io::Result<Vec<String>> {
+    crate::path::glob(pattern)
+}
+
+/// Resolves all symlinks along `path` and returns the canonical
+/// absolute path. Same shape as [`canonicalize`] but mirrors Go's
+/// `filepath.EvalSymlinks` name.
+pub fn eval_symlinks(path: impl AsRef<Path>) -> io::Result<String> {
+    crate::path::eval_symlinks(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

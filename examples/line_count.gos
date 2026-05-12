@@ -3,7 +3,7 @@
  *
  * A minimal, self-contained, terminating example used by the CI
  * smoke suite. The richer version in earlier drafts walked the
- * filesystem via `os::read_dir`, fanned work out through a
+ * filesystem via `fs::read_dir`, fanned work out through a
  * channel, and aggregated results in a goroutine; that flow is
  * parked until the scheduler-aware runtime lands.
  */

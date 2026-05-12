@@ -163,7 +163,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="stdhttp"><code>std::http</code><a class="headerlink" href="#stdhttp" title="Permanent link">&para;</a></h1>
-<p>HTTP/1.1 client and server.</p>
+<p>HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -213,6 +213,56 @@
 <td><code>Client</code></td>
 <td>type</td>
 <td>HTTP client capable of GET/POST/PUT/DELETE.</td>
+</tr>
+<tr>
+<td><code>Http2Handler</code></td>
+<td>trait</td>
+<td>Bounded-body HTTP/2 handler: serve(Request) -&gt; Response.</td>
+</tr>
+<tr>
+<td><code>Http2StreamingHandler</code></td>
+<td>trait</td>
+<td>Chunked-body HTTP/2 handler: serve(Request, StreamingResponseWriter) -&gt; Result.</td>
+</tr>
+<tr>
+<td><code>StreamingResponseWriter</code></td>
+<td>type</td>
+<td>Streaming HTTP/2 response writer; set_status / header / write_chunk / finish.</td>
+</tr>
+<tr>
+<td><code>Http2Config</code></td>
+<td>type</td>
+<td>Per-connection HTTP/2 tuning (window sizes, max concurrent streams, frame caps).</td>
+</tr>
+<tr>
+<td><code>Http2ServerHandle</code></td>
+<td>type</td>
+<td>Handle to a running HTTP/2 connection for shutdown / in-flight counts.</td>
+</tr>
+<tr>
+<td><code>Http2Error</code></td>
+<td>type</td>
+<td>HTTP/2 server error: Io, Protocol, Handler.</td>
+</tr>
+<tr>
+<td><code>serve_h2_connection</code></td>
+<td>fn</td>
+<td>Drive an HTTP/2 connection on the calling goroutine (bounded handler).</td>
+</tr>
+<tr>
+<td><code>serve_h2_connection_streaming</code></td>
+<td>fn</td>
+<td>Same shape for Http2StreamingHandler.</td>
+</tr>
+<tr>
+<td><code>serve_h2c</code></td>
+<td>fn</td>
+<td>Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext).</td>
+</tr>
+<tr>
+<td><code>serve_h2c_streaming</code></td>
+<td>fn</td>
+<td>Same shape for Http2StreamingHandler.</td>
 </tr>
 </tbody>
 </table>

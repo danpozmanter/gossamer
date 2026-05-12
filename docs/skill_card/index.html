@@ -718,6 +718,25 @@ fn main() -&gt; Result&lt;(), http::Error&gt; {
   self-evident code. Gossamer has no <code>///</code> / <code>//!</code> form.</li>
 <li><strong>Pipe aggressively</strong> — if a value flows through more
   than one call, use <code>|&gt;</code>.</li>
+<li><strong><code>iter::*</code> over hand-rolled <code>for</code> loops for transformations.</strong>
+  <code>xs |&gt; iter::for_each(handle)</code> instead of
+  <code>for x in xs { handle(x) }</code> when the body is a single call.
+  <code>xs |&gt; iter::sum_by(|n| n*n)</code> instead of a
+  <code>let mut total=0; for n in xs { ... }</code>. The combinators (<code>map</code>,
+  <code>filter</code>, <code>filter_map</code>, <code>fold</code>, <code>reduce</code>, <code>for_each</code>, <code>find</code>,
+  <code>group_by</code>, <code>partition</code>, …) live as free functions in
+  <code>std::iter</code> with data-last argument order so they thread through
+  <code>|&gt;</code>. Keep <code>for</code> for side-effect loops with complex state,
+  <code>break</code>/<code>continue</code>, or early-return.</li>
+<li><strong><code>option::*</code> / <code>result::*</code> for in-pipeline chaining.</strong>
+  <code>parse(s) |&gt; result::map(render) |&gt; result::default("")</code>
+  instead of a <code>match</code> when each arm is extract-or-default.
+  <code>?</code> remains the right tool for short-circuit propagation.</li>
+<li><strong>Free functions in <code>std::iter</code>, not methods on collections.</strong>
+  <code>Vec&lt;T&gt;</code> / <code>HashMap</code> / <code>HashSet</code> do not carry <code>.map</code> /
+  <code>.filter</code> / <code>.fold</code> methods. Mutating helpers like <code>xs.push</code>,
+  <code>xs.sort</code>, <code>m.inc</code>, <code>m.or_insert</code> stay as methods because they
+  operate by side-effect on the receiver.</li>
 <li><strong>One statement per line;</strong> omit semicolons.</li>
 <li><strong>Derive <code>Debug</code>, <code>Clone</code>, <code>PartialEq</code></strong> when cheap and
   meaningful; derive <code>Default</code> for zero-valued types.</li>

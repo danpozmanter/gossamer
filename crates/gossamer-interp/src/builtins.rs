@@ -12,6 +12,7 @@ use std::time::Duration;
 use gossamer_ast::Ident;
 
 use gossamer_std::compress::gzip as gzip_std;
+use gossamer_std::env as env_std;
 use gossamer_std::exec as exec_std;
 use gossamer_std::fs as fs_std;
 use gossamer_std::http as http_std;
@@ -284,13 +285,17 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Router::serve",
         native("Router::serve", crate::stdlib_builtins::native_router_serve),
     ));
+    // HTTP/2 folded into std::http per the Go model. Canonical
+    // names live under http::*; nothing exposes the old http2::
+    // module path any more (the interp dispatch did, briefly,
+    // during 0.4.0 dev — it's gone now).
     globals.push((
-        "http2::bind_and_run_h2c",
-        native("http2::bind_and_run_h2c", native_http2_bind_and_run_h2c),
+        "http::serve_h2c",
+        native("http::serve_h2c", native_http2_bind_and_run_h2c),
     ));
     globals.push((
-        "http2::Config::default",
-        builtin("http2::Config::default", builtin_http2_config_default),
+        "http::Http2Config::default",
+        builtin("http::Http2Config::default", builtin_http2_config_default),
     ));
     globals.push((
         "http::Response::text",
@@ -448,6 +453,12 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     install_module(
         "os",
         &[
+            // os identity (canonical — stays on os::).
+            ("family", builtin_os_family),
+            ("arch", builtin_os_arch),
+            // Deprecated re-exports — kept callable so existing
+            // user code keeps working; see env::*, process::exit,
+            // fs::* for the canonical paths.
             ("args", builtin_os_args),
             ("program_name", builtin_os_program_name),
             ("env", builtin_os_env),
@@ -471,6 +482,21 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         globals,
     );
     install_module(
+        "env",
+        &[
+            ("args", builtin_os_args),
+            ("program_name", builtin_os_program_name),
+            ("var", builtin_os_env),
+            ("set_var", builtin_env_set_var),
+            ("unset_var", builtin_env_unset_var),
+            ("current_dir", builtin_os_cwd),
+            ("set_current_dir", builtin_env_set_current_dir),
+            ("home_dir", builtin_env_home_dir),
+            ("temp_dir", builtin_env_temp_dir),
+        ],
+        globals,
+    );
+    install_module(
         "time",
         &[
             ("now", builtin_time_now),
@@ -481,6 +507,8 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    // Bare `exec::*` is a back-compat alias for `process::*` /
+    // `os::exec::*`. New code should prefer `process::*`.
     install_module(
         "exec",
         &[
@@ -500,10 +528,23 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         globals,
     );
     install_module(
+        "process",
+        &[
+            ("run", builtin_exec_run),
+            ("spawn", builtin_exec_spawn),
+            ("kill", builtin_exec_kill),
+            ("exit", builtin_os_exit),
+            ("id", builtin_process_id),
+            ("abort", builtin_process_abort),
+        ],
+        globals,
+    );
+    install_module(
         "fs",
         &[
             ("walk_dir", builtin_fs_walk_dir),
             ("list_dir", builtin_fs_list_dir),
+            ("read", builtin_os_read_file),
             ("read_to_string", builtin_os_read_file_to_string),
             ("read_file", builtin_os_read_file),
             ("write", builtin_os_write_file),
@@ -512,16 +553,29 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("mkdir", builtin_os_mkdir),
             ("mkdir_all", builtin_os_mkdir_all),
             ("remove_file", builtin_os_remove_file),
+            ("remove_dir", builtin_fs_remove_dir),
             ("remove_dir_all", builtin_fs_remove_dir_all),
             ("remove_all", builtin_fs_remove_dir_all),
             ("rename", builtin_os_rename),
+            ("read_dir", builtin_os_read_dir),
             ("exists", builtin_os_exists),
+            ("is_file", builtin_fs_is_file),
+            ("is_dir", builtin_fs_is_dir),
+            ("is_symlink", builtin_fs_is_symlink),
+            ("file_size", builtin_fs_file_size),
+            ("canonicalize", builtin_fs_canonicalize),
         ],
         globals,
     );
     install_module(
         "path",
-        &[("walk", builtin_fs_walk_dir), ("join", builtin_path_join_v)],
+        &[
+            // `path::walk` was deprecated in favour of `fs::walk_dir`;
+            // the dispatch entry stays for one release so existing
+            // user code keeps resolving while we migrate examples.
+            ("walk", builtin_fs_walk_dir),
+            ("join", builtin_path_join_v),
+        ],
         globals,
     );
     install_module("BTreeMap", &[("new", builtin_btmap_new)], globals);
@@ -541,14 +595,6 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         globals,
     );
     globals.push(("to_vec", builtin("to_vec", builtin_to_vec_v)));
-    install_module(
-        "gzip",
-        &[
-            ("encode", builtin_gzip_encode),
-            ("decode", builtin_gzip_decode),
-        ],
-        globals,
-    );
     install_module(
         "compress::gzip",
         &[
@@ -1004,6 +1050,10 @@ fn builtin_flag_define(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_("Flags", Arc::new(fields)))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "flat dispatch-registration list; splitting hides per-arm intent"
+)]
 fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("len", builtin("len", builtin_len)));
     globals.push(("to_string", builtin("to_string", builtin_to_string)));
@@ -1049,6 +1099,12 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "to_lowercase",
         builtin("to_lowercase", builtin_to_lowercase),
     ));
+    // Note: `to_lower` / `to_upper` are NOT registered here as
+    // bare globals — `install_module("unicode", ...)` later
+    // registers char-level shims under those names, which would
+    // shadow a string-level binding via the last-write-wins
+    // lookup. Method dispatch on a `String` receiver routes
+    // through the qualified `String::to_lower` key set up below.
     globals.push(("contains", builtin("contains", builtin_contains)));
     globals.push(("starts_with", builtin("starts_with", builtin_starts_with)));
     globals.push(("ends_with", builtin("ends_with", builtin_ends_with)));
@@ -1062,6 +1118,28 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push((
         "String::substring",
         builtin("String::substring", builtin_str_substring),
+    ));
+    // `String::to_lower` / `String::to_upper` — short Rust/Go-style
+    // names for the existing to_lowercase / to_uppercase shims.
+    // Registered as qualified keys so `s.to_lower()` on a `String`
+    // receiver dispatches here rather than to the char-level
+    // `unicode::to_lower` shim (which would silently return the
+    // first scalar only).
+    globals.push((
+        "String::to_lower",
+        builtin("String::to_lower", builtin_to_lowercase),
+    ));
+    globals.push((
+        "String::to_upper",
+        builtin("String::to_upper", builtin_to_uppercase),
+    ));
+    globals.push((
+        "String::to_lowercase",
+        builtin("String::to_lowercase", builtin_to_lowercase),
+    ));
+    globals.push((
+        "String::to_uppercase",
+        builtin("String::to_uppercase", builtin_to_uppercase),
     ));
     globals.push(("unwrap", builtin("unwrap", builtin_variant_unwrap)));
     globals.push(("unwrap_or", builtin("unwrap_or", builtin_variant_unwrap_or)));
@@ -2433,6 +2511,56 @@ fn builtin_os_env(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+fn builtin_env_set_var(args: &[Value]) -> RuntimeResult<Value> {
+    let name = args.first().and_then(as_str).unwrap_or("");
+    let value = args.get(1).and_then(as_str).unwrap_or("");
+    match env_std::set_var(name, value) {
+        Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_env_unset_var(args: &[Value]) -> RuntimeResult<Value> {
+    let name = args.first().and_then(as_str).unwrap_or("");
+    env_std::unset_var(name);
+    Ok(Value::Unit)
+}
+
+fn builtin_env_set_current_dir(args: &[Value]) -> RuntimeResult<Value> {
+    let path = args.first().and_then(as_str).unwrap_or("");
+    match env_std::set_current_dir(path) {
+        Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_env_home_dir(_args: &[Value]) -> RuntimeResult<Value> {
+    match env_std::home_dir() {
+        Some(p) => Ok(some_variant(Value::String(p.into()))),
+        None => Ok(none_variant()),
+    }
+}
+
+fn builtin_env_temp_dir(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(env_std::temp_dir().into()))
+}
+
+fn builtin_process_id(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Int(i64::from(std::process::id())))
+}
+
+fn builtin_process_abort(_args: &[Value]) -> RuntimeResult<Value> {
+    std::process::abort();
+}
+
+fn builtin_os_family(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(os_std::family().into()))
+}
+
+fn builtin_os_arch(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(os_std::arch().into()))
+}
+
 fn builtin_os_exit(args: &[Value]) -> RuntimeResult<Value> {
     let code = args.first().and_then(value_to_int).unwrap_or(0);
     std::process::exit(i32::try_from(code).unwrap_or(0));
@@ -2509,6 +2637,47 @@ fn builtin_fs_remove_dir_all(args: &[Value]) -> RuntimeResult<Value> {
     };
     match std::fs::remove_dir_all(path) {
         Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_fs_remove_dir(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(path) = args.first().and_then(as_str) else {
+        return Ok(err_variant("remove_dir: path argument must be a string"));
+    };
+    match std::fs::remove_dir(path) {
+        Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+fn builtin_fs_is_file(args: &[Value]) -> RuntimeResult<Value> {
+    let path = args.first().and_then(as_str).unwrap_or("");
+    Ok(Value::Bool(fs_std::is_file(path)))
+}
+
+fn builtin_fs_is_dir(args: &[Value]) -> RuntimeResult<Value> {
+    let path = args.first().and_then(as_str).unwrap_or("");
+    Ok(Value::Bool(fs_std::is_dir(path)))
+}
+
+fn builtin_fs_is_symlink(args: &[Value]) -> RuntimeResult<Value> {
+    let path = args.first().and_then(as_str).unwrap_or("");
+    Ok(Value::Bool(fs_std::is_symlink(path)))
+}
+
+fn builtin_fs_file_size(args: &[Value]) -> RuntimeResult<Value> {
+    let path = args.first().and_then(as_str).unwrap_or("");
+    let size = fs_std::file_size(path);
+    Ok(Value::Int(i64::try_from(size).unwrap_or(i64::MAX)))
+}
+
+fn builtin_fs_canonicalize(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(path) = args.first().and_then(as_str) else {
+        return Ok(err_variant("canonicalize: path argument must be a string"));
+    };
+    match fs_std::canonicalize(path) {
+        Ok(p) => Ok(ok_variant(Value::String(p.into()))),
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
 }

@@ -525,20 +525,17 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::thread;
 
-    fn pick_port() -> SocketAddr {
-        TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
+    fn bind_loopback() -> (TcpListener, SocketAddr) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        (listener, addr)
     }
 
     fn start_server<F>(handle: F) -> (SocketAddr, thread::JoinHandle<()>, Arc<AtomicBool>)
     where
         F: FnMut(Request) -> Response + Send + 'static,
     {
-        let addr = pick_port();
-        let listener = TcpListener::bind(addr).unwrap();
-        let actual = listener.local_addr().unwrap();
+        let (listener, actual) = bind_loopback();
         let shutdown = Arc::new(AtomicBool::new(false));
         let config = Config {
             shutdown: Arc::clone(&shutdown),

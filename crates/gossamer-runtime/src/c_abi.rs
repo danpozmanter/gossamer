@@ -443,6 +443,27 @@ pub unsafe extern "C" fn gos_rt_os_is_dir(path: *const c_char) -> i64 {
     i64::from(std::fs::metadata(&p).is_ok_and(|m| m.is_dir()))
 }
 
+/// `fs::is_symlink(path) -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_is_symlink(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    i64::from(std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()))
+}
+
+/// `fs::file_size(path) -> i64`. Returns 0 when the path cannot be
+/// stat'd; the interp's matching helper has the same shape.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_os_file_size(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+    std::fs::metadata(&p).map_or(0, |m| i64::try_from(m.len()).unwrap_or(i64::MAX))
+}
+
 /// `exec::run(prog, args) -> Result<Output, errors::Error>`.
 ///
 /// Spawns `prog` with `args` (a `Vec<String>` whose backing storage
@@ -5399,6 +5420,22 @@ pub unsafe extern "C" fn gos_rt_exit(code: i32) -> ! {
         gos_rt_flush_stdout();
     }
     std::process::exit(code);
+}
+
+/// Returns the current process ID. Wraps `std::process::id`. The
+/// LLVM and cranelift backends call this for `process::id()` in
+/// Gossamer source.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_process_id() -> u32 {
+    std::process::id()
+}
+
+/// Aborts the current process without unwinding. Wraps
+/// `std::process::abort`. Used by `process::abort()` in Gossamer
+/// source. Doesn't flush stdout — abort semantics.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_process_abort() -> ! {
+    std::process::abort();
 }
 
 // ---------------------------------------------------------------

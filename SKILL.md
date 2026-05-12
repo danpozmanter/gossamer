@@ -317,10 +317,10 @@ build / wrap / inspect errors through `std::errors`:
 
 ```gossamer
 use std::errors
-use std::os
+use std::fs
 
 fn load_config(path: &String) -> Result<String, errors::Error> {
-    os::read_file_to_string(path)
+    fs::read_to_string(path)
         .map_err(|e| errors::wrap(e, format!("reading {}", path)))
 }
 ```
@@ -336,14 +336,14 @@ through `result::map` for the ok-path and
 `result::default_with` to handle the error in-line:
 
 ```gossamer
-use std::{errors, iter, os, result}
+use std::{env, errors, fs, iter, result}
 
 fn cat(f: &String) -> Result<(), errors::Error> {
-    os::read_file_to_string(f) |> result::map(|s| print!("{}", s))
+    fs::read_to_string(f) |> result::map(|s| print!("{}", s))
 }
 
 fn main() {
-    os::args() |> iter::for_each(|f| cat(&f) |> result::default_with(|e| eprintln!("{f}: {e}")))
+    env::args() |> iter::for_each(|f| cat(&f) |> result::default_with(|e| eprintln!("{f}: {e}")))
 }
 ```
 
@@ -519,14 +519,24 @@ executed by `gos test`. Mark non-runnable fences as
 
 - `std::fmt` — `Display`, `Debug`.
 - `std::io` — `Read`, `Write`, buffered wrappers, `stdin` / `stdout`.
-- `std::os` — process environment, argv, filesystem primitives.
-  Now also exposed: `set_env`, `unset_env`, `is_file`, `is_dir`,
-  `is_symlink`, `file_size`, `home`, `temp_dir`, `set_cwd`,
-  `canonicalize`, `remove_dir`, `remove_dir_all`, `copy`,
-  `program_name` (returns argv[0]; `args()` already skips it).
-- `std::fs` — `metadata`, `is_file`, `is_dir`, `is_symlink`,
-  `file_size`, `copy`, `canonicalize` (in addition to existing
-  `read_to_string` / `write` / `walk_dir` / `read_dir`).
+- `std::env` — process environment and CLI args:
+  `args`, `program_name`, `var`, `set_var`, `unset_var`,
+  `current_dir`, `set_current_dir`, `home_dir`, `temp_dir`.
+- `std::process` — child processes and exit:
+  `Command`, `Output`, `Stdio`, `Child`, `ExitStatus`,
+  `run`, `spawn`, `kill`, `exit`, `id`, `abort`.
+- `std::fs` — filesystem (Rust-style):
+  `read`, `read_to_string`, `write`, `read_dir`, `walk_dir`,
+  `create_dir`, `create_dir_all`, `remove_file`, `remove_dir`,
+  `remove_dir_all`, `remove_all`, `copy`, `rename`, `exists`,
+  `is_file`, `is_dir`, `is_symlink`, `file_size`, `metadata`,
+  `canonicalize`, `glob`, `eval_symlinks`.
+- `std::path` — pure path manipulation (no I/O):
+  `join`, `split`, `base`, `dir`, `ext`, `clean`,
+  `is_absolute`, `has_prefix`, `matches`. `path::native` for
+  backslash-style paths on Windows.
+- `std::os` — OS identity + deprecated re-exports of env/process/fs
+  for one release: `family()`, `arch()`.
 - `std::strings` — `split`, `splitn`, `split_whitespace`, `trim`,
   `trim_start`, `trim_end`, `contains`, `find`, `rfind`,
   `replace`, `replacen`, `to_lower`, `to_upper`, `starts_with`,
@@ -613,14 +623,14 @@ license = "Apache-2.0"
 ### CLI flags
 
 ```gossamer
+use std::env
 use std::flag
-use std::os
 
 fn main() -> Result<(), flag::Error> {
     let mut fs = flag::Set::new("myapp")
     let port = fs.uint("port", 8080, "listen port")
     let verbose = fs.bool("verbose", false, "chatty output")
-    let _ = fs.parse(os::args())?
+    let _ = fs.parse(env::args())?
 
     if *verbose {
         println!("starting on port {}", *port)
@@ -687,7 +697,7 @@ match per (method, path), exact match by default with
   Channels work under `gos run`; `gos build` for programs
   that create channels is not yet wired — it will bail with
   a clear message. `go` spawn by itself builds natively.
-- `os::args()` can return empty under some codegen paths —
+- `env::args()` can return empty under some codegen paths —
   prefer `std::flag` with explicit defaults.
 - `arr.sort_by(|a, b| …)` works in the bytecode VM and the
   tree-walker. The cranelift JIT auto-skips bodies that call

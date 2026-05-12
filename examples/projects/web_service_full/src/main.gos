@@ -17,7 +17,7 @@
  */
 
 use std::http
-use std::os
+use std::env
 use std::slog
 use std::signal
 
@@ -171,8 +171,8 @@ fn main() -> Result<(), http::Error> {
     // accepts both http:// and https:// deployments behind the
     // same handler so the shape stays uniform between dev and
     // production.
-    let cert_path = os::env("GOS_TLS_CERT")
-    let key_path = os::env("GOS_TLS_KEY")
+    let cert_path = env::var("GOS_TLS_CERT")
+    let key_path = env::var("GOS_TLS_KEY")
     let _ = cert_path
     let _ = key_path
     let _ = shutdown

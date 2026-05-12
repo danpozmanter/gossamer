@@ -498,3 +498,36 @@ logger.info("started", &[slog::field("port", 8080)])
 - [`../stdlib_coverage.md`](../stdlib_coverage.md) — every
   stdlib item, support state.
   / `--race` recipes.
+
+## Standard library mapping (Go → Gossamer)
+
+Most of Go's `net/`, `encoding/`, `compress/`, `archive/`, `crypto/`,
+`hash/`, and `database/` namespace is mirrored 1:1 in Gossamer. Where
+Gossamer diverges, it does so toward Rust's `fs`/`env`/`process`
+split for OS primitives — `os.ReadFile` → `fs::read`, `os.Args` →
+`env::args`, `os.Exit` → `process::exit`.
+
+| Go | Gossamer |
+| --- | --- |
+| `os.ReadFile` | `fs::read` |
+| `os.WriteFile` | `fs::write` |
+| `os.Remove` | `fs::remove_file` |
+| `os.MkdirAll` | `fs::create_dir_all` |
+| `os.ReadDir` | `fs::read_dir` |
+| `os.Args` | `env::args()` |
+| `os.Getenv` | `env::var` |
+| `os.Setenv` | `env::set_var` |
+| `os.Getwd` | `env::current_dir` |
+| `os.TempDir` | `env::temp_dir` |
+| `os.Exit` | `process::exit` |
+| `os/exec.Command(...)` | `process::Command::new(...)` |
+| `path/filepath.Join` | `path::join` |
+| `path/filepath.Walk` | `fs::walk_dir` |
+| `path/filepath.Glob` | `fs::glob` |
+| `sync.Mutex` | `sync::Mutex` |
+| `time.Sleep` | `time::sleep` |
+| `go fn()` | `go expr` |
+
+HTTP/2 is integrated into `std::http` directly — exactly the
+shape of Go's `net/http`. `http::serve_h2c` is the cleartext h2c
+entry point; HTTP/2 over TLS auto-negotiates via ALPN.

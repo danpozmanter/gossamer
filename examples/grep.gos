@@ -12,14 +12,16 @@
 
 use std::bufio
 use std::errors
+use std::env
 use std::flag
 use std::os
+use std::process
 
 fn main() -> Result<(), errors::Error> {
     let mut fs = flag::Set::new("grep")
     let count = fs.bool("count", false, "print only the match count")
     let numbers = fs.bool("line-numbers", false, "prefix matches with line number")
-    let rest = fs.parse(os::args())
+    let rest = fs.parse(env::args())
         .map_err(|e| errors::wrap(e, "parse flags"))?
     if rest.is_empty() {
         return Err(errors::new("usage: grep [--count] [--line-numbers] PATTERN"))
@@ -49,7 +51,7 @@ fn main() -> Result<(), errors::Error> {
         println!("{hits}")
     }
     if hits == 0 {
-        os::exit(1)
+        process::exit(1)
     }
     Ok(())
 }

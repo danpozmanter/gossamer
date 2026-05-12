@@ -1,5 +1,9 @@
 /*
- * HTTP/2 cleartext (h2c) server using std::http2.
+ * HTTP/2 cleartext (h2c) server using std::http.
+ *
+ * Following the Go model, HTTP/2 lives inside std::http directly —
+ * `http::serve_h2c` is the h2c (cleartext) entry point;
+ * `http::serve_tls` auto-negotiates HTTP/2 over TLS via ALPN.
  *
  * Each accepted connection runs the h2 handshake under the
  * goroutine scheduler and spawns one child goroutine per inbound
@@ -18,7 +22,6 @@
  */
 
 use std::http
-use std::http2
 
 struct App { }
 
@@ -33,5 +36,5 @@ impl App {
 
 fn main() {
     println!("HTTP/2 (h2c) listening on :8443")
-    let _ = http2::bind_and_run_h2c("0.0.0.0:8443", App { }, http2::Config::default())
+    let _ = http::serve_h2c("0.0.0.0:8443", App { }, http::Http2Config::default())
 }

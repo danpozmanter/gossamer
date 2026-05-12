@@ -163,7 +163,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="stdos"><code>std::os</code><a class="headerlink" href="#stdos" title="Permanent link">&para;</a></h1>
-<p>Operating-system primitives: filesystem, env, process.</p>
+<p>Operating-system identity and deprecated re-exports of env/process/fs.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -175,79 +175,99 @@
 </thead>
 <tbody>
 <tr>
+<td><code>family</code></td>
+<td>fn</td>
+<td>Returns "unix" or "windows" for the running OS family.</td>
+</tr>
+<tr>
+<td><code>arch</code></td>
+<td>fn</td>
+<td>Returns the target CPU architecture (e.g. "x86_64").</td>
+</tr>
+<tr>
 <td><code>args</code></td>
 <td>fn</td>
-<td>Returns the program's command-line arguments.</td>
+<td>Deprecated: use env::args.</td>
+</tr>
+<tr>
+<td><code>program_name</code></td>
+<td>fn</td>
+<td>Deprecated: use env::program_name.</td>
 </tr>
 <tr>
 <td><code>env</code></td>
 <td>fn</td>
-<td>Returns the value of an environment variable.</td>
+<td>Deprecated: use env::var.</td>
 </tr>
 <tr>
 <td><code>set_env</code></td>
 <td>fn</td>
-<td>Sets an environment variable in the current process.</td>
+<td>Deprecated: use env::set_var.</td>
 </tr>
 <tr>
 <td><code>exit</code></td>
 <td>fn</td>
-<td>Exits the process with the given status code.</td>
+<td>Deprecated: use process::exit.</td>
 </tr>
 <tr>
 <td><code>open</code></td>
 <td>fn</td>
-<td>Opens a file for reading.</td>
+<td>Deprecated: use fs::open.</td>
 </tr>
 <tr>
 <td><code>create</code></td>
 <td>fn</td>
-<td>Creates or truncates a file for writing.</td>
+<td>Deprecated: use fs::create.</td>
 </tr>
 <tr>
 <td><code>read_file</code></td>
 <td>fn</td>
-<td>Reads an entire file into memory.</td>
+<td>Deprecated: use fs::read.</td>
+</tr>
+<tr>
+<td><code>read_file_to_string</code></td>
+<td>fn</td>
+<td>Deprecated: use fs::read_to_string.</td>
 </tr>
 <tr>
 <td><code>write_file</code></td>
 <td>fn</td>
-<td>Writes the given bytes to a file, creating it if needed.</td>
+<td>Deprecated: use fs::write.</td>
 </tr>
 <tr>
 <td><code>remove_file</code></td>
 <td>fn</td>
-<td>Removes a file from the filesystem.</td>
+<td>Deprecated: use fs::remove_file.</td>
 </tr>
 <tr>
 <td><code>rename</code></td>
 <td>fn</td>
-<td>Renames a file or directory.</td>
+<td>Deprecated: use fs::rename.</td>
 </tr>
 <tr>
 <td><code>exists</code></td>
 <td>fn</td>
-<td>Returns whether a path exists.</td>
+<td>Deprecated: use fs::exists.</td>
 </tr>
 <tr>
 <td><code>mkdir</code></td>
 <td>fn</td>
-<td>Creates a single directory.</td>
+<td>Deprecated: use fs::create_dir.</td>
 </tr>
 <tr>
 <td><code>mkdir_all</code></td>
 <td>fn</td>
-<td>Creates a directory and any required parents.</td>
+<td>Deprecated: use fs::create_dir_all.</td>
 </tr>
 <tr>
 <td><code>read_dir</code></td>
 <td>fn</td>
-<td>Iterates the entries of a directory.</td>
+<td>Deprecated: use fs::read_dir.</td>
 </tr>
 <tr>
 <td><code>File</code></td>
 <td>type</td>
-<td>Open file handle supporting read/write/seek/close.</td>
+<td>Deprecated: use fs::File.</td>
 </tr>
 </tbody>
 </table>

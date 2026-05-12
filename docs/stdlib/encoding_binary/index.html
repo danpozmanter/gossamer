@@ -163,7 +163,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="stdencodingbinary"><code>std::encoding::binary</code><a class="headerlink" href="#stdencodingbinary" title="Permanent link">&para;</a></h1>
-<p>Big-endian / little-endian integer packing.</p>
+<p>Big/little-endian integer packing and varint codecs.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -174,16 +174,6 @@
 </tr>
 </thead>
 <tbody>
-<tr>
-<td><code>put_u16_be</code></td>
-<td>fn</td>
-<td>Writes a big-endian u16.</td>
-</tr>
-<tr>
-<td><code>put_u32_be</code></td>
-<td>fn</td>
-<td>Writes a big-endian u32.</td>
-</tr>
 <tr>
 <td><code>get_u8</code></td>
 <td>fn</td>
@@ -200,6 +190,11 @@
 <td>Reads a big-endian u16.</td>
 </tr>
 <tr>
+<td><code>put_u16_be</code></td>
+<td>fn</td>
+<td>Writes a big-endian u16.</td>
+</tr>
+<tr>
 <td><code>get_u16_le</code></td>
 <td>fn</td>
 <td>Reads a little-endian u16.</td>
@@ -213,6 +208,11 @@
 <td><code>get_u32_be</code></td>
 <td>fn</td>
 <td>Reads a big-endian u32.</td>
+</tr>
+<tr>
+<td><code>put_u32_be</code></td>
+<td>fn</td>
+<td>Writes a big-endian u32.</td>
 </tr>
 <tr>
 <td><code>get_u32_le</code></td>

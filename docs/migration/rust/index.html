@@ -113,6 +113,10 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#translation-examples">Translation examples</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#collection-combinators-one-obvious-way">Collection combinators (one obvious way)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#standard-library-mapping-rust-gossamer">Standard library mapping (Rust → Gossamer)</a>
+    </li>
     </ul>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../go/">From Go</a>
@@ -248,6 +252,119 @@ into a handful of rules.</p>
 </code></pre>
 <p>(Trait objects stay available but rarely needed — concrete closure
 types are preferred and the GC keeps their captures alive.)</p>
+<h2 id="collection-combinators-one-obvious-way">Collection combinators (one obvious way)<a class="headerlink" href="#collection-combinators-one-obvious-way" title="Permanent link">&para;</a></h2>
+<p>Rust:</p>
+<pre><code class="language-rust">let total: i64 = xs.iter()
+    .filter(|n| **n % 2 == 0)
+    .map(|n| n * n)
+    .sum();
+</code></pre>
+<p>Gossamer:</p>
+<pre><code class="language-gos">let total = xs
+    |&gt; iter::filter(|n: i64| n % 2 == 0)
+    |&gt; iter::sum_by(|n: i64| n * n)
+</code></pre>
+<p><code>Vec&lt;T&gt;</code>, <code>HashMap&lt;K, V&gt;</code>, and <code>HashSet&lt;T&gt;</code> deliberately <strong>do not</strong>
+carry <code>.map</code> / <code>.filter</code> / <code>.fold</code> methods in Gossamer. The
+free-function form in <code>std::iter</code> is the one obvious way to chain
+transformations, and the <code>|&gt;</code> operator (SPEC §4.6) threads each
+value through with the data-last convention. Mutating helpers like
+<code>xs.push</code>, <code>xs.sort</code>, <code>m.inc</code>, <code>m.or_insert</code> stay as methods —
+they operate by side-effect on the receiver and don't compose
+through <code>|&gt;</code>.</p>
+<p>The same pattern applies to <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code> chaining:
+Rust-style methods (<code>opt.map</code>, <code>opt.unwrap_or</code>, <code>result.map_err</code>)
+remain available, but the free-function siblings in <code>std::option</code>
+and <code>std::result</code> are the pipe-friendly form. <code>?</code> stays the right
+tool for short-circuit propagation; the combinators are for
+in-pipeline transformation.</p>
+<h2 id="standard-library-mapping-rust-gossamer">Standard library mapping (Rust → Gossamer)<a class="headerlink" href="#standard-library-mapping-rust-gossamer" title="Permanent link">&para;</a></h2>
+<p>The Gossamer stdlib follows Rust's <code>fs</code>/<code>env</code>/<code>process</code> split for
+process-level primitives, and Go's flat <code>strings</code>/<code>strconv</code>/<code>bytes</code>
+shape for text and numeric formatting. Filesystem entry points are
+all in <code>fs::*</code>, environment and CLI in <code>env::*</code>, child processes
+and exit in <code>process::*</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Rust</th>
+<th>Gossamer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>std::fs::read_to_string</code></td>
+<td><code>fs::read_to_string</code></td>
+</tr>
+<tr>
+<td><code>std::fs::read</code></td>
+<td><code>fs::read</code></td>
+</tr>
+<tr>
+<td><code>std::fs::write</code></td>
+<td><code>fs::write</code></td>
+</tr>
+<tr>
+<td><code>std::fs::remove_file</code></td>
+<td><code>fs::remove_file</code></td>
+</tr>
+<tr>
+<td><code>std::fs::create_dir_all</code></td>
+<td><code>fs::create_dir_all</code></td>
+</tr>
+<tr>
+<td><code>std::fs::read_dir</code></td>
+<td><code>fs::read_dir</code> (returns <code>Vec&lt;DirInfo&gt;</code>)</td>
+</tr>
+<tr>
+<td><code>std::fs::copy</code></td>
+<td><code>fs::copy</code></td>
+</tr>
+<tr>
+<td><code>std::env::args</code></td>
+<td><code>env::args</code></td>
+</tr>
+<tr>
+<td><code>std::env::var(name).ok()</code></td>
+<td><code>env::var(name)</code></td>
+</tr>
+<tr>
+<td><code>std::env::current_dir</code></td>
+<td><code>env::current_dir</code></td>
+</tr>
+<tr>
+<td><code>std::env::temp_dir</code></td>
+<td><code>env::temp_dir</code></td>
+</tr>
+<tr>
+<td><code>std::process::Command::new(...)</code></td>
+<td><code>process::Command::new(...)</code></td>
+</tr>
+<tr>
+<td><code>std::process::exit</code></td>
+<td><code>process::exit</code></td>
+</tr>
+<tr>
+<td><code>std::path::Path::new(p).join(...)</code></td>
+<td><code>path::join(p, ...)</code></td>
+</tr>
+<tr>
+<td><code>std::sync::Mutex</code></td>
+<td><code>sync::Mutex</code></td>
+</tr>
+<tr>
+<td><code>std::time::Duration::from_millis</code></td>
+<td><code>time::Duration::from_millis</code></td>
+</tr>
+<tr>
+<td><code>std::thread::spawn</code></td>
+<td><code>go expr</code> (goroutine) or <code>thread::spawn</code> (OS thread)</td>
+</tr>
+</tbody>
+</table>
+<p>HTTP/2 is integrated into <code>std::http</code> directly (Go-style) —
+<code>http::serve_h2c</code> for cleartext h2c, automatic ALPN negotiation
+when serving over TLS. There is no separate <code>std::http2</code>.</p>
               
             </div>
           </div><footer>

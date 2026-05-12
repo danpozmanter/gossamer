@@ -12,5 +12,4 @@ POSIX-style path manipulation.
 | `dir` | fn | Directory portion. |
 | `ext` | fn | Dotted extension, if any. |
 | `clean` | fn | Collapses `.`, `..`, and duplicate separators. |
-| `walk` | fn | Recursive directory walk; returns Result<[String], String> of every descendant path. Aliases fs::walk_dir. |
 

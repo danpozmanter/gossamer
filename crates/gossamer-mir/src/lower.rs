@@ -2264,7 +2264,7 @@ impl<'a> Builder<'a> {
             // in entries` iterates real C-string slots instead of
             // segfaulting on the null pointer that the generic
             // fall-through used to hand back.
-            "os::read_dir" => {
+            "os::read_dir" | "fs::read_dir" => {
                 let s = self.tcx.string_ty();
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
                 ("gos_rt_os_read_dir", v)
@@ -2303,12 +2303,19 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_time_format_rfc3339", result_ty)
             }
-            "os::program_name" => ("gos_rt_os_program_name", self.tcx.string_ty()),
-            "os::env" => ("gos_rt_os_env", self.option_string_adt_ty()),
+            "os::program_name" | "env::program_name" => {
+                ("gos_rt_os_program_name", self.tcx.string_ty())
+            }
+            "os::env" | "env::var" => ("gos_rt_os_env", self.option_string_adt_ty()),
             "os::exists" | "fs::exists" => ("gos_rt_os_exists", self.tcx.bool_ty()),
             "os::is_file" | "fs::is_file" => ("gos_rt_os_is_file", self.tcx.bool_ty()),
             "os::is_dir" | "fs::is_dir" => ("gos_rt_os_is_dir", self.tcx.bool_ty()),
-            "os::cwd" => ("gos_rt_os_cwd", self.result_string_error_adt_ty()),
+            "os::is_symlink" | "fs::is_symlink" => ("gos_rt_os_is_symlink", self.tcx.bool_ty()),
+            "os::file_size" | "fs::file_size" => (
+                "gos_rt_os_file_size",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "os::cwd" | "env::current_dir" => ("gos_rt_os_cwd", self.result_string_error_adt_ty()),
             // `os::args() -> Vec<String>`. Pinning the dest type
             // here is what teaches `args[i].len()` to dispatch
             // through `gos_rt_str_len` instead of the generic
@@ -2323,7 +2330,7 @@ impl<'a> Builder<'a> {
             // `*mut GosVec` whose data pointer is `argv + 1`, so
             // index access through the standard `header.ptr + i *
             // elem_bytes` shape Just Works.
-            "os::args" => {
+            "os::args" | "env::args" => {
                 let s = self.tcx.string_ty();
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
                 ("gos_rt_os_args", v)
@@ -2404,7 +2411,7 @@ impl<'a> Builder<'a> {
             // user-fn symbol and the destination held an undefined
             // pointer the caller then dereferenced as the Result
             // aggregate (the askq segfault).
-            "exec::run" | "os::exec::run" => {
+            "exec::run" | "os::exec::run" | "process::run" => {
                 let output_def = gossamer_resolve::DefId::local(u32::MAX - 3);
                 let output_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
                     def: output_def,
@@ -2444,7 +2451,7 @@ impl<'a> Builder<'a> {
             // payload to `i64` and the Err to `errors::Error` so
             // downstream `?` / `match` shapes find the right field
             // layout.
-            "exec::spawn" | "os::exec::spawn" => {
+            "exec::spawn" | "os::exec::spawn" | "process::spawn" => {
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let err_ty = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([i64_ty, err_ty]);
@@ -2455,7 +2462,9 @@ impl<'a> Builder<'a> {
                 ("gos_rt_exec_spawn", result_ty)
             }
             // `exec::kill(pid) -> bool` — best-effort SIGTERM.
-            "exec::kill" | "os::exec::kill" => ("gos_rt_exec_kill", self.tcx.bool_ty()),
+            "exec::kill" | "os::exec::kill" | "process::kill" => {
+                ("gos_rt_exec_kill", self.tcx.bool_ty())
+            }
             "flag::Set::new" => (
                 "gos_rt_flag_set_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -2480,7 +2489,7 @@ impl<'a> Builder<'a> {
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             "http::serve" => ("gos_rt_http_serve", self.tcx.unit()),
-            "http2::bind_and_run_h2c" => ("gos_rt_http2_bind_and_run_h2c", self.tcx.unit()),
+            "http::serve_h2c" => ("gos_rt_http2_bind_and_run_h2c", self.tcx.unit()),
             // 0.4.0 HTTP-module bridges (compiled tier free-fn surface).
             // Stateful types (router::new, etc.) are interp-only and not
             // listed here — calling them in compiled mode emits an
@@ -4646,11 +4655,13 @@ impl<'a> Builder<'a> {
                     return Some(local);
                 }
             }
-            // `http2::bind_and_run_h2c(addr, handler, config)` —
-            // ignore the config argument in compiled mode and use
-            // the runtime default; reuses the same handler-fn-ptr
-            // dispatch as http::serve.
-            if joined == "http2::bind_and_run_h2c" && args.len() >= 2 {
+            // `http::serve_h2c(addr, handler, config)` — ignore the
+            // config argument in compiled mode and use the runtime
+            // default; reuses the same handler-fn-ptr dispatch as
+            // http::serve. Renamed from the original `http2::*`
+            // spelling when HTTP/2 was folded into std::http per
+            // the Go model (0.4.0).
+            if joined == "http::serve_h2c" && args.len() >= 2 {
                 if let Some(local) = self.lower_http2_bind_and_run_h2c(&args[0], &args[1], ty, span)
                 {
                     return Some(local);
@@ -4788,7 +4799,9 @@ impl<'a> Builder<'a> {
                             self.tcx.float_ty(gossamer_types::FloatTy::F64)
                         }
                         "time::now_ns" | "time::now_ms" | "strconv::parse_i64"
-                        | "gos_rt_math_sqrt" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                        | "strconv::parse_int" | "strconv::atoi" | "gos_rt_math_sqrt" => {
+                            self.tcx.int_ty(gossamer_types::IntTy::I64)
+                        }
                         // String-returning stdlib helpers. The
                         // runtime returns a `*mut c_char` which the
                         // codegen needs to know is a String so
@@ -7794,8 +7807,8 @@ impl<'a> Builder<'a> {
                     Some("")
                 }
             }
-            "to_lowercase" => Some("gos_rt_str_to_lower"),
-            "to_uppercase" => Some("gos_rt_str_to_upper"),
+            "to_lowercase" | "to_lower" => Some("gos_rt_str_to_lower"),
+            "to_uppercase" | "to_upper" => Some("gos_rt_str_to_upper"),
             "push" => Some("gos_rt_vec_push"),
             "pop" => Some("gos_rt_vec_pop"),
             "iter" => Some("gos_rt_arr_iter"),
@@ -9322,8 +9335,10 @@ impl<'a> Builder<'a> {
             HirExprKind::MethodCall { name, .. } => match name.name.as_str() {
                 "len" | "count" | "find" | "byte_at" | "as_i64" | "to_int" | "abs" | "pow"
                 | "signum" => Some(TyKind::Int(gossamer_types::IntTy::I64)),
-                "to_string" | "trim" | "to_lowercase" | "to_uppercase" | "replace" | "repeat"
-                | "as_str" | "clone_str" | "message" => Some(TyKind::String),
+                "to_string" | "trim" | "to_lowercase" | "to_uppercase" | "to_lower"
+                | "to_upper" | "replace" | "repeat" | "as_str" | "clone_str" | "message" => {
+                    Some(TyKind::String)
+                }
                 "is_empty" | "contains" | "starts_with" | "ends_with" | "is_some" | "is_none"
                 | "is_ok" | "is_err" => Some(TyKind::Bool),
                 _ => None,
@@ -9522,11 +9537,13 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
-    /// Lowers `http2::bind_and_run_h2c(addr, handler, config?)`
-    /// to `gos_rt_http2_bind_and_run_h2c(addr, handler_env, fn_addr)`
+    /// Lowers `http::serve_h2c(addr, handler, config?)` to
+    /// `gos_rt_http2_bind_and_run_h2c(addr, handler_env, fn_addr)`
     /// — same handler-fn-ptr dispatch as `http::serve`. The
     /// runtime ignores the optional `config` arg in v0.4.0 and
-    /// uses the default `http_h2::Config`.
+    /// uses the default HTTP/2 config. The fn was renamed from
+    /// `http2::bind_and_run_h2c` when HTTP/2 was folded into the
+    /// http namespace per the Go model.
     fn lower_http2_bind_and_run_h2c(
         &mut self,
         addr_expr: &HirExpr,

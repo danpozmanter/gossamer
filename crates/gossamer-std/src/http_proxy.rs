@@ -232,7 +232,17 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    fn pick_port() -> SocketAddr {
+    fn bind_loopback() -> (TcpListener, SocketAddr) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        (listener, addr)
+    }
+
+    /// Returns an ephemeral port that was bound, then released —
+    /// useful for negative tests that need a port nothing is
+    /// listening on. The brief gap between drop and reuse is OK
+    /// since the caller's intent is "no listener here".
+    fn pick_unbound_port() -> SocketAddr {
         TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
@@ -273,9 +283,7 @@ mod tests {
     #[test]
     fn single_host_proxy_forwards_path_and_query() {
         // Start a real upstream that echoes back its path + query.
-        let addr = pick_port();
-        let listener = TcpListener::bind(addr).unwrap();
-        let actual_addr = listener.local_addr().unwrap();
+        let (listener, actual_addr) = bind_loopback();
         let shutdown = StdArc::new(AtomicBool::new(false));
         let config = Config {
             max_requests: Some(1),
@@ -310,7 +318,7 @@ mod tests {
     #[test]
     fn error_handler_runs_on_transport_failure() {
         // Point at an unbound port so the request fails.
-        let port = pick_port();
+        let port = pick_unbound_port();
         let proxy = ReverseProxy::single_host(format!("http://127.0.0.1:{}", port.port()))
             .with_error_handler(|_req, _err| Response {
                 status: StatusCode(503),
