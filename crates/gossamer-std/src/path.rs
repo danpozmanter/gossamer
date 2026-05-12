@@ -413,8 +413,16 @@ where
 /// `?`, `[abc]`, and `**` (recursive directory match). The
 /// pattern is rooted at the current working directory unless
 /// it begins with `/`.
+///
+/// On Windows, `\` is accepted as a path separator in the
+/// pattern interchangeably with `/`, and drive-letter
+/// (`C:\...`) or UNC (`\\server\share\...`) prefixes mark the
+/// pattern as absolute. The function is the boundary at which
+/// native-form paths cross into the otherwise-posix path
+/// helpers — callers do not need to pre-convert.
 pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
-    let (root, rest) = split_glob_root(pattern);
+    let normalised = normalise_glob_separators(pattern);
+    let (root, rest) = split_glob_root(&normalised);
     let segments: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
     let mut frontier: Vec<std::path::PathBuf> = vec![root];
     for seg in &segments {
@@ -462,7 +470,56 @@ pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
     Ok(out)
 }
 
+/// Replace `\` with `/` on Windows so the glob splitter sees a
+/// single canonical separator. No-op elsewhere — `\` is a valid
+/// filename character on Unix and must stay literal.
+fn normalise_glob_separators(pattern: &str) -> String {
+    #[cfg(windows)]
+    {
+        pattern.replace('\\', "/")
+    }
+    #[cfg(not(windows))]
+    {
+        pattern.to_string()
+    }
+}
+
 fn split_glob_root(pattern: &str) -> (std::path::PathBuf, &str) {
+    #[cfg(windows)]
+    {
+        let bytes = pattern.as_bytes();
+        // UNC share root: //server/share/rest — the root is the
+        // share itself, not `/`, because there is no per-drive
+        // root above it.
+        if bytes.len() >= 2 && bytes[0] == b'/' && bytes[1] == b'/' {
+            if let Some(srv_end) = pattern[2..].find('/') {
+                let after_srv = 2 + srv_end + 1;
+                if let Some(share_end) = pattern[after_srv..].find('/') {
+                    let root_end = after_srv + share_end + 1;
+                    return (
+                        std::path::PathBuf::from(&pattern[..root_end]),
+                        &pattern[root_end..],
+                    );
+                }
+                return (std::path::PathBuf::from(pattern), "");
+            }
+            // Malformed (no share name) — fall through to relative.
+        }
+        // Drive-letter absolute: `C:/...`. The root must include
+        // the trailing slash; `PathBuf::from("C:")` resolves to
+        // the *current* directory of drive C, which is not what
+        // the user wrote.
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'/'
+        {
+            return (
+                std::path::PathBuf::from(&pattern[..3]),
+                &pattern[3..],
+            );
+        }
+    }
     if let Some(rest) = pattern.strip_prefix('/') {
         (std::path::PathBuf::from("/"), rest)
     } else {
@@ -611,5 +668,66 @@ mod glob_walk_tests {
         std::fs::write(&file, "x").unwrap();
         let resolved = eval_symlinks(&file).unwrap();
         assert!(resolved.ends_with("real.txt"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn glob_accepts_backslash_separators() {
+        // A pattern in native Windows form (backslashes, drive
+        // prefix) is what callers produce by formatting a
+        // `std::path::Path::display()` into a string, so glob must
+        // accept it verbatim.
+        let dir = TmpDir::new("glob_bs");
+        std::fs::write(dir.path().join("a.gos"), "").unwrap();
+        std::fs::write(dir.path().join("b.gos"), "").unwrap();
+        let pattern = format!("{}\\*.gos", dir.path().display());
+        let mut out = glob(&pattern).unwrap();
+        out.sort();
+        assert_eq!(out.len(), 2, "got {out:?}");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn glob_accepts_mixed_separators() {
+        // The exact shape produced by `format!("{}/*.gos",
+        // dir.display())`: backslashes in the prefix from
+        // `display()`, a forward slash inserted by the literal.
+        let dir = TmpDir::new("glob_mix");
+        std::fs::create_dir(dir.path().join("nest")).unwrap();
+        std::fs::write(dir.path().join("nest\\a.gos"), "").unwrap();
+        let prefix = dir.path().display().to_string();
+        let pattern = format!("{prefix}/nest/*.gos");
+        let out = glob(&pattern).unwrap();
+        assert_eq!(out.len(), 1, "got {out:?}");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn split_glob_root_handles_drive_letter() {
+        let (root, rest) = super::split_glob_root("C:/Users/foo/*.gos");
+        assert_eq!(root, std::path::PathBuf::from("C:/"));
+        assert_eq!(rest, "Users/foo/*.gos");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn split_glob_root_handles_unc_share() {
+        let (root, rest) = super::split_glob_root("//srv/share/foo/*.gos");
+        assert_eq!(root, std::path::PathBuf::from("//srv/share/"));
+        assert_eq!(rest, "foo/*.gos");
+    }
+
+    #[test]
+    fn split_glob_root_treats_posix_absolute_as_root() {
+        let (root, rest) = super::split_glob_root("/etc/foo/*.gos");
+        assert_eq!(root, std::path::PathBuf::from("/"));
+        assert_eq!(rest, "etc/foo/*.gos");
+    }
+
+    #[test]
+    fn split_glob_root_treats_relative_as_cwd() {
+        let (root, rest) = super::split_glob_root("a/b/*.gos");
+        assert_eq!(root, std::path::PathBuf::from("."));
+        assert_eq!(rest, "a/b/*.gos");
     }
 }
