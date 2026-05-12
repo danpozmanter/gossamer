@@ -14,11 +14,11 @@ use gossamer_ast::Ident;
 use gossamer_std::compress::gzip as gzip_std;
 use gossamer_std::env as env_std;
 use gossamer_std::exec as exec_std;
-use gossamer_std::signal as signal_std;
 use gossamer_std::fs as fs_std;
 use gossamer_std::http as http_std;
 use gossamer_std::json as json_std;
 use gossamer_std::os as os_std;
+use gossamer_std::signal as signal_std;
 use gossamer_std::slog as slog_std;
 use gossamer_std::time as time_std;
 
@@ -540,18 +540,13 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
-    install_module(
-        "signal",
-        &[("on", builtin_signal_on)],
-        globals,
-    );
-    install_module(
-        "os::signal",
-        &[("on", builtin_signal_on)],
-        globals,
-    );
+    install_module("signal", &[("on", builtin_signal_on)], globals);
+    install_module("os::signal", &[("on", builtin_signal_on)], globals);
     globals.push(("signal_wait", builtin("signal_wait", builtin_signal_wait)));
-    globals.push(("signal_try_wait", builtin("signal_try_wait", builtin_signal_try_wait)));
+    globals.push((
+        "signal_try_wait",
+        builtin("signal_try_wait", builtin_signal_try_wait),
+    ));
     install_module(
         "fs",
         &[

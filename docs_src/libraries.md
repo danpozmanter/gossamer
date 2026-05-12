@@ -22,7 +22,7 @@ widget/
 [project]
 id      = "example.com/widget"
 version = "0.1.0"
-authors = ["Jane Roe <jane@example.com>"]
+authors = ["Leslie Tungsten <ltungsten@example.com>"]
 license = "Apache-2.0"
 
 [dependencies]

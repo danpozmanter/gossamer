@@ -2466,9 +2466,10 @@ impl<'a> Builder<'a> {
                 ("gos_rt_exec_kill", self.tcx.bool_ty())
             }
             // `signal::on(sig_raw) -> i64` — registers a notifier.
-            "signal::on" | "os::signal::on" => {
-                ("gos_rt_signal_on", self.tcx.int_ty(gossamer_types::IntTy::I64))
-            }
+            "signal::on" | "os::signal::on" => (
+                "gos_rt_signal_on",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             // `Notifier::wait(handle)` — blocks until signal fires.
             "signal_wait" | "Notifier::wait" => ("gos_rt_signal_wait", self.tcx.unit()),
             // `Notifier::try_wait(handle) -> bool`.

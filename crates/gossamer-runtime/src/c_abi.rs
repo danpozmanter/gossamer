@@ -3175,10 +3175,10 @@ pub unsafe extern "C" fn gos_rt_signal_on(sig_raw: i32) -> i64 {
         std::sync::Arc::clone(&flag),
         std::sync::Arc::clone(&waiter),
     );
-    let notifier = SignalNotifier {
-        flag,
-        waiter,
-    };
+    // On non-unix platforms the signal number is unused.
+    #[cfg(not(unix))]
+    let _ = sig_raw;
+    let notifier = SignalNotifier { flag, waiter };
     let mut notifiers = signal_registry().notifiers.lock();
     notifiers.push(Some(notifier));
     i64::try_from(notifiers.len() - 1).unwrap_or(-1)

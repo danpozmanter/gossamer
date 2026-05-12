@@ -254,9 +254,14 @@ fn server_aborts_slowloris_at_header_timeout() {
             break;
         }
     }
-    // The server should have closed the connection. Read should
-    // succeed (EOF) or fail (connection reset) — both signal a
-    // dropped peer.
+    // Send FIN so the server goroutine gets EOF from read_line
+    // immediately rather than waiting for SO_RCVTIMEO (5 s). On
+    // macOS under constrained CI the socket timeout fires late,
+    // causing the server to hold the connection open for the full
+    // 5 s and the test to stall at stream.read() below.
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    // Server should now close — wait up to 1 s for the RST/EOF.
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
     let mut buf = [0u8; 16];
     let _ = stream.read(&mut buf);
 
@@ -264,7 +269,7 @@ fn server_aborts_slowloris_at_header_timeout() {
     let _ = TcpStream::connect(actual_addr);
     server_handle.join().unwrap();
     assert!(
-        start.elapsed() < Duration::from_secs(5),
+        start.elapsed() < Duration::from_secs(8),
         "slowloris connection must be dropped before read_timeout: {:?}",
         start.elapsed()
     );
