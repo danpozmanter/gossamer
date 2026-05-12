@@ -239,6 +239,15 @@ impl OsPoller {
     /// Registers a goroutine `gid` to wake when `io` reports the
     /// requested `interest`. Returns the [`PollSource`] handle the
     /// caller should later use to deregister.
+    ///
+    /// Falls back to `reregister` when the source is already known to
+    /// the OS poller (epoll/kqueue reject re-`register` with
+    /// `AlreadyExists`). Without this fallback, the second `wait_io`
+    /// call on a long-lived connection silently parks the goroutine
+    /// with no netpoller subscription — every keep-alive connection
+    /// would stall on its second request until the client timeout
+    /// fired, surfacing as ~200+ "deadline exceeded" failures per
+    /// 30-second bench run.
     pub fn register_io<S: mio::event::Source + ?Sized>(
         &mut self,
         io: &mut S,
@@ -262,7 +271,15 @@ impl OsPoller {
                 ));
             }
         };
-        self.poll.registry().register(io, token, mio_int)?;
+        let registered = match self.poll.registry().register(io, token, mio_int) {
+            Ok(()) => true,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                self.poll.registry().reregister(io, token, mio_int)?;
+                false
+            }
+            Err(e) => return Err(e),
+        };
+        let _ = registered;
         self.by_source.insert((source, interest), gid);
         self.by_token.insert(token, (source, interest, gid));
         Ok(source)

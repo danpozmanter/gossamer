@@ -1,16 +1,12 @@
 /*
  * Web server with method + path routing.
  *
- * Each endpoint is its own free function — none of the handlers
- * are inline lambdas. The dispatch lives in `App::serve`, which
- * matches on `(method, path)` and forwards to the appropriate
- * handler. This is the shape Go's `http.ServeMux` produces:
- * registration is declarative, every handler does one job.
- *
- * For richer apps, lift the dispatch into a reusable `Router`
- * (see SKILL.md §14 for the pattern). The free-function-per-
- * route layout in this file scales fine to a few dozen routes
- * and is the easiest shape to read at a glance.
+ * Each endpoint is a free function with the standard handler
+ * signature: `fn(http::Request) -> Result<http::Response, http::Error>`.
+ * Routes are registered directly on `router::Router::new()` — no
+ * `struct + impl http::Handler` wrapper needed. The router walks its
+ * route table per request and dispatches to the matching function;
+ * unmatched paths fall through to a built-in 404 response.
  *
  * Run:
  *     gos run examples/web_server.gos
@@ -22,6 +18,7 @@
  */
 
 use std::http
+use std::http::router
 
 // --- Handlers — each is a one-job function ---
 
@@ -52,30 +49,13 @@ fn echo(request: http::Request) -> Result<http::Response, http::Error> {
         format!("{{\"method\":\"{method}\",\"path\":\"{path}\",\"query\":\"{query}\",\"body\":\"{body}\"}}")))
 }
 
-fn not_found(request: http::Request) -> Result<http::Response, http::Error> {
-    Ok(http::Response::text(404, format!("not found: {} {}", request.method, request.path)))
-}
-
-// --- Dispatch ---
-
-struct App { }
-
-impl http::Handler for App {
-    fn serve(&self, request: http::Request) -> Result<http::Response, http::Error> {
-        let method = &request.method
-        let path = request.path()
-        if path == "/" { return index(request) }
-        if path == "/health" { return health(request) }
-        if path == "/users" {
-            if method == "POST" { return create_user(request) }
-            return list_users(request)
-        }
-        if path == "/echo" || path.starts_with("/echo") { return echo(request) }
-        not_found(request)
-    }
-}
-
 fn main() -> Result<(), http::Error> {
     println!("listening on 0.0.0.0:8080")
-    http::serve("0.0.0.0:8080", App { })
+    let r = router::Router::new()
+    r.get("/", index)
+    r.get("/health", health)
+    r.get("/users", list_users)
+    r.post("/users", create_user)
+    r.get("/echo", echo)
+    http::serve("0.0.0.0:8080", r)
 }

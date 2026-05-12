@@ -27,6 +27,24 @@ use crate::ir::{
 
 /// Lowers every function in `program` to a MIR [`Body`].
 #[must_use]
+/// Calling-convention shape of a `r.get(pattern, handler)` handler value
+/// at the runtime ABI boundary. Returned by [`BodyBuilder::emit_router_handler_abi`]
+/// so the caller can pick between the env-carrying and bare entry points.
+enum RouterHandlerAbi {
+    /// Top-level `fn(http::Request) -> Result<...>` value. Caller routes
+    /// to the `_fn` runtime symbol and passes only `fn_addr`.
+    Bare(Operand),
+    /// Struct or closure value with a `(env, req) -> Result<...>` ABI.
+    /// Caller keeps the original runtime symbol and pushes both operands.
+    WithEnv {
+        /// The handler env operand (struct value pointer or closure env).
+        env: Operand,
+        /// The handler `fn_addr` operand (`gos_fn_addr("…::serve")`).
+        fn_addr: Operand,
+    },
+}
+
+/// Lower an entire HIR program to MIR `Body`s, one per top-level function.
 pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     let (structs, struct_defs) = collect_struct_fields(program);
     let enums = collect_enum_variants(program);
@@ -1489,6 +1507,66 @@ impl<'a> Builder<'a> {
                 }
                 _ => return None,
             }
+        }
+    }
+
+    /// Map a router runtime symbol to its bare-fn `_fn` variant, used
+    /// when the handler is a top-level Gossamer function rather than a
+    /// struct/closure. Returns `None` for non-router or unmappable
+    /// symbols, in which case the caller keeps the original symbol.
+    fn router_bare_variant(symbol: &str) -> Option<&'static str> {
+        match symbol {
+            "gos_rt_router_get" => Some("gos_rt_router_get_fn"),
+            "gos_rt_router_post" => Some("gos_rt_router_post_fn"),
+            "gos_rt_router_put" => Some("gos_rt_router_put_fn"),
+            "gos_rt_router_delete" => Some("gos_rt_router_delete_fn"),
+            "gos_rt_router_patch" => Some("gos_rt_router_patch_fn"),
+            "gos_rt_router_head" => Some("gos_rt_router_head_fn"),
+            "gos_rt_router_options" => Some("gos_rt_router_options_fn"),
+            "gos_rt_router_add" => Some("gos_rt_router_add_fn"),
+            _ => None,
+        }
+    }
+
+    /// Lower a Router HTTP-verb handler. Two ABI shapes:
+    ///
+    /// - bare fn handler — returned [`RouterHandlerAbi::Bare`]. The
+    ///   caller switches the runtime symbol to the `_fn` variant
+    ///   (e.g. `gos_rt_router_get_fn`) and passes only `fn_addr`.
+    /// - struct handler — returned [`RouterHandlerAbi::WithEnv`]. The
+    ///   caller keeps the existing runtime symbol and pushes both
+    ///   `(env, fn_addr)`.
+    fn emit_router_handler_abi(&mut self, handler_local: Local, span: Span) -> RouterHandlerAbi {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        if let Some(fn_name) = self.local_fn_name.get(&handler_local).cloned() {
+            let fn_addr_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(fn_addr_local),
+                Rvalue::CallIntrinsic {
+                    name: "gos_fn_addr",
+                    args: vec![Operand::Const(ConstValue::Str(fn_name))],
+                },
+                span,
+            );
+            return RouterHandlerAbi::Bare(Operand::Copy(Place::local(fn_addr_local)));
+        }
+        let handler_ty = self.locals[handler_local.0 as usize].ty;
+        let handler_struct = self
+            .struct_name_of(handler_ty)
+            .unwrap_or_else(|| "Handler".to_string());
+        let serve_fn_name = format!("{handler_struct}::serve");
+        let fn_addr_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(fn_addr_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_fn_addr",
+                args: vec![Operand::Const(ConstValue::Str(serve_fn_name))],
+            },
+            span,
+        );
+        RouterHandlerAbi::WithEnv {
+            env: Operand::Copy(Place::local(handler_local)),
+            fn_addr: Operand::Copy(Place::local(fn_addr_local)),
         }
     }
 
@@ -4274,6 +4352,19 @@ impl<'a> Builder<'a> {
             if let Some(value) = self.consts.get(&def) {
                 Operand::Const(value.clone())
             } else {
+                // Path resolves to a named item. Record the joined
+                // name when the result is function-shaped so a later
+                // call site (closure env, router handler, etc.) can
+                // round-trip back to the symbol via `gos_fn_addr`.
+                if matches!(
+                    self.tcx.kind_of(pinned_ty),
+                    gossamer_types::TyKind::FnDef { .. }
+                        | gossamer_types::TyKind::FnPtr(_)
+                        | gossamer_types::TyKind::FnTrait(_)
+                        | gossamer_types::TyKind::Closure { .. }
+                ) {
+                    self.local_fn_name.insert(local, joined_name.clone());
+                }
                 Operand::FnRef {
                     def,
                     substs: self.substs_of(pinned_ty),
@@ -8109,6 +8200,7 @@ impl<'a> Builder<'a> {
                     | "gos_rt_router_options"
                     | "gos_rt_router_add"
             );
+            let mut rt = rt;
             if router_handler_method && !args.is_empty() {
                 let handler_idx = args.len() - 1;
                 for arg in &args[..handler_idx] {
@@ -8116,23 +8208,18 @@ impl<'a> Builder<'a> {
                     arg_operands.push(Operand::Copy(Place::local(a)));
                 }
                 let handler_local = self.lower_expr(&args[handler_idx])?;
-                arg_operands.push(Operand::Copy(Place::local(handler_local)));
-                let handler_ty = self.locals[handler_local.0 as usize].ty;
-                let handler_struct = self
-                    .struct_name_of(handler_ty)
-                    .unwrap_or_else(|| "Handler".to_string());
-                let serve_fn_name = format!("{handler_struct}::serve");
-                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let fn_addr_local = self.fresh(i64_ty);
-                self.emit_assign(
-                    Place::local(fn_addr_local),
-                    Rvalue::CallIntrinsic {
-                        name: "gos_fn_addr",
-                        args: vec![Operand::Const(ConstValue::Str(serve_fn_name))],
-                    },
-                    span,
-                );
-                arg_operands.push(Operand::Copy(Place::local(fn_addr_local)));
+                match self.emit_router_handler_abi(handler_local, span) {
+                    RouterHandlerAbi::Bare(fn_addr) => {
+                        arg_operands.push(fn_addr);
+                        if let Some(bare_rt) = Self::router_bare_variant(rt) {
+                            rt = bare_rt;
+                        }
+                    }
+                    RouterHandlerAbi::WithEnv { env, fn_addr } => {
+                        arg_operands.push(env);
+                        arg_operands.push(fn_addr);
+                    }
+                }
             } else {
                 for arg in args {
                     let a = self.lower_expr(arg)?;
@@ -8167,7 +8254,15 @@ impl<'a> Builder<'a> {
                 | "gos_rt_router_delete"
                 | "gos_rt_router_patch"
                 | "gos_rt_router_head"
-                | "gos_rt_router_options" => self.tcx.unit(),
+                | "gos_rt_router_options"
+                | "gos_rt_router_add_fn"
+                | "gos_rt_router_get_fn"
+                | "gos_rt_router_post_fn"
+                | "gos_rt_router_put_fn"
+                | "gos_rt_router_delete_fn"
+                | "gos_rt_router_patch_fn"
+                | "gos_rt_router_head_fn"
+                | "gos_rt_router_options_fn" => self.tcx.unit(),
                 "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
                     let s = self.tcx.string_ty();
                     self.tcx.intern(gossamer_types::TyKind::Vec(s))
@@ -8325,6 +8420,7 @@ impl<'a> Builder<'a> {
                     | "gos_rt_router_options"
                     | "gos_rt_router_add"
             );
+            let mut rt = rt;
             if router_handler_method && !args.is_empty() {
                 let handler_idx = args.len() - 1;
                 // Lower non-handler args (method-name for add,
@@ -8333,26 +8429,19 @@ impl<'a> Builder<'a> {
                     let a = self.lower_expr(arg)?;
                     arg_operands.push(Operand::Copy(Place::local(a)));
                 }
-                // Handler env: pass the struct value as a pointer.
                 let handler_local = self.lower_expr(&args[handler_idx])?;
-                arg_operands.push(Operand::Copy(Place::local(handler_local)));
-                // Synthesize fn_addr via gos_fn_addr intrinsic.
-                let handler_ty = self.locals[handler_local.0 as usize].ty;
-                let handler_struct = self
-                    .struct_name_of(handler_ty)
-                    .unwrap_or_else(|| "Handler".to_string());
-                let serve_fn_name = format!("{handler_struct}::serve");
-                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let fn_addr_local = self.fresh(i64_ty);
-                self.emit_assign(
-                    Place::local(fn_addr_local),
-                    Rvalue::CallIntrinsic {
-                        name: "gos_fn_addr",
-                        args: vec![Operand::Const(ConstValue::Str(serve_fn_name))],
-                    },
-                    span,
-                );
-                arg_operands.push(Operand::Copy(Place::local(fn_addr_local)));
+                match self.emit_router_handler_abi(handler_local, span) {
+                    RouterHandlerAbi::Bare(fn_addr) => {
+                        arg_operands.push(fn_addr);
+                        if let Some(bare_rt) = Self::router_bare_variant(rt) {
+                            rt = bare_rt;
+                        }
+                    }
+                    RouterHandlerAbi::WithEnv { env, fn_addr } => {
+                        arg_operands.push(env);
+                        arg_operands.push(fn_addr);
+                    }
+                }
             } else {
                 for arg in args {
                     let a = self.lower_expr(arg)?;
@@ -8387,7 +8476,15 @@ impl<'a> Builder<'a> {
                 | "gos_rt_router_delete"
                 | "gos_rt_router_patch"
                 | "gos_rt_router_head"
-                | "gos_rt_router_options" => self.tcx.unit(),
+                | "gos_rt_router_options"
+                | "gos_rt_router_add_fn"
+                | "gos_rt_router_get_fn"
+                | "gos_rt_router_post_fn"
+                | "gos_rt_router_put_fn"
+                | "gos_rt_router_delete_fn"
+                | "gos_rt_router_patch_fn"
+                | "gos_rt_router_head_fn"
+                | "gos_rt_router_options_fn" => self.tcx.unit(),
                 "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
                     let s = self.tcx.string_ty();
                     self.tcx.intern(gossamer_types::TyKind::Vec(s))

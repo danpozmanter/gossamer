@@ -644,13 +644,29 @@ pub mod server {
                     }
                     let worker_config = config.clone();
                     let tx = dispatch_tx.clone();
-                    // Each accepted connection is a goroutine on
-                    // the M:N pool. The blocking-syscall hooks
-                    // inside `worker_loop` keep the pool warm
-                    // when reads/writes park the worker.
-                    gossamer_runtime::sched_global::spawn(Box::new(move || {
-                        worker_loop(stream, worker_config, tx);
-                    }));
+                    // Each accepted connection runs on a dedicated
+                    // OS thread (not the M:N goroutine pool). The
+                    // worker loop performs blocking `read`/`write`
+                    // syscalls on the std `TcpStream`; running it on
+                    // a goroutine would block the underlying pool
+                    // worker for the full duration of every idle
+                    // keep-alive wait, starving other goroutines
+                    // pinned to that worker. Under bench load
+                    // (100 concurrent connections, 24 pool workers)
+                    // this surfaced as ~230 "deadline exceeded"
+                    // failures per 30s run: 100 connections all
+                    // blocking on the next request tied up every
+                    // worker thread, the netpoller had no chance to
+                    // deliver readiness, and a fraction of those
+                    // waits stretched past the client's 10 s
+                    // timeout. Per-connection threads sidestep the
+                    // problem entirely — blocking I/O is fine when
+                    // each connection owns its own thread.
+                    let _ = std::thread::Builder::new()
+                        .name("gossamer-http-conn".into())
+                        .spawn(move || {
+                            worker_loop(stream, worker_config, tx);
+                        });
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::WouldBlock) => {
                     if let Some(ref mut mio_listener) = listener_mio {

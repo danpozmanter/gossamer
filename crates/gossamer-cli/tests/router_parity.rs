@@ -53,6 +53,37 @@ fn main() {{
     path
 }
 
+fn write_source_bare_fn(port: u16) -> PathBuf {
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    let path = std::env::temp_dir().join(format!("gos-router-parity-fn-{pid}-{nanos}.gos"));
+    let src = format!(
+        r#"
+use std::http
+use std::http::router
+
+fn health(_r: http::Request) -> Result<http::Response, http::Error> {{
+    Ok(http::Response::text(200, "ok"))
+}}
+
+fn echo(r: http::Request) -> Result<http::Response, http::Error> {{
+    Ok(http::Response::text(200, &format!("echo {{}}", r.path)))
+}}
+
+fn main() {{
+    let r = router::Router::new()
+    r.get("/health", health)
+    r.get("/echo", echo)
+    let _ = http::serve("127.0.0.1:{port}", r)
+}}
+"#,
+    );
+    std::fs::write(&path, src).unwrap();
+    path
+}
+
 fn free_port() -> u16 {
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let p = l.local_addr().unwrap().port();
@@ -107,6 +138,34 @@ fn router_interp_matches_compiled() {
     let src = write_source(port);
 
     // Interp run.
+    let mut interp = Command::new(gos_bin());
+    interp.arg("run").arg(&src);
+    run_and_check(&mut interp, port);
+
+    // Compiled build + run.
+    let build = Command::new(gos_bin())
+        .arg("build")
+        .arg(&src)
+        .output()
+        .expect("gos build");
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let stem = src.file_stem().unwrap().to_str().unwrap();
+    let bin = std::env::temp_dir().join("target").join("debug").join(stem);
+    let mut compiled = Command::new(&bin);
+    run_and_check(&mut compiled, port);
+    let _ = std::fs::remove_file(&src);
+}
+
+#[test]
+fn router_bare_fn_interp_matches_compiled() {
+    let port = free_port();
+    let src = write_source_bare_fn(port);
+
+    // Interp run with bare-function handlers (no struct + impl).
     let mut interp = Command::new(gos_bin());
     interp.arg("run").arg(&src);
     run_and_check(&mut interp, port);

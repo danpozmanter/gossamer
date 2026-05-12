@@ -5117,22 +5117,28 @@ pub unsafe extern "C" fn gos_rt_http_serve(
             Err(_) => break,
         };
         let _ = stream.set_nodelay(true);
-        let task: Box<dyn FnOnce() + Send + 'static> = Box::new(move || {
-            let Some(mut conn) = HttpConn::wrap(stream) else {
-                return;
-            };
-            handle_http_conn(&mut conn, env_addr, fn_addr);
-        });
-        if crate::sched_global::try_spawn(task).is_none() {
-            // Cap reached; the boxed closure (and the TcpStream it
-            // owns) is dropped here, which closes the connection
-            // cleanly. Surface the refusal so operators see the
-            // load-shedding event.
-            eprintln!(
-                "gos_rt_http_serve: live-goroutine cap reached on {addr_s}; \
-                 dropping connection",
-            );
-        }
+        // Each accepted connection runs on a dedicated OS thread,
+        // not the M:N goroutine pool. `handle_http_conn` performs
+        // blocking `read`/`write` syscalls on the std `TcpStream`;
+        // running it on a goroutine would block the pool worker for
+        // the full duration of every idle keep-alive wait, starving
+        // other goroutines pinned to that worker and (under bench
+        // load) causing ~230 "deadline exceeded" failures per 30 s
+        // run. Per-connection threads sidestep both that pool-
+        // starvation hazard and the ~30 % RPS hit observed when we
+        // tried to keep goroutines + netpoller wait_io for keep-
+        // alive idles (mutex contention on the shared poller dwarfed
+        // the syscall savings). The user's `go` statements inside
+        // the handler still go to the M:N pool — only the
+        // connection-driving I/O loop owns its OS thread.
+        let _ = std::thread::Builder::new()
+            .name("gos-http-conn".into())
+            .spawn(move || {
+                let Some(mut conn) = HttpConn::wrap(stream) else {
+                    return;
+                };
+                handle_http_conn(&mut conn, env_addr, fn_addr);
+            });
     }
     std::process::exit(0);
 }
@@ -5255,6 +5261,12 @@ struct HttpConn {
 
 impl HttpConn {
     fn wrap(stream: TcpStream) -> Option<Self> {
+        // Blocking I/O on the std fd. Compiled-mode HTTP runs each
+        // connection on a dedicated OS thread (see `gos_rt_http_serve`),
+        // so blocking reads are fine — they only stall the per-
+        // connection thread, not a shared goroutine pool. The mio
+        // clone is retained so any other path that needs non-blocking
+        // semantics can still register it with the netpoller.
         let cloned = stream.try_clone().ok()?;
         Some(Self {
             mio_stream: mio::net::TcpStream::from_std(cloned),
@@ -9505,6 +9517,13 @@ struct GosRoute {
     segments: Vec<RouteSegment>,
     env: usize,
     fn_addr: usize,
+    /// `true` when the handler is a bare Gossamer `fn(http::Request) ->
+    /// Result<http::Response, http::Error>` registered via
+    /// `gos_rt_router_get_fn` (and friends). Dispatch calls the handler
+    /// with a single `req` arg, no env. `false` for struct/closure
+    /// handlers registered via `gos_rt_router_get`, which use the
+    /// `fn(env, req)` closure ABI.
+    bare: bool,
 }
 
 enum RouteSegment {
@@ -9591,6 +9610,45 @@ pub unsafe extern "C" fn gos_rt_router_add(
         segments,
         env: env as usize,
         fn_addr: fn_addr as usize,
+        bare: false,
+    });
+}
+
+/// Internal helper: bare-fn variant of `gos_rt_router_add`. Used by
+/// `gos_rt_router_get_fn` / `_post_fn` / etc. when the registered
+/// handler has no env (a top-level `fn`).
+unsafe fn router_add_bare(
+    router: *mut GosRouter,
+    method: *const c_char,
+    pattern: *const c_char,
+    fn_addr: i64,
+) {
+    if router.is_null() {
+        return;
+    }
+    let r = unsafe { &mut *router };
+    let m = if method.is_null() {
+        String::new()
+    } else {
+        unsafe {
+            CStr::from_ptr(method)
+                .to_string_lossy()
+                .into_owned()
+                .to_ascii_uppercase()
+        }
+    };
+    let pat = if pattern.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(pattern).to_string_lossy().into_owned() }
+    };
+    let segments = parse_route_pattern(&pat);
+    r.routes.push(GosRoute {
+        method: m,
+        segments,
+        env: 0,
+        fn_addr: fn_addr as usize,
+        bare: true,
     });
 }
 
@@ -9676,6 +9734,90 @@ pub unsafe extern "C" fn gos_rt_router_options(
     unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
 }
 
+/// Bare-fn variants: register a top-level Gossamer `fn(http::Request)
+/// -> Result<http::Response, http::Error>` directly as a handler — no
+/// env, no struct wrapper. Dispatch invokes the function with the
+/// request as its single argument.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_get_fn(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("GET").expect("static verb");
+    unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_post_fn(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("POST").expect("static verb");
+    unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_put_fn(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("PUT").expect("static verb");
+    unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_delete_fn(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("DELETE").expect("static verb");
+    unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_patch_fn(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("PATCH").expect("static verb");
+    unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_head_fn(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("HEAD").expect("static verb");
+    unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_options_fn(
+    router: *mut GosRouter,
+    pattern: *const c_char,
+    fn_addr: i64,
+) {
+    let verb_c = std::ffi::CString::new("OPTIONS").expect("static verb");
+    unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_router_add_fn(
+    router: *mut GosRouter,
+    method: *const c_char,
+    pattern: *const c_char,
+    fn_addr: i64,
+) {
+    unsafe { router_add_bare(router, method, pattern, fn_addr) }
+}
+
 /// Dispatch a request through the router. Walks the route table,
 /// invokes the first matching handler via fn-pointer ABI, and
 /// returns its `*mut GosResult`. Returns a 404-shaped result when
@@ -9696,6 +9838,11 @@ pub unsafe extern "C" fn gos_rt_router_serve(
             continue;
         }
         if route_segments_match(&route.segments, path) {
+            if route.bare {
+                type BareFn = unsafe extern "C" fn(req: *mut GosHttpRequest) -> *mut GosResult;
+                let handler: BareFn = unsafe { std::mem::transmute(route.fn_addr) };
+                return unsafe { handler(req) };
+            }
             type HandlerFn =
                 unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> *mut GosResult;
             let handler: HandlerFn = unsafe { std::mem::transmute(route.fn_addr) };

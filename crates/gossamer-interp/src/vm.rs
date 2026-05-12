@@ -721,26 +721,15 @@ impl Vm {
         for item in &program.items {
             self.load_item(item, tcx, &def_layouts, &wrappers, &module_consts)?;
         }
-        // Phase 2: load function closures into the walker, but only when
-        // the program actually needs them. Two cases require walker fns:
-        //   1. Any bytecode chunk has deferred exprs (closure fallback path).
-        //   2. Any impl/trait block exists — native built-ins like http::serve
-        //      call back through `NativeDispatch::call_fn` which dispatches
-        //      into the walker's function table for impl methods.
-        let has_deferred = self.globals.values().any(|g| {
-            if let Global::Fn(chunk) = g {
-                !chunk.deferred_exprs.is_empty()
-            } else {
-                false
-            }
-        });
-        let has_impl = program
-            .items
-            .iter()
-            .any(|item| matches!(item.kind, HirItemKind::Impl(_) | HirItemKind::Trait(_)));
-        if has_deferred || has_impl {
-            self.walker.borrow_mut().load_fns(program);
-        }
+        // Phase 2: load function closures into the walker. The walker
+        // backs every `NativeDispatch::call_fn` / `call_value` callback
+        // a Native builtin makes — http::serve dispatching `Router::serve`,
+        // iter::for_each invoking a passed-in fn, etc. A bare function
+        // value (e.g. `r.get("/", root)`) reaches the walker as
+        // `Value::String("root")` and resolves through `globals`, so the
+        // user's fn table must live there unconditionally. The cost is a
+        // one-time HashMap insert per top-level fn at startup.
+        self.walker.borrow_mut().load_fns(program);
         // Tier D2 — deferred JIT. Lower MIR up front so the
         // tier-up trigger (in `apply`) can dispatch a compile via
         // `&self`, but don't compile yet: short-running programs

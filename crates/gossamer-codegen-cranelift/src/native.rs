@@ -3818,6 +3818,14 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_router_patch" => Some("gos_rt_router_patch"),
         "gos_rt_router_head" => Some("gos_rt_router_head"),
         "gos_rt_router_options" => Some("gos_rt_router_options"),
+        "gos_rt_router_add_fn" => Some("gos_rt_router_add_fn"),
+        "gos_rt_router_get_fn" => Some("gos_rt_router_get_fn"),
+        "gos_rt_router_post_fn" => Some("gos_rt_router_post_fn"),
+        "gos_rt_router_put_fn" => Some("gos_rt_router_put_fn"),
+        "gos_rt_router_delete_fn" => Some("gos_rt_router_delete_fn"),
+        "gos_rt_router_patch_fn" => Some("gos_rt_router_patch_fn"),
+        "gos_rt_router_head_fn" => Some("gos_rt_router_head_fn"),
+        "gos_rt_router_options_fn" => Some("gos_rt_router_options_fn"),
         "gos_rt_router_serve" => Some("gos_rt_router_serve"),
         "gos_rt_file_server_new" => Some("gos_rt_file_server_new"),
         "gos_rt_file_server_serve" => Some("gos_rt_file_server_serve"),
@@ -4014,6 +4022,14 @@ fn lower_generic_rt_call(
         | "gos_rt_router_patch"
         | "gos_rt_router_head"
         | "gos_rt_router_options" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], None),
+        "gos_rt_router_add_fn" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], None),
+        "gos_rt_router_get_fn"
+        | "gos_rt_router_post_fn"
+        | "gos_rt_router_put_fn"
+        | "gos_rt_router_delete_fn"
+        | "gos_rt_router_patch_fn"
+        | "gos_rt_router_head_fn"
+        | "gos_rt_router_options_fn" => (&[ptr_ty, ptr_ty, types::I64], None),
         "gos_rt_router_serve" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_file_server_new" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_file_server_serve" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),

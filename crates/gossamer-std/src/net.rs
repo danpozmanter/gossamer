@@ -349,22 +349,18 @@ impl TcpStream {
 }
 
 /// Socket-option bridge using `socket2`. Wraps the std stream
-/// FD without taking ownership.
+/// FD without taking ownership via `SockRef`, which carries a
+/// `PhantomData` borrow rather than duplicating the descriptor.
+/// The previous `try_clone` + `Socket::from` + `drop` dance
+/// triggered `setsockopt: EINVAL` on macOS for `SO_KEEPALIVE`
+/// when the cloned-FD wrapper closed in the same syscall window,
+/// even though the option itself is universally supported.
 mod socket_option {
+    use socket2::SockRef;
     use std::net::TcpStream;
 
     pub(super) fn set_keepalive(stream: &TcpStream, on: bool) -> std::io::Result<()> {
-        let cloned = stream.try_clone()?;
-        let socket = socket2::Socket::from(cloned);
-        socket.set_keepalive(on)?;
-        // Drop the wrapped socket without closing the original
-        // FD by retrieving the raw stream back; `socket2::Socket`
-        // owns the FD, so we must `into_raw_fd` / `forget` to
-        // avoid the double close. The cloned FD will be closed
-        // on drop, which is fine — that's the same as letting
-        // the clone fall out of scope.
-        drop(socket);
-        Ok(())
+        SockRef::from(stream).set_keepalive(on)
     }
 }
 

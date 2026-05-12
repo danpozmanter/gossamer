@@ -561,6 +561,23 @@ fn server_smoke(tier: Tier) {
     let server = spec.server.expect("server fixture");
     let deadline = Instant::now() + PER_RUN_TIMEOUT;
 
+    // Pre-flight: if port 8080 is already bound (stale server from a
+    // prior run, an unrelated dev process, etc.) the spawned child's
+    // listener will fail to bind but the test would still probe and
+    // hit the *other* process — producing a confusing "status 404"
+    // panic. Try to acquire the port briefly to fail fast with a
+    // clear diagnostic instead.
+    if let Err(e) = std::net::TcpListener::bind(server.addr) {
+        panic!(
+            "{} web_server smoke: cannot bind {} ({e}). \
+             Likely a stale server from a previous test run or a \
+             benchmark holding the port. Kill it (`fuser -k 8080/tcp` \
+             or `pkill -9 -f server.gos`) and retry.",
+            tier.label(),
+            server.addr,
+        );
+    }
+
     let src = workspace_root().join(spec.path);
     let (mut child, scratch) = match tier {
         Tier::Vm => {
@@ -600,6 +617,19 @@ fn server_smoke(tier: Tier) {
     if let Some(s) = scratch {
         let _ = fs::remove_dir_all(s);
     }
+
+    // If the child reported a bind failure mid-run (e.g. another
+    // process raced to grab the port between our pre-flight check
+    // and the spawn), surface that explicitly instead of letting
+    // the test panic on a status mismatch from the other server.
+    let bind_raced = captured.stderr.contains("bind") && captured.stderr.contains("in use");
+    assert!(
+        !bind_raced,
+        "{} web_server: bind raced — port {} taken before child could listen\n--- child stderr ---\n{}",
+        tier.label(),
+        server.addr,
+        captured.stderr,
+    );
 
     let (status, body) = probe.unwrap_or_else(|e| {
         panic!(

@@ -6266,14 +6266,18 @@ pub(crate) fn native_router_serve(
             .and_then(|hs| hs.get(idx).cloned())
             .unwrap_or(Value::Unit)
     });
-    // Resolve serve to the handler's specific impl by struct
-    // name. The bare "serve" key is shared by every impl-method
-    // named serve and gets overwritten as more types load.
-    let method_name = match &handler {
-        Value::Struct(inner) => format!("{}::serve", inner.name),
-        _ => "serve".to_string(),
-    };
-    dispatch.call_fn(&method_name, vec![handler, request])
+    // Struct handlers route through `{StructName}::serve(handler, request)`
+    // because the bare "serve" name is shared across every impl and gets
+    // overwritten as more types load. Any other shape (Closure, Builtin,
+    // Native, or the bytecode VM's `Value::String` fn-name surrogate)
+    // calls the handler directly with the request as its sole argument.
+    match &handler {
+        Value::Struct(inner) => {
+            let method_name = format!("{}::serve", inner.name);
+            dispatch.call_fn(&method_name, vec![handler.clone(), request])
+        }
+        _ => dispatch.call_value(&handler, vec![request]),
+    }
 }
 
 fn http_404_response() -> Value {
