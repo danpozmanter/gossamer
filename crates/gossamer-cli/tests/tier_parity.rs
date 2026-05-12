@@ -595,59 +595,123 @@ fn server_smoke(tier: Tier) {
 
     let probe = http_probe(server.addr, server.probe_path, deadline);
     let _ = child.kill();
+    let captured = read_child_streams(&mut child);
     let _ = child.wait();
     if let Some(s) = scratch {
         let _ = fs::remove_dir_all(s);
     }
 
     let (status, body) = probe.unwrap_or_else(|e| {
-        panic!("{} web_server probe failed: {e}", tier.label());
+        panic!(
+            "{} web_server probe failed: {e}\n--- child stdout ---\n{}\n--- child stderr ---\n{}",
+            tier.label(),
+            captured.stdout,
+            captured.stderr,
+        );
     });
     assert_eq!(
         status,
         200,
-        "{} web_server returned status {status}, body={body:?}",
+        "{} web_server returned status {status}, body={body:?}\n--- child stdout ---\n{}\n--- child stderr ---\n{}",
         tier.label(),
+        captured.stdout,
+        captured.stderr,
     );
     assert!(
         !body.is_empty(),
-        "{} web_server returned empty body",
+        "{} web_server returned empty body\n--- child stdout ---\n{}\n--- child stderr ---\n{}",
         tier.label(),
+        captured.stdout,
+        captured.stderr,
     );
 }
 
+struct ChildOutput {
+    stdout: String,
+    stderr: String,
+}
+
+/// Drains the child's piped stdout / stderr. Must be called after
+/// `kill()` and before `wait()` so the buffered output is not lost
+/// when the kernel reclaims the pipes. Either end may be missing
+/// if the caller did not configure `Stdio::piped()`.
+fn read_child_streams(child: &mut Child) -> ChildOutput {
+    use std::io::Read;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    if let Some(mut s) = child.stdout.take() {
+        let _ = s.read_to_string(&mut stdout);
+    }
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut stderr);
+    }
+    ChildOutput { stdout, stderr }
+}
+
+/// Probes `addr` with `GET {path}` and returns the status code and
+/// body. Retries the *whole* attempt (connect + write + read) on
+/// any transient error until `deadline`. A single attempt can fail
+/// for reasons that resolve a moment later — the kernel may
+/// complete a TCP handshake against a not-quite-ready application
+/// (the listen backlog masks slow accept loops), and the read then
+/// times out with EAGAIN even though the server will be serving
+/// within a second. Retrying the full handshake decouples the test
+/// from runtime bootstrap timing.
 fn http_probe(addr: &str, path: &str, deadline: Instant) -> Result<(u16, String), String> {
-    use std::io::{BufRead, BufReader, Read};
-    use std::net::TcpStream;
-    let connect_deadline = deadline.min(Instant::now() + Duration::from_secs(5));
-    let mut stream = loop {
-        match TcpStream::connect(addr) {
-            Ok(s) => break s,
+    let socket = addr
+        .parse::<std::net::SocketAddr>()
+        .map_err(|e| format!("parse addr {addr}: {e}"))?;
+    let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    let mut last_err = String::from("probe never attempted");
+    while Instant::now() < deadline {
+        match probe_once(&socket, req.as_bytes(), deadline) {
+            Ok(reply) => return Ok(reply),
             Err(e) => {
-                if Instant::now() >= connect_deadline {
-                    return Err(format!("connect to {addr}: {e}"));
-                }
-                std::thread::sleep(Duration::from_millis(80));
+                last_err = e;
+                std::thread::sleep(Duration::from_millis(120));
             }
         }
-    };
+    }
+    Err(format!("probe deadline reached; last error: {last_err}"))
+}
+
+fn probe_once(
+    socket: &std::net::SocketAddr,
+    req: &[u8],
+    deadline: Instant,
+) -> Result<(u16, String), String> {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpStream;
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err("deadline elapsed before attempt".to_string());
+    }
+    let connect_budget = remaining.min(Duration::from_secs(2));
+    let mut stream =
+        TcpStream::connect_timeout(socket, connect_budget).map_err(|e| format!("connect: {e}"))?;
+    let read_budget = deadline
+        .saturating_duration_since(Instant::now())
+        .min(Duration::from_secs(2))
+        .max(Duration::from_millis(200));
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        .set_read_timeout(Some(read_budget))
+        .map_err(|e| format!("set_read_timeout: {e}"))?;
     stream
-        .write_all(req.as_bytes())
-        .map_err(|e| e.to_string())?;
+        .set_write_timeout(Some(read_budget))
+        .map_err(|e| format!("set_write_timeout: {e}"))?;
+    stream.write_all(req).map_err(|e| format!("write: {e}"))?;
     let mut reader = BufReader::new(stream);
     let mut status_line = String::new();
     reader
         .read_line(&mut status_line)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("read status: {e}"))?;
     let parts: Vec<&str> = status_line.split_whitespace().collect();
     if parts.len() < 2 || !parts[0].starts_with("HTTP/") {
         return Err(format!("malformed status line: {status_line:?}"));
     }
-    let code = parts[1].parse::<u16>().map_err(|e| e.to_string())?;
+    let code = parts[1]
+        .parse::<u16>()
+        .map_err(|e| format!("parse status: {e}"))?;
     let mut body = Vec::new();
     let _ = reader.read_to_end(&mut body);
     Ok((code, String::from_utf8_lossy(&body).into_owned()))

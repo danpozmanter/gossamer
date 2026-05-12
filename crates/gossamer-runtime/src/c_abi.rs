@@ -55,7 +55,7 @@
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::ffi::CStr;
-use std::io::{BufRead, Read, Write};
+use std::io::{BufRead, Read};
 use std::net::{TcpListener, TcpStream};
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
@@ -4971,36 +4971,65 @@ pub unsafe extern "C" fn gos_rt_http_serve(
     let fn_addr = handler_fn as usize;
     // Per-connection goroutine on the M:N work-stealing pool.
     // Each accepted socket is dispatched via
-    // `crate::sched_global::spawn`, so the connection lifetime is
-    // owned by a scheduler-managed worker rather than a fresh OS
-    // thread. The pool grows automatically when goroutines park
-    // on socket reads (`MultiScheduler::enter_blocking_syscall`),
-    // so the keep-alive throughput characteristics of the
-    // previous thread-per-conn design hold under load.
+    // `crate::sched_global::try_spawn`, so the connection lifetime
+    // is owned by a scheduler-managed worker rather than a fresh
+    // OS thread (the previous design did the latter and silently
+    // dropped connections whenever `std::thread::Builder::spawn`
+    // returned `EAGAIN` under load).
     //
-    // Read/write helpers (`conn_read_nonblocking` /
-    // `conn_write_nonblocking`) drive non-blocking I/O against
-    // the global netpoller: when the kernel buffer is empty (or
-    // full), the helper registers interest with `OsPoller`,
-    // calls `enter_blocking_syscall` to keep the pool warm, and
-    // parks on a Condvar that the netpoller signals when the
-    // socket is ready. This matches Go's `netpoll` shape: the
-    // worker thread is parked while the socket waits, but the
-    // scheduler always has at least one M ready to run other
-    // goroutines.
-    let read_timeout = std::time::Duration::from_secs(30);
+    // The [`HttpConn`] wrapper drives non-blocking I/O against the
+    // global netpoller: when the kernel send/receive buffer is
+    // empty or full, the goroutine parks via
+    // [`crate::sched_global::wait_io`] and the worker thread is
+    // freed to run other goroutines. The netpoller wakes the
+    // waker when the kernel reports readiness — the same shape as
+    // Go's `netpoll`.
+    //
+    // When [`crate::sched_global::try_spawn`] refuses (live-
+    // goroutine cap reached — default 1M, set by
+    // `GOSSAMER_MAX_GOROUTINES`), the connection is dropped and
+    // the refusal is logged to stderr. Hitting that cap means
+    // something pathological is happening upstream, so refusing
+    // is the right back-pressure.
+    //
+    // Accept-loop errors retry on `EINTR` and break on anything
+    // else; the listener's filesystem socket is then closed by
+    // the OS at process exit.
+    //
+    // Handler safety: per-worker thread-local state survives only
+    // across synchronous sequences. The handler-returns-pointer →
+    // `extract_response_into` copy → `drop_handler_result` →
+    // `gos_rt_gc_reset` sequence runs without yielding, so the
+    // arena reset never wipes a pointer the goroutine still holds.
+    // Handlers that yield *mid-execution* (e.g. user code that
+    // performs blocking I/O inside the handler) would observe an
+    // arena reset triggered by another goroutine on the same
+    // worker and are not supported under this server. Keep
+    // handlers CPU-bound; offload blocking work to a separate
+    // goroutine and pass results back via a channel.
     loop {
-        let Ok((stream, _addr)) = listener.accept() else {
-            break;
+        let stream = match listener.accept() {
+            Ok((s, _)) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
         };
         let _ = stream.set_nodelay(true);
-        let _ = stream.set_read_timeout(Some(read_timeout));
-        std::thread::Builder::new()
-            .name("gos-http-conn".to_string())
-            .spawn(move || {
-                handle_http_conn(stream, env_addr, fn_addr);
-            })
-            .ok();
+        let task: Box<dyn FnOnce() + Send + 'static> = Box::new(move || {
+            let Some(mut conn) = HttpConn::wrap(stream) else {
+                return;
+            };
+            handle_http_conn(&mut conn, env_addr, fn_addr);
+        });
+        if crate::sched_global::try_spawn(task).is_none() {
+            // Cap reached; the boxed closure (and the TcpStream it
+            // owns) is dropped here, which closes the connection
+            // cleanly. Surface the refusal so operators see the
+            // load-shedding event.
+            eprintln!(
+                "gos_rt_http_serve: live-goroutine cap reached on {addr_s}; \
+                 dropping connection",
+            );
+        }
     }
     std::process::exit(0);
 }
@@ -5030,14 +5059,14 @@ pub unsafe extern "C" fn gos_rt_http2_bind_and_run_h2c(
     std::process::exit(0);
 }
 
-fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
+fn handle_http_conn(conn: &mut HttpConn, env_addr: usize, fn_addr: usize) {
     let mut scratch = ConnScratch::new();
     let mut accum: Vec<u8> = Vec::with_capacity(8192);
     let mut buf: Vec<u8> = vec![0u8; 8192];
     loop {
         let header_end = find_header_end(&accum);
         if header_end.is_none() {
-            match stream.read(&mut buf) {
+            match conn.read(&mut buf) {
                 Ok(0) => return,
                 Ok(n) => {
                     accum.extend_from_slice(&buf[..n]);
@@ -5073,7 +5102,7 @@ fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
                 // bogus request claimed, so the next request would
                 // be misaligned. The connection will be reopened
                 // by the client.
-                let _ = stream.write_all(RESPONSE_400_BYTES);
+                let _ = conn.write_all(RESPONSE_400_BYTES);
                 return;
             }
 
@@ -5089,16 +5118,18 @@ fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
             }
             unsafe { drop_handler_result(result_ptr) };
 
-            // Reset the per-thread gossamer arena. The handler
+            // Reset the per-worker gossamer arena. The handler
             // may have allocated strings/vecs into it (e.g.
             // `format!` output backing the response body, json
             // encoding output); without this the arena grows
             // unboundedly across requests on a long-lived
-            // connection.
+            // connection. Runs synchronously after the
+            // `extract_response_into` copy, so it cannot wipe a
+            // pointer the goroutine still holds.
             unsafe { gos_rt_gc_reset() };
         }
 
-        if stream.write_all(&scratch.response_buf).is_err() {
+        if conn.write_all(&scratch.response_buf).is_err() {
             return;
         }
         // Drop the consumed request from the accumulator while
@@ -5113,14 +5144,12 @@ fn handle_http_conn(mut stream: TcpStream, env_addr: usize, fn_addr: usize) {
 /// interest with [`crate::sched_global`] and park the calling
 /// goroutine on a Condvar; the netpoller wakes the waker when the
 /// kernel reports readiness.
-#[allow(dead_code)]
 struct HttpConn {
     stream: TcpStream,
     mio_stream: mio::net::TcpStream,
     last_source: Option<crate::sched::PollSource>,
 }
 
-#[allow(dead_code)]
 impl HttpConn {
     fn wrap(stream: TcpStream) -> Option<Self> {
         let cloned = stream.try_clone().ok()?;

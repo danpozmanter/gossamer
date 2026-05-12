@@ -421,17 +421,46 @@ where
 /// native-form paths cross into the otherwise-posix path
 /// helpers — callers do not need to pre-convert.
 pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
+    if pattern.is_empty() {
+        return Ok(Vec::new());
+    }
     let normalised = normalise_glob_separators(pattern);
-    let (root, rest) = split_glob_root(&normalised);
-    let segments: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
-    let mut frontier: Vec<std::path::PathBuf> = vec![root];
-    for seg in &segments {
+    let segments: Vec<&str> = normalised.split('/').collect();
+
+    // Everything up to the first segment containing a glob
+    // metacharacter is a literal prefix. Constructing the
+    // starting `PathBuf` from that prefix in one step lets the
+    // std::path machinery handle drive letters, UNC shares, and
+    // POSIX roots natively — far more reliable than walking from
+    // a synthetic root one `read_dir` at a time.
+    let split_idx = segments
+        .iter()
+        .position(|s| s.contains('*') || s.contains('?') || s.contains('['))
+        .unwrap_or(segments.len());
+
+    let base = build_glob_base(&segments[..split_idx]);
+    let glob_segments: Vec<&str> = segments[split_idx..]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .copied()
+        .collect();
+
+    // Wholly literal pattern — match if the path exists.
+    if glob_segments.is_empty() {
+        return Ok(match base.to_str() {
+            Some(s) if base.exists() => vec![s.to_string()],
+            _ => Vec::new(),
+        });
+    }
+
+    let mut frontier: Vec<std::path::PathBuf> = vec![base];
+    for seg in &glob_segments {
         let mut next: Vec<std::path::PathBuf> = Vec::new();
-        for base in &frontier {
+        for current in &frontier {
             if *seg == "**" {
-                // Recursive descent: include `base` itself plus
+                // Recursive descent: include `current` itself plus
                 // every subdirectory.
-                let mut bfs: Vec<std::path::PathBuf> = vec![base.clone()];
+                let mut bfs: Vec<std::path::PathBuf> = vec![current.clone()];
                 while let Some(p) = bfs.pop() {
                     next.push(p.clone());
                     if let Ok(entries) = std::fs::read_dir(&p) {
@@ -445,7 +474,7 @@ pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
                 }
                 continue;
             }
-            let entries = match std::fs::read_dir(base) {
+            let entries = match std::fs::read_dir(current) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
@@ -484,47 +513,28 @@ fn normalise_glob_separators(pattern: &str) -> String {
     }
 }
 
-fn split_glob_root(pattern: &str) -> (std::path::PathBuf, &str) {
+/// Build the starting `PathBuf` from the literal-prefix segments
+/// (everything before the first glob metacharacter).
+fn build_glob_base(prefix_segments: &[&str]) -> std::path::PathBuf {
+    if prefix_segments.is_empty() {
+        return std::path::PathBuf::from(".");
+    }
+    let joined = prefix_segments.join("/");
+    if joined.is_empty() {
+        // All segments empty — pattern was `/` or similar.
+        return std::path::PathBuf::from("/");
+    }
+    // Lone drive letter "C:" is drive-relative on Windows; append
+    // `/` so the path resolves to the actual drive root rather
+    // than the drive's current working directory.
     #[cfg(windows)]
     {
-        let bytes = pattern.as_bytes();
-        // UNC share root: //server/share/rest — the root is the
-        // share itself, not `/`, because there is no per-drive
-        // root above it.
-        if bytes.len() >= 2 && bytes[0] == b'/' && bytes[1] == b'/' {
-            if let Some(srv_end) = pattern[2..].find('/') {
-                let after_srv = 2 + srv_end + 1;
-                if let Some(share_end) = pattern[after_srv..].find('/') {
-                    let root_end = after_srv + share_end + 1;
-                    return (
-                        std::path::PathBuf::from(&pattern[..root_end]),
-                        &pattern[root_end..],
-                    );
-                }
-                return (std::path::PathBuf::from(pattern), "");
-            }
-            // Malformed (no share name) — fall through to relative.
-        }
-        // Drive-letter absolute: `C:/...`. The root must include
-        // the trailing slash; `PathBuf::from("C:")` resolves to
-        // the *current* directory of drive C, which is not what
-        // the user wrote.
-        if bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && bytes[2] == b'/'
-        {
-            return (
-                std::path::PathBuf::from(&pattern[..3]),
-                &pattern[3..],
-            );
+        let bytes = joined.as_bytes();
+        if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            return std::path::PathBuf::from(format!("{joined}/"));
         }
     }
-    if let Some(rest) = pattern.strip_prefix('/') {
-        (std::path::PathBuf::from("/"), rest)
-    } else {
-        (std::path::PathBuf::from("."), pattern)
-    }
+    std::path::PathBuf::from(joined)
 }
 
 /// Resolves all symlinks along `path` and returns the canonical
@@ -702,32 +712,35 @@ mod glob_walk_tests {
     }
 
     #[test]
-    #[cfg(windows)]
-    fn split_glob_root_handles_drive_letter() {
-        let (root, rest) = super::split_glob_root("C:/Users/foo/*.gos");
-        assert_eq!(root, std::path::PathBuf::from("C:/"));
-        assert_eq!(rest, "Users/foo/*.gos");
+    fn build_glob_base_relative() {
+        let base = super::build_glob_base(&["a", "b"]);
+        assert_eq!(base, std::path::PathBuf::from("a/b"));
+    }
+
+    #[test]
+    fn build_glob_base_empty_is_cwd() {
+        let base = super::build_glob_base(&[]);
+        assert_eq!(base, std::path::PathBuf::from("."));
+    }
+
+    #[test]
+    fn build_glob_base_posix_absolute() {
+        // Leading "" comes from splitting "/etc/foo" on "/".
+        let base = super::build_glob_base(&["", "etc", "foo"]);
+        assert_eq!(base, std::path::PathBuf::from("/etc/foo"));
     }
 
     #[test]
     #[cfg(windows)]
-    fn split_glob_root_handles_unc_share() {
-        let (root, rest) = super::split_glob_root("//srv/share/foo/*.gos");
-        assert_eq!(root, std::path::PathBuf::from("//srv/share/"));
-        assert_eq!(rest, "foo/*.gos");
+    fn build_glob_base_drive_letter_alone_gets_root_slash() {
+        let base = super::build_glob_base(&["C:"]);
+        assert_eq!(base, std::path::PathBuf::from("C:/"));
     }
 
     #[test]
-    fn split_glob_root_treats_posix_absolute_as_root() {
-        let (root, rest) = super::split_glob_root("/etc/foo/*.gos");
-        assert_eq!(root, std::path::PathBuf::from("/"));
-        assert_eq!(rest, "etc/foo/*.gos");
-    }
-
-    #[test]
-    fn split_glob_root_treats_relative_as_cwd() {
-        let (root, rest) = super::split_glob_root("a/b/*.gos");
-        assert_eq!(root, std::path::PathBuf::from("."));
-        assert_eq!(rest, "a/b/*.gos");
+    #[cfg(windows)]
+    fn build_glob_base_drive_letter_with_subpath() {
+        let base = super::build_glob_base(&["C:", "Users", "foo"]);
+        assert_eq!(base, std::path::PathBuf::from("C:/Users/foo"));
     }
 }
