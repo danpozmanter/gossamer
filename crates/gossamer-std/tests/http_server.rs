@@ -14,18 +14,21 @@ use std::time::Duration;
 use gossamer_std::http::server::{Config, run};
 use gossamer_std::http::{Headers, Request, Response, Server, StatusCode};
 
-fn pick_port() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
+/// Binds a fresh loopback listener and hands back the listener
+/// plus the address it ended up on. Returning both avoids the
+/// classic bind-twice race: prior code dropped the listener
+/// before re-binding the same port, which is reliably exploited
+/// by parallel test workers (and by Windows CI agents whose
+/// ephemeral-port allocator recycles aggressively).
+fn bind_loopback() -> (TcpListener, SocketAddr) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    (listener, addr)
 }
 
 #[test]
 fn server_responds_to_a_real_http_request() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -94,9 +97,7 @@ fn server_responds_to_a_real_http_request() {
 
 #[test]
 fn server_skips_date_and_server_when_handler_set_them() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -161,9 +162,7 @@ fn server_skips_date_and_server_when_handler_set_them() {
 
 #[test]
 fn server_splits_path_and_query() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -215,9 +214,7 @@ fn server_splits_path_and_query() {
 
 #[test]
 fn server_aborts_slowloris_at_header_timeout() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -275,9 +272,7 @@ fn server_aborts_slowloris_at_header_timeout() {
 
 #[test]
 fn server_decodes_chunked_request_body() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -336,9 +331,7 @@ fn server_decodes_chunked_request_body() {
 
 #[test]
 fn server_rejects_chunked_with_content_length() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_for_config = Arc::clone(&shutdown);
@@ -382,9 +375,7 @@ fn server_rejects_chunked_with_content_length() {
 
 #[test]
 fn server_writes_100_continue_before_reading_expect_body() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -454,9 +445,7 @@ fn server_writes_100_continue_before_reading_expect_body() {
 
 #[test]
 fn server_emits_chunked_response_when_handler_requests() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -517,9 +506,7 @@ fn server_emits_chunked_response_when_handler_requests() {
 
 #[test]
 fn graceful_shutdown_drains_in_flight_handler() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
     let config = Config::default();
     let config_for_server = config.clone();
     let shutdown_for_test = Arc::clone(&config.shutdown);
@@ -589,9 +576,7 @@ fn graceful_shutdown_drains_in_flight_handler() {
 
 #[test]
 fn handler_request_context_cancels_on_shutdown() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual_addr = listener.local_addr().unwrap();
+    let (listener, actual_addr) = bind_loopback();
     let config = Config::default();
     let config_for_server = config.clone();
 
@@ -660,8 +645,7 @@ fn handler_request_context_cancels_on_shutdown() {
 
 #[test]
 fn server_honours_shutdown_flag_without_a_request() {
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
+    let (listener, _addr) = bind_loopback();
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
         read_timeout: None,
@@ -687,10 +671,10 @@ fn server_honours_shutdown_flag_without_a_request() {
 
 #[test]
 fn server_surfaces_bind_errors() {
-    let addr = pick_port();
-    let first = TcpListener::bind(addr).unwrap();
-    let err = TcpListener::bind(first.local_addr().unwrap()).unwrap_err();
+    let (first, addr) = bind_loopback();
+    let err = TcpListener::bind(addr).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+    drop(first);
 }
 
 #[test]
@@ -699,9 +683,7 @@ fn slow_client_does_not_block_other_connections() {
     // connect and get a response while a slow client is still
     // drip-feeding its request line. If we blocked on the slow
     // client, the fast one would time out.
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual = listener.local_addr().unwrap();
+    let (listener, actual) = bind_loopback();
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
         read_timeout: Some(Duration::from_secs(5)),
@@ -752,9 +734,7 @@ fn server_handles_many_concurrent_connections() {
     // regressions where the accept loop serialises or a shared lock
     // gets poisoned under load.
     const CLIENTS: u64 = 64;
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual = listener.local_addr().unwrap();
+    let (listener, actual) = bind_loopback();
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
         read_timeout: Some(Duration::from_secs(5)),
@@ -808,9 +788,7 @@ fn server_handles_many_concurrent_connections() {
 fn server_request_context_is_not_cancelled_by_default() {
     // Every Request carries a `context::Context` — verify the
     // default is live and cancellable.
-    let addr = pick_port();
-    let listener = TcpListener::bind(addr).unwrap();
-    let actual = listener.local_addr().unwrap();
+    let (listener, actual) = bind_loopback();
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
         read_timeout: Some(Duration::from_secs(2)),
