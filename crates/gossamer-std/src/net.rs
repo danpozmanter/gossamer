@@ -452,14 +452,31 @@ mod p9_tests {
 
     #[test]
     fn keepalive_toggle_succeeds_on_loopback_stream() {
+        // The previous shape of this test dropped the listener
+        // immediately after `connect` and called `set_keepalive` on
+        // the un-`accept`ed client side. On Linux the kernel kept
+        // the half-orphaned connection alive long enough for the
+        // setsockopt to succeed, but macOS reset the socket more
+        // eagerly and `setsockopt(SO_KEEPALIVE)` returned `EINVAL`
+        // ("Invalid argument") because the socket was no longer
+        // in `ESTABLISHED`. Hold the listener and explicitly accept
+        // the server side so both ends are stable for the toggles.
         let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
+        let acceptor = std::thread::spawn(move || {
+            let (sock, _) = listener.accept().unwrap();
+            // Hold the server side until the client closes.
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut buf = [0u8; 1];
+            let _ = std::io::Read::read(&mut (&sock), &mut buf);
+        });
         let stream = TcpStream::connect(&addr.to_string()).unwrap();
-        // Drop the listener; we just need the socket pair.
-        drop(listener);
-        // The setsockopt call must succeed in both directions.
+        // Both ends are now ESTABLISHED; the setsockopt call must
+        // succeed in both directions.
         stream.set_keepalive(Some(Duration::from_secs(60))).unwrap();
         stream.set_keepalive(None).unwrap();
+        drop(stream);
+        let _ = acceptor.join();
     }
 
     #[test]
