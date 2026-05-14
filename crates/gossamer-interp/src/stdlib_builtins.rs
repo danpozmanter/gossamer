@@ -6120,15 +6120,35 @@ struct RouterTable {
     routes: Vec<(String, String)>, // (method, pattern)
 }
 
+// Static router-builtin tables are kept at module scope rather than
+// inside `install_http_router` so clippy's `items-after-statements`
+// doesn't fire — and so we never need `Box::leak(format!(…))` for
+// what is conceptually a static lookup. The previous shape leaked
+// process-lifetime strings on first install, which leaksanitizer
+// flagged on fuzz-target exit.
+const ROUTER_FREE_FNS: &[(&str, &str, BuiltinFnPub)] = &[
+    ("http::router::new", "router::new", builtin_router_new),
+    ("http::router::add", "router::add", builtin_router_add),
+    (
+        "http::router::lookup",
+        "router::lookup",
+        builtin_router_lookup,
+    ),
+];
+
+const ROUTER_METHODS: &[(&str, BuiltinFnPub)] = &[
+    ("Router::get", builtin_router_method_get),
+    ("Router::post", builtin_router_method_post),
+    ("Router::put", builtin_router_method_put),
+    ("Router::delete", builtin_router_method_delete),
+    ("Router::patch", builtin_router_method_patch),
+    ("Router::head", builtin_router_method_head),
+    ("Router::options", builtin_router_method_options),
+];
+
 fn install_http_router(globals: &mut Vec<(&'static str, Value)>) {
-    for (name, call) in [
-        ("new", builtin_router_new as BuiltinFnPub),
-        ("add", builtin_router_add),
-        ("lookup", builtin_router_lookup),
-    ] {
-        let qualified: &'static str = Box::leak(format!("http::router::{name}").into_boxed_str());
+    for &(qualified, short, call) in ROUTER_FREE_FNS {
         globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
-        let short: &'static str = Box::leak(format!("router::{name}").into_boxed_str());
         globals.push((short, crate::builtins::builtin_pub(short, call)));
     }
     // Constructor aliases that mirror the compiled-tier surface
@@ -6147,36 +6167,8 @@ fn install_http_router(globals: &mut Vec<(&'static str, Value)>) {
     // resolves to `Router::get(r, pattern, handler)` which stores
     // the route + a Value-handler in the registry. Dispatch via
     // http::serve goes through Router::serve below.
-    for (method_name, http_verb) in [
-        ("get", "GET"),
-        ("post", "POST"),
-        ("put", "PUT"),
-        ("delete", "DELETE"),
-        ("patch", "PATCH"),
-        ("head", "HEAD"),
-        ("options", "OPTIONS"),
-    ] {
-        let qualified: &'static str = Box::leak(format!("Router::{method_name}").into_boxed_str());
-        let verb_static: &'static str = Box::leak(http_verb.to_string().into_boxed_str());
-        let closure: BuiltinFnPub = make_router_method_builtin(verb_static);
-        globals.push((qualified, crate::builtins::builtin_pub(qualified, closure)));
-    }
-}
-
-fn make_router_method_builtin(verb: &'static str) -> BuiltinFnPub {
-    // Builtin fn pointers must be top-level — use a thread_local
-    // to thread `verb` into a shared dispatch. The simpler shape
-    // is to register one builtin per verb, each with the verb
-    // baked in via a small closure-shaped wrapper.
-    match verb {
-        "GET" => builtin_router_method_get,
-        "POST" => builtin_router_method_post,
-        "PUT" => builtin_router_method_put,
-        "DELETE" => builtin_router_method_delete,
-        "PATCH" => builtin_router_method_patch,
-        "HEAD" => builtin_router_method_head,
-        "OPTIONS" => builtin_router_method_options,
-        _ => builtin_router_method_get,
+    for &(qualified, call) in ROUTER_METHODS {
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
     }
 }
 

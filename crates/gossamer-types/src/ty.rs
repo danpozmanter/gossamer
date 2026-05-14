@@ -295,8 +295,12 @@ pub enum TyKind {
     Param {
         /// Position in the parent generics list.
         idx: ParamIdx,
-        /// Source-level name for diagnostics (`T`, `U`, ...).
-        name: &'static str,
+        /// Source-level name for diagnostics (`T`, `U`, ...). Owned
+        /// so the previous `Box::leak`-into-`&'static str` pattern
+        /// can't strand allocations on the heap when the surrounding
+        /// `TyCtxt` is dropped — leaksanitizer flagged the strand
+        /// on the fuzz harness.
+        name: Box<str>,
     },
     /// A type that could not be resolved; diagnostics have already been
     /// produced.

@@ -43,6 +43,10 @@ pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDi
         let item = parser.parse_item();
         items.push(item);
         if parser.checkpoint_public() == before {
+            // parse_item left us where we started — guarantee forward
+            // progress so an adversarial input cannot pin the loop and
+            // blow `items` up to gigabytes of stub allocations.
+            parser.bump_public();
             parser.recover_to_item_start_public();
         }
     }
@@ -105,5 +109,13 @@ impl Parser<'_> {
     /// Public facade that forwards to the item-start recovery helper.
     pub fn recover_to_item_start_public(&mut self) {
         self.recover_to_item_start();
+    }
+
+    /// Single-token advance used as the outer-loop's last-resort
+    /// progress guarantee when an item-parser is unable to recover.
+    pub fn bump_public(&mut self) {
+        if !self.at_eof() {
+            self.bump();
+        }
     }
 }

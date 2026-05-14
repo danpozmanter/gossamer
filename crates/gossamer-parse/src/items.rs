@@ -102,6 +102,13 @@ impl Parser<'_> {
             },
             self.peek_span(),
         );
+        // Force progress past the bad token before re-syncing — otherwise
+        // a token that is *itself* an item-start keyword (e.g. a stray
+        // `use` after the first item) traps `recover_to_item_start` in a
+        // no-op and the caller's progress check loops forever.
+        if !self.at_eof() {
+            self.bump();
+        }
         self.recover_to_item_start();
         ItemKind::Mod(ModDecl {
             name: Ident::new("<error>"),

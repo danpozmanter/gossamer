@@ -1,0 +1,15 @@
+# cargo-fuzz build artefacts
+target/
+Cargo.lock
+
+# Crashes / leaks libFuzzer reports — produced ad-hoc by `cargo fuzz
+# run` and reduced into the seed corpus with a descriptive name
+# before being committed.
+artifacts/
+
+# libFuzzer's engine-grown corpus. Each input it discovers lands in
+# `corpus/<target>/<40-hex-char-sha1>` — the engine regenerates
+# these on every run, so we keep only the hand-curated seeds (which
+# carry descriptive `.gos` / `.bin` filenames).
+corpus/*/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]
+oom_repro/

@@ -123,3 +123,38 @@ fn very_large_integer_literal_is_handled() {
     parse_does_not_panic("fn main() { let n = 99999999999999999999999999999 }");
     parse_does_not_panic("fn main() { let n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF }");
 }
+
+#[test]
+fn unterminated_raw_string_with_multibyte_tail_does_not_panic() {
+    // Regression for an mir_lower-fuzz panic: an unterminated raw
+    // string `r"...ڍ` left the suffix offset inside the multi-byte
+    // `ڍ` (U+068D, bytes 4..6) and `extract_raw_string_body` sliced
+    // mid-codepoint, panicking the parser.
+    parse_does_not_panic("fn a() { let s = r\"\0\0ڍ");
+    parse_does_not_panic("fn a() { let s = r#\"\0\0ڍ");
+    parse_does_not_panic("fn a() { let s = br\"\0\0ڍ");
+    parse_does_not_panic("fn a() { let s = r\"ڍ\"; }");
+}
+
+#[test]
+fn item_recovery_makes_forward_progress_on_item_start_keywords() {
+    // Regression for the fuzz OOM where an item-start keyword
+    // (e.g. `use`) appearing where no item parser handled it
+    // trapped `recover_to_item_start` (already at item-start) in
+    // a no-op. The outer loop's progress check then re-invoked
+    // recovery on the same token forever, pushing one stub Item
+    // per iteration until RSS blew past 600 MB.
+    parse_does_not_panic("fn a() {}\nuse\n");
+    parse_does_not_panic("fn a() {}\nuse let ing()");
+    parse_does_not_panic("fn a() {}\nfn\nfn\nfn");
+    parse_does_not_panic("struct S {}\nimpl\nimpl\nimpl");
+    parse_does_not_panic("\0use");
+    parse_does_not_panic("fn a(){} pub pub pub pub pub");
+    // The exact 173-byte input from the CI fuzz crash.
+    parse_does_not_panic(concat!(
+        "pub fn greet(name: &str) ->  2ng() + nam -> String {64 { a * b }\n",
+        "use let ing() + nameString {64 {Ha * b }\n",
+        "    let 2ng() + nam -> String {64 { a * b }\n",
+        "use let ing() + name\n}\n",
+    ));
+}

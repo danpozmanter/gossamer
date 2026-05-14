@@ -535,15 +535,28 @@ fn link_posix(
         cmd.arg(archive);
     }
     cmd.arg("-o").arg(out_path);
-    cmd.arg("-lpthread").arg("-ldl").arg("-lm");
+    // macOS has no `libdl` — `dl*` is part of `libSystem`. `-ldl`
+    // there fails with "library 'dl' not found". `libpthread` /
+    // `libm` are stub-forwarders that resolve, so we keep those.
+    cmd.arg("-lpthread");
+    if !cfg!(target_os = "macos") {
+        cmd.arg("-ldl");
+    }
+    cmd.arg("-lm");
     if !extra_archives.is_empty() {
         // The rust-bindings staticlib pulls in `gossamer-runtime`
         // as a transitive Cargo dep, which produces a second copy
         // of every `gos_rt_*` symbol alongside `libgossamer_runtime.a`.
         // Both copies come from the same source tree and are
         // functionally identical, so let the linker keep the first
-        // definition rather than failing the link.
-        cmd.arg("-Wl,--allow-multiple-definition");
+        // definition rather than failing the link. macOS `ld64`
+        // doesn't accept the GNU-ld spelling — the equivalent
+        // there is `-Wl,-multiply_defined,suppress`.
+        if cfg!(target_os = "macos") {
+            cmd.arg("-Wl,-multiply_defined,suppress");
+        } else {
+            cmd.arg("-Wl,--allow-multiple-definition");
+        }
     }
     if opts.want_strip() {
         if opts.release {

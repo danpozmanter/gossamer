@@ -1450,7 +1450,20 @@ fn extract_raw_string_body(source: &str, hashes: u8) -> String {
     if source.len() < prefix_len + suffix_len {
         return String::new();
     }
-    source[prefix_len..source.len() - suffix_len].to_string()
+    // Unterminated raw strings can leave the trailing suffix
+    // offset inside a multi-byte codepoint when the lexer
+    // synthesised the token's span to end of input. Walk the end
+    // back to the closest char boundary so the slice is well-typed
+    // — Rust's panic on bad boundaries would otherwise tear the
+    // parser down on adversarial input.
+    let mut end = source.len() - suffix_len;
+    while end > prefix_len && !source.is_char_boundary(end) {
+        end -= 1;
+    }
+    if prefix_len >= end {
+        return String::new();
+    }
+    source[prefix_len..end].to_string()
 }
 
 /// Returns `true` when the next token could begin an expression.

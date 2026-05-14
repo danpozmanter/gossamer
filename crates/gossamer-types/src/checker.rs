@@ -90,9 +90,12 @@ struct TypeChecker<'a> {
     /// impl declaration so `type_from_ast_path` can render a
     /// type-parameter reference (`A`, `B`) as the right
     /// `TyKind::Param` index. Keyed by name because the AST's
+    /// generic param reference and its definition site use names,
+    /// not indices.
+    ///
     /// `GenericParam::Type` carries an `Ident` without a
     /// resolver-assigned `NodeId`.
-    current_generic_scope: HashMap<String, (crate::ParamIdx, &'static str)>,
+    current_generic_scope: HashMap<String, (crate::ParamIdx, Box<str>)>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -124,13 +127,13 @@ impl<'a> TypeChecker<'a> {
     fn enter_generic_scope(
         &mut self,
         generics: &gossamer_ast::Generics,
-    ) -> HashMap<String, (crate::ParamIdx, &'static str)> {
+    ) -> HashMap<String, (crate::ParamIdx, Box<str>)> {
         let prior = std::mem::take(&mut self.current_generic_scope);
         for (i, param) in generics.params.iter().enumerate() {
             if let gossamer_ast::GenericParam::Type { name, .. } = param {
-                let leaked: &'static str = Box::leak(name.name.clone().into_boxed_str());
+                let owned: Box<str> = name.name.clone().into_boxed_str();
                 self.current_generic_scope
-                    .insert(name.name.clone(), (crate::ParamIdx(i as u32), leaked));
+                    .insert(name.name.clone(), (crate::ParamIdx(i as u32), owned));
             }
         }
         prior
@@ -138,7 +141,7 @@ impl<'a> TypeChecker<'a> {
 
     /// Restores a generic-parameter scope saved by
     /// [`enter_generic_scope`].
-    fn leave_generic_scope(&mut self, prior: HashMap<String, (crate::ParamIdx, &'static str)>) {
+    fn leave_generic_scope(&mut self, prior: HashMap<String, (crate::ParamIdx, Box<str>)>) {
         self.current_generic_scope = prior;
     }
 
@@ -1605,7 +1608,7 @@ impl<'a> TypeChecker<'a> {
                     // map).
                     if kind == gossamer_resolve::DefKind::TypeParam {
                         if let Some((idx, name)) =
-                            self.current_generic_scope.get(head_name).copied()
+                            self.current_generic_scope.get(head_name).cloned()
                         {
                             return self.tcx.intern(TyKind::Param { idx, name });
                         }
