@@ -110,7 +110,9 @@ fn no_workspace_code_silently_swallows_getrandom_errors() {
         if skip_component("target")
             || skip_component("tests")
             || skip_component(".git")
-            || path.file_name().is_some_and(|n| n == "crypto_rand_failure.rs")
+            || path
+                .file_name()
+                .is_some_and(|n| n == "crypto_rand_failure.rs")
         {
             return;
         }
