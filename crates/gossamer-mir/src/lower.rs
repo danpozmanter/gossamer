@@ -2394,6 +2394,12 @@ impl<'a> Builder<'a> {
             "os::program_name" | "env::program_name" => {
                 ("gos_rt_os_program_name", self.tcx.string_ty())
             }
+            "env::temp_dir" | "os::temp_dir" => {
+                ("gos_rt_env_temp_dir", self.tcx.string_ty())
+            }
+            "env::home_dir" | "os::home_dir" => {
+                ("gos_rt_env_home_dir", self.option_string_adt_ty())
+            }
             "os::env" | "env::var" => ("gos_rt_os_env", self.option_string_adt_ty()),
             "os::exists" | "fs::exists" => ("gos_rt_os_exists", self.tcx.bool_ty()),
             "os::is_file" | "fs::is_file" => ("gos_rt_os_is_file", self.tcx.bool_ty()),

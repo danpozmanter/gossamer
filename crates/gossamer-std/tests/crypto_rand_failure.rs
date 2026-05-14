@@ -98,12 +98,19 @@ fn no_workspace_code_silently_swallows_getrandom_errors() {
     let workspace_root = locate_workspace_root();
     let mut offenders: Vec<String> = Vec::new();
     walk_rs(&workspace_root, &mut |path, body| {
-        // Skip generated/target/test paths.
-        let path_str = path.to_string_lossy();
-        if path_str.contains("/target/")
-            || path_str.contains("/tests/")
-            || path_str.contains("/.git/")
-            || path_str.ends_with("/crypto_rand_failure.rs")
+        // Skip generated/target/test paths. Match by path *component*
+        // rather than by substring so the filter is separator-agnostic
+        // (Windows uses `\`, Unix uses `/` — a `contains("/tests/")`
+        // check silently lets every test file through on Windows and
+        // the audit then flags its own pattern documentation).
+        let skip_component = |name: &str| {
+            path.components()
+                .any(|c| c.as_os_str().to_string_lossy() == name)
+        };
+        if skip_component("target")
+            || skip_component("tests")
+            || skip_component(".git")
+            || path.file_name().is_some_and(|n| n == "crypto_rand_failure.rs")
         {
             return;
         }

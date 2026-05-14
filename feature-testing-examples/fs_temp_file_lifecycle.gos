@@ -3,10 +3,12 @@
 // check sizes, and delete it — covering the common create/read/
 // delete lifecycle across fs:: operations.
 
+use std::env
 use std::fs
+use std::path
 
 fn temp_path(name: String) -> String {
-    format!("/tmp/gossamer_test_{}", name)
+    path::join(&env::temp_dir(), &format!("gossamer_test_{}", name))
 }
 
 fn write_and_read(path: String, content: String) -> Result<String, String> {

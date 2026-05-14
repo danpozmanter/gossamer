@@ -235,6 +235,34 @@ pub unsafe extern "C" fn gos_rt_os_program_name() -> *const c_char {
     PROGRAM_NAME_PTR.load(Ordering::SeqCst) as *const c_char
 }
 
+/// `env::temp_dir() -> String`. Returns the platform temp directory:
+/// `/tmp` on Linux, `$TMPDIR` on macOS, `%TEMP%`/`%USERPROFILE%\AppData\Local\Temp`
+/// on Windows. Mirrors Rust's `std::env::temp_dir`; the returned
+/// pointer is GC-managed and lives for the process lifetime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_env_temp_dir() -> *const c_char {
+    let path = std::env::temp_dir();
+    let bytes = path.to_string_lossy();
+    alloc_cstring(bytes.as_bytes()).cast_const()
+}
+
+/// `env::home_dir() -> Option<String>`. Returns `Some(path)` when
+/// the user has a home directory; `None` otherwise. The Result
+/// payload's disc-0/disc-1 convention mirrors `gos_rt_os_env` so
+/// `if let Some(h) = env::home_dir()` works the same way.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_env_home_dir() -> *mut GosResult {
+    #[allow(deprecated)]
+    match std::env::home_dir() {
+        Some(path) => {
+            let bytes = path.to_string_lossy();
+            let cs = alloc_cstring(bytes.as_bytes());
+            unsafe { gos_rt_result_new(0, cs as i64) }
+        }
+        None => unsafe { gos_rt_result_new(1, 0) },
+    }
+}
+
 /// `os::env(name) -> Option<String>`. Compiled tier returns a
 /// `*mut GosResult` shaped as Option (disc 0 = Some, 1 = None).
 #[unsafe(no_mangle)]

@@ -10,13 +10,14 @@
  */
 
 use std::encoding::json
+use std::env
 use std::errors
 use std::fs
 use std::io
 use std::path
 
 fn main() -> Result<(), errors::Error> {
-    let dir = "/tmp/gossamer-file-io-demo"
+    let dir = path::join(&env::temp_dir(), &"gossamer-file-io-demo")
     let text_path = path::join(&dir, &"greeting.txt")
     let json_path = path::join(&dir, &"settings.json")
 

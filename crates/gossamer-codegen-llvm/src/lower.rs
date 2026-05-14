@@ -4886,6 +4886,8 @@ fn map_prelude_symbol(name: &str) -> &str {
         "panic" => "gos_rt_panic",
         "os::args" | "env::args" => "gos_rt_os_args",
         "os::program_name" | "env::program_name" => "gos_rt_os_program_name",
+        "env::temp_dir" | "os::temp_dir" => "gos_rt_env_temp_dir",
+        "env::home_dir" | "os::home_dir" => "gos_rt_env_home_dir",
         "os::exit" | "process::exit" => "gos_rt_exit",
         "process::id" => "gos_rt_process_id",
         "process::abort" => "gos_rt_process_abort",

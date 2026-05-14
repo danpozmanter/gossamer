@@ -117,5 +117,50 @@ fn is_valid_path_segment(segment: &str) -> bool {
     if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
         return false;
     }
-    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProjectId, ProjectIdError};
+
+    #[test]
+    fn parses_simple_identifier() {
+        let id = ProjectId::parse("example.com/math").unwrap();
+        assert_eq!(id.domain(), "example.com");
+        assert_eq!(id.path(), "math");
+        assert_eq!(id.tail(), "math");
+    }
+
+    #[test]
+    fn path_segments_accept_underscores() {
+        let id = ProjectId::parse("example.com/my_project").unwrap();
+        assert_eq!(id.path(), "my_project");
+
+        let nested = ProjectId::parse("acme.dev/sub_dir/leaf_name").unwrap();
+        assert_eq!(nested.tail(), "leaf_name");
+    }
+
+    #[test]
+    fn path_segments_still_accept_hyphens() {
+        let id = ProjectId::parse("example.com/my-project").unwrap();
+        assert_eq!(id.path(), "my-project");
+    }
+
+    #[test]
+    fn path_segments_reject_leading_underscore() {
+        // Lead char is still `[a-z0-9]`; underscores are only allowed
+        // mid-segment. Otherwise package names could look like Rust's
+        // unused-binding convention (`_foo`) which is reserved.
+        let err = ProjectId::parse("example.com/_lead").unwrap_err();
+        assert!(matches!(err, ProjectIdError::InvalidSegment(_)));
+    }
+
+    #[test]
+    fn domains_still_reject_underscores() {
+        // DNS labels disallow `_`; keep that for the domain even though
+        // path segments accept it.
+        let err = ProjectId::parse("bad_host.example/path").unwrap_err();
+        assert!(matches!(err, ProjectIdError::InvalidDomain(_)));
+    }
 }

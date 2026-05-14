@@ -905,7 +905,7 @@ form:
 ProjectId = DomainSegment { "/" PathSegment }
 DomainSegment = Label { "." Label }        // must contain at least one "."
 Label         = [a-z][a-z0-9-]*
-PathSegment   = [a-z0-9][a-z0-9-]*
+PathSegment   = [a-z0-9][a-z0-9-_]*
 ```
 
 Examples: `example.com/math`, `acme.dev/tools/codegen`,

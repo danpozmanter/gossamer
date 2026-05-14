@@ -221,7 +221,20 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/panic_recover_round_trip.gos"),
     spec("feature-testing-examples/pattern_match_exhaustiveness.gos"),
     spec("feature-testing-examples/pipe_operator_precedence.gos"),
-    spec("feature-testing-examples/process_spawn_pipe.gos"),
+    Spec {
+        // The example exercises `exec::run` against `echo`, `printf`,
+        // `sh`, `true`, `false` — all Unix-only standalone executables
+        // (on Windows `echo`/`true`/`false` are `cmd` builtins, not
+        // resolvable via `Command::new`, and `sh`/`printf` aren't
+        // present at all). Cross-platform shape would defeat the
+        // demo's purpose. Linux + macOS cover the surface.
+        skip_all: if cfg!(windows) {
+            Some("uses Unix-only commands (echo, sh, printf, true, false)")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/process_spawn_pipe.gos")
+    },
     spec("feature-testing-examples/recursive_enum_walk.gos"),
     spec("feature-testing-examples/reference_alias_mutation.gos"),
     spec("feature-testing-examples/regex_unicode_categories.gos"),
