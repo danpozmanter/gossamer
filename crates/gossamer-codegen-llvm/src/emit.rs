@@ -1120,7 +1120,10 @@ fn find_opt() -> Result<PathBuf> {
             return Ok(PathBuf::from(candidate));
         }
     }
-    Err(anyhow!("{}", missing_llvm_tool_message("opt", "GOS_LLVM_OPT")))
+    Err(anyhow!(
+        "{}",
+        missing_llvm_tool_message("opt", "GOS_LLVM_OPT")
+    ))
 }
 
 fn find_llc() -> Result<PathBuf> {

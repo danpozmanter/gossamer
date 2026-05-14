@@ -42,6 +42,71 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
+      # `gos build` shells out to `opt` and `llc` from LLVM 18+.
+      # Ubuntu runners ship them at `/usr/lib/llvm-18/bin/` (auto-
+      # discovered); macOS and Windows runners need explicit
+      # discovery + env-var pointers. Both steps run BEFORE
+      # `dtolnay/rust-toolchain@stable` so its `$GITHUB_PATH`
+      # push of `~/.cargo/bin` is the last entry on PATH —
+      # without that ordering, a brew-managed `cargo` shim
+      # (left by a stale `rustup-init` install on the macOS
+      # runner image) gets resolved ahead of the rust toolchain
+      # this job actually installed, and `cargo test` becomes
+      # `rustup-init test` → unrecognised-argument failure.
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          set -euo pipefail
+          brew install llvm@18
+          prefix="$(brew --prefix llvm@18)"
+          test -x "$prefix/bin/opt" || { echo "opt missing under $prefix/bin" >&2; exit 1; }
+          test -x "$prefix/bin/llc" || { echo "llc missing under $prefix/bin" >&2; exit 1; }
+          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=$prefix/bin/llc"      >> "$GITHUB_ENV"
+      - name: Locate LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Try PATH first (covers chocolatey shims under
+          # `C:\ProgramData\chocolatey\bin\`) and a list of
+          # well-known install locations second. Only fall back
+          # to a forced reinstall if both come up empty — the
+          # runner image's pre-installed LLVM is usually fine,
+          # but the choco state can desync from the filesystem.
+          function Find-LlvmTool($name) {
+            $cmd = Get-Command $name -ErrorAction SilentlyContinue
+            if ($cmd) { return $cmd.Source }
+            foreach ($dir in @(
+              'C:\Program Files\LLVM\bin',
+              'C:\Program Files (x86)\LLVM\bin',
+              'C:\ProgramData\chocolatey\bin'
+            )) {
+              $cand = Join-Path $dir $name
+              if (Test-Path $cand) { return $cand }
+            }
+            return $null
+          }
+          $opt = Find-LlvmTool 'opt.exe'
+          $llc = Find-LlvmTool 'llc.exe'
+          if (-not $opt -or -not $llc) {
+            Write-Host "LLVM tools missing; forcing chocolatey reinstall"
+            choco install -y --no-progress --force llvm
+            $profile = Join-Path $env:ChocolateyInstall 'helpers\chocolateyProfile.psm1'
+            if (Test-Path $profile) { Import-Module $profile }
+            if (Get-Command refreshenv -ErrorAction SilentlyContinue) { refreshenv }
+            $opt = Find-LlvmTool 'opt.exe'
+            $llc = Find-LlvmTool 'llc.exe'
+          }
+          if (-not $opt) { throw "opt.exe still not found after install" }
+          if (-not $llc) { throw "llc.exe still not found after install" }
+          Write-Host "GOS_LLVM_OPT=$opt"
+          Write-Host "GOS_LLC=$llc"
+          "GOS_LLVM_OPT=$opt" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "GOS_LLC=$llc"      | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -50,31 +115,6 @@ jobs:
           # rlibs still reference the absent symbol on Windows
           # MSVC; bumping the prefix forces a clean rebuild.
           prefix-key: v2-test-stdio
-      # `gos build` shells out to `opt` and `llc` from LLVM 18+.
-      # Ubuntu runners ship them at `/usr/lib/llvm-18/bin/` (picked
-      # up by the auto-discovery candidates); macOS and Windows
-      # runners need an explicit install + env-var pointer.
-      - name: Install LLVM (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-          brew install llvm@18
-          prefix="$(brew --prefix llvm@18)"
-          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
-          echo "GOS_LLC=$prefix/bin/llc"      >> "$GITHUB_ENV"
-      - name: Locate LLVM (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $bin = 'C:\Program Files\LLVM\bin'
-          if (-not (Test-Path "$bin\opt.exe")) {
-            choco install -y --no-progress llvm
-          }
-          if (-not (Test-Path "$bin\opt.exe")) {
-            throw "opt.exe still missing under $bin after install"
-          }
-          "GOS_LLVM_OPT=$bin\opt.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "GOS_LLC=$bin\llc.exe"      | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       # `crates/gossamer-cli/build.rs` ensures the runtime
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
