@@ -78,6 +78,12 @@ pub enum ParseError {
     /// Two consecutive tokens formed something the parser does not recognise.
     #[error("unexpected construct")]
     UnexpectedConstruct,
+    /// `extern "C" { ... }` or `extern "C" fn` encountered at item position.
+    ///
+    /// The `extern` keyword is reserved; FFI is expressed through
+    /// `[rust-bindings]` in `project.toml` plus the `gossamer-binding` crate.
+    #[error("extern blocks are not supported — use `[rust-bindings]` in `project.toml`")]
+    ExternReserved,
 }
 
 /// A diagnostic with its source location.
@@ -180,6 +186,17 @@ impl ParseDiagnostic {
             ParseError::MalformedAttribute => ("GP0013", "malformed attribute".to_string(), None),
             ParseError::MalformedUse => ("GP0014", "malformed `use` declaration".to_string(), None),
             ParseError::UnexpectedConstruct => ("GP0015", "unexpected construct".to_string(), None),
+            ParseError::ExternReserved => (
+                "GP0016",
+                "extern blocks are not supported in Gossamer 0.5.0".to_string(),
+                Some(
+                    "FFI is expressed through the `[rust-bindings]` section of `project.toml` \
+                     plus the `gossamer-binding` crate (see `docs_src/libraries.md`). \
+                     Remove the `extern \"C\" { ... }` block or rewrite the binding as a \
+                     Rust crate consumed via `[rust-bindings]`."
+                        .to_string(),
+                ),
+            ),
         };
         let mut out = Diagnostic::error(Code(code), title.clone()).with_primary(location, title);
         if let Some(help) = help {

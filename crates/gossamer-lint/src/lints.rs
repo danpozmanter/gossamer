@@ -193,7 +193,8 @@ pub(crate) fn walk_expr(expr: &Expr, visitor: &mut dyn FnMut(&Expr)) {
         | ExprKind::Return(None)
         | ExprKind::Break { value: None, .. }
         | ExprKind::Continue { .. }
-        | ExprKind::MacroCall(_) => {}
+        | ExprKind::MacroCall(_)
+        | ExprKind::Error => {}
     }
 }
 

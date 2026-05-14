@@ -1,0 +1,11 @@
+// Stack overflow must produce a clean diagnostic (non-zero exit
+// code), not silently corrupt memory. Unbounded recursion is the
+// simplest trigger.
+
+fn recurse(n: i64) -> i64 {
+    recurse(n + 1)
+}
+
+fn main() {
+    let _ = recurse(0)
+}

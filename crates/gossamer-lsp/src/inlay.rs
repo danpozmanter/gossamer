@@ -219,7 +219,8 @@ impl Walker<'_> {
             ExprKind::Literal(_)
             | ExprKind::Path(_)
             | ExprKind::Continue { .. }
-            | ExprKind::MacroCall(_) => {}
+            | ExprKind::MacroCall(_)
+            | ExprKind::Error => {}
         }
     }
 

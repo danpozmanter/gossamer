@@ -1650,11 +1650,34 @@ fn lower_statement(
                 ir::immediates::Offset32::new(0),
             );
         }
-        // GcWriteBarrier: until the tri-color GC lands the barrier
-        // is a no-op. Code is correct without it; once the
-        // collector arrives it becomes a call to
-        // `gos_rt_gc_write_barrier(place, value)`.
-        StatementKind::GcWriteBarrier { .. } => {}
+        // GcWriteBarrier: emit a call to the runtime's barrier
+        // entry point so the concurrent collector's mark phase
+        // greys the target GcRef. The runtime helper takes a u32
+        // GcRef index (the flat-ABI shape); only i64-encoded
+        // value operands reach this path. Raw pointer-typed
+        // values (Vec / String / HashMap / etc) are tracked
+        // through the GC's allocation registry without an
+        // explicit barrier.
+        StatementKind::GcWriteBarrier { value, .. } => {
+            let operand_ty = operand_cl_type(body, tcx, value, module);
+            if operand_ty == Some(types::I64) {
+                let v = lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    value,
+                    Some(types::I64),
+                    intrinsics,
+                )?;
+                let truncated = builder.ins().ireduce(types::I32, v);
+                let barrier_fn =
+                    intrinsics.extern_fn(module, "gos_rt_write_barrier", &[types::I32], &[])?;
+                let fref = module.declare_func_in_func(barrier_fn, builder.func);
+                let _ = builder.ins().call(fref, &[truncated]);
+            }
+        }
     }
     Ok(())
 }
@@ -3720,6 +3743,7 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_duration_from_secs" => Some("gos_rt_duration_from_secs"),
         "gos_rt_duration_from_millis" => Some("gos_rt_duration_from_millis"),
         "gos_rt_time_format_rfc3339" => Some("gos_rt_time_format_rfc3339"),
+        "gos_rt_time_parse_rfc3339" => Some("gos_rt_time_parse_rfc3339"),
         "gos_rt_flag_parse" => Some("gos_rt_flag_parse"),
         "gos_rt_flag_map_get" => Some("gos_rt_flag_map_get"),
         "gos_rt_os_env" => Some("gos_rt_os_env"),
@@ -3848,6 +3872,8 @@ fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_flag_cell_load_bool" => Some("gos_rt_flag_cell_load_bool"),
         "gos_rt_flag_cell_load_f64" => Some("gos_rt_flag_cell_load_f64"),
         "gos_rt_flag_cell_load_vec" => Some("gos_rt_flag_cell_load_vec"),
+        // Plain ascending sort for Vec<i64>.
+        "gos_rt_vec_sort_i64" => Some("gos_rt_vec_sort_i64"),
         // Sort-by callbacks for fixed-array / Vec receivers.
         "gos_rt_arr_sort_by_i64" => Some("gos_rt_arr_sort_by_i64"),
         "gos_rt_vec_sort_by_i64" => Some("gos_rt_vec_sort_by_i64"),
@@ -3920,6 +3946,7 @@ fn lower_generic_rt_call(
         "gos_rt_duration_from_secs" => (&[types::I64], Some(types::I64)),
         "gos_rt_duration_from_millis" => (&[types::I64], Some(types::I64)),
         "gos_rt_time_format_rfc3339" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_time_parse_rfc3339" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_parse" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_map_get" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_os_env" => (&[ptr_ty], Some(ptr_ty)),
@@ -4051,6 +4078,7 @@ fn lower_generic_rt_call(
         "gos_rt_flag_cell_load_bool" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_flag_cell_load_f64" => (&[ptr_ty], Some(types::F64)),
         "gos_rt_flag_cell_load_vec" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_vec_sort_i64" => (&[ptr_ty], None),
         "gos_rt_arr_sort_by_i64" => (&[ptr_ty, types::I64, ptr_ty], None),
         "gos_rt_vec_sort_by_i64" => (&[ptr_ty, ptr_ty], None),
         // Aggregate-stride variants. Vec form reads `elem_bytes`

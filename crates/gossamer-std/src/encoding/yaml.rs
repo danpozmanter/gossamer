@@ -9,8 +9,59 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use thiserror::Error;
+
+const DEFAULT_MAX_DEPTH: usize = 128;
+const DEFAULT_MAX_SIZE: usize = 16 * 1024 * 1024;
+
+static MAX_DEPTH: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_DEPTH);
+static MAX_SIZE: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_SIZE);
+
+/// Overrides the process-wide cap on parser nesting depth.
+pub fn set_max_depth(n: usize) {
+    MAX_DEPTH.store(n, Ordering::Relaxed);
+}
+
+/// Overrides the process-wide cap on parser input bytes.
+pub fn set_max_size(n: usize) {
+    MAX_SIZE.store(n, Ordering::Relaxed);
+}
+
+/// Current cap on parser nesting depth.
+#[must_use]
+pub fn max_depth() -> usize {
+    MAX_DEPTH.load(Ordering::Relaxed)
+}
+
+/// Current cap on parser input bytes.
+#[must_use]
+pub fn max_size() -> usize {
+    MAX_SIZE.load(Ordering::Relaxed)
+}
+
+fn check_depth(value: &serde_yaml::Value, depth: usize, cap: usize) -> Result<(), Error> {
+    if depth > cap {
+        return Err(Error {
+            message: format!("nesting depth exceeds max_depth ({cap})"),
+        });
+    }
+    match value {
+        serde_yaml::Value::Sequence(seq) => {
+            for v in seq {
+                check_depth(v, depth + 1, cap)?;
+            }
+        }
+        serde_yaml::Value::Mapping(map) => {
+            for (_, v) in map {
+                check_depth(v, depth + 1, cap)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
 
 /// Dynamically typed YAML value.
 #[derive(Debug, Clone, PartialEq)]
@@ -127,15 +178,30 @@ impl Error {
 
 /// Parses a single YAML document into a [`Value`].
 pub fn parse(source: &str) -> Result<Value, Error> {
+    let size_cap = max_size();
+    if source.len() > size_cap {
+        return Err(Error {
+            message: format!("input exceeds max_size ({} > {size_cap})", source.len()),
+        });
+    }
     let raw: serde_yaml::Value = serde_yaml::from_str(source).map_err(Error::from_serde)?;
+    check_depth(&raw, 0, max_depth())?;
     Ok(from_serde(raw))
 }
 
 /// Parses every document in a multi-document YAML stream.
 pub fn parse_all(source: &str) -> Result<Vec<Value>, Error> {
+    let size_cap = max_size();
+    if source.len() > size_cap {
+        return Err(Error {
+            message: format!("input exceeds max_size ({} > {size_cap})", source.len()),
+        });
+    }
+    let depth_cap = max_depth();
     let mut out = Vec::new();
     for doc in serde_yaml::Deserializer::from_str(source) {
         let value = serde_yaml::Value::deserialize(doc).map_err(Error::from_serde)?;
+        check_depth(&value, 0, depth_cap)?;
         out.push(from_serde(value));
     }
     Ok(out)

@@ -8,12 +8,41 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use quick_xml::writer::Writer;
 
 use crate::errors::Error;
+
+const DEFAULT_MAX_DEPTH: usize = 128;
+const DEFAULT_MAX_SIZE: usize = 16 * 1024 * 1024;
+
+static MAX_DEPTH: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_DEPTH);
+static MAX_SIZE: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_SIZE);
+
+/// Overrides the process-wide cap on parser nesting depth.
+pub fn set_max_depth(n: usize) {
+    MAX_DEPTH.store(n, Ordering::Relaxed);
+}
+
+/// Overrides the process-wide cap on parser input bytes.
+pub fn set_max_size(n: usize) {
+    MAX_SIZE.store(n, Ordering::Relaxed);
+}
+
+/// Current cap on parser nesting depth.
+#[must_use]
+pub fn max_depth() -> usize {
+    MAX_DEPTH.load(Ordering::Relaxed)
+}
+
+/// Current cap on parser input bytes.
+#[must_use]
+pub fn max_size() -> usize {
+    MAX_SIZE.load(Ordering::Relaxed)
+}
 
 /// A single attribute name → value pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +129,14 @@ impl Node {
 
 /// Parses an XML document into a tree of [`Node`]s. Returns the root element.
 pub fn parse(src: &str) -> Result<Node, Error> {
+    let cap = max_size();
+    if src.len() > cap {
+        return Err(Error::new(format!(
+            "xml input exceeds max_size ({} > {cap})",
+            src.len()
+        )));
+    }
+    let depth_cap = max_depth();
     let mut reader = Reader::from_str(src);
     reader.config_mut().trim_text(true);
     let mut stack: Vec<(String, BTreeMap<String, String>, Vec<Node>)> = Vec::new();
@@ -107,6 +144,11 @@ pub fn parse(src: &str) -> Result<Node, Error> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
+                if stack.len() >= depth_cap {
+                    return Err(Error::new(format!(
+                        "xml nesting depth exceeds max_depth ({depth_cap})"
+                    )));
+                }
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 let mut attrs = BTreeMap::new();
                 for attr in e.attributes().flatten() {

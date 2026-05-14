@@ -59,6 +59,42 @@ impl Parser<'_> {
         if self.at_keyword(Keyword::Mod) {
             return ItemKind::Mod(self.parse_mod_decl());
         }
+        // `extern "C" { ... }` and `unsafe extern "C" { ... }` — GP0016.
+        // The keyword is recognised as an item start by the recovery
+        // helper, so we must handle it here to avoid the infinite loop
+        // where recovery returns without advancing past `extern`.
+        if self.at_keyword(Keyword::Extern)
+            || (self.at_keyword(Keyword::Unsafe)
+                && matches!(self.peek_nth(1).kind, TokenKind::Keyword(Keyword::Extern)))
+        {
+            let span = self.peek_span();
+            self.record(ParseError::ExternReserved, span);
+            if self.eat_keyword(Keyword::Unsafe) {
+                // consumed `unsafe` of `unsafe extern "C" ...`
+            }
+            self.bump(); // consume `extern`
+            // optional ABI string: `"C"`, `"system"`, etc.
+            if matches!(self.peek().kind, TokenKind::StringLit) {
+                self.bump();
+            }
+            // skip braced body `{ ... }` when present
+            if self.at_punct(Punct::LBrace) {
+                self.bump(); // consume opening `{`
+                let mut depth = 1u32;
+                while !self.at_eof() && depth > 0 {
+                    if self.at_punct(Punct::LBrace) {
+                        depth += 1;
+                    } else if self.at_punct(Punct::RBrace) {
+                        depth -= 1;
+                    }
+                    self.bump();
+                }
+            }
+            return ItemKind::Mod(ModDecl {
+                name: Ident::new("<extern-error>"),
+                body: ModBody::External,
+            });
+        }
         self.record(
             ParseError::Unexpected {
                 expected: "item keyword".to_string(),

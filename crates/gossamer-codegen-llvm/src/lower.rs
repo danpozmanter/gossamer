@@ -140,6 +140,23 @@ enum ConcatKind {
     Float,
     Bool,
     Char,
+    /// `Vec<i64>` (or any 8-byte-elem Vec) formatted via
+    /// `gos_rt_vec_format_i64`.
+    VecI64,
+    VecF64,
+    VecBool,
+    VecString,
+    VecVecI64,
+    /// `[i64; N]` flat-buffer literal; the embedded length is
+    /// passed alongside the buffer pointer to the runtime helper.
+    ArrI64(i64),
+    ArrF64(i64),
+    ArrBool(i64),
+    ArrString(i64),
+    /// `json::Value` rendered via `gos_rt_json_display`.
+    JsonValue,
+    /// `errors::Error` rendered via `gos_rt_error_message`.
+    ErrorMessage,
     Unsupported,
 }
 
@@ -176,6 +193,26 @@ impl<'a> Lowerer<'a> {
     /// remain in `self.runtime_refs` and are read by the
     /// caller to prepend to the module.
     pub(crate) fn lower(&mut self) -> Result<String, BuildError> {
+        // Reject i128 / u128 use up-front. The runtime ABI is i64
+        // throughout; codegen would silently truncate or emit an
+        // invalid `sext i128 to i64`. Surface a clear diagnostic
+        // mentioning the offending type and the compiled tier.
+        for (i, _) in self.body.locals.iter().enumerate() {
+            let ty = self
+                .body
+                .local_ty(gossamer_mir::Local(u32::try_from(i).unwrap_or(0)));
+            if matches!(
+                self.tcx.kind(ty),
+                Some(gossamer_types::TyKind::Int(
+                    gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128
+                ))
+            ) {
+                return Err(BuildError::Unsupported(
+                    "i128 / u128 is not supported by the compiled tier; \
+                     use i64 / u64 or split the value into two 64-bit halves",
+                ));
+            }
+        }
         // Closure bodies (`__closure_N`) used to fall back to
         // Cranelift because their MIR return slot was typed
         // `Unit`. The 2026-05-07 lift fix now propagates the
@@ -385,10 +422,26 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
-            StatementKind::GcWriteBarrier { .. } => {
-                // No-op until the tri-color GC lands; matches
-                // Cranelift's behaviour. Code is correct
-                // without it.
+            StatementKind::GcWriteBarrier { value, .. } => {
+                // Explicit GcWriteBarrier statements are emitted
+                // by the MIR layer for stores that the
+                // codegen-side lower_assign post-store sniffer
+                // wouldn't catch (runtime-helper internal writes
+                // exposed through MIR, aggregate-field writes
+                // that the per-field shape detection misses).
+                //
+                // The runtime's `gos_rt_write_barrier(u32)` takes
+                // a GcRef index — only i64-encoded values
+                // (the flat ABI's GcRef shape) reach this path.
+                // Pointer-typed runtime handles are tracked by
+                // the GC's allocation registry without a barrier.
+                let value_ty = self.operand_llvm_ty(value);
+                if value_ty == "i64" {
+                    let Ok(lowered) = self.lower_operand(value) else {
+                        return Ok(());
+                    };
+                    self.emit_write_barrier(&lowered);
+                }
             }
         }
         Ok(())
@@ -483,13 +536,45 @@ impl<'a> Lowerer<'a> {
         let leaf_ty = self.place_leaf_ty(place);
         let leaf_llvm = render_ty(self.tcx, leaf_ty);
         let value = self.lower_rvalue(rvalue, place.local)?;
-        // `Use(FnRef)` returns a `ptr` literal (the function's
-        // global symbol). When the destination slot is integer-
-        // shaped (the goroutine-spawn path stores fn addresses
-        // into `i64` locals), coerce ptr → leaf_llvm so the
-        // emitted `store` types match.
-        let value = if matches!(rvalue, Rvalue::Use(Operand::FnRef { .. })) && leaf_llvm != "ptr" {
-            self.coerce_llvm_value(&value, "ptr", &leaf_llvm)
+        // The rvalue's LLVM type may differ from the destination
+        // slot's leaf type for several shapes:
+        //
+        //   * `Use(FnRef)` returns a `ptr` literal; when the
+        //     destination is an `i64` slot (goroutine-spawn path
+        //     stores fn addresses as i64), coerce ptr → i64.
+        //   * `Use(Const(Int(n)))` returns the integer literal
+        //     `n` as an `i64`; when the destination is a float
+        //     slot (closure capturing a float, struct field of
+        //     type `f64`, etc.), the bare `store double 16` IR
+        //     is rejected by `opt`/`llc`. Coerce i64 → double.
+        //   * `Use(Const(Float(...)))` returns a `0xH…` literal
+        //     typed `double`; when the destination is integer-
+        //     shaped (rare; format-precision args route this
+        //     way), coerce double → i64.
+        //
+        // The pre-0.5.0 silent Cranelift fallback masked these
+        // mismatches because Cranelift accepted them. Strict
+        // LLVM verification surfaces them; coerce here.
+        let rvalue_llvm = self.rvalue_llvm_ty(rvalue);
+        // When the rvalue is void (e.g. `Use(Copy(_tmp))` where the
+        // source local was assigned the result of a void-returning
+        // runtime call), `lower_place_read` returns an empty string.
+        // Coercing `bitcast void <empty> to ptr` is invalid IR.
+        // Synthesise a null sentinel matching the destination's
+        // leaf type so the slot has a well-defined bit pattern when
+        // the return path or any later use reads it.
+        let (rvalue_llvm, value) = if rvalue_llvm == "void" || value.is_empty() {
+            let sentinel = match leaf_llvm.as_str() {
+                "ptr" => "null".to_string(),
+                "double" | "float" => "0.0".to_string(),
+                _ => "0".to_string(),
+            };
+            (leaf_llvm.clone(), sentinel)
+        } else {
+            (rvalue_llvm, value)
+        };
+        let value = if rvalue_llvm != leaf_llvm && !rvalue_llvm.is_empty() && leaf_llvm != "void" {
+            self.coerce_llvm_value(&value, &rvalue_llvm, &leaf_llvm)
         } else {
             value
         };
@@ -498,16 +583,20 @@ impl<'a> Lowerer<'a> {
         } else {
             self.lower_place_address(place)
         };
-        // When a runtime call returns a heap pointer to a multi-slot aggregate
-        // (e.g. `gos_rt_result_payload` returning an ExecOutput blob), the
-        // destination is an inline `[N x i64]` alloca. A bare `store ptr`
-        // only writes the blob address into slot 0; subsequent field reads
-        // then load the blob pointer instead of the actual field value. Memcpy
-        // the full struct instead.
+        // When a runtime call returns a heap pointer to an
+        // aggregate (e.g. `gos_rt_result_payload` returning a
+        // heap-allocated Bag / ExecOutput / tuple), the destination
+        // is an inline `[N x i64]` alloca. A bare `store ptr` only
+        // writes the blob address into slot 0; subsequent field
+        // reads then load the blob pointer instead of the actual
+        // field value. Memcpy the full struct instead. This applies
+        // to every aggregate slot count, including N==1: a 1-slot
+        // `Bag { items: Vec<String> }` value-semantically holds a
+        // Vec ptr at offset 0, NOT the Bag's address itself.
         if place.projection.is_empty()
             && leaf_llvm == "ptr"
             && is_aggregate(self.tcx, dest_ty_mir)
-            && slot_count(self.tcx, dest_ty_mir).is_some_and(|n| n > 1)
+            && slot_count(self.tcx, dest_ty_mir).is_some_and(|n| n >= 1)
         {
             let bytes = u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8;
             writeln!(
@@ -570,7 +659,27 @@ impl<'a> Lowerer<'a> {
         let mut slot_idx = 0u32;
         for operand in operands {
             let op_ty = self.operand_ty(operand);
-            let op_slots = slot_count(self.tcx, op_ty).unwrap_or(1);
+            let mut op_slots = slot_count(self.tcx, op_ty).unwrap_or(1);
+            // `operand_ty` falls back to the return-slot type for
+            // `Const(Str)` and FnRef operands when their own type
+            // isn't directly representable. When the function
+            // returns a multi-slot aggregate (struct return), that
+            // fallback inflates `op_slots` to the return type's
+            // slot count, sending a 1-slot string-literal operand
+            // through the multi-slot memcpy branch which then
+            // bails because the source is a Const, not a place.
+            // Every Const* and FnRef value is exactly 1 slot in the
+            // flat ABI (the underlying constant produces a single
+            // i64/double/ptr). Force `op_slots = 1` to match.
+            if matches!(operand, Operand::Const(_) | Operand::FnRef { .. }) {
+                op_slots = 1;
+            }
+            if op_slots == 0 {
+                // A genuine zero-slot operand (Unit). Nothing to
+                // store; skip to the next operand without
+                // advancing `slot_idx`.
+                continue;
+            }
             if op_slots == 1 {
                 let v = self.lower_operand(operand)?;
                 let op_llvm = self.operand_llvm_ty(operand);
@@ -582,19 +691,37 @@ impl<'a> Lowerer<'a> {
                 .unwrap();
                 writeln!(self.out, "  store {op_llvm} {v}, ptr {dst}").unwrap();
             } else {
-                // Nested aggregate: the operand is a local
-                // whose stack slot we memcpy. Use
-                // `llvm.memcpy.p0.p0.i64` — lowered by `llc` to
-                // the platform's best sequence.
+                // Nested aggregate. The operand may be either a
+                // bare-local copy (`Operand::Copy(p)` with empty
+                // projection — the original supported shape) or
+                // a projected place (`base.inner`, `tuple.0`,
+                // etc.). For both, the source is an in-memory
+                // place whose address we compute through
+                // `lower_place_address`, then memcpy `op_slots *
+                // 8` bytes into the destination slot. The
+                // memcpy expands at `llc` time to the platform's
+                // best sequence.
                 let src_place = match operand {
-                    Operand::Copy(p) if p.projection.is_empty() => p,
-                    _ => {
+                    Operand::Copy(p) => p,
+                    Operand::Const(_) | Operand::FnRef { .. } => {
+                        // Genuinely multi-slot const / FnRef are
+                        // not surfaced by the current MIR: every
+                        // multi-slot constructor is materialised
+                        // into a temp local first, and FnRef is
+                        // always 1-slot. The Unit-typed
+                        // mis-classification is handled by the
+                        // `op_slots == 0` recovery above so this
+                        // branch is unreachable on well-formed
+                        // input; we surface it as a hard error
+                        // rather than a silent miscompile.
                         return Err(BuildError::Unsupported(
-                            "nested aggregate operand must be a local copy",
+                            "nested aggregate operand must be a Copy(place); \
+                             multi-slot constants and FnRef values are not \
+                             materialised through the aggregate-store path",
                         ));
                     }
                 };
-                let src = local_slot(src_place.local);
+                let src = self.lower_place_address(src_place);
                 let dst = self.fresh();
                 writeln!(
                     self.out,
@@ -758,6 +885,38 @@ impl<'a> Lowerer<'a> {
         dest_local: Local,
     ) -> Result<String, BuildError> {
         let dest_ty = render_ty(self.tcx, self.body.local_ty(dest_local));
+        // Pull canonical parameter types from the runtime registry
+        // when the symbol is registered. This sidesteps two related
+        // miscompiles: (a) a Unit / `void` operand becoming a `void`
+        // call-site argument (LLVM rejects this), and (b) two
+        // distinct calls for the same symbol producing two divergent
+        // `declare` lines (LLVM rejects redefinition).
+        let registry_param_llvm: Vec<String> = gossamer_abi::lookup(name)
+            .map(|e| {
+                e.sig
+                    .params
+                    .iter()
+                    .map(|p| p.llvm_ir().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        // `gos_rt_chan_send` / `gos_rt_chan_try_send` expect their
+        // second argument to be `*const u8` — a pointer to a
+        // memory slot holding the value bytes (the runtime
+        // memcpys `chan.elem_bytes` from there). A naive
+        // `inttoptr i64 N to ptr` produces a wild pointer that
+        // segfaults inside `push_back`. Stack-spill the value
+        // and pass the slot address, matching the Cranelift
+        // backend.
+        let chan_send_spill = matches!(name, "gos_rt_chan_send" | "gos_rt_chan_try_send");
+        // `gos_rt_result_new(disc, payload)` stores `payload` as an
+        // i64. For aggregate payloads (struct literals, tuples,
+        // arrays built on this function's stack), the operand's
+        // value in the flat-slot ABI is its stack alloca address —
+        // which becomes dangling the moment the caller's frame
+        // pops. Heap-copy the aggregate before passing so the
+        // pointer outlives the function return.
+        let result_new_heap_copy = matches!(name, "gos_rt_result_new");
         let mut arg_text = String::new();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
@@ -765,20 +924,89 @@ impl<'a> Lowerer<'a> {
             }
             let a_ty = self.operand_llvm_ty(arg);
             let a_v = self.lower_operand(arg)?;
+            if result_new_heap_copy
+                && i == 1
+                && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
+            {
+                let _ = write!(arg_text, "i64 {heap_v}");
+                continue;
+            }
+            if chan_send_spill && i == 1 {
+                // Spill the value into a fresh 8-byte stack slot
+                // (the channel element width is at most one
+                // word in the current runtime ABI) and pass the
+                // slot address. The `a_ty` could be ptr / i64 /
+                // double / i32 / i1; widen scalars to i64 so the
+                // slot's 8 bytes are fully initialised.
+                let slot = self.fresh();
+                writeln!(self.out, "  {slot} = alloca i64").unwrap();
+                let stored_ty;
+                let stored_val;
+                if a_ty == "ptr" {
+                    stored_ty = "ptr".to_string();
+                    stored_val = a_v.clone();
+                } else if a_ty == "double" || a_ty == "float" {
+                    stored_ty = "double".to_string();
+                    stored_val = a_v.clone();
+                } else if a_ty.starts_with('i') && a_ty != "i64" {
+                    let widened = self.fresh();
+                    writeln!(self.out, "  {widened} = zext {a_ty} {a_v} to i64").unwrap();
+                    stored_ty = "i64".to_string();
+                    stored_val = widened;
+                } else {
+                    stored_ty = "i64".to_string();
+                    stored_val = a_v.clone();
+                }
+                writeln!(self.out, "  store {stored_ty} {stored_val}, ptr {slot}").unwrap();
+                let _ = write!(arg_text, "ptr {slot}");
+                continue;
+            }
+            if let Some(want_ty) = registry_param_llvm.get(i) {
+                if a_ty == "void" || a_ty.is_empty() {
+                    let zero = match want_ty.as_str() {
+                        "ptr" => "null".to_string(),
+                        "double" => "0.0".to_string(),
+                        _ => "0".to_string(),
+                    };
+                    let _ = write!(arg_text, "{want_ty} {zero}");
+                    continue;
+                }
+                if &a_ty != want_ty {
+                    let coerced = self.coerce_llvm_value(&a_v, &a_ty, want_ty);
+                    let _ = write!(arg_text, "{want_ty} {coerced}");
+                    continue;
+                }
+            }
             let _ = write!(arg_text, "{a_ty} {a_v}");
         }
         // Build a `declare` stub matching the call's actual
         // shape so the module header carries a single coherent
         // declaration. The runtime fn's signature is whatever
         // we just emitted at the call site — record it here.
+        // Prefer the registry signature when available so two
+        // different call sites for the same symbol always agree.
         let mut decl_args = String::new();
-        for (i, arg) in args.iter().enumerate() {
-            if i > 0 {
-                decl_args.push_str(", ");
+        if !registry_param_llvm.is_empty() {
+            decl_args = registry_param_llvm.join(", ");
+        } else {
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    decl_args.push_str(", ");
+                }
+                let t = self.operand_llvm_ty(arg);
+                let t = if t == "void" || t.is_empty() {
+                    "i64".to_string()
+                } else {
+                    t
+                };
+                let _ = write!(decl_args, "{t}");
             }
-            let _ = write!(decl_args, "{}", self.operand_llvm_ty(arg));
         }
-        let decl_ret = if dest_ty == "void" || is_unit(self.tcx, self.body.local_ty(dest_local)) {
+        let registry_ret_llvm: Option<String> =
+            gossamer_abi::lookup(name).map(|e| e.sig.ret.llvm_ir().to_string());
+        let decl_ret = if let Some(r) = &registry_ret_llvm {
+            r.clone()
+        } else if dest_ty == "void" || is_unit(self.tcx, self.body.local_ty(dest_local)) {
             "void".to_string()
         } else {
             dest_ty.clone()
@@ -806,17 +1034,33 @@ impl<'a> Lowerer<'a> {
         }
         if decl_ret == "void" {
             writeln!(self.out, "  call void @{name}({arg_text})").unwrap();
-            // Rvalue-position void call: synthesise a sentinel
-            // SSA name. The caller stores it back into the slot
-            // (which is unit-typed and will be a no-op), or
-            // silently ignores the result. Use a literal `0` so
-            // any downstream coerce path treats it like an
-            // unsigned immediate.
-            Ok("0".to_string())
+            // Rvalue-position void call: synthesise a sentinel value
+            // matching the destination slot's type. Normally the dest
+            // is unit-typed (a no-op store), but the drop pass may assign
+            // a free call to a local whose type is the function's return
+            // type (e.g. ptr). LLVM 18 rejects `store ptr 0`; use `null`.
+            let sentinel = match dest_ty.as_str() {
+                "ptr" => "null",
+                "double" | "float" => "0.0",
+                _ => "0",
+            };
+            Ok(sentinel.to_string())
         } else {
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = call {decl_ret} @{name}({arg_text})").unwrap();
-            Ok(tmp)
+            // The declaration is canonical, but the destination
+            // slot may expect a different but ABI-compatible
+            // shape (e.g. `gos_rt_result_payload` returns `i64`
+            // per registry, but the call site stores it into a
+            // ptr-typed slot when the payload was a heap pointer
+            // reinterpreted as an integer). Coerce so the
+            // surrounding store / use is well-typed.
+            if decl_ret != dest_ty && dest_ty != "void" && !dest_ty.is_empty() {
+                let coerced = self.coerce_llvm_value(&tmp, &decl_ret, &dest_ty);
+                Ok(coerced)
+            } else {
+                Ok(tmp)
+            }
         }
     }
 
@@ -1277,8 +1521,17 @@ impl<'a> Lowerer<'a> {
                 // `Not` is bitwise on integers, logical on bool.
                 // Both map to `xor` with an all-ones mask for the
                 // operand's width — `-1` covers both `i1` and
-                // wider integer types.
-                let ty = render_ty(self.tcx, dest_ty);
+                // wider integer types. The destination's MIR type
+                // may be `Var`/`ptr` (typechecker left it
+                // unresolved); use the operand's actual LLVM type
+                // so `xor i1 %v, -1` is generated for bools rather
+                // than the invalid `xor ptr`.
+                let operand_llvm = self.operand_llvm_ty(operand);
+                let ty = if operand_llvm == "ptr" || operand_llvm.is_empty() {
+                    render_ty(self.tcx, dest_ty)
+                } else {
+                    operand_llvm
+                };
                 writeln!(self.out, "  {tmp} = xor {ty} {operand_v}, -1").unwrap();
             }
             _ => {
@@ -1348,6 +1601,111 @@ impl<'a> Lowerer<'a> {
         let operand_ty = self.operand_ty(lhs);
         let mut kind = numeric_kind(self.tcx, operand_ty);
         let mut operand_llvm = render_ty(self.tcx, operand_ty);
+        // Width mismatch correction: when one operand is the
+        // narrower `i1` form (most often a `Copy(bool_place)`) but
+        // `operand_ty(lhs)` resolved to `i64` (typical when the
+        // other operand is a Const fall-through), widen the i1
+        // side to match. Without this fix, `and i64 1, %i1_val`
+        // hits opt's "operand type mismatch" verifier.
+        let lhs_llvm = self.operand_llvm_ty(lhs);
+        let rhs_llvm = self.operand_llvm_ty(rhs);
+        if operand_llvm == "i64" {
+            if lhs_llvm == "i1" {
+                let zlhs = self.fresh();
+                writeln!(self.out, "  {zlhs} = zext i1 {lhs_v} to i64").unwrap();
+                lhs_v = zlhs;
+            }
+            if rhs_llvm == "i1" {
+                let zrhs = self.fresh();
+                writeln!(self.out, "  {zrhs} = zext i1 {rhs_v} to i64").unwrap();
+                rhs_v = zrhs;
+            }
+            // LLVM 18 rejects mixing ptr and integer operands in any
+            // instruction. When a local was typed as ptr (e.g. an enum
+            // discriminant stored via inttoptr) but the MIR operand type
+            // is i64, convert the ptr operand before the operation.
+            if lhs_llvm == "ptr" {
+                let plhs = self.fresh();
+                writeln!(self.out, "  {plhs} = ptrtoint ptr {lhs_v} to i64").unwrap();
+                lhs_v = plhs;
+            }
+            if rhs_llvm == "ptr" {
+                let prhs = self.fresh();
+                writeln!(self.out, "  {prhs} = ptrtoint ptr {rhs_v} to i64").unwrap();
+                rhs_v = prhs;
+            }
+        }
+        // When the MIR operand type is `ptr` (e.g. a closure parameter
+        // whose type was not pinned to a concrete integer during inference),
+        // the LLVM locals hold integer bit-patterns stored via inttoptr.
+        // Arithmetic on such values requires ptrtoint → integer op →
+        // inttoptr back so the result slot (also ptr-typed) stays coherent.
+        let mut result_needs_inttoptr = false;
+        if operand_llvm == "ptr"
+            && matches!(
+                op,
+                BinOp::Add
+                    | BinOp::Sub
+                    | BinOp::Mul
+                    | BinOp::Div
+                    | BinOp::Rem
+                    | BinOp::BitAnd
+                    | BinOp::BitOr
+                    | BinOp::BitXor
+                    | BinOp::Shl
+                    | BinOp::Shr
+            )
+        {
+            if lhs_llvm == "ptr" {
+                let plhs = self.fresh();
+                writeln!(self.out, "  {plhs} = ptrtoint ptr {lhs_v} to i64").unwrap();
+                lhs_v = plhs;
+            } else if lhs_llvm == "double" || lhs_llvm == "float" {
+                let blhs = self.fresh();
+                writeln!(self.out, "  {blhs} = bitcast {lhs_llvm} {lhs_v} to i64").unwrap();
+                lhs_v = blhs;
+            }
+            if rhs_llvm == "ptr" {
+                let prhs = self.fresh();
+                writeln!(self.out, "  {prhs} = ptrtoint ptr {rhs_v} to i64").unwrap();
+                rhs_v = prhs;
+            } else if rhs_llvm == "double" || rhs_llvm == "float" {
+                let brhs = self.fresh();
+                writeln!(self.out, "  {brhs} = bitcast {rhs_llvm} {rhs_v} to i64").unwrap();
+                rhs_v = brhs;
+            }
+            operand_llvm = "i64".to_string();
+            kind = NumericKind::Int(gossamer_types::IntTy::I64);
+            result_needs_inttoptr = true;
+        }
+        // Similarly, ptr-typed comparison operands need ptrtoint.
+        if operand_llvm == "ptr"
+            && matches!(
+                op,
+                BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+            )
+        {
+            if lhs_llvm == "ptr" {
+                let plhs = self.fresh();
+                writeln!(self.out, "  {plhs} = ptrtoint ptr {lhs_v} to i64").unwrap();
+                lhs_v = plhs;
+            } else if lhs_llvm == "double" || lhs_llvm == "float" {
+                let blhs = self.fresh();
+                writeln!(self.out, "  {blhs} = bitcast {lhs_llvm} {lhs_v} to i64").unwrap();
+                lhs_v = blhs;
+            }
+            if rhs_llvm == "ptr" {
+                let prhs = self.fresh();
+                writeln!(self.out, "  {prhs} = ptrtoint ptr {rhs_v} to i64").unwrap();
+                rhs_v = prhs;
+            } else if rhs_llvm == "double" || rhs_llvm == "float" {
+                let brhs = self.fresh();
+                writeln!(self.out, "  {brhs} = bitcast {rhs_llvm} {rhs_v} to i64").unwrap();
+                rhs_v = brhs;
+            }
+            operand_llvm = "i64".to_string();
+            kind = NumericKind::Int(gossamer_types::IntTy::I64);
+        }
         // The MIR lowering of `||` / `&&` evaluates both
         // operands eagerly and folds into `Add` / similar
         // arithmetic on `i1`, with a `SwitchInt(0, false_arm)`
@@ -1416,10 +1774,26 @@ impl<'a> Lowerer<'a> {
                 format!("fcmp {pred} {operand_llvm}")
             }
             (cmp, _) if matches!(cmp, BinOp::Eq | BinOp::Ne) => {
-                // Equality on non-numeric types (bool, char,
-                // opaque pointers) uses `icmp`.
                 let pred = if matches!(cmp, BinOp::Eq) { "eq" } else { "ne" };
-                format!("icmp {pred} {operand_llvm}")
+                if operand_llvm == "ptr" {
+                    // LLVM 18 rejects `icmp eq ptr %t, 0`. When comparing
+                    // enum discriminants (stored as tagged pointers via
+                    // inttoptr) against integer constants or other ptr
+                    // operands, convert pointer operands to i64 first.
+                    let lhs_int = self.fresh();
+                    writeln!(self.out, "  {lhs_int} = ptrtoint ptr {lhs_v} to i64").unwrap();
+                    lhs_v = lhs_int;
+                    if rhs_llvm == "ptr" {
+                        let rhs_int = self.fresh();
+                        writeln!(self.out, "  {rhs_int} = ptrtoint ptr {rhs_v} to i64").unwrap();
+                        rhs_v = rhs_int;
+                    }
+                    operand_llvm = "i64".to_string();
+                    format!("icmp {pred} i64")
+                } else {
+                    // Equality on non-numeric types (bool, char) uses icmp.
+                    format!("icmp {pred} {operand_llvm}")
+                }
             }
             _ => {
                 if std::env::var("GOS_LLVM_TRACE").is_ok() {
@@ -1463,6 +1837,14 @@ impl<'a> Lowerer<'a> {
             let narrowed = self.fresh();
             writeln!(self.out, "  {narrowed} = icmp ne i64 {tmp}, 0").unwrap();
             return Ok(narrowed);
+        }
+        // When the operands were ptr-typed in MIR but we treated them as
+        // integer by ptrtoint-ing, the i64 result must be converted back to
+        // ptr to match the dest slot's expected type.
+        if result_needs_inttoptr && dest_llvm == "ptr" {
+            let p = self.fresh();
+            writeln!(self.out, "  {p} = inttoptr i64 {tmp} to ptr").unwrap();
+            return Ok(p);
         }
         Ok(tmp)
     }
@@ -1745,7 +2127,19 @@ impl<'a> Lowerer<'a> {
         // Read the local's value: for a function pointer the
         // load yields the callable address; for a closure env
         // it yields the env pointer.
-        let env_value = self.lower_place_read(place);
+        let callee_llvm = render_ty(self.tcx, callee_ty);
+        let raw_value = self.lower_place_read(place);
+        // When a closure was stored through a Vec<i64> or similar
+        // integer-typed container, the loaded value is an i64 holding
+        // a pointer bit-pattern. Convert to ptr so it can be used as
+        // a memory address for vtable + env dispatch.
+        let env_value = if callee_llvm == "i64" {
+            let p = self.fresh();
+            writeln!(self.out, "  {p} = inttoptr i64 {raw_value} to ptr").unwrap();
+            p
+        } else {
+            raw_value
+        };
         let fn_ptr = if is_plain_fn {
             env_value.clone()
         } else {
@@ -1936,10 +2330,178 @@ impl<'a> Lowerer<'a> {
                     let widened = self.widen_char_to_i32(arg, &value);
                     writeln!(self.out, "  call void @gos_rt_print_char(i32 {widened})").unwrap();
                 }
+                kind @ (ConcatKind::VecI64
+                | ConcatKind::VecF64
+                | ConcatKind::VecBool
+                | ConcatKind::VecString
+                | ConcatKind::VecVecI64
+                | ConcatKind::ArrI64(_)
+                | ConcatKind::ArrF64(_)
+                | ConcatKind::ArrBool(_)
+                | ConcatKind::ArrString(_)
+                | ConcatKind::JsonValue
+                | ConcatKind::ErrorMessage) => {
+                    let str_ptr = self.emit_aggregate_format(kind, &value);
+                    writeln!(self.out, "  call void @gos_rt_print_str(ptr {str_ptr})").unwrap();
+                }
                 ConcatKind::Unsupported => unreachable!("checked above"),
             }
         }
         Ok(())
+    }
+
+    /// When `arg` is a `Copy` of a stack-aggregate local whose
+    /// slot contents will outlive the current frame as data —
+    /// but whose stack address won't — emit a heap copy and
+    /// return the heap pointer (as i64). Returns `None` for
+    /// non-aggregate operands; callers fall through to the
+    /// normal arg-coercion path.
+    ///
+    /// Used by the `gos_rt_result_new` arg-emission path so
+    /// `Ok(Bag { ... })` doesn't return a pointer to a struct
+    /// that lives only on the producer's stack.
+    fn maybe_heap_copy_aggregate(&mut self, arg: &Operand) -> Option<String> {
+        let Operand::Copy(place) = arg else {
+            return None;
+        };
+        if !place.projection.is_empty() {
+            return None;
+        }
+        let local_ty = self.body.local_ty(place.local);
+        if !is_aggregate(self.tcx, local_ty) {
+            return None;
+        }
+        // Sentinel Adts (Result/Option, u32::MAX / u32::MAX-1)
+        // are themselves heap-allocated pointers — the slot
+        // holds the pointer directly. No copy needed.
+        if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(local_ty)
+            && (def.local == u32::MAX || def.local == u32::MAX - 1)
+        {
+            return None;
+        }
+        let slots = slot_count(self.tcx, local_ty)?;
+        if slots == 0 {
+            return None;
+        }
+        let bytes = u64::from(slots) * 8;
+        declare_rt(&mut self.runtime_refs, "gos_rt_gc_alloc");
+        let heap = self.fresh();
+        writeln!(
+            self.out,
+            "  {heap} = call ptr @gos_rt_gc_alloc(i64 {bytes})"
+        )
+        .unwrap();
+        let src = local_slot(place.local);
+        writeln!(
+            self.out,
+            "  call void @llvm.memcpy.p0.p0.i64(ptr {heap}, ptr {src}, i64 {bytes}, i1 false)"
+        )
+        .unwrap();
+        let heap_i64 = self.fresh();
+        writeln!(self.out, "  {heap_i64} = ptrtoint ptr {heap} to i64").unwrap();
+        Some(heap_i64)
+    }
+
+    /// Renders an aggregate / variant `value` to a `*c_char`
+    /// suitable for `gos_rt_print_str` / `gos_rt_concat_str`.
+    /// Each kind is routed through a runtime helper that walks
+    /// the value's layout and produces a Display string. The Arr*
+    /// kinds carry the static length so the helper knows the
+    /// flat buffer's bounds.
+    fn emit_aggregate_format(&mut self, kind: ConcatKind, value: &str) -> String {
+        let dest = self.fresh();
+        match kind {
+            ConcatKind::VecI64 => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_i64");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_i64(ptr {value})"
+                )
+                .unwrap();
+            }
+            ConcatKind::VecF64 => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_f64");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_f64(ptr {value})"
+                )
+                .unwrap();
+            }
+            ConcatKind::VecBool => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_bool");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_bool(ptr {value})"
+                )
+                .unwrap();
+            }
+            ConcatKind::VecString => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_string");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_string(ptr {value})"
+                )
+                .unwrap();
+            }
+            ConcatKind::VecVecI64 => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_vec_i64");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_vec_i64(ptr {value})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ArrI64(n) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_i64");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_i64(ptr {value}, i64 {n})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ArrF64(n) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_f64");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_f64(ptr {value}, i64 {n})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ArrBool(n) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_bool");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_bool(ptr {value}, i64 {n})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ArrString(n) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_string");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_string(ptr {value}, i64 {n})"
+                )
+                .unwrap();
+            }
+            ConcatKind::JsonValue => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_json_display");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_json_display(ptr {value})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ErrorMessage => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_error_message");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_error_message(ptr {value})"
+                )
+                .unwrap();
+            }
+            _ => unreachable!("emit_aggregate_format called with non-aggregate kind"),
+        }
+        dest
     }
 
     /// Builds a single concatenated c-string from every argument
@@ -2054,6 +2616,17 @@ impl<'a> Lowerer<'a> {
                 .unwrap();
                 Ok(dest)
             }
+            kind @ (ConcatKind::VecI64
+            | ConcatKind::VecF64
+            | ConcatKind::VecBool
+            | ConcatKind::VecString
+            | ConcatKind::VecVecI64
+            | ConcatKind::ArrI64(_)
+            | ConcatKind::ArrF64(_)
+            | ConcatKind::ArrBool(_)
+            | ConcatKind::ArrString(_)
+            | ConcatKind::JsonValue
+            | ConcatKind::ErrorMessage) => Ok(self.emit_aggregate_format(kind, &value)),
             ConcatKind::Unsupported => unreachable!("checked above"),
         }
     }
@@ -2120,6 +2693,20 @@ impl<'a> Lowerer<'a> {
                 ConcatKind::Char => {
                     let widened = self.widen_char_to_i32(arg, &value);
                     writeln!(self.out, "  call void @gos_rt_concat_char(i32 {widened})").unwrap();
+                }
+                kind @ (ConcatKind::VecI64
+                | ConcatKind::VecF64
+                | ConcatKind::VecBool
+                | ConcatKind::VecString
+                | ConcatKind::VecVecI64
+                | ConcatKind::ArrI64(_)
+                | ConcatKind::ArrF64(_)
+                | ConcatKind::ArrBool(_)
+                | ConcatKind::ArrString(_)
+                | ConcatKind::JsonValue
+                | ConcatKind::ErrorMessage) => {
+                    let str_ptr = self.emit_aggregate_format(kind, &value);
+                    writeln!(self.out, "  call void @gos_rt_concat_str(ptr {str_ptr})").unwrap();
                 }
                 ConcatKind::Unsupported => unreachable!("checked above"),
             }
@@ -2220,26 +2807,52 @@ impl<'a> Lowerer<'a> {
                     // empty-string pointer as a giant integer.
                     Some(TyKind::Var(_)) => ConcatKind::StrPtr,
                     // Aggregate / collection / variant types
-                    // need a Display impl. Refuse loudly so the
-                    // backend triggers fallback to Cranelift,
-                    // whose bail emits the user-facing message.
+                    // we can route through runtime format helpers.
+                    Some(TyKind::JsonValue) => ConcatKind::JsonValue,
+                    Some(TyKind::DynError) => ConcatKind::ErrorMessage,
+                    Some(TyKind::Array { elem, len }) => {
+                        let n = i64::try_from(*len).unwrap_or(0);
+                        match self.tcx.kind(*elem) {
+                            Some(TyKind::Int(_)) => ConcatKind::ArrI64(n),
+                            Some(TyKind::Float(_)) => ConcatKind::ArrF64(n),
+                            Some(TyKind::Bool) => ConcatKind::ArrBool(n),
+                            Some(TyKind::String) => ConcatKind::ArrString(n),
+                            _ => ConcatKind::Unsupported,
+                        }
+                    }
+                    Some(TyKind::Slice(elem) | TyKind::Vec(elem)) => match self.tcx.kind(*elem) {
+                        Some(TyKind::Int(_)) => ConcatKind::VecI64,
+                        Some(TyKind::Float(_)) => ConcatKind::VecF64,
+                        Some(TyKind::Bool) => ConcatKind::VecBool,
+                        Some(TyKind::String) => ConcatKind::VecString,
+                        Some(TyKind::Vec(inner) | TyKind::Slice(inner)) => {
+                            match self.tcx.kind(*inner) {
+                                Some(TyKind::Int(_)) => ConcatKind::VecVecI64,
+                                _ => ConcatKind::Unsupported,
+                            }
+                        }
+                        _ => ConcatKind::Unsupported,
+                    },
+                    // Aggregate / collection / variant types we
+                    // can't yet route. Refuse loudly so the
+                    // backend triggers fallback.
                     Some(
-                        TyKind::Tuple(_)
-                        | TyKind::Array { .. }
-                        | TyKind::Slice(_)
-                        | TyKind::Vec(_)
+                        kind @ (TyKind::Tuple(_)
                         | TyKind::HashMap { .. }
                         | TyKind::Sender(_)
                         | TyKind::Receiver(_)
-                        | TyKind::JsonValue
-                        | TyKind::DynError
                         | TyKind::Adt { .. }
                         | TyKind::Closure { .. }
                         | TyKind::FnDef { .. }
                         | TyKind::FnPtr(_)
                         | TyKind::FnTrait(_)
-                        | TyKind::Dyn(_),
-                    ) => ConcatKind::Unsupported,
+                        | TyKind::Dyn(_)),
+                    ) => {
+                        if std::env::var("GOS_LLVM_TRACE").is_ok() {
+                            eprintln!("llvm backend: concat_print_kind unsupported: {kind:?}");
+                        }
+                        ConcatKind::Unsupported
+                    }
                     Some(TyKind::Param { .. } | TyKind::Alias { .. } | TyKind::Error) | None => {
                         ConcatKind::Int
                     }
@@ -2256,6 +2869,13 @@ impl<'a> Lowerer<'a> {
         let src_llvm = self.operand_llvm_ty(op);
         if src_llvm == "i64" {
             return v.to_string();
+        }
+        // LLVM 18 rejects sext/zext from ptr; pointer-typed locals stored via
+        // inttoptr (e.g. loop iteration over array elements) must use ptrtoint.
+        if src_llvm == "ptr" {
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = ptrtoint ptr {v} to i64").unwrap();
+            return tmp;
         }
         let signed = match op {
             Operand::Copy(p) => {
@@ -2501,6 +3121,14 @@ impl<'a> Lowerer<'a> {
             self.lower_str_len_inline(&args[0], destination, target)?;
             return Ok(());
         }
+        // `vec.len()` reads the `len: i64` field at offset 0 of the
+        // `GosVec` heap struct. One FFI call per loop iteration
+        // would otherwise dominate any `for i in 0..xs.len() { … }`
+        // shape that doesn't pre-cache the length.
+        if name == "gos_rt_vec_len" && args.len() == 1 {
+            self.lower_vec_len_inline(&args[0], destination, target)?;
+            return Ok(());
+        }
         // `s.split(c)` where `c` is a char: the runtime takes `sep: *const c_char`
         // (a C string pointer), but MIR emits the char code as `i32`. Convert
         // via `gos_rt_char_to_str` first, mirroring the Cranelift backend.
@@ -2583,6 +3211,116 @@ impl<'a> Lowerer<'a> {
                 && !name.contains("::"));
         if is_variant_stub {
             self.emit_variant_stub(&name, args, destination, target)?;
+            return Ok(());
+        }
+        // `channel()` / `sync::channel()` — the std prelude shape
+        // for unbuffered channels. MIR emits a 0-arg `Call("channel",
+        // dest=tuple_local)`; we lower to `gos_rt_chan_new(8, 0)` and
+        // mirror the cranelift backend's "write chan_ptr to both
+        // tuple slots" trick so `pair.0` and `pair.1` (Sender +
+        // Receiver) project to the same handle.
+        if matches!(
+            name.as_str(),
+            "channel"
+                | "channel::new"
+                | "sync::channel"
+                | "sync::Channel::new"
+                | "gos_rt_chan_new"
+                | "Channel::new"
+        ) {
+            declare_rt(&mut self.runtime_refs, "gos_rt_chan_new");
+            let cap_arg = if let Some(a) = args.first() {
+                Some(self.lower_operand(a)?)
+            } else {
+                None
+            };
+            let cap = cap_arg.unwrap_or_else(|| "0".to_string());
+            let tmp = self.fresh();
+            writeln!(
+                self.out,
+                "  {tmp} = call ptr @gos_rt_chan_new(i32 8, i64 {cap})"
+            )
+            .unwrap();
+            // Materialise a fresh 16-byte tuple buffer so the
+            // `(Sender, Receiver)` projections both observe the
+            // same channel handle. The destination MIR local may
+            // be a single-ptr alloca (typeck doesn't always
+            // preserve the tuple shape through the channel-call
+            // path), so writing slot 1 into the destination
+            // directly would overflow the alloca and clobber
+            // adjacent stack memory. Mirrors the Cranelift
+            // backend's `create_sized_stack_slot(16, 3)` shape.
+            let pair_buf = self.fresh();
+            writeln!(self.out, "  {pair_buf} = alloca [2 x i64]").unwrap();
+            let slot0 = self.fresh();
+            writeln!(
+                self.out,
+                "  {slot0} = getelementptr i64, ptr {pair_buf}, i64 0"
+            )
+            .unwrap();
+            writeln!(self.out, "  store ptr {tmp}, ptr {slot0}").unwrap();
+            let slot1 = self.fresh();
+            writeln!(
+                self.out,
+                "  {slot1} = getelementptr i64, ptr {pair_buf}, i64 1"
+            )
+            .unwrap();
+            writeln!(self.out, "  store ptr {tmp}, ptr {slot1}").unwrap();
+            // Store the buffer address into the destination
+            // local so downstream `.0` / `.1` projections lower
+            // as loads from `pair_buf + N*8`.
+            let dest_slot = local_slot(destination.local);
+            writeln!(self.out, "  store ptr {pair_buf}, ptr {dest_slot}").unwrap();
+            emit_terminator_branch(&mut self.out, target);
+            return Ok(());
+        }
+        // `Vec::new(elem_bytes)` — the runtime helper signature is
+        // `gos_rt_vec_new(elem_bytes: u32)`. MIR passes the element
+        // width as `i64`, so we truncate to `i32` before the call.
+        if matches!(name.as_str(), "Vec::new" | "gos_rt_vec_new") {
+            declare_rt(&mut self.runtime_refs, "gos_rt_vec_new");
+            let dst = local_slot(destination.local);
+            let eb_i64 = if let Some(a) = args.first() {
+                self.lower_operand(a)?
+            } else {
+                "8".to_string()
+            };
+            let eb_i32 = self.fresh();
+            writeln!(self.out, "  {eb_i32} = trunc i64 {eb_i64} to i32").unwrap();
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = call ptr @gos_rt_vec_new(i32 {eb_i32})").unwrap();
+            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            emit_terminator_branch(&mut self.out, target);
+            return Ok(());
+        }
+        // `Vec::with_capacity(elem_bytes, cap)` mirrors `Vec::new` but
+        // pre-allocates buffer space.
+        if matches!(
+            name.as_str(),
+            "Vec::with_capacity" | "gos_rt_vec_with_capacity"
+        ) {
+            declare_rt(&mut self.runtime_refs, "gos_rt_vec_with_capacity");
+            let dst = local_slot(destination.local);
+            let eb_i64 = if let Some(a) = args.first() {
+                self.lower_operand(a)?
+            } else {
+                "8".to_string()
+            };
+            let cap_i64 = if let Some(a) = args.get(1) {
+                self.lower_operand(a)?
+            } else {
+                "0".to_string()
+            };
+            let eb_i32 = self.fresh();
+            writeln!(self.out, "  {eb_i32} = trunc i64 {eb_i64} to i32").unwrap();
+            let tmp = self.fresh();
+            writeln!(
+                self.out,
+                "  {tmp} = call ptr @gos_rt_vec_with_capacity(i32 {eb_i32}, i64 {cap_i64})"
+            )
+            .unwrap();
+            writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
+            emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
         // HashMap / collection constructors: MIR emits a 0-arg call but the
@@ -2758,22 +3496,44 @@ impl<'a> Lowerer<'a> {
                 let off_v = self.lower_operand(&args[1])?;
                 let off_ty = self.operand_llvm_ty(&args[1]);
                 // gep i8, p, off → addr
-                let off64 = if off_ty == "i64" {
-                    off_v
-                } else {
-                    let tmp = self.fresh();
-                    writeln!(self.out, "  {tmp} = sext {off_ty} {off_v} to i64").unwrap();
-                    tmp
-                };
+                // `sext` is integer-only; use the type-aware
+                // coercion so a `double` offset (closure capture
+                // routed through gos_load) converts via `fptosi`
+                // rather than the malformed `sext double to i64`
+                // shape that `opt`'s verifier rejects.
+                let off64 = self.coerce_llvm_value(&off_v, &off_ty, "i64");
                 let addr = self.fresh();
                 writeln!(
                     self.out,
                     "  {addr} = getelementptr i8, ptr {p}, i64 {off64}"
                 )
                 .unwrap();
+                if crate::emit::want_race_instrumentation() {
+                    declare_rt(&mut self.runtime_refs, "gos_rt_race_access");
+                    let addr_int = self.fresh();
+                    writeln!(self.out, "  {addr_int} = ptrtoint ptr {addr} to i64").unwrap();
+                    writeln!(
+                        self.out,
+                        "  call void @gos_rt_race_access(i64 {addr_int}, i32 0)"
+                    )
+                    .unwrap();
+                }
                 let loaded = self.fresh();
                 writeln!(self.out, "  {loaded} = load i64, ptr {addr}").unwrap();
-                let coerced = self.coerce_llvm_value(&loaded, "i64", &dest_ty);
+                // Heap-load value recovery is bit-preserving:
+                // a `double` capture stored via `gos_store` (which
+                // bitcasts the float bits into the i64 slot)
+                // must be read back via `bitcast i64 to double`,
+                // not `sitofp` (which would interpret the bits
+                // as an integer value). Mirrors the gos_store
+                // path above.
+                let coerced = if dest_ty == "double" || dest_ty == "float" {
+                    let tmp = self.fresh();
+                    writeln!(self.out, "  {tmp} = bitcast i64 {loaded} to {dest_ty}").unwrap();
+                    tmp
+                } else {
+                    self.coerce_llvm_value(&loaded, "i64", &dest_ty)
+                };
                 let slot = local_slot(destination.local);
                 writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
             }
@@ -2793,20 +3553,44 @@ impl<'a> Lowerer<'a> {
                 // resolution as the ptr arg so we store the
                 // heap pointer rather than the slot address.
                 let (val_v, val_ty) = self.lower_raw_value_arg(&args[2])?;
-                let off64 = if off_ty == "i64" {
-                    off_v
-                } else {
+                // `sext` is integer-only; use the type-aware
+                // coercion so a `double` offset (closure capture
+                // routed through gos_load) converts via `fptosi`
+                // rather than the malformed `sext double to i64`
+                // shape that `opt`'s verifier rejects.
+                let off64 = self.coerce_llvm_value(&off_v, &off_ty, "i64");
+                // Heap-store value-coercion is bit-preserving:
+                // a `double` capture stored into an `i64` heap
+                // slot must keep its IEEE-754 bit pattern intact
+                // (so the matching `gos_load` can read it back
+                // via `bitcast i64 to double`). `coerce_llvm_value`
+                // uses `fptosi` for value-semantic conversions —
+                // wrong here: `fptosi(0.5)` is `0`, losing the
+                // capture. Emit `bitcast` explicitly for the
+                // float-to-i64 store path.
+                let val64 = if val_ty == "double" || val_ty == "float" {
                     let tmp = self.fresh();
-                    writeln!(self.out, "  {tmp} = sext {off_ty} {off_v} to i64").unwrap();
+                    writeln!(self.out, "  {tmp} = bitcast {val_ty} {val_v} to i64").unwrap();
                     tmp
+                } else {
+                    self.coerce_llvm_value(&val_v, &val_ty, "i64")
                 };
-                let val64 = self.coerce_llvm_value(&val_v, &val_ty, "i64");
                 let addr = self.fresh();
                 writeln!(
                     self.out,
                     "  {addr} = getelementptr i8, ptr {p}, i64 {off64}"
                 )
                 .unwrap();
+                if crate::emit::want_race_instrumentation() {
+                    declare_rt(&mut self.runtime_refs, "gos_rt_race_access");
+                    let addr_int = self.fresh();
+                    writeln!(self.out, "  {addr_int} = ptrtoint ptr {addr} to i64").unwrap();
+                    writeln!(
+                        self.out,
+                        "  call void @gos_rt_race_access(i64 {addr_int}, i32 1)"
+                    )
+                    .unwrap();
+                }
                 writeln!(self.out, "  store i64 {val64}, ptr {addr}").unwrap();
                 if dest_ty != "void" && !is_unit(self.tcx, dest_ty_mir) {
                     let slot = local_slot(destination.local);
@@ -2850,7 +3634,14 @@ impl<'a> Lowerer<'a> {
                 // LLVM IR pointer-to-function constants are written
                 // as the function symbol itself; declare-only is OK
                 // because the cranelift companion (or another LLVM
-                // body) provides the definition.
+                // body) provides the definition. When `fname` is a
+                // runtime symbol (`gos_rt_*`), ensure the matching
+                // `declare` lands in the module — otherwise opt
+                // rejects `bitcast ptr @gos_rt_<name>` with "use of
+                // undefined value".
+                if fname.starts_with("gos_rt_") && gossamer_abi::lookup(fname).is_some() {
+                    declare_rt(&mut self.runtime_refs, fname);
+                }
                 let tmp = self.fresh();
                 writeln!(self.out, "  {tmp} = bitcast ptr @\"{fname}\" to ptr").unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
@@ -2924,7 +3715,20 @@ impl<'a> Lowerer<'a> {
         let tmp = self.fresh();
         let op = match (from_ty, to_ty) {
             ("ptr", _) if to_ty.starts_with('i') => "ptrtoint",
-            (_, "ptr") if from_ty.starts_with('i') => "inttoptr",
+            (_, "ptr") if from_ty.starts_with('i') => {
+                // `inttoptr` requires the source to be at least
+                // pointer-width. Narrower integers (i1 for bool,
+                // i32 for char) must be zext'd to i64 first or
+                // LLVM rejects with "pointer cast from non-integral".
+                let from_w: u32 = from_ty[1..].parse().unwrap_or(64);
+                if from_w < 64 {
+                    let widened = self.fresh();
+                    writeln!(self.out, "  {widened} = zext {from_ty} {value} to i64").unwrap();
+                    writeln!(self.out, "  {tmp} = inttoptr i64 {widened} to ptr").unwrap();
+                    return tmp;
+                }
+                "inttoptr"
+            }
             ("ptr", "double") => {
                 // Through i64 — LLVM has no direct ptr→double.
                 let mid = self.fresh();
@@ -2949,6 +3753,14 @@ impl<'a> Lowerer<'a> {
                     return value.to_string();
                 }
             }
+            // Integer ↔ floating-point conversions use `sitofp`
+            // / `fptosi` (signed) — `bitcast` reinterprets bits
+            // and produces a denormal float for small integers,
+            // which is both wrong semantically and rejected by
+            // `opt`'s verifier when the integer literal is too
+            // small to be a valid double bit-pattern.
+            _ if from_ty.starts_with('i') && (to_ty == "double" || to_ty == "float") => "sitofp",
+            _ if (from_ty == "double" || from_ty == "float") && to_ty.starts_with('i') => "fptosi",
             _ => "bitcast",
         };
         writeln!(self.out, "  {tmp} = {op} {from_ty} {value} to {to_ty}").unwrap();
@@ -3156,6 +3968,28 @@ impl<'a> Lowerer<'a> {
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let slot = local_slot(destination.local);
             writeln!(self.out, "  store i64 {val}, ptr {slot}").unwrap();
+        }
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Inline fast path for `gos_rt_vec_len(v) -> i64`. The
+    /// `GosVec` heap struct stores `len: i64` at offset 0, so the
+    /// runtime helper degenerates to one load. Inlining skips the
+    /// FFI call entirely; LLVM then hoists the load when `v` is
+    /// loop-invariant.
+    fn lower_vec_len_inline(
+        &mut self,
+        arg: &Operand,
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let v = self.lower_operand(arg)?;
+        let tmp = self.fresh();
+        writeln!(self.out, "  {tmp} = load i64, ptr {v}").unwrap();
+        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+            let slot = local_slot(destination.local);
+            writeln!(self.out, "  store i64 {tmp}, ptr {slot}").unwrap();
         }
         emit_terminator_branch(&mut self.out, target);
         Ok(())
@@ -3517,6 +4351,20 @@ impl<'a> Lowerer<'a> {
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
         let arg_v = self.lower_operand(arg)?;
+        let arg_llvm = self.operand_llvm_ty(arg);
+        // When an intermediate f64 value was stored through the ptr-arithmetic
+        // path (e.g. result of `s * (s - a) * ...` where operand types are ptr),
+        // the loaded value is ptr-typed but holds a double bit-pattern. Convert
+        // ptr → i64 → double before passing to the llvm intrinsic.
+        let arg_v = if arg_llvm == "ptr" {
+            let i = self.fresh();
+            let d = self.fresh();
+            writeln!(self.out, "  {i} = ptrtoint ptr {arg_v} to i64").unwrap();
+            writeln!(self.out, "  {d} = bitcast i64 {i} to double").unwrap();
+            d
+        } else {
+            arg_v
+        };
         let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
         self.runtime_refs
             .insert(format!("declare double @{intrinsic_name}(double)"));
@@ -3549,13 +4397,98 @@ impl<'a> Lowerer<'a> {
             .get(symbol)
             .map(|tys| tys.iter().map(|t| Some(*t)).collect())
             .unwrap_or_default();
+        // For `gos_rt_*` symbols, the runtime registry gives us
+        // canonical LLVM parameter types — drive the emission off
+        // those rather than the per-call operand types so that a
+        // Unit-typed operand still lands as a valid i64 / ptr at
+        // the call site (matches the dedup'd canonical declare
+        // emitted above).
+        let registry_param_llvm: Vec<String> = if symbol.starts_with("gos_rt_") {
+            gossamer_abi::lookup(symbol)
+                .map(|e| {
+                    e.sig
+                        .params
+                        .iter()
+                        .map(|p| p.llvm_ir().to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        // `gos_rt_chan_send` / `gos_rt_chan_try_send` expect their
+        // second argument to be `*const u8` — a pointer to a
+        // memory slot holding the value bytes (the runtime
+        // memcpys `chan.elem_bytes` from there). Stack-spill the
+        // value and pass the slot address, matching the
+        // Cranelift backend; a bare `inttoptr i64 N to ptr`
+        // produces a wild pointer that segfaults inside the
+        // runtime's `push_back`.
+        let chan_send_spill = matches!(symbol, "gos_rt_chan_send" | "gos_rt_chan_try_send");
+        // See `lower_runtime_call_intrinsic` for rationale: heap-copy
+        // aggregate payloads passed to `gos_rt_result_new` so the
+        // caller's stack alloca doesn't go dangling after return.
+        let result_new_heap_copy = matches!(symbol, "gos_rt_result_new");
         let mut arg_text = String::new();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 arg_text.push_str(", ");
             }
             let want = expected_param_tys.get(i).copied().flatten();
-            let (a_v, a_ty) = self.lower_call_arg(arg, want)?;
+            let (a_v, mut a_ty) = self.lower_call_arg(arg, want)?;
+            if result_new_heap_copy
+                && i == 1
+                && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
+            {
+                let _ = write!(arg_text, "i64 {heap_v}");
+                continue;
+            }
+            if chan_send_spill && i == 1 {
+                let slot = self.fresh();
+                writeln!(self.out, "  {slot} = alloca i64").unwrap();
+                let stored_ty;
+                let stored_val;
+                if a_ty == "ptr" {
+                    stored_ty = "ptr".to_string();
+                    stored_val = a_v.clone();
+                } else if a_ty == "double" || a_ty == "float" {
+                    stored_ty = "double".to_string();
+                    stored_val = a_v.clone();
+                } else if a_ty.starts_with('i') && a_ty != "i64" {
+                    let widened = self.fresh();
+                    writeln!(self.out, "  {widened} = zext {a_ty} {a_v} to i64").unwrap();
+                    stored_ty = "i64".to_string();
+                    stored_val = widened;
+                } else {
+                    stored_ty = "i64".to_string();
+                    stored_val = a_v.clone();
+                }
+                writeln!(self.out, "  store {stored_ty} {stored_val}, ptr {slot}").unwrap();
+                let _ = write!(arg_text, "ptr {slot}");
+                continue;
+            }
+            // If `a_ty` came back as `void` (Unit operand) or as
+            // a different ABI-compatible shape than the registry
+            // declares, coerce so the call instruction's argument
+            // types match the dedup'd canonical declaration.
+            if let Some(want_ty) = registry_param_llvm.get(i) {
+                if a_ty == "void" || a_ty.is_empty() {
+                    let zero = match want_ty.as_str() {
+                        "ptr" => "null".to_string(),
+                        "double" => "0.0".to_string(),
+                        _ => "0".to_string(),
+                    };
+                    let _ = write!(arg_text, "{want_ty} {zero}");
+                    continue;
+                }
+                if &a_ty != want_ty {
+                    let coerced = self.coerce_llvm_value(&a_v, &a_ty, want_ty);
+                    let _ = write!(arg_text, "{want_ty} {coerced}");
+                    a_ty.clone_from(want_ty);
+                    let _ = a_ty;
+                    continue;
+                }
+            }
             let _ = write!(arg_text, "{a_ty} {a_v}");
         }
         let dest_ty_mir = self.body.local_ty(destination.local);
@@ -3570,41 +4503,65 @@ impl<'a> Lowerer<'a> {
         // miscompile. User-defined functions are defined in this module and
         // need no `declare`.
         if symbol.starts_with("gos_rt_") {
-            let decl_ret = if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
-                "void"
+            // Prefer the canonical declaration from the runtime
+            // registry when one exists: it gives the right types
+            // for both return and parameters, sidestepping the
+            // call-site-derived guessing that breaks when an
+            // operand has Unit / void type or a different-but-
+            // ABI-compatible spelling (i64 vs ptr).
+            if gossamer_abi::lookup(symbol).is_some() {
+                declare_rt(&mut self.runtime_refs, symbol);
             } else {
-                &dest_ty
-            };
-            let decl_args = args
-                .iter()
-                .enumerate()
-                .map(|(i, arg)| {
-                    // Mirror lower_call_arg's type selection: aggregate
-                    // params that are expected by a callee expecting Ref<T>
-                    // or another aggregate get "ptr"; everything else uses
-                    // the operand's own LLVM type.
-                    let want = expected_param_tys.get(i).copied().flatten();
-                    if let Some(w) = want
-                        && let Operand::Copy(place) = arg
-                        && place.projection.is_empty()
-                    {
-                        let local_ty = self.body.local_ty(place.local);
-                        if matches!(self.tcx.kind(w), Some(TyKind::Ref { .. }))
-                            && matches!(self.tcx.kind(local_ty), Some(TyKind::Adt { .. }))
-                            && slot_count(self.tcx, local_ty).is_none()
+                let decl_ret = if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
+                    "void"
+                } else {
+                    &dest_ty
+                };
+                let decl_args = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, arg)| {
+                        // Mirror lower_call_arg's type selection: aggregate
+                        // params that are expected by a callee expecting Ref<T>
+                        // or another aggregate get "ptr"; everything else uses
+                        // the operand's own LLVM type.
+                        let want = expected_param_tys.get(i).copied().flatten();
+                        if let Some(w) = want
+                            && let Operand::Copy(place) = arg
+                            && place.projection.is_empty()
                         {
-                            return "ptr".to_string();
+                            let local_ty = self.body.local_ty(place.local);
+                            if matches!(self.tcx.kind(w), Some(TyKind::Ref { .. }))
+                                && matches!(self.tcx.kind(local_ty), Some(TyKind::Adt { .. }))
+                                && slot_count(self.tcx, local_ty).is_none()
+                            {
+                                return "ptr".to_string();
+                            }
+                            if is_aggregate(self.tcx, w) && is_aggregate(self.tcx, local_ty) {
+                                return "ptr".to_string();
+                            }
                         }
-                        if is_aggregate(self.tcx, w) && is_aggregate(self.tcx, local_ty) {
-                            return "ptr".to_string();
+                        let t = self.operand_llvm_ty(arg);
+                        // Replace void/empty operand types with i64 — `void`
+                        // is invalid as a parameter type in LLVM IR.
+                        if t == "void" || t.is_empty() {
+                            "i64".to_string()
+                        } else {
+                            t
                         }
-                    }
-                    self.operand_llvm_ty(arg)
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            self.runtime_refs
-                .insert(format!("declare {decl_ret} @{symbol}({decl_args})"));
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let needle = format!("@{symbol}(");
+                if !self
+                    .runtime_refs
+                    .iter()
+                    .any(|d| d.contains(needle.as_str()))
+                {
+                    self.runtime_refs
+                        .insert(format!("declare {decl_ret} @{symbol}({decl_args})"));
+                }
+            }
         }
 
         if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
@@ -3647,6 +4604,42 @@ impl<'a> Lowerer<'a> {
     /// walking any projection chain so `p.x + p.y` sees the
     /// field type rather than the struct-ptr one. String-byte
     /// reads (`s[i]`) classify as `i64`.
+    /// Returns the LLVM type the rvalue's lowering produces, or
+    /// the empty string when the rvalue's emitter writes
+    /// directly into the destination slot (aggregates, repeats,
+    /// raw heap intrinsics, runtime calls). The assign-store
+    /// path uses this to decide whether a coercion is needed
+    /// between the produced value and the destination slot's
+    /// leaf type.
+    fn rvalue_llvm_ty(&self, rvalue: &Rvalue) -> String {
+        use gossamer_mir::BinOp;
+        match rvalue {
+            Rvalue::Use(op) => self.operand_llvm_ty(op),
+            Rvalue::BinaryOp { op, lhs, .. } => {
+                // Comparison ops produce `i1`; everything else
+                // follows the lhs operand type. Returning the
+                // wrong shape here makes the assign-store path
+                // emit a spurious coercion that itself produces
+                // invalid IR.
+                match op {
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                        "i1".to_string()
+                    }
+                    _ => self.operand_llvm_ty(lhs),
+                }
+            }
+            Rvalue::UnaryOp { operand, .. } => self.operand_llvm_ty(operand),
+            Rvalue::Cast { target, .. } => render_ty(self.tcx, *target),
+            Rvalue::Ref { .. } | Rvalue::Len(_) => "ptr".to_string(),
+            // Aggregate / Repeat write into the destination
+            // directly; no coercion at the assign-store site.
+            Rvalue::Aggregate { .. } | Rvalue::Repeat { .. } => String::new(),
+            // CallIntrinsic ABIs vary; coercion is handled
+            // per-intrinsic inside lower_raw_intrinsic.
+            Rvalue::CallIntrinsic { .. } => String::new(),
+        }
+    }
+
     fn operand_llvm_ty(&self, op: &Operand) -> String {
         match op {
             Operand::Copy(p) => {
@@ -3765,8 +4758,13 @@ fn local_slot(local: Local) -> String {
 fn render_const(cv: &ConstValue) -> String {
     match cv {
         ConstValue::Unit => String::new(),
-        ConstValue::Bool(false) => "false".to_string(),
-        ConstValue::Bool(true) => "true".to_string(),
+        // Emit bool constants as 0/1 rather than false/true:
+        // LLVM accepts both for `i1`, but only the numeric form is
+        // valid when the same constant is later used as `i64`
+        // (e.g. when the binop pipeline widens an i1 operand to
+        // i64). Avoids `and i64 true, %t` shapes that opt rejects.
+        ConstValue::Bool(false) => "0".to_string(),
+        ConstValue::Bool(true) => "1".to_string(),
         ConstValue::Int(n) => n.to_string(),
         ConstValue::Float(bits) => {
             // `ConstValue::Float` already stores the bit

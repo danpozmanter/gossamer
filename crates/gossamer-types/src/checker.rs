@@ -75,6 +75,24 @@ struct TypeChecker<'a> {
     /// use site unconstrained and the codegen reading the slot at
     /// the wrong layout.
     const_tys: HashMap<gossamer_resolve::DefId, Ty>,
+    /// Generic-parameter arity for every named struct, keyed by
+    /// the struct's `DefId`. Built during `register_struct`. Used
+    /// at struct-literal sites to allocate one fresh inference
+    /// variable per parameter and substitute them into the
+    /// declared field types' `TyKind::Param` slots. Without this,
+    /// a `Pair<A, B> { fst: 10, snd: "hi" }` literal would fail
+    /// to unify the `A`/`B` `Param` slots against `i64` /
+    /// `String` and surface a confusing `type mismatch` against
+    /// the rigid `Param`.
+    struct_generic_arity: HashMap<gossamer_resolve::DefId, usize>,
+    /// Currently-active generic-parameter name → `ParamIdx`
+    /// mapping. Populated while walking a struct / enum / fn /
+    /// impl declaration so `type_from_ast_path` can render a
+    /// type-parameter reference (`A`, `B`) as the right
+    /// `TyKind::Param` index. Keyed by name because the AST's
+    /// `GenericParam::Type` carries an `Ident` without a
+    /// resolver-assigned `NodeId`.
+    current_generic_scope: HashMap<String, (crate::ParamIdx, &'static str)>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -93,11 +111,143 @@ impl<'a> TypeChecker<'a> {
             struct_fields: checker_struct_fields,
             fn_sigs: HashMap::new(),
             const_tys: HashMap::new(),
+            struct_generic_arity: HashMap::new(),
+            current_generic_scope: HashMap::new(),
         }
+    }
+
+    /// Pushes a generic-parameter scope while walking a declaration
+    /// (struct, enum, fn, trait, impl). Each parameter name maps to
+    /// its position so `type_from_ast_path` renders references as
+    /// the right `TyKind::Param`. Returns the prior scope so the
+    /// caller can restore it.
+    fn enter_generic_scope(
+        &mut self,
+        generics: &gossamer_ast::Generics,
+    ) -> HashMap<String, (crate::ParamIdx, &'static str)> {
+        let prior = std::mem::take(&mut self.current_generic_scope);
+        for (i, param) in generics.params.iter().enumerate() {
+            if let gossamer_ast::GenericParam::Type { name, .. } = param {
+                let leaked: &'static str = Box::leak(name.name.clone().into_boxed_str());
+                self.current_generic_scope
+                    .insert(name.name.clone(), (crate::ParamIdx(i as u32), leaked));
+            }
+        }
+        prior
+    }
+
+    /// Restores a generic-parameter scope saved by
+    /// [`enter_generic_scope`].
+    fn leave_generic_scope(&mut self, prior: HashMap<String, (crate::ParamIdx, &'static str)>) {
+        self.current_generic_scope = prior;
     }
 
     fn fresh(&mut self) -> Ty {
         self.infer.fresh_var(self.tcx)
+    }
+
+    /// Walks `ty` and substitutes each `TyKind::Param { idx }`
+    /// reference with `substs[idx]`. Used at struct-literal and
+    /// generic-call sites where the declared field/parameter
+    /// types carry rigid `Param` slots that must be replaced by
+    /// fresh inference vars (or by explicit generic arguments)
+    /// before unification.
+    ///
+    /// Out-of-range `idx` falls back to the original `ty` so a
+    /// malformed declaration produces a deferred unification
+    /// error rather than a panic.
+    fn subst_params_in_ty(&mut self, ty: Ty, substs: &[Ty]) -> Ty {
+        if substs.is_empty() {
+            return ty;
+        }
+        let kind = self.tcx.kind_of(ty).clone();
+        match kind {
+            TyKind::Param { idx, .. } => substs.get(idx.0 as usize).copied().unwrap_or(ty),
+            TyKind::Ref { inner, mutability } => {
+                let new_inner = self.subst_params_in_ty(inner, substs);
+                if new_inner == inner {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Ref {
+                        inner: new_inner,
+                        mutability,
+                    })
+                }
+            }
+            TyKind::Tuple(elems) => {
+                let new_elems: Vec<Ty> = elems
+                    .iter()
+                    .map(|e| self.subst_params_in_ty(*e, substs))
+                    .collect();
+                if new_elems == elems {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Tuple(new_elems))
+                }
+            }
+            TyKind::Array { elem, len } => {
+                let new_elem = self.subst_params_in_ty(elem, substs);
+                if new_elem == elem {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Array {
+                        elem: new_elem,
+                        len,
+                    })
+                }
+            }
+            TyKind::Slice(elem) => {
+                let new = self.subst_params_in_ty(elem, substs);
+                if new == elem {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Slice(new))
+                }
+            }
+            TyKind::Vec(elem) => {
+                let new = self.subst_params_in_ty(elem, substs);
+                if new == elem {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Vec(new))
+                }
+            }
+            TyKind::HashMap { key, value } => {
+                let new_k = self.subst_params_in_ty(key, substs);
+                let new_v = self.subst_params_in_ty(value, substs);
+                if new_k == key && new_v == value {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::HashMap {
+                        key: new_k,
+                        value: new_v,
+                    })
+                }
+            }
+            TyKind::Sender(inner) => {
+                let new = self.subst_params_in_ty(inner, substs);
+                if new == inner {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Sender(new))
+                }
+            }
+            TyKind::Receiver(inner) => {
+                let new = self.subst_params_in_ty(inner, substs);
+                if new == inner {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Receiver(new))
+                }
+            }
+            // Adt / Alias / Closure carry their own substs lists;
+            // substituting inside them is the monomorph layer's
+            // responsibility. For the struct-literal use case
+            // those sub-Adts already have concrete (or fresh-var)
+            // substs from their own typeck, so we leave them
+            // alone.
+            _ => ty,
+        }
     }
 
     fn emit(&mut self, error: TypeError, span: Span) {
@@ -112,10 +262,45 @@ impl<'a> TypeChecker<'a> {
     fn resolve_table(&mut self) {
         let pairs: Vec<(NodeId, Ty)> = self.table.sorted_entries();
         for (node, ty) in pairs {
-            let resolved = self.infer.resolve(self.tcx, ty);
+            let resolved = self.deep_resolve(ty);
             if resolved != ty {
                 self.table.insert(node, resolved);
             }
+        }
+    }
+
+    /// Resolves a type deeply — after shallow-resolving top-level `Var`
+    /// nodes, recurses into `FnPtr` / `FnTrait` sigs so that compound
+    /// types like `FnPtr(FnSig { output: Var(1) })` are fully grounded
+    /// when the inference var was unified with a concrete type.
+    fn deep_resolve(&mut self, ty: Ty) -> Ty {
+        let resolved = self.infer.resolve(self.tcx, ty);
+        match self.tcx.kind_of(resolved).clone() {
+            TyKind::FnPtr(sig) => {
+                let out = self.deep_resolve(sig.output);
+                let inputs: Vec<Ty> = sig.inputs.iter().map(|&t| self.deep_resolve(t)).collect();
+                if out != sig.output || inputs != sig.inputs {
+                    self.tcx.intern(TyKind::FnPtr(FnSig {
+                        inputs,
+                        output: out,
+                    }))
+                } else {
+                    resolved
+                }
+            }
+            TyKind::FnTrait(sig) => {
+                let out = self.deep_resolve(sig.output);
+                let inputs: Vec<Ty> = sig.inputs.iter().map(|&t| self.deep_resolve(t)).collect();
+                if out != sig.output || inputs != sig.inputs {
+                    self.tcx.intern(TyKind::FnTrait(FnSig {
+                        inputs,
+                        output: out,
+                    }))
+                } else {
+                    resolved
+                }
+            }
+            _ => resolved,
         }
     }
 
@@ -205,7 +390,7 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Impl(decl) => self.collect_impl_signatures(decl),
                 ItemKind::Trait(decl) => self.collect_trait_signatures(decl),
                 ItemKind::Struct(decl) => {
-                    self.register_struct(item.id, decl.name.name.as_str(), &decl.body);
+                    self.register_struct(item.id, decl);
                 }
                 ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
                 ItemKind::Mod(decl) => {
@@ -226,12 +411,29 @@ impl<'a> TypeChecker<'a> {
         self.const_tys.insert(def, resolved);
     }
 
-    fn register_struct(&mut self, item_id: NodeId, name: &str, body: &StructBody) {
+    fn register_struct(&mut self, item_id: NodeId, decl: &gossamer_ast::StructDecl) {
         let Some(def) = self.resolutions.definition_of(item_id) else {
             return;
         };
+        let name = decl.name.name.as_str();
         self.tcx.register_def_name(def, name);
-        if let StructBody::Named(fields) = body {
+        // Build the generic-parameter scope so `Pair<A, B> { fst:
+        // A, snd: B }` field-type references resolve to the right
+        // `TyKind::Param` indices.
+        let prior_scope = self.enter_generic_scope(&decl.generics);
+        // Record the struct's generic-parameter arity in source
+        // order so struct-literal substitution at use sites knows
+        // how many fresh inference variables to allocate.
+        let arity = decl
+            .generics
+            .params
+            .iter()
+            .filter(|p| matches!(p, gossamer_ast::GenericParam::Type { .. }))
+            .count();
+        if arity > 0 {
+            self.struct_generic_arity.insert(def, arity);
+        }
+        if let StructBody::Named(fields) = &decl.body {
             let list: Vec<(String, Ty)> = fields
                 .iter()
                 .map(|f| (f.name.name.clone(), self.type_from_ast(&f.ty)))
@@ -240,6 +442,7 @@ impl<'a> TypeChecker<'a> {
             self.tcx.register_struct_fields(def, tys);
             self.struct_fields.insert(def, list);
         }
+        self.leave_generic_scope(prior_scope);
     }
 
     /// Resolves `receiver_ty.field_name` to the leaf field type.
@@ -271,9 +474,9 @@ impl<'a> TypeChecker<'a> {
         loop {
             match self.tcx.kind_of(cur).clone() {
                 TyKind::Ref { inner, .. } => cur = inner,
-                TyKind::Adt { def, .. } => {
+                TyKind::Adt { def, substs } => {
                     let ty_name = crate::printer::render_ty(self.tcx, resolved);
-                    let Some(fields) = self.struct_fields.get(&def) else {
+                    let Some(fields) = self.struct_fields.get(&def).cloned() else {
                         return Err(TypeError::UnknownField {
                             ty: ty_name,
                             field: field_name.to_string(),
@@ -282,7 +485,18 @@ impl<'a> TypeChecker<'a> {
                     };
                     for (name, ty) in fields {
                         if name == field_name {
-                            return Ok(*ty);
+                            // Substitute `TyKind::Param { idx }`
+                            // slots in the declared field type
+                            // with the matching generic argument
+                            // from the receiver's `substs`. This
+                            // is the dual of the substitution at
+                            // struct-literal sites: literals
+                            // allocate fresh vars for each
+                            // parameter; field reads need to
+                            // resolve `Param` back to the
+                            // receiver's per-instance argument.
+                            let substs_vec = substs.types();
+                            return Ok(self.subst_params_in_ty(ty, &substs_vec));
                         }
                     }
                     return Err(TypeError::UnknownField {
@@ -552,26 +766,41 @@ impl<'a> TypeChecker<'a> {
                 self.tcx.intern(TyKind::Tuple(tys))
             }
             ExprKind::Struct { path, fields, base } => {
-                // Resolve the header path to an Adt type. `head` is
-                // the struct's NodeId in the path's last segment.
-                // Unifying named field values with the declared
-                // field types lets downstream field-access nodes
-                // see concrete leaf types.
+                // Resolve the header path to an Adt type. Unifying
+                // named field values with the declared field
+                // types lets downstream field-access nodes see
+                // concrete leaf types.
+                //
+                // For a generic struct (`Pair<A, B>`), the
+                // declared field types carry `TyKind::Param`
+                // slots. We allocate one fresh inference variable
+                // per generic parameter and substitute those into
+                // each field type before unifying with the
+                // literal's value type — that lets the inferencer
+                // pin `A` and `B` from the field values.
                 let head_node = expr.id;
-                let struct_ty = if let Some(res) = self.resolutions.get(head_node) {
+                let (struct_ty, substs_table) = if let Some(res) = self.resolutions.get(head_node) {
                     match res {
                         Resolution::Def {
                             def,
                             kind:
                                 gossamer_resolve::DefKind::Struct | gossamer_resolve::DefKind::Enum,
-                        } => self.tcx.intern(TyKind::Adt {
-                            def,
-                            substs: crate::Substs::new(),
-                        }),
-                        _ => self.fresh(),
+                        } => {
+                            let arity = self.struct_generic_arity.get(&def).copied().unwrap_or(0);
+                            let substs: Vec<Ty> = (0..arity).map(|_| self.fresh()).collect();
+                            let substs_obj = crate::Substs::from_types(substs.iter().copied());
+                            (
+                                self.tcx.intern(TyKind::Adt {
+                                    def,
+                                    substs: substs_obj,
+                                }),
+                                substs,
+                            )
+                        }
+                        _ => (self.fresh(), Vec::new()),
                     }
                 } else {
-                    self.fresh()
+                    (self.fresh(), Vec::new())
                 };
                 let _ = path;
                 let resolved = self.infer.resolve(self.tcx, struct_ty);
@@ -586,7 +815,13 @@ impl<'a> TypeChecker<'a> {
                             if let Some((_, dty)) =
                                 declared_fields.iter().find(|(n, _)| n == &field.name.name)
                             {
-                                self.unify(*dty, val_ty, value.span);
+                                // Substitute `Param { idx }` slots
+                                // with the fresh inference vars
+                                // allocated above so unification
+                                // can drive `A`, `B`, ... from
+                                // each literal's value type.
+                                let dty_sub = self.subst_params_in_ty(*dty, &substs_table);
+                                self.unify(dty_sub, val_ty, value.span);
                             }
                         }
                     }
@@ -615,7 +850,7 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr(inner);
                 self.fresh()
             }
-            ExprKind::Select(_) | ExprKind::MacroCall(_) => self.fresh(),
+            ExprKind::Select(_) | ExprKind::MacroCall(_) | ExprKind::Error => self.fresh(),
         }
     }
 
@@ -859,12 +1094,64 @@ impl<'a> TypeChecker<'a> {
                 self.unify(bool_ty, rhs_ty, rhs.span);
                 bool_ty
             }
-            BinaryOp::PipeGt => rhs_ty,
+            BinaryOp::PipeGt => self.pipe_result_ty(lhs_ty, lhs.span, rhs, rhs_ty),
             _ => {
                 self.unify(lhs_ty, rhs_ty, span);
                 lhs_ty
             }
         }
+    }
+
+    /// Returns the result type of a `lhs |> rhs` pipe expression.
+    ///
+    /// `|>` desugars to `rhs(lhs)` (or `rhs(partial_args…, lhs)` for
+    /// partial-application RHS). The expression type is the callee's
+    /// return type, not the callee's function type. Unifies `lhs_ty`
+    /// with the callee's last parameter so that un-annotated closure
+    /// params (`|x| x + 1`) are pinned from the piped value's type.
+    fn pipe_result_ty(&mut self, lhs_ty: Ty, lhs_span: Span, rhs: &Expr, rhs_ty: Ty) -> Ty {
+        // Try to extract the callee's return type from rhs_ty first.
+        let resolved = self.infer.resolve(self.tcx, rhs_ty);
+        match self.tcx.kind_of(resolved).clone() {
+            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                if let Some(&last) = sig.inputs.last() {
+                    self.unify(lhs_ty, last, lhs_span);
+                }
+                return self.infer.resolve(self.tcx, sig.output);
+            }
+            TyKind::FnDef { def, .. } => {
+                if let Some(sig) = self.fn_sigs.get(&def).cloned() {
+                    if let Some(&last) = sig.inputs.last() {
+                        self.unify(lhs_ty, last, lhs_span);
+                    }
+                    return sig.output;
+                }
+            }
+            _ => {}
+        }
+        // rhs_ty might be an unresolved Var when `rhs` is a partial-application
+        // Call (e.g. `add(1)` from `x |> add(1)` where check_call's arity guard
+        // fired). Recover by inspecting the call's inner callee type directly.
+        if let ExprKind::Call {
+            callee: inner_callee,
+            ..
+        } = &rhs.kind
+        {
+            let inner_ty = self.table.get(inner_callee.id).unwrap_or(rhs_ty);
+            let resolved_inner = self.infer.resolve(self.tcx, inner_ty);
+            match self.tcx.kind_of(resolved_inner).clone() {
+                TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                    return self.infer.resolve(self.tcx, sig.output);
+                }
+                TyKind::FnDef { def, .. } => {
+                    if let Some(sig) = self.fn_sigs.get(&def).cloned() {
+                        return sig.output;
+                    }
+                }
+                _ => {}
+            }
+        }
+        rhs_ty
     }
 
     fn check_assign(&mut self, place: &Expr, value: &Expr) -> Ty {
@@ -1298,7 +1585,32 @@ impl<'a> TypeChecker<'a> {
         if let Some(resolution) = self.resolutions.get(node) {
             match resolution {
                 Resolution::Primitive(prim) => return self.type_from_primitive(prim),
-                Resolution::Def { def, .. } => {
+                Resolution::Def { def, kind } => {
+                    // A path resolving to a generic type parameter (`fn
+                    // f<T>(x: T)` or `struct Pair<A, B> { fst: A }`)
+                    // must surface as `TyKind::Param`, not as an `Adt`
+                    // whose `def` happens to point at the parameter's
+                    // binding. Without this branch, the `A` in `Pair<A>`
+                    // unifies as an opaque ADT and any concrete struct
+                    // literal hits a `type mismatch: expected adt#N`
+                    // error rather than driving inference of A from
+                    // the field-value type.
+                    //
+                    // Use the resolver's per-resolution kind rather
+                    // than `resolutions.kind_of(def)` because the
+                    // resolver records the DefKind on the
+                    // resolution itself but not always on the
+                    // separate def→kind map (`bind_generics` only
+                    // inserts into the scope, not into the global
+                    // map).
+                    if kind == gossamer_resolve::DefKind::TypeParam {
+                        if let Some((idx, name)) =
+                            self.current_generic_scope.get(head_name).copied()
+                        {
+                            return self.tcx.intern(TyKind::Param { idx, name });
+                        }
+                        return self.fresh();
+                    }
                     let substs = self.substs_from_ast(path);
                     return self.tcx.intern(TyKind::Adt { def, substs });
                 }

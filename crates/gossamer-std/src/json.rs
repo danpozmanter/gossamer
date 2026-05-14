@@ -16,8 +16,42 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use thiserror::Error;
+
+/// Default cap on parser nesting depth — guards the recursive descent
+/// against stack exhaustion from adversarial input.
+pub const DEFAULT_MAX_DEPTH: usize = 128;
+
+/// Default cap on document byte length — guards against memory
+/// exhaustion from oversized payloads. 16 MiB.
+pub const DEFAULT_MAX_SIZE: usize = 16 * 1024 * 1024;
+
+static MAX_DEPTH: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_DEPTH);
+static MAX_SIZE: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_SIZE);
+
+/// Overrides the process-wide cap on parser nesting depth.
+pub fn set_max_depth(n: usize) {
+    MAX_DEPTH.store(n, Ordering::Relaxed);
+}
+
+/// Overrides the process-wide cap on input byte length.
+pub fn set_max_size(n: usize) {
+    MAX_SIZE.store(n, Ordering::Relaxed);
+}
+
+/// Returns the current cap on parser nesting depth.
+#[must_use]
+pub fn max_depth() -> usize {
+    MAX_DEPTH.load(Ordering::Relaxed)
+}
+
+/// Returns the current cap on input byte length.
+#[must_use]
+pub fn max_size() -> usize {
+    MAX_SIZE.load(Ordering::Relaxed)
+}
 
 /// Dynamically typed JSON value.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +85,14 @@ pub struct Error {
 
 /// Parses a JSON document into a [`Value`].
 pub fn parse(source: &str) -> Result<Value, Error> {
+    let cap = max_size();
+    if source.len() > cap {
+        return Err(Error {
+            message: format!("input exceeds max_size ({} > {cap})", source.len()),
+            line: 1,
+            column: 1,
+        });
+    }
     let mut parser = Parser::new(source);
     parser.skip_whitespace();
     let value = parser.parse_value()?;
@@ -495,6 +537,8 @@ struct Parser<'a> {
     cursor: usize,
     line: u32,
     column: u32,
+    depth: usize,
+    max_depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -504,7 +548,24 @@ impl<'a> Parser<'a> {
             cursor: 0,
             line: 1,
             column: 1,
+            depth: 0,
+            max_depth: max_depth(),
         }
+    }
+
+    fn enter(&mut self) -> Result<(), Error> {
+        if self.depth >= self.max_depth {
+            return Err(self.error(format!(
+                "nesting depth exceeds max_depth ({})",
+                self.max_depth
+            )));
+        }
+        self.depth += 1;
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        self.depth -= 1;
     }
 
     fn error(&self, message: impl Into<String>) -> Error {
@@ -558,11 +619,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_object(&mut self) -> Result<Value, Error> {
+        self.enter()?;
         self.bump();
         let mut map = BTreeMap::new();
         self.skip_whitespace();
         if self.peek() == Some(b'}') {
             self.bump();
+            self.leave();
             return Ok(Value::Object(map));
         }
         loop {
@@ -577,18 +640,23 @@ impl<'a> Parser<'a> {
             self.skip_whitespace();
             match self.bump() {
                 Some(b',') => continue,
-                Some(b'}') => return Ok(Value::Object(map)),
+                Some(b'}') => {
+                    self.leave();
+                    return Ok(Value::Object(map));
+                }
                 _ => return Err(self.error("expected `,` or `}` in object")),
             }
         }
     }
 
     fn parse_array(&mut self) -> Result<Value, Error> {
+        self.enter()?;
         self.bump();
         let mut out = Vec::new();
         self.skip_whitespace();
         if self.peek() == Some(b']') {
             self.bump();
+            self.leave();
             return Ok(Value::Array(out));
         }
         loop {
@@ -597,7 +665,10 @@ impl<'a> Parser<'a> {
             self.skip_whitespace();
             match self.bump() {
                 Some(b',') => continue,
-                Some(b']') => return Ok(Value::Array(out)),
+                Some(b']') => {
+                    self.leave();
+                    return Ok(Value::Array(out));
+                }
                 _ => return Err(self.error("expected `,` or `]` in array")),
             }
         }

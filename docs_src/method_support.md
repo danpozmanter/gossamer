@@ -57,6 +57,7 @@ share these methods:
 |---|---|---|
 | `tx.send(v)` | `()` | Blocks if buffered channel is full. |
 | `rx.recv()` | `T` | Blocks until a value is available. |
+| `rx.recv_ctx(&ctx)` | `Option<T>` | Blocks like `recv()` but returns `None` when the supplied [`std::context::Context`](stdlib.md#stdcontext) fires. Goroutine callers observe cancellation immediately via the scheduler unpark path; OS-thread callers within 50ms via a bounded condvar timeout. |
 | `tx.try_send(v)` | `bool` | Non-blocking; false if full. |
 | `rx.try_recv()` | `Option<T>` | Non-blocking; None if empty. |
 | `tx.close()` / `rx.close()` | `()` | Subsequent send/recv return immediately. |
@@ -118,7 +119,9 @@ calls) are listed in [`stdlib_coverage.md`](stdlib_coverage.md).
 If you need a method that isn't listed:
 
 1. Add the runtime helper in `crates/gossamer-runtime/src/c_abi.rs`
-   under `extern "C"`.
+   as a `#[unsafe(no_mangle)] pub unsafe extern "C" fn` (Rust-side
+   declaration; this is internal runtime ABI, not the Gossamer
+   source-level FFI surface — see SPEC.md §12 for the latter).
 2. Add the dispatch arm in
    `crates/gossamer-mir/src/lower.rs::lower_method_call`.
 3. Add the LLVM declaration in

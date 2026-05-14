@@ -136,6 +136,10 @@ fn run<R: Read, W: Write>(reader: R, writer: W) -> std::io::Result<()> {
                 let result = state.formatting(&params);
                 transport.write_message(&response_ok(id, result))?;
             }
+            "textDocument/codeAction" => {
+                let result = state.code_actions(&params);
+                transport.write_message(&response_ok(id, result))?;
+            }
             "textDocument/semanticTokens/full" => {
                 let result = state.semantic_tokens(&params);
                 transport.write_message(&response_ok(id, result))?;
@@ -176,6 +180,15 @@ fn initialize_result() -> Value {
     caps.insert("workspaceSymbolProvider".to_string(), Value::Bool(true));
     caps.insert("foldingRangeProvider".to_string(), Value::Bool(true));
     caps.insert("documentFormattingProvider".to_string(), Value::Bool(true));
+    // CodeActionKinds we surface today: every action we generate
+    // is a `quickfix` derived from a diagnostic's `Suggestion`
+    // payload (resolver / parser / typechecker fix-its).
+    let mut code_action = BTreeMap::new();
+    code_action.insert(
+        "codeActionKinds".to_string(),
+        Value::Array(vec![Value::String("quickfix".to_string())]),
+    );
+    caps.insert("codeActionProvider".to_string(), Value::Object(code_action));
     let mut rename = BTreeMap::new();
     rename.insert("prepareProvider".to_string(), Value::Bool(true));
     caps.insert("renameProvider".to_string(), Value::Object(rename));
@@ -291,6 +304,63 @@ impl ServerState {
     fn close(&mut self, uri: &str) {
         self.documents.remove(uri);
         self.workspace.remove(uri);
+    }
+
+    /// Returns the `CodeAction[]` for `textDocument/codeAction`.
+    ///
+    /// The request carries a `range` and (optionally) a list of
+    /// diagnostics. We iterate the document's diagnostics and
+    /// surface every `Suggestion` whose label overlaps the
+    /// request range as a `quickfix` action with a
+    /// `WorkspaceEdit` applying the suggestion's replacement.
+    ///
+    /// Diagnostics without a `Suggestion` produce no action.
+    /// Resolver / parser / typechecker fix-its (GP0006, GP0016,
+    /// GR0001 import-this-name, etc.) all live as
+    /// `Suggestion` payloads on the diagnostic; once the
+    /// suggestion is computed by the front end, this method is
+    /// the only thing that decides whether the client sees it.
+    fn code_actions(&self, params: &Value) -> Value {
+        let Some(uri) = field_str(field(params, "textDocument"), "uri") else {
+            return Value::Array(Vec::new());
+        };
+        let Some(doc) = self.documents.get(uri) else {
+            return Value::Array(Vec::new());
+        };
+        let req_range = field(params, "range");
+        let (req_start, req_end) = lsp_range_to_offsets(doc, req_range);
+        let mut actions: Vec<Value> = Vec::new();
+        for diag in &doc.diagnostics {
+            // Only quickfix every diagnostic that has at least
+            // one Suggestion. The action surfaces ALL the
+            // diagnostic's suggestions (a single diagnostic may
+            // attach multiple replacements; we emit one action
+            // per suggestion so the user sees each candidate).
+            if diag.suggestions.is_empty() {
+                continue;
+            }
+            // Skip when the diagnostic's primary label does not
+            // overlap the request range. Clients filter by
+            // their cursor position; we honour that filter so a
+            // codeAction request at line 10 does not show fix-its
+            // for diagnostics at line 200.
+            let diag_span = diag
+                .labels
+                .iter()
+                .find(|l| l.primary)
+                .or_else(|| diag.labels.first())
+                .map(|l| l.location.span);
+            if let Some(span) = diag_span {
+                let overlaps = (span.start as usize) <= req_end && req_start <= (span.end as usize);
+                if !overlaps {
+                    continue;
+                }
+            }
+            for suggestion in &diag.suggestions {
+                actions.push(suggestion_to_code_action(doc, uri, diag, suggestion));
+            }
+        }
+        Value::Array(actions)
     }
 
     fn publish_diagnostics(&self, uri: &str) -> Vec<Value> {
@@ -2234,6 +2304,101 @@ fn import_insert_offset(source: &str) -> u32 {
     u32::try_from(offset).unwrap_or(0)
 }
 
+/// Converts an LSP `Range` value to byte offsets in `doc`'s
+/// source. Missing or malformed ranges return the full document
+/// span — that matches the LSP convention where a request
+/// without an explicit range asks about the entire document.
+fn lsp_range_to_offsets(doc: &DocumentAnalysis, range: &Value) -> (usize, usize) {
+    let source_len = doc.source().len();
+    let Value::Object(map) = range else {
+        return (0, source_len);
+    };
+    let start_offset = map
+        .get("start")
+        .and_then(|p| {
+            let line = field_u32(p, "line")?;
+            let col = field_u32(p, "character")?;
+            doc.position_to_offset(line, col)
+        })
+        .map_or(0, |v| v as usize);
+    let end_offset = map
+        .get("end")
+        .and_then(|p| {
+            let line = field_u32(p, "line")?;
+            let col = field_u32(p, "character")?;
+            doc.position_to_offset(line, col)
+        })
+        .map_or(source_len, |v| v as usize);
+    (start_offset, end_offset)
+}
+
+/// Builds a single `CodeAction` of kind `quickfix` from a
+/// diagnostic-attached [`Suggestion`]. The action's
+/// `WorkspaceEdit` replaces the suggestion's location with the
+/// suggestion's `replacement` text.
+fn suggestion_to_code_action(
+    doc: &DocumentAnalysis,
+    uri: &str,
+    diag: &GossamerDiagnostic,
+    suggestion: &gossamer_diagnostics::Suggestion,
+) -> Value {
+    let mut text_edit = BTreeMap::new();
+    text_edit.insert(
+        "range".to_string(),
+        span_to_range(doc, suggestion.location.span),
+    );
+    text_edit.insert(
+        "newText".to_string(),
+        Value::String(suggestion.replacement.clone()),
+    );
+
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        uri.to_string(),
+        Value::Array(vec![Value::Object(text_edit)]),
+    );
+
+    let mut workspace_edit = BTreeMap::new();
+    workspace_edit.insert("changes".to_string(), Value::Object(changes));
+
+    let mut action = BTreeMap::new();
+    action.insert(
+        "title".to_string(),
+        Value::String(suggestion.message.clone()),
+    );
+    action.insert("kind".to_string(), Value::String("quickfix".to_string()));
+    action.insert("edit".to_string(), Value::Object(workspace_edit));
+    // Link the action to the originating diagnostic so the
+    // client groups it under the lightbulb at that location.
+    let mut diag_for_link = BTreeMap::new();
+    diag_for_link.insert(
+        "range".to_string(),
+        span_to_range(
+            doc,
+            diag.labels
+                .iter()
+                .find(|l| l.primary)
+                .or_else(|| diag.labels.first())
+                .map_or(suggestion.location.span, |l| l.location.span),
+        ),
+    );
+    diag_for_link.insert(
+        "severity".to_string(),
+        Value::Number(severity_tag(diag.severity)),
+    );
+    diag_for_link.insert(
+        "code".to_string(),
+        Value::String(diag.code.as_str().to_string()),
+    );
+    diag_for_link.insert("source".to_string(), Value::String("gos".to_string()));
+    diag_for_link.insert("message".to_string(), Value::String(diag.title.clone()));
+    action.insert(
+        "diagnostics".to_string(),
+        Value::Array(vec![Value::Object(diag_for_link)]),
+    );
+    Value::Object(action)
+}
+
 fn span_to_range(doc: &DocumentAnalysis, span: Span) -> Value {
     let (start_line, start_col) = doc.offset_to_position(span.start);
     let (end_line, end_col) = doc.offset_to_position(span.end);
@@ -2441,6 +2606,112 @@ mod tests {
             .collect();
         assert!(names.contains(&"helper".to_string()), "names: {names:?}");
         assert!(names.contains(&"Point".to_string()), "names: {names:?}");
+    }
+
+    #[test]
+    fn code_action_surfaces_did_you_mean_quickfix() {
+        // GR0001 (unresolved name) attaches a Suggestion when
+        // the resolver finds a candidate within edit distance 2.
+        // textDocument/codeAction must surface that Suggestion
+        // as a quickfix with a WorkspaceEdit replacing the
+        // misspelled identifier with the candidate.
+        let mut state = ServerState::new();
+        // `helpre` is unresolved; `helper` is in scope; edit
+        // distance is 1 so the resolver emits a suggestion.
+        let source = "fn helper() { }\nfn main() { helpre() }\n";
+        state.update("file:///x.gos", source);
+
+        let mut text_doc = BTreeMap::new();
+        text_doc.insert(
+            "uri".to_string(),
+            Value::String("file:///x.gos".to_string()),
+        );
+
+        // Range covering the misspelled call on line 1.
+        let mut start = BTreeMap::new();
+        start.insert("line".to_string(), Value::Number(1.0));
+        start.insert("character".to_string(), Value::Number(12.0));
+        let mut end = BTreeMap::new();
+        end.insert("line".to_string(), Value::Number(1.0));
+        end.insert("character".to_string(), Value::Number(20.0));
+        let mut range = BTreeMap::new();
+        range.insert("start".to_string(), Value::Object(start));
+        range.insert("end".to_string(), Value::Object(end));
+
+        let mut params = BTreeMap::new();
+        params.insert("textDocument".to_string(), Value::Object(text_doc));
+        params.insert("range".to_string(), Value::Object(range));
+
+        let response = state.code_actions(&Value::Object(params));
+        let Value::Array(items) = response else {
+            panic!("codeAction must return an Array, got {response:?}");
+        };
+        assert!(
+            !items.is_empty(),
+            "expected at least one quickfix for `helpre` → `helper`",
+        );
+        let first = &items[0];
+        let Value::Object(action) = first else {
+            panic!("action must be object");
+        };
+        assert!(matches!(action.get("kind"), Some(Value::String(s)) if s == "quickfix"));
+        // Title carries the resolver's suggestion text.
+        let Some(Value::String(title)) = action.get("title") else {
+            panic!("action.title must be string");
+        };
+        assert!(
+            title.contains("helper"),
+            "title should name the candidate: {title}",
+        );
+        // The edit must include a `changes` map keyed by uri.
+        let Some(Value::Object(edit)) = action.get("edit") else {
+            panic!("edit must be object");
+        };
+        let Some(Value::Object(changes)) = edit.get("changes") else {
+            panic!("edit.changes must be object");
+        };
+        let Some(Value::Array(edits)) = changes.get("file:///x.gos") else {
+            panic!("changes must contain edits for the uri");
+        };
+        let Value::Object(first_edit) = &edits[0] else {
+            panic!("edit must be object");
+        };
+        let Some(Value::String(new_text)) = first_edit.get("newText") else {
+            panic!("edit.newText must be string");
+        };
+        assert_eq!(new_text, "helper");
+        // The action must link back to the originating GR0001
+        // diagnostic.
+        let Some(Value::Array(diagnostics)) = action.get("diagnostics") else {
+            panic!("action.diagnostics must be array");
+        };
+        let Value::Object(diag0) = &diagnostics[0] else {
+            panic!("diagnostic must be object");
+        };
+        assert!(matches!(diag0.get("code"), Some(Value::String(s)) if s == "GR0001"));
+    }
+
+    #[test]
+    fn code_action_returns_empty_when_no_suggestion_attached() {
+        // A clean source has no diagnostics and therefore no
+        // codeAction. The handler must return an empty array
+        // (not Null) so clients can lift it directly.
+        let mut state = ServerState::new();
+        state.update("file:///ok.gos", "fn main() { println!(\"hi\") }\n");
+
+        let mut text_doc = BTreeMap::new();
+        text_doc.insert(
+            "uri".to_string(),
+            Value::String("file:///ok.gos".to_string()),
+        );
+        let mut params = BTreeMap::new();
+        params.insert("textDocument".to_string(), Value::Object(text_doc));
+
+        let response = state.code_actions(&Value::Object(params));
+        let Value::Array(items) = response else {
+            panic!("codeAction must return Array, got {response:?}");
+        };
+        assert!(items.is_empty(), "expected no actions on clean source");
     }
 
     #[test]

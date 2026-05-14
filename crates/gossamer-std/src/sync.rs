@@ -129,6 +129,70 @@ impl<T> Mutex<T> {
             .store(i64::from(race::current_gid()), Ordering::Release);
         Some(result)
     }
+
+    /// Cancellation-aware variant of [`with`].
+    ///
+    /// Polls `try_lock` and yields to the scheduler between
+    /// attempts (or briefly sleeps on OS threads). On cancellation
+    /// — including a deadline elapsing on a `with_deadline` ctx
+    /// — returns `Err` *before* invoking `f`. The closure runs
+    /// only on a successful acquisition.
+    pub fn with_ctx<R>(
+        &self,
+        ctx: &crate::context::Context,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Result<R, crate::errors::Error> {
+        if let Some(err) = ctx.err() {
+            return Err(err);
+        }
+        let gid = crate::sched_global::current_gid();
+        if let Some(g) = gid {
+            ctx.register_waiter(g);
+        }
+        loop {
+            if let Some(mut guard) = self.inner.try_lock() {
+                if let Some(g) = gid {
+                    ctx.deregister_waiter(g);
+                }
+                let from = self.last_unlocker.load(Ordering::Acquire);
+                if from >= 0 {
+                    race::record_sync(u32::try_from(from).unwrap_or(0), race::current_gid());
+                }
+                let result = f(&mut guard);
+                self.last_unlocker
+                    .store(i64::from(race::current_gid()), Ordering::Release);
+                drop(guard);
+                if let Some(gid) = self.waiters.lock().pop_front() {
+                    gossamer_runtime::sched_global::scheduler().unpark(gid);
+                }
+                return Ok(result);
+            }
+            if ctx.is_cancelled() {
+                if let Some(g) = gid {
+                    ctx.deregister_waiter(g);
+                }
+                return Err(ctx
+                    .err()
+                    .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
+            }
+            if gossamer_coro::in_goroutine() {
+                gossamer_runtime::sched_global::park(
+                    gossamer_runtime::sched::ParkReason::Sync,
+                    |parker| {
+                        self.waiters.lock().push_back(parker.gid);
+                        if !self.inner.is_locked() {
+                            gossamer_runtime::sched_global::scheduler().unpark(parker.gid);
+                        }
+                    },
+                );
+                if let Some(gid) = gossamer_runtime::sched_global::current_gid() {
+                    self.waiters.lock().retain(|g| *g != gid);
+                }
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+    }
 }
 
 /// Backwards-compatible alias for [`Mutex<T>`].
@@ -482,6 +546,76 @@ impl WaitGroup {
     /// Decrements the pending count by one. Equivalent to `add(-1)`.
     pub fn done(&self) {
         self.add(-1);
+    }
+
+    /// Cancellation-aware variant of [`wait`].
+    ///
+    /// Behaves identically to `wait()` when `ctx` is not
+    /// cancelled. If `ctx` is cancelled while the goroutine is
+    /// parked — either via `Cancel::cancel_with` or via a
+    /// `with_deadline` elapsing — `wait_ctx` returns
+    /// `Err(context error)`. Mirrors the
+    /// [`crate::time::sleep_ctx`] pattern: check before park,
+    /// register the goroutine with the context's wait-list,
+    /// wake on cancel, re-check after resume.
+    pub fn wait_ctx(&self, ctx: &crate::context::Context) -> Result<(), crate::errors::Error> {
+        if let Some(err) = ctx.err() {
+            return Err(err);
+        }
+        // Fast path: already drained.
+        if *self.state.lock() == 0 {
+            return Ok(());
+        }
+        let gid = crate::sched_global::current_gid();
+        if let Some(g) = gid {
+            ctx.register_waiter(g);
+        }
+        // Park-and-recheck loop. Each iteration either (a)
+        // observes a drained count and returns Ok, (b) observes
+        // cancellation and returns Err, or (c) parks until
+        // another `done()` or a `cancel_with` unparks the
+        // goroutine. The existing non-context `wait()` uses the
+        // same shape; we just gain a cancellation arm and the
+        // wait-list bookkeeping.
+        loop {
+            if *self.state.lock() == 0 {
+                if let Some(g) = gid {
+                    ctx.deregister_waiter(g);
+                }
+                return Ok(());
+            }
+            if ctx.is_cancelled() {
+                if let Some(g) = gid {
+                    ctx.deregister_waiter(g);
+                }
+                return Err(ctx
+                    .err()
+                    .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
+            }
+            if gossamer_coro::in_goroutine() {
+                gossamer_runtime::sched_global::park(
+                    gossamer_runtime::sched::ParkReason::Sync,
+                    |parker| {
+                        // Register with WaitGroup so `done()` wakes us;
+                        // re-check the counter under the same lock to
+                        // close the wake-before-park race.
+                        self.waiters.lock().push(parker.gid);
+                        let count = self.state.lock();
+                        if *count == 0 || ctx.is_cancelled() {
+                            gossamer_runtime::sched_global::scheduler().unpark(parker.gid);
+                        }
+                    },
+                );
+                if let Some(gid) = gossamer_runtime::sched_global::current_gid() {
+                    self.waiters.lock().retain(|g| *g != gid);
+                }
+            } else {
+                // OS-thread caller: sleep briefly to avoid
+                // busy-spinning. Cancellation will be observed
+                // within the sleep period.
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
     }
 
     /// Blocks until the pending count reaches zero. Goroutines park

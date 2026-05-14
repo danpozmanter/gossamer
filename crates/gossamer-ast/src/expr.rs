@@ -212,6 +212,11 @@ pub enum ExprKind {
     /// `go expr` statement-expression form. When `expr` is a closure with no
     /// arguments, pretty-printers emit the sugared `go fn() { body }` form.
     Go(Box<Expr>),
+    /// Synthetic error placeholder inserted during error recovery. Downstream
+    /// passes return a fresh type variable or unit when they encounter this
+    /// variant, suppressing cascading diagnostics for the same malformed
+    /// sub-expression.
+    Error,
 }
 
 /// Literal values appearing in expressions and patterns.

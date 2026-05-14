@@ -7,7 +7,7 @@
 //! in `crates/gossamer-std/std/*.gos` and call into the helpers here
 //! for primitives the language can't yet express in itself.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 /// Archive readers and writers (zip, tar).
 pub mod archive;

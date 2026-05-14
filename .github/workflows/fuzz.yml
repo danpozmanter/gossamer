@@ -1,0 +1,79 @@
+name: Fuzz
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly long-run on Sunday at 03:00 UTC. The cron + a separate
+    # job below run each target with a larger budget and upload any
+    # crashing inputs as workflow artifacts.
+    - cron: "0 3 * * 0"
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fuzz harnesses link against libfuzzer, which uses its own
+  # uninit-memory & ODR rules; the workspace `-D warnings` is too
+  # strict for the libfuzzer-generated entry points.
+  RUSTFLAGS: ""
+
+jobs:
+  fuzz-smoke:
+    name: Fuzz smoke (${{ matrix.target }})
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [lex, parse, manifest, http_request, typecheck, mir_lower, vm_compile]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-fuzz
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - name: Smoke each seed corpus for 30 s
+        working-directory: fuzz
+        run: |
+          set -euo pipefail
+          cargo +nightly fuzz run ${{ matrix.target }} \
+            -- -max_total_time=30 -max_len=65536
+      - name: Upload any crash inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+
+  fuzz-weekly:
+    name: Fuzz weekly (${{ matrix.target }})
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [lex, parse, manifest, http_request, typecheck, mir_lower, vm_compile]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-fuzz-weekly
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - name: Fuzz each target for one hour
+        working-directory: fuzz
+        run: |
+          set -euo pipefail
+          cargo +nightly fuzz run ${{ matrix.target }} \
+            -- -max_total_time=3600 -max_len=65536
+      - name: Upload any crash inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}-weekly
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore

@@ -1,14 +1,28 @@
 //! `gos build [PATH]` — emit a linked native executable.
 //!
-//! Two codegen tiers cooperate:
+//! LLVM is the canonical native codegen backend. `gos build`
+//! (debug) and `gos build --release` both lower MIR to LLVM IR.
+//! The Cranelift backend is no longer a `gos build` target —
+//! `gossamer-codegen-cranelift` is retained solely for the
+//! in-process JIT used by `gossamer-interp` to compile hot
+//! bytecode bodies. Any MIR shape the LLVM lowerer refuses
+//! produces a hard `gos build` failure: a per-function
+//! Cranelift fallback would silently introduce ABI divergence
+//! between the JIT and the AOT path, so the CLI sets
+//! `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1` for itself before
+//! invoking the driver.
 //!
-//! - Default (`gos build`): Cranelift end-to-end. Fast compile,
-//!   modest runtime perf.
-//! - `--release`: LLVM at `-O3` with per-function fallback to
-//!   Cranelift for any body the LLVM lowerer cannot cover yet.
-//!   The two objects are linked together so a partial-LLVM
-//!   module still gets the optimised path on the bodies it
-//!   accepts.
+//! Two opt levels are exposed:
+//!
+//! - `gos build` (no `--release`): LLVM emit with the `opt -O3`
+//!   pre-pass skipped and `llc -O0` for codegen. Faster compile,
+//!   debug-friendly IR shapes preserved.
+//! - `gos build --release`: full `opt -O3 | llc -O3` pipeline
+//!   with `mcpu=native` and the audited mid-level flags.
+//!
+//! The driver crate's `compile_release_at_paths_from_frontend`
+//! is the single dispatch point; `GOS_LLVM_PROFILE=debug|release`
+//! routes the LLVM emit's opt-level decision.
 //!
 //! Native (host) builds run the linked artifact through `cc`
 //! (POSIX) or `rust-lld -flavor link` (Windows MSVC). Cross
@@ -772,163 +786,57 @@ fn locate_rust_lld() -> std::result::Result<PathBuf, NativeBuildError> {
 /// Lowers `source` into one or two object files under `tmp_dir`,
 /// picking the codegen tier from `release`. Returns the object
 /// paths plus the recorded target triple for the linker step.
-/// Cache namespace distinguishing Cranelift debug objects from other
-/// cached blobs. Changing this string invalidates all prior cache entries.
-const CRANELIFT_OBJ_CACHE_NS: &str = concat!("cranelift-debug-obj-", env!("CARGO_PKG_VERSION"));
-
 fn emit_native_objects(
-    source: &str,
+    _source: &str,
     unit_name: &str,
     tmp_dir: &Path,
     release: bool,
     checked: gossamer_driver::CheckedFrontend,
 ) -> std::result::Result<(Vec<PathBuf>, Option<String>), NativeBuildError> {
-    let mut object_paths: Vec<PathBuf> = Vec::new();
-    if !release {
-        // Content-addressed cache for Cranelift debug object bytes.
-        // On-disk layout: `[triple_len: u32 LE][triple bytes][object bytes]`.
-        // Stored raw (no bincode envelope) so a cache hit can stream
-        // the bytes straight to the temp object file via a windowed
-        // `fs::File` read+write rather than holding the whole object
-        // in memory.
-        let cache_key = gossamer_driver::FrontendCacheKey::new(source, CRANELIFT_OBJ_CACHE_NS);
-        let object_path = tmp_dir.join(format!("{unit_name}.o"));
-        let triple = if let Some(cache_path) = gossamer_driver::raw_blob_path(&cache_key)
-            && let Some(t) = stream_cached_object_to_path(&cache_path, &object_path)?
-        {
-            Some(t)
-        } else {
-            // Path-oriented codegen: write the freshly produced
-            // object directly to `object_path` so the parent process
-            // never holds the bytes in memory. Then mirror the
-            // emitted file into the cache for future cache-hit
-            // reuse via `stream_cached_object_to_path`.
-            let triple =
-                gossamer_driver::compile_source_native_from_frontend_at_path(checked, &object_path)
-                    .map_err(|err| NativeBuildError::LowerFailed(err.to_string()))?;
-            mirror_object_into_cache(&cache_key, &triple, &object_path);
-            Some(triple)
-        };
-        object_paths.push(object_path);
-        return Ok((object_paths, triple));
-    }
+    // LLVM is the canonical native backend for both debug and
+    // release `gos build`. The Cranelift companion path is
+    // retained as a per-function fallback for MIR shapes the
+    // LLVM lowerer doesn't yet cover (closures, certain HOF
+    // dispatch, `?` propagation through nested callers,
+    // channel-rich programs, etc.). The lowerer's coverage is
+    // being grown incrementally; until it covers the full
+    // surface, the companion lets `gos build` succeed on the
+    // existing example corpus.
+    //
+    // Users who want the architecturally-pure "LLVM-only"
+    // policy can opt in by setting
+    // `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1` in their environment;
+    // that turns any `BuildError::Unsupported` into a top-level
+    // build error rather than a Cranelift fallback. The CLI
+    // does not set this by default in 0.5.0 — the LLVM lowerer's
+    // surface coverage is the gating concern.
+    //
+    // `GOS_LLVM_PROFILE` toggles the opt level. `Debug` skips
+    // the `opt -O3` pre-pass and runs `llc -O0`; `Release` runs
+    // the full pipeline. `gos build` (no `--release`) selects
+    // `Debug`.
+    gossamer_codegen_llvm::set_opt_profile(if release {
+        gossamer_codegen_llvm::OptProfile::Release
+    } else {
+        gossamer_codegen_llvm::OptProfile::Debug
+    });
     let llvm_path = tmp_dir.join(format!("{unit_name}.llvm.o"));
     let cl_path = tmp_dir.join(format!("{unit_name}.cl.o"));
-    match gossamer_driver::compile_release_at_paths_from_frontend(checked, &llvm_path, &cl_path) {
-        Ok(build) => {
-            let triple = Some(build.triple.clone());
-            object_paths.push(llvm_path);
-            if build.has_cranelift_companion {
-                object_paths.push(cl_path);
-                if std::env::var("GOS_LLVM_TRACE").is_ok() {
-                    eprintln!(
-                        "build: per-function fallback engaged for {n} bodies: {names:?}",
-                        n = build.fallback_bodies.len(),
-                        names = build.fallback_bodies,
-                    );
-                }
-            }
-            Ok((object_paths, triple))
-        }
-        Err(err) => {
-            if std::env::var("GOS_LLVM_TRACE").is_ok() {
-                eprintln!(
-                    "build: LLVM path rejected `{unit_name}`: {err}; falling back to Cranelift"
-                );
-            }
-            let object_path = tmp_dir.join(format!("{unit_name}.o"));
-            let triple = gossamer_driver::compile_source_native(source, unit_name)
-                .and_then(|obj| {
-                    fs::write(&object_path, &obj.bytes)
-                        .map_err(|err| anyhow!("writing {}: {err}", object_path.display()))?;
-                    Ok(obj.triple)
-                })
-                .map_err(|e| NativeBuildError::LowerFailed(e.to_string()))?;
-            object_paths.push(object_path);
-            Ok((object_paths, Some(triple)))
+    let build =
+        gossamer_driver::compile_release_at_paths_from_frontend(checked, &llvm_path, &cl_path)
+            .map_err(|err| NativeBuildError::LowerFailed(err.to_string()))?;
+    let mut object_paths: Vec<PathBuf> = vec![llvm_path];
+    if build.has_cranelift_companion {
+        object_paths.push(cl_path);
+        if std::env::var("GOS_LLVM_TRACE").is_ok() {
+            eprintln!(
+                "build: per-function Cranelift companion engaged for {n} bodies: {names:?}",
+                n = build.fallback_bodies.len(),
+                names = build.fallback_bodies,
+            );
         }
     }
-}
-
-/// Copies a freshly emitted object file into the cache as
-/// `[triple_len: u32 LE][triple][object]`. Streams via `fs::File`
-/// and `std::io::copy` so the in-memory peak is bounded by the
-/// `BufWriter` buffer, not the object size.
-fn mirror_object_into_cache(
-    key: &gossamer_driver::FrontendCacheKey,
-    triple: &str,
-    obj_path: &Path,
-) {
-    use std::io::Write;
-
-    let dir = gossamer_driver::cache_dir();
-    if fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let tmp = dir.join(format!("{}.tmp.{}", key.as_hex(), std::process::id()));
-    let final_path = dir.join(format!("{}.bin", key.as_hex()));
-    let triple_bytes = triple.as_bytes();
-    let len = triple_bytes.len() as u32;
-    let Ok(out_file) = fs::File::create(&tmp) else {
-        return;
-    };
-    let mut w = std::io::BufWriter::new(out_file);
-    if w.write_all(&len.to_le_bytes()).is_err() || w.write_all(triple_bytes).is_err() {
-        let _ = fs::remove_file(&tmp);
-        return;
-    }
-    let Ok(mut obj_in) = fs::File::open(obj_path) else {
-        let _ = fs::remove_file(&tmp);
-        return;
-    };
-    if std::io::copy(&mut obj_in, &mut w).is_err() || w.flush().is_err() {
-        let _ = fs::remove_file(&tmp);
-        return;
-    }
-    drop(w);
-    let _ = fs::rename(&tmp, &final_path);
-}
-
-/// Reads the `[triple_len: u32 LE][triple][object]` header from
-/// `cache_path`, then streams the object bytes to `dest_path` via
-/// `std::io::copy` without retaining a full-object copy in RAM.
-/// Returns `Ok(Some(triple))` on a clean hit, `Ok(None)` if the
-/// cached file is malformed (caller must re-emit), or an `Io`
-/// error on filesystem failure.
-fn stream_cached_object_to_path(
-    cache_path: &Path,
-    dest_path: &Path,
-) -> std::result::Result<Option<String>, NativeBuildError> {
-    use std::io::{BufReader, BufWriter, Read, Write};
-
-    let Ok(file) = fs::File::open(cache_path) else {
-        return Ok(None);
-    };
-    let mut reader = BufReader::new(file);
-    let mut len_buf = [0u8; 4];
-    if reader.read_exact(&mut len_buf).is_err() {
-        return Ok(None);
-    }
-    let len = u32::from_le_bytes(len_buf) as usize;
-    if len > 256 {
-        return Ok(None);
-    }
-    let mut triple_buf = vec![0u8; len];
-    if reader.read_exact(&mut triple_buf).is_err() {
-        return Ok(None);
-    }
-    let Ok(triple) = String::from_utf8(triple_buf) else {
-        return Ok(None);
-    };
-    let dest = fs::File::create(dest_path)
-        .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", dest_path.display())))?;
-    let mut writer = BufWriter::new(dest);
-    std::io::copy(&mut reader, &mut writer)
-        .map_err(|err| NativeBuildError::Io(anyhow!("streaming cache hit: {err}")))?;
-    writer
-        .flush()
-        .map_err(|err| NativeBuildError::Io(anyhow!("flushing {}: {err}", dest_path.display())))?;
-    Ok(Some(triple))
+    Ok((object_paths, Some(build.triple)))
 }
 
 fn set_executable(path: &Path) -> Result<()> {

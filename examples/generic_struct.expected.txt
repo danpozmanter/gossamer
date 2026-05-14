@@ -1,0 +1,5 @@
+10 + 32 = 42
+hello world
+7 is seven
+total: 300
+1 two 3

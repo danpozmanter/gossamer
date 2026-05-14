@@ -17,6 +17,21 @@
 
 pub mod rand {
     //! OS-backed secure random bytes.
+    //!
+    //! Two surfaces:
+    //!
+    //! - [`fill`] / [`bytes`] / [`nonce_12`] — recoverable. They
+    //!   return `Result<_, Error>`; callers that can refuse the
+    //!   operation surface the failure.
+    //! - [`fill_or_abort`] — non-recoverable. Used by infallible
+    //!   helpers like [`OsRng`]'s `RngCore` impl, where the
+    //!   alternative was a `.expect(...)` panic. The function
+    //!   `process::abort()`s on CSPRNG failure rather than
+    //!   panicking, because a panic could be caught by an outer
+    //!   [`std::panic::catch_unwind`] in a binding-ABI thunk
+    //!   wrapper, an HTTP handler middleware, or a goroutine
+    //!   isolation boundary. Aborting guarantees that no code path
+    //!   produces all-zero entropy.
 
     use crate::errors::Error;
 
@@ -31,9 +46,42 @@ pub mod rand {
     ///
     /// On any host where the kernel CSPRNG is unavailable this returns
     /// an `Err` rather than zero-filling the buffer; callers must
-    /// surface the failure to refuse the operation.
+    /// surface the failure to refuse the operation. Fault injection
+    /// for tests is available via [`set_fault_for_tests`].
     pub fn fill(buf: &mut [u8]) -> Result<(), Error> {
+        if test_support::fault_injected() {
+            return Err(Error::new(
+                "rand: injected fault (set_fault_for_tests is true)",
+            ));
+        }
         getrandom::getrandom(buf).map_err(|e| Error::new(format!("rand: {e}")))
+    }
+
+    /// Fills `buf` with cryptographically-secure random bytes or
+    /// aborts the process on failure.
+    ///
+    /// Use only at call sites whose API contract is infallible
+    /// (`RngCore::fill_bytes`, internal key-material generation
+    /// inside [`OsRng`]). The abort is deliberate: it cannot be
+    /// caught by [`std::panic::catch_unwind`], so an outer
+    /// fault-isolation boundary cannot silently swallow a
+    /// catastrophic entropy failure and continue with zero bytes.
+    pub fn fill_or_abort(buf: &mut [u8]) {
+        match fill(buf) {
+            Ok(()) => {}
+            Err(err) => {
+                // Log via stderr (best-effort; process is about to
+                // die) so the operator sees the cause. Use `print!`-
+                // free writeln to avoid re-entering panic-prone
+                // formatting code in degraded conditions.
+                let _ = std::io::Write::write_all(
+                    &mut std::io::stderr(),
+                    format!("crypto::rand: fatal: CSPRNG unavailable; aborting process: {err}\n")
+                        .as_bytes(),
+                );
+                std::process::abort();
+            }
+        }
     }
 
     /// Convenience: allocates a fresh buffer and returns `n` random
@@ -44,13 +92,32 @@ pub mod rand {
         Ok(out)
     }
 
-    /// Returns a freshly-generated 16-byte random nonce. Suitable for
-    /// AES-GCM and ChaCha20-Poly1305 IVs (both use 96-bit nonces, so
-    /// the first 12 bytes are taken).
+    /// Returns a freshly-generated 12-byte random nonce. Suitable for
+    /// AES-GCM and ChaCha20-Poly1305 IVs (both use 96-bit nonces).
     pub fn nonce_12() -> Result<[u8; 12], Error> {
         let mut out = [0u8; 12];
         fill(&mut out)?;
         Ok(out)
+    }
+
+    /// Test-only hooks. Production callers never reach this module.
+    pub mod test_support {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static FAULT: AtomicBool = AtomicBool::new(false);
+
+        /// Enables or disables CSPRNG fault injection process-wide.
+        /// When enabled, every call to [`super::fill`] returns
+        /// `Err` without consulting `getrandom`. Tests must reset
+        /// the flag to `false` before returning; the suite is
+        /// process-global, not thread-scoped.
+        pub fn set_fault_for_tests(on: bool) {
+            FAULT.store(on, Ordering::SeqCst);
+        }
+
+        pub(super) fn fault_injected() -> bool {
+            FAULT.load(Ordering::SeqCst)
+        }
     }
 
     pub(crate) struct OsRng;
@@ -60,26 +127,23 @@ pub mod rand {
     impl rand_core::RngCore for OsRng {
         fn next_u32(&mut self) -> u32 {
             let mut buf = [0u8; 4];
-            getrandom::getrandom(&mut buf).expect("OS CSPRNG must be available");
+            fill_or_abort(&mut buf);
             u32::from_le_bytes(buf)
         }
 
         fn next_u64(&mut self) -> u64 {
             let mut buf = [0u8; 8];
-            getrandom::getrandom(&mut buf).expect("OS CSPRNG must be available");
+            fill_or_abort(&mut buf);
             u64::from_le_bytes(buf)
         }
 
         fn fill_bytes(&mut self, dest: &mut [u8]) {
-            getrandom::getrandom(dest).expect("OS CSPRNG must be available");
+            fill_or_abort(dest);
         }
 
         fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-            getrandom::getrandom(dest).map_err(|e| {
-                let nz = core::num::NonZeroU32::new(e.raw_os_error().unwrap_or(1) as u32)
-                    .unwrap_or_else(|| {
-                        core::num::NonZeroU32::new(rand_core::Error::CUSTOM_START).unwrap()
-                    });
+            fill(dest).map_err(|_| {
+                let nz = core::num::NonZeroU32::new(rand_core::Error::CUSTOM_START).unwrap();
                 rand_core::Error::from(nz)
             })
         }

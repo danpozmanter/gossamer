@@ -246,7 +246,13 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/static_items.gos"),
     spec("feature-testing-examples/struct_update_base.gos"),
     spec("feature-testing-examples/at_binding_subpattern.gos"),
-    spec("feature-testing-examples/scheduler_drain.gos"),
+    Spec {
+        skip_parity: Some(
+            "blocking channel recv without sleep returns None immediately in compiled tiers; \
+             use channel_close_drain.gos (with time::sleep) for cross-tier drain coverage",
+        ),
+        ..spec("feature-testing-examples/scheduler_drain.gos")
+    },
     spec("feature-testing-examples/static_mut_basic.gos"),
     spec("feature-testing-examples/closure_goroutine.gos"),
 ];
@@ -485,7 +491,17 @@ fn llvm_release_matches_vm_on_every_example() {
     parity_walk(Tier::Llvm);
 }
 
+/// Serialises every parity walk so concurrent test functions can't
+/// race on examples whose fixtures share `/tmp/gossamer_test_*`
+/// paths (notably `fs_temp_file_lifecycle.gos`). Each walk takes
+/// ~40 s; doing them sequentially adds wall-clock but eliminates
+/// the cross-test fixture race.
+static PARITY_WALK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn parity_walk(compiled: Tier) {
+    let _guard = PARITY_WALK_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut failures = Vec::new();
     for spec in SPECS {
         if spec.skip_all.is_some() || spec.skip_parity.is_some() || spec.server.is_some() {

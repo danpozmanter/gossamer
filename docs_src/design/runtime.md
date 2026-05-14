@@ -60,11 +60,31 @@ bindings never observe each other's mutations.
 
 ## Garbage collector
 
-`gossamer-gc` is the off-line design of the real concurrent GC — a
-tri-colour mark-sweep collector with write-barriers for generations
-and weak references. The tree-walker currently piggy-backs on Rust's
-`Rc` / `Arc` reference counting; the concurrent GC comes online once
-the Arc-based interpreter lands.
+`gossamer-gc` is the tri-colour concurrent mark-sweep collector with
+generational write-barriers and weak references. Compiled programs
+emit a `gos_rt_write_barrier` call before every projected heap-pointer
+store via the MIR `insert_gc_barriers` pass — both the Cranelift and
+LLVM backends share the same emission semantics, so collector
+invariants are tier-agnostic.
+
+The collector runs in two modes:
+
+- **Concurrent (default).** Mark work is interleaved with mutator
+  allocation: each `gos_rt_gc_alloc_rooted` call drives one
+  `STEP_BUDGET = 32` chunk of marking when a cycle is active and
+  starts a fresh cycle when allocation pressure crosses the heap
+  threshold (`GOSSAMER_GC_TARGET` env var overrides the default).
+- **Stop-the-world.** Set `GOSSAMER_GC_MODE=stw` to disable the
+  allocation-driven incremental drive. The heap still grows on
+  allocation and explicit `gos_rt_gc_concurrent_*` calls still
+  run STW; this is the comparison mode used to diagnose collector
+  bugs.
+
+The tree-walker piggy-backs on Rust's `Rc` / `Arc` for object
+lifetime; concurrent collection is a property of the compiled tier
+and the bytecode VM. The `gc_mode_parity` CI test verifies every
+allocation-heavy example produces identical stdout under both
+modes.
 
 ## Scheduler
 

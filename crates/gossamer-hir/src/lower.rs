@@ -408,6 +408,7 @@ impl Lowerer<'_> {
             },
             AstExprKind::Try(inner) => self.lower_try(inner, expr.span),
             AstExprKind::Go(inner) => HirExprKind::Go(Box::new(self.lower_expr(inner))),
+            AstExprKind::Error => HirExprKind::Placeholder,
         }
     }
 
@@ -447,7 +448,7 @@ impl Lowerer<'_> {
                     args: new_args,
                 }
             }
-            AstExprKind::Path(_) => HirExprKind::Call {
+            AstExprKind::Path(_) | AstExprKind::Closure { .. } => HirExprKind::Call {
                 callee: Box::new(self.lower_expr(rhs)),
                 args: vec![piped],
             },

@@ -9,6 +9,9 @@ to untrusted input:
 | `parse` | `gossamer_parse::parse_source_file` — full front end. | 9 |
 | `manifest` | `gossamer_pkg::Manifest::parse` — `project.toml`. | 5 |
 | `http_request` | `gossamer_std::http::parse_{request,status}_line`. | 7 |
+| `typecheck` | full front-end through `resolve_source_file` + `typecheck_source_file`. | 0 (libFuzzer-grown) |
+| `mir_lower` | front-end + HIR + `lower_program` + `optimise`; asserts `verify_body` post-pass. | 0 (libFuzzer-grown) |
+| `vm_compile` | front-end + HIR + bytecode `Vm::load` (no execution). | 0 (libFuzzer-grown) |
 
 ## Running locally
 
@@ -47,10 +50,12 @@ cases and known-buggy inputs. The plan is:
 
 ## CI cadence
 
-The CI workflow runs each target for **30 seconds** on every
-push to main, smoke-testing that the seed corpus still parses
-without panicking. A weekly job runs each target for an
-hour and uploads any new crashes.
+`.github/workflows/fuzz.yml` runs each target for **30 seconds**
+on every PR and push to `main`, smoke-testing that the seed
+corpus still parses without panicking. A `cron: "0 3 * * 0"`
+job runs each target for an hour every Sunday and uploads any
+new crash inputs as workflow artifacts. Both jobs fail loud on
+new crashes; they do not warn.
 
 For deeper local fuzzing:
 

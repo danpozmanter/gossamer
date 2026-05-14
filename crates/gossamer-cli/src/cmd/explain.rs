@@ -120,13 +120,50 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      specialisation."
         }
         "GP0005" => {
-            "A function declared as `extern \"C\"` had a body. `extern \"C\"`\n\
-                     items are foreign declarations; remove the body or drop the\n\
-                     `extern` keyword."
+            "Range operators (`..`, `..=`) are not associative.\n\
+                     Parenthesise the operands: `(a..b)..c`."
         }
         "GP0006" => {
-            "An attribute argument was malformed. Attribute syntax accepts\n\
-                     `#[attr]`, `#[attr(args)]`, or `#[attr = value]`."
+            "A braced struct literal in the scrutinee of `if`/`while`/`match`\n\
+                     is ambiguous with the block that follows.\n\
+                     Wrap the literal in `(...)`."
+        }
+        "GP0007" => {
+            "The right-hand side of `|>` must be a callable: a function\n\
+                     reference, a method call (which receives the piped value as\n\
+                     its last positional argument), or a closure."
+        }
+        "GP0008" => {
+            "Assignment (`=`, `+=`, …) only appears at statement position.\n\
+                     If you need an expression, return the right-hand side\n\
+                     directly."
+        }
+        "GP0009" => "An integer literal is required at this position.",
+        "GP0010" => "A string literal is required at this position.",
+        "GP0011" => {
+            "A tuple index must be a plain decimal integer (`p.0`, `p.1`).\n\
+                     Hex, binary, or octal indices are not accepted."
+        }
+        "GP0012" => "A label identifier is required after the leading `'`.",
+        "GP0013" => {
+            "An attribute is malformed. Accepted forms are `#[attr]`,\n\
+                     `#[attr(args)]`, and `#[attr = value]`."
+        }
+        "GP0014" => {
+            "A `use` declaration could not be parsed. Check the path for\n\
+                     stray punctuation or an unfinished brace list."
+        }
+        "GP0015" => {
+            "Two consecutive tokens formed something the parser does not\n\
+                     recognise. Most often a missing operator or comma."
+        }
+        "GP0016" => {
+            "The `extern` keyword is reserved in 0.5.0 but has no\n\
+                     source-level item form. Gossamer's FFI surface is the\n\
+                     `[rust-bindings]` section of `project.toml` plus the\n\
+                     `gossamer-binding` crate (see `docs_src/libraries.md`).\n\
+                     Remove the `extern \"C\" { ... }` block or rewrite the\n\
+                     binding as a Rust crate consumed via `[rust-bindings]`."
         }
         "GX0001" => {
             "A runtime value had the wrong shape for the operation. The\n\
@@ -160,6 +197,16 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
             "The execution path (interpreter or native) does not yet\n\
                      implement the construct reached. File the example and use\n\
                      the other path in the meantime."
+        }
+        "GX0008" => {
+            "The goroutine exceeded the VM's maximum call depth (40 frames).\n\
+                     Each interpreted Gossamer frame adds a large pair of Rust stack\n\
+                     frames (apply + run); the 8 MB OS thread stack can safely hold\n\
+                     around 40 such pairs in a debug build before overflowing.\n\
+                     Direct or mutual recursion without a reachable base case is the\n\
+                     most common cause. Add a terminating condition, convert to an\n\
+                     iterative loop, or use `gos build` where the native codegen\n\
+                     produces standard call instructions the OS can grow to handle."
         }
         _ => return None,
     })

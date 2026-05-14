@@ -264,7 +264,19 @@ const STEP_BUDGET: usize = 32;
 /// Drives one step of the concurrent GC cycle from an allocation
 /// site. Reads the `PHASE` atomic lock-free and takes the heap mutex
 /// only when action is needed.
+///
+/// Mode selection via `GOSSAMER_GC_MODE`:
+/// - unset / `concurrent` (default): incremental marking interleaved
+///   with allocation, matching the description above.
+/// - `stw`: never start a concurrent cycle from this path. The heap
+///   still grows on allocation; explicit `gos_rt_gc_concurrent_*`
+///   calls (or test harnesses) can still drive collection
+///   stop-the-world. Useful for diagnosing GC-related bugs by
+///   comparing program output between modes.
 fn drive_incremental() {
+    if gc_mode_is_stw() {
+        return;
+    }
     match PHASE.load(Ordering::Relaxed) {
         // Idle — start a new cycle when allocation pressure exceeds the
         // threshold. `gos_rt_gc_concurrent_start` also greys shadow-stack
@@ -283,6 +295,20 @@ fn drive_incremental() {
         }
         _ => {}
     }
+}
+
+/// `true` when `GOSSAMER_GC_MODE` is set to `stw` (case-insensitive).
+/// Cached behind an `OnceLock` so we don't re-parse the env var on
+/// every allocation. The value is sampled once at first allocation;
+/// changing the env var after the process is up has no effect (which
+/// matches Go and the JVM's GC-mode flags).
+fn gc_mode_is_stw() -> bool {
+    static MODE: OnceLock<bool> = OnceLock::new();
+    *MODE.get_or_init(|| {
+        std::env::var("GOSSAMER_GC_MODE")
+            .ok()
+            .is_some_and(|v| v.eq_ignore_ascii_case("stw"))
+    })
 }
 
 /// Lock-free mirror of `Heap::concurrent_phase()`. Updated by

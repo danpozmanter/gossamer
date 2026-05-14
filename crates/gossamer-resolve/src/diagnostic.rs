@@ -95,14 +95,20 @@ impl ResolveDiagnostic {
     /// did-you-mean suggestion drawn from the provided names.
     #[must_use]
     pub fn to_diagnostic(&self, in_scope: &[&str]) -> gossamer_diagnostics::Diagnostic {
-        use gossamer_diagnostics::{Code, Diagnostic, Location, suggest};
+        use gossamer_diagnostics::{Code, Diagnostic, Location, Suggestion, suggest};
         let location = Location::new(self.span.file, self.span);
         let title = format!("{}", self.error);
         let mut out =
             Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title);
         if let ResolveError::UnresolvedName { name } = &self.error {
             if let Some(suggestion) = suggest(name, in_scope.iter().copied(), 2) {
-                out = out.with_help(format!("did you mean `{suggestion}`?"));
+                let msg = format!("did you mean `{suggestion}`?");
+                out = out.with_suggestion(Suggestion::replacement(
+                    location,
+                    msg.clone(),
+                    suggestion.to_string(),
+                ));
+                out = out.with_help(msg);
             }
         }
         out

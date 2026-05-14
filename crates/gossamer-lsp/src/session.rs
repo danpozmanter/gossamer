@@ -84,7 +84,11 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
             .iter()
             .map(gossamer_parse::ParseDiagnostic::to_diagnostic),
     );
-    diagnostics.extend(resolve_diags.iter().map(|d| d.to_diagnostic(&[])));
+    // Seed `did you mean ...?` candidates from the file's
+    // top-level item names so the resolver attaches a Suggestion
+    // that LSP code-actions can surface as a quickfix.
+    let in_scope = collect_top_level_names(&sf);
+    diagnostics.extend(resolve_diags.iter().map(|d| d.to_diagnostic(&in_scope)));
     diagnostics.extend(
         type_diags
             .iter()
@@ -104,6 +108,31 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
         diagnostics,
         index,
     }
+}
+
+/// Best-effort enumeration of every top-level item name a source
+/// file declares. Seeds the resolver's `did you mean ...?`
+/// suggestion candidates so `GR0001` diagnostics carry a
+/// machine-applicable replacement that LSP code-actions can
+/// surface as a quickfix. Mirrors the same function in
+/// `gossamer-cli/src/loaders.rs`; duplicated here so the LSP
+/// crate stays decoupled from the CLI crate.
+fn collect_top_level_names(sf: &gossamer_ast::SourceFile) -> Vec<&str> {
+    let mut out = Vec::new();
+    for item in &sf.items {
+        match &item.kind {
+            gossamer_ast::ItemKind::Fn(decl) => out.push(decl.name.name.as_str()),
+            gossamer_ast::ItemKind::Struct(decl) => out.push(decl.name.name.as_str()),
+            gossamer_ast::ItemKind::Enum(decl) => out.push(decl.name.name.as_str()),
+            gossamer_ast::ItemKind::Trait(decl) => out.push(decl.name.name.as_str()),
+            gossamer_ast::ItemKind::TypeAlias(decl) => out.push(decl.name.name.as_str()),
+            gossamer_ast::ItemKind::Const(decl) => out.push(decl.name.name.as_str()),
+            gossamer_ast::ItemKind::Static(decl) => out.push(decl.name.name.as_str()),
+            gossamer_ast::ItemKind::Mod(decl) => out.push(decl.name.name.as_str()),
+            gossamer_ast::ItemKind::Impl(_) | gossamer_ast::ItemKind::AttrItem(_) => {}
+        }
+    }
+    out
 }
 
 impl DocumentAnalysis {

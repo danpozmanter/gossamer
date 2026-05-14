@@ -1,0 +1,9 @@
+// IEEE 754 NaN propagation: 0.0 / 0.0 produces NaN, and NaN is not
+// equal to itself per the standard. Pinning this so a runtime
+// re-implementation of f64 division cannot silently change either.
+
+fn main() {
+    let n: f64 = 0.0 / 0.0
+    println!("{}", n)
+    println!("{}", n == n)
+}

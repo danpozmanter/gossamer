@@ -1,8 +1,8 @@
-//! `gos run [PATH]` — execute a program through the VM (default)
-//! or the tree-walker interpreter (`--tree-walker`).
+//! `gos run [PATH]` — execute a program through the bytecode VM.
 //!
-//! Both paths route through `loaders::load_and_check` so a
-//! statically-invalid program never reaches execution.
+//! The bytecode VM is the only interpretation tier. The tree-walker
+//! was retired in 0.5.0; it is no longer reachable from this command
+//! or from any CLI / env-var path.
 
 use std::path::PathBuf;
 
@@ -11,18 +11,13 @@ use anyhow::{Result, anyhow};
 use crate::loaders::load_and_check;
 use crate::paths::{default_main_entry, read_entry_source};
 
-/// How `gos run` executes a program.
+/// How `gos run` executes a program. Single-variant marker kept so
+/// the cli dispatcher's call sites do not need to be rewritten; the
+/// only legitimate mode is `Vm`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunMode {
-    /// Default: register-based bytecode VM. Silently falls back
-    /// to the tree-walker when the VM compiler hits an HIR
-    /// construct it doesn't yet lower (closures-with-late-binding,
-    /// etc.).
+    /// Register-based bytecode VM.
     Vm,
-    /// `--tree-walker`: force the tree-walker. Slower but covers
-    /// every construct; useful for debugging the VM or chasing
-    /// parity differences.
-    TreeWalker,
 }
 
 /// `gos run` dispatcher: walks the project root for a default entry
@@ -35,101 +30,40 @@ pub(crate) fn dispatch(path: Option<PathBuf>, mode: RunMode, args: &[String]) ->
     run(&resolved, mode, args)
 }
 
-fn run(file: &PathBuf, mode: RunMode, forwarded: &[String]) -> Result<()> {
+fn run(file: &PathBuf, _mode: RunMode, forwarded: &[String]) -> Result<()> {
     let source = read_entry_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
-    // Static checks always run first, regardless of execution
-    // mode. A program with parse / resolve / type errors has no
-    // business reaching the VM — execution would either crash
-    // or produce unsound output.
+    // Static checks always run first. A program with parse / resolve /
+    // type errors has no business reaching the VM — execution would
+    // either crash or produce unsound output.
     let (program, mut tcx) = load_and_check(&source, file_id, &map)?;
     gossamer_interp::set_program_name(&file.to_string_lossy());
     gossamer_interp::set_program_args(forwarded);
-    if mode == RunMode::TreeWalker {
-        return run_tree_walker(&program);
-    }
-    // Default: VM with tree-walker fallback. Load failure usually
-    // means the VM compiler refused an HIR shape; the tree-walker
-    // covers the long tail.
     let mut vm = gossamer_interp::Vm::new();
-    match vm.load(&program, &mut tcx) {
-        Ok(()) => {
-            // Free HIR and type context — the VM has already extracted
-            // everything it needs (bytecode chunks, MIR Arc, TyCtxt Arc).
-            // Holding these on the stack for the full execution life doubles
-            // peak RSS on programs with large ASTs.
-            drop(program);
-            drop(tcx);
-            let r = vm.call("main", Vec::new()).map(|_| ());
-            // MIR bodies and TyCtxt snapshot were needed only for deferred JIT.
-            // Release them now so goroutine-join doesn't hold the per-program
-            // compilation data live while waiting on worker threads.
-            vm.release_jit_prelude();
-            // Wait for any outstanding goroutines (pool-backed
-            // `Op::Spawn` tasks + tree-walker join handles)
-            // before exiting so their stdout has a chance to
-            // land. Without this, `go expr; println!("...")`
-            // would race the process exit and silently drop
-            // worker output.
-            gossamer_interp::join_outstanding_goroutines();
-            // JIT-promoted bodies print through the runtime's
-            // thread-local `STDOUT_BUF` rather than the bytecode
-            // VM's writer. Drain the buffer so any output that
-            // bypassed the bytecode path still reaches the user
-            // before we exit.
-            gossamer_interp::flush_runtime_stdout();
-            match r {
-                Ok(()) => Ok(()),
-                Err(err) => {
-                    // VM runtime error must NOT silently re-run via
-                    // the tree-walker — the program has already
-                    // emitted side effects (println, file I/O); a
-                    // re-run would duplicate them. Surface the
-                    // error with whatever call-stack snapshot the
-                    // VM has tracked.
-                    let stack = vm.call_stack_snapshot();
-                    let trace = if stack.is_empty() {
-                        String::new()
-                    } else {
-                        let mut rendered = String::from("\n  call stack (outermost first):");
-                        for name in &stack {
-                            rendered.push_str("\n    at ");
-                            rendered.push_str(name);
-                        }
-                        rendered
-                    };
-                    Err(anyhow!("runtime error: {err}{trace}"))
-                }
-            }
-        }
-        Err(err) => {
-            if std::env::var("GOS_VM_TRACE").is_ok() {
-                eprintln!("vm load failed ({err}); falling back to tree-walker");
-            }
-            run_tree_walker(&program)
-        }
-    }
-}
-
-fn run_tree_walker(program: &gossamer_hir::HirProgram) -> Result<()> {
-    let mut interp = gossamer_interp::Interpreter::new();
-    interp.load(program);
-    let result = interp.call("main", Vec::new());
+    vm.load(&program, &mut tcx)
+        .map_err(|err| anyhow!("vm load failed: {err}"))?;
+    drop(program);
+    drop(tcx);
+    let r = vm.call("main", Vec::new()).map(|_| ());
+    vm.release_jit_prelude();
     gossamer_interp::join_outstanding_goroutines();
-    if let Err(err) = result {
-        let stack = interp.call_stack();
-        let trace = if stack.is_empty() {
-            String::new()
-        } else {
-            let mut rendered = String::from("\n  call stack (outermost first):");
-            for name in &stack {
-                rendered.push_str("\n    at ");
-                rendered.push_str(name);
-            }
-            rendered
-        };
-        return Err(anyhow!("runtime error: {err}{trace}"));
+    gossamer_interp::flush_runtime_stdout();
+    match r {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let stack = vm.call_stack_snapshot();
+            let trace = if stack.is_empty() {
+                String::new()
+            } else {
+                let mut rendered = String::from("\n  call stack (outermost first):");
+                for name in &stack {
+                    rendered.push_str("\n    at ");
+                    rendered.push_str(name);
+                }
+                rendered
+            };
+            Err(anyhow!("runtime error: {err}{trace}"))
+        }
     }
-    Ok(())
 }

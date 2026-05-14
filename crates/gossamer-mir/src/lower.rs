@@ -2381,6 +2381,16 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_time_format_rfc3339", result_ty)
             }
+            "time::parse_rfc3339" => {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let s = self.tcx.string_ty();
+                let substs = gossamer_types::Substs::from_types([i64_ty, s]);
+                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_time_parse_rfc3339", result_ty)
+            }
             "os::program_name" | "env::program_name" => {
                 ("gos_rt_os_program_name", self.tcx.string_ty())
             }
@@ -4399,6 +4409,7 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        use gossamer_types::TyKind;
         let inner = self.lower_expr(operand)?;
         let mir_op = match op {
             HirUnaryOp::Neg => UnOp::Neg,
@@ -4490,6 +4501,26 @@ impl<'a> Builder<'a> {
                 }
                 return Some(inner);
             }
+        };
+        // When the HIR type is unresolved (`Var(_)`) the unary
+        // result inherits the operand's type — `!bool` is `bool`,
+        // `-i64` is `i64`, etc. Without this fallback the
+        // destination local is `Var`/ptr-shaped, and downstream
+        // print kinds route the i1 result through `print_str`
+        // (treating the bit as a string pointer) rather than
+        // `print_bool`, segfaulting in `strlen` on `0x1`.
+        let ty = if matches!(self.tcx.kind_of(ty), TyKind::Var(_) | TyKind::Error) {
+            let inner_ty = self.locals[inner.0 as usize].ty;
+            if matches!(
+                self.tcx.kind_of(inner_ty),
+                TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Char
+            ) {
+                inner_ty
+            } else {
+                ty
+            }
+        } else {
+            ty
         };
         let local = self.fresh(ty);
         self.emit_assign(
@@ -4591,6 +4622,43 @@ impl<'a> Builder<'a> {
             }
             return Some(cmp);
         }
+        // When the HIR type is still an inference variable, ground the
+        // result type from the operands so the LLVM backend uses the
+        // correct alloca type (double vs ptr). Without this, f64
+        // arithmetic in impl methods produces ptr-typed intermediate
+        // locals whose integer bit-pattern arithmetic diverges from
+        // the correct float computation.
+        let ty = if matches!(self.tcx.kind_of(ty), TyKind::Var(_) | TyKind::Error) {
+            let lhs_ty = self.locals[lhs_local.0 as usize].ty;
+            let rhs_ty = self.locals[rhs_local.0 as usize].ty;
+            let resolve_float_or_int =
+                |this: &Self, t: gossamer_types::Ty| -> Option<gossamer_types::Ty> {
+                    match this.tcx.kind_of(t) {
+                        TyKind::Float(_) | TyKind::Int(_) | TyKind::Bool => Some(t),
+                        _ => None,
+                    }
+                };
+            // For comparison ops, result is bool regardless of operand types.
+            if matches!(
+                op,
+                HirBinaryOp::Eq
+                    | HirBinaryOp::Ne
+                    | HirBinaryOp::Lt
+                    | HirBinaryOp::Le
+                    | HirBinaryOp::Gt
+                    | HirBinaryOp::Ge
+            ) {
+                self.tcx.bool_ty()
+            } else if let Some(concrete) = resolve_float_or_int(self, lhs_ty) {
+                concrete
+            } else if let Some(concrete) = resolve_float_or_int(self, rhs_ty) {
+                concrete
+            } else {
+                ty
+            }
+        } else {
+            ty
+        };
         let local = self.fresh(ty);
         let bin_op = lower_binop(op);
         self.emit_assign(
@@ -5200,6 +5268,43 @@ impl<'a> Builder<'a> {
             };
             arg_operands.push(Operand::Copy(Place::local(local)));
         }
+        // When an inline closure literal is the callee (e.g. `x |> |s| f(s)`),
+        // `ty` may still be the FnPtr type of the closure rather than its
+        // return type. Resolve the return type from the callee operand's sig.
+        let ty = {
+            use gossamer_types::TyKind;
+            if matches!(
+                self.tcx.kind_of(ty),
+                TyKind::Var(_) | TyKind::Error | TyKind::FnPtr(_) | TyKind::FnTrait(_)
+            ) {
+                if let Operand::Copy(Place {
+                    local: callee_local,
+                    projection,
+                }) = &callee_operand
+                {
+                    if projection.is_empty() {
+                        let callee_local_ty = self.locals[callee_local.0 as usize].ty;
+                        match self.tcx.kind_of(callee_local_ty) {
+                            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                                let out = sig.output;
+                                if matches!(self.tcx.kind_of(out), TyKind::Var(_) | TyKind::Error) {
+                                    ty
+                                } else {
+                                    out
+                                }
+                            }
+                            _ => ty,
+                        }
+                    } else {
+                        ty
+                    }
+                } else {
+                    ty
+                }
+            } else {
+                ty
+            }
+        };
         let dest = self.fresh(ty);
         // Pre-register the destination's struct name so subsequent
         // `dest.field` projections resolve to a concrete struct
@@ -7913,6 +8018,7 @@ impl<'a> Builder<'a> {
             "to_uppercase" | "to_upper" => Some("gos_rt_str_to_upper"),
             "push" => Some("gos_rt_vec_push"),
             "pop" => Some("gos_rt_vec_pop"),
+            "sort" => Some("gos_rt_vec_sort_i64"),
             "iter" => Some("gos_rt_arr_iter"),
             "to_vec" => match &receiver_kind_flat {
                 // Vec/Slice/Array `.to_vec()` must produce an
@@ -7952,6 +8058,12 @@ impl<'a> Builder<'a> {
                 _ => None,
             },
             "recv" => Some("gos_rt_chan_recv_option"),
+            // `rx.recv_ctx(&ctx)` — same shape as `recv`, but
+            // takes a Context handle as the second arg. The
+            // runtime helper polls cancellation on both the
+            // goroutine park path and the OS-thread condvar
+            // path, returning None when the context fires.
+            "recv_ctx" => Some("gos_rt_chan_recv_ctx_option"),
             "try_send" => Some("gos_rt_chan_try_send"),
             "try_recv" => Some("gos_rt_chan_try_recv_option"),
             "close" => Some("gos_rt_chan_close"),

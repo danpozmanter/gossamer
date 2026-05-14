@@ -1612,6 +1612,64 @@ impl Client {
             .ok_or_else(|| ClientError::Transport(format!("unsupported HTTP method: {method}")))?;
         self.do_request(m, url, body, headers)
     }
+
+    /// Cancellation-aware variant of [`do_request`].
+    pub fn do_request_ctx(
+        &self,
+        ctx: &crate::context::Context,
+        method: Method,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(&str, &str)],
+    ) -> Result<Response, ClientError> {
+        match crate::blocking_pool::run_ctx(
+            ctx,
+            move_owned(method, url, body, headers, &self.inner.agent),
+        ) {
+            Ok(inner) => inner,
+            Err(_) => Err(ClientError::Cancelled),
+        }
+    }
+
+    /// Cancellation-aware GET.
+    pub fn get_ctx(
+        &self,
+        ctx: &crate::context::Context,
+        url: &str,
+    ) -> Result<Response, ClientError> {
+        self.do_request_ctx(ctx, Method::Get, url, None, &[])
+    }
+
+    /// Cancellation-aware POST.
+    pub fn post_ctx(
+        &self,
+        ctx: &crate::context::Context,
+        url: &str,
+        body: &[u8],
+        content_type: &str,
+    ) -> Result<Response, ClientError> {
+        self.do_request_ctx(
+            ctx,
+            Method::Post,
+            url,
+            Some(body),
+            &[("Content-Type", content_type)],
+        )
+    }
+
+    /// Cancellation-aware variant of [`request`].
+    pub fn request_ctx(
+        &self,
+        ctx: &crate::context::Context,
+        method: &str,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(&str, &str)],
+    ) -> Result<Response, ClientError> {
+        let m = Method::parse(method)
+            .ok_or_else(|| ClientError::Transport(format!("unsupported HTTP method: {method}")))?;
+        self.do_request_ctx(ctx, m, url, body, headers)
+    }
 }
 
 /// Module-level convenience wrappers. Each builds an ephemeral

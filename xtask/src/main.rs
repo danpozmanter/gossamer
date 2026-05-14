@@ -35,6 +35,7 @@ fn main() -> Result<()> {
             println!("  docs-all            run every docs generator");
             println!("  lint-budget         tally #[allow(...)] sites per crate");
             println!("  audit-allows        list every #[allow(...)] with surrounding context");
+            println!("  audit-spec-banners  validate 0.5.0 conformance banners in SPEC.md");
             Ok(())
         }
         Some("docs-stdlib") => regenerate_stdlib_docs(),
@@ -49,6 +50,7 @@ fn main() -> Result<()> {
         }
         Some("lint-budget") => report_lint_budget(),
         Some("audit-allows") => audit_allows(),
+        Some("audit-spec-banners") => audit_spec_banners(),
         Some(other) => {
             eprintln!("xtask: unknown subcommand {other:?}");
             std::process::exit(2);
@@ -184,6 +186,169 @@ fn audit_allows() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Parses SPEC.md and validates the 0.5.0 conformance banners.
+///
+/// Each `> **Conformance (0.5.0)**` block must declare a `status:`
+/// keyword from the closed vocabulary
+/// `{implemented, partial, scaffolded, not-in-0.5.0, rust-bindings-only}`.
+/// Required banners are listed in [`REQUIRED_BANNERS`]; the audit
+/// fails if any required section lacks a banner or carries an
+/// invalid keyword. Failure exits non-zero so CI fails loud.
+fn audit_spec_banners() -> Result<()> {
+    let workspace_root = locate_workspace_root()?;
+    let spec_path = workspace_root.join("SPEC.md");
+    let body = fs::read_to_string(&spec_path)
+        .with_context(|| format!("reading {}", spec_path.display()))?;
+    let banners = parse_spec_banners(&body);
+    let mut errors: Vec<String> = Vec::new();
+
+    // Required section → required status keyword.
+    for (section, expected_status) in REQUIRED_BANNERS {
+        match banners.iter().find(|b| b.section.starts_with(section)) {
+            None => errors.push(format!(
+                "section {section} requires a 0.5.0 conformance banner but none found"
+            )),
+            Some(banner) => {
+                if !expected_status.contains(&banner.status.as_str()) {
+                    errors.push(format!(
+                        "section {section} has banner status {:?}; expected one of {expected_status:?}",
+                        banner.status
+                    ));
+                }
+            }
+        }
+    }
+
+    // Every banner anywhere in the doc must use a vocabulary keyword.
+    for banner in &banners {
+        if !STATUS_VOCABULARY.contains(&banner.status.as_str()) {
+            errors.push(format!(
+                "section {} carries unknown status keyword {:?}; vocabulary is {STATUS_VOCABULARY:?}",
+                banner.section, banner.status
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        println!(
+            "xtask: audit-spec-banners ok ({} banner(s) validated)",
+            banners.len()
+        );
+        Ok(())
+    } else {
+        for error in &errors {
+            eprintln!("xtask: {error}");
+        }
+        anyhow::bail!("{} spec-banner audit failure(s)", errors.len());
+    }
+}
+
+/// Closed vocabulary for the `status:` field of a conformance banner.
+const STATUS_VOCABULARY: &[&str] = &[
+    "implemented",
+    "partial",
+    "scaffolded",
+    "not-in-0.5.0",
+    "rust-bindings-only",
+];
+
+/// Sections that must carry a banner, paired with the set of
+/// statuses any of which is acceptable. Sections are matched as a
+/// prefix on the rendered section path (e.g. `3.1`, `7.5`, `12`),
+/// so `3.10` matches `3.10 Generics`, etc.
+const REQUIRED_BANNERS: &[(&str, &[&str])] = &[
+    ("3.1", &["partial", "not-in-0.5.0"]),
+    ("3.10", &["partial", "scaffolded"]),
+    ("7.2", &["scaffolded"]),
+    ("7.4", &["scaffolded"]),
+    ("7.5", &["not-in-0.5.0"]),
+    ("8.6", &["implemented"]),
+    ("11.1", &["partial"]),
+    ("11.2", &["not-in-0.5.0"]),
+    ("12", &["rust-bindings-only"]),
+    ("14", &["partial"]),
+];
+
+/// One banner: the surrounding section heading and the status keyword
+/// declared inside the banner block.
+struct SpecBanner {
+    section: String,
+    status: String,
+}
+
+/// Walks SPEC.md line by line, tracking the current section heading
+/// and collecting every `> **Conformance (0.5.0)**` block's `status:`
+/// keyword.
+fn parse_spec_banners(body: &str) -> Vec<SpecBanner> {
+    let mut current_section = String::from("(preamble)");
+    let mut out: Vec<SpecBanner> = Vec::new();
+    let mut iter = body.lines().peekable();
+    while let Some(line) = iter.next() {
+        if let Some(rest) = line
+            .strip_prefix("## ")
+            .or_else(|| line.strip_prefix("### "))
+        {
+            current_section = rest.trim().to_string();
+            continue;
+        }
+        if line.contains("**Conformance (0.5.0)**") {
+            // The banner body may span multiple `> ...` continuation
+            // lines. Collect them all and search for `status:`.
+            let mut buf = line.to_string();
+            while let Some(peek) = iter.peek() {
+                if peek.trim_start().starts_with('>') {
+                    buf.push(' ');
+                    buf.push_str(peek);
+                    iter.next();
+                } else {
+                    break;
+                }
+            }
+            if let Some(status) = extract_status_keyword(&buf) {
+                out.push(SpecBanner {
+                    section: current_section.clone(),
+                    status,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Extracts the value of the first `` `status: X` `` (or
+/// `status: X` plain) directive found in `text`. Whitespace and
+/// surrounding backticks are stripped from the keyword.
+fn extract_status_keyword(text: &str) -> Option<String> {
+    let needle = "status:";
+    let start = text.find(needle)? + needle.len();
+    let tail = &text[start..];
+    // Skip leading whitespace then take the first contiguous token of
+    // status characters. `.` and `-` are part of the vocabulary
+    // (`not-in-0.5.0`); the keyword ends at a backtick, whitespace
+    // followed by a punctuator, or a sentence-style terminator.
+    let mut chars = tail.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() || c == '`' {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    let mut cleaned = String::new();
+    for c in chars {
+        if c == '`' || c == '*' || c == '\n' || c == ',' || c == ')' || c == ' ' {
+            break;
+        }
+        cleaned.push(c);
+    }
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// Yields every `*.rs` path under `root`, skipping `target/` and any
@@ -429,6 +594,78 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "Parser",
         "chained comparison without parentheses",
         "Comparison operators like `==` / `!=` / `<` are not associative. Parenthesise the operands: `(a == b) && (b == c)`.",
+    ),
+    (
+        "GP0005",
+        "Parser",
+        "chained range operator",
+        "Range operators (`..`, `..=`) are not associative. Parenthesise the operands: `(a..b)..c`.",
+    ),
+    (
+        "GP0006",
+        "Parser",
+        "struct literal in scrutinee",
+        "A braced struct literal in the scrutinee of `if`/`while`/`match` is ambiguous with the block. Wrap the literal in `(...)`.",
+    ),
+    (
+        "GP0007",
+        "Parser",
+        "pipe right-hand side not callable",
+        "The right-hand side of `|>` must be a callable: a function reference, a method call, or a closure.",
+    ),
+    (
+        "GP0008",
+        "Parser",
+        "assignment outside statement position",
+        "Assignment (`=`, `+=`, …) only appears at statement position. If you need an expression, return the right-hand side directly.",
+    ),
+    (
+        "GP0009",
+        "Parser",
+        "expected integer literal",
+        "An integer literal is required at this position.",
+    ),
+    (
+        "GP0010",
+        "Parser",
+        "expected string literal",
+        "A string literal is required at this position.",
+    ),
+    (
+        "GP0011",
+        "Parser",
+        "invalid tuple index",
+        "A tuple index must be a plain decimal integer (`p.0`, `p.1`). Hex, binary, or octal indices are not accepted.",
+    ),
+    (
+        "GP0012",
+        "Parser",
+        "malformed label",
+        "A label identifier is required after the leading `'`.",
+    ),
+    (
+        "GP0013",
+        "Parser",
+        "malformed attribute",
+        "An attribute is malformed. Accepted forms are `#[attr]`, `#[attr(args)]`, and `#[attr = value]`.",
+    ),
+    (
+        "GP0014",
+        "Parser",
+        "malformed `use` declaration",
+        "A `use` declaration could not be parsed. Check the path for stray punctuation or an unfinished brace list.",
+    ),
+    (
+        "GP0015",
+        "Parser",
+        "unexpected construct",
+        "Two consecutive tokens formed something the parser does not recognise.",
+    ),
+    (
+        "GP0016",
+        "Parser",
+        "reserved `extern` keyword",
+        "The `extern` keyword is reserved in 0.5.0 but has no source-level item form. Gossamer's FFI surface is the `[rust-bindings]` section of `project.toml` plus the `gossamer-binding` crate.",
     ),
     (
         "GR0001",

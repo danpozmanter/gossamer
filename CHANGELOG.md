@@ -1,5 +1,136 @@
 # Changelog
 
+## 0.5.0
+
+### Language
+
+- **Tree-walker retired.** `gos run` now exclusively uses the register-based
+  bytecode VM. The `--tree-walker` / `--vm` flags are removed; `gos run` has
+  no mode selector. Programs that previously required the walker fall back to
+  the VM or should use `gos build`.
+- **Generic structs.** `struct Pair<A, B> { fst: A, snd: B }` is typechecked
+  across multiple instantiation sites. Per-instance substitution at field-read
+  sites lets field arithmetic (`p.fst + p.snd`) resolve to the correct
+  concrete type. Supported in the VM tier; compiled-tier parity tracked
+  separately.
+- **`extern "C" { }` rejected at parse time (GP0016).** Parser previously
+  infinite-looped on any `extern` block. Fixed: the extern item is consumed
+  cleanly and GP0016 is emitted. Applies to bare block,
+  `#[no_mangle] extern "C" fn`, and `unsafe extern "C" { }` forms.
+  `gos explain GP0016` directs users to `[rust-bindings]`.
+- **`vec![...]` macro confirmed for 0.5.0.** `assert!`, `assert_eq!`,
+  `debug_assert!`, `todo!`, `unimplemented!`, `write!`, `writeln!` are
+  rejected at parse time (SPEC §14 not-in-0.5.0).
+
+### VM / runtime
+
+- **Call depth limit with clean diagnostic (GX0008).** Unbounded recursion
+  now produces `error[GX0008]: stack overflow — call depth exceeded 40 frames`
+  with a call-stack trace instead of a Rust stack overflow / SIGSEGV. The
+  limit is calibrated for debug builds; `gos build` is not affected — native
+  code uses the OS call stack. `gos explain GX0008` registered.
+
+### Correctness
+
+- **MIR verifier wired into optimization pipeline.** `verify_body` runs after
+  every optimization pass. Structural drift (bad block ids, out-of-range
+  locals, missing call targets) panics immediately under debug assertions
+  instead of silently miscompiling.
+- **GC write barriers emitted.** New shared `gossamer_mir::insert_gc_barriers`
+  pass walks every projected pointer-store and emits
+  `StatementKind::GcWriteBarrier`; both LLVM and Cranelift backends emit
+  `gos_rt_write_barrier`. Concurrent collector is now safe as the default;
+  `GOSSAMER_GC_MODE=stw` disables the allocation-driven incremental drive.
+- **Race detector: multi-reader RAW/WAR tracking.** Per-address state now
+  stores the last write and up to four concurrent active reads. Write accesses
+  check all active readers for write-after-read conflicts; read accesses check
+  the last write for read-after-write conflicts. Previous single-entry
+  tracking missed races where a reader's record was overwritten before the
+  conflicting write arrived.
+- **LSP did-you-mean quick-fix.** `textDocument/codeAction` now surfaces
+  machine-applicable `Suggestion` objects for unresolved-name diagnostics,
+  not just help text. Editors that support quick-fixes receive a one-click
+  rename to the nearest spelling match.
+- **`ExprKind::Error` AST variant.** All compiler passes (HIR lower,
+  typechecker, resolver, MIR lower, interpreter, LSP passes) handle the new
+  `Error` expression variant. Malformed sub-expressions can now be represented
+  in the AST instead of being silently dropped, enabling error-recovery paths
+  that suppress cascading diagnostics.
+- **Native codegen — zero LLVM fallbacks on `tier_parity`.** Aggregate
+  Display formatting (Vec / Array / `JsonValue` / `DynError`) lowers inline
+  via `gos_rt_*_format_*` helpers; struct-update aggregate-store path
+  handles 1-slot fields; `Ok(struct)` heap-copies the aggregate so the
+  payload pointer outlives the producer's frame; `gos_rt_chan_send`
+  stack-spills its value arg; `channel()` materialises a fresh 16-byte pair
+  buffer so `(tx, rx)` destructuring can't overflow a 1-slot alloca;
+  `bitcast void` IR errors fixed.
+- **Unary `Not` type inference.** MIR `lower_unary` inherits the operand's
+  concrete type when the HIR result is `Var(_)`, fixing `!fs::exists(p)`
+  segfaults where the `i1` result was being routed through `print_str`.
+
+### Context cancellation
+
+- **`rx.recv_ctx(&ctx)` end-to-end.** New runtime helper
+  `gos_rt_chan_recv_ctx_option` plus cross-crate hook bridge
+  (`gos_rt_install_ctx_hooks`); MIR dispatches the method name to the
+  helper, and interp gains a matching `Channel::recv_ctx` builtin. OS-thread
+  callers observe cancel within 50 ms via a bounded `wait_timeout`;
+  goroutine callers via the scheduler's existing unpark path. Context flows
+  in from any surface that hands one out (today: HTTP `r.context`).
+- **Cancellation tests.** 4 channel-context tests, 3 net-context tests
+  (`TcpListener::accept_ctx`, `TcpStream::read_ctx`).
+
+### Tooling / CI
+
+- **Miri nightly workflow.** `.github/workflows/miri.yml` runs `cargo miri
+  test --lib` weekly against the seven safety-load-bearing crates (gc, mir,
+  types, resolve, runtime, coro, sched).
+- **Workspace lint debt.** `unsafe_code` workspace level changed `forbid`
+  → `deny` so per-fn `#[allow(unsafe_code)]` works without each crate
+  re-listing every workspace lint. Four of five unsafe-using crates dropped
+  their duplicated `[lints]` overrides.
+- **`tier_parity` flake fix.** New `PARITY_WALK_LOCK` serialises the
+  cranelift/llvm parity walks so concurrent test functions can't race on
+  shared `/tmp/gossamer_test_*` fixture paths.
+- **`release_perf` tolerance fix.** Sub-50 ms wallclock skips the
+  ratio check (both backends constant-folded the loop to startup-noise);
+  live-loop tolerance bumped 1.10× → 1.25× for CI jitter.
+- **Every bug-tracking `#[ignore]` closed.** 6 previously-ignored tests
+  unblocked (channel drain, nested format precision, capturing closure as
+  goroutine, `?`-through-indexed-Vec-field, 1k and 10k goroutine stress);
+  the only remaining `#[ignore]`s are explicitly opt-in perf
+  characterizations.
+
+### Serialization safety
+
+- **Depth and size limits for JSON, XML, and YAML.** Default: 128 levels deep,
+  16 MiB. Pre-parse size rejection avoids allocation; depth is tracked live
+  during parse. Process-wide overrides via `set_max_depth` / `set_max_size`.
+
+### Fuzzing
+
+- **7 fuzz targets.** `lex`, `parse`, `manifest`, `http_request`, `typecheck`,
+  `mir_lower` (includes verifier), `vm_compile`. 30-second smoke CI on every
+  PR; 1-hour weekly deep run.
+
+### Perf CI
+
+- **Baseline-pinned regression gate.** Per-benchmark baselines are cached
+  between CI runs; any benchmark that exceeds 2× its baseline fails the build.
+  Three representative programs exercise arithmetic, recursion, and I/O on
+  every PR.
+
+### SPEC conformance tests
+
+- 9 tests in `spec_conformance` pin every 0.5.0 conformance banner
+  behaviorally: GP0016 rejection, macro subset, integer overflow no-panic,
+  borrow-check not enforced, `--message-format json` schema.
+
+### Edge-case tests
+
+- 3 tests in `edge_case_battery`: NaN propagation, double-close channel panic,
+  stack-overflow → GX0008. All use spawn + timeout so they cannot seize CI.
+
 ## 0.4.0
 
 ### Stdlib reorganization (Rust-style `fs` / `env` / `process`, Go-style HTTP/2)

@@ -682,6 +682,7 @@ fn expr_precedence(expr: &Expr) -> Precedence {
         | ExprKind::Continue { .. }
         | ExprKind::Closure { .. }
         | ExprKind::Go(_) => PREC_STMT,
+        ExprKind::Error => PREC_PRIMARY,
     }
 }
 

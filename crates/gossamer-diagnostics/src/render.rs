@@ -67,6 +67,131 @@ pub fn render_plain(diag: &Diagnostic) -> String {
     out
 }
 
+/// Renders `diag` as a single-line JSON object, terminated by `\n`.
+///
+/// Stable schema (versioned at `1`):
+///
+/// ```json
+/// {
+///   "schema": 1,
+///   "code": "GP0016",
+///   "severity": "error",
+///   "title": "the `extern` keyword is reserved",
+///   "labels": [
+///     {"file":"foo.gos","line":1,"column":1,"span_start":0,"span_end":6,"primary":true,"message":"..."}
+///   ],
+///   "notes": ["..."],
+///   "helps": ["..."],
+///   "suggestions": [
+///     {"file":"foo.gos","line":1,"column":1,"span_start":0,"span_end":6,"message":"...","replacement":"..."}
+///   ]
+/// }
+/// ```
+///
+/// The shape is intentionally flat per label / suggestion so a
+/// consumer can stream individual diagnostics through `jq` or
+/// equivalent without paged parsing. The hand-rolled emitter
+/// avoids a `serde_json` dependency; the field set is closed and
+/// stable so the cost is bounded.
+#[must_use]
+pub fn render_json(diag: &Diagnostic, map: &SourceMap) -> String {
+    let mut out = String::new();
+    out.push_str("{\"schema\":1,\"code\":");
+    push_json_string(&mut out, diag.code.as_str());
+    out.push_str(",\"severity\":");
+    push_json_string(&mut out, diag.severity.tag());
+    out.push_str(",\"title\":");
+    push_json_string(&mut out, &diag.title);
+    out.push_str(",\"labels\":[");
+    for (i, label) in diag.labels.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let (path, line, column) = resolve(map, label.location.file, label.location.span);
+        out.push_str("{\"file\":");
+        push_json_string(&mut out, &path);
+        out.push_str(",\"line\":");
+        out.push_str(&line.to_string());
+        out.push_str(",\"column\":");
+        out.push_str(&column.to_string());
+        out.push_str(",\"span_start\":");
+        out.push_str(&label.location.span.start.to_string());
+        out.push_str(",\"span_end\":");
+        out.push_str(&label.location.span.end.to_string());
+        out.push_str(",\"primary\":");
+        out.push_str(if label.primary { "true" } else { "false" });
+        out.push_str(",\"message\":");
+        match &label.message {
+            Some(msg) => push_json_string(&mut out, msg),
+            None => out.push_str("null"),
+        }
+        out.push('}');
+    }
+    out.push_str("],\"notes\":[");
+    for (i, note) in diag.notes.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        push_json_string(&mut out, note);
+    }
+    out.push_str("],\"helps\":[");
+    for (i, help) in diag.helps.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        push_json_string(&mut out, help);
+    }
+    out.push_str("],\"suggestions\":[");
+    for (i, suggestion) in diag.suggestions.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let (path, line, column) = resolve(map, suggestion.location.file, suggestion.location.span);
+        out.push_str("{\"file\":");
+        push_json_string(&mut out, &path);
+        out.push_str(",\"line\":");
+        out.push_str(&line.to_string());
+        out.push_str(",\"column\":");
+        out.push_str(&column.to_string());
+        out.push_str(",\"span_start\":");
+        out.push_str(&suggestion.location.span.start.to_string());
+        out.push_str(",\"span_end\":");
+        out.push_str(&suggestion.location.span.end.to_string());
+        out.push_str(",\"message\":");
+        push_json_string(&mut out, &suggestion.message);
+        out.push_str(",\"replacement\":");
+        push_json_string(&mut out, &suggestion.replacement);
+        out.push('}');
+    }
+    out.push_str("]}\n");
+    out
+}
+
+/// Pushes `value` onto `buf` as a JSON-escaped double-quoted
+/// string. Supports the minimum set of escapes required by
+/// RFC 8259: `\"`, `\\`, `\b`, `\f`, `\n`, `\r`, `\t`, and
+/// `\u00XX` for the remaining control characters.
+fn push_json_string(buf: &mut String, value: &str) {
+    buf.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => buf.push_str("\\\""),
+            '\\' => buf.push_str("\\\\"),
+            '\u{08}' => buf.push_str("\\b"),
+            '\u{0c}' => buf.push_str("\\f"),
+            '\n' => buf.push_str("\\n"),
+            '\r' => buf.push_str("\\r"),
+            '\t' => buf.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write as _;
+                let _ = write!(buf, "\\u{:04x}", c as u32);
+            }
+            c => buf.push(c),
+        }
+    }
+    buf.push('"');
+}
+
 fn render_label(
     out: &mut String,
     label: &Label,

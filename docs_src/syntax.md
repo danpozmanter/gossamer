@@ -50,6 +50,38 @@ impl Area for Shape {
 }
 ```
 
+## Generic structs
+
+A struct may carry one or more type parameters. The typechecker
+infers each parameter from the field values at the construction
+site — no turbofish annotation is needed:
+
+```gossamer
+struct Pair<A, B> { fst: A, snd: B }
+struct Cell<T>    { value: T }
+
+fn main() {
+    // Parameters inferred: Pair<i64, String>
+    let p = Pair { fst: 42, snd: "answer" }
+    println!("{} = {}", p.fst, p.snd)   // 42 = answer
+
+    // Same struct, different instantiation: Pair<i64, i64>
+    let nums = Pair { fst: 10, snd: 32 }
+    println!("{}", nums.fst + nums.snd)  // 42
+
+    let c = Cell { value: 99 }
+    println!("{}", c.value)              // 99
+}
+```
+
+Field reads carry the per-instance concrete type. When two fields
+share the same parameter (`Pair<i64, i64>`), arithmetic across
+them typechecks directly — no extra annotation required.
+
+Up to three type parameters are supported in 0.5.0. Generic
+methods (`impl Pair<A, B> { ... }`) are tracked for a later
+release; field access works across all tiers today.
+
 ## Expressions
 
 Everything is an expression. Blocks evaluate to their tail:

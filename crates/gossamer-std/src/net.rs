@@ -91,6 +91,51 @@ impl TcpListener {
         }
     }
 
+    /// Cancellation-aware variant of [`accept`].
+    pub fn accept_ctx(
+        &mut self,
+        ctx: &crate::context::Context,
+    ) -> Result<(TcpStream, SocketAddr), IoError> {
+        if let Some(err) = ctx.err() {
+            return Err(IoError::cancelled(err));
+        }
+        let gid = crate::sched_global::current_gid();
+        if let Some(g) = gid {
+            ctx.register_waiter(g);
+        }
+        loop {
+            match self.inner.accept() {
+                Ok((stream, addr)) => {
+                    if let Some(g) = gid {
+                        ctx.deregister_waiter(g);
+                    }
+                    stream
+                        .set_nonblocking(true)
+                        .map_err(|e| IoError::from_std(e, "accept_ctx"))?;
+                    return Ok((TcpStream::from_std(stream)?, addr));
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    if ctx.is_cancelled() {
+                        if let Some(g) = gid {
+                            ctx.deregister_waiter(g);
+                        }
+                        return Err(IoError::cancelled(
+                            ctx.err()
+                                .unwrap_or_else(|| crate::errors::Error::new("context cancelled")),
+                        ));
+                    }
+                    self.wait_readable()?;
+                }
+                Err(e) => {
+                    if let Some(g) = gid {
+                        ctx.deregister_waiter(g);
+                    }
+                    return Err(IoError::from_std(e, "accept_ctx"));
+                }
+            }
+        }
+    }
+
     fn wait_readable(&mut self) -> Result<(), IoError> {
         let Some(mio_handle) = self.mio.as_mut() else {
             std::thread::sleep(Duration::from_millis(1));
@@ -137,6 +182,61 @@ impl TcpStream {
         }
     }
 
+    /// Cancellation-aware variant of [`read`].
+    ///
+    /// Loops through the same non-blocking-read / poll-park
+    /// cycle as `read`, but checks `ctx.is_cancelled()` on
+    /// every iteration (and registers the current goroutine
+    /// with the context's wait-list so `Cancel::cancel_with`
+    /// can wake it out of the poller park). Returns
+    /// `IoError::cancelled(ctx.err())` when the context fires
+    /// before any data arrives.
+    pub fn read_ctx(
+        &mut self,
+        ctx: &crate::context::Context,
+        buf: &mut [u8],
+    ) -> Result<usize, IoError> {
+        if let Some(err) = ctx.err() {
+            return Err(IoError::cancelled(err));
+        }
+        let gid = crate::sched_global::current_gid();
+        if let Some(g) = gid {
+            ctx.register_waiter(g);
+        }
+        loop {
+            match self.inner.read(buf) {
+                Ok(n) => {
+                    if let Some(g) = gid {
+                        ctx.deregister_waiter(g);
+                    }
+                    return Ok(n);
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    // Cancellation check on each loop iteration:
+                    // if cancel fired between the previous park
+                    // unblock and now, return Err without
+                    // re-parking.
+                    if ctx.is_cancelled() {
+                        if let Some(g) = gid {
+                            ctx.deregister_waiter(g);
+                        }
+                        return Err(IoError::cancelled(
+                            ctx.err()
+                                .unwrap_or_else(|| crate::errors::Error::new("context cancelled")),
+                        ));
+                    }
+                    self.wait_io(Interest::Readable)?;
+                }
+                Err(e) => {
+                    if let Some(g) = gid {
+                        ctx.deregister_waiter(g);
+                    }
+                    return Err(IoError::from_std(e, "TcpStream::read_ctx"));
+                }
+            }
+        }
+    }
+
     /// Writes every byte in `buf`.
     pub fn write_all(&mut self, buf: &[u8]) -> Result<(), IoError> {
         let mut written = 0;
@@ -154,6 +254,58 @@ impl TcpStream {
                 }
                 Err(e) => return Err(IoError::from_std(e, "TcpStream::write_all")),
             }
+        }
+        Ok(())
+    }
+
+    /// Cancellation-aware variant of [`write_all`].
+    pub fn write_all_ctx(
+        &mut self,
+        ctx: &crate::context::Context,
+        buf: &[u8],
+    ) -> Result<(), IoError> {
+        if let Some(err) = ctx.err() {
+            return Err(IoError::cancelled(err));
+        }
+        let gid = crate::sched_global::current_gid();
+        if let Some(g) = gid {
+            ctx.register_waiter(g);
+        }
+        let mut written = 0;
+        while written < buf.len() {
+            match self.inner.write(&buf[written..]) {
+                Ok(0) => {
+                    if let Some(g) = gid {
+                        ctx.deregister_waiter(g);
+                    }
+                    return Err(IoError::from_std(
+                        io::Error::new(ErrorKind::WriteZero, "wrote zero bytes"),
+                        "TcpStream::write_all_ctx",
+                    ));
+                }
+                Ok(n) => written += n,
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    if ctx.is_cancelled() {
+                        if let Some(g) = gid {
+                            ctx.deregister_waiter(g);
+                        }
+                        return Err(IoError::cancelled(
+                            ctx.err()
+                                .unwrap_or_else(|| crate::errors::Error::new("context cancelled")),
+                        ));
+                    }
+                    self.wait_io(Interest::Writable)?;
+                }
+                Err(e) => {
+                    if let Some(g) = gid {
+                        ctx.deregister_waiter(g);
+                    }
+                    return Err(IoError::from_std(e, "TcpStream::write_all_ctx"));
+                }
+            }
+        }
+        if let Some(g) = gid {
+            ctx.deregister_waiter(g);
         }
         Ok(())
     }
@@ -227,11 +379,77 @@ impl UdpSocket {
             .map_err(|e| IoError::from_std(e, addr))
     }
 
+    /// Cancellation-aware variant of [`send_to`]. The kernel UDP
+    /// send path is essentially non-blocking, so cancellation is
+    /// observed *before* the send attempt; the call itself does
+    /// not park.
+    pub fn send_to_ctx(
+        &self,
+        ctx: &crate::context::Context,
+        buf: &[u8],
+        addr: &str,
+    ) -> Result<usize, IoError> {
+        if let Some(err) = ctx.err() {
+            return Err(IoError::cancelled(err));
+        }
+        self.inner
+            .send_to(buf, addr)
+            .map_err(|e| IoError::from_std(e, addr))
+    }
+
     /// Receives a datagram, returning the length and source address.
     pub fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), IoError> {
         self.inner
             .recv_from(buf)
             .map_err(|e| IoError::from_std(e, "UdpSocket::recv_from"))
+    }
+
+    /// Cancellation-aware variant of [`recv_from`].
+    ///
+    /// Sets a short `SO_RCVTIMEO` so each blocking syscall returns
+    /// within 50ms, then re-checks `ctx.is_cancelled()` between
+    /// attempts. Restores the original timeout (if any) on exit.
+    pub fn recv_from_ctx(
+        &self,
+        ctx: &crate::context::Context,
+        buf: &mut [u8],
+    ) -> Result<(usize, SocketAddr), IoError> {
+        if let Some(err) = ctx.err() {
+            return Err(IoError::cancelled(err));
+        }
+        let gid = crate::sched_global::current_gid();
+        if let Some(g) = gid {
+            ctx.register_waiter(g);
+        }
+        let prior = self
+            .inner
+            .read_timeout()
+            .map_err(|e| IoError::from_std(e, "UdpSocket::recv_from_ctx"))?;
+        let slice = Duration::from_millis(50);
+        let _ = self.inner.set_read_timeout(Some(slice));
+        let result = loop {
+            match self.inner.recv_from(buf) {
+                Ok(v) => break Ok(v),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                    ) =>
+                {
+                    if ctx.is_cancelled() {
+                        break Err(IoError::cancelled(ctx.err().unwrap_or_else(|| {
+                            crate::errors::Error::new("context cancelled")
+                        })));
+                    }
+                }
+                Err(e) => break Err(IoError::from_std(e, "UdpSocket::recv_from_ctx")),
+            }
+        };
+        let _ = self.inner.set_read_timeout(prior);
+        if let Some(g) = gid {
+            ctx.deregister_waiter(g);
+        }
+        result
     }
 
     /// Returns the bound local address.

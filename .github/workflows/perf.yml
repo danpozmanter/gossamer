@@ -1,0 +1,184 @@
+name: Perf gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 clang-18 lld-18
+          echo "GOS_LLC=/usr/bin/llc-18" >> "$GITHUB_ENV"
+          echo "GOS_LLVM_OPT=/usr/bin/opt-18" >> "$GITHUB_ENV"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-perf-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Restore perf baseline
+        id: restore-baseline
+        uses: actions/cache@v4
+        with:
+          path: .perf/baseline.txt
+          # Baseline is keyed to the main branch head. PRs restore the
+          # most recent main baseline and compare against it; pushes to
+          # main write a new baseline entry after the run.
+          key: perf-baseline-${{ runner.os }}-${{ github.base_ref == '' && github.sha || 'main' }}
+          restore-keys: |
+            perf-baseline-${{ runner.os }}-
+
+      - name: Build release `gos`
+        run: cargo build --release -p gossamer-cli
+
+      - name: Run benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOS=./target/release/gos
+          mkdir -p .perf
+
+          # time_ns LABEL ARGS... — runs the program and appends
+          # "LABEL <nanoseconds>" to .perf/current.txt
+          time_ns() {
+            local label=$1; shift
+            local start end
+            start=$(date +%s%N)
+            "$@" >/dev/null 2>&1
+            end=$(date +%s%N)
+            echo "$label $((end - start))" | tee -a .perf/current.txt
+          }
+
+          rm -f .perf/current.txt
+
+          # Arithmetic-heavy: factorial via recursion
+          [[ -f examples/factorial.gos ]] && time_ns factorial "$GOS" run examples/factorial.gos
+
+          # String + I/O: hello world (baseline for interpreter startup)
+          [[ -f examples/hello_world.gos ]] && time_ns hello_world "$GOS" run examples/hello_world.gos
+
+          # Struct + field arithmetic: generic struct instantiation
+          [[ -f examples/generic_struct.gos ]] && time_ns generic_struct "$GOS" run examples/generic_struct.gos
+
+      - name: Compare against baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT=.perf/current.txt
+          BASELINE=.perf/baseline.txt
+
+          if [[ ! -f "$CURRENT" ]]; then
+            echo "No benchmark results — skipping comparison."
+            exit 0
+          fi
+
+          # Hard wall-clock cap: 30 s per benchmark.
+          awk '{
+            if ($2 > 30000000000) {
+              print "PERF ABORT: " $1 " took " int($2/1000000) "ms (> 30 s limit)"
+              exit 1
+            }
+          }' "$CURRENT"
+
+          if [[ ! -f "$BASELINE" ]]; then
+            echo "No baseline yet — this run establishes one."
+            cp "$CURRENT" "$BASELINE"
+            exit 0
+          fi
+
+          # 2× regression check: fail if any benchmark exceeds twice
+          # its baseline. Missing baseline entries are skipped.
+          python3 - "$BASELINE" "$CURRENT" <<'PY'
+          import sys, collections
+
+          def load(path):
+              d = {}
+              for line in open(path):
+                  parts = line.split()
+                  if len(parts) == 2:
+                      d[parts[0]] = int(parts[1])
+              return d
+
+          base = load(sys.argv[1])
+          curr = load(sys.argv[2])
+          regressions = []
+          for name, ns in curr.items():
+              if name not in base:
+                  continue
+              ratio = ns / base[name]
+              ms_curr = ns // 1_000_000
+              ms_base = base[name] // 1_000_000
+              status = "OK" if ratio < 2.0 else "REGRESSION"
+              print(f"  {name}: {ms_curr}ms (baseline {ms_base}ms, {ratio:.2f}x) [{status}]")
+              if ratio >= 2.0:
+                  regressions.append(name)
+          if regressions:
+              print(f"\nPerf regressions (>2x baseline): {', '.join(regressions)}")
+              sys.exit(1)
+          PY
+
+      - name: Update baseline on main
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        shell: bash
+        run: |
+          # Merge current results into the baseline: keep the minimum
+          # (fastest observed) per benchmark so a one-off slow run on
+          # main doesn't permanently raise the bar.
+          CURRENT=.perf/current.txt
+          BASELINE=.perf/baseline.txt
+          python3 - "$BASELINE" "$CURRENT" <<'PY'
+          import sys
+
+          def load(path):
+              d = {}
+              try:
+                  for line in open(path):
+                      parts = line.split()
+                      if len(parts) == 2:
+                          d[parts[0]] = int(parts[1])
+              except FileNotFoundError:
+                  pass
+              return d
+
+          base = load(sys.argv[1])
+          curr = load(sys.argv[2])
+          merged = {**base, **curr}
+          # Take the minimum (fastest) for any benchmark in both.
+          for k in set(base) & set(curr):
+              merged[k] = min(base[k], curr[k])
+          with open(sys.argv[1], 'w') as f:
+              for k, v in sorted(merged.items()):
+                  f.write(f"{k} {v}\n")
+          PY
+
+      - name: Save updated baseline
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache@v4
+        with:
+          path: .perf/baseline.txt
+          key: perf-baseline-${{ runner.os }}-${{ github.sha }}
+
+      - name: Upload perf log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-log
+          path: .perf/

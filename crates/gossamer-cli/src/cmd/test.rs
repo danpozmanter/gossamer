@@ -127,6 +127,7 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
     gossamer_resolve::set_test_cfg(true);
     if opts.race {
         gossamer_runtime::race::enable();
+        gossamer_codegen_llvm::set_race_instrumentation(true);
     }
     let resolved = match opts.path.as_ref() {
         Some(p) => p.clone(),

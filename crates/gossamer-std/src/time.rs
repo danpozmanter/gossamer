@@ -147,6 +147,52 @@ pub fn sleep(duration: Duration) {
     crate::sched_global::sleep_until(deadline);
 }
 
+/// Cancellation-aware variant of [`sleep`].
+///
+/// Behaves identically to `sleep(duration)` when `ctx` is not
+/// cancelled. If `ctx` is cancelled while the goroutine is parked
+/// — either via `Cancel::cancel_with` or via a `with_deadline`
+/// elapsing — the sleep returns early. The return value is
+/// `Ok(())` for a natural completion and `Err(context error)`
+/// for a cancellation-driven wake-up.
+///
+/// Race-free against an already-cancelled `ctx`: the function
+/// checks before parking and again after parking; the wait-list
+/// registration is the synchronisation point that lets
+/// `Cancel::cancel_with` reach the goroutine while it sleeps.
+pub fn sleep_ctx(
+    ctx: &crate::context::Context,
+    duration: Duration,
+) -> Result<(), crate::errors::Error> {
+    if let Some(err) = ctx.err() {
+        return Err(err);
+    }
+    if duration.0.is_zero() {
+        return Ok(());
+    }
+    let gid = crate::sched_global::current_gid().expect(
+        "time::sleep_ctx must be called from a goroutine; use time::sleep outside a goroutine",
+    );
+    ctx.register_waiter(gid);
+    // Re-check after registration; cancel may have fired between
+    // the entry check and the registration.
+    if ctx.is_cancelled() {
+        ctx.deregister_waiter(gid);
+        return Err(ctx
+            .err()
+            .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
+    }
+    let deadline = std::time::Instant::now() + duration.0;
+    crate::sched_global::sleep_until(deadline);
+    ctx.deregister_waiter(gid);
+    if ctx.is_cancelled() {
+        return Err(ctx
+            .err()
+            .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
+    }
+    Ok(())
+}
+
 /// Convenience wrapper around [`Instant::now`].
 #[must_use]
 pub fn now() -> Instant {

@@ -257,6 +257,15 @@ fn lower_to_mir_from_frontend(checked: CheckedFrontend) -> (Vec<Body>, TyCtxt) {
     inline_small_callees(&mut bodies);
     for body in &mut bodies {
         optimise(body, &tcx);
+        // Insert GC write barriers after optimisation so
+        // copy-propagated / dead-store-eliminated pointer stores
+        // are caught at their final positions. The pass walks
+        // every projected `Statement::Assign` whose rvalue
+        // produces a heap reference and emits the matching
+        // `GcWriteBarrier` statement so the concurrent
+        // collector's mark phase greys the new target before the
+        // mutator can hide it.
+        gossamer_mir::insert_gc_barriers(body, &tcx);
     }
     (bodies, tcx)
 }
@@ -294,6 +303,15 @@ fn lower_to_mir_with_tcx(source: &str, unit_name: &str) -> (Vec<Body>, TyCtxt) {
     inline_small_callees(&mut bodies);
     for body in &mut bodies {
         optimise(body, &tcx);
+        // Insert GC write barriers after optimisation so
+        // copy-propagated / dead-store-eliminated pointer stores
+        // are caught at their final positions. The pass walks
+        // every projected `Statement::Assign` whose rvalue
+        // produces a heap reference and emits the matching
+        // `GcWriteBarrier` statement so the concurrent
+        // collector's mark phase greys the new target before the
+        // mutator can hide it.
+        gossamer_mir::insert_gc_barriers(body, &tcx);
     }
     (bodies, tcx)
 }

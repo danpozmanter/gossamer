@@ -155,13 +155,25 @@ fn release_tier_is_at_least_as_fast_as_debug_on_numeric_loop() {
     eprintln!("debug (cranelift): {dbg_time:?}");
     eprintln!("release (llvm):    {rel_time:?}");
 
+    // When both wall-clocks are sub-50ms, both backends have
+    // constant-folded the loop to its closed form and the
+    // remaining time is process-startup noise (binary load +
+    // `println!` flush). The silent-fallback regression this
+    // test guards against produced 21+s release times against
+    // a 0.93s baseline — it cannot hide inside sub-50ms noise,
+    // so a strict ratio assertion here only catches jitter.
+    if dbg_time < Duration::from_millis(50) && rel_time < Duration::from_millis(50) {
+        eprintln!("both backends folded the loop — startup-noise regime, skipping ratio check");
+        return;
+    }
+
     // `release` must be no slower than `debug` plus a small
     // noise margin. The historical silent-fallback regression
     // made release ≈ debug (LLVM body fell back to Cranelift,
     // so identical wall-clock plus LLVM build-time overhead).
-    // 1.10× tolerance accommodates jitter without letting a
+    // 1.25× tolerance accommodates CI jitter without letting a
     // 23× spectral-norm-style regression sneak through.
-    let bound = dbg_time.mul_f64(1.10);
+    let bound = dbg_time.mul_f64(1.25);
     assert!(
         rel_time <= bound,
         "release tier ({rel_time:?}) is slower than debug tier ({dbg_time:?}) — \

@@ -122,6 +122,94 @@ pub fn run<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
     rx.recv().expect("blocking pool result channel closed")
 }
 
+/// Cancellation-aware variant of [`run`].
+///
+/// The job still runs to completion on a worker thread (the host
+/// kernel offers no way to interrupt an in-flight blocking syscall),
+/// but the *waiter* — the goroutine that submitted the job — returns
+/// early when `ctx` cancels. The job's result is dropped once it
+/// arrives. Use this when you want to abandon a slow filesystem /
+/// network call from the goroutine's point of view even though the
+/// worker thread cannot be hard-aborted.
+pub fn run_ctx<R: Send + 'static>(
+    ctx: &crate::context::Context,
+    f: impl FnOnce() -> R + Send + 'static,
+) -> Result<R, crate::errors::Error> {
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    if let Some(err) = ctx.err() {
+        return Err(err);
+    }
+    let result_slot: Arc<Mutex<Option<R>>> = Arc::new(Mutex::new(None));
+    let result_slot_for_pool = Arc::clone(&result_slot);
+    let waiter_gid_slot: Arc<Mutex<Option<gossamer_runtime::sched::Gid>>> =
+        Arc::new(Mutex::new(None));
+    let waiter_gid_slot_for_pool = Arc::clone(&waiter_gid_slot);
+    let job: Job = Box::new(move || {
+        let result = f();
+        *result_slot_for_pool.lock() = Some(result);
+        if let Some(gid) = *waiter_gid_slot_for_pool.lock() {
+            gossamer_runtime::sched_global::scheduler().unpark(gid);
+        }
+    });
+    pool()
+        .submit
+        .send(job)
+        .expect("blocking pool sender disconnected");
+    let gid = crate::sched_global::current_gid();
+    if let Some(g) = gid {
+        ctx.register_waiter(g);
+    }
+    if gossamer_coro::in_goroutine() {
+        loop {
+            if result_slot.lock().is_some() {
+                if let Some(g) = gid {
+                    ctx.deregister_waiter(g);
+                }
+                return Ok(result_slot
+                    .lock()
+                    .take()
+                    .expect("blocking pool result missing after observation"));
+            }
+            if ctx.is_cancelled() {
+                if let Some(g) = gid {
+                    ctx.deregister_waiter(g);
+                }
+                return Err(ctx
+                    .err()
+                    .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
+            }
+            gossamer_runtime::sched_global::park(
+                gossamer_runtime::sched::ParkReason::Sync,
+                |parker| {
+                    *waiter_gid_slot.lock() = Some(parker.gid);
+                    if result_slot.lock().is_some() || ctx.is_cancelled() {
+                        gossamer_runtime::sched_global::scheduler().unpark(parker.gid);
+                    }
+                },
+            );
+        }
+    }
+    loop {
+        if let Some(v) = result_slot.lock().take() {
+            if let Some(g) = gid {
+                ctx.deregister_waiter(g);
+            }
+            return Ok(v);
+        }
+        if ctx.is_cancelled() {
+            if let Some(g) = gid {
+                ctx.deregister_waiter(g);
+            }
+            return Err(ctx
+                .err()
+                .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
 /// Number of worker threads in the pool. Mostly for diagnostics.
 #[must_use]
 pub fn pool_size() -> usize {

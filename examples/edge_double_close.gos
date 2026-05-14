@@ -1,0 +1,10 @@
+// Double-close of a channel must panic with a clear message rather
+// than silently corrupting the channel state.
+
+use std::sync::channel
+
+fn main() {
+    let (tx, _rx) = channel()
+    tx.close()
+    tx.close()
+}

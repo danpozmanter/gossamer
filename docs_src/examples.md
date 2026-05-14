@@ -49,6 +49,12 @@ fn main() {
   Runs under `gos run`, `gos build` (cranelift), and
   `gos build --release` (LLVM); the tier_parity test confirms
   identical output across all three.
+- **`generic_struct.gos`** — three generic struct shapes: `Pair<A, B>`
+  (two independent parameters), `SameType<T>` (one parameter shared by
+  both fields, enabling field arithmetic), and `Triple<A, B, C>` (three
+  parameters). Each construction site is a separate monomorphisation;
+  parameters are inferred from the field values at the call site.
+  Runs under `gos run` and `gos build`.
 - **`go_spawn.gos`** — goroutine fan-out with no channels.
   Every construct lowers through native codegen, so `gos build`
   produces a working binary.

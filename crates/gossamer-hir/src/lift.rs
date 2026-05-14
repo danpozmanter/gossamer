@@ -559,7 +559,10 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
             }
             true
         }
-        HirExprKind::Loop { body } | HirExprKind::While { body, .. } => is_closed(body, bound),
+        HirExprKind::Loop { body } => is_closed(body, bound),
+        HirExprKind::While {
+            condition, body, ..
+        } => is_closed(condition, bound) && is_closed(body, bound),
         HirExprKind::Block(block) => is_closed_block(block, bound),
         HirExprKind::Closure { params, body, .. } => {
             let mut inner_bound = bound.clone();
@@ -649,9 +652,10 @@ fn capture_ty_in_expr(expr: &HirExpr, name: &str) -> Option<gossamer_types::Ty> 
                 })
             })
         }
-        HirExprKind::Loop { body } | HirExprKind::While { body, .. } => {
-            capture_ty_in_expr(body, name)
-        }
+        HirExprKind::Loop { body } => capture_ty_in_expr(body, name),
+        HirExprKind::While {
+            condition, body, ..
+        } => capture_ty_in_expr(condition, name).or_else(|| capture_ty_in_expr(body, name)),
         HirExprKind::Block(block) => block
             .stmts
             .iter()

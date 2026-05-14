@@ -284,14 +284,12 @@ fn render_module_to_path(
                 // spectral-norm slowdowns where a malformed
                 // `runtime_refs` entry kicked the body off LLVM
                 // without surfacing in any human-readable signal.
-                let fail_on_fallback = std::env::var("GOSSAMER_FAIL_ON_LLVM_FALLBACK")
-                    .ok()
-                    .is_some_and(|v| !v.is_empty() && v != "0");
-                if fail_on_fallback {
+                if want_strict_lowering() {
                     let _ = std::fs::remove_file(&body_path);
                     return Err(anyhow!(
                         "llvm backend: `{fn_name}` would fall back to Cranelift ({msg}) but \
-                         GOSSAMER_FAIL_ON_LLVM_FALLBACK is set",
+                         strict-lowering is enabled (set_strict_lowering(true) or \
+                         GOSSAMER_FAIL_ON_LLVM_FALLBACK=1)",
                         fn_name = body.name,
                     ));
                 }
@@ -395,8 +393,30 @@ fn render_module_to_path(
     // affected bodies to the Cranelift fallback. Each entry must
     // be either an `@symbol = ...` definition or a `declare ...`
     // function declaration.
+    // Dedupe declarations by symbol name: each lowerer body
+    // accumulates its own `declare` lines, but two bodies that call
+    // the same runtime helper with ABI-compatible-but-different
+    // operand types (e.g. `gos_rt_result_new(i64, i64)` vs
+    // `(i64, ptr)`) would each emit a `declare` and LLVM rejects
+    // the redefinition. Pick the first declaration we see for a
+    // given symbol; the calls themselves are individually typed and
+    // the ABI tolerates the i64/ptr substitution on x86_64.
+    let mut emitted_decls: std::collections::HashSet<String> = std::collections::HashSet::new();
     for g in &globals {
         validate_global_decl_shape(g)?;
+        if let Some(rest) = g.strip_prefix("declare ") {
+            // Parse "<ret> @<name>(...)" — name is the substring
+            // between '@' and '('.
+            if let Some(at_idx) = rest.find('@')
+                && let Some(open_idx) = rest[at_idx..].find('(')
+            {
+                let symbol = &rest[at_idx + 1..at_idx + open_idx];
+                let symbol = symbol.trim_matches('"');
+                if !emitted_decls.insert(symbol.to_string()) {
+                    continue;
+                }
+            }
+        }
         writeln!(ll_w, "{g}")?;
     }
     if !globals.is_empty() {
@@ -442,6 +462,34 @@ static DEBUG_INFO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 /// header, and forces a sorted symbol table on the output.
 static REPRODUCIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Process-wide flag toggled by [`set_strict_lowering`] requesting
+/// that any `BuildError::Unsupported` produce a top-level error
+/// rather than the historical per-function Cranelift fallback.
+/// `gos build` sets this for itself so the CLI never silently
+/// links Cranelift-emitted bodies into a release binary — under
+/// the canonical-LLVM policy, Cranelift is the JIT-only backend
+/// and `gos build` is LLVM-only. The pre-existing
+/// `GOSSAMER_FAIL_ON_LLVM_FALLBACK` env var continues to enable
+/// the same behaviour for callers that prefer env-driven config
+/// (tier_parity tests already use it).
+static STRICT_LOWERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Process-wide flag toggled by [`set_race_instrumentation`]. When on,
+/// the LLVM emitter wraps every `gos_load` / `gos_store` raw-heap
+/// intrinsic with a `gos_rt_race_access(addr, write)` call so the
+/// runtime detector can observe the access. Off by default; the CLI
+/// flips it for `gos test --race` / `gos build --race`.
+static RACE_INSTRUMENTATION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Process-wide optimisation-profile flag toggled by
+/// [`set_opt_profile`]. `0` = release (full `opt -O3 | llc -O3`
+/// pipeline); `1` = debug (skip the `opt` pre-pass, run `llc -O0`).
+/// Default is release so callers that don't configure the profile
+/// see the historical behaviour. `gos build` flips this to debug
+/// when the user omits `--release`.
+static OPT_PROFILE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
 /// Enables (or disables) DWARF emission for subsequent
 /// [`compile_to_object`] / [`compile_with_fallback`] calls.
 /// Called by the `gos build --release -g` flag.
@@ -458,6 +506,74 @@ pub fn set_reproducible(enabled: bool) {
 /// `true` when reproducible-build mode is on.
 fn want_reproducible() -> bool {
     REPRODUCIBLE.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Enables (or disables) strict-lowering mode. When on, the LLVM
+/// emitter treats any `BuildError::Unsupported` as a top-level
+/// error and refuses to fall back to Cranelift per-function. The
+/// `gos build` CLI sets this true for itself so the canonical-
+/// LLVM policy holds without touching env vars (the workspace
+/// forbids `unsafe_code` in the CLI crate, so `std::env::set_var`
+/// is unavailable there).
+pub fn set_strict_lowering(enabled: bool) {
+    STRICT_LOWERING.store(enabled, std::sync::atomic::Ordering::Release);
+}
+
+/// Enables (or disables) race-detector instrumentation for
+/// subsequent emits. When on, the LLVM lowerer wraps every
+/// `gos_load` / `gos_store` raw-heap intrinsic with a
+/// `gos_rt_race_access(addr, write)` call so the runtime
+/// detector observes the access. `gos test --race` /
+/// `gos build --race` flip this on.
+pub fn set_race_instrumentation(enabled: bool) {
+    RACE_INSTRUMENTATION.store(enabled, std::sync::atomic::Ordering::Release);
+}
+
+/// `true` when race-detector instrumentation is requested.
+#[must_use]
+pub fn want_race_instrumentation() -> bool {
+    RACE_INSTRUMENTATION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// `true` when strict lowering is requested — either by
+/// [`set_strict_lowering`] or by the legacy
+/// `GOSSAMER_FAIL_ON_LLVM_FALLBACK` env var.
+fn want_strict_lowering() -> bool {
+    if STRICT_LOWERING.load(std::sync::atomic::Ordering::Acquire) {
+        return true;
+    }
+    std::env::var("GOSSAMER_FAIL_ON_LLVM_FALLBACK")
+        .ok()
+        .is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Optimisation profile selector for [`set_opt_profile`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptProfile {
+    /// Release: full `opt -O3 | llc -O3` pipeline. Default.
+    Release,
+    /// Debug: skip the `opt` pre-pass, run `llc -O0`. Faster
+    /// compile, no mid-level optimisation, debug-friendly IR
+    /// shapes preserved.
+    Debug,
+}
+
+/// Sets the optimisation profile for subsequent emits. `gos build`
+/// flips this to `Debug` when the user omits `--release`.
+pub fn set_opt_profile(profile: OptProfile) {
+    let v: u8 = match profile {
+        OptProfile::Release => 0,
+        OptProfile::Debug => 1,
+    };
+    OPT_PROFILE.store(v, std::sync::atomic::Ordering::Release);
+}
+
+/// Reads the active optimisation profile.
+fn opt_profile() -> OptProfile {
+    match OPT_PROFILE.load(std::sync::atomic::Ordering::Acquire) {
+        1 => OptProfile::Debug,
+        _ => OptProfile::Release,
+    }
 }
 
 /// `true` when the build should embed DWARF debug information.
@@ -735,17 +851,24 @@ fn invoke_llc_pipeline(
         // the IR file without guessing a temp-dir layout.
         eprintln!("llvm backend: IR at {}", ll_path.display());
     }
-    // Mid-end pipeline: `opt -O3` runs `mem2reg`, GVN, instcombine,
-    // loop unrolling, the loop vectoriser, the SLP vectoriser, …
-    // Critical because `llc` only does codegen / register
-    // allocation; without `opt` first every Lowerer-emitted
-    // `alloca` + `load` + `store` survives into the asm and the
-    // hot loops spill aggressively.
-    let opt_tool = find_opt()?;
+    let profile = opt_profile();
     let mcpu = mcpu_target();
+    // Both profiles run `opt` because the lowerer emits some
+    // non-canonical shapes (e.g. integer-typed constants in
+    // floating-point store positions) that `opt`'s
+    // instcombine + verifier passes fix up. Skipping `opt`
+    // entirely sends those shapes straight to `llc`, which
+    // rejects them. Debug profile runs `opt -O1` (faster, no
+    // vectoriser / loop unroller) and `llc -O0`; release
+    // profile runs `opt -O3 | llc -O3`.
+    let (opt_level, llc_level) = match profile {
+        OptProfile::Debug => ("-O1", "-O0"),
+        OptProfile::Release => ("-O3", "-O3"),
+    };
+    let opt_tool = find_opt()?;
     let mut opt_cmd = std::process::Command::new(&opt_tool);
     opt_cmd
-        .arg("-O3")
+        .arg(opt_level)
         .arg(format!("-mtriple={triple}"))
         // Match `rustc -C target-cpu=native`: tell the
         // mid-level optimiser the target's feature set so the
@@ -841,7 +964,7 @@ fn invoke_llc_pipeline(
     let llc = find_llc()?;
     let mut llc_cmd = std::process::Command::new(&llc);
     llc_cmd
-        .arg("-O3")
+        .arg(llc_level)
         .arg("-filetype=obj")
         .arg(format!("-mtriple={triple}"))
         .arg("-relocation-model=pic")

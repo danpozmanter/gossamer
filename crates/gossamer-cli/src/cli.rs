@@ -44,14 +44,26 @@ enum Command {
         /// Print per-stage wall-clock timings on success.
         #[arg(long)]
         timings: bool,
+        /// Diagnostic output format.
+        ///
+        /// `plain` (default) renders each diagnostic as a
+        /// rustc/elm-style coloured text frame on stderr. `json`
+        /// renders each diagnostic as a single-line JSON object
+        /// with a stable schema; consumers can stream the output
+        /// through `jq` or equivalent. The schema lives in
+        /// `gossamer_diagnostics::render_json`.
+        #[arg(long, value_enum, default_value_t = MessageFormat::Plain)]
+        message_format: MessageFormat,
     },
     /// Execute a program by invoking its `main` function.
     ///
-    /// The default path is the register-based bytecode VM. When
-    /// the VM's compiler hits an HIR construct it doesn't yet
-    /// support the runner silently falls back to the tree-walker.
-    /// Use `--tree-walker` to force the tree-walker for
-    /// development / debugging.
+    /// The execution path is the register-based bytecode VM.
+    /// When the VM's compiler hits an HIR construct it doesn't
+    /// yet support, the runner internally falls back to the
+    /// tree-walker oracle; this is an implementation detail and
+    /// not a user-selectable tier. The historical
+    /// `--tree-walker` flag was retired in 0.5.0 — the walker is
+    /// no longer a user-facing execution mode.
     ///
     /// With no path: defaults to `<project-root>/src/main.gos`
     /// when a `project.toml` is reachable.
@@ -59,12 +71,6 @@ enum Command {
         /// Path to a `.gos` source file. Optional: defaults to the
         /// project's `src/main.gos`.
         file: Option<PathBuf>,
-        /// Use the tree-walker (the original recursive
-        /// interpreter) instead of the VM. Slower but covers
-        /// every language construct today; mostly useful when
-        /// debugging the VM or chasing parity bugs.
-        #[arg(long)]
-        tree_walker: bool,
         /// Disable the cranelift JIT (deferred whole-program
         /// compile triggered by per-chunk hot-counter tier-up).
         /// The JIT is on by default — pass `--no-jit` to fall back
@@ -88,9 +94,14 @@ enum Command {
         /// Cross-compilation target triple (e.g. `aarch64-apple-darwin`).
         #[arg(long)]
         target: Option<String>,
-        /// Route codegen through the LLVM backend with `-O3` for
-        /// production builds. Falls back to Cranelift when LLVM lowerer
-        /// does not cover a construct yet.
+        /// Run the full LLVM `opt -O3 | llc -O3` optimisation
+        /// pipeline. Without this flag, `gos build` skips the
+        /// `opt` pre-pass and runs `llc -O0` (faster compile,
+        /// unoptimised native code). Both modes use the LLVM
+        /// backend; the Cranelift code path is reserved for the
+        /// in-process JIT and is no longer reachable from `gos
+        /// build`. Any MIR shape the LLVM lowerer cannot handle is
+        /// a hard build failure.
         #[arg(long)]
         release: bool,
         /// Embed DWARF debug information so `gdb` / `lldb` can step
@@ -391,13 +402,12 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
     match command {
         None | Some(Command::Repl) => repl::cmd_repl(),
         Some(Command::Parse { file }) => cmd::parse::run(&file),
-        Some(Command::Check { file, timings }) => cmd::check::dispatch(file, timings),
-        Some(Command::Run {
+        Some(Command::Check {
             file,
-            tree_walker,
-            no_jit,
-            args,
-        }) => dispatch_run(file, tree_walker, no_jit, &args),
+            timings,
+            message_format,
+        }) => cmd::check::dispatch(file, timings, message_format),
+        Some(Command::Run { file, no_jit, args }) => dispatch_run(file, no_jit, &args),
         Some(Command::Build {
             file,
             target,
@@ -519,30 +529,38 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
     }
 }
 
-fn dispatch_run(
-    file: Option<PathBuf>,
-    tree_walker: bool,
-    no_jit: bool,
-    args: &[String],
-) -> anyhow::Result<()> {
-    let mode = if tree_walker {
-        RunMode::TreeWalker
-    } else {
-        RunMode::Vm
-    };
+fn dispatch_run(file: Option<PathBuf>, no_jit: bool, args: &[String]) -> anyhow::Result<()> {
+    // VM is the only user-selectable `gos run` tier in 0.5.0.
+    // The tree-walker remains as an internal correctness oracle
+    // reachable from the test suite; the CLI no longer exposes
+    // a tree-walker mode.
+    let mode = RunMode::Vm;
     if no_jit {
         gossamer_interp::set_jit_disabled();
     }
     cmd::run::dispatch(file, mode, args)
 }
 
-/// Codegen tier. `Debug` routes through Cranelift end-to-end; `Release`
-/// runs the LLVM pipeline at `-O3` with per-function fallback to
-/// Cranelift for un-lowered constructs.
+/// Codegen optimisation level. Both modes go through the LLVM
+/// backend; the difference is whether the `opt -O3` pre-pass
+/// runs. `Debug` skips it (`llc -O0`, faster compile); `Release`
+/// runs the full mid-level pipeline plus `llc -O3`. The Cranelift
+/// backend is reserved for the in-process JIT and is not a `gos
+/// build` target in 0.5.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BuildMode {
     Debug,
     Release,
+}
+
+/// Diagnostic output format selected by `--message-format`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum MessageFormat {
+    /// rustc/elm-style coloured text frame on stderr (default).
+    Plain,
+    /// One JSON object per diagnostic, single line, stable schema.
+    /// See `gossamer_diagnostics::render_json`.
+    Json,
 }
 
 /// Linker strategy. `Static` (Linux release) drives `rust-lld -static`
@@ -612,9 +630,14 @@ mod tests {
     }
 
     #[test]
-    fn run_subcommand_accepts_tree_walker_flag() {
-        let ok = Cli::try_parse_from(["gos", "run", "hello.gos", "--tree-walker"]);
-        assert!(ok.is_ok());
+    fn run_subcommand_rejects_removed_tree_walker_flag() {
+        // `--tree-walker` was the legacy "force the walker" flag
+        // before the walker became an internal-only oracle.
+        // `gos run` is bytecode-VM-only in 0.5.0; the flag must
+        // produce a clap error so an outdated invocation is not
+        // silently ignored.
+        let err = Cli::try_parse_from(["gos", "run", "hello.gos", "--tree-walker"]);
+        assert!(err.is_err());
     }
 
     #[test]

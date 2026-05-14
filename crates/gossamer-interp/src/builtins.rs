@@ -1392,6 +1392,23 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "gos_rt_chan_try_recv_option",
         builtin("gos_rt_chan_try_recv_option", builtin_channel_try_recv),
     ));
+    // `rx.recv_ctx(&ctx)` — the interp Channel doesn't share
+    // storage with `gossamer-std::context::Context` waiters,
+    // so the interp implementation degrades to a plain recv
+    // (cancel-via-context is observed only when both the
+    // channel send/recv and the cancel come from the
+    // *compiled* tier sharing the runtime GosChan). The MIR
+    // dispatch + runtime helper carry the real semantics;
+    // the interp builtin keeps the .gos source portable
+    // between tiers without crashing in `gos run`.
+    globals.push((
+        "Channel::recv_ctx",
+        builtin("Channel::recv_ctx", builtin_channel_recv_ctx),
+    ));
+    globals.push((
+        "gos_rt_chan_recv_ctx_option",
+        builtin("gos_rt_chan_recv_ctx_option", builtin_channel_recv_ctx),
+    ));
     globals.push((
         "Channel::close",
         builtin("Channel::close", builtin_channel_close),
@@ -5011,6 +5028,28 @@ fn builtin_channel_try_recv(args: &[Value]) -> RuntimeResult<Value> {
         ));
     };
     Ok(match channel.try_recv() {
+        Some(value) => some_variant(value),
+        None => none_variant(),
+    })
+}
+
+/// `rx.recv_ctx(&ctx)` in the interp. The interp's `Channel` is
+/// a Rust-side struct distinct from the runtime's `GosChan`, so
+/// it can't observe a `gossamer-std::context::Context` cancel
+/// directly. For source-level parity with the compiled tier
+/// (where the cancel does propagate via the runtime hooks), this
+/// builtin degrades to a plain `recv` — the `&ctx` arg is
+/// accepted and ignored. Programs that need real cancellation
+/// in interpreted mode should structure around `select { _ =
+/// ctx.done() => …, x = rx.recv() => … }`, which the interp's
+/// select primitive supports.
+fn builtin_channel_recv_ctx(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Channel(channel)) = args.first() else {
+        return Err(RuntimeError::Type(
+            "recv_ctx: receiver must be a channel".to_string(),
+        ));
+    };
+    Ok(match channel.recv() {
         Some(value) => some_variant(value),
         None => none_variant(),
     })

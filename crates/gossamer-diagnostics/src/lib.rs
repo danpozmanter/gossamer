@@ -17,7 +17,7 @@ use gossamer_lex::{FileId, Span};
 
 pub mod render;
 
-pub use render::{RenderOptions, render, render_plain};
+pub use render::{RenderOptions, render, render_json, render_plain};
 
 /// Severity of a diagnostic. Mirrors the standard four-level scale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

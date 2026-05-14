@@ -17,7 +17,11 @@ use crate::paths::{
 
 /// `gos check` dispatcher: routes between single-file and
 /// whole-project walks.
-pub(crate) fn dispatch(path: Option<PathBuf>, timings: bool) -> Result<()> {
+pub(crate) fn dispatch(
+    path: Option<PathBuf>,
+    timings: bool,
+    message_format: crate::cli::MessageFormat,
+) -> Result<()> {
     if let Err(err) = crate::binding_dispatch::ensure_external_signatures() {
         eprintln!("warning: failed to load rust-binding signatures: {err}");
     }
@@ -27,7 +31,7 @@ pub(crate) fn dispatch(path: Option<PathBuf>, timings: bool) -> Result<()> {
     };
     let meta = fs::metadata(&resolved).map_err(|e| friendly_io_error(e, &resolved))?;
     if meta.is_file() {
-        return run(&resolved, timings);
+        return run(&resolved, timings, message_format);
     }
     let files = collect_lint_targets(&resolved)?;
     if files.is_empty() {
@@ -41,7 +45,7 @@ pub(crate) fn dispatch(path: Option<PathBuf>, timings: bool) -> Result<()> {
         if files.len() > 1 {
             println!("=== {} ===", file.display());
         }
-        match run(file, timings) {
+        match run(file, timings, message_format) {
             Ok(()) => {}
             Err(err) => {
                 eprintln!("{err}");
@@ -66,7 +70,11 @@ pub(crate) fn dispatch(path: Option<PathBuf>, timings: bool) -> Result<()> {
 
 /// Single-file `gos check`. Public to the crate so the dispatcher
 /// above and the `cmd::watch` re-runner can share it.
-pub(crate) fn run(file: &PathBuf, timings: bool) -> Result<()> {
+pub(crate) fn run(
+    file: &PathBuf,
+    timings: bool,
+    message_format: crate::cli::MessageFormat,
+) -> Result<()> {
     let source = read_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
@@ -81,10 +89,7 @@ pub(crate) fn run(file: &PathBuf, timings: bool) -> Result<()> {
     let mut total_errors = parse_diags.len();
     for diag in &parse_diags {
         let structured = diag.to_diagnostic();
-        eprintln!(
-            "{}",
-            gossamer_diagnostics::render(&structured, &map, render_opts)
-        );
+        emit_diag(&structured, &map, render_opts, message_format);
     }
     let stage_resolve = std::time::Instant::now();
     let (resolutions, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
@@ -103,10 +108,7 @@ pub(crate) fn run(file: &PathBuf, timings: bool) -> Result<()> {
     let in_scope: Vec<&str> = collect_top_level_names(&sf);
     for diag in unresolved {
         let structured = diag.to_diagnostic(&in_scope);
-        eprintln!(
-            "{}",
-            gossamer_diagnostics::render(&structured, &map, render_opts)
-        );
+        emit_diag(&structured, &map, render_opts, message_format);
     }
     let mut tcx = gossamer_types::TyCtxt::new();
     let stage_typeck = std::time::Instant::now();
@@ -115,10 +117,7 @@ pub(crate) fn run(file: &PathBuf, timings: bool) -> Result<()> {
     total_errors += type_diags.len();
     for diag in &type_diags {
         let structured = diag.to_diagnostic();
-        eprintln!(
-            "{}",
-            gossamer_diagnostics::render(&structured, &map, render_opts)
-        );
+        emit_diag(&structured, &map, render_opts, message_format);
     }
     let stage_exhaust = std::time::Instant::now();
     let exhaustive_diags = gossamer_types::check_exhaustiveness(&sf, &resolutions, &table, &tcx);
@@ -135,10 +134,7 @@ pub(crate) fn run(file: &PathBuf, timings: bool) -> Result<()> {
     total_errors += nonexhaustive.len();
     for diag in nonexhaustive {
         let structured = diag.to_diagnostic();
-        eprintln!(
-            "{}",
-            gossamer_diagnostics::render(&structured, &map, render_opts)
-        );
+        emit_diag(&structured, &map, render_opts, message_format);
     }
     if total_errors > 0 {
         return Err(anyhow!("check failed with {total_errors} diagnostic(s)"));
@@ -162,4 +158,29 @@ pub(crate) fn run(file: &PathBuf, timings: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Renders a structured diagnostic to stderr, branching on
+/// `--message-format`. Plain mode uses the colour-aware text
+/// frame; JSON mode writes the single-line JSON object directly
+/// (the trailing newline is part of `render_json`'s output).
+fn emit_diag(
+    structured: &gossamer_diagnostics::Diagnostic,
+    map: &gossamer_lex::SourceMap,
+    render_opts: gossamer_diagnostics::RenderOptions,
+    message_format: crate::cli::MessageFormat,
+) {
+    match message_format {
+        crate::cli::MessageFormat::Plain => {
+            eprintln!(
+                "{}",
+                gossamer_diagnostics::render(structured, map, render_opts)
+            );
+        }
+        crate::cli::MessageFormat::Json => {
+            // Single-line JSON envelope; `render_json` adds the
+            // trailing `\n` so consumers can read line-delimited.
+            eprint!("{}", gossamer_diagnostics::render_json(structured, map));
+        }
+    }
 }

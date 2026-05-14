@@ -62,6 +62,14 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_atomic_i64_swap",
     "gos_rt_callback_invoke",
     "gos_rt_chan_drop",
+    // Cross-crate context-cancellation bridge: installed once
+    // by `gossamer-std::context` at first context use, called
+    // by the context-aware runtime entry. Not emitted from MIR
+    // yet (the `.gos`-level `rx.recv_ctx(&ctx)` surface needs
+    // language frontend wiring before either backend would
+    // call it).
+    "gos_rt_chan_recv_ctx_option",
+    "gos_rt_install_ctx_hooks",
     "gos_rt_concat_f64_prec",
     "gos_rt_gc_reset",
     "gos_rt_go_spawn",

@@ -7,19 +7,16 @@
 //! Mutex / Channel synchronisation events:
 //!
 //! - Per-goroutine vector clock (`Vec<u64>` indexed by goroutine id).
-//! - Per-address last-access record `(gid, op, vector_clock)`.
-//! - On every access, the tracker compares the current goroutine's
-//!   clock against the last recorded access; if neither happens
-//!   before the other and at least one is a write, a data race is
-//!   reported.
+//! - Per-address state: the last write and up to [`MAX_ACTIVE_READS`]
+//!   concurrent reads not yet dominated by a subsequent write.
+//! - On every write, the tracker checks all active readers (WAR) and
+//!   the last writer (WW) for unsynchronised conflicts. On every read,
+//!   it checks the last writer (RAW). Any conflict where neither clock
+//!   happens-before the other is reported.
 //!
-//! The tracker shipped here is the foundation: the vector-clock
-//! propagation hooks for Mutex/Channel events are in place, and
-//! a simple write-write race is detected and reported. The full
-//! `ThreadSanitizer` parity (slot map for memory regions, RAW/WAR
-//! distinction for inter-goroutine ordering, lock-set analysis)
-//! lands in Phase 2 — see `record_access` for what's shipping
-//! today.
+//! Older reads are evicted when `MAX_ACTIVE_READS` is exceeded so
+//! the per-address state stays bounded. Lock-set analysis remains
+//! out of scope.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,23 +24,35 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
 
+/// At most this many concurrent read accesses are retained per
+/// address. Oldest entries are evicted when the cap is reached.
+const MAX_ACTIVE_READS: usize = 4;
+
 /// One observed access. Stored per address so the tracker can
 /// reason about read-write / write-write conflicts.
 #[derive(Debug, Clone)]
 struct Access {
     gid: u32,
-    write: bool,
     /// Frozen vector clock at the time of the access — keyed by
     /// goroutine id, value = the local logical step counter.
     clock: Vec<u64>,
+}
+
+/// Per-address access state: the last write and up to
+/// [`MAX_ACTIVE_READS`] concurrent reads not yet dominated by a
+/// subsequent write.
+#[derive(Debug, Default)]
+struct AddressState {
+    last_write: Option<Access>,
+    active_reads: Vec<Access>,
 }
 
 #[derive(Default)]
 struct Tracker {
     /// Per-goroutine logical clock.
     goroutines: Mutex<FxHashMap<u32, Vec<u64>>>,
-    /// Last access seen for each address.
-    accesses: Mutex<FxHashMap<usize, Access>>,
+    /// Per-address write/read state.
+    accesses: Mutex<FxHashMap<usize, AddressState>>,
     /// Append-only race log; each entry is a human-readable
     /// description that `gos test --race` prints at the end of a
     /// run.
@@ -93,7 +102,11 @@ fn bump_clock(gid: u32) {
 
 /// Records a memory access. `addr` is the heap address being
 /// touched; `write` distinguishes load (false) from store (true).
-/// Reports a race when the previous access is unsynchronised.
+///
+/// On a write, checks all active readers for WAR conflicts and the
+/// last writer for WW conflicts, then resets the address state.
+/// On a read, checks the last writer for RAW conflicts, then appends
+/// to the active reader set (oldest evicted when the cap is hit).
 pub fn record_access(gid: u32, addr: usize, write: bool) {
     if !is_enabled() {
         return;
@@ -101,20 +114,47 @@ pub fn record_access(gid: u32, addr: usize, write: bool) {
     bump_clock(gid);
     let clock = ensure_clock_for(gid);
     let mut accesses = tracker().accesses.lock();
-    if let Some(prev) = accesses.get(&addr).cloned()
-        && prev.gid != gid
-        && (prev.write || write)
-        && !happens_before(&prev.clock, &clock, gid)
-    {
-        let msg = format!(
-            "DATA RACE: addr={addr:#x} prev={prev_gid} ({prev_op}) curr={gid} ({op})",
-            prev_gid = prev.gid,
-            prev_op = if prev.write { "write" } else { "read" },
-            op = if write { "write" } else { "read" },
-        );
-        tracker().races.lock().push(msg);
+    let state = accesses.entry(addr).or_default();
+    let mut new_races: Vec<String> = Vec::new();
+    if write {
+        // Write: check concurrent reads (WAR) then last write (WW).
+        for reader in &state.active_reads {
+            if reader.gid != gid && !happens_before(&reader.clock, &clock, gid) {
+                new_races.push(format!(
+                    "DATA RACE: addr={addr:#x} reader={} (read) writer={gid} (write)",
+                    reader.gid,
+                ));
+            }
+        }
+        if let Some(ref prev_write) = state.last_write {
+            if prev_write.gid != gid && !happens_before(&prev_write.clock, &clock, gid) {
+                new_races.push(format!(
+                    "DATA RACE: addr={addr:#x} prev={} (write) curr={gid} (write)",
+                    prev_write.gid,
+                ));
+            }
+        }
+        state.active_reads.clear();
+        state.last_write = Some(Access { gid, clock });
+    } else {
+        // Read: check last write (RAW) then append to active readers.
+        if let Some(ref prev_write) = state.last_write {
+            if prev_write.gid != gid && !happens_before(&prev_write.clock, &clock, gid) {
+                new_races.push(format!(
+                    "DATA RACE: addr={addr:#x} writer={} (write) reader={gid} (read)",
+                    prev_write.gid,
+                ));
+            }
+        }
+        if state.active_reads.len() >= MAX_ACTIVE_READS {
+            state.active_reads.remove(0);
+        }
+        state.active_reads.push(Access { gid, clock });
     }
-    accesses.insert(addr, Access { gid, write, clock });
+    drop(accesses);
+    if !new_races.is_empty() {
+        tracker().races.lock().extend(new_races);
+    }
 }
 
 /// Records a synchronisation event between two goroutines: when
@@ -217,14 +257,47 @@ mod tests {
         let _g = TEST_GUARD.lock();
         enable();
         let _ = drain_races();
-        // Two goroutines write the same address with no
-        // synchronisation: race expected.
         record_access(101, 0xCAFE, true);
         record_access(102, 0xCAFE, true);
         let races = drain_races();
+        assert!(!races.is_empty(), "expected WW race, got {races:?}");
+    }
+
+    #[test]
+    fn detector_finds_raw_race_write_then_read_no_sync() {
+        let _g = TEST_GUARD.lock();
+        enable();
+        let _ = drain_races();
+        // Goroutine 110 writes, goroutine 111 reads with no
+        // synchronisation between them: read-after-write race.
+        record_access(110, 0xAAAA, true);
+        record_access(111, 0xAAAA, false);
+        let races = drain_races();
+        assert!(!races.is_empty(), "expected RAW race, got {races:?}");
         assert!(
-            !races.is_empty(),
-            "expected at least one race, got {races:?}"
+            races
+                .iter()
+                .any(|r| r.contains("writer=110") && r.contains("reader=111")),
+            "race message should name writer and reader: {races:?}",
+        );
+    }
+
+    #[test]
+    fn detector_finds_war_race_read_then_write_no_sync() {
+        let _g = TEST_GUARD.lock();
+        enable();
+        let _ = drain_races();
+        // Goroutine 112 reads, goroutine 113 writes with no
+        // synchronisation between them: write-after-read race.
+        record_access(112, 0xBBBB, false);
+        record_access(113, 0xBBBB, true);
+        let races = drain_races();
+        assert!(!races.is_empty(), "expected WAR race, got {races:?}");
+        assert!(
+            races
+                .iter()
+                .any(|r| r.contains("reader=112") && r.contains("writer=113")),
+            "race message should name reader and writer: {races:?}",
         );
     }
 
@@ -234,8 +307,7 @@ mod tests {
         enable();
         let _ = drain_races();
         // Goroutine 103 writes, hands off via record_sync to 104
-        // which also writes — no race because the synchronisation
-        // event makes 103's write happen-before 104's.
+        // which also writes — 103's write happens-before 104's.
         record_access(103, 0xBEEF, true);
         record_sync(103, 104);
         record_access(104, 0xBEEF, true);
@@ -244,6 +316,37 @@ mod tests {
             races.is_empty(),
             "synchronised writes flagged as race: {races:?}"
         );
+    }
+
+    #[test]
+    fn detector_does_not_flag_synchronised_read_after_write() {
+        let _g = TEST_GUARD.lock();
+        enable();
+        let _ = drain_races();
+        // Writer syncs to reader via record_sync — no race.
+        record_access(120, 0xCCCC, true);
+        record_sync(120, 121);
+        record_access(121, 0xCCCC, false);
+        let races = drain_races();
+        assert!(
+            races.is_empty(),
+            "synchronised RAW flagged as race: {races:?}"
+        );
+    }
+
+    #[test]
+    fn detector_tracks_multiple_concurrent_readers_for_war() {
+        let _g = TEST_GUARD.lock();
+        enable();
+        let _ = drain_races();
+        // Three goroutines read, then a fourth writes without sync.
+        // All three read-write pairs should be flagged.
+        record_access(130, 0xDDDD, false);
+        record_access(131, 0xDDDD, false);
+        record_access(132, 0xDDDD, false);
+        record_access(133, 0xDDDD, true);
+        let races = drain_races();
+        assert!(races.len() >= 3, "expected 3 WAR races, got: {races:?}");
     }
 
     #[test]

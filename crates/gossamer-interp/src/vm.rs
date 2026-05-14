@@ -129,6 +129,12 @@ pub struct Vm {
     /// chunk entry, pop on success — on error the frame stays so
     /// `call_stack_snapshot` reports the failing chain.
     call_stack: RefCell<Vec<String>>,
+    /// Current Gossamer call depth for this goroutine's VM. Incremented
+    /// on every `apply` entry, decremented on return. When it reaches
+    /// `MAX_CALL_DEPTH` the call is refused with `RuntimeError::StackOverflow`
+    /// so unbounded mutual or direct recursion aborts instead of spinning
+    /// the CPU indefinitely through heap-allocated frame allocation.
+    call_depth: Cell<usize>,
 }
 
 /// Per-`Vm` per-chunk dispatch caches. Pinned inside
@@ -530,6 +536,21 @@ pub(crate) enum Global {
     Value(Value),
 }
 
+/// Maximum Gossamer call frames per goroutine before `StackOverflow`.
+///
+/// Each Gossamer call adds one `apply()` + `run()` pair to the Rust call
+/// stack. `run()` is a 2 000-line match function; in debug builds the
+/// compiler keeps every arm's locals live simultaneously, making each
+/// pair cost ~160 KB of Rust stack. The default OS thread stack is 8 MB,
+/// leaving roughly 40 safe levels after process and CLI startup.
+///
+/// 40 is conservative for debug builds. Release builds incur ~10× smaller
+/// frames, so the effective safe depth there is ~400+ — but since this
+/// constant governs both tiers, the lower debug-safe value is used. For
+/// deeply recursive programs use `gos build`, where the native codegen
+/// produces standard call instructions the OS can grow to handle.
+const MAX_CALL_DEPTH: usize = 40;
+
 impl Vm {
     /// Builds a VM pre-populated with the built-in intrinsics.
     #[must_use]
@@ -547,6 +568,7 @@ impl Vm {
             chunk_state_last: Cell::new(None),
             globals_generation: Cell::new(1),
             call_stack: RefCell::new(Vec::new()),
+            call_depth: Cell::new(0),
         };
         let globals = Arc::get_mut(&mut vm.globals).expect("fresh Vm globals are uniquely owned");
         for (name, value) in builtins::cached() {
@@ -583,6 +605,7 @@ impl Vm {
             chunk_state_last: Cell::new(None),
             globals_generation: Cell::new(1),
             call_stack: RefCell::new(Vec::new()),
+            call_depth: Cell::new(0),
         }
     }
 
@@ -1029,6 +1052,17 @@ impl Vm {
     fn apply(&self, global: Global, args: Vec<Value>) -> RuntimeResult<Value> {
         match global {
             Global::Fn(chunk) => {
+                // Refuse calls beyond the goroutine call-depth cap. The VM
+                // allocates Gossamer frames on the heap (not on the OS stack),
+                // so without this check a program like `fn f(n) { f(n+1) }`
+                // would spin indefinitely consuming CPU and heap rather than
+                // crashing with a clear message.
+                let depth = self.call_depth.get();
+                if depth >= MAX_CALL_DEPTH {
+                    return Err(RuntimeError::StackOverflow(MAX_CALL_DEPTH));
+                }
+                self.call_depth.set(depth + 1);
+
                 // Push a frame on the call stack so a runtime error
                 // mid-body reports the chain. Pop on success only;
                 // a propagating error keeps the frame so callers
@@ -1083,7 +1117,10 @@ impl Vm {
                 };
                 if let Some(jit) = jit_opt {
                     match jit_call::invoke(&jit, &args) {
-                        jit_call::Dispatch::Ok(value) => return Ok(value),
+                        jit_call::Dispatch::Ok(value) => {
+                            self.call_depth.set(self.call_depth.get().saturating_sub(1));
+                            return Ok(value);
+                        }
                         jit_call::Dispatch::Fallback => {
                             if jit_call::jit_trace() {
                                 eprintln!("jit: fallback to bytecode for {}", jit.name);
@@ -1092,6 +1129,9 @@ impl Vm {
                     }
                 }
                 let result = self.run(&chunk, state, args);
+                // Decrement depth unconditionally on return so mutual
+                // recursion and early-return paths both release their slot.
+                self.call_depth.set(self.call_depth.get().saturating_sub(1));
                 if result.is_ok() && pushed_frame {
                     self.call_stack.borrow_mut().pop();
                 }

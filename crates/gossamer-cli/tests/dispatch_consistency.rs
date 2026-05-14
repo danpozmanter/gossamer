@@ -34,7 +34,14 @@ fn extract_runtime_exports() -> Vec<String> {
         .join("..")
         .join("gossamer-runtime")
         .join("src");
-    let candidate_files = ["c_abi.rs", "gc.rs", "preempt.rs", "lib.rs", "safe_env.rs"];
+    let candidate_files = [
+        "c_abi.rs",
+        "gc.rs",
+        "preempt.rs",
+        "lib.rs",
+        "safe_env.rs",
+        "race.rs",
+    ];
     let mut out = Vec::new();
     for filename in candidate_files {
         let path = runtime_src.join(filename);
@@ -239,7 +246,14 @@ fn registry_param_counts_match_runtime_exports() {
         .join("..")
         .join("gossamer-runtime")
         .join("src");
-    let candidate_files = ["c_abi.rs", "gc.rs", "preempt.rs", "lib.rs", "safe_env.rs"];
+    let candidate_files = [
+        "c_abi.rs",
+        "gc.rs",
+        "preempt.rs",
+        "lib.rs",
+        "safe_env.rs",
+        "race.rs",
+    ];
     let mut all_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for filename in candidate_files {
         let path = runtime_src.join(filename);

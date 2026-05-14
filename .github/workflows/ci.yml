@@ -125,3 +125,15 @@ jobs:
         run: cargo build --bin gos
       - name: Verify docs_src/stdlib/ matches manifest::ALL_MODULES
         run: ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
+
+  spec-banners:
+    name: SPEC.md conformance banners
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-spec-banners
+      - name: Validate every required banner is present + vocabulary
+        run: cargo run -p xtask --quiet -- audit-spec-banners

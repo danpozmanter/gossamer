@@ -1529,6 +1529,72 @@ pub unsafe extern "C" fn gos_rt_time_format_rfc3339(unix_ms: i64) -> *mut GosRes
     unsafe { gos_rt_result_new(0, cs as i64) }
 }
 
+/// `time::parse_rfc3339(s) -> Result<i64, errors::Error>`.
+/// Parses a UTC RFC 3339 timestamp and returns unix milliseconds.
+/// Accepts the `YYYY-MM-DDTHH:MM:SSZ` form produced by format_rfc3339.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_parse_rfc3339(s: *const c_char) -> *mut GosResult {
+    let text = if s.is_null() {
+        return unsafe {
+            let msg = alloc_cstring(b"parse_rfc3339: null input");
+            gos_rt_result_new(1, msg as i64)
+        };
+    } else {
+        unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }.trim()
+    };
+    // Minimal RFC 3339 / ISO 8601 parser: YYYY-MM-DDTHH:MM:SS[.frac]Z
+    let err = |msg: &str| -> *mut GosResult {
+        let cs = alloc_cstring(msg.as_bytes());
+        unsafe { gos_rt_result_new(1, cs as i64) }
+    };
+    if text.len() < 19 {
+        return err("parse_rfc3339: input too short");
+    }
+    let parse_u32 = |s: &str| -> Option<u32> { s.parse::<u32>().ok() };
+    let year = parse_u32(&text[0..4]).unwrap_or(0) as i64;
+    let month = parse_u32(&text[5..7]).unwrap_or(0) as i64;
+    let day = parse_u32(&text[8..10]).unwrap_or(0) as i64;
+    let hour = parse_u32(&text[11..13]).unwrap_or(0) as i64;
+    let min = parse_u32(&text[14..16]).unwrap_or(0) as i64;
+    let sec = parse_u32(&text[17..19]).unwrap_or(0) as i64;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return err("parse_rfc3339: invalid date fields");
+    }
+    let is_leap = |yr: i64| (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
+    let dim = |m: i64, yr: i64| -> i64 {
+        match m {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if is_leap(yr) {
+                    29
+                } else {
+                    28
+                }
+            }
+            _ => 30,
+        }
+    };
+    // Days since Unix epoch (1970-01-01).
+    let mut days: i64 = 0;
+    let mut y = 1970_i64;
+    while y < year {
+        days += if is_leap(y) { 366 } else { 365 };
+        y += 1;
+    }
+    while y > year {
+        y -= 1;
+        days -= if is_leap(y) { 366 } else { 365 };
+    }
+    for mo in 1..month {
+        days += dim(mo, year);
+    }
+    days += day - 1;
+    let unix_secs = days * 86_400 + hour * 3_600 + min * 60 + sec;
+    let unix_ms = unix_secs * 1_000;
+    unsafe { gos_rt_result_new(0, unix_ms) }
+}
+
 /// `time::Duration::from_millis(n)` lowering — Duration is already
 /// stored as i64 ms in the compiled tier, so this is the identity.
 #[unsafe(no_mangle)]
@@ -1729,6 +1795,39 @@ fn stdout_lock_release() {
     });
 }
 
+/// Sync-Sealed `[u8; STDOUT_BUF_SIZE]` newtype used as the
+/// storage cell of [`GOS_RT_STDOUT_BYTES`]. `repr(transparent)`
+/// keeps the linker symbol's size and alignment identical to a
+/// bare `[u8; STDOUT_BUF_SIZE]`, so the LLVM lowerer's
+/// `@GOS_RT_STDOUT_BYTES = external local_unnamed_addr global
+/// [8192 x i8]` reference resolves at link time exactly as
+/// before. `UnsafeCell` carries the documented interior-mutability
+/// contract; the manual `Sync` impl declares that all access is
+/// serialised by [`STDOUT_LOCK`] / [`STDOUT_LOCK_DEPTH`].
+#[repr(transparent)]
+pub struct GosRtStdoutBytes(core::cell::UnsafeCell<[u8; STDOUT_BUF_SIZE]>);
+
+// SAFETY: every `&self` use of this static reaches into the
+// `UnsafeCell` via raw pointers under one of the access paths
+// audited below. Mutation is gated by `STDOUT_LOCK`'s per-thread
+// depth counter; reads from the inline LLVM fast path acquire the
+// same lock via `gos_rt_stdout_acquire` before dereferencing.
+unsafe impl Sync for GosRtStdoutBytes {}
+
+/// Sync-Sealed `usize` newtype used as the storage cell of
+/// [`GOS_RT_STDOUT_LEN`]. Same rationale as
+/// [`GosRtStdoutBytes`]: `repr(transparent)` preserves the
+/// linker symbol shape so the inline LLVM fast path's
+/// `load i64, ptr @GOS_RT_STDOUT_LEN` and matching `store`
+/// resolve unchanged.
+#[repr(transparent)]
+pub struct GosRtStdoutLen(core::cell::UnsafeCell<usize>);
+
+// SAFETY: same contract as `GosRtStdoutBytes` — all access
+// serialised by `STDOUT_LOCK`. The inline LLVM path holds
+// `gos_rt_stdout_acquire` before reaching this symbol.
+unsafe impl Sync for GosRtStdoutLen {}
+
 /// Process-global stdout buffer storage. The LLVM backend
 /// emits inline fast-path code that loads
 /// `GOS_RT_STDOUT_LEN`, stores the new byte at offset
@@ -1737,14 +1836,15 @@ fn stdout_lock_release() {
 /// character-at-a-time output (fasta hot loop). Access from any
 /// thread requires the `STDOUT_LOCK` mutex be held.
 #[unsafe(no_mangle)]
-pub static mut GOS_RT_STDOUT_BYTES: [u8; STDOUT_BUF_SIZE] = [0; STDOUT_BUF_SIZE];
+pub static GOS_RT_STDOUT_BYTES: GosRtStdoutBytes =
+    GosRtStdoutBytes(core::cell::UnsafeCell::new([0; STDOUT_BUF_SIZE]));
 
 /// Current write offset in `GOS_RT_STDOUT_BYTES`. The inline
 /// fast path reads this, stores the byte, and writes it back.
 /// Access from any thread requires the `STDOUT_LOCK` mutex be
 /// held.
 #[unsafe(no_mangle)]
-pub static mut GOS_RT_STDOUT_LEN: usize = 0;
+pub static GOS_RT_STDOUT_LEN: GosRtStdoutLen = GosRtStdoutLen(core::cell::UnsafeCell::new(0));
 
 /// Acquires the process-wide stdout buffer lock. Codegen wraps
 /// every inline byte-write region in matched
@@ -1807,8 +1907,8 @@ unsafe fn write_stdout_locked(bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }
-    let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
-    let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
+    let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+    let len_ptr = GOS_RT_STDOUT_LEN.0.get();
     let len = unsafe { *len_ptr };
     // Flush and bypass the buffer entirely for chunks that
     // don't fit — a single large chunk costs one syscall
@@ -1855,8 +1955,8 @@ unsafe fn write_stdout(bytes: &[u8]) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_flush_stdout() {
     let _guard = StdoutGuard::acquire();
-    let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
-    let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
+    let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+    let len_ptr = GOS_RT_STDOUT_LEN.0.get();
     let len = unsafe { *len_ptr };
     if len > 0 {
         unsafe {
@@ -2044,8 +2144,8 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte(stream: *const GosStream, b: i
     let fd = unsafe { stream_fd(stream) };
     if fd == 1 {
         let _guard = StdoutGuard::acquire();
-        let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
-        let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
+        let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+        let len_ptr = GOS_RT_STDOUT_LEN.0.get();
         let len = unsafe { *len_ptr };
         if len < STDOUT_BUF_SIZE {
             unsafe {
@@ -2108,8 +2208,8 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte_array(
         // small-block case (fasta's 61-byte lines) the buffer
         // is rarely full, so the fast path runs every line.
         let guard = StdoutGuard::acquire();
-        let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
-        let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
+        let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+        let len_ptr = GOS_RT_STDOUT_LEN.0.get();
         let cur = unsafe { *len_ptr };
         if cur + len <= STDOUT_BUF_SIZE {
             unsafe {
@@ -2221,8 +2321,8 @@ pub unsafe extern "C" fn gos_rt_println() {
     // in 64 KiB chunks, which is dramatically cheaper than per-
     // write syscalls.
     let _guard = StdoutGuard::acquire();
-    let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
-    let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
+    let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+    let len_ptr = GOS_RT_STDOUT_LEN.0.get();
     let len = unsafe { *len_ptr };
     if len >= STDOUT_BUF_SIZE / 2 {
         unsafe {
@@ -3265,6 +3365,22 @@ pub unsafe extern "C" fn gos_rt_vec_sort_by_i64(v: *mut GosVec, env: *const u8) 
     unsafe {
         gos_rt_arr_sort_by_i64(vec.ptr.cast::<i64>(), vec.len, env);
     }
+}
+
+/// Sorts a `Vec<i64>` (heap `GosVec`) in ascending order in place.
+/// Used by `xs.sort()` on integer vecs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_sort_i64(v: *mut GosVec) {
+    if v.is_null() {
+        return;
+    }
+    let vec = unsafe { &mut *v };
+    if vec.len <= 0 || vec.ptr.is_null() {
+        return;
+    }
+    let len_usize = vec.len.max(0) as usize;
+    let buf = unsafe { std::slice::from_raw_parts_mut(vec.ptr.cast::<i64>(), len_usize) };
+    buf.sort_unstable();
 }
 
 /// Sorts a flat `[T; len]` buffer of `elem_bytes`-wide elements in
@@ -4517,6 +4633,173 @@ pub unsafe extern "C" fn gos_rt_chan_try_recv_option(c: *mut GosChan) -> *mut Go
     Box::into_raw(Box::new(GosResult { disc, payload }))
 }
 
+/// Cross-crate hooks installed by `gossamer-std` so the runtime
+/// can observe a `Context` without depending on `gossamer-std`
+/// itself. `ctx_handle` is the opaque pointer the caller passes
+/// to `gos_rt_chan_recv_ctx_option` etc.; the installed callbacks
+/// downcast it on their side. All three hooks must be installed
+/// together via [`gos_rt_install_ctx_hooks`] before any
+/// context-aware runtime entry point is called.
+type CtxRegisterFn = unsafe extern "C" fn(ctx_handle: *const u8, gid: u32);
+type CtxDeregisterFn = unsafe extern "C" fn(ctx_handle: *const u8, gid: u32);
+type CtxIsCancelledFn = unsafe extern "C" fn(ctx_handle: *const u8) -> i32;
+
+static CTX_REGISTER_HOOK: std::sync::atomic::AtomicPtr<()> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+static CTX_DEREGISTER_HOOK: std::sync::atomic::AtomicPtr<()> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+static CTX_IS_CANCELLED_HOOK: std::sync::atomic::AtomicPtr<()> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Installs the cross-crate context hooks. Idempotent; calling
+/// twice with the same fn pointers is a no-op. Calling with a
+/// different fn pointer (an actual rebind) is undefined behaviour
+/// — the caller (gossamer-std) installs exactly once at first
+/// use of a context-aware runtime entry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_install_ctx_hooks(
+    register: CtxRegisterFn,
+    deregister: CtxDeregisterFn,
+    is_cancelled: CtxIsCancelledFn,
+) {
+    use std::sync::atomic::Ordering;
+    CTX_REGISTER_HOOK.store(register as *mut (), Ordering::Release);
+    CTX_DEREGISTER_HOOK.store(deregister as *mut (), Ordering::Release);
+    CTX_IS_CANCELLED_HOOK.store(is_cancelled as *mut (), Ordering::Release);
+}
+
+fn ctx_register_hook() -> Option<CtxRegisterFn> {
+    let p = CTX_REGISTER_HOOK.load(std::sync::atomic::Ordering::Acquire);
+    if p.is_null() {
+        None
+    } else {
+        // SAFETY: `p` was stored via `CtxRegisterFn as *mut ()` in
+        // `gos_rt_install_ctx_hooks` and is read back with the
+        // same function-pointer type. The pointer itself is
+        // immutable for the program's lifetime after install.
+        Some(unsafe { std::mem::transmute::<*mut (), CtxRegisterFn>(p) })
+    }
+}
+
+fn ctx_deregister_hook() -> Option<CtxDeregisterFn> {
+    let p = CTX_DEREGISTER_HOOK.load(std::sync::atomic::Ordering::Acquire);
+    if p.is_null() {
+        None
+    } else {
+        Some(unsafe { std::mem::transmute::<*mut (), CtxDeregisterFn>(p) })
+    }
+}
+
+fn ctx_is_cancelled_hook() -> Option<CtxIsCancelledFn> {
+    let p = CTX_IS_CANCELLED_HOOK.load(std::sync::atomic::Ordering::Acquire);
+    if p.is_null() {
+        None
+    } else {
+        Some(unsafe { std::mem::transmute::<*mut (), CtxIsCancelledFn>(p) })
+    }
+}
+
+/// Cancellation-aware variant of [`gos_rt_chan_recv_option`].
+///
+/// Behaves identically to `chan_recv_option` when the context
+/// is uncancelled. If the context fires while the goroutine is
+/// parked on the channel's `parked_recv` queue, the registered
+/// `is_cancelled` hook's cancellation will be observed on the
+/// next unpark cycle and the function returns `None` (disc=1).
+///
+/// `ctx_handle` is the opaque pointer the caller's
+/// `gos_rt_install_ctx_hooks` callbacks know how to interpret;
+/// the runtime never derefs it directly. Passing `null` falls
+/// back to the unconditional [`gos_rt_chan_recv_option`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
+    c: *mut GosChan,
+    ctx_handle: *const u8,
+) -> *mut GosResult {
+    if ctx_handle.is_null() {
+        return unsafe { gos_rt_chan_recv_option(c) };
+    }
+    let (Some(register), Some(deregister), Some(is_cancelled)) = (
+        ctx_register_hook(),
+        ctx_deregister_hook(),
+        ctx_is_cancelled_hook(),
+    ) else {
+        return unsafe { gos_rt_chan_recv_option(c) };
+    };
+    // Check before parking: an already-cancelled context
+    // short-circuits without touching the channel.
+    if unsafe { is_cancelled(ctx_handle) } != 0 {
+        return Box::into_raw(Box::new(GosResult {
+            disc: 1,
+            payload: 0,
+        }));
+    }
+    if c.is_null() {
+        return Box::into_raw(Box::new(GosResult {
+            disc: 1,
+            payload: 0,
+        }));
+    }
+    let chan = unsafe { &*c };
+    let bytes_len = chan.elem_bytes as usize;
+    let gid = crate::sched_global::current_gid();
+    if let Some(g) = gid {
+        unsafe { register(ctx_handle, g.as_u32()) };
+    }
+    // Inline the recv loop with cancel polling on both the
+    // goroutine park path and the OS-thread condvar path. The
+    // 50 ms condvar timeout is the cancel-observation latency
+    // for non-goroutine callers: short enough to feel responsive,
+    // long enough not to hot-loop while idle.
+    let mut out_val = 0i64;
+    let out_ptr = std::ptr::addr_of_mut!(out_val).cast::<u8>();
+    let (result_disc, result_payload) = loop {
+        let mut guard = chan.buf.lock().unwrap();
+        if pop_front(&mut guard, out_ptr, bytes_len) {
+            drop(guard);
+            record_chan_handoff(chan);
+            wake_one_send(chan);
+            break (0i64, out_val);
+        }
+        if *chan.closed.lock().unwrap() {
+            break (1i64, 0i64);
+        }
+        if gossamer_coro::in_goroutine() {
+            drop(guard);
+            crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
+                chan.parked_recv.lock().push_back(parker.gid);
+            });
+            if let Some(g) = crate::sched_global::current_gid() {
+                chan.parked_recv.lock().retain(|x| *x != g);
+            }
+            if unsafe { is_cancelled(ctx_handle) } != 0 {
+                break (1i64, 0i64);
+            }
+        } else {
+            // OS-thread path: bounded condvar wait so the
+            // cancel poll below can fire even when the channel
+            // never gets a sender. Without the timeout, an
+            // OS-thread caller would block forever on a
+            // cancelled context.
+            let (g, _) = chan
+                .not_empty
+                .wait_timeout(guard, std::time::Duration::from_millis(50))
+                .unwrap();
+            drop(g);
+            if unsafe { is_cancelled(ctx_handle) } != 0 {
+                break (1i64, 0i64);
+            }
+        }
+    };
+    if let Some(g) = gid {
+        unsafe { deregister(ctx_handle, g.as_u32()) };
+    }
+    Box::into_raw(Box::new(GosResult {
+        disc: result_disc,
+        payload: result_payload,
+    }))
+}
+
 fn storage_len(storage: &ChanStorage) -> usize {
     match storage {
         ChanStorage::I64(d) => d.len(),
@@ -4581,7 +4864,14 @@ pub unsafe extern "C" fn gos_rt_chan_close(c: *mut GosChan) {
         return;
     }
     let chan = unsafe { &*c };
-    *chan.closed.lock().unwrap() = true;
+    {
+        let mut guard = chan.closed.lock().unwrap();
+        if *guard {
+            eprintln!("panic: channel already closed");
+            std::process::abort();
+        }
+        *guard = true;
+    }
     wake_all(chan);
 }
 
@@ -5940,8 +6230,8 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_lines_to_stdout(
         return;
     }
     let _guard = StdoutGuard::acquire();
-    let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
-    let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
+    let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+    let len_ptr = GOS_RT_STDOUT_LEN.0.get();
     let mut cur = unsafe { *len_ptr };
     let mut col: i64 = 0;
     let mut idx = start as usize;
@@ -6024,8 +6314,8 @@ pub unsafe extern "C" fn gos_rt_heap_i64_write_bytes_to_stdout(
         return;
     }
     let _guard = StdoutGuard::acquire();
-    let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
-    let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
+    let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+    let len_ptr = GOS_RT_STDOUT_LEN.0.get();
     let mut cur = unsafe { *len_ptr };
     let n = count as usize;
     let mut idx = start as usize;
@@ -6179,8 +6469,8 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_lines_to_stdout(
         return;
     }
     let _guard = StdoutGuard::acquire();
-    let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
-    let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
+    let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+    let len_ptr = GOS_RT_STDOUT_LEN.0.get();
     let mut cur = unsafe { *len_ptr };
     let mut col: i64 = 0;
     let mut idx = start as usize;
@@ -6258,8 +6548,8 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_bytes_to_stdout(
         return;
     }
     let _guard = StdoutGuard::acquire();
-    let bytes_ptr = &raw mut GOS_RT_STDOUT_BYTES;
-    let len_ptr = &raw mut GOS_RT_STDOUT_LEN;
+    let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+    let len_ptr = GOS_RT_STDOUT_LEN.0.get();
     let mut cur = unsafe { *len_ptr };
     let n = count as usize;
     let mut idx = start as usize;

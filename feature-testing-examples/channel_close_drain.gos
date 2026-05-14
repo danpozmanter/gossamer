@@ -25,6 +25,14 @@ fn fibonacci_producer(tx: channel::Sender<i64>, limit: i64) {
     tx.close()
 }
 
+// Like count_producer but does not close — used when multiple senders
+// share one channel so only the coordinating side decides when to close.
+fn count_sender(tx: channel::Sender<i64>, n: i64) {
+    for i in 0..n {
+        tx.send(i)
+    }
+}
+
 fn batch_sum(vals: [i64]) -> i64 {
     let mut s = 0
     for v in vals {
@@ -66,8 +74,8 @@ fn main() {
     // close+drain pattern requires a single owner of the close
     // step (typically the last sender to finish).
     let (mtx, mrx) = channel()
-    go count_producer(mtx, 5)
-    go count_producer(mtx, 5)
+    go count_sender(mtx, 5)
+    go count_sender(mtx, 5)
     time::sleep(40)
     let mut all: [i64] = []
     while let Some(v) = mrx.try_recv() {

@@ -1,0 +1,70 @@
+name: Miri
+
+# Weekly nightly miri run on a curated subset of the test suite.
+# Miri executes Rust at the MIR-interpreter level, catching UB
+# (uninitialised reads, dangling pointers, alignment violations,
+# data races on shared atomics) that escape compile-time and
+# integration-test checks. Recent bug discoveries — invalid IR
+# bitcasts, wild pointers passed to `chan_send`, single-slot
+# alloca overflows — are exactly the class miri surfaces early.
+#
+# Run weekly rather than per-PR because miri is ~50× slower than
+# native test execution and most fixes don't need that signal on
+# every commit. Manual `workflow_dispatch` lets maintainers force
+# a run before risky merges.
+
+on:
+  schedule:
+    # Sundays 04:00 UTC — quiet window, doesn't compete with the
+    # weekly fuzz cron at 03:00.
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  miri:
+    name: Miri (${{ matrix.crate }})
+    runs-on: ubuntu-latest
+    # Allow long wall-clock; the largest crate (gossamer-runtime)
+    # runs ~30 minutes under miri because every alloc path goes
+    # through the interpreter.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Crates picked for highest UB-surface density. Excluded:
+        # gossamer-cli (drives subprocesses miri can't observe),
+        # gossamer-codegen-llvm / -cranelift (emit IR that's
+        # off-MIR by design), gossamer-pkg / gossamer-lsp (mostly
+        # I/O glue). The fundamental memory-safety crates are
+        # in-scope.
+        crate:
+          - gossamer-gc
+          - gossamer-mir
+          - gossamer-types
+          - gossamer-resolve
+          - gossamer-runtime
+          - gossamer-coro
+          - gossamer-sched
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-miri-${{ matrix.crate }}
+      - name: Run miri
+        env:
+          # Miri flags:
+          # - `-Zmiri-disable-isolation`: allow time, env, fs
+          #   reads — the runtime crate inspects clocks and env
+          #   for the GC-mode toggle.
+          # - `-Zmiri-permissive-provenance`: allow ptr-int-ptr
+          #   roundtrips used by the runtime's flat-slot ABI.
+          # - `-Zmiri-ignore-leaks`: the GC heap leaks by design
+          #   under tests that don't run a full collection cycle.
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-permissive-provenance -Zmiri-ignore-leaks
+        run: cargo miri test -p ${{ matrix.crate }} --lib

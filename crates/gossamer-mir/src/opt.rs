@@ -20,11 +20,17 @@ use crate::ir::{
 /// into the two-constant form folding recognises. A second copy-prop
 /// pass after folding propagates the newly-created constants.
 pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
+    crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
+    crate::verify::debug_verify_body(body);
     const_fold(body);
+    crate::verify::debug_verify_body(body);
     copy_propagate(body, tcx);
+    crate::verify::debug_verify_body(body);
     const_branch_elim(body);
+    crate::verify::debug_verify_body(body);
     dead_store_elim(body, tcx);
+    crate::verify::debug_verify_body(body);
 }
 
 /// Detects trivial wrapper functions (a two-block body whose entry block

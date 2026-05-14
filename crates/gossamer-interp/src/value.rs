@@ -661,9 +661,15 @@ impl Channel {
     }
 
     /// Marks the channel as closed and wakes every parked receiver
-    /// so they observe the closed state and exit their wait. Idempotent.
+    /// so they observe the closed state and exit their wait.
+    /// Panics if the channel was already closed (matches Go's
+    /// `close on closed channel` panic).
     pub fn close(&self) {
         let guard = self.inner.buf.lock();
+        if self.inner.closed.get() {
+            eprintln!("panic: channel already closed");
+            std::process::abort();
+        }
         self.inner.closed.set(true);
         self.inner.cv.notify_all();
         drop(guard);
@@ -1141,6 +1147,9 @@ pub enum RuntimeError {
     /// An unimplemented construct was reached while walking the tree.
     #[error("error[GX0007]: interpreter does not yet support {0}")]
     Unsupported(&'static str),
+    /// Goroutine call depth exceeded the VM limit.
+    #[error("error[GX0008]: stack overflow — call depth exceeded {0} frames")]
+    StackOverflow(usize),
 }
 
 impl RuntimeError {
@@ -1157,6 +1166,7 @@ impl RuntimeError {
             Self::Panic(_) => "GX0005",
             Self::MatchFailure => "GX0006",
             Self::Unsupported(_) => "GX0007",
+            Self::StackOverflow(_) => "GX0008",
         }
     }
 }

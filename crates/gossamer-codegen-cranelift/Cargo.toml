@@ -8,37 +8,8 @@ repository.workspace = true
 authors.workspace = true
 description = "Cranelift-backed codegen for the Gossamer compiler."
 
-[lints.rust]
-# Workspace sets `unsafe_code = forbid`, which cannot be relaxed
-# per-module. We downgrade to `deny` here so `jit.rs` can opt in via
-# `#![allow]` for the one `unsafe` call required by
-# `JITModule::free_memory`. The rest of the crate keeps unsafe out.
-unsafe_code = "deny"
-missing_docs = "warn"
-unreachable_pub = "warn"
-rust_2024_compatibility = { level = "warn", priority = -1 }
-
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-pedantic = { level = "deny", priority = -1 }
-cognitive_complexity = "deny"
-too_many_lines = "warn"
-module_name_repetitions = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-match_same_arms = "allow"
-needless_pass_by_value = "allow"
-unused_self = "allow"
-cast_possible_truncation = "allow"
-cast_precision_loss = "allow"
-cast_sign_loss = "allow"
-cast_possible_wrap = "allow"
-float_cmp = "allow"
-unreadable_literal = "allow"
-format_push_string = "allow"
-# Mirrors the workspace allow: nested `if let` over the
-# 1.88+ let-chain rewrite is the in-codebase convention.
-collapsible_if = "allow"
+[lints]
+workspace = true
 
 [dependencies]
 anyhow = { workspace = true }

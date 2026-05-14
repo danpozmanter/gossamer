@@ -414,7 +414,10 @@ impl Walker {
                     self.visit_expr(value);
                 }
             }
-            ExprKind::Literal(_) | ExprKind::Continue { .. } | ExprKind::MacroCall(_) => {}
+            ExprKind::Literal(_)
+            | ExprKind::Continue { .. }
+            | ExprKind::MacroCall(_)
+            | ExprKind::Error => {}
         }
     }
 
@@ -1011,7 +1014,8 @@ impl DefinitionIndex {
             ExprKind::Path(_)
             | ExprKind::Literal(_)
             | ExprKind::Continue { .. }
-            | ExprKind::MacroCall(_) => {}
+            | ExprKind::MacroCall(_)
+            | ExprKind::Error => {}
         }
     }
 

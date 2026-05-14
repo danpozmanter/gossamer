@@ -10,10 +10,15 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+gossamer-hir = { path = "../crates/gossamer-hir" }
+gossamer-interp = { path = "../crates/gossamer-interp" }
 gossamer-lex = { path = "../crates/gossamer-lex" }
+gossamer-mir = { path = "../crates/gossamer-mir" }
 gossamer-parse = { path = "../crates/gossamer-parse" }
 gossamer-pkg = { path = "../crates/gossamer-pkg" }
+gossamer-resolve = { path = "../crates/gossamer-resolve" }
 gossamer-std = { path = "../crates/gossamer-std" }
+gossamer-types = { path = "../crates/gossamer-types" }
 
 # Keep `cargo fuzz` targets out of the workspace so plain
 # `cargo build --workspace` does not try to compile them without the
@@ -41,5 +46,23 @@ doc = false
 [[bin]]
 name = "http_request"
 path = "fuzz_targets/http_request.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "typecheck"
+path = "fuzz_targets/typecheck.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "mir_lower"
+path = "fuzz_targets/mir_lower.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "vm_compile"
+path = "fuzz_targets/vm_compile.rs"
 test = false
 doc = false

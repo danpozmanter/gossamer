@@ -506,7 +506,10 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
                 visit_expr(value, out);
             }
         }
-        ExprKind::Literal(_) | ExprKind::Continue { .. } | ExprKind::MacroCall(_) => {}
+        ExprKind::Literal(_)
+        | ExprKind::Continue { .. }
+        | ExprKind::MacroCall(_)
+        | ExprKind::Error => {}
     }
 }
 

@@ -30,6 +30,9 @@ pub enum IoError {
     /// The caller did not have permission to perform the operation.
     #[error("permission denied: {0}")]
     PermissionDenied(String),
+    /// The operation was cancelled by a `std::context::Context`.
+    #[error("cancelled: {0}")]
+    Cancelled(String),
     /// An I/O operation failed at the OS layer.
     #[error("io: {0}")]
     Other(String),
@@ -46,6 +49,12 @@ impl IoError {
             ErrorKind::PermissionDenied => Self::PermissionDenied(context.to_string()),
             _ => Self::Other(format!("{context}: {err}")),
         }
+    }
+
+    /// Constructs a cancellation error from a context error.
+    #[must_use]
+    pub fn cancelled(err: crate::errors::Error) -> Self {
+        Self::Cancelled(err.message().to_string())
     }
 }
 

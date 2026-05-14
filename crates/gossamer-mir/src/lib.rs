@@ -9,10 +9,14 @@
 
 mod cleanup;
 mod escape;
+mod gc_barrier;
 mod ir;
 mod lower;
 mod monomorph;
 mod opt;
+pub mod verify;
+
+pub use gc_barrier::insert_gc_barriers;
 
 pub use cleanup::{
     CleanupEntry, CleanupPlan, DropAt, HEAP_ALLOCATOR_PAIRS, plan as plan_cleanup,
