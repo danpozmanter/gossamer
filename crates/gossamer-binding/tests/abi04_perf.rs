@@ -1,13 +1,13 @@
 //! ABI 0.4 perf characterization.
 //!
 //! These tests measure round-trip cost across the C-ABI boundary
-//! for each new shape. They are `#[ignore]` by default — run on
-//! demand with `cargo test -p gossamer-binding -- --ignored`.
+//! for each new shape.
 //!
 //! The pass criterion is "doesn't regress catastrophically". A
 //! 64KiB Bytes round-trip should complete in < 1 ms on a modern
 //! workstation; we assert < 50 ms as a generous regression
-//! bound. Same shape for the other types.
+//! bound that survives even a heavily loaded CI runner. Same
+//! shape for the other types.
 
 #![allow(unsafe_code, clippy::missing_safety_doc)]
 
@@ -39,7 +39,6 @@ unsafe extern "C" {
 const ITERS: usize = 1_000;
 
 #[test]
-#[ignore = "perf characterization; run with --ignored"]
 fn bytes_64k_round_trip_throughput() {
     let payload: Vec<u8> = (0..64 * 1024).map(|i| (i & 0xff) as u8).collect();
     let start = Instant::now();
@@ -59,7 +58,6 @@ fn bytes_64k_round_trip_throughput() {
 }
 
 #[test]
-#[ignore = "perf characterization; run with --ignored"]
 fn map_30_entries_round_trip_throughput() {
     let mut m: HashMap<String, String> = HashMap::with_capacity(30);
     for i in 0..30 {
@@ -82,7 +80,6 @@ fn map_30_entries_round_trip_throughput() {
 }
 
 #[test]
-#[ignore = "perf characterization; run with --ignored"]
 fn dyn_value_depth_8_round_trip_throughput() {
     let mut v = DynValue::Int(42);
     for i in 0..8 {

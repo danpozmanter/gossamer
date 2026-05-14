@@ -135,11 +135,58 @@ jobs:
           # rlibs still reference the absent symbol on Windows
           # MSVC; bumping the prefix forces a clean rebuild.
           prefix-key: v2-test-stdio
+      # Defensive against the macOS-runner brew/rustup shim issue:
+      # `cargo` in $PATH can resolve to `rustup-init` even after
+      # `dtolnay/rust-toolchain@stable` pushes `~/.cargo/bin` to
+      # $GITHUB_PATH (the runner image ships a brew-managed `cargo`
+      # link earlier in PATH on some images). Resolve the real
+      # toolchain binary via `rustup which cargo` and export it as
+      # $CARGO_BIN; subsequent steps invoke that absolute path so a
+      # stray shim cannot intercept `cargo test` and produce
+      # `error: unexpected argument 'test' found / rustup-init`.
+      - name: Resolve cargo binary (shim guard)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # Diagnostic: show what's actually resolving in PATH.
+          which cargo || true
+          which rustup || true
+          # Use absolute paths to the rustup-managed toolchain. The
+          # macOS runner image has a brew-installed `cargo`/`rustup`
+          # link that can be the standalone `rustup-init` installer
+          # binary; resolving via $PATH then dispatches `cargo test`
+          # to `rustup-init test` and errors with
+          # `unexpected argument 'test'`. Going through
+          # `~/.cargo/bin/...` bypasses any PATH-resolved shim and
+          # invokes the toolchain `dtolnay/rust-toolchain@stable`
+          # actually installed.
+          rustup_bin="$HOME/.cargo/bin/rustup"
+          cargo_bin="$HOME/.cargo/bin/cargo"
+          if [ ! -x "$rustup_bin" ]; then
+            echo "::error::$rustup_bin missing — rust-toolchain action did not install rustup at the expected path"
+            ls -la "$HOME/.cargo/bin/" || true
+            exit 1
+          fi
+          "$rustup_bin" --version
+          "$rustup_bin" default stable
+          # Ask rustup directly for the active cargo, in case the
+          # toolchain lives under a host-triple subdir rather than
+          # the canonical `~/.cargo/bin/cargo` location.
+          resolved_cargo="$("$rustup_bin" which cargo)"
+          echo "resolved cargo => $resolved_cargo"
+          "$resolved_cargo" --version
+          echo "CARGO_BIN=$resolved_cargo" >> "$GITHUB_ENV"
       # `crates/gossamer-cli/build.rs` ensures the runtime
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
-      - run: cargo test --workspace --no-fail-fast
-      - run: cargo build --release --workspace
+      - name: Test
+        shell: bash
+        run: |
+          "$CARGO_BIN" test --workspace --no-fail-fast
+      - name: Build release
+        shell: bash
+        run: |
+          "$CARGO_BIN" build --release --workspace
 
   idle-cpu:
     name: Idle CPU regression guard

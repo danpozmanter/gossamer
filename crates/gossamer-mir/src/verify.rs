@@ -90,11 +90,43 @@ pub enum VerifyError {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// Constructs a trivial single-block body that just `return`s and
+/// runs it through the verifier. Most callers operate on bodies
+/// produced by `lower_program`; this shape is what the verifier
+/// expects as the minimum well-formed CFG (one block, in-range
+/// locals, a `Return` terminator).
+///
+/// ```rust
+/// use gossamer_lex::SourceMap;
 /// use gossamer_mir::verify::verify_body;
-/// for body in &bodies {
-///     verify_body(body).expect("MIR verifier rejected body");
-/// }
+/// use gossamer_mir::{BasicBlock, BlockId, Body, LocalDecl, Terminator};
+/// use gossamer_types::{IntTy, TyCtxt};
+///
+/// let mut sources = SourceMap::new();
+/// let file = sources.add_file("doc.gos", String::new());
+/// let span = gossamer_lex::Span::new(file, 0, 0);
+///
+/// let mut tcx = TyCtxt::new();
+/// let i64_ty = tcx.int_ty(IntTy::I64);
+///
+/// let body = Body {
+///     name: "id".to_string(),
+///     def: None,
+///     arity: 1,
+///     locals: vec![
+///         LocalDecl { ty: i64_ty, debug_name: None, mutable: false },
+///         LocalDecl { ty: i64_ty, debug_name: None, mutable: false },
+///     ],
+///     blocks: vec![BasicBlock {
+///         id: BlockId::ENTRY,
+///         stmts: Vec::new(),
+///         terminator: Terminator::Return,
+///         span,
+///     }],
+///     span,
+/// };
+///
+/// verify_body(&body).expect("MIR verifier rejected body");
 /// ```
 pub fn verify_body(body: &Body) -> Result<(), Vec<VerifyError>> {
     let mut errors: Vec<VerifyError> = Vec::new();
