@@ -229,6 +229,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_json_set", (Ptr, Ptr, Ptr) -> Ptr, Cranelift, "Set a key on a JSON object and return the modified value."),
     rt!("gos_rt_json_value_array", (Ptr) -> Ptr, Cranelift, "Construct a JSON array value from a GosVec."),
     rt!("gos_rt_json_value_bool", (I32) -> Ptr, Cranelift, "Construct a JSON boolean value."),
+    rt!("gos_rt_json_value_float", (F64) -> Ptr, Cranelift, "Construct a JSON float value from an f64."),
     rt!("gos_rt_json_value_int", (I64) -> Ptr, Cranelift, "Construct a JSON integer value."),
     rt!("gos_rt_json_value_null", () -> Ptr, Cranelift, "Construct a JSON null value."),
     rt!("gos_rt_json_value_object", (Ptr) -> Ptr, Cranelift, "Construct a JSON object from a flat key-value GosVec."),

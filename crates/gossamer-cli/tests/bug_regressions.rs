@@ -1152,3 +1152,41 @@ fn main() {
     // guarding against.
     assert!(!out.0.contains("checksum=0\n"), "second slot dropped");
 }
+
+#[test]
+fn json_render_adt_text_branch_does_not_free_uninit_pairs_vec() {
+    // json::render(&adt) builds a temporary GosVec (pairs_vec) inside
+    // lower_json_render_adt.  The insert_drops_at_returns pass used to
+    // emit a gos_rt_vec_free for pairs_vec at every Return block —
+    // including the text-mode arm where pairs_vec was never initialised.
+    // That produced gos_rt_vec_free(stack_garbage) → segfault in
+    // __GI___libc_free.  The fix: emit the free immediately in the JSON
+    // arm and re-assign pairs_vec to 0 so the global drop pass skips it.
+    let src = r#"
+use std::json
+
+struct Info { num: i64, label: String }
+
+fn show(item: Info, as_json: bool) {
+    if as_json {
+        println!("{}", json::render(&item))
+    } else {
+        println!("num={} label={}", item.num, item.label)
+    }
+}
+
+fn main() {
+    let it = Info { num: 42, label: "hello".to_string() }
+    show(it, false)
+}
+"#;
+    let dir = fresh_dir("json_render_text_branch");
+    let path = write_source(&dir, "json_render_text_branch", src);
+    let scratch = dir.join("bin");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native(&path, &scratch).expect("build");
+    let out = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "segfault in text branch; stderr: {}", out.1);
+    assert_eq!(out.0, "num=42 label=hello\n");
+}

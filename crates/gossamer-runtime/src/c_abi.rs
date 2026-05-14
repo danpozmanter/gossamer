@@ -7195,6 +7195,22 @@ unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
     if p.is_null() {
         return None;
     }
+    // Arc<serde_json::Value> pointers are always >> 1 on any real allocator.
+    // If the first word is 0 or 1 we received a *mut GosResult (disc + payload)
+    // instead of a *const GosJson — unwrap the Option layer transparently.
+    let first_word = unsafe { *(p as *const u64) };
+    if first_word <= 1 {
+        if first_word == 0 {
+            // disc=0 (Some): offset-8 holds the inner *mut GosJson as i64.
+            let payload = unsafe { *((p as *const u64).add(1)) };
+            if payload == 0 {
+                return None;
+            }
+            return unsafe { json_borrow(payload as *const GosJson) };
+        }
+        // disc=1 (None)
+        return None;
+    }
     let json = unsafe { &*p };
     if json.view.is_null() {
         return None;
@@ -7212,6 +7228,18 @@ unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
 /// `None` only for null inputs.
 unsafe fn json_handle<'a>(p: *const GosJson) -> Option<&'a GosJson> {
     if p.is_null() {
+        return None;
+    }
+    // Same GosResult-vs-GosJson guard as json_borrow.
+    let first_word = unsafe { *(p as *const u64) };
+    if first_word <= 1 {
+        if first_word == 0 {
+            let payload = unsafe { *((p as *const u64).add(1)) };
+            if payload == 0 {
+                return None;
+            }
+            return unsafe { json_handle(payload as *const GosJson) };
+        }
         return None;
     }
     Some(unsafe { &*p })
@@ -7513,6 +7541,14 @@ pub unsafe extern "C" fn gos_rt_json_value_int(n: i64) -> *mut GosJson {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_value_bool(b: i32) -> *mut GosJson {
     GosJson::into_raw(serde_json::Value::Bool(b != 0))
+}
+
+/// `json::Value::Float(x)` constructor used by `json::render` on
+/// struct fields of type `f64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_float(x: f64) -> *mut GosJson {
+    let n = serde_json::Number::from_f64(x).unwrap_or_else(|| serde_json::Number::from(0));
+    GosJson::into_raw(serde_json::Value::Number(n))
 }
 
 /// `json::Value::Null` constructor.

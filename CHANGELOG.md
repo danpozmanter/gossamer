@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.1
+
+### Bug fixes
+
+- **`json::render(&adt)` now works in compiled mode.** Calling
+  `json::render` on a user-defined struct previously fell through to the
+  raw `gos_rt_json_render` path in compiled (Cranelift/LLVM) code,
+  where the runtime misinterpreted the struct pointer as a `GosJson`
+  Arc — crashing on the first field access.
+
+- **Compiled-mode segfault when `json::render` appears in one branch of
+  an if-else.** `lower_json_render_adt` allocates a `pairs_vec` (via
+  `Vec::new`) only inside the JSON arm. `insert_drops_at_returns`
+  scanned all blocks globally and emitted `gos_rt_vec_free(pairs_vec)`
+  at every `Return` — including the other arm where `pairs_vec` was
+  never initialised, producing `gos_rt_vec_free(0x21)` → segfault in
+  `__GI___libc_free`.
+
 ## 0.5.0
 
 ### Language

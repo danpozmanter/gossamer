@@ -3266,6 +3266,35 @@ impl<'a> Builder<'a> {
             self.set_current(next);
             return Some(dest);
         }
+        // Struct-aware render: json::render(user_struct) → serialize each field.
+        //
+        // The HIR type of `&val` is often left as a generic Var (the
+        // parameter T in `render<T>(val: &T)`). To find the concrete
+        // struct type, peel `&` syntactically and use the inner
+        // expression's type, which the typechecker always resolves.
+        if (last == "render" || last == "encode") && !args.is_empty() {
+            let inner_arg = {
+                let mut e = &args[0];
+                while let gossamer_hir::HirExprKind::Unary {
+                    op: gossamer_hir::HirUnaryOp::RefShared | gossamer_hir::HirUnaryOp::RefMut,
+                    operand,
+                    ..
+                } = &e.kind
+                {
+                    e = operand;
+                }
+                e
+            };
+            let mut peeled = inner_arg.ty;
+            while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+                peeled = *inner;
+            }
+            if let gossamer_types::TyKind::Adt { def, .. } = self.tcx.kind_of(peeled).clone() {
+                if let Some(result) = self.lower_json_render_adt(args, def, span) {
+                    return Some(result);
+                }
+            }
+        }
         let (rt_name, ret_ty) = match last {
             "parse" | "decode" => ("gos_rt_json_parse", self.result_json_value_error_adt_ty()),
             "render" | "encode" => ("gos_rt_json_render", self.tcx.string_ty()),
@@ -3313,6 +3342,167 @@ impl<'a> Builder<'a> {
         });
         self.set_current(next);
         Some(dest)
+    }
+
+    /// Serializes a user-defined struct to a JSON object string by
+    /// building a flat key/value `GosVec`, calling
+    /// `gos_rt_json_value_object`, then `gos_rt_json_render`.
+    /// Returns `None` when struct metadata is unavailable (fallback
+    /// to `gos_rt_json_render` which handles `json::Value` natively).
+    fn lower_json_render_adt(
+        &mut self,
+        args: &[HirExpr],
+        def: gossamer_resolve::DefId,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let struct_name = self.struct_defs.get(&def)?.clone();
+        let field_names = self.structs.get(&struct_name)?.clone();
+        let field_tys: Vec<_> = self.tcx.struct_field_tys(def)?.to_vec();
+        if field_names.len() != field_tys.len() || field_names.is_empty() {
+            return None;
+        }
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let unit_ty = self.tcx.unit();
+        let string_ty = self.tcx.string_ty();
+        let json_val_ty = self.tcx.json_value_ty();
+        let vec_of_i64_ty = self.tcx.intern(TyKind::Vec(i64_ty));
+
+        let struct_local = self.lower_expr(&args[0])?;
+
+        // Allocate the KV pairs vec (8-byte element slots — cstr/GosJson ptrs).
+        let pairs_vec = self.fresh(vec_of_i64_ty);
+        let elem_size = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(elem_size),
+            Rvalue::Use(Operand::Const(ConstValue::Int(8))),
+            span,
+        );
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("Vec::new".to_string())),
+            args: vec![Operand::Copy(Place::local(elem_size))],
+            destination: Place::local(pairs_vec),
+            target: Some(next),
+        });
+        self.set_current(next);
+
+        for (i, (name, &fty)) in field_names.iter().zip(field_tys.iter()).enumerate() {
+            // Read the struct field by index projection.
+            let field_local = self.fresh(fty);
+            self.emit_assign(
+                Place::local(field_local),
+                Rvalue::Use(Operand::Copy(Place {
+                    local: struct_local,
+                    projection: vec![crate::ir::Projection::Field(i as u32)],
+                })),
+                span,
+            );
+
+            // Push field name as a cstr (String-typed local).
+            let name_local = self.fresh(string_ty);
+            self.emit_assign(
+                Place::local(name_local),
+                Rvalue::Use(Operand::Const(ConstValue::Str(name.clone()))),
+                span,
+            );
+            let push_dest = self.fresh(unit_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(pairs_vec)),
+                    Operand::Copy(Place::local(name_local)),
+                ],
+                destination: Place::local(push_dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+
+            // Convert field to *mut GosJson via the appropriate constructor.
+            let mut flat_fty = fty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat_fty) {
+                flat_fty = *inner;
+            }
+            let json_helper: &'static str = match self.tcx.kind_of(flat_fty) {
+                TyKind::Int(_) => "gos_rt_json_value_int",
+                TyKind::Float(_) => "gos_rt_json_value_float",
+                TyKind::Bool => "gos_rt_json_value_bool",
+                TyKind::String => "gos_rt_json_value_string",
+                TyKind::JsonValue => "gos_rt_json_identity",
+                _ => "gos_rt_json_value_null",
+            };
+            let json_local = self.fresh(json_val_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(json_helper.to_string())),
+                args: vec![Operand::Copy(Place::local(field_local))],
+                destination: Place::local(json_local),
+                target: Some(next),
+            });
+            self.set_current(next);
+
+            // Push the *mut GosJson ptr into the pairs vec.
+            let push_dest = self.fresh(unit_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(pairs_vec)),
+                    Operand::Copy(Place::local(json_local)),
+                ],
+                destination: Place::local(push_dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+        }
+
+        // Build the json::Value object from the KV pairs vec.
+        let json_obj = self.fresh(json_val_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_json_value_object".to_string())),
+            args: vec![Operand::Copy(Place::local(pairs_vec))],
+            destination: Place::local(json_obj),
+            target: Some(next),
+        });
+        self.set_current(next);
+
+        // Free the pairs vec immediately after use — it was only borrowed by
+        // gos_rt_json_value_object, so we own it and must release it here.
+        // Doing this inline (rather than relying on insert_drops_at_returns)
+        // keeps the free inside the JSON arm only: the drop-at-return pass
+        // operates on all return paths unconditionally, so a pairs_vec drop
+        // at the Return block would also fire along the text-mode arm where
+        // pairs_vec was never initialised, producing gos_rt_vec_free(garbage).
+        let free_dest = self.fresh(unit_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_free".to_string())),
+            args: vec![Operand::Copy(Place::local(pairs_vec))],
+            destination: Place::local(free_dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        // Re-assign pairs_vec to a sentinel so insert_drops_at_returns sees a
+        // re-assignment and disqualifies it from emitting a second free at Return.
+        self.emit_assign(
+            Place::local(pairs_vec),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+
+        // Render the json::Value to a compact JSON string.
+        let result = self.fresh(string_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_json_render".to_string())),
+            args: vec![Operand::Copy(Place::local(json_obj))],
+            destination: Place::local(result),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(result)
     }
 
     /// Picks the right `gos_rt_json_as_*` (or render) helper for

@@ -522,6 +522,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_flag_cell_load_vec"  => rt::gos_rt_flag_cell_load_vec,
         "gos_rt_json_value_string"   => rt::gos_rt_json_value_string,
         "gos_rt_json_value_int"      => rt::gos_rt_json_value_int,
+        "gos_rt_json_value_float"    => rt::gos_rt_json_value_float,
         "gos_rt_json_value_bool"     => rt::gos_rt_json_value_bool,
         "gos_rt_json_value_null"     => rt::gos_rt_json_value_null,
         "gos_rt_json_value_array"    => rt::gos_rt_json_value_array,

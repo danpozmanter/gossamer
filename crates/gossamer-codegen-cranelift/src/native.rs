@@ -4025,6 +4025,7 @@ fn lower_generic_rt_call(
         "gos_rt_errors_join_vec" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_errors_join" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_json_value_object_n" => (&[types::I64, ptr_ty], Some(ptr_ty)),
+        "gos_rt_json_value_float" => (&[types::F64], Some(ptr_ty)),
         "gos_rt_http_response_set_header" => (&[ptr_ty, ptr_ty, ptr_ty], None),
         "gos_rt_http_response_get_header" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_http_request_set_header" => (&[ptr_ty, ptr_ty, ptr_ty], None),
@@ -7592,6 +7593,33 @@ fn lower_intrinsic_call(
             };
             let n = coerce_arg_to(builder, n, types::I64)?;
             let call = builder.ins().call(fref, &[n]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
+            Ok(true)
+        }
+        "gos_rt_json_value_float" => {
+            let rt_fn = intrinsics.extern_fn_by_name(module, "gos_rt_json_value_float")?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let x = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::F64),
+                    intrinsics,
+                )?,
+                None => builder.ins().f64const(0.0),
+            };
+            let call = builder.ins().call(fref, &[x]);
             let v = builder.inst_results(call)[0];
             define_var_to(
                 builder,
