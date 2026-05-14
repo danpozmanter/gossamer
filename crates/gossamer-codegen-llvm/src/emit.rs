@@ -1115,66 +1115,129 @@ fn find_opt() -> Result<PathBuf> {
     if let Ok(path) = std::env::var("GOS_LLVM_OPT") {
         return Ok(PathBuf::from(path));
     }
-    for candidate in [
-        "opt",
-        "opt-18",
-        "opt-19",
-        "opt-20",
-        "opt-17",
-        "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/bin/opt",
-        "/usr/lib/llvm-18/bin/opt",
-        "/usr/lib/llvm-19/bin/opt",
-        "/usr/lib/llvm-20/bin/opt",
-    ] {
+    for candidate in OPT_CANDIDATES {
         if is_executable(candidate) {
             return Ok(PathBuf::from(candidate));
         }
     }
-    Err(anyhow!(
-        "opt (LLVM optimiser) not found. Install `llvm-18-dev` or set \
-         GOS_LLVM_OPT to the full path."
-    ))
+    Err(anyhow!("{}", missing_llvm_tool_message("opt", "GOS_LLVM_OPT")))
 }
 
 fn find_llc() -> Result<PathBuf> {
     if let Ok(path) = std::env::var("GOS_LLC") {
         return Ok(PathBuf::from(path));
     }
-    // Well-known system paths and versioned binaries for
-    // apt-installed LLVM on Debian/Ubuntu.
-    for candidate in [
-        "llc",
-        "llc-18",
-        "llc-19",
-        "llc-20",
-        "llc-17",
-        "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/bin/llc",
-        "/usr/lib/llvm-18/bin/llc",
-        "/usr/lib/llvm-19/bin/llc",
-        "/usr/lib/llvm-20/bin/llc",
-    ] {
+    for candidate in LLC_CANDIDATES {
         if is_executable(candidate) {
             return Ok(PathBuf::from(candidate));
         }
     }
-    Err(anyhow!(
-        "llc not found. Install `llvm-18-dev` or similar, or set GOS_LLC \
-         to the full path."
-    ))
+    Err(anyhow!("{}", missing_llvm_tool_message("llc", "GOS_LLC")))
+}
+
+/// Cross-platform candidate list for the LLVM `opt` driver. Order
+/// matters: PATH-resolvable bare names first (cheap), then well-known
+/// system locations on Linux (apt), macOS (Homebrew, both Apple Silicon
+/// and Intel prefixes), and Windows (Chocolatey / pre-installed runner
+/// image). Version-suffixed entries cover 18 first (target), then
+/// 19 / 20 / 17 as graceful fall-backs.
+const OPT_CANDIDATES: &[&str] = &[
+    // PATH lookups
+    "opt",
+    "opt-18",
+    "opt-19",
+    "opt-20",
+    "opt-17",
+    // Linux (apt-installed)
+    "/usr/lib/llvm-18/bin/opt",
+    "/usr/lib/llvm-19/bin/opt",
+    "/usr/lib/llvm-20/bin/opt",
+    "/usr/lib/llvm-17/bin/opt",
+    "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/bin/opt",
+    // macOS Homebrew (Apple Silicon)
+    "/opt/homebrew/opt/llvm@18/bin/opt",
+    "/opt/homebrew/opt/llvm@19/bin/opt",
+    "/opt/homebrew/opt/llvm@20/bin/opt",
+    "/opt/homebrew/opt/llvm@17/bin/opt",
+    "/opt/homebrew/opt/llvm/bin/opt",
+    "/opt/homebrew/bin/opt",
+    // macOS Homebrew (Intel)
+    "/usr/local/opt/llvm@18/bin/opt",
+    "/usr/local/opt/llvm@19/bin/opt",
+    "/usr/local/opt/llvm@20/bin/opt",
+    "/usr/local/opt/llvm@17/bin/opt",
+    "/usr/local/opt/llvm/bin/opt",
+    "/usr/local/bin/opt",
+    // Windows (Chocolatey / Inno installer / GitHub runner image)
+    "C:\\Program Files\\LLVM\\bin\\opt.exe",
+    "C:\\Program Files (x86)\\LLVM\\bin\\opt.exe",
+];
+
+/// Parallel candidate list for `llc`. See [`OPT_CANDIDATES`] for the
+/// ordering rationale; the entries mirror it directly.
+const LLC_CANDIDATES: &[&str] = &[
+    "llc",
+    "llc-18",
+    "llc-19",
+    "llc-20",
+    "llc-17",
+    "/usr/lib/llvm-18/bin/llc",
+    "/usr/lib/llvm-19/bin/llc",
+    "/usr/lib/llvm-20/bin/llc",
+    "/usr/lib/llvm-17/bin/llc",
+    "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/bin/llc",
+    "/opt/homebrew/opt/llvm@18/bin/llc",
+    "/opt/homebrew/opt/llvm@19/bin/llc",
+    "/opt/homebrew/opt/llvm@20/bin/llc",
+    "/opt/homebrew/opt/llvm@17/bin/llc",
+    "/opt/homebrew/opt/llvm/bin/llc",
+    "/opt/homebrew/bin/llc",
+    "/usr/local/opt/llvm@18/bin/llc",
+    "/usr/local/opt/llvm@19/bin/llc",
+    "/usr/local/opt/llvm@20/bin/llc",
+    "/usr/local/opt/llvm@17/bin/llc",
+    "/usr/local/opt/llvm/bin/llc",
+    "/usr/local/bin/llc",
+    "C:\\Program Files\\LLVM\\bin\\llc.exe",
+    "C:\\Program Files (x86)\\LLVM\\bin\\llc.exe",
+];
+
+fn missing_llvm_tool_message(tool: &str, env_var: &str) -> String {
+    format!(
+        "{tool} (LLVM toolchain) not found. Install LLVM 18+ and retry:\n  \
+         Linux:   apt install llvm-18-dev   (or the distro equivalent)\n  \
+         macOS:   brew install llvm@18\n  \
+         Windows: choco install llvm        (or pre-installed at \
+         C:\\Program Files\\LLVM\\bin\\{tool}.exe)\n\
+         Or set `{env_var}` to the absolute path of `{tool}`."
+    )
 }
 
 fn is_executable(path: &str) -> bool {
     if let Ok(meta) = std::fs::metadata(path) {
         return meta.is_file();
     }
-    // Fall back to a `which`-style PATH scan for bare names.
-    if !path.contains('/') {
-        if let Ok(paths) = std::env::var("PATH") {
-            for dir in paths.split(':') {
-                let p = format!("{dir}/{path}");
-                if std::fs::metadata(&p).is_ok_and(|m| m.is_file()) {
-                    return true;
-                }
+    // Bare name (no path separator)? Walk `PATH` looking for it.
+    // Use `std::env::split_paths` so the separator is correct on
+    // every platform (`:` on Unix, `;` on Windows), and try the
+    // `.exe` suffix on Windows when the caller passed a bare stem.
+    let has_separator = path.contains('/') || path.contains('\\');
+    if has_separator {
+        return false;
+    }
+    let Ok(paths) = std::env::var("PATH") else {
+        return false;
+    };
+    let suffixes: &[&str] = if cfg!(windows) && !path.to_ascii_lowercase().ends_with(".exe") {
+        &["", ".exe"]
+    } else {
+        &[""]
+    };
+    for dir in std::env::split_paths(&paths) {
+        for suffix in suffixes {
+            let candidate = dir.join(format!("{path}{suffix}"));
+            if std::fs::metadata(&candidate).is_ok_and(|m| m.is_file()) {
+                return true;
             }
         }
     }

@@ -50,6 +50,31 @@ jobs:
           # rlibs still reference the absent symbol on Windows
           # MSVC; bumping the prefix forces a clean rebuild.
           prefix-key: v2-test-stdio
+      # `gos build` shells out to `opt` and `llc` from LLVM 18+.
+      # Ubuntu runners ship them at `/usr/lib/llvm-18/bin/` (picked
+      # up by the auto-discovery candidates); macOS and Windows
+      # runners need an explicit install + env-var pointer.
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          brew install llvm@18
+          prefix="$(brew --prefix llvm@18)"
+          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=$prefix/bin/llc"      >> "$GITHUB_ENV"
+      - name: Locate LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = 'C:\Program Files\LLVM\bin'
+          if (-not (Test-Path "$bin\opt.exe")) {
+            choco install -y --no-progress llvm
+          }
+          if (-not (Test-Path "$bin\opt.exe")) {
+            throw "opt.exe still missing under $bin after install"
+          }
+          "GOS_LLVM_OPT=$bin\opt.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "GOS_LLC=$bin\llc.exe"      | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       # `crates/gossamer-cli/build.rs` ensures the runtime
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
