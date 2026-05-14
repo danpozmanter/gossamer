@@ -66,24 +66,27 @@ jobs:
           test -x "$prefix/bin/llc" || { echo "llc missing under $prefix/bin" >&2; exit 1; }
           echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
           echo "GOS_LLC=$prefix/bin/llc"      >> "$GITHUB_ENV"
-      - name: Locate LLVM (Windows)
+      - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # Try PATH first (covers chocolatey shims under
-          # `C:\ProgramData\chocolatey\bin\`) and a list of
-          # well-known install locations second. Only fall back
-          # to a forced reinstall if both come up empty — the
-          # runner image's pre-installed LLVM is usually fine,
-          # but the choco state can desync from the filesystem.
+          # The upstream LLVM Windows installer (wrapped by the
+          # chocolatey `llvm` package) ships a slim distribution:
+          # clang / clang-cl / clang-tidy / lld / llvm-ar — but
+          # NOT `opt.exe` or `llc.exe`, the two binaries our
+          # codegen pipeline drives. Pull the full toolchain from
+          # MSYS2's `mingw-w64-x86_64-llvm` package, which is
+          # preinstalled on the windows-latest runner image at
+          # `C:\msys64\` and includes both.
           function Find-LlvmTool($name) {
             $cmd = Get-Command $name -ErrorAction SilentlyContinue
             if ($cmd) { return $cmd.Source }
             foreach ($dir in @(
+              'C:\msys64\mingw64\bin',
+              'C:\msys64\clang64\bin',
               'C:\Program Files\LLVM\bin',
-              'C:\Program Files (x86)\LLVM\bin',
-              'C:\ProgramData\chocolatey\bin'
+              'C:\Program Files (x86)\LLVM\bin'
             )) {
               $cand = Join-Path $dir $name
               if (Test-Path $cand) { return $cand }
@@ -93,16 +96,33 @@ jobs:
           $opt = Find-LlvmTool 'opt.exe'
           $llc = Find-LlvmTool 'llc.exe'
           if (-not $opt -or -not $llc) {
-            Write-Host "LLVM tools missing; forcing chocolatey reinstall"
-            choco install -y --no-progress --force llvm
-            $profile = Join-Path $env:ChocolateyInstall 'helpers\chocolateyProfile.psm1'
-            if (Test-Path $profile) { Import-Module $profile }
-            if (Get-Command refreshenv -ErrorAction SilentlyContinue) { refreshenv }
+            Write-Host "Installing mingw-w64 LLVM via MSYS2 pacman"
+            & 'C:\msys64\usr\bin\pacman.exe' -S --noconfirm --needed `
+              mingw-w64-x86_64-llvm
+            if ($LASTEXITCODE -ne 0) {
+              throw "pacman -S mingw-w64-x86_64-llvm failed (exit $LASTEXITCODE)"
+            }
             $opt = Find-LlvmTool 'opt.exe'
             $llc = Find-LlvmTool 'llc.exe'
           }
-          if (-not $opt) { throw "opt.exe still not found after install" }
-          if (-not $llc) { throw "llc.exe still not found after install" }
+          if (-not $opt -or -not $llc) {
+            Write-Host "=== Diagnostic: contents of expected install dirs ==="
+            foreach ($d in @(
+              'C:\msys64\mingw64\bin',
+              'C:\Program Files\LLVM\bin'
+            )) {
+              if (Test-Path $d) {
+                Write-Host "--- $d ---"
+                Get-ChildItem -Path $d -Filter '*.exe' -ErrorAction SilentlyContinue |
+                  Select-Object -ExpandProperty Name | Sort-Object | Format-Wide -Column 4 |
+                  Out-String | Write-Host
+              } else {
+                Write-Host "--- $d  (missing) ---"
+              }
+            }
+            if (-not $opt) { throw "opt.exe not found after MSYS2 install" }
+            if (-not $llc) { throw "llc.exe not found after MSYS2 install" }
+          }
           Write-Host "GOS_LLVM_OPT=$opt"
           Write-Host "GOS_LLC=$llc"
           "GOS_LLVM_OPT=$opt" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8

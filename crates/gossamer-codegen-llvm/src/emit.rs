@@ -895,7 +895,16 @@ fn invoke_llc_pipeline(
         // recommendation for AVX-512 codegen on cores where
         // 512-bit ops down-clock or share execution-port budget
         // with scalar work.
-        .arg("-mattr=+prefer-256-bit")
+        // `+prefer-256-bit` is an x86 AVX-512 feature flag — only
+        // meaningful on x86_64 hosts. Passing it to an aarch64
+        // target produces a warning but otherwise no-ops; we keep
+        // it scoped to x86 so non-x86 hosts (Apple Silicon, etc.)
+        // don't see the spurious "unknown subtarget feature" line.
+        .args(if cfg!(target_arch = "x86_64") {
+            &["-mattr=+prefer-256-bit"][..]
+        } else {
+            &[][..]
+        })
         // Block `LoopIdiomRecognize` from rewriting trivial
         // copy / shift loops into `llvm.memcpy` / `llvm.memmove`
         // calls. Once a memcpy/memmove appears with a runtime
@@ -973,7 +982,16 @@ fn invoke_llc_pipeline(
         // the late-stage vectoriser at 256-bit too so any
         // remaining post-`opt` codegen (slow-path lowering,
         // memcpy/memset expansion) doesn't reach for ZMM.
-        .arg("-mattr=+prefer-256-bit")
+        // `+prefer-256-bit` is an x86 AVX-512 feature flag — only
+        // meaningful on x86_64 hosts. Passing it to an aarch64
+        // target produces a warning but otherwise no-ops; we keep
+        // it scoped to x86 so non-x86 hosts (Apple Silicon, etc.)
+        // don't see the spurious "unknown subtarget feature" line.
+        .args(if cfg!(target_arch = "x86_64") {
+            &["-mattr=+prefer-256-bit"][..]
+        } else {
+            &[][..]
+        })
         .arg(&opt_path)
         .arg("-o")
         .arg(obj_out);
@@ -1141,9 +1159,11 @@ fn find_llc() -> Result<PathBuf> {
 /// Cross-platform candidate list for the LLVM `opt` driver. Order
 /// matters: PATH-resolvable bare names first (cheap), then well-known
 /// system locations on Linux (apt), macOS (Homebrew, both Apple Silicon
-/// and Intel prefixes), and Windows (Chocolatey / pre-installed runner
-/// image). Version-suffixed entries cover 18 first (target), then
-/// 19 / 20 / 17 as graceful fall-backs.
+/// and Intel prefixes), and Windows (MSYS2 mingw — which is the only
+/// commonly-installed source that actually ships `opt.exe` / `llc.exe`
+/// on Windows, since the upstream LLVM installer ships only the clang
+/// front-end). Version-suffixed entries cover 18 first (target),
+/// then 19 / 20 / 17 as graceful fall-backs.
 const OPT_CANDIDATES: &[&str] = &[
     // PATH lookups
     "opt",
@@ -1171,7 +1191,15 @@ const OPT_CANDIDATES: &[&str] = &[
     "/usr/local/opt/llvm@17/bin/opt",
     "/usr/local/opt/llvm/bin/opt",
     "/usr/local/bin/opt",
-    // Windows (Chocolatey / Inno installer / GitHub runner image)
+    // Windows (MSYS2 mingw — full LLVM via `pacman -S
+    // mingw-w64-x86_64-llvm`; also `mingw-w64-clang-x86_64-llvm`
+    // under `clang64/`).
+    "C:\\msys64\\mingw64\\bin\\opt.exe",
+    "C:\\msys64\\clang64\\bin\\opt.exe",
+    "C:\\msys64\\ucrt64\\bin\\opt.exe",
+    // Windows (LLVM upstream installer — usually clang-only,
+    // but a custom-built distribution may include opt; kept as a
+    // last-resort path).
     "C:\\Program Files\\LLVM\\bin\\opt.exe",
     "C:\\Program Files (x86)\\LLVM\\bin\\opt.exe",
 ];
@@ -1201,6 +1229,9 @@ const LLC_CANDIDATES: &[&str] = &[
     "/usr/local/opt/llvm@17/bin/llc",
     "/usr/local/opt/llvm/bin/llc",
     "/usr/local/bin/llc",
+    "C:\\msys64\\mingw64\\bin\\llc.exe",
+    "C:\\msys64\\clang64\\bin\\llc.exe",
+    "C:\\msys64\\ucrt64\\bin\\llc.exe",
     "C:\\Program Files\\LLVM\\bin\\llc.exe",
     "C:\\Program Files (x86)\\LLVM\\bin\\llc.exe",
 ];
@@ -1208,10 +1239,11 @@ const LLC_CANDIDATES: &[&str] = &[
 fn missing_llvm_tool_message(tool: &str, env_var: &str) -> String {
     format!(
         "{tool} (LLVM toolchain) not found. Install LLVM 18+ and retry:\n  \
-         Linux:   apt install llvm-18-dev   (or the distro equivalent)\n  \
+         Linux:   apt install llvm-18-dev               (or the distro equivalent)\n  \
          macOS:   brew install llvm@18\n  \
-         Windows: choco install llvm        (or pre-installed at \
-         C:\\Program Files\\LLVM\\bin\\{tool}.exe)\n\
+         Windows: pacman -S mingw-w64-x86_64-llvm       (from MSYS2; the upstream LLVM\n           \
+                                                         Windows installer ships clang\n           \
+                                                         but not `opt`/`llc`)\n\
          Or set `{env_var}` to the absolute path of `{tool}`."
     )
 }
@@ -1248,22 +1280,32 @@ fn is_executable(path: &str) -> bool {
 }
 
 fn host_triple() -> String {
-    // Mirror the target triple the Cranelift backend uses via
-    // `cranelift_native`. Linux hosts are effectively always
-    // `x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`
-    // these days; honour `TARGET` (the env var cargo sets for
-    // build scripts) when present.
+    // Build the LLVM target triple for the current host. `llc`
+    // uses this to pick the object-file format (ELF on Linux,
+    // Mach-O on Darwin, COFF on Windows); getting the OS portion
+    // wrong produces an object the host's `ld` rejects as
+    // "unknown file type" — the exact symptom seen on macOS when
+    // this helper hardcoded `unknown-linux-gnu`.
+    //
+    // `TARGET` (set by cargo build scripts) takes precedence so
+    // cross-compilation still works; otherwise derive arch + OS
+    // from `std::env::consts` (cross-platform, no subprocess).
     if let Ok(triple) = std::env::var("TARGET") {
         return triple;
     }
-    // Fall back to `uname -m` + linux-gnu.
-    let arch = std::process::Command::new("uname")
-        .arg("-m")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map_or_else(|| "x86_64".to_string(), |s| s.trim().to_string());
-    format!("{arch}-unknown-linux-gnu")
+    let arch = std::env::consts::ARCH;
+    let os = match std::env::consts::OS {
+        "linux" => "unknown-linux-gnu",
+        "macos" => "apple-darwin",
+        "windows" => "pc-windows-msvc",
+        "freebsd" => "unknown-freebsd",
+        "ios" => "apple-ios",
+        // Conservative default — Linux is the dev host. Any
+        // unrecognised target will produce a clear `llc` error
+        // rather than a silently mis-formatted object.
+        _ => "unknown-linux-gnu",
+    };
+    format!("{arch}-{os}")
 }
 
 #[cfg(test)]
@@ -1305,5 +1347,56 @@ mod shape_validation_tests {
     fn rejects_random_text() {
         let g = "this is not LLVM IR";
         assert!(validate_global_decl_shape(g).is_err());
+    }
+}
+
+#[cfg(test)]
+mod host_triple_tests {
+    use super::host_triple;
+
+    /// `llc` selects the object-file format from the OS portion of
+    /// the triple — ELF on a Linux triple, Mach-O on `apple-darwin`,
+    /// COFF on `pc-windows-msvc`. If `host_triple` hardcoded
+    /// `unknown-linux-gnu` on every host (as it used to), macOS /
+    /// Windows builds linked with `ld: unknown file type` because
+    /// the object format was wrong. This regression pins the OS
+    /// portion of the triple to the running host so any future
+    /// drift fails at unit-test time rather than at `gos build`
+    /// time.
+    ///
+    /// Cargo sets `TARGET` for build scripts, not for normal test
+    /// binaries — in `cargo test` runs the env var is unset and
+    /// the function exercises its OS-detection branch, which is
+    /// exactly what we want to cover here.
+    #[test]
+    fn host_triple_matches_running_os() {
+        if std::env::var("TARGET").is_ok() {
+            // Cross-compilation override is active — the function
+            // is just echoing back `TARGET` and the host-detection
+            // branch isn't covered. Skip rather than assert a
+            // mismatch we can't control.
+            return;
+        }
+        let triple = host_triple();
+        let expected_os_part = match std::env::consts::OS {
+            "linux" => "unknown-linux-gnu",
+            "macos" => "apple-darwin",
+            "windows" => "pc-windows-msvc",
+            "freebsd" => "unknown-freebsd",
+            "ios" => "apple-ios",
+            _ => "unknown-linux-gnu",
+        };
+        assert!(
+            triple.ends_with(expected_os_part),
+            "host_triple {triple:?} does not end with {expected_os_part:?} \
+             for OS {os:?}; llc would emit the wrong object format and the \
+             system linker would reject it",
+            os = std::env::consts::OS,
+        );
+        assert!(
+            triple.starts_with(std::env::consts::ARCH),
+            "host_triple {triple:?} does not start with arch {arch:?}",
+            arch = std::env::consts::ARCH,
+        );
     }
 }
