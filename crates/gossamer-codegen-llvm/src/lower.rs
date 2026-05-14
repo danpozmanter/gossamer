@@ -4564,13 +4564,67 @@ impl<'a> Lowerer<'a> {
             }
         }
 
-        if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
+        // Look up the registry's canonical return type for
+        // `gos_rt_*` symbols. The call instruction's return type
+        // drives the x86_64 calling convention's read register
+        // (rax for integer / ptr, xmm0 for double on both SysV
+        // and Win64). When the surrounding code writes a runtime
+        // helper's result into a destination slot whose type
+        // differs from the helper's declared return (e.g. reading
+        // an f64 element out of a `Vec<f64>` via the i64-shaped
+        // `gos_rt_vec_get_i64`), the call MUST be typed with the
+        // helper's actual return so the caller reads the right
+        // register. Linux SysV LLVM 18 happens to normalise the
+        // mismatch through the `declare i64` line and a memory
+        // spill/reload pair; Windows mingw-w64-x86_64-llvm 18
+        // does NOT — it honours the call-site type literally, so
+        // the caller reads xmm0 while the function wrote rax and
+        // the load yields stale FP state instead of the i64 we
+        // returned. The visible symptom on Windows was
+        // `halved[0] = 2` instead of `0.5` for any `Fn(f64) ->
+        // f64` closure result threaded through
+        // `gos_rt_vec_get_i64` (the closure result bytes never
+        // made it through the read).
+        let registry_ret: Option<String> = if symbol.starts_with("gos_rt_") {
+            gossamer_abi::lookup(symbol).map(|e| e.sig.ret.llvm_ir().to_string())
+        } else {
+            None
+        };
+        let dest_is_void = dest_ty == "void" || is_unit(self.tcx, dest_ty_mir);
+        let registry_says_void = registry_ret.as_deref() == Some("void");
+        if dest_is_void || registry_says_void {
+            // Either the destination is unit-typed (caller
+            // discards the return) or the registry declares the
+            // helper as `void`. Emit a void call; if the dest is
+            // non-unit but the helper returns void, fill the
+            // slot with a zero of the dest's shape so any
+            // accidental read doesn't see undefined memory.
             writeln!(self.out, "  call void @\"{symbol}\"({arg_text})").unwrap();
+            if !dest_is_void {
+                let slot = local_slot(destination.local);
+                let zero = match dest_ty.as_str() {
+                    "ptr" => "null".to_string(),
+                    "double" | "float" => "0.0".to_string(),
+                    _ => "0".to_string(),
+                };
+                writeln!(self.out, "  store {dest_ty} {zero}, ptr {slot}").unwrap();
+            }
         } else {
             let tmp = self.fresh();
+            // Aggregate destinations always come back as a heap
+            // pointer; use dest_ty (typically "ptr") for them so
+            // the subsequent memcpy / store sees the right
+            // shape. Non-aggregate destinations get the
+            // registry's return type when one exists, falling
+            // back to dest_ty otherwise.
+            let call_ret_ty = if is_aggregate(self.tcx, dest_ty_mir) {
+                dest_ty.clone()
+            } else {
+                registry_ret.clone().unwrap_or_else(|| dest_ty.clone())
+            };
             writeln!(
                 self.out,
-                "  {tmp} = call {dest_ty} @\"{symbol}\"({arg_text})"
+                "  {tmp} = call {call_ret_ty} @\"{symbol}\"({arg_text})"
             )
             .unwrap();
             let slot = local_slot(destination.local);
@@ -4586,6 +4640,33 @@ impl<'a> Lowerer<'a> {
                     "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr {tmp}, i64 {bytes}, i1 false)"
                 )
                 .unwrap();
+            } else if call_ret_ty != dest_ty {
+                // Registry-typed call result differs from the
+                // destination slot's MIR-derived shape. The
+                // runtime helpers (gos_rt_vec_get_i64,
+                // gos_rt_arr_get, …) store and return values as
+                // raw 8-byte slots regardless of source type, so
+                // the i64 → double / i64 → ptr conversion at the
+                // boundary is a bit-reinterpret, NOT a numeric
+                // conversion. Reach for `bitcast` (and ptr-int
+                // detours) directly instead of going through
+                // `coerce_llvm_value`, whose i64↔double path uses
+                // `sitofp` / `fptosi` semantics which would turn
+                // the bit pattern of `0.5` (0x3FE0…) into the
+                // f64 value `4.5e18`.
+                let coerced = if call_ret_ty == "i64" && (dest_ty == "double" || dest_ty == "float")
+                {
+                    let mid = self.fresh();
+                    writeln!(self.out, "  {mid} = bitcast i64 {tmp} to {dest_ty}").unwrap();
+                    mid
+                } else if (call_ret_ty == "double" || call_ret_ty == "float") && dest_ty == "i64" {
+                    let mid = self.fresh();
+                    writeln!(self.out, "  {mid} = bitcast {call_ret_ty} {tmp} to i64").unwrap();
+                    mid
+                } else {
+                    self.coerce_llvm_value(&tmp, &call_ret_ty, &dest_ty)
+                };
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
             } else {
                 writeln!(self.out, "  store {dest_ty} {tmp}, ptr {slot}").unwrap();
             }
