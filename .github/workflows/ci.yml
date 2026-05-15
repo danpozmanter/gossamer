@@ -172,7 +172,20 @@ jobs:
             exit 1
           fi
           "$rustup_bin" --version
-          "$rustup_bin" default stable
+          # Pre-warm the project toolchain serially. `rustup show`
+          # reads `rust-toolchain.toml` and installs the pinned
+          # channel + components synchronously; without this, the
+          # FIRST cargo invocation does the install, and any nested
+          # cargo (e.g. `crates/gossamer-cli/build.rs` rebuilding
+          # the runtime staticlib) races against the parent on
+          # component download — one of them dies with
+          # "could not rename 'downloaded' / .partial" (Linux)
+          # or "detected conflict: rust-src Cargo.lock" (macOS /
+          # Windows). Doing the install serially here is the cheap
+          # cure. `rustup show` is idempotent; if dtolnay's install
+          # already covers what rust-toolchain.toml wants, this is
+          # a no-op.
+          "$rustup_bin" show
           # Ask rustup directly for the active cargo, in case the
           # toolchain lives under a host-triple subdir rather than
           # the canonical `~/.cargo/bin/cargo` location.

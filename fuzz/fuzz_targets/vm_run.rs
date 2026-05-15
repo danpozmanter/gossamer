@@ -28,8 +28,8 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let mut map = SourceMap::new();
-    let file = map.add_file("fuzz.gos", source.to_string());
-    let (sf, diags) = parse_source_file(source, file);
+    let file = map.add_file("fuzz.gos", source.clone());
+    let (sf, diags) = parse_source_file(&source, file);
     if !diags.is_empty() {
         return;
     }
@@ -49,5 +49,5 @@ fuzz_target!(|data: &[u8]| {
     }
     // Execute `main` if it exists. A clean RuntimeError is fine;
     // a panic / UB is the regression libFuzzer is hunting for.
-    let _ = vm.call("main", &[]);
+    let _ = vm.call("main", Vec::new());
 });

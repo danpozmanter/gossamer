@@ -6917,29 +6917,6 @@ fn http_max_conn() -> usize {
     cap
 }
 
-/// Number of worker threads the HTTP accept loop dispatches
-/// connections to. Overridable via `GOSSAMER_HTTP_WORKERS`;
-/// default is `available_parallelism() * 2` so blocking I/O
-/// doesn't starve compute. Cached on first call.
-fn http_worker_count() -> usize {
-    static CACHE: AtomicUsize = AtomicUsize::new(0);
-    let cached = CACHE.load(Ordering::Relaxed);
-    if cached != 0 {
-        return cached;
-    }
-    let count = std::env::var("GOSSAMER_HTTP_WORKERS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map_or(1, std::num::NonZero::get)
-                .saturating_mul(2)
-        });
-    CACHE.store(count, Ordering::Relaxed);
-    count
-}
-
 const RESPONSE_503_BYTES: &[u8] =
     b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
@@ -7019,49 +6996,33 @@ pub unsafe extern "C" fn gos_rt_http_serve(
         // worker and are not supported under this server. Keep
         // handlers CPU-bound; offload blocking work to a separate
         // goroutine and pass results back via a channel.
-        // fixed worker pool + bounded queue
-        // replaces per-connection thread spawn. Each accepted socket
-        // is pushed into a `sync_channel(cap)`; a fixed pool of
-        // workers (size `GOSSAMER_HTTP_WORKERS`, default
-        // `available_parallelism()*2`) drains the channel and runs
-        // `handle_http_conn` synchronously. Workers do blocking
-        // reads/writes — fine because they're dedicated threads, not
-        // M:N goroutines.
+        // Thread-per-connection — matches Go's `net/http` shape.
+        // Each accepted socket gets a dedicated OS thread that runs
+        // `handle_http_conn` to completion (blocking reads/writes
+        // are safe because they only stall their own thread, not a
+        // shared worker pool). `HTTP_ACTIVE_CONNS` caps the live
+        // thread count at `GOSSAMER_HTTP_MAX_CONN` (default 4096)
+        // and responds 503 past the cap, so a runaway client cannot
+        // exhaust the fd / thread budget.
         //
-        // Channel-full → 503 fallback (matches the pre-0.6 cap
-        // behavior). The 0.6 cap (`HTTP_ACTIVE_CONNS`) still tracks
-        // in-flight handlers so callers querying it observe correct
-        // backpressure.
+        // The previous (0.6.0 stability) shape was a fixed worker
+        // pool + bounded sync_channel. That cap on in-flight workers
+        // (`available_parallelism() * 2` ≈ 48 on a 12-core box)
+        // throttled throughput at >48 concurrent clients and the
+        // queue-full path silently `try_send`-dropped sockets, which
+        // the bench saw as connection errors. The per-connection
+        // thread design is what the 2026-05-12 web benchmark
+        // (272 k RPS, 0 fails) measured.
         //
-        // Graceful shutdown: when `sched_global::request_shutdown` is
-        // called (from `gos_rt_exit`), the accept loop exits its
-        // next iteration, the channel is dropped, workers see Err on
-        // recv and exit. In-flight handlers run to completion.
-        let workers = http_worker_count();
-        let (tx, rx) = std::sync::mpsc::sync_channel::<std::net::TcpStream>(http_max_conn());
-        let rx = std::sync::Arc::new(parking_lot::Mutex::new(rx));
-        for i in 0..workers {
-            let rx = std::sync::Arc::clone(&rx);
-            let _ = std::thread::Builder::new()
-                .name(format!("gos-http-worker-{i}"))
-                .spawn(move || {
-                    loop {
-                        let next = {
-                            let guard = rx.lock();
-                            guard.recv()
-                        };
-                        let Ok(stream) = next else {
-                            // Channel disconnected — listener closed.
-                            return;
-                        };
-                        let _guard = HttpConnGuard;
-                        let Some(mut conn) = HttpConn::wrap(stream) else {
-                            continue;
-                        };
-                        handle_http_conn(&mut conn, env_addr, fn_addr);
-                    }
-                });
-        }
+        // `GOSSAMER_HTTP_WORKERS` is retained as an env var for
+        // backwards compatibility but is no longer consulted by
+        // this path.
+        //
+        // Graceful shutdown: when `sched_global::request_shutdown`
+        // is called (from `gos_rt_exit`), the accept loop exits its
+        // next iteration. In-flight per-connection threads run to
+        // completion; the listener fd is closed by the OS at
+        // process exit.
         loop {
             if crate::sched_global::is_shutdown_requested() {
                 break;
@@ -7076,24 +7037,31 @@ pub unsafe extern "C" fn gos_rt_http_serve(
             let current = HTTP_ACTIVE_CONNS.fetch_add(1, Ordering::AcqRel);
             if current >= cap {
                 HTTP_ACTIVE_CONNS.fetch_sub(1, Ordering::AcqRel);
-                // Best-effort 503; ignore write errors — the client
-                // might already be gone.
+                // Best-effort 503 + close; ignore write errors —
+                // the client might already be gone.
                 let mut stream = stream;
                 use std::io::Write;
                 let _ = stream.write_all(RESPONSE_503_BYTES);
                 let _ = stream.flush();
                 continue;
             }
-            if tx.try_send(stream).is_err() {
-                // Queue was full (worker pool not draining fast
-                // enough) — roll back the cap counter; the dropped
-                // stream gets RST'd as the TcpStream drops.
+            // Spawn a dedicated OS thread for this connection. On
+            // EAGAIN (extremely rare; would mean the system is out
+            // of thread quota), roll back the cap counter and drop
+            // the socket — the kernel will RST it.
+            let spawn_result = std::thread::Builder::new()
+                .name("gos-http-conn".to_string())
+                .spawn(move || {
+                    let _guard = HttpConnGuard;
+                    let Some(mut conn) = HttpConn::wrap(stream) else {
+                        return;
+                    };
+                    handle_http_conn(&mut conn, env_addr, fn_addr);
+                });
+            if spawn_result.is_err() {
                 HTTP_ACTIVE_CONNS.fetch_sub(1, Ordering::AcqRel);
             }
         }
-        // Drop the sender so workers observe channel disconnect on
-        // their next recv and exit cleanly.
-        drop(tx);
     }));
     // `-> !` entry point: the accept loop above only exits on a
     // fatal listener error, and any panic was caught by the

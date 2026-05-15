@@ -15,13 +15,17 @@ use arbitrary::{Arbitrary, Unstructured};
 
 /// Maximum source size produced. Keeps individual fuzz iterations
 /// bounded; larger inputs are clipped.
-pub(crate) const MAX_SOURCE_BYTES: usize = 4096;
+pub const MAX_SOURCE_BYTES: usize = 4096;
 
 /// Renders an `Arbitrary` choice tape into a Gossamer source
 /// fragment. Always emits a syntactically-plausible body — even
 /// degenerate tapes produce valid AST shapes.
-#[allow(dead_code)]
-pub(crate) fn render_source(seed: &[u8]) -> String {
+///
+/// `pub` (not `pub(crate)`) because the fuzz target bins are
+/// separate cargo crates that depend on this lib; `pub(crate)`
+/// would hide it from them and the build fails with
+/// `function `render_source` is private`.
+pub fn render_source(seed: &[u8]) -> String {
     let mut u = Unstructured::new(seed);
     let prog = Program::arbitrary(&mut u).unwrap_or_default();
     let mut out = String::new();
@@ -138,7 +142,7 @@ impl ShortStr {
 impl Expr {
     fn emit(&self, out: &mut String, depth: u32) {
         if depth > 4 {
-            out.push_str("0");
+            out.push('0');
             return;
         }
         match self {

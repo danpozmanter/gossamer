@@ -23,8 +23,8 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let mut map = SourceMap::new();
-    let file = map.add_file("fuzz.gos", source.to_string());
-    let (sf, diags) = parse_source_file(source, file);
+    let file = map.add_file("fuzz.gos", source.clone());
+    let (sf, diags) = parse_source_file(&source, file);
     if !diags.is_empty() {
         return;
     }

@@ -20,7 +20,7 @@ fuzz_secs="${GOSSAMER_FUZZ_SECS:-10}"
 if command -v cargo-fuzz >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
     echo "fuzz smoke (${fuzz_secs}s per target)"
     fuzz_log="$(mktemp -d)/fuzz.log"
-    for target in lex parse manifest http_request typecheck mir_lower vm_compile; do
+    for target in lex parse manifest http_request typecheck resolve mir_lower hir_lower vm_compile vm_run; do
         echo "  -> $target"
         if ! ( cd fuzz && cargo +nightly fuzz run "$target" -- \
                 -max_total_time="$fuzz_secs" -max_len=65536 ) \

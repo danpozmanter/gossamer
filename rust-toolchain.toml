@@ -1,9 +1,16 @@
 [toolchain]
-# `profile = "minimal"` keeps the component set deterministic
-# (rustc + rust-std + the two explicit components below) so that
-# nested `build.rs` cargo invocations can't trigger a rust-src or
-# rust-docs auto-install from a runner image's default profile —
-# parallel rustup syncs race on the partial-download rename.
+# Conscious lock — bump deliberately, not via `stable` drift.
+# CI must call `dtolnay/rust-toolchain@1.95.0` (not `@stable`) so
+# the action install matches this file and no second sync fires.
+#
+# No `profile = ...` line: rustup interprets a profile mismatch
+# against the installed toolchain as "delete every component that
+# isn't on the requested profile, reinstall what's needed". When
+# two cargo invocations (parent + nested `build.rs`) hit that path
+# simultaneously, they race on the rustup state files and one of
+# them dies with "can't find crate for `core`" mid-build. Letting
+# rustup keep whatever the action installed (default profile from
+# `dtolnay/rust-toolchain`) avoids the replace path entirely; the
+# `components` list below is additive over that and never deletes.
 channel = "1.95.0"
-profile = "minimal"
 components = ["rustfmt", "clippy"]

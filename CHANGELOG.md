@@ -157,12 +157,28 @@ The compiled tier now has an active tracing collector.
 
 ### Tooling
 
-- Toolchain locked to Rust 1.95.0 (`channel = "1.95.0"`,
-  `profile = "minimal"` in `rust-toolchain.toml`); workspace MSRV
-  bumped to 1.95; CI workflows call `dtolnay/rust-toolchain@1.95.0`
-  so the action install matches the file and nested `build.rs`
-  cargo invocations don't race a second rustup sync. The redundant
-  MSRV CI job is gone.
+- Toolchain locked to Rust 1.95.0 (`channel = "1.95.0"` in
+  `rust-toolchain.toml`); workspace MSRV bumped to 1.95; CI
+  workflows call `dtolnay/rust-toolchain@1.95.0` so the action
+  install matches the file. The `rustup default stable` step in
+  the shim-guard was replaced with `rustup show` (which is
+  idempotent and serial); the old call was triggering a parallel
+  `stable` toolchain install that raced with nested `build.rs`
+  cargo invocations on rust-src component download. The
+  `rust-toolchain.toml` profile directive was intentionally
+  omitted — declaring `profile = "minimal"` against a dtolnay
+  default-profile install triggers a delete-and-reinstall path
+  that drops `core`/`std` mid-build on Linux. The redundant MSRV
+  CI job is gone.
+- Weekly fuzz + corpus-minimization jobs moved out of `fuzz.yml`
+  into a separate `fuzz-weekly.yml`. The `if: github.event_name
+  == 'schedule'` gate hid them on push / PR, but the GitHub UI
+  still rendered each skipped job with its unexpanded
+  `${{ matrix.target }}` placeholder. A schedule-only file is
+  cleaner.
+- `check.sh` fuzz loop covers all 10 targets (added `resolve`,
+  `hir_lower`, `vm_run` — they were missing, which is how the
+  CI build broke without local notice).
 - CI runners standardised on `*-latest` (`macos-13` pin retired —
   retired runners stalled jobs in the queue).
 - Adopted `clippy::duration_suboptimal_units` (new in 1.95);
@@ -187,6 +203,27 @@ The compiled tier now has an active tracing collector.
   recovery in `gos build --release`: spectral-norm 47.8s → 0.92s,
   fannkuch 1.12s → 0.13s, fasta 9.22s → 2.00s, n-body 16.5s →
   1.49s, k-nucleotide 1.09s → 0.51s.
+- **HTTP server thread-per-connection restored.** 0.6.0 had
+  swapped `gos_rt_http_serve` from "spawn a dedicated OS thread
+  per accepted socket" (`http_blocking_io_fix.md`, 2026-05-12:
+  272k RPS / 0 fails) to "fixed worker pool + bounded
+  `sync_channel`". With `available_parallelism() * 2` workers
+  (≈ 48 on a 12-core box), > 48 concurrent clients saturated
+  the pool, the queue filled, `try_send` started silently
+  dropping sockets (RST'd by the OS), and the bench saw
+  connection errors. The dedicated-thread shape (capped by
+  `HTTP_ACTIVE_CONNS` / `GOSSAMER_HTTP_MAX_CONN` — default
+  4096 — so a runaway client cannot bomb the thread / fd
+  budget; past the cap responds 503 cleanly) is back.
+  Recovery on web-server bench: text 198k → 263k RPS / 174 →
+  0 fails; json 221k → 258k RPS / 169 → 0 fails.
+- **Fuzz targets `hir_lower` + `vm_run` were broken on `cargo
+  +nightly fuzz build`.** `grammar::render_source` was
+  `pub(crate)` (invisible to fuzz-target bins, which are
+  separate crates from the fuzz lib), and the call sites still
+  used the pre-0.5.0 `parse_source_file(String, _)` /
+  `vm.call(&str, &[])` signatures. Renamed to `pub`, swapped to
+  `parse_source_file(&str, _)` / `vm.call(&str, Vec<Value>)`.
 - `c_abi::tracing_gc_tests::ptr_key_is_send_sync_via_usize` now
   acquires `GC_TEST_LOCK`; previously raced the process-wide GC
   registry against sibling tests, producing intermittent
