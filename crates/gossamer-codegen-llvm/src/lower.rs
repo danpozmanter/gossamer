@@ -88,11 +88,16 @@ pub(crate) struct Lowerer<'a> {
     /// per-block drops for owning bindings whose only outbound use
     /// is a non-capturing user fn.
     pub(crate) capture_summary: gossamer_mir::CaptureSummary,
-    /// Loop-header block ids (targets of back-edges). Each such
-    /// block opens with a `gos_rt_gc_safepoint()` call so
-    /// long-running loops give the tracing GC + concurrent GC
-    /// chances to advance.
+    /// Loop-header block ids (targets of back-edges). Currently
+    /// unused — back-edge safepoints are elided to let `opt -O3`
+    /// vectorise inner loops. Retained for the future inline-
+    /// safepoint pass.
     pub(crate) loop_headers: std::collections::HashSet<u32>,
+    /// Whether the function-prologue safepoint + shadow-stack save
+    /// was actually emitted. Drives the matching restore at
+    /// `Terminator::Return` so we don't load an undefined frame
+    /// slot when the prologue elided itself.
+    pub(crate) gc_prologue_emitted: bool,
 }
 
 /// Module-scoped string intern pool.
@@ -228,6 +233,7 @@ impl<'a> Lowerer<'a> {
             preempt_seq: 0,
             capture_summary: gossamer_mir::CaptureSummary::default(),
             loop_headers: std::collections::HashSet::new(),
+            gc_prologue_emitted: false,
         }
     }
 
@@ -282,7 +288,17 @@ impl<'a> Lowerer<'a> {
     /// Emits the function-prologue safepoint hook + raw-pointer
     /// shadow-stack save. The save's result is stored in a
     /// dedicated alloca'd i64 slot which the return path loads.
+    /// Skipped for functions whose body can't allocate — the
+    /// safepoint call is opaque to `opt -O3` and blocks inner-
+    /// loop vectorisation. Pure leaf math functions are the
+    /// hot-path victims (spectral-norm / n-body inner helpers
+    /// are called > 10⁹ times).
     fn emit_gc_prologue(&mut self) {
+        if !gossamer_mir::body_might_allocate(self.body) {
+            self.gc_prologue_emitted = false;
+            return;
+        }
+        self.gc_prologue_emitted = true;
         declare_rt(&mut self.runtime_refs, "gos_rt_gc_root_save");
         declare_rt(&mut self.runtime_refs, "gos_rt_gc_safepoint");
         let slot = Self::gc_frame_slot_name();
@@ -304,8 +320,11 @@ impl<'a> Lowerer<'a> {
 
     /// Emits the matching shadow-stack restore for `emit_gc_prologue`.
     /// Used by `Terminator::Return` lowering just before the `ret`
-    /// instruction.
+    /// instruction. Skipped when the prologue was elided.
     fn emit_gc_root_restore(&mut self) {
+        if !self.gc_prologue_emitted {
+            return;
+        }
         declare_rt(&mut self.runtime_refs, "gos_rt_gc_root_restore");
         let slot = Self::gc_frame_slot_name();
         let frame = self.fresh();
@@ -451,13 +470,16 @@ impl<'a> Lowerer<'a> {
 
     fn lower_block(&mut self, block: &gossamer_mir::BasicBlock) -> Result<(), BuildError> {
         writeln!(self.out, "bb{}:", block.id.as_u32()).unwrap();
-        // Loop back-edge safepoint: emit at the start of any
-        // block reached by a back-edge so long-running loops
-        // give the unified GC safepoint a chance to advance.
-        if self.loop_headers.contains(&block.id.as_u32()) {
-            declare_rt(&mut self.runtime_refs, "gos_rt_gc_safepoint");
-            writeln!(self.out, "  call void @gos_rt_gc_safepoint()").unwrap();
-        }
+        // No loop-back-edge safepoint. A runtime call on every
+        // iteration is opaque to `opt -O3` and blocks vectorisation
+        // of tight numeric loops — the difference between sub-1-second
+        // and 50-second runs on spectral-norm and n-body. Allocation-
+        // driven safepoint dispatch (`gos_rt_aggr_alloc` updates the
+        // byte-pressure counter; the next function-prologue safepoint
+        // collects when the threshold trips) is sufficient for any
+        // loop that allocates; pure-arithmetic loops have nothing to
+        // collect.
+        let _ = block.id;
         let cleanup = gossamer_mir::plan_cleanup_with_summary(self.body, &self.capture_summary);
         for entry in cleanup.at_block_entry(block.id) {
             self.emit_cleanup_call(entry);

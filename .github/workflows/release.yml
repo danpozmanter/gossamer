@@ -26,7 +26,7 @@ jobs:
           ' Cargo.toml)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
 
       - uses: Swatinem/rust-cache@v2
 
@@ -81,7 +81,7 @@ jobs:
           ' Cargo.toml)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: aarch64-unknown-linux-gnu
 
@@ -158,7 +158,7 @@ jobs:
           ' Cargo.toml)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: ${{ matrix.target }}
 
@@ -204,7 +204,7 @@ jobs:
           ' Cargo.toml)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
 
       - uses: Swatinem/rust-cache@v2
 

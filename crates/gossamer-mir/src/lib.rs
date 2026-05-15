@@ -10,6 +10,7 @@
 mod cleanup;
 mod escape;
 mod gc_barrier;
+mod gc_safepoints;
 mod ir;
 mod lower;
 mod monomorph;
@@ -26,6 +27,7 @@ pub use escape::{
     CaptureSummary, EscapeSet, analyse as analyse_escape,
     analyse_with_summary as analyse_escape_with_summary, build_capture_summary,
 };
+pub use gc_safepoints::body_might_allocate;
 pub use ir::{
     AggregateKind, AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl,
     Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator, UnOp,

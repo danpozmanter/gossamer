@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
       - run: cargo fmt --all --check
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -50,7 +50,7 @@ jobs:
       # Ubuntu runners ship them at `/usr/lib/llvm-18/bin/` (auto-
       # discovered); macOS and Windows runners need explicit
       # discovery + env-var pointers. Both steps run BEFORE
-      # `dtolnay/rust-toolchain@stable` so its `$GITHUB_PATH`
+      # `dtolnay/rust-toolchain@1.95.0` so its `$GITHUB_PATH`
       # push of `~/.cargo/bin` is the last entry on PATH —
       # without that ordering, a brew-managed `cargo` shim
       # (left by a stale `rustup-init` install on the macOS
@@ -131,7 +131,7 @@ jobs:
           Write-Host "GOS_LLC=$llc"
           "GOS_LLVM_OPT=$opt" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "GOS_LLC=$llc"      | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           # Bumped after the runtime stdio rewrite (extern POSIX
@@ -141,7 +141,7 @@ jobs:
           prefix-key: v2-test-stdio
       # Defensive against the macOS-runner brew/rustup shim issue:
       # `cargo` in $PATH can resolve to `rustup-init` even after
-      # `dtolnay/rust-toolchain@stable` pushes `~/.cargo/bin` to
+      # `dtolnay/rust-toolchain@1.95.0` pushes `~/.cargo/bin` to
       # $GITHUB_PATH (the runner image ships a brew-managed `cargo`
       # link earlier in PATH on some images). Resolve the real
       # toolchain binary via `rustup which cargo` and export it as
@@ -162,7 +162,7 @@ jobs:
           # to `rustup-init test` and errors with
           # `unexpected argument 'test'`. Going through
           # `~/.cargo/bin/...` bypasses any PATH-resolved shim and
-          # invokes the toolchain `dtolnay/rust-toolchain@stable`
+          # invokes the toolchain `dtolnay/rust-toolchain@1.95.0`
           # actually installed.
           rustup_bin="$HOME/.cargo/bin/rustup"
           cargo_bin="$HOME/.cargo/bin/cargo"
@@ -197,7 +197,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-idle-stdio
@@ -209,7 +209,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
@@ -230,7 +230,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-audit-stdio
@@ -253,7 +253,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-stdlib-docs-drift
@@ -267,7 +267,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-spec-banners

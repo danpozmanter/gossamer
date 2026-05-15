@@ -22,8 +22,9 @@ install -m 0755 target/release/gos /usr/local/bin/gos
 ## Dependencies
 
 - **Rust toolchain** — 1.95.0, edition 2024, MSRV 1.95.
-  `rust-toolchain.toml` pins the exact channel; rustup installs
-  it on first `cargo` invocation.
+  `rust-toolchain.toml` pins the exact version and `profile =
+  "minimal"`; rustup installs it on first `cargo` invocation.
+  Bumps happen consciously, not via `stable` drift.
 - **A C linker** — required by Cargo, not by Gossamer. `cc` /
   `gcc` / `clang` will do.
 

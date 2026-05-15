@@ -2,9 +2,6 @@
 
 ## 0.6.0 — Stability hardening
 
-No new language features; focused on safety, codegen correctness, and
-connecting the tracing GC end-to-end.
-
 ### Safety
 
 - `catch_unwind` at every `gos_rt_*` and JIT-call boundary — runtime
@@ -160,10 +157,12 @@ The compiled tier now has an active tracing collector.
 
 ### Tooling
 
-- Toolchain pinned to Rust 1.95.0 via `rust-toolchain.toml`; workspace
-  MSRV bumped to match. Single source of truth, no parallel MSRV job.
-- `rust-toolchain.toml` declares `x86_64-unknown-linux-musl` so fresh
-  checkouts auto-install the target `gos build --release` needs.
+- Toolchain locked to Rust 1.95.0 (`channel = "1.95.0"`,
+  `profile = "minimal"` in `rust-toolchain.toml`); workspace MSRV
+  bumped to 1.95; CI workflows call `dtolnay/rust-toolchain@1.95.0`
+  so the action install matches the file and nested `build.rs`
+  cargo invocations don't race a second rustup sync. The redundant
+  MSRV CI job is gone.
 - CI runners standardised on `*-latest` (`macos-13` pin retired —
   retired runners stalled jobs in the queue).
 - Adopted `clippy::duration_suboptimal_units` (new in 1.95);
@@ -172,6 +171,22 @@ The compiled tier now has an active tracing collector.
 
 ### Fixes
 
+- **Perf regression recovered.** The 0.6.0 GC work emitted a
+  `gos_rt_gc_safepoint` call at every function prologue and every
+  loop back-edge plus a `gos_rt_gc_root_save`/`_restore` pair around
+  every function. The runtime calls are opaque to `opt -O3` and
+  block inner-loop vectorisation; pure leaf math helpers (called
+  > 10⁹ times in spectral-norm / n-body) paid the FFI cost on
+  every invocation. The codegen now elides the prologue safepoint
+  + shadow-stack save/restore when the body cannot allocate (new
+  `gossamer_mir::body_might_allocate` helper) and drops the
+  loop-back-edge safepoint outright — allocation routines update
+  the byte-pressure counter and the next allocating function's
+  prologue safepoint runs the collect when the threshold trips,
+  which is sufficient for any body that grows the heap. Measured
+  recovery in `gos build --release`: spectral-norm 47.8s → 0.92s,
+  fannkuch 1.12s → 0.13s, fasta 9.22s → 2.00s, n-body 16.5s →
+  1.49s, k-nucleotide 1.09s → 0.51s.
 - `c_abi::tracing_gc_tests::ptr_key_is_send_sync_via_usize` now
   acquires `GC_TEST_LOCK`; previously raced the process-wide GC
   registry against sibling tests, producing intermittent

@@ -1,7 +1,9 @@
 [toolchain]
+# `profile = "minimal"` keeps the component set deterministic
+# (rustc + rust-std + the two explicit components below) so that
+# nested `build.rs` cargo invocations can't trigger a rust-src or
+# rust-docs auto-install from a runner image's default profile —
+# parallel rustup syncs race on the partial-download rename.
 channel = "1.95.0"
+profile = "minimal"
 components = ["rustfmt", "clippy"]
-# Release builds use the musl target for fully-static binaries
-# (`gos build --release`). Declared here so a fresh checkout
-# `cargo` invocation auto-installs it via rustup.
-targets = ["x86_64-unknown-linux-musl"]

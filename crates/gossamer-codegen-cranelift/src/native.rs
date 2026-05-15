@@ -1138,6 +1138,15 @@ fn lower_body(
     let cleanup_plan = gossamer_mir::plan_cleanup_with_summary(body, capture_summary);
     let entry_block_id = body.blocks.first().map(|b| b.id.as_u32());
     let mut emitted_prologue = false;
+    // Elide the GC prologue (shadow-stack save + safepoint hook) for
+    // bodies that can't allocate. The safepoint call is opaque to
+    // the optimiser and dominates the cost of pure leaf math
+    // functions (the spectral-norm / n-body inner helpers are called
+    // > 10⁹ times). Allocation-driven safepoint dispatch handles
+    // any function whose body actually touches the heap.
+    let needs_gc_prologue = gossamer_mir::body_might_allocate(body);
+    // `loop_headers` retained for the future inline-safepoint pass.
+    let _ = &loop_headers;
     for block in &body.blocks {
         let cl_block = blocks[&block.id.as_u32()];
         // The entry block is already current from the parameter-
@@ -1156,26 +1165,34 @@ fn lower_body(
         if !emitted_prologue {
             let zero = builder.ins().iconst(types::I64, 0);
             builder.def_var(shadow_frame_var, zero);
-            let save_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_root_save")?;
-            let save_ref = module.declare_func_in_func(save_id, builder.func);
-            let call = builder.ins().call(save_ref, &[]);
-            let frame = builder.inst_results(call)[0];
-            builder.def_var(raw_shadow_frame_var, frame);
-            // Function-prologue safepoint: cheap atomic-load + compare
-            // in the common (under-threshold) case.
-            let safepoint_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_safepoint")?;
-            let safepoint_ref = module.declare_func_in_func(safepoint_id, builder.func);
-            builder.ins().call(safepoint_ref, &[]);
+            if needs_gc_prologue {
+                let save_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_root_save")?;
+                let save_ref = module.declare_func_in_func(save_id, builder.func);
+                let call = builder.ins().call(save_ref, &[]);
+                let frame = builder.inst_results(call)[0];
+                builder.def_var(raw_shadow_frame_var, frame);
+                // Function-prologue safepoint: cheap atomic-load + compare
+                // in the common (under-threshold) case.
+                let safepoint_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_safepoint")?;
+                let safepoint_ref = module.declare_func_in_func(safepoint_id, builder.func);
+                builder.ins().call(safepoint_ref, &[]);
+            } else {
+                // No prologue — keep the variable initialised to 0 so
+                // the matching restore (which is also skipped) doesn't
+                // observe an undefined slot if a later refactor toggles
+                // the gate at one end without the other.
+                builder.def_var(raw_shadow_frame_var, zero);
+            }
             emitted_prologue = true;
         }
 
-        // Loop back-edge safepoint: emit at the start of any block
-        // that is a back-edge target. Cheap atomic-load + compare.
-        if loop_headers.contains(&block.id.as_u32()) {
-            let safepoint_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_safepoint")?;
-            let safepoint_ref = module.declare_func_in_func(safepoint_id, builder.func);
-            builder.ins().call(safepoint_ref, &[]);
-        }
+        // Loop-back-edge safepoints are elided: a runtime call on
+        // every iteration is opaque to the optimiser and blocks
+        // vectorisation of tight numeric inner loops. Allocation-
+        // driven safepoint dispatch (`gos_rt_aggr_alloc` updates
+        // the byte-pressure counter; the next function-prologue
+        // safepoint collects when the threshold trips) is
+        // sufficient.
 
         if !cleanup_plan.is_empty() {
             for entry in cleanup_plan.at_block_entry(block.id) {
@@ -2651,15 +2668,12 @@ fn lower_terminator(
 ) -> Result<()> {
     match terminator {
         Terminator::Goto { target } => {
-            // Loop back-edge — emit a unified safepoint so the
-            // tracing GC threshold check fires and the concurrent
-            // GC can advance. Cheap atomic-load + compare in the
-            // common case.
-            if target.as_u32() <= src_block {
-                let safepoint_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_safepoint")?;
-                let safepoint_ref = module.declare_func_in_func(safepoint_id, builder.func);
-                builder.ins().call(safepoint_ref, &[]);
-            }
+            // Loop-back-edge safepoint elided — see the matching
+            // comment in the block-prefix lowering. Allocation-
+            // driven safepoint dispatch keeps the collector
+            // responsive without an opaque runtime call on every
+            // iteration that would block inner-loop vectorisation.
+            let _ = src_block;
             let block = blocks[&target.as_u32()];
             builder.ins().jump(block, &[]);
         }
@@ -2676,7 +2690,11 @@ fn lower_terminator(
             // Raw-pointer tracing-GC shadow stack close: truncate
             // back to the depth captured at function entry so every
             // aggregate root pushed inside this body is removed.
-            {
+            // Skipped when the prologue was elided (body can't
+            // allocate, so no roots were pushed); the call would be
+            // a no-op but its FFI overhead dominates leaf-math
+            // functions.
+            if gossamer_mir::body_might_allocate(body) {
                 let restore_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_root_restore")?;
                 let restore_ref = module.declare_func_in_func(restore_id, builder.func);
                 let frame = builder.use_var(raw_shadow_frame_var);
