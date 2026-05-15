@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn next_timeout_picks_earlier_value() {
         let mut poller = OsPoller::new().expect("OsPoller::new");
-        let when = Instant::now() + Duration::from_secs(60);
+        let when = Instant::now() + Duration::from_mins(1);
         let _ = poller.add_timer(when, Gid(1));
         let dt = poller.next_timeout(Some(Duration::from_millis(10)));
         // Caller's 10 ms is the earlier deadline.

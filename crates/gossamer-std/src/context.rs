@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn child_deadline_is_earliest_of_chain() {
         let root = Context::background();
-        let parent_deadline = Instant::now() + Duration::from_secs(60);
+        let parent_deadline = Instant::now() + Duration::from_mins(1);
         let parent = with_deadline(&root, parent_deadline);
         let child = with_timeout(&parent, Duration::from_millis(5));
         let deadline = child.deadline().unwrap();

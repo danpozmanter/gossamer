@@ -39,12 +39,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-latest is ARM64 (Apple Silicon). macos-13 covers
-        # x86_64 explicitly so the release pipeline's
-        # x86_64-apple-darwin artifact has matching test coverage
-        # (audit M8). Past releases shipped that triple without CI
-        # ever exercising it.
-        os: [ubuntu-latest, macos-latest, macos-13, windows-latest]
+        # Always use *-latest runners. Pinned major versions
+        # (macos-13, ubuntu-20.04, …) get retired by GitHub and
+        # the queued job then waits forever for a runner that
+        # no longer exists.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
       # `gos build` shells out to `opt` and `llc` from LLVM 18+.
@@ -274,18 +273,3 @@ jobs:
           prefix-key: v2-spec-banners
       - name: Validate every required banner is present + vocabulary
         run: cargo run -p xtask --quiet -- audit-spec-banners
-
-  # Audit M7: MSRV pin. The workspace declares
-  # `rust-version = "1.88"`. Run cargo check on that exact
-  # toolchain so silent MSRV drift (e.g. accidentally using a
-  # newer-than-1.88 std API) is caught.
-  msrv:
-    name: MSRV check (Rust 1.88)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.88
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: v1-msrv
-      - run: cargo check --workspace --all-targets

@@ -346,7 +346,7 @@ fn blocking_pool_run_ctx_returns_err_on_cancel() {
     let observed_clone = Arc::clone(&observed);
     let done = spawn_blocking(move || {
         let result: Result<i64, _> = blocking_pool::run_ctx(&ctx_for_goroutine, || {
-            std::thread::sleep(StdDuration::from_secs(60));
+            std::thread::sleep(StdDuration::from_mins(1));
             42
         });
         if result.is_err() {

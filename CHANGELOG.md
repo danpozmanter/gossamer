@@ -158,6 +158,27 @@ The compiled tier now has an active tracing collector.
 
 - Deleted dead interpreter modules (`peephole.rs`, `goroutine_pool.rs`).
 
+### Tooling
+
+- Toolchain pinned to Rust 1.95.0 via `rust-toolchain.toml`; workspace
+  MSRV bumped to match. Single source of truth, no parallel MSRV job.
+- `rust-toolchain.toml` declares `x86_64-unknown-linux-musl` so fresh
+  checkouts auto-install the target `gos build --release` needs.
+- CI runners standardised on `*-latest` (`macos-13` pin retired —
+  retired runners stalled jobs in the queue).
+- Adopted `clippy::duration_suboptimal_units` (new in 1.95);
+  `Duration::from_secs(60)` rewritten to `from_mins(1)` across the
+  tree.
+
+### Fixes
+
+- `c_abi::tracing_gc_tests::ptr_key_is_send_sync_via_usize` now
+  acquires `GC_TEST_LOCK`; previously raced the process-wide GC
+  registry against sibling tests, producing intermittent
+  "alloc_count = 0" / "freed = 0" failures.
+- Removed unused `CloseHandle` import from `preempt.rs`
+  (`-D warnings` failed the Windows build on Rust 1.95).
+
 ### Behavior changes
 
 - Stricter at every IR boundary; some previously-silent miscompiles

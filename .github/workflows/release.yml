@@ -12,7 +12,7 @@ permissions:
 jobs:
   build-linux-x86_64:
     name: Linux x86_64
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -67,7 +67,7 @@ jobs:
 
   build-linux-aarch64:
     name: Linux aarch64
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 

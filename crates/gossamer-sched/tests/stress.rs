@@ -25,7 +25,7 @@ use gossamer_sched::{MultiScheduler, Scheduler, Step};
 
 /// Wall-clock cap per stress test. Catches a regression that
 /// hangs the scheduler without freezing the whole CI run.
-const STRESS_DEADLINE: Duration = Duration::from_secs(60);
+const STRESS_DEADLINE: Duration = Duration::from_mins(1);
 
 /// Asserts that `f` finishes inside [`STRESS_DEADLINE`]. The
 /// scheduler doesn't have a built-in cancellation hook so this

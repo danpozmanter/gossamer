@@ -13689,6 +13689,13 @@ mod tracing_gc_tests {
         // provenance model does not flag an integer-to-pointer
         // cast. The `as_addr` accessor stays test-only —
         // production callers go through registry lookups instead.
+        // The alloc + free touch the process-wide GC registry,
+        // so this test must serialise against every other test in
+        // this module — otherwise a concurrent reset() between
+        // alloc and free races with sibling tests that snapshot
+        // alloc_count or sweep, producing flaky failures
+        // ("expected 1 got 0" / "expected 64 freed got 0").
+        let _g = GC_TEST_LOCK.lock();
         force_tracking_on();
         gos_rt_gc_reset();
         let real = gos_rt_gc_alloc(8);

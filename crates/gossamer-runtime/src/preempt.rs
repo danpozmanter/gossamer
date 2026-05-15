@@ -203,9 +203,7 @@ pub fn current_thread_handle() -> u64 {
         // current thread (`GetCurrentThread` returns a pseudo-handle
         // that's only valid in-process; `DuplicateHandle` upgrades
         // it to a real handle with stable identity).
-        use windows_sys::Win32::Foundation::{
-            CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE,
-        };
+        use windows_sys::Win32::Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE};
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread};
         // SAFETY: GetCurrentThread / GetCurrentProcess return
         // pseudo-handles that DuplicateHandle resolves into real

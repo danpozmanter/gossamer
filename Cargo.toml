@@ -35,7 +35,7 @@ exclude = [
 [workspace.package]
 version = "0.6.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 license = "Apache-2.0"
 repository = "https://github.com/gossamer-lang/gossamer"
 authors = ["Gossamer contributors"]

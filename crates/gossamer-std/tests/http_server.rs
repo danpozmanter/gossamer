@@ -223,7 +223,7 @@ fn server_aborts_slowloris_at_header_timeout() {
         read_header_timeout: Some(Duration::from_millis(300)),
         read_body_timeout: Some(Duration::from_secs(5)),
         write_timeout: Some(Duration::from_secs(5)),
-        idle_timeout: Some(Duration::from_secs(60)),
+        idle_timeout: Some(Duration::from_mins(1)),
         max_requests: Some(1),
         shutdown: Arc::clone(&shutdown),
         server_name: None,

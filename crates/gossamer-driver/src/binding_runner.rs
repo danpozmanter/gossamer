@@ -965,7 +965,7 @@ struct AdvisoryLock {
 
 impl AdvisoryLock {
     fn acquire(path: &Path) -> io::Result<Self> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_mins(5);
         loop {
             match fs::OpenOptions::new()
                 .write(true)

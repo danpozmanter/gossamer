@@ -691,7 +691,7 @@ mod p9_tests {
         let stream = TcpStream::connect(&addr.to_string()).unwrap();
         // Both ends are now ESTABLISHED; the setsockopt call must
         // succeed in both directions.
-        stream.set_keepalive(Some(Duration::from_secs(60))).unwrap();
+        stream.set_keepalive(Some(Duration::from_mins(1))).unwrap();
         stream.set_keepalive(None).unwrap();
         drop(stream);
         let _ = acceptor.join();

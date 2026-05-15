@@ -57,7 +57,7 @@ fn run_with_timeout(mut cmd: Command, label: &str) -> (String, Option<i32>) {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap_or_else(|e| panic!("spawn {label}: {e}"));
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let deadline = std::time::Instant::now() + Duration::from_mins(1);
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,

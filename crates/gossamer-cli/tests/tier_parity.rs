@@ -27,7 +27,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-const PER_RUN_TIMEOUT: Duration = Duration::from_secs(60);
+const PER_RUN_TIMEOUT: Duration = Duration::from_mins(1);
 
 fn gos_bin() -> PathBuf {
     PathBuf::from(env::var("CARGO_BIN_EXE_gos").expect("CARGO_BIN_EXE_gos"))

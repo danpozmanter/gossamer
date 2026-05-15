@@ -295,7 +295,7 @@ impl NativeClient {
             let mut g = self.inner.pool.lock();
             if let Some(pos) = g.iter().position(|c| c.host == host && c.port == port) {
                 let conn = g.remove(pos);
-                if conn.last_used.elapsed() < Duration::from_secs(60) {
+                if conn.last_used.elapsed() < Duration::from_mins(1) {
                     return Ok(conn.stream);
                 }
             }
