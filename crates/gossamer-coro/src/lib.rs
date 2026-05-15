@@ -38,7 +38,22 @@
 
 use std::cell::Cell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+
+/// Set to `true` whenever any spawned goroutine has panicked.
+/// Tests / runtime status helpers read this flag via
+/// [`any_goroutine_panicked`] to assert that long-running services
+/// finished without hitting the M9 isolation path.
+static GOROUTINE_PANICKED: AtomicBool = AtomicBool::new(false);
+
+/// Returns `true` if any goroutine has panicked since this
+/// process started. The flag is sticky — once set it stays set,
+/// so a test that spawns multiple goroutines can check it after
+/// the full batch joins.
+#[must_use]
+pub fn any_goroutine_panicked() -> bool {
+    GOROUTINE_PANICKED.load(Ordering::Acquire)
+}
 
 use corosensei::stack::DefaultStack;
 use corosensei::{Coroutine, CoroutineResult, Yielder};
@@ -125,7 +140,25 @@ impl Goroutine {
                 .cast_mut();
             yielder_slot_clone.store(ptr, Ordering::Release);
             set_current_yielder(ptr);
-            main();
+            // contain panics inside the
+            // goroutine body so they don't propagate to the
+            // scheduler's `resume()` and abort the worker (and
+            // the process). The goroutine state machine on the
+            // outside observes the goroutine as `done` and the
+            // global panicked-flag flips so test programs can
+            // assert clean execution.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(main));
+            if let Err(payload) = result {
+                let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                    (*s).to_string()
+                } else if let Some(s) = payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "(non-string panic payload)".to_string()
+                };
+                eprintln!("gossamer: goroutine panicked — {msg}; isolating, scheduler continues");
+                GOROUTINE_PANICKED.store(true, Ordering::Release);
+            }
         });
         Self { coro, yielder_slot }
     }

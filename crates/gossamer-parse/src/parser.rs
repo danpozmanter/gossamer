@@ -8,6 +8,11 @@ use gossamer_lex::{FileId, Keyword, Punct, Span, Token, TokenKind};
 use crate::diagnostic::{ParseDiagnostic, ParseError};
 use crate::stream::TokenStream;
 
+/// Hard limit on parser recursion depth. Sized to comfortably exceed
+/// every real-world program while preventing adversarial inputs like
+/// `((((((((x))))))))` from blowing the C stack.
+pub(crate) const RECURSION_LIMIT: u32 = 256;
+
 /// Hand-written recursive-descent parser over a buffered token stream.
 pub struct Parser<'src> {
     /// Raw source text (so the parser can recover identifier names and
@@ -25,6 +30,14 @@ pub struct Parser<'src> {
     /// Depth of contexts where `|` denotes a pattern alternative and
     /// must not be consumed as bitwise-or by the Pratt loop.
     pub(crate) pattern_pipe_depth: u32,
+    /// Running depth of recursive entries into expression, type, and
+    /// pattern parsers. Compared against [`RECURSION_LIMIT`] by
+    /// [`Parser::enter_recursion`].
+    pub(crate) recursion_depth: u32,
+    /// Set once the parser has emitted a recursion-limit diagnostic so
+    /// subsequent overflows in the same parse do not flood the
+    /// diagnostic stream with duplicates.
+    pub(crate) recursion_limit_reported: bool,
     /// `use` declarations encountered inside inline `mod ... { ... }`
     /// bodies. The mod-body grammar collects them into this side
     /// channel so [`parse_source_file`] can hoist them to the
@@ -45,6 +58,8 @@ impl<'src> Parser<'src> {
             diagnostics: Vec::new(),
             no_struct_literal_depth: 0,
             pattern_pipe_depth: 0,
+            recursion_depth: 0,
+            recursion_limit_reported: false,
             hoisted_uses: Vec::new(),
         }
     }
@@ -237,6 +252,35 @@ impl<'src> Parser<'src> {
             return "";
         }
         &self.source[start..end]
+    }
+
+    /// Bumps the recursion counter and records a diagnostic when the
+    /// configured [`RECURSION_LIMIT`] is hit. Returns `Err(())` when
+    /// the limit has been reached; callers should then return a stub
+    /// node (typically `ExprKind::Error`, `PatternKind::Error`, or an
+    /// `Infer` type) so the parser can keep making forward progress.
+    /// Successful calls must be paired with [`Parser::leave_recursion`].
+    pub(crate) fn enter_recursion(&mut self, span: Span) -> Result<(), ()> {
+        if self.recursion_depth >= RECURSION_LIMIT {
+            if !self.recursion_limit_reported {
+                self.recursion_limit_reported = true;
+                self.record(
+                    ParseError::RecursionLimit {
+                        limit: RECURSION_LIMIT,
+                    },
+                    span,
+                );
+            }
+            return Err(());
+        }
+        self.recursion_depth += 1;
+        Ok(())
+    }
+
+    /// Decrements the recursion counter. Must follow a successful
+    /// [`Parser::enter_recursion`] call on the same logical scope.
+    pub(crate) fn leave_recursion(&mut self) {
+        self.recursion_depth = self.recursion_depth.saturating_sub(1);
     }
 
     /// Returns `true` when at least one newline appears in the source

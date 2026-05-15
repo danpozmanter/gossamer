@@ -1,0 +1,78 @@
+/*
+ * JSON serialize and deserialize with structs — one line per direction.
+ *
+ * Every named struct in the program auto-derives two synthetic
+ * methods at load time:
+ *
+ *     <Type>::to_json(self) -> Result<String, errors::Error>
+ *     <Type>::from_json(text: &String) -> Result<Type, errors::Error>
+ *
+ * `from_json` is strict: every declared field must be present and
+ * each one must match its declared type. A JSON document whose
+ * `"age"` field is a string fails with a structured error.
+ *
+ * Nested structs, growable arrays (`[String]`), tuples, fixed-size
+ * arrays, `Option<T>`, and `HashMap<String, V>` are walked
+ * recursively.
+ *
+ * Run:
+ *     gos run examples/json_structs.gos
+ */
+
+use std::errors
+
+struct Address {
+    city: String,
+    zip: String,
+}
+
+struct User {
+    name: String,
+    age: i64,
+    active: bool,
+    tags: [String],
+    address: Address,
+}
+
+fn main() -> Result<(), errors::Error> {
+    let mut tags: [String] = []
+    tags.push("admin")
+    tags.push("ops")
+    let original = User {
+        name: "alice",
+        age: 30,
+        active: true,
+        tags: tags,
+        address: Address { city: "denver", zip: "80205" },
+    }
+
+    // Serialize: one call, one line.
+    let text = User::to_json(&original)?
+    println!("serialized: {}", text)
+
+    // Deserialize: one call, one line.
+    let back: User = User::from_json(&text)?
+    println!("name    = {}", back.name)
+    println!("age     = {}", back.age)
+    println!("active  = {}", back.active)
+    println!("city    = {}", back.address.city)
+    println!("zip     = {}", back.address.zip)
+    println!("tags[0] = {}", back.tags[0])
+    println!("tags[1] = {}", back.tags[1])
+
+    // Strict validation rejects type mismatches with a path-qualified
+    // error: `User::from_json: field 'age': expected integer, got string`.
+    let bad = "{\"name\":\"bob\",\"age\":\"oops\",\"active\":false,\"tags\":[],\"address\":{\"city\":\"x\",\"zip\":\"0\"}}"
+    match User::from_json(&bad) {
+        Ok(_)  => println!("unexpected: bad payload parsed clean"),
+        Err(e) => println!("rejected:   {}", e),
+    }
+
+    // Strict validation also rejects missing required fields.
+    let missing = "{\"name\":\"carol\",\"age\":40,\"active\":true,\"tags\":[]}"
+    match User::from_json(&missing) {
+        Ok(_)  => println!("unexpected: missing payload parsed clean"),
+        Err(e) => println!("rejected:   {}", e),
+    }
+    Ok(())
+}

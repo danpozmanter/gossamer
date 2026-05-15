@@ -36,6 +36,12 @@ const PREFIX_HANDLED: &[&str] = &[
     "gos_rt_iter_",
     "gos_rt_option_",
     "gos_rt_result_",
+    // aggregate alloc/free emitted directly by
+    // the codegen for `Rvalue::Aggregate` / `Rvalue::Repeat` and
+    // by the MIR drop pass at scope exit. Generic registry-lookup
+    // dispatch handles the CallIntrinsic path; the `_alloc` is
+    // called by name from both backends' Aggregate sites.
+    "gos_rt_aggr_",
 ];
 
 /// Helpers that are deliberately Rust-only (used inside the runtime
@@ -61,6 +67,12 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_atomic_i64_store_release",
     "gos_rt_atomic_i64_swap",
     "gos_rt_callback_invoke",
+    // callback registry. Not emitted from MIR;
+    // called only by the binding crate's `BindingCallback` Drop
+    // impl and by user code that opts into the ABI 0.4 callback
+    // surface.
+    "gos_rt_callback_register",
+    "gos_rt_callback_unregister",
     "gos_rt_chan_drop",
     // Cross-crate context-cancellation bridge: installed once
     // by `gossamer-std::context` at first context use, called
@@ -96,6 +108,43 @@ const RUST_ONLY: &[&str] = &[
     // Called from Rust (gossamer-interp) to override argv[0], not
     // emitted from MIR.
     "gos_rt_set_program_name",
+    // 0.6.0 deep-vec-free typed allocators. The codegen dispatch
+    // for `Vec::new` / `Vec::with_capacity` calls these directly
+    // (not as a named MIR call), so they don't appear in the
+    // syntactic `name == "..."` arms of native.rs even though they
+    // are emitted via `extern_fn_by_name`. Mark Rust-only at the
+    // parity-check level so the missing-arm guard doesn't trip.
+    "gos_rt_vec_new_typed",
+    "gos_rt_vec_with_capacity_typed",
+    // 0.6.0 binding-side map free helper. Called from the
+    // gossamer-binding crate's drop path for binding-owned maps
+    // whose layout differs from the runtime's `GosMap`. Never
+    // emitted from MIR.
+    "gos_rt_binding_map_free",
+    // Raw-pointer tracing-GC plumbing. Codegen emits
+    // `gos_rt_gc_safepoint`, `gos_rt_gc_root_save`,
+    // `gos_rt_gc_root_push`, and `gos_rt_gc_root_restore` directly;
+    // the helpers below are called only from Rust:
+    //
+    // - `gos_rt_gc_alloc_count`: test/diagnostic hook.
+    // - `gos_rt_gc_collect`: invoked from `gos_rt_gc_raw_safepoint`
+    //   when the threshold trips, and from test code.
+    // - `gos_rt_gc_raw_safepoint`: called from
+    //   `gossamer-runtime::gc::gos_rt_gc_safepoint` so the unified
+    //   safepoint hook drives the raw-pointer collector too.
+    "gos_rt_gc_alloc_count",
+    "gos_rt_gc_assert_consistent",
+    "gos_rt_gc_collect",
+    "gos_rt_gc_raw_safepoint",
+    // Future concurrent-mark write barrier. Exported so codegen
+    // can flip to barrier-routed pointer stores when
+    // GOSSAMER_WRITE_BARRIER=1; production codegen does not emit
+    // calls today.
+    "gos_rt_write_barrier_ptr",
+    // test/diagnostic hook. Not emitted from
+    // MIR — called only by tests asserting clean goroutine
+    // shutdown.
+    "gos_rt_goroutine_panicked",
 ];
 
 fn read_to_string(rel: &str) -> String {

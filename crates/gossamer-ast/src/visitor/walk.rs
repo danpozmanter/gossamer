@@ -490,7 +490,7 @@ pub fn walk_type<V: Visitor + ?Sized>(visitor: &mut V, ty: &Type) {
 /// Walks into every child of a [`Pattern`].
 pub fn walk_pattern<V: Visitor + ?Sized>(visitor: &mut V, pattern: &Pattern) {
     match &pattern.kind {
-        PatternKind::Wildcard | PatternKind::Rest => {}
+        PatternKind::Wildcard | PatternKind::Rest | PatternKind::Error => {}
         PatternKind::Literal(lit) => visitor.visit_literal(lit),
         PatternKind::Ident { subpattern, .. } => {
             if let Some(sub) = subpattern {

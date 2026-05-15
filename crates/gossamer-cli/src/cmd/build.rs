@@ -723,6 +723,17 @@ fn link_windows_msvc(
     for archive in extra_archives {
         cmd.arg(archive);
     }
+    if !extra_archives.is_empty() {
+        // rust-bindings staticlibs pull in
+        // `gossamer-runtime` as a transitive Cargo dep, producing a
+        // second copy of every `gos_rt_*` symbol alongside the
+        // primary `gossamer_runtime.lib`. Both copies are
+        // functionally identical (same source tree). `/FORCE:MULTIPLE`
+        // is the MSVC linker's equivalent of GNU ld's
+        // `--allow-multiple-definition`; without it, `link.exe`
+        // exits with LNK4006 ("multiply defined").
+        cmd.arg("/FORCE:MULTIPLE");
+    }
     for lib in [
         "advapi32.lib",
         "bcrypt.lib",

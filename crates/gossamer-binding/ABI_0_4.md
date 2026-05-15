@@ -103,9 +103,11 @@ duplicate keys, the first entry wins.
 ### Ownership / lifetime / GC
 
 Both `keys` and `values` are independent `GosVec` headers with
-the same lifetime as a returned `Vec<T>`. The outer `GosMap`
-header is also heap-owned and reclaimed through
-`gos_rt_map_free`.
+the same lifetime as a returned `Vec<T>`. The outer
+`BindingGosMap` header is heap-owned and reclaimed through
+`gos_rt_binding_map_free`. Note that `gos_rt_map_free` targets
+the runtime's incompatible `GosMap` layout (a `Mutex<MapStorage>`)
+and MUST NOT be called on a binding-side pointer.
 
 ### Concrete impls shipped in 0.4
 

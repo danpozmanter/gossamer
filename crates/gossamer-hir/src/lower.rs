@@ -37,6 +37,7 @@ pub fn lower_source_file(
         table,
         tcx,
         ids: HirIdGenerator::new(),
+        recursion_depth: 0,
     };
     let mut items = Vec::new();
     let mut module_path: Vec<String> = Vec::new();
@@ -75,11 +76,20 @@ fn lower_items(
     }
 }
 
+/// Hard limit on HIR-lowering recursion depth. Mirrors the parser /
+/// type-checker guards and stops adversarial input (or front-end bugs
+/// that produce one) from blowing the C stack during AST→HIR lowering.
+const RECURSION_LIMIT: u32 = 256;
+
 struct Lowerer<'a> {
     resolutions: &'a Resolutions,
     table: &'a TypeTable,
     tcx: &'a mut TyCtxt,
     ids: HirIdGenerator,
+    /// Running depth of recursive entries into `lower_expr` /
+    /// `lower_pat`. Reaching the cap returns a placeholder node so
+    /// the rest of lowering can continue with a self-consistent tree.
+    recursion_depth: u32,
 }
 
 impl Lowerer<'_> {
@@ -286,9 +296,20 @@ impl Lowerer<'_> {
 
     fn lower_expr(&mut self, expr: &AstExpr) -> HirExpr {
         use gossamer_types::TyKind;
+        if self.recursion_depth >= RECURSION_LIMIT {
+            let ty = self.error_ty();
+            return HirExpr {
+                id: self.fresh(),
+                span: expr.span,
+                ty,
+                kind: HirExprKind::Placeholder,
+            };
+        }
+        self.recursion_depth += 1;
         let mut ty = self.ty_of(expr.id);
         let span = expr.span;
         let kind = self.lower_expr_kind(expr);
+        self.recursion_depth = self.recursion_depth.saturating_sub(1);
         // `?`-unwrap leaves the typechecker's assigned type for the
         // outer Match unresolved when the inner Result wasn't
         // pinned. Pull the Ok-arm body's type up so any binding
@@ -1066,7 +1087,17 @@ impl Lowerer<'_> {
     }
 
     fn lower_pat_with_ty(&mut self, pattern: &AstPat, ty: gossamer_types::Ty) -> HirPat {
+        if self.recursion_depth >= RECURSION_LIMIT {
+            return HirPat {
+                id: self.fresh(),
+                span: pattern.span,
+                ty,
+                kind: HirPatKind::Wildcard,
+            };
+        }
+        self.recursion_depth += 1;
         let kind = self.lower_pat_kind(pattern, ty);
+        self.recursion_depth = self.recursion_depth.saturating_sub(1);
         HirPat {
             id: self.fresh(),
             span: pattern.span,
@@ -1136,6 +1167,7 @@ impl Lowerer<'_> {
                 hi: lower_literal(hi),
                 inclusive: matches!(kind, gossamer_ast::RangeKind::Inclusive),
             },
+            AstPatKind::Error => HirPatKind::Wildcard,
         }
         .erase_unused(ty)
     }

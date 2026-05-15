@@ -212,3 +212,244 @@ fn empty_blocks_is_detected() {
         "expected EmptyBlocks in {errors:?}",
     );
 }
+
+// ----------------------------------------------------------------
+// Type-aware checks (C17).
+// ----------------------------------------------------------------
+
+use gossamer_mir::verify::{verify_body_typed, verify_program};
+use gossamer_mir::{AggregateKind, ConstValue, LocalDecl, Rvalue, UnOp};
+
+#[test]
+fn verify_program_passes_clean_bodies() {
+    let (bodies, tcx) = build("fn add(a: i64, b: i64) -> i64 { a + b }\n");
+    verify_program(&bodies, &tcx).expect("clean program must verify");
+}
+
+#[test]
+fn call_arity_mismatch_is_detected() {
+    let source = r"
+fn callee(a: i64, b: i64) -> i64 { a + b }
+fn caller() -> i64 { callee(1, 2) }
+";
+    let (mut bodies, tcx) = build(source);
+    // Strip a single arg from any Call to `callee`.
+    let mut rewrote = false;
+    for body in &mut bodies {
+        for block in &mut body.blocks {
+            if let Terminator::Call { args, .. } = &mut block.terminator
+                && !args.is_empty()
+                && body.name == "caller"
+            {
+                args.pop();
+                rewrote = true;
+                break;
+            }
+        }
+        if rewrote {
+            break;
+        }
+    }
+    assert!(rewrote, "test fixture: expected a Call terminator");
+    let errors = verify_program(&bodies, &tcx).expect_err("arity mismatch must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, VerifyError::CallArityMismatch { .. })),
+        "expected CallArityMismatch in {errors:?}",
+    );
+}
+
+#[test]
+fn return_type_error_is_detected() {
+    let (mut bodies, mut tcx) = build("fn id(x: i64) -> i64 { x }\n");
+    let body = &mut bodies[0];
+    let err_ty = tcx.error_ty();
+    body.locals[0].ty = err_ty;
+    let errors = verify_body_typed(body, &tcx).expect_err("error return type must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, VerifyError::ReturnTypeError { .. })),
+        "expected ReturnTypeError in {errors:?}",
+    );
+}
+
+#[test]
+fn switch_int_non_integer_discriminant_is_detected() {
+    let (mut bodies, mut tcx) = build("fn pick(b: bool) -> i64 { if b { 1 } else { 0 } }\n");
+    let body = &mut bodies[0];
+    // Inject a SwitchInt on a String operand. Allocate a String
+    // local, then rewrite an existing SwitchInt's discriminant to
+    // read from it.
+    let str_ty = tcx.string_ty();
+    body.locals.push(LocalDecl {
+        ty: str_ty,
+        debug_name: None,
+        mutable: false,
+    });
+    let bad_local = Local((body.locals.len() - 1) as u32);
+    let mut rewrote = false;
+    for block in &mut body.blocks {
+        if let Terminator::SwitchInt { discriminant, .. } = &mut block.terminator {
+            *discriminant = Operand::Copy(Place::local(bad_local));
+            rewrote = true;
+            break;
+        }
+    }
+    assert!(rewrote, "test fixture: expected a SwitchInt terminator");
+    let errors = verify_body_typed(body, &tcx).expect_err("non-int switch discriminant must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, VerifyError::SwitchIntNonIntegerDiscriminant { .. })),
+        "expected SwitchIntNonIntegerDiscriminant in {errors:?}",
+    );
+}
+
+#[test]
+fn drop_of_non_owning_is_detected() {
+    let (mut bodies, tcx) = build("fn id(x: i64) -> i64 { x }\n");
+    let body = &mut bodies[0];
+    // x is i64 — not a heap pointer. Inject a Drop targeting it
+    // and a fresh dummy block to satisfy block-id contiguity.
+    let span = body.span;
+    let new_id = BlockId(body.blocks.len() as u32);
+    body.blocks.push(gossamer_mir::BasicBlock {
+        id: new_id,
+        stmts: Vec::new(),
+        terminator: Terminator::Return,
+        span,
+    });
+    let drop_block_id = BlockId(body.blocks.len() as u32);
+    body.blocks.push(gossamer_mir::BasicBlock {
+        id: drop_block_id,
+        stmts: Vec::new(),
+        terminator: Terminator::Drop {
+            place: Place::local(Local(1)),
+            target: new_id,
+        },
+        span,
+    });
+    let errors = verify_body_typed(body, &tcx).expect_err("drop of i64 must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, VerifyError::DropOfNonOwning { .. })),
+        "expected DropOfNonOwning in {errors:?}",
+    );
+}
+
+#[test]
+fn unary_neg_i128_min_is_detected() {
+    let (mut bodies, tcx) = build("fn n() -> i64 { 0 }\n");
+    let body = &mut bodies[0];
+    let span = body.span;
+    body.blocks[0].stmts.insert(
+        0,
+        Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(Local(0)),
+                rvalue: Rvalue::UnaryOp {
+                    op: UnOp::Neg,
+                    operand: Operand::Const(ConstValue::Int(i128::MIN)),
+                },
+            },
+            span,
+        },
+    );
+    let errors = verify_body_typed(body, &tcx).expect_err("neg(i128::MIN) must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, VerifyError::UnaryNegI128Min { .. })),
+        "expected UnaryNegI128Min in {errors:?}",
+    );
+}
+
+#[test]
+fn call_destination_untyped_is_detected() {
+    let (mut bodies, mut tcx) = build("fn id(x: i64) -> i64 { x }\n");
+    let body = &mut bodies[0];
+    let err_ty = tcx.error_ty();
+    let span = body.span;
+    // Add an Error-typed dest local; splice a Call terminator
+    // through a fresh continuation block.
+    body.locals.push(LocalDecl {
+        ty: err_ty,
+        debug_name: None,
+        mutable: false,
+    });
+    let bad_dest = Local((body.locals.len() - 1) as u32);
+    let cont_id = BlockId(body.blocks.len() as u32);
+    body.blocks.push(gossamer_mir::BasicBlock {
+        id: cont_id,
+        stmts: Vec::new(),
+        terminator: Terminator::Return,
+        span,
+    });
+    let call_id = BlockId(body.blocks.len() as u32);
+    body.blocks.push(gossamer_mir::BasicBlock {
+        id: call_id,
+        stmts: Vec::new(),
+        terminator: Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("phantom".to_string())),
+            args: Vec::new(),
+            destination: Place::local(bad_dest),
+            target: Some(cont_id),
+        },
+        span,
+    });
+    let errors = verify_body_typed(body, &tcx).expect_err("untyped call destination must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, VerifyError::CallDestinationUntyped { .. })),
+        "expected CallDestinationUntyped in {errors:?}",
+    );
+}
+
+#[test]
+fn aggregate_operand_count_is_detected() {
+    use gossamer_resolve::DefId;
+    use gossamer_types::IntTy;
+    let (mut bodies, mut tcx) = build("fn id(x: i64) -> i64 { x }\n");
+    let body = &mut bodies[0];
+    // Register a fake struct with three fields and emit an
+    // Aggregate with two operands.
+    let i64_ty = tcx.int_ty(IntTy::I64);
+    let fake = DefId::local(7_777);
+    tcx.register_struct_fields(fake, vec![i64_ty, i64_ty, i64_ty]);
+    let span = body.span;
+    body.blocks[0].stmts.insert(
+        0,
+        Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(Local(0)),
+                rvalue: Rvalue::Aggregate {
+                    kind: AggregateKind::Adt {
+                        def: fake,
+                        variant: 0,
+                    },
+                    operands: vec![
+                        Operand::Const(ConstValue::Int(0)),
+                        Operand::Const(ConstValue::Int(0)),
+                    ],
+                },
+            },
+            span,
+        },
+    );
+    let errors = verify_body_typed(body, &tcx).expect_err("short aggregate must fail");
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            VerifyError::AggregateOperandCount {
+                got: 2,
+                expected: 3,
+                ..
+            }
+        )),
+        "expected AggregateOperandCount in {errors:?}",
+    );
+}

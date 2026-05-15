@@ -1,7 +1,7 @@
 # Gossamer fuzz corpora
 
-Four `cargo-fuzz` targets live here. Each targets a parser we expose
-to untrusted input:
+`cargo-fuzz` targets covering every untrusted-input boundary the
+toolchain exposes plus differential execution between tiers:
 
 | Target | What it fuzzes | Seed inputs |
 |--------|----------------|-------------|
@@ -12,6 +12,10 @@ to untrusted input:
 | `typecheck` | full front-end through `resolve_source_file` + `typecheck_source_file`. | 0 (libFuzzer-grown) |
 | `mir_lower` | front-end + HIR + `lower_program` + `optimise`; asserts `verify_body` post-pass. | 0 (libFuzzer-grown) |
 | `vm_compile` | front-end + HIR + bytecode `Vm::load` (no execution). | 0 (libFuzzer-grown) |
+| `resolve` | resolver-only driver; takes `Arbitrary`-grown AST and forces it through `resolve_source_file` without a parse-clean prefix. | 0 |
+| `hir_lower` | HIR lowering — drives `gossamer_hir::lower_program` on grammar-generated input bypassing typecheck rejection. | 0 |
+| `vm_run` | bytecode VM **execution** — `Vm::run` on grammar-generated programs; surfaces `get_unchecked` UB the validator misses. | 0 |
+| `differential` | grammar-generated programs through VM, Cranelift JIT and LLVM AOT; byte-compares stdout, panics on divergence. | 0 |
 
 ## Running locally
 

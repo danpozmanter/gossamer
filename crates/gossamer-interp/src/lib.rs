@@ -27,6 +27,12 @@ mod jit_call;
 pub mod profile;
 mod regex_builtins;
 mod stdlib_builtins;
+// bytecode validator runs only under
+// `debug_assertions`; gate the module so release builds don't
+// pay the compile cost and don't surface dead-code warnings on
+// items the release stub doesn't use.
+#[cfg(debug_assertions)]
+mod validate;
 pub mod value;
 mod vm;
 
@@ -34,7 +40,10 @@ pub use builtins::{
     TestTally, reset_test_tally, set_assertion_location, set_http_max_requests, set_program_args,
     set_program_name, set_stderr_writer, set_stdout_writer, set_struct_layouts, take_test_tally,
 };
-pub use jit_call::force_jit_disabled as set_jit_disabled;
+pub use jit_call::{
+    force_jit_disabled as set_jit_disabled, force_jit_enable as set_jit_enabled,
+    jit_force_disabled_state,
+};
 
 /// Pushes `args` into the runtime's `ARGS_PTR` so JIT-compiled
 /// `gos_rt_os_args` reads see the same list `os::args()` returns

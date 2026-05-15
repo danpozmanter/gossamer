@@ -91,6 +91,11 @@ pub enum PatternKind {
         /// Inner pattern matched through the reference.
         inner: Box<Pattern>,
     },
+    /// Synthetic error placeholder emitted by the parser during pattern
+    /// recovery. Downstream passes treat this as opaque — it does not
+    /// fold into exhaustiveness as a catch-all and the typechecker
+    /// assigns `TyKind::Error` to it.
+    Error,
 }
 
 /// A single field pattern inside a struct pattern.

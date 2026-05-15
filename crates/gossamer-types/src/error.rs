@@ -95,6 +95,37 @@ pub enum TypeError {
     /// are a compile error unless explicitly suppressed with `let _ =`.
     #[error("unused `Result` value — the `Err` variant may go unhandled")]
     DiscardedResult,
+    /// An expression, type, or pattern nested past the type-checker's
+    /// hard recursion limit. Emitted on adversarial input that
+    /// survives parsing (rare, but the typechecker has its own
+    /// guard to keep `cargo check`-style probes from crashing).
+    #[error("expression nests beyond {limit} levels (consider rewriting with a helper)")]
+    RecursionLimit {
+        /// Recursion limit at which the error was raised.
+        limit: u32,
+    },
+    /// An integer literal overflows the value range of its declared
+    /// type-suffix (e.g. `300i8`, `99999999999999999999i64`). Treated
+    /// as `TyKind::Error` so downstream typing does not cascade.
+    #[error("integer literal `{literal}` does not fit in `{ty}`")]
+    IntLiteralOverflow {
+        /// Source spelling of the literal, including suffix.
+        literal: String,
+        /// Name of the suffix-derived target type.
+        ty: String,
+    },
+    /// A string escape that the parser accepted but cannot be
+    /// validly decoded (out-of-range `\u{...}`, surrogate code
+    /// point, non-ASCII `\x..`). Surfaced from the AST→typechecker
+    /// boundary so that downstream lowering sees no malformed
+    /// strings.
+    #[error("invalid escape `{escape}` in string literal: {reason}")]
+    InvalidEscape {
+        /// Verbatim text of the rejected escape sequence.
+        escape: String,
+        /// Human-readable reason the escape is invalid.
+        reason: String,
+    },
 }
 
 impl TypeError {
@@ -109,6 +140,9 @@ impl TypeError {
             Self::InvalidCast { .. } => "invalid-cast",
             Self::UnknownField { .. } => "unknown-field",
             Self::DiscardedResult => "discarded-result",
+            Self::RecursionLimit { .. } => "recursion-limit",
+            Self::IntLiteralOverflow { .. } => "int-literal-overflow",
+            Self::InvalidEscape { .. } => "invalid-escape",
         }
     }
 
@@ -123,6 +157,9 @@ impl TypeError {
             Self::InvalidCast { .. } => "GT0005",
             Self::UnknownField { .. } => "GT0006",
             Self::DiscardedResult => "GT0007",
+            Self::RecursionLimit { .. } => "GT0008",
+            Self::IntLiteralOverflow { .. } => "GT0009",
+            Self::InvalidEscape { .. } => "GT0010",
         }
     }
 }
@@ -240,6 +277,19 @@ impl TypeDiagnostic {
                          or explicitly discard with `let _ = <expr>`",
                     )
                     .with_note("SPEC §9: every `Result` value must be handled");
+            }
+            TypeError::RecursionLimit { .. } => {
+                out = out
+                    .with_help("split the expression into smaller helpers")
+                    .with_note(
+                        "the typechecker bails out at a fixed depth to avoid a C-stack overflow",
+                    );
+            }
+            TypeError::IntLiteralOverflow { literal, ty } => {
+                out = out.with_help(format!("`{literal}` exceeds the range of `{ty}`"));
+            }
+            TypeError::InvalidEscape { escape, reason } => {
+                out = out.with_help(format!("`{escape}` is not a valid escape: {reason}"));
             }
         }
         out

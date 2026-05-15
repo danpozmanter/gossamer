@@ -60,6 +60,15 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // Tracked in `~/dev/contexts/gos/latest.md`.
     "gos_rt_chan_recv_ctx_option",
     "gos_rt_install_ctx_hooks",
+    // Tracing-GC debug walker. Called from tests and from
+    // `gos_rt_gc_collect` under `cfg(debug_assertions)`. Production
+    // codegen does not emit calls — its only callers are Rust.
+    "gos_rt_gc_assert_consistent",
+    // Future-concurrent-collector write barrier. Exported so the
+    // codegen can switch heap-pointer stores to route through it
+    // when `GOSSAMER_WRITE_BARRIER=1` is set; production codegen
+    // does not currently emit calls.
+    "gos_rt_write_barrier_ptr",
 ];
 
 fn main() {

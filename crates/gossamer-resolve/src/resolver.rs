@@ -788,7 +788,21 @@ impl Resolver {
         }
         let head_name = head.name.name.clone();
         let lookup_name = effective.first().copied().unwrap_or(head_name.as_str());
-        let resolution = self.lookup_value_or_type(lookup_name).unwrap_or_else(|| {
+        // For multi-segment paths (`a::b::c`), the head can only be a
+        // module / type / trait — never a local value binding. A
+        // local variable that happens to share a module's name (a
+        // common shadow, e.g. `let mut provider = "";` plus
+        // `mod provider`) must not capture `provider::xxx` paths.
+        // The flat lookup-value-then-type fallback below would
+        // otherwise resolve the head to the local binding, and the
+        // VM tier would then dispatch the call as a method-on-string,
+        // silently returning Unit.
+        let resolution = if effective.len() > 1 {
+            self.scopes.lookup_type(lookup_name).map(|b| b.resolution)
+        } else {
+            self.lookup_value_or_type(lookup_name)
+        };
+        let resolution = resolution.unwrap_or_else(|| {
             self.emit(
                 ResolveError::UnresolvedName {
                     name: lookup_name.to_string(),
@@ -966,7 +980,8 @@ impl Resolver {
             PatternKind::Wildcard
             | PatternKind::Literal(_)
             | PatternKind::Rest
-            | PatternKind::Range { .. } => {}
+            | PatternKind::Range { .. }
+            | PatternKind::Error => {}
             PatternKind::Ident {
                 name, subpattern, ..
             } => {

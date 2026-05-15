@@ -812,3 +812,94 @@ fn main() -> i64 {
     );
     assert_eq!(bodies.len(), before, "no extra bodies expected");
 }
+
+/// C18 — drop pass skips conditionally-initialised locals.
+///
+/// A `HashMap` allocated only inside an `if` arm must not have its
+/// free scheduled at the function's `Return`, because the `else`
+/// path reaches the return with the slot uninit. Pre-fix, this
+/// shape lowered to a `gos_rt_map_free(uninit_slot)` call.
+#[test]
+fn drop_pass_skips_conditionally_initialised_local() {
+    let source = r"
+fn maybe_build(flag: bool) -> i64 {
+    if flag {
+        let m: HashMap<i64, i64> = HashMap::new()
+        m.insert(1, 2)
+        m.len()
+    } else {
+        0
+    }
+}
+";
+    let (bodies, _) = build(source);
+    let body = bodies
+        .iter()
+        .find(|b| b.name == "maybe_build")
+        .expect("body");
+    // No drop pass should have emitted a `gos_rt_map_free` in this
+    // shape — every Return is reachable from the `else` arm which
+    // never allocated the map.
+    let frees: Vec<_> = body
+        .blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .filter_map(|stmt| match &stmt.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, .. },
+                ..
+            } => {
+                if *name == "gos_rt_map_free" {
+                    Some(*name)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        frees.is_empty(),
+        "drop pass must not free a conditionally-initialised local; got {frees:?}"
+    );
+}
+
+/// C18 — drop pass keeps unconditional drops intact.
+///
+/// When a `HashMap` is allocated at the top of the function and
+/// every path through the body keeps it owned by this frame, the
+/// drop must still fire on `Return` to release the heap storage.
+#[test]
+fn drop_pass_keeps_unconditional_drop_intact() {
+    let source = r"
+fn build() -> i64 {
+    let m: HashMap<i64, i64> = HashMap::new()
+    m.insert(1, 2)
+    m.len()
+}
+";
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "build").expect("body");
+    let frees: Vec<_> = body
+        .blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .filter_map(|stmt| match &stmt.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, .. },
+                ..
+            } => {
+                if *name == "gos_rt_map_free" {
+                    Some(*name)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !frees.is_empty(),
+        "drop pass must free an unconditionally-allocated local"
+    );
+}

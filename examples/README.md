@@ -11,6 +11,7 @@ validated by the CLI integration tests.
 | `web_server.gos` | HTTP/1.1 echo server over `std::http` | runs |
 | `cli_args.gos` | Command-line argument parsing (`std::flag`) | runs when `os::args` is wired |
 | `file_io.gos` | File read / write — text + JSON | runs when `std::fs` + `std::encoding::json` are wired |
+| `json_structs.gos` | One-line strict JSON via auto-derived `<Type>::to_json` / `<Type>::from_json` | runs |
 | `http_client.gos` | HTTP client / REST call | pairs with `web_server.gos` |
 | `data_structures.gos` | Lists, maps, sets from `std::collections` | parses; runs partially |
 | `control_flow.gos` | Loops + conditionals + match (pure syntax) | runs |

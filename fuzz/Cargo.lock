@@ -1063,11 +1063,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-abi"
-version = "0.5.1"
+version = "0.6.0"
 
 [[package]]
 name = "gossamer-ast"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1075,7 +1075,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1095,14 +1095,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gossamer-lex",
 ]
@@ -1111,6 +1111,7 @@ dependencies = [
 name = "gossamer-fuzz"
 version = "0.0.0"
 dependencies = [
+ "arbitrary",
  "gossamer-hir",
  "gossamer-interp",
  "gossamer-lex",
@@ -1125,11 +1126,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-gc"
-version = "0.5.1"
+version = "0.6.0"
 
 [[package]]
 name = "gossamer-hir"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1139,7 +1140,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
@@ -1158,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1167,7 +1168,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mir"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-hir",
@@ -1178,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1188,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "rustls",
  "rustls-pki-types",
@@ -1199,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-resolve"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1210,7 +1211,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "crossbeam-deque",
@@ -1235,18 +1236,19 @@ dependencies = [
  "signal-hook",
  "tokio",
  "ureq",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "gossamer-sched"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1308,7 +1310,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-types"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",

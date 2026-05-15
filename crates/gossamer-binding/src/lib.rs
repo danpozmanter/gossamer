@@ -31,6 +31,30 @@ pub use crate::registry::{ItemFn, Module, NativeCall, REGISTRY, Signature};
 pub use crate::sig::SigType;
 pub use crate::types::{Type, VariantArm};
 
+/// Major.minor ABI version of the gossamer-binding surface.
+///
+/// Bumped whenever any of the cross-FFI layouts, calling
+/// conventions, or symbol prefixes change in a way that would
+/// silently corrupt memory if a binding built against an older
+/// version were linked against a newer runtime. Each released
+/// binding records this constant via the `__GOS_BINDING_ABI_VERSION`
+/// static the runtime sniffs at startup.
+pub const ABI_VERSION: (u8, u8) = (0, 6);
+
+/// Linkage-anchored marker so the runtime can verify the binding's
+/// ABI version at load time. The runtime probes for the symbol
+/// (`__gos_binding_abi_version`) via the host's dynamic-symbol
+/// lookup; mismatch produces a diagnostic at first call rather
+/// than a silent memory corruption.
+///
+/// `unsafe_code` is permitted on this single static because the
+/// `no_mangle` export is the entire mechanism — without it, the
+/// runtime has nothing to dlsym for at link time.
+#[allow(unsafe_code, reason = "no_mangle is the load-time ABI-version anchor")]
+#[unsafe(no_mangle)]
+#[used]
+pub static __gos_binding_abi_version: [u8; 2] = [ABI_VERSION.0, ABI_VERSION.1];
+
 /// Renders the C-ABI export symbol for a binding item.
 ///
 /// Mirrors what the `register_module!` macro emits via the
@@ -205,7 +229,18 @@ fn populate_resolve_table() {
 /// leaf consumes one slot; collisions across more than this many
 /// distinct leaves panic. The number is generous given typical
 /// binding-crate sizes (tuigoose has ~50 items across 7 modules).
-const AMBIG_POOL_SIZE: usize = 64;
+/// Maximum number of ambiguous-leaf dispatch groups.
+///
+/// The dispatch table at the bottom of this file is a fixed-size
+/// array of distinct `extern fn` pointers (each is a separate
+/// monomorphic instantiation of `ambig_call::<N>`), so growing
+/// the pool at runtime would require regenerating the table —
+/// which is a build-time concern, not a runtime one. 0.6.0
+/// bumped the cap from 64 to 256 (and improved the
+/// exhaustion diagnostic) so practical binding-crate sizes never
+/// hit the limit. Linking a binding crate that exposes more than
+/// 256 ambiguous-leaf groups produces a clear panic at startup.
+const AMBIG_POOL_SIZE: usize = 256;
 
 type AmbigGroup = Vec<&'static ItemFn>;
 
@@ -235,7 +270,16 @@ fn assign_ambig_dispatcher(group: AmbigGroup) -> gossamer_interp::value::NativeC
                 break;
             }
         }
-        chosen.expect("ambiguous-leaf pool exhausted; raise AMBIG_POOL_SIZE")
+        chosen.unwrap_or_else(|| {
+            panic!(
+                "gossamer-binding: ambiguous-leaf dispatch pool exhausted ({AMBIG_POOL_SIZE} slots in use). \
+                 More than {AMBIG_POOL_SIZE} distinct ambiguous leaf names are registered \
+                 across the linked binding crates. Raise `AMBIG_POOL_SIZE` in \
+                 `gossamer-binding/src/lib.rs` and regenerate `AMBIG_DISPATCH_TABLE` \
+                 — the table must remain a fixed-size const array so each entry is \
+                 a distinct `extern fn` pointer."
+            )
+        })
     };
     AMBIG_DISPATCH_TABLE[idx]
 }
@@ -327,6 +371,198 @@ const AMBIG_DISPATCH_TABLE: [gossamer_interp::value::NativeCall; AMBIG_POOL_SIZE
     ambig_call::<61>,
     ambig_call::<62>,
     ambig_call::<63>,
+    ambig_call::<64>,
+    ambig_call::<65>,
+    ambig_call::<66>,
+    ambig_call::<67>,
+    ambig_call::<68>,
+    ambig_call::<69>,
+    ambig_call::<70>,
+    ambig_call::<71>,
+    ambig_call::<72>,
+    ambig_call::<73>,
+    ambig_call::<74>,
+    ambig_call::<75>,
+    ambig_call::<76>,
+    ambig_call::<77>,
+    ambig_call::<78>,
+    ambig_call::<79>,
+    ambig_call::<80>,
+    ambig_call::<81>,
+    ambig_call::<82>,
+    ambig_call::<83>,
+    ambig_call::<84>,
+    ambig_call::<85>,
+    ambig_call::<86>,
+    ambig_call::<87>,
+    ambig_call::<88>,
+    ambig_call::<89>,
+    ambig_call::<90>,
+    ambig_call::<91>,
+    ambig_call::<92>,
+    ambig_call::<93>,
+    ambig_call::<94>,
+    ambig_call::<95>,
+    ambig_call::<96>,
+    ambig_call::<97>,
+    ambig_call::<98>,
+    ambig_call::<99>,
+    ambig_call::<100>,
+    ambig_call::<101>,
+    ambig_call::<102>,
+    ambig_call::<103>,
+    ambig_call::<104>,
+    ambig_call::<105>,
+    ambig_call::<106>,
+    ambig_call::<107>,
+    ambig_call::<108>,
+    ambig_call::<109>,
+    ambig_call::<110>,
+    ambig_call::<111>,
+    ambig_call::<112>,
+    ambig_call::<113>,
+    ambig_call::<114>,
+    ambig_call::<115>,
+    ambig_call::<116>,
+    ambig_call::<117>,
+    ambig_call::<118>,
+    ambig_call::<119>,
+    ambig_call::<120>,
+    ambig_call::<121>,
+    ambig_call::<122>,
+    ambig_call::<123>,
+    ambig_call::<124>,
+    ambig_call::<125>,
+    ambig_call::<126>,
+    ambig_call::<127>,
+    ambig_call::<128>,
+    ambig_call::<129>,
+    ambig_call::<130>,
+    ambig_call::<131>,
+    ambig_call::<132>,
+    ambig_call::<133>,
+    ambig_call::<134>,
+    ambig_call::<135>,
+    ambig_call::<136>,
+    ambig_call::<137>,
+    ambig_call::<138>,
+    ambig_call::<139>,
+    ambig_call::<140>,
+    ambig_call::<141>,
+    ambig_call::<142>,
+    ambig_call::<143>,
+    ambig_call::<144>,
+    ambig_call::<145>,
+    ambig_call::<146>,
+    ambig_call::<147>,
+    ambig_call::<148>,
+    ambig_call::<149>,
+    ambig_call::<150>,
+    ambig_call::<151>,
+    ambig_call::<152>,
+    ambig_call::<153>,
+    ambig_call::<154>,
+    ambig_call::<155>,
+    ambig_call::<156>,
+    ambig_call::<157>,
+    ambig_call::<158>,
+    ambig_call::<159>,
+    ambig_call::<160>,
+    ambig_call::<161>,
+    ambig_call::<162>,
+    ambig_call::<163>,
+    ambig_call::<164>,
+    ambig_call::<165>,
+    ambig_call::<166>,
+    ambig_call::<167>,
+    ambig_call::<168>,
+    ambig_call::<169>,
+    ambig_call::<170>,
+    ambig_call::<171>,
+    ambig_call::<172>,
+    ambig_call::<173>,
+    ambig_call::<174>,
+    ambig_call::<175>,
+    ambig_call::<176>,
+    ambig_call::<177>,
+    ambig_call::<178>,
+    ambig_call::<179>,
+    ambig_call::<180>,
+    ambig_call::<181>,
+    ambig_call::<182>,
+    ambig_call::<183>,
+    ambig_call::<184>,
+    ambig_call::<185>,
+    ambig_call::<186>,
+    ambig_call::<187>,
+    ambig_call::<188>,
+    ambig_call::<189>,
+    ambig_call::<190>,
+    ambig_call::<191>,
+    ambig_call::<192>,
+    ambig_call::<193>,
+    ambig_call::<194>,
+    ambig_call::<195>,
+    ambig_call::<196>,
+    ambig_call::<197>,
+    ambig_call::<198>,
+    ambig_call::<199>,
+    ambig_call::<200>,
+    ambig_call::<201>,
+    ambig_call::<202>,
+    ambig_call::<203>,
+    ambig_call::<204>,
+    ambig_call::<205>,
+    ambig_call::<206>,
+    ambig_call::<207>,
+    ambig_call::<208>,
+    ambig_call::<209>,
+    ambig_call::<210>,
+    ambig_call::<211>,
+    ambig_call::<212>,
+    ambig_call::<213>,
+    ambig_call::<214>,
+    ambig_call::<215>,
+    ambig_call::<216>,
+    ambig_call::<217>,
+    ambig_call::<218>,
+    ambig_call::<219>,
+    ambig_call::<220>,
+    ambig_call::<221>,
+    ambig_call::<222>,
+    ambig_call::<223>,
+    ambig_call::<224>,
+    ambig_call::<225>,
+    ambig_call::<226>,
+    ambig_call::<227>,
+    ambig_call::<228>,
+    ambig_call::<229>,
+    ambig_call::<230>,
+    ambig_call::<231>,
+    ambig_call::<232>,
+    ambig_call::<233>,
+    ambig_call::<234>,
+    ambig_call::<235>,
+    ambig_call::<236>,
+    ambig_call::<237>,
+    ambig_call::<238>,
+    ambig_call::<239>,
+    ambig_call::<240>,
+    ambig_call::<241>,
+    ambig_call::<242>,
+    ambig_call::<243>,
+    ambig_call::<244>,
+    ambig_call::<245>,
+    ambig_call::<246>,
+    ambig_call::<247>,
+    ambig_call::<248>,
+    ambig_call::<249>,
+    ambig_call::<250>,
+    ambig_call::<251>,
+    ambig_call::<252>,
+    ambig_call::<253>,
+    ambig_call::<254>,
+    ambig_call::<255>,
 ];
 
 fn lower_type(t: &crate::types::Type) -> gossamer_resolve::BindingType {

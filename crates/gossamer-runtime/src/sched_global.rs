@@ -54,6 +54,13 @@ struct Globals {
     gid_alloc: AtomicU64,
     /// Set after the poller thread has been started.
     poller_started: AtomicBool,
+    /// Set by [`request_shutdown`] to ask the poller loop to exit
+    /// cleanly so the runtime can flush in-flight I/O before
+    /// `gos_rt_exit`. Without this signal the poller thread was
+    /// killed mid-`poll()` by `std::process::exit`, sending RST
+    /// (not FIN) on any TCP connections in the OS kernel's send
+    /// buffer.
+    poller_shutdown: AtomicBool,
 }
 
 static GLOBALS: OnceLock<Globals> = OnceLock::new();
@@ -73,6 +80,7 @@ fn globals() -> &'static Globals {
             wakers: Mutex::new(WakerMap::new()),
             gid_alloc: AtomicU64::new(1_000_000),
             poller_started: AtomicBool::new(false),
+            poller_shutdown: AtomicBool::new(false),
         }
     })
 }
@@ -120,6 +128,9 @@ const POLL_TICK_MS: u64 = 1;
 fn poller_loop() {
     let g = globals();
     loop {
+        if g.poller_shutdown.load(Ordering::Acquire) {
+            break;
+        }
         let events = {
             let mut poller = g.poller.lock();
             poller
@@ -130,6 +141,26 @@ fn poller_loop() {
             deliver_event(ev);
         }
     }
+}
+
+/// Signals the netpoller thread to exit on its next tick. Called
+/// from `gos_rt_exit` so in-flight I/O drains cleanly instead of
+/// being interrupted mid-syscall by `std::process::exit`. Idempotent.
+pub fn request_shutdown() {
+    let g = globals();
+    g.poller_shutdown.store(true, Ordering::Release);
+    // Wake the poller so it doesn't sit on a 1ms tick before
+    // observing the flag.
+    let _ = g.poller_interrupt.wake();
+}
+
+/// True if [`request_shutdown`] has been called. Long-running
+/// runtime loops (HTTP accept, M:N worker idle, …) poll this
+/// flag at safepoints so `gos_rt_exit` doesn't interrupt them
+/// mid-iteration.
+#[must_use]
+pub fn is_shutdown_requested() -> bool {
+    globals().poller_shutdown.load(Ordering::Acquire)
 }
 
 /// Wakes the netpoller thread early so it re-enters `poll()` with

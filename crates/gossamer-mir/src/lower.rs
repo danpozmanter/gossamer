@@ -70,6 +70,8 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     for body in &mut bodies {
         insert_drops_at_returns(body, tcx);
     }
+    #[cfg(debug_assertions)]
+    crate::verify::debug_verify_program(&bodies, tcx);
     bodies
 }
 
@@ -208,6 +210,39 @@ fn returns_borrowed_pointer(name: &str) -> bool {
     matches!(name, "gos_rt_os_args")
 }
 
+/// Recursive flat-slot byte count for a MIR type. Mirrors the codegen's `slot_count * 8` aggregate layout and supplies the size operand for [`gos_rt_aggr_free`].
+fn aggr_size_bytes(tcx: &gossamer_types::TyCtxt, ty: Ty) -> i64 {
+    use gossamer_types::TyKind;
+    let bytes = match tcx.kind_of(ty) {
+        TyKind::Tuple(elems) => {
+            let total: i64 = elems
+                .iter()
+                .map(|t| aggr_size_bytes(tcx, *t).max(8) / 8)
+                .sum();
+            total.max(1) * 8
+        }
+        TyKind::Array { elem, len } => {
+            let elem_bytes = aggr_size_bytes(tcx, *elem).max(8);
+            i64::try_from(*len).unwrap_or(1).saturating_mul(elem_bytes)
+        }
+        TyKind::Adt { def, .. } => {
+            if let Some(field_tys) = tcx.struct_field_tys(*def) {
+                let total: i64 = field_tys
+                    .iter()
+                    .map(|t| aggr_size_bytes(tcx, *t).max(8) / 8)
+                    .sum();
+                total.max(1) * 8
+            } else {
+                // Sentinel Adts (Result/Option, DirInfo, …): single
+                // heap-pointer slot.
+                8
+            }
+        }
+        _ => 8,
+    };
+    bytes.max(8)
+}
+
 /// Emits a `Call(gos_rt_*_free, [local])` before each `Return`
 /// terminator for every local that owns a heap-allocated runtime
 /// container (`HashMap` / `Vec` / `HashSet` / `BTreeMap`) and
@@ -228,7 +263,8 @@ fn returns_borrowed_pointer(name: &str) -> bool {
 ///   are never dropped here (caller owns them).
 #[allow(
     clippy::cognitive_complexity,
-    reason = "linear flow analysis over MIR; splitting hides the per-pass intent"
+    clippy::needless_range_loop,
+    reason = "linear flow analysis over MIR; splitting hides the per-pass intent. Parallel indexing into `body.blocks` and `init_at_return` is by design."
 )]
 fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     use gossamer_types::TyKind;
@@ -242,6 +278,16 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     // or has been disqualified by a subsequent re-assignment.
     let mut owner_ctor: Vec<Option<&'static str>> = vec![None; body.locals.len()];
     let mut moved_into_return: Vec<bool> = vec![false; body.locals.len()];
+
+    // Drop-before-overwrite sites for aggregate-typed locals. Each
+    // entry `(block_idx, stmt_idx, local, size_bytes)` means
+    // "insert `gos_rt_aggr_free(local, size)` before block
+    // `block_idx`'s statement at index `stmt_idx`". The null check
+    // inside `gos_rt_aggr_free` makes this a no-op on the first
+    // assignment (the local holds 0/null pre-init) and reclaims
+    // the previous allocation on every subsequent assignment
+    // — closing the loop-body aggregate-leak case.
+    let mut drop_before_sites: Vec<(usize, usize, Local, i64)> = Vec::new();
 
     let ctor_to_free = |name: &str| -> Option<&'static str> {
         match name {
@@ -301,6 +347,18 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
                 if idx == 0 || idx <= arity || idx >= owner_ctor.len() {
                     continue;
                 }
+                // note: `Rvalue::Aggregate` /
+                // `Rvalue::Repeat` are NOT tracked here. The LLVM
+                // backend (used by `gos build`) lowers aggregates
+                // to stack slots that die with the function frame
+                // — no leak. The Cranelift backend (used by the
+                // in-process JIT for `gos run`) routes them through
+                // `gos_rt_aggr_alloc`, which lives in the
+                // process-wide registry; long-running JIT bodies
+                // can call `gos_rt_gc_reset` at safepoints to
+                // reclaim. Emitting `gos_rt_aggr_free` here would
+                // double-free the stack slot under LLVM, which is
+                // the default backend.
                 // Re-assignment of an owning local — disqualify.
                 if owner_ctor[idx].is_some() && !matches!(rvalue, Rvalue::CallIntrinsic { .. }) {
                     owner_ctor[idx] = None;
@@ -363,6 +421,26 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
                     continue;
                 }
             }
+            // when a Call returns an aggregate
+            // (Adt / Tuple / Array) into a local, queue a
+            // drop-before-overwrite of the prior value at the end
+            // of this block (just before the Call terminator
+            // runs). On the first execution the local holds 0/null
+            // and `gos_rt_aggr_free` no-ops via its null check; on
+            // every subsequent execution (loop reuse, repeated
+            // call) the prior allocation is reclaimed instead of
+            // leaked. The end-of-scope drop continues to handle
+            // the final allocation at function return.
+            let dest_is_aggregate = matches!(
+                tcx.kind_of(dest_ty),
+                TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
+            );
+            // note: Call destinations of aggregate
+            // type are not tracked here. See the matching comment in
+            // the stmt-loop above — LLVM uses stack slots, Cranelift
+            // JIT uses tracked heap allocs reclaimable via
+            // `gos_rt_gc_reset` at safepoints.
+            let _ = dest_is_aggregate;
             // Any other Call destination invalidates ownership
             // (the local now holds something else).
             owner_ctor[idx] = None;
@@ -553,12 +631,37 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
         return;
     }
 
+    // Per-target must-init dataflow. For each drop target `L`,
+    // compute `init_at_return[L][R]` — `true` when every path from
+    // entry to Return block `R` passes through at least one
+    // definition of `L`. A definition is a Call terminator whose
+    // destination is `L` or a stmt-position assignment to `L`.
+    //
+    // The earlier (type-only) pass scheduled a free at every
+    // Return for every recognised owner local, including shapes
+    // like `let m: HashMap<...>; if cond { m = HashMap::new() };
+    // return m;` where the `else` branch reaches Return without
+    // ever initialising `m`. Calling `gos_rt_map_free` on the
+    // uninit slot aborts in the allocator metadata probe.
+    //
+    // Approach: minimal forward dataflow with intersection at
+    // joins (the "must-init" lattice). Drops are emitted only at
+    // Return blocks where the target is must-init at the point of
+    // return; cases where the proof is undecidable (irreducible
+    // CFG, complex loops) conservatively skip the drop — a leak
+    // is preferable to a free of uninit memory.
+    let init_at_return = compute_init_at_returns(body, &drop_targets);
+
     for block_idx in 0..last_block {
         if !matches!(body.blocks[block_idx].terminator, Terminator::Return) {
             continue;
         }
         let span = body.blocks[block_idx].span;
-        for (local, free_name) in &drop_targets {
+        let init_row = &init_at_return[block_idx];
+        for (target_idx, (local, free_name)) in drop_targets.iter().enumerate() {
+            if !init_row[target_idx] {
+                continue;
+            }
             let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
             let unit_ty = body.locals[0].ty;
             body.locals.push(LocalDecl {
@@ -566,35 +669,327 @@ fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
                 debug_name: None,
                 mutable: false,
             });
-            // New trampoline block: Call(free, [local]) -> Goto(original_return_block)
-            // To keep block ordering stable (and avoid moving the
-            // Return terminator), we instead splice a statement
-            // by appending into the current block's stmts. Drop
-            // calls expect Terminator::Call shape, so we route
-            // through a fresh trampoline block.
-            let new_block_id = BlockId(u32::try_from(body.blocks.len()).expect("block overflow"));
-            let _ = new_block_id;
-            // Append a `Call` to the original block by replacing
-            // its terminator: the existing Return moves to a new
-            // block, and we splice a chain of Call terminators
-            // before it.
-            //
-            // Simpler implementation: emit a noop assignment that
-            // *invokes* the free helper as an Rvalue::CallIntrinsic.
-            // This is supported by the cranelift lowerer's
-            // statement path (via lower_intrinsic_call), so we
-            // avoid the block-rewiring complexity.
+            // Emit the free as a CallIntrinsic stmt — the cranelift
+            // lowerer's statement path handles it without any block
+            // rewiring. `gos_rt_aggr_free` needs a second `size`
+            // arg the codegen derives from the local's type; all
+            // other helpers (Vec/Map/Set/...) are single-arg.
+            // `gos_rt_aggr_free` takes 2 args (ptr + size); the
+            // other heap-container free helpers take only the
+            // receiver pointer.
+            let args = if *free_name == "gos_rt_aggr_free" {
+                let size = aggr_size_bytes(tcx, body.locals[local.0 as usize].ty);
+                vec![
+                    Operand::Copy(Place::local(*local)),
+                    Operand::Const(ConstValue::Int(i128::from(size))),
+                ]
+            } else {
+                vec![Operand::Copy(Place::local(*local))]
+            };
             body.blocks[block_idx].stmts.push(Statement {
                 kind: StatementKind::Assign {
                     place: Place::local(dest),
                     rvalue: Rvalue::CallIntrinsic {
                         name: free_name,
-                        args: vec![Operand::Copy(Place::local(*local))],
+                        args,
                     },
                 },
                 span,
             });
         }
+    }
+
+    // drop-before-overwrite for aggregate
+    // reassignments. Skip sites where the local is not provably
+    // initialised on every path leading to this statement —
+    // freeing an uninitialised aggregate local reads garbage from
+    // the Cranelift Variable slot and aborts in `__libc_free`.
+    //
+    // For each candidate site, compute "is local must-init at
+    // block entry?" via the same dataflow used by
+    // `compute_init_at_returns`. Then walk the block statements
+    // up to `stmt_idx`, updating must-init on each Assign to
+    // this local. Drop is emitted only if must-init is true at
+    // the point of the candidate stmt.
+    let candidate_locals: Vec<Local> = drop_before_sites
+        .iter()
+        .map(|(_, _, l, _)| *l)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let init_at_each_return = if candidate_locals.is_empty() {
+        Vec::new()
+    } else {
+        let targets: Vec<(Local, &'static str)> = candidate_locals
+            .iter()
+            .map(|l| (*l, "gos_rt_aggr_free"))
+            .collect();
+        compute_init_at_block_entries(body, &targets)
+    };
+    let local_to_target_idx: std::collections::BTreeMap<Local, usize> = candidate_locals
+        .iter()
+        .enumerate()
+        .map(|(i, l)| (*l, i))
+        .collect();
+    let must_init_at = |block_idx: usize, stmt_idx: usize, local: Local| -> bool {
+        let Some(target_idx) = local_to_target_idx.get(&local) else {
+            return false;
+        };
+        if block_idx >= init_at_each_return.len() {
+            return false;
+        }
+        let mut init = init_at_each_return[block_idx][*target_idx];
+        // Walk stmts up to stmt_idx and update must-init based on
+        // Assign destinations.
+        for (i, stmt) in body.blocks[block_idx].stmts.iter().enumerate() {
+            if i >= stmt_idx {
+                break;
+            }
+            if let StatementKind::Assign { place, .. } = &stmt.kind
+                && place.projection.is_empty()
+                && place.local == local
+            {
+                init = true;
+            }
+        }
+        init
+    };
+    drop_before_sites.sort_by_key(|a| (a.0, a.1));
+    let drop_before_sites: Vec<_> = drop_before_sites
+        .into_iter()
+        .filter(|(b, s, l, _)| must_init_at(*b, *s, *l))
+        .collect();
+    for (block_idx, stmt_idx, local, size) in drop_before_sites.into_iter().rev() {
+        if block_idx >= body.blocks.len() {
+            continue;
+        }
+        let span = body.blocks[block_idx]
+            .stmts
+            .get(stmt_idx)
+            .map_or(body.blocks[block_idx].span, |s| s.span);
+        let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+        let unit_ty = body.locals[0].ty;
+        body.locals.push(LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+        });
+        let drop_stmt = Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(dest),
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "gos_rt_aggr_free",
+                    args: vec![
+                        Operand::Copy(Place::local(local)),
+                        Operand::Const(ConstValue::Int(i128::from(size))),
+                    ],
+                },
+            },
+            span,
+        };
+        body.blocks[block_idx].stmts.insert(stmt_idx, drop_stmt);
+    }
+}
+
+/// Variant of `compute_init_at_returns` that returns the must-init
+/// state at *block entry* (intersection across all predecessors'
+/// exit states). Used by the drop-before-overwrite pass to decide
+/// whether a candidate site is safe to emit — freeing an
+/// uninitialised aggregate local aborts in `__libc_free`.
+fn compute_init_at_block_entries(body: &Body, targets: &[(Local, &'static str)]) -> Vec<Vec<bool>> {
+    let n_blocks = body.blocks.len();
+    let n_targets = targets.len();
+    if n_blocks == 0 || n_targets == 0 {
+        return vec![vec![false; n_targets]; n_blocks];
+    }
+
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n_blocks];
+    for (i, block) in body.blocks.iter().enumerate() {
+        for s in block_successors(&block.terminator) {
+            let si = s.0 as usize;
+            if si < n_blocks {
+                preds[si].push(i);
+            }
+        }
+    }
+    let target_locals: Vec<u32> = targets.iter().map(|(l, _)| l.0).collect();
+
+    let mut stmt_defs = vec![vec![false; n_targets]; n_blocks];
+    for (i, block) in body.blocks.iter().enumerate() {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, .. } = &stmt.kind
+                && place.projection.is_empty()
+            {
+                for (t, l) in target_locals.iter().enumerate() {
+                    if place.local.0 == *l {
+                        stmt_defs[i][t] = true;
+                    }
+                }
+            }
+        }
+    }
+    let mut term_defs = vec![vec![false; n_targets]; n_blocks];
+    for (i, block) in body.blocks.iter().enumerate() {
+        if let Terminator::Call { destination, .. } = &block.terminator
+            && destination.projection.is_empty()
+        {
+            for (t, l) in target_locals.iter().enumerate() {
+                if destination.local.0 == *l {
+                    term_defs[i][t] = true;
+                }
+            }
+        }
+    }
+
+    let mut init_in = vec![vec![false; n_targets]; n_blocks];
+    let mut init_out = vec![vec![false; n_targets]; n_blocks];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for i in 0..n_blocks {
+            for t in 0..n_targets {
+                let new_in = if preds[i].is_empty() {
+                    false
+                } else {
+                    preds[i].iter().all(|&p| init_out[p][t] || term_defs[p][t])
+                };
+                let new_out = new_in || stmt_defs[i][t];
+                if new_in != init_in[i][t] || new_out != init_out[i][t] {
+                    init_in[i][t] = new_in;
+                    init_out[i][t] = new_out;
+                    changed = true;
+                }
+            }
+        }
+    }
+    init_in
+}
+
+/// Must-be-initialised forward dataflow for each `(local, free_fn)`
+/// drop target. Returns a per-block row indexed by `target_idx`:
+/// `out[block_idx][target_idx] == true` means "every path from the
+/// entry block to the point of return in `block_idx` defines
+/// `targets[target_idx].0`."
+///
+/// The lattice is `bool` with `false ⊑ true`; joins use intersection
+/// (must-init from every predecessor). Defs come from Call
+/// terminators whose destination is the target local, and from
+/// stmt-position assignments to it (anything else doesn't allocate
+/// a fresh value into the slot in practice).
+///
+/// Result is sized `n_blocks × n_targets`. Cost is `O(n_targets ×
+/// n_blocks × iters)` with `iters` bounded by the longest dataflow
+/// chain (CFGs with cycles converge in a handful of passes).
+fn compute_init_at_returns(body: &Body, targets: &[(Local, &'static str)]) -> Vec<Vec<bool>> {
+    let n_blocks = body.blocks.len();
+    let n_targets = targets.len();
+    let mut out = vec![vec![false; n_targets]; n_blocks];
+    if n_blocks == 0 || n_targets == 0 {
+        return out;
+    }
+
+    // Predecessor map for join nodes.
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n_blocks];
+    for (i, block) in body.blocks.iter().enumerate() {
+        for s in block_successors(&block.terminator) {
+            let si = s.0 as usize;
+            if si < n_blocks {
+                preds[si].push(i);
+            }
+        }
+    }
+
+    let target_locals: Vec<u32> = targets.iter().map(|(l, _)| l.0).collect();
+
+    // init_in[B][t] — must-init at entry of B.
+    // init_out[B][t] — must-init after all of B's stmts (used at
+    // the Return point for Return-terminated blocks).
+    let mut init_in = vec![vec![false; n_targets]; n_blocks];
+    let mut init_out = vec![vec![false; n_targets]; n_blocks];
+
+    // Pre-compute stmt-position defs per (block, target).
+    let mut stmt_defs = vec![vec![false; n_targets]; n_blocks];
+    for (i, block) in body.blocks.iter().enumerate() {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, .. } = &stmt.kind
+                && place.projection.is_empty()
+            {
+                for (t, l) in target_locals.iter().enumerate() {
+                    if place.local.0 == *l {
+                        stmt_defs[i][t] = true;
+                    }
+                }
+            }
+        }
+    }
+    // Terminator-position defs (Call destinations).
+    let mut term_defs = vec![vec![false; n_targets]; n_blocks];
+    for (i, block) in body.blocks.iter().enumerate() {
+        if let Terminator::Call { destination, .. } = &block.terminator
+            && destination.projection.is_empty()
+        {
+            for (t, l) in target_locals.iter().enumerate() {
+                if destination.local.0 == *l {
+                    term_defs[i][t] = true;
+                }
+            }
+        }
+    }
+
+    // Successors of a Call see the destination as already
+    // initialised. Encode that by folding `term_defs[B]` into
+    // `init_out[B]` *and* into the value propagated to successors.
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for i in 0..n_blocks {
+            for t in 0..n_targets {
+                // Join: must-init at entry = AND across predecessors.
+                let new_in = if preds[i].is_empty() {
+                    false
+                } else {
+                    preds[i].iter().all(|&p| init_out[p][t] || term_defs[p][t])
+                };
+                // Transfer: pick up stmt defs that fire before any
+                // terminator-position read. The Return point reads
+                // *after* stmts but the terminator itself is the
+                // return — so `init_out` for a Return block sees
+                // stmt defs from this block.
+                let new_out = new_in || stmt_defs[i][t];
+                if new_in != init_in[i][t] || new_out != init_out[i][t] {
+                    init_in[i][t] = new_in;
+                    init_out[i][t] = new_out;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // For each block, `out[B][t]` is the must-init bit at the
+    // *point of return*. Return blocks read `init_out[B]` (defs in
+    // this block's stmts count); non-Return blocks see the value
+    // they would have at the terminator boundary, which callers
+    // ignore — the drop pass only consults Return blocks.
+    for i in 0..n_blocks {
+        out[i].clone_from(&init_out[i]);
+    }
+    out
+}
+
+/// CFG successors of `t`. Standalone helper so the
+/// `compute_init_at_returns` dataflow doesn't pull in the
+/// cleanup-pass copy.
+fn block_successors(t: &Terminator) -> Vec<BlockId> {
+    match t {
+        Terminator::Goto { target } => vec![*target],
+        Terminator::SwitchInt { arms, default, .. } => {
+            let mut out: Vec<BlockId> = arms.iter().map(|(_, b)| *b).collect();
+            out.push(*default);
+            out
+        }
+        Terminator::Call { target, .. } => target.iter().copied().collect(),
+        Terminator::Assert { target, .. } | Terminator::Drop { target, .. } => vec![*target],
+        Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => Vec::new(),
     }
 }
 
@@ -9615,6 +10010,29 @@ impl<'a> Builder<'a> {
     /// find their element type even when the chained expressions
     /// are typed as `Var`.
     fn peek_struct_type(&self, expr: &HirExpr) -> Option<Ty> {
+        self.peek_struct_type_with_depth(expr, 0)
+    }
+
+    /// Depth-bounded inner walk for [`peek_struct_type`].
+    ///
+    /// deeply chained projections like
+    /// `outer.middle.inner.field[k]` previously recursed without
+    /// a guard. A pathological HIR shape (mutually-recursive
+    /// `Field` nodes through `struct_defs` aliases) could re-enter
+    /// indefinitely. Cap at 16 levels; past that, return `None`
+    /// so the existing fallback path (typically: dispatch as
+    /// `gos_rt_*` generic) handles the projection.
+    fn peek_struct_type_with_depth(&self, expr: &HirExpr, depth: u32) -> Option<Ty> {
+        const MAX_PEEK_DEPTH: u32 = 16;
+        if depth >= MAX_PEEK_DEPTH {
+            // Surface the cap during compiler development so a
+            // genuine depth-bomb HIR shape doesn't silently fall
+            // through to the runtime-dispatch path.
+            eprintln!(
+                "gossamer-mir: peek_struct_type recursion cap reached ({MAX_PEEK_DEPTH}) — falling back to runtime dispatch"
+            );
+            return None;
+        }
         if let Some(local) = self.receiver_local_from_path(expr) {
             return Some(self.locals[local.0 as usize].ty);
         }
@@ -9626,7 +10044,7 @@ impl<'a> Builder<'a> {
             name,
         } = &expr.kind
         {
-            let parent_ty = self.peek_struct_type(parent)?;
+            let parent_ty = self.peek_struct_type_with_depth(parent, depth + 1)?;
             let mut peeled = parent_ty;
             while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
                 peeled = *inner;

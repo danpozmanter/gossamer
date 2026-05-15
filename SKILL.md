@@ -477,10 +477,9 @@ Bare `gos` drops into the REPL.
 | Command | Purpose |
 |---------|---------|
 | `gos check FILE` | Parse + resolve + typecheck + exhaustiveness. |
-| `gos run FILE` | Register-based VM by default; falls back to the tree-walker when the VM hits something it doesn't yet support. |
-| `gos run --vm FILE` | Require the VM (no fallback). |
-| `gos run --tree-walker FILE` | Use the tree-walker directly. |
-| `gos build FILE` | Native build via Cranelift + system `cc`. |
+| `gos run FILE` | Register-based bytecode VM. The walker is gone as a user-facing mode; if the VM hits an HIR shape it doesn't lower yet, it falls back internally — never user-selectable. |
+| `gos build FILE` | Native build via LLVM (`opt -O0 \| llc -O0`) + system linker. |
+| `gos build --release FILE` | Native build via LLVM (`opt -O3 \| llc -O3 -mcpu=native`) + system linker. |
 | `gos test PATH` | Discover and run `#[test]` functions. |
 | `gos bench PATH` | Discover and time `#[bench]` functions. |
 | `gos fmt [--check] FILE` | Rewrite canonically. |
@@ -570,7 +569,19 @@ executed by `gos test`. Mark non-runnable fences as
   time. All method-string entry points accept
   `"GET"`/`"POST"`/`"PUT"`/`"DELETE"`/`"PATCH"`/`"HEAD"`/`"OPTIONS"`
   case-insensitively; unknown methods return `Err(transport)`.
-- `std::encoding::{json, base64, hex, binary}`.
+- `std::encoding::{json, base64, hex, binary}`. Every user struct
+  auto-derives `<Type>::from_json(text) -> Result<Type, errors::Error>`
+  and `<Type>::to_json(self) -> Result<String, errors::Error>` for
+  one-line, strict serde-style (de)serialization — the decoder
+  checks each field against its declared type and rejects type
+  mismatches and missing required fields with path-qualified
+  errors. Nested structs, `[T]` / `Vec<T>` / `[T; N]` / tuples /
+  `Option<T>` / `HashMap<String, V>` walk recursively; a
+  `json::Value` field passes through untouched.
+  `let user: User = User::from_json(&text)?` is the canonical
+  shape. The dynamic `json::parse` / `json::decode` /
+  `json::render` surface from the prior release stays available
+  for documents whose shape isn't known at compile time.
 - `std::sync` — `Mutex`, `RwLock`, atomics, `channel`, `Once`,
   `WaitGroup` (`new`, `add`, `done`, `wait`).
 - `std::time` — `Instant::{now, elapsed_ms}`, `Duration::{from_millis,
@@ -699,16 +710,11 @@ match per (method, path), exact match by default with
   a clear message. `go` spawn by itself builds natively.
 - `env::args()` can return empty under some codegen paths —
   prefer `std::flag` with explicit defaults.
-- `arr.sort_by(|a, b| …)` works in the bytecode VM and the
-  tree-walker. The cranelift JIT auto-skips bodies that call
-  it (the closure-callback ABI isn't wired through native
-  code yet) and the body runs on the bytecode VM instead, so
-  sort behaviour is correct everywhere — just not JIT-fast.
-- Tree-walker numeric casts (`x as f64` etc.) auto-promote at
-  arithmetic sites instead of producing a typed `Value::Float`.
-  The bytecode VM and the AOT compiler emit the proper
-  conversion. Visible only in `gos run --tree-walker` for
-  programs whose hot loop crosses int/float boundaries.
+- `arr.sort_by(|a, b| …)` works in the bytecode VM. The
+  cranelift JIT auto-skips bodies that call it (the
+  closure-callback ABI isn't wired through native code yet)
+  and the body runs on the bytecode VM instead, so sort
+  behaviour is correct everywhere — just not JIT-fast.
 
 ## 16. Style rules
 

@@ -1,5 +1,170 @@
 # Changelog
 
+## 0.6.0 — Stability hardening
+
+No new language features; focused on safety, codegen correctness, and
+connecting the tracing GC end-to-end.
+
+### Safety
+
+- `catch_unwind` at every `gos_rt_*` and JIT-call boundary — runtime
+  panics no longer cross `extern "C"` as UB.
+- Recoverable language panics (e.g. chan double-close) return a typed
+  error instead of `process::abort`.
+- `gos_rt_str_free` validates the allocator tag before freeing.
+- No `process::abort` / `process::exit` outside sanctioned entries.
+
+### Codegen
+
+- Cranelift sign discipline: `coerce_arg_to` / `coerce_store_value`
+  sign-extend by default; `Shr` dispatches `sshr` vs `ushr` from MIR
+  operand type.
+- Bounds checks on dynamic array indexing in both backends; opt out
+  via `GOSSAMER_DISABLE_BOUNDS_CHECK`.
+- Cranelift soft-zero fallback for unknown call names warns at
+  compile time; `GOSSAMER_STRICT_LOWER=1` promotes to a hard error.
+- LLVM IR verification (`opt -passes=verify`) runs before the
+  optimisation pipeline.
+- LLVM `gos_rt_*` declarations route through a single `declare_rt`;
+  the synthesized-decl path is gone.
+- Cranelift `Rvalue::Aggregate` allocates through `gos_rt_aggr_alloc`
+  (GC-tracked) rather than raw `calloc`.
+
+### Containers
+
+- Typed `Vec<T>` allocation in both backends. `Vec<String>`,
+  `Vec<Vec<_>>`, `Vec<HashMap<_,_>>` emit `gos_rt_vec_new_typed`
+  with an element-kind tag.
+- `gos_rt_vec_free` deep-frees STRING / VEC / MAP / ERROR element
+  payloads via the elem-kind tag.
+- `gos_rt_vec_push` clones inbound strings for STRING-typed vecs
+  into the tagged allocator domain.
+
+### IR validation
+
+- MIR verifier gained 8 type-aware checks (call arity vs callee,
+  return ty != Error, aggregate operand count, branch cond is bool,
+  drop target is owning, unary-neg `i128::MIN`, switchint disc
+  int/bool, call dest typed). Runs in `debug_assertions` at every
+  pass boundary.
+- Bytecode validator runs at `Vm::load` (PC bounds, register
+  bounds, jump targets, constant-pool bounds).
+- Conditional-init drop pass is now flow-sensitive (forward must-init
+  dataflow); refuses uninit free path-sensitively.
+- `i128::MIN` const-fold uses `checked_neg` (was overflow-panic).
+
+### Frontend
+
+- Recursion-depth cap (256) on parser, type-checker, and HIR lowerer
+  with `GP0017` / `GT0008` diagnostics. Closes brace-bomb crashes.
+- Parse-error nodes are typed: `ExprKind::Error` / `PatternKind::Error`
+  replace silent `Literal::Unit` / `Wildcard` fallbacks.
+- Integer-literal magnitude validation at typecheck (`GT0009`).
+- `\u{...}` / `\x..` string escapes decoded with surrogate /
+  ASCII-bound validation.
+
+### Binding ABI
+
+- `ABI_VERSION = (0, 6)` const plus `__gos_binding_abi_version`
+  static the runtime sniffs at startup.
+- Runtime `GosMap` and binding-side `BindingGosMap` layouts split;
+  new `gos_rt_binding_map_free` for the binding struct.
+- `gos_rt_callback_invoke` is a loud stub (eprintln + zero-fill of
+  `result_out`); closes the silent-Err(-1) regression.
+
+### Runtime
+
+- `gos_rt_http_serve` bounded thread spawn: `GOSSAMER_HTTP_MAX_CONN`
+  (default 4096); past the cap responds 503.
+- VM `MAX_CALL_DEPTH = 512` in release (was 40).
+
+### Tracing GC connected end-to-end
+
+The compiled tier now has an active tracing collector.
+
+- Raw-pointer aggregate registry (`gos_rt_gc_alloc` /
+  `gos_rt_aggr_alloc`) backed by a `HashMap<usize, AllocEntry>`
+  carrying `(size, mark, generation)`. Tracking is on by default;
+  `GOS_GC=leak` opts out for benchmarks measuring raw-allocator cost.
+- Stop-the-world conservative mark + sweep (`gos_rt_gc_collect`).
+  Mark phase snapshots every thread's raw-pointer shadow stack and
+  transitively traces each marked allocation's payload with
+  pointer-sized validated word scans (alignment, bounds, and
+  registry-presence checked per word). Sweep deallocates unmarked
+  entries and bumps the registry generation so cross-thread races
+  against a stale snapshot fail fast.
+- Thread-local raw-pointer shadow stack with `gos_rt_gc_root_push`,
+  `gos_rt_gc_root_save`, `gos_rt_gc_root_restore`. Stored as
+  `usize` so `Send + Sync` is structural, not bespoke.
+- Safepoints at function prologues and loop back-edges in both
+  Cranelift and LLVM. A per-function MIR pre-scan identifies
+  back-edge targets; codegen opens those blocks with
+  `gos_rt_gc_safepoint()`. Atomic-load + compare in the common case;
+  runs a full collect when `GOS_GC_THRESHOLD` (default 4 MiB) trips.
+- Per-function root save/restore emitted at every prologue and every
+  return in both backends. Aggregate-return heap copies push the
+  returned pointer after the callee's restore so the root persists
+  into the caller's frame.
+- `Layout::from_size_align_unchecked` removed from the GC path; every
+  allocation routes through a single validated helper that fails fast
+  on overflow or bad alignment.
+- Cycle reclamation proven by a runtime unit test plus two
+  cross-tier stress regressions (10 000-iteration aggregate loops
+  under `GOS_GC_THRESHOLD=4096` across VM, debug LLVM, and release
+  LLVM). Spectral-norm at `N=5500` produces the bit-exact reference
+  value `1.274224153` with the collector firing throughout.
+
+### Tracing GC hardening
+
+- `PtrKey` reduced to a `usize` newtype. Registry is structurally
+  thread-safe; pointer dereference happens only after registry
+  validation under the collect lock.
+- `ThreadRoots.stack` stores `usize`; the marker is the sole code
+  path that converts back to a pointer, only after re-validating
+  the address against the registry.
+- Generation counter on `AllocEntry` bumped at sweep so a pointer
+  the marker observed in a stale shadow-stack snapshot can't be
+  silently re-traced. Marker checks `(addr, generation)` together.
+- Word scan replaces raw pointer arithmetic with `scan_payload_words`,
+  which re-derives word count from the registry's authoritative size
+  and uses `ptr::read_unaligned` defensively.
+- Shadow-stack bounded growth: per-thread stack capped at
+  `GOS_GC_SHADOW_MAX` (default 1 048 576); pushes past the cap
+  trigger an immediate stop-the-world collect.
+- `gos_rt_write_barrier_ptr(slot, new_val)` exposed as a runtime
+  symbol (no-op under STW); reserves the ABI slot for a future
+  concurrent-mark phase.
+- `gos_rt_gc_assert_consistent()` debug-only registry walker wired
+  into the STW collect path.
+- Miri-clean GC unit tests (`cargo +nightly miri test -p
+  gossamer-runtime --lib tracing_gc_tests`).
+- Every `unsafe` block in the GC path carries a structured SAFETY
+  comment (provenance, aliasing, synchronization, failure mode).
+
+### Stdlib
+
+- Auto-derived `<Type>::from_json(text)` / `<Type>::to_json(self)`
+  on every user struct. Strict, one-line, serde-style
+  (de)serialization built at `Vm::load` from the typechecker's
+  field-type table. The decoder validates each field against its
+  declared shape and rejects type mismatches and missing required
+  fields with a path-qualified error (e.g.
+  `User::from_json: field 'age': expected integer, got string`).
+  Nested structs resolve by source name; `[T]` / `Vec<T>` /
+  `[T; N]` / tuples / `Option<T>` / `HashMap<String, V>` walk
+  recursively; `json::Value` fields pass through untouched.
+
+### Cleanup
+
+- Deleted dead interpreter modules (`peephole.rs`, `goroutine_pool.rs`).
+
+### Behavior changes
+
+- Stricter at every IR boundary; some previously-silent miscompiles
+  now refuse to compile.
+- `gos build` is LLVM-only (Cranelift remains the in-process JIT for
+  `gos run`); `--release` runs the full `opt -O3 | llc -O3` pipeline.
+
 ## 0.5.1
 
 ### Bug fixes

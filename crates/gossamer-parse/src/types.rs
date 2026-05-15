@@ -12,10 +12,18 @@ impl Parser<'_> {
     /// Parses a single `Type` production.
     pub(crate) fn parse_type(&mut self) -> Type {
         let start_span = self.peek_span();
+        if self.enter_recursion(start_span).is_err() {
+            let id = self.alloc_id();
+            if !self.at_eof() {
+                self.bump();
+            }
+            return Type::new(id, start_span, TypeKind::Infer);
+        }
         let kind = self.parse_type_kind();
         let end_span = self.last_span();
         let span = self.join(start_span, end_span);
         let id = self.alloc_id();
+        self.leave_recursion();
         Type::new(id, span, kind)
     }
 

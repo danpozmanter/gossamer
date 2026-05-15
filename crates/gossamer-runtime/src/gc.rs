@@ -476,6 +476,32 @@ pub extern "C" fn gos_rt_gc_phase() -> i32 {
     })
 }
 
+/// Safepoint hook callable from any goroutine. Production
+/// codegen emits a call at every function prologue and at every
+/// loop back-edge. The call is the unified entry point for both:
+///
+/// - the handle-based concurrent collector in this module (drives
+///   one incremental step when the collector is active, or kicks
+///   off a new cycle when heap pressure crosses the threshold);
+/// - the raw-pointer tracing collector in `crate::c_abi` (runs a
+///   STW mark + sweep over the aggregate registry when bytes
+///   allocated since the last collect cross the configured
+///   threshold).
+///
+/// Both branches are cheap in the common case (atomic-load +
+/// compare). When neither collector needs work, the helper
+/// returns in a handful of instructions.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_gc_safepoint() {
+    // Concurrent handle-based GC step (no-op under stw mode).
+    if !gc_mode_is_stw() {
+        drive_incremental();
+    }
+    // Raw-pointer tracing GC threshold check (runs STW mark+sweep
+    // over the aggregate registry when the byte threshold trips).
+    crate::c_abi::gos_rt_gc_raw_safepoint();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -148,7 +148,7 @@ fn field_ty_at(tcx: &TyCtxt, ty: Ty, idx: u32) -> Option<Ty> {
 /// `true` if a runtime value of `ty` is a heap reference the
 /// concurrent collector must trace. Mirrors the operand-kind decision
 /// the backends already use to filter values into the barrier path.
-fn ty_is_pointer(tcx: &TyCtxt, ty: Ty) -> bool {
+pub(crate) fn ty_is_pointer(tcx: &TyCtxt, ty: Ty) -> bool {
     match tcx.kind_of(ty) {
         TyKind::String
         | TyKind::Ref { .. }

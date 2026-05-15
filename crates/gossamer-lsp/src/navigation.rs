@@ -251,7 +251,8 @@ impl Walker {
             | PatternKind::Literal(_)
             | PatternKind::Path(_)
             | PatternKind::Range { .. }
-            | PatternKind::Rest => {}
+            | PatternKind::Rest
+            | PatternKind::Error => {}
         }
     }
 
@@ -869,7 +870,8 @@ impl DefinitionIndex {
             | PatternKind::Literal(_)
             | PatternKind::Path(_)
             | PatternKind::Range { .. }
-            | PatternKind::Rest => {}
+            | PatternKind::Rest
+            | PatternKind::Error => {}
         }
     }
 

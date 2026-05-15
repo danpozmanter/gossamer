@@ -316,10 +316,9 @@ Bare `gos` drops into the REPL.
 | Command | Purpose |
 |---------|---------|
 | `gos check FILE` | Parse + resolve + typecheck + exhaustiveness. |
-| `gos run FILE` | Register-based VM by default; falls back to the tree-walker when the VM hits something it doesn't yet support. |
-| `gos run --vm FILE` | Require the VM (no fallback). |
-| `gos run --tree-walker FILE` | Use the tree-walker directly. |
-| `gos build FILE` | Native build via Cranelift + system `cc`. |
+| `gos run FILE` | Register-based bytecode VM. The walker is gone as a user-facing mode; if the VM hits an HIR shape it doesn't lower yet, it falls back internally — never user-selectable. |
+| `gos build FILE` | Native build via LLVM (`opt -O0 \| llc -O0`) + system linker. |
+| `gos build --release FILE` | Native build via LLVM (`opt -O3 \| llc -O3 -mcpu=native`) + system linker. |
 | `gos test PATH` | Discover and run `#[test]` functions. |
 | `gos bench PATH` | Discover and time `#[bench]` functions. |
 | `gos fmt [--check] FILE` | Rewrite canonically. |

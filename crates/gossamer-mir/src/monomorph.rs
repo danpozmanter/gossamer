@@ -18,55 +18,84 @@ use gossamer_types::{GenericArg, Substs, Ty, TyCtxt, TyKind};
 
 use crate::ir::{Body, Operand, Rvalue, StatementKind, Terminator};
 
+/// Cap on the number of fixed-point iterations the monomorphiser
+/// will run before bailing. Real workloads converge in ≤ 5; the
+/// generous cap guards against a runaway generic that recursively
+/// produces fresh specialisations.
+const MAX_MONOMORPHISE_ITERATIONS: u32 = 32;
+
 /// Monomorphises `bodies` by emitting one specialised copy per
 /// distinct `(def, substs)` pair observed at a call site whose
 /// substitution is non-empty. Monomorphic calls are untouched.
+///
+/// the pass is now **fixed-point**. The
+/// previous implementation walked the original bodies once and
+/// emitted copies after; specialisations that themselves called
+/// other generics never had their inner calls specialised. We
+/// loop until a pass produces no new copies — `fn map<T,U>(f:
+/// fn(T)->U, xs)` calling `fn each<T>(f, xs)` now produces both
+/// `map_i64_str` and `each_i64`. Cap at
+/// [`MAX_MONOMORPHISE_ITERATIONS`] as a runaway guard.
 pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
-    let mut needs: HashMap<DefId, Vec<Substs>> = HashMap::new();
-    for body in bodies.iter() {
-        for block in &body.blocks {
-            for stmt in &block.stmts {
-                if let StatementKind::Assign { rvalue, .. } = &stmt.kind {
-                    collect_from_rvalue(rvalue, &mut needs);
-                }
-            }
-            collect_from_terminator(&block.terminator, &mut needs);
-        }
-    }
-    let sources: HashMap<u32, usize> = bodies
-        .iter()
-        .enumerate()
-        .filter_map(|(i, b)| b.def.map(|d| (d.local, i)))
-        .collect();
     let mut emitted: HashSet<String> = HashSet::new();
-    let mut specialised: Vec<Body> = Vec::new();
-    for (def, subst_list) in &needs {
-        let Some(src_idx) = sources.get(&def.local) else {
-            continue;
-        };
-        for substs in subst_list {
-            if substs.is_empty() {
-                continue;
+    for iteration in 0..MAX_MONOMORPHISE_ITERATIONS {
+        let mut needs: HashMap<DefId, Vec<Substs>> = HashMap::new();
+        for body in bodies.iter() {
+            for block in &body.blocks {
+                for stmt in &block.stmts {
+                    if let StatementKind::Assign { rvalue, .. } = &stmt.kind {
+                        collect_from_rvalue(rvalue, &mut needs);
+                    }
+                }
+                collect_from_terminator(&block.terminator, &mut needs);
             }
-            let name = mangled_name(*def, substs);
-            if !emitted.insert(name.clone()) {
-                continue;
-            }
-            let mut copy = bodies[*src_idx].clone();
-            copy.name = name;
-            copy.def = None;
-            for local in &mut copy.locals {
-                local.ty = resolve(tcx, local.ty);
-            }
-            specialised.push(copy);
         }
+        let sources: HashMap<u32, usize> = bodies
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| b.def.map(|d| (d.local, i)))
+            .collect();
+        let mut specialised: Vec<Body> = Vec::new();
+        for (def, subst_list) in &needs {
+            let Some(src_idx) = sources.get(&def.local) else {
+                continue;
+            };
+            for substs in subst_list {
+                if substs.is_empty() {
+                    continue;
+                }
+                let name = mangled_name(*def, substs);
+                if !emitted.insert(name.clone()) {
+                    continue;
+                }
+                let mut copy = bodies[*src_idx].clone();
+                copy.name = name;
+                copy.def = None;
+                for local in &mut copy.locals {
+                    local.ty = resolve(tcx, local.ty);
+                }
+                specialised.push(copy);
+            }
+        }
+        if specialised.is_empty() {
+            // No new copies — fixed point reached.
+            break;
+        }
+        bodies.extend(specialised);
+        assert!(
+            iteration + 1 != MAX_MONOMORPHISE_ITERATIONS,
+            "monomorphise: did not reach a fixed point in {MAX_MONOMORPHISE_ITERATIONS} iterations \
+            — either there's a runaway generic that depends on its own specialisation, \
+            or the cap needs to be raised after auditing the offending bodies"
+        );
     }
+    // Resolve every local's type one last time so specialised
+    // copies + originals share the resolved (no-Var) state.
     for body in bodies.iter_mut() {
         for local in &mut body.locals {
             local.ty = resolve(tcx, local.ty);
         }
     }
-    bodies.extend(specialised);
 }
 
 fn collect_from_rvalue(rvalue: &Rvalue, out: &mut HashMap<DefId, Vec<Substs>>) {

@@ -1588,10 +1588,24 @@ transformation when the chain doesn't return from the enclosing fn.
 
 ### 10.11 `std::encoding::json`, `std::encoding::csv`
 
-- `json::encode(v: &T) -> Result<String, Error>` where `T: Serialize`.
-- `json::decode::<T>(s: &String) -> Result<T, Error>` where
-  `T: Deserialize`.
-- `#[derive(Serialize, Deserialize)]` for automatic impls.
+- Dynamic surface: `json::parse(text) -> Result<json::Value, Error>`,
+  `json::render(value) -> String`, plus the `json::{get, at, len,
+  is_null, as_str, as_i64, as_f64, as_bool, as_array, keys}` query
+  helpers.
+- Strict, typed surface: every named struct in the program
+  auto-derives
+  - `<Type>::from_json(text: &String) -> Result<Type, errors::Error>`
+  - `<Type>::to_json(self) -> Result<String, errors::Error>`.
+  `from_json` is the canonical one-line, serde-style deserializer:
+  it validates each field against the declared field type
+  recursively (nested structs by source name, `[T]` / `Vec<T>` /
+  `[T; N]` / tuples / `Option<T>` / `HashMap<String, V>` walk
+  through, `json::Value` fields pass through). Missing required
+  fields and type mismatches surface as
+  `Result::Err(errors::Error)` with a path-qualified message.
+- `#[derive(Serialize, Deserialize)]` is reserved for future
+  customization (rename, omit-empty, default); the current
+  auto-derive uses the source field names verbatim.
 
 ### 10.12 `std::thread`, `std::channel`
 

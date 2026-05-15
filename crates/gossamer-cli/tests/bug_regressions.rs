@@ -322,6 +322,82 @@ fn main() {
 }
 
 #[test]
+fn type_from_json_round_trips_struct_with_nested_address_and_tags() {
+    // Every named struct in the program auto-derives
+    // `<Type>::from_json(text)` / `<Type>::to_json(self)` at
+    // `Vm::load` time. The decoder must (a) accept a clean payload
+    // and produce a typed struct readable via dot-access, (b) reject
+    // type mismatches with a path-qualified error, and (c) reject
+    // missing required fields. Tests all three.
+    let src = r#"
+use std::errors
+
+struct Address {
+    city: String,
+    zip: String,
+}
+
+struct User {
+    name: String,
+    age: i64,
+    active: bool,
+    tags: [String],
+    address: Address,
+}
+
+fn main() -> Result<(), errors::Error> {
+    let mut tags: [String] = []
+    tags.push("admin")
+    let original = User {
+        name: "alice",
+        age: 30,
+        active: true,
+        tags: tags,
+        address: Address { city: "denver", zip: "80205" },
+    }
+    let text = User::to_json(&original)?
+    let back: User = User::from_json(&text)?
+    println!("name={}", back.name)
+    println!("age={}", back.age)
+    println!("city={}", back.address.city)
+    println!("tag0={}", back.tags[0])
+
+    let bad = "{\"name\":\"bob\",\"age\":\"oops\",\"active\":false,\"tags\":[],\"address\":{\"city\":\"x\",\"zip\":\"0\"}}"
+    match User::from_json(&bad) {
+        Ok(_)  => println!("bad-passed"),
+        Err(e) => println!("bad-rejected: {}", e),
+    }
+
+    let missing = "{\"name\":\"carol\",\"age\":40,\"active\":true,\"tags\":[]}"
+    match User::from_json(&missing) {
+        Ok(_)  => println!("missing-passed"),
+        Err(e) => println!("missing-rejected: {}", e),
+    }
+    Ok(())
+}
+"#;
+    let dir = fresh_dir("type_from_json_round_trip");
+    let path = write_source(&dir, "from_json", src);
+    let run = run_vm(&path);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert!(run.0.contains("name=alice"), "missing name: {:?}", run.0);
+    assert!(run.0.contains("age=30"), "missing age: {:?}", run.0);
+    assert!(run.0.contains("city=denver"), "missing city: {:?}", run.0);
+    assert!(run.0.contains("tag0=admin"), "missing tag: {:?}", run.0);
+    assert!(
+        run.0.contains("bad-rejected: ") && run.0.contains("field `age`"),
+        "expected age-mismatch rejection: {:?}",
+        run.0,
+    );
+    assert!(
+        run.0.contains("missing-rejected: ") && run.0.contains("missing field `address`"),
+        "expected missing-address rejection: {:?}",
+        run.0,
+    );
+}
+
+#[test]
 fn json_set_appends_and_replaces_fields() {
     // `json::set(obj, key, value)` must append a new field when
     // the key is missing and replace it when present, returning
@@ -1189,4 +1265,295 @@ fn main() {
     let _ = fs::remove_dir_all(&dir);
     assert_eq!(out.2, Some(0), "segfault in text branch; stderr: {}", out.1);
     assert_eq!(out.0, "num=42 label=hello\n");
+}
+
+#[test]
+fn jit_pre_interns_array_index_label_string() {
+    // Regression: a program that hits the bounds-check helper
+    // path (any `arr[i]` with i64 index) would route through the
+    // codegen helper that interns "array index" as the diagnostic
+    // label. The pre-pass that pre-interns strings before the
+    // parallel codegen phase missed this literal, so the first
+    // bounds-checked array access in any body panicked with
+    // `OfflineModule: declare_data called in parallel phase`.
+    //
+    // The fix: pre-intern "array index" alongside `""`, `" "`,
+    // and `"<value>"` in the codegen prelude. spectral-norm's
+    // `src[j]` access is the canonical trigger.
+    let src = "fn main() {\n\
+                   let xs: [i64; 4] = [1, 2, 3, 4]\n\
+                   let mut sum: i64 = 0\n\
+                   let n: i64 = 4\n\
+                   let mut i: i64 = 0\n\
+                   while i < n {\n\
+                       sum += xs[i]\n\
+                       i += 1\n\
+                   }\n\
+                   println!(\"{}\", sum)\n\
+               }\n";
+    let dir = fresh_dir("jit_array_index_pre_intern");
+    let path = write_source(&dir, "jit_array_index_pre_intern", src);
+    let run = run_vm(&path);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(
+        run.2,
+        Some(0),
+        "vm: expected clean exit, got {:?}; stderr: {}",
+        run.2,
+        run.1,
+    );
+    assert!(
+        !run.1.contains("declare_data called in parallel phase"),
+        "vm: regressed parallel-phase declare_data panic; stderr: {}",
+        run.1
+    );
+    assert_eq!(run.0.trim_end(), "10");
+}
+
+#[test]
+fn local_var_shadowing_module_does_not_capture_qualified_path() {
+    // Regression: a local binding whose name matches an imported
+    // module silently captured every `mod_name::item(...)` call
+    // through the VM-tier's tree-walker fallback. `eval_path`
+    // looked up the head segment in the env first, returning the
+    // local's value (a String), and `apply()` of a non-callable
+    // degraded to Unit. The LLVM AOT tier resolved correctly; the
+    // VM tier did not — a parity gap that broke askq's
+    // `provider::provider_endpoint_and_auth(&cfg, &provider)` call
+    // (the local `provider: String` captured the call).
+    //
+    // The fix: multi-segment paths bypass the env-first lookup.
+    // A path's head can only resolve to a module / type / trait —
+    // never a local binding.
+    let dir = fresh_dir("local_shadow_mod_path");
+    fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/shadow\"\nversion = \"0.0.1\"\n",
+    )
+    .expect("write project.toml");
+    let src_dir = dir.join("src");
+    fs::create_dir_all(&src_dir).expect("mk src dir");
+    fs::write(
+        src_dir.join("main.gos"),
+        "mod prov;\n\
+         fn main() {\n\
+             let prov = \"local-string\".to_string()\n\
+             let s = prov::greet(&prov)\n\
+             println!(\"{}\", s)\n\
+         }\n",
+    )
+    .expect("write main.gos");
+    fs::write(
+        src_dir.join("prov.gos"),
+        "pub fn greet(who: &String) -> String {\n\
+             format!(\"hello, {}\", who)\n\
+         }\n",
+    )
+    .expect("write prov.gos");
+    let main_path = src_dir.join("main.gos");
+    let run = run_vm(&main_path);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(
+        run.2,
+        Some(0),
+        "vm: expected clean exit, got {:?}; stderr: {}",
+        run.2,
+        run.1
+    );
+    assert_eq!(
+        run.0.trim_end(),
+        "hello, local-string",
+        "vm: expected greet to run, got stdout: {:?}",
+        run.0,
+    );
+}
+
+#[test]
+fn tracing_gc_runs_aggregate_loop_under_collect() {
+    // Stress: a tight loop that allocates a heap aggregate every
+    // iteration and discards it. With the tracing GC wired into
+    // both backends and the runtime tracking every aggregate via
+    // the registry, the byte-allocation threshold trips inside
+    // the loop and `gos_rt_gc_collect` reclaims the unrooted
+    // aggregates from prior iterations. GOS_GC_THRESHOLD is set
+    // small so the collector fires several times during a
+    // 10_000-iteration loop. The test verifies:
+    //   - the loop produces the correct numeric result (the GC
+    //     does not corrupt rooted values held in locals);
+    //   - the process exits with status 0 (no segfault during
+    //     collect, no double-free in the drop pass);
+    //   - all three tiers agree.
+    let src = "struct Pair { a: i64, b: i64 }\n\
+               fn make(i: i64) -> Pair { Pair { a: i, b: i * 2 } }\n\
+               fn main() {\n\
+                   let mut total: i64 = 0\n\
+                   let mut i: i64 = 0\n\
+                   while i < 10000 {\n\
+                       let p = make(i)\n\
+                       total += p.a + p.b\n\
+                       i += 1\n\
+                   }\n\
+                   println!(\"{}\", total)\n\
+               }\n";
+    let expected = (0i64..10000).map(|i| i + i * 2).sum::<i64>();
+    let dir = fresh_dir("tracing_gc_loop");
+    let path = write_source(&dir, "tracing_gc_loop", src);
+
+    // VM tier
+    let run = {
+        let child = Command::new(gos_bin())
+            .arg("run")
+            .arg(&path)
+            .env("GOS_GC_THRESHOLD", "8192")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn gos run");
+        run_with_timeout(child)
+    };
+    assert_eq!(
+        run.2,
+        Some(0),
+        "vm: expected clean exit, got {:?}; stderr: {}",
+        run.2,
+        run.1
+    );
+    assert_eq!(run.0.trim_end(), expected.to_string(), "vm output mismatch");
+
+    // Debug LLVM tier
+    let scratch = dir.join("bin");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native(&path, &scratch).expect("build debug");
+    let out = {
+        let child = Command::new(&bin)
+            .env("GOS_GC_THRESHOLD", "8192")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn debug binary");
+        run_with_timeout(child)
+    };
+    assert_eq!(
+        out.2,
+        Some(0),
+        "debug: expected clean exit, got {:?}; stderr: {}",
+        out.2,
+        out.1
+    );
+    assert_eq!(
+        out.0.trim_end(),
+        expected.to_string(),
+        "debug output mismatch"
+    );
+
+    // Release LLVM tier
+    let bin = build_native_release(&path, &scratch).expect("build release");
+    let out = {
+        let child = Command::new(&bin)
+            .env("GOS_GC_THRESHOLD", "8192")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn release binary");
+        run_with_timeout(child)
+    };
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(
+        out.2,
+        Some(0),
+        "release: expected clean exit, got {:?}; stderr: {}",
+        out.2,
+        out.1
+    );
+    assert_eq!(
+        out.0.trim_end(),
+        expected.to_string(),
+        "release output mismatch"
+    );
+}
+
+#[test]
+fn tracing_gc_aggregate_return_chain_survives_collect() {
+    // Stresses the aggregate-return shadow-stack discipline:
+    // every iteration calls a function that allocates an
+    // aggregate on the callee's frame, copies it to the heap at
+    // return, pushes the returned pointer onto the shadow stack
+    // AFTER the callee's restore (so the entry persists into
+    // the caller's frame), and the caller uses both fields of
+    // the returned tuple. Under aggressive GC pressure
+    // (`GOS_GC_THRESHOLD` set to a tiny value) the collector
+    // fires many times during the loop and must NOT reclaim
+    // the just-returned aggregate before the caller consumes
+    // its fields. Verifies the post-restore push.
+    let src = "fn pair_of(i: i64) -> (i64, i64) {\n\
+                   (i, i * 7)\n\
+               }\n\
+               fn main() {\n\
+                   let mut sum: i64 = 0\n\
+                   let mut i: i64 = 0\n\
+                   while i < 5000 {\n\
+                       let p = pair_of(i)\n\
+                       sum += p.0 + p.1\n\
+                       i += 1\n\
+                   }\n\
+                   println!(\"{}\", sum)\n\
+               }\n";
+    let expected = (0i64..5000).map(|i| i + i * 7).sum::<i64>();
+    let dir = fresh_dir("tracing_gc_return_chain");
+    let path = write_source(&dir, "tracing_gc_return_chain", src);
+
+    let run = {
+        let child = Command::new(gos_bin())
+            .arg("run")
+            .arg(&path)
+            .env("GOS_GC_THRESHOLD", "4096")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn gos run");
+        run_with_timeout(child)
+    };
+    assert_eq!(
+        run.2,
+        Some(0),
+        "vm: expected clean exit, got {:?}; stderr: {}",
+        run.2,
+        run.1
+    );
+    assert_eq!(
+        run.0.trim_end(),
+        expected.to_string(),
+        "vm aggregate-return chain mismatch (rooted-return discipline broken?)"
+    );
+
+    let scratch = dir.join("bin");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("build release");
+    let out = {
+        let child = Command::new(&bin)
+            .env("GOS_GC_THRESHOLD", "4096")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn release binary");
+        run_with_timeout(child)
+    };
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(
+        out.2,
+        Some(0),
+        "release: expected clean exit, got {:?}; stderr: {}",
+        out.2,
+        out.1
+    );
+    assert_eq!(
+        out.0.trim_end(),
+        expected.to_string(),
+        "release aggregate-return chain mismatch"
+    );
 }

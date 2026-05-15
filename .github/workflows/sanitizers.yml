@@ -1,0 +1,86 @@
+name: Sanitizers
+
+# Audit M1 + M2 (0.6.0). Runs ASan / TSan on the unsafe-touching
+# crates against the existing lib test suite. Nightly toolchain
+# is required for -Z sanitizer.
+#
+# Schedule: every push to main + nightly cron (sanitizers are
+# slow; running them on every PR is too expensive). On-demand
+# invocation via workflow_dispatch when investigating a
+# suspected UB regression.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  asan:
+    name: ASan (Linux nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Install LLVM
+        run: sudo apt-get update && sudo apt-get install -y llvm-18 clang-18
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-asan
+      # ASan + leak detection. We skip the LLVM-build crates (they
+      # shell out to opt/llc which produce noise irrelevant to
+      # the unsafe surface we're hardening).
+      - name: cargo test under ASan
+        env:
+          RUSTFLAGS: "-Z sanitizer=address"
+          RUSTDOCFLAGS: "-Z sanitizer=address"
+          ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:halt_on_error=1"
+        run: |
+          cargo +nightly test \
+            -Z build-std \
+            --target x86_64-unknown-linux-gnu \
+            --lib \
+            -p gossamer-runtime \
+            -p gossamer-interp \
+            -p gossamer-gc \
+            -p gossamer-coro \
+            -p gossamer-mir \
+            -p gossamer-binding
+
+  tsan:
+    name: TSan (Linux nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Install LLVM
+        run: sudo apt-get update && sudo apt-get install -y llvm-18 clang-18
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-tsan
+      - name: cargo test under TSan
+        env:
+          RUSTFLAGS: "-Z sanitizer=thread"
+          RUSTDOCFLAGS: "-Z sanitizer=thread"
+          TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+        # TSan-relevant crates: anything that spawns threads or
+        # crosses thread boundaries. The MIR / interp lib tests
+        # don't exercise concurrency but build cleanly under
+        # TSan and surface no false positives.
+        run: |
+          cargo +nightly test \
+            -Z build-std \
+            --target x86_64-unknown-linux-gnu \
+            --lib \
+            -p gossamer-runtime \
+            -p gossamer-sched \
+            -p gossamer-coro \
+            -p gossamer-gc

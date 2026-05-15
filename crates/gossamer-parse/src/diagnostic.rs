@@ -84,6 +84,14 @@ pub enum ParseError {
     /// `[rust-bindings]` in `project.toml` plus the `gossamer-binding` crate.
     #[error("extern blocks are not supported — use `[rust-bindings]` in `project.toml`")]
     ExternReserved,
+    /// An expression, type, or pattern nested past the parser's hard
+    /// recursion limit. Emitted to keep adversarial inputs from
+    /// blowing the C stack while still letting the parser recover.
+    #[error("expression nests beyond {limit} levels (consider rewriting with a helper)")]
+    RecursionLimit {
+        /// Configured recursion limit at which this error was raised.
+        limit: u32,
+    },
 }
 
 /// A diagnostic with its source location.
@@ -196,6 +204,11 @@ impl ParseDiagnostic {
                      Rust crate consumed via `[rust-bindings]`."
                         .to_string(),
                 ),
+            ),
+            ParseError::RecursionLimit { limit } => (
+                "GP0017",
+                format!("expression nests beyond {limit} levels"),
+                Some("split the expression into smaller helpers".to_string()),
             ),
         };
         let mut out = Diagnostic::error(Code(code), title.clone()).with_primary(location, title);

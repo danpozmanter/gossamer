@@ -1718,6 +1718,13 @@ fn default_stderr(text: &str) {
 /// `STDOUT_WRITER`, which the redirect actually catches. Test
 /// suites that wrap their writer with `set_stdout_writer` therefore
 /// see every byte the program emits, JIT-eligible function or not.
+///
+/// The disable is reversible: callers in long-lived processes (REPL,
+/// test runners that swap writers between cases) should pair the
+/// teardown that restores the previous writer with a call to
+/// [`crate::set_jit_enabled`] so subsequent runs regain JIT
+/// promotion. Prior versions left the JIT permanently disabled after
+/// any `set_stdout_writer` call.
 pub fn set_stdout_writer(writer: Writer) -> Writer {
     crate::set_jit_disabled();
     STDOUT_WRITER.with(|cell| cell.replace(writer))
@@ -3573,6 +3580,229 @@ fn builtin_json_decode(args: &[Value]) -> RuntimeResult<Value> {
     match json_std::decode(text) {
         Ok(value) => Ok(ok_variant(json_value_to_gossamer(&value))),
         Err(err) => Ok(err_variant(err.to_string())),
+    }
+}
+
+/// Ordered field schema attached to a user struct. Built at
+/// `Vm::load` time from the typechecker's `struct_field_tys` map and
+/// the HIR's declaration-order field name list. Drives strict
+/// `<Type>::from_json(text)` deserialization.
+#[derive(Debug, Clone)]
+pub(crate) struct JsonStructSchema {
+    /// Source-order `(field_name, expected_kind)` pairs.
+    pub fields: Vec<(String, JsonSchemaKind)>,
+}
+
+/// Expected shape for one JSON-decoded field. Mirrors the subset of
+/// `TyKind` the JSON decoder validates against — primitives, the
+/// growable / fixed sequence shapes, tuples, and nested named ADTs
+/// resolved by struct name.
+#[derive(Debug, Clone)]
+pub(crate) enum JsonSchemaKind {
+    /// `i8`..`u128` / `isize` / `usize`.
+    Int,
+    /// `f32` / `f64`.
+    Float,
+    /// `bool`.
+    Bool,
+    /// `String` (and `char`, encoded as one-rune string).
+    String,
+    /// `Vec<T>` or `[T]` (growable / slice).
+    Vec(Box<JsonSchemaKind>),
+    /// `[T; N]` fixed-size array.
+    Array(Box<JsonSchemaKind>, usize),
+    /// `(A, B, ...)`. Matched as JSON array of the same arity.
+    Tuple(Vec<JsonSchemaKind>),
+    /// Nested user struct referenced by source name.
+    Struct(String),
+    /// `Option<T>`. `null` decodes to `None`; any other JSON value
+    /// runs through the inner kind and wraps in `Some`.
+    Option(Box<JsonSchemaKind>),
+    /// `HashMap<String, V>` — JSON object with arbitrary string keys.
+    Map(Box<JsonSchemaKind>),
+    /// `json::Value` — accept any well-formed JSON value untouched.
+    Json,
+    /// Unknown / unsupported leaf. The decoder accepts whatever the
+    /// parser produced and does not validate further.
+    Any,
+}
+
+#[allow(
+    clippy::missing_const_for_thread_local,
+    reason = "HashMap::new with default RandomState is not const on MSRV"
+)]
+mod json_schema_registry {
+    use super::{JsonStructSchema, RefCell};
+
+    thread_local! {
+        pub(crate) static STRUCT_SCHEMAS: RefCell<std::collections::HashMap<String, JsonStructSchema>> =
+            RefCell::new(std::collections::HashMap::new());
+    }
+}
+
+pub(crate) use json_schema_registry::STRUCT_SCHEMAS;
+
+/// Installs the struct schema table consulted by
+/// `<Type>::from_json(text)` deserialization. Invoked once per
+/// `Vm::load`. Replaces any prior table so tests that load multiple
+/// programs see only the current program's structs.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "stored verbatim in a RandomState-typed thread-local; generic hasher would force the thread-local to be generic too"
+)]
+pub(crate) fn set_json_struct_schemas(
+    schemas: std::collections::HashMap<String, JsonStructSchema>,
+) {
+    STRUCT_SCHEMAS.with(|cell| *cell.borrow_mut() = schemas);
+}
+
+/// Returns `true` when `type_name` has a registered JSON schema —
+/// i.e. it is a user struct in the currently-loaded program. Used
+/// by the interpreter to decide whether to intercept
+/// `<Type>::from_json(text)` / `<Type>::to_json(value)` calls.
+#[must_use]
+pub(crate) fn has_json_schema(type_name: &str) -> bool {
+    STRUCT_SCHEMAS.with(|cell| cell.borrow().contains_key(type_name))
+}
+
+/// `<Type>::to_json(value)` — render `value` as a JSON string,
+/// returning `Result<String, errors::Error>`. Pairs with
+/// `<Type>::from_json`; the receiver may be either an already-typed
+/// `Value::Struct` or any other shape `json::render` can flatten.
+pub(crate) fn json_to_string_for_type(_type_name: &str, value: &Value) -> Value {
+    let rendered = gossamer_to_json_value(value);
+    ok_variant(Value::String(SmolStr::from(json_std::encode(&rendered))))
+}
+
+/// `<Type>::from_json(text)` — parse and validate strictly against
+/// the registered schema for `type_name`. Returns the same shape as
+/// `json::decode` (`Result<T, errors::Error>`) so `?` propagates.
+pub(crate) fn json_from_str_for_type(type_name: &str, text: &str) -> Value {
+    let parsed = match json_std::parse(text) {
+        Ok(v) => v,
+        Err(e) => return err_variant(format!("{type_name}::from_json: {e}")),
+    };
+    match coerce_json_to_named_struct(&parsed, type_name) {
+        Ok(value) => ok_variant(value),
+        Err(msg) => err_variant(format!("{type_name}::from_json: {msg}")),
+    }
+}
+
+fn coerce_json_to_named_struct(value: &json_std::Value, type_name: &str) -> Result<Value, String> {
+    let schema = STRUCT_SCHEMAS.with(|cell| cell.borrow().get(type_name).cloned());
+    let Some(schema) = schema else {
+        return Err(format!("unknown struct `{type_name}`"));
+    };
+    let json_std::Value::Object(map) = value else {
+        return Err(format!("expected JSON object for `{type_name}`"));
+    };
+    let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(schema.fields.len());
+    for (field_name, kind) in &schema.fields {
+        let Some(child) = map.get(field_name) else {
+            return Err(format!("missing field `{field_name}`"));
+        };
+        let coerced =
+            coerce_json_to_kind(child, kind).map_err(|m| format!("field `{field_name}`: {m}"))?;
+        fields.push((Ident::new(field_name.as_str()), coerced));
+    }
+    Ok(Value::struct_(type_name, Arc::new(fields)))
+}
+
+fn coerce_json_to_kind(value: &json_std::Value, kind: &JsonSchemaKind) -> Result<Value, String> {
+    use JsonSchemaKind as K;
+    match (value, kind) {
+        (_, K::Any | K::Json) => Ok(json_value_to_gossamer(value)),
+        (json_std::Value::Null, K::Option(_)) => Ok(none_variant()),
+        (other, K::Option(inner)) => coerce_json_to_kind(other, inner).map(some_variant),
+        (json_std::Value::Number(n), K::Int) => {
+            if !n.is_finite() || n.fract() != 0.0 {
+                return Err(format!("expected integer, got {n}"));
+            }
+            Ok(Value::Int(*n as i64))
+        }
+        (json_std::Value::Number(n), K::Float) => Ok(Value::Float(*n)),
+        (json_std::Value::Bool(b), K::Bool) => Ok(Value::Bool(*b)),
+        (json_std::Value::String(s), K::String) => Ok(Value::String(SmolStr::from(s.clone()))),
+        (json_std::Value::Array(items), K::Vec(elem)) => {
+            let mut out: Vec<Value> = Vec::with_capacity(items.len());
+            for (i, item) in items.iter().enumerate() {
+                out.push(coerce_json_to_kind(item, elem).map_err(|m| format!("[{i}]: {m}"))?);
+            }
+            Ok(Value::Array(Arc::new(out)))
+        }
+        (json_std::Value::Array(items), K::Array(elem, expected_len)) => {
+            if items.len() != *expected_len {
+                return Err(format!(
+                    "expected array of length {expected_len}, got {}",
+                    items.len()
+                ));
+            }
+            let mut out: Vec<Value> = Vec::with_capacity(items.len());
+            for (i, item) in items.iter().enumerate() {
+                out.push(coerce_json_to_kind(item, elem).map_err(|m| format!("[{i}]: {m}"))?);
+            }
+            Ok(Value::Array(Arc::new(out)))
+        }
+        (json_std::Value::Array(items), K::Tuple(elems)) => {
+            if items.len() != elems.len() {
+                return Err(format!(
+                    "expected tuple of arity {}, got {}",
+                    elems.len(),
+                    items.len()
+                ));
+            }
+            let mut out: Vec<Value> = Vec::with_capacity(items.len());
+            for (i, (item, elem_kind)) in items.iter().zip(elems.iter()).enumerate() {
+                out.push(coerce_json_to_kind(item, elem_kind).map_err(|m| format!(".{i}: {m}"))?);
+            }
+            Ok(Value::Tuple(Arc::new(out)))
+        }
+        (json_std::Value::Object(_), K::Struct(name)) => coerce_json_to_named_struct(value, name),
+        (json_std::Value::Object(map), K::Map(value_kind)) => {
+            let storage: rustc_hash::FxHashMap<MapKey, Value> = map
+                .iter()
+                .map(|(k, v)| {
+                    let coerced =
+                        coerce_json_to_kind(v, value_kind).map_err(|m| format!("[{k:?}]: {m}"))?;
+                    Ok((MapKey::Str(SmolStr::from(k.clone())), coerced))
+                })
+                .collect::<Result<rustc_hash::FxHashMap<_, _>, String>>()?;
+            Ok(Value::Map(Arc::new(parking_lot::Mutex::new(storage))))
+        }
+        (got, want) => Err(format!(
+            "expected {}, got {}",
+            describe_kind(want),
+            describe_json_value(got)
+        )),
+    }
+}
+
+fn describe_kind(kind: &JsonSchemaKind) -> String {
+    use JsonSchemaKind as K;
+    match kind {
+        K::Int => "integer".to_string(),
+        K::Float => "number".to_string(),
+        K::Bool => "bool".to_string(),
+        K::String => "string".to_string(),
+        K::Vec(inner) => format!("array of {}", describe_kind(inner)),
+        K::Array(inner, n) => format!("array of {} length {n}", describe_kind(inner)),
+        K::Tuple(elems) => format!("tuple of arity {}", elems.len()),
+        K::Struct(name) => name.clone(),
+        K::Option(inner) => format!("optional {}", describe_kind(inner)),
+        K::Map(inner) => format!("map of {}", describe_kind(inner)),
+        K::Json => "any json value".to_string(),
+        K::Any => "any value".to_string(),
+    }
+}
+
+fn describe_json_value(value: &json_std::Value) -> &'static str {
+    match value {
+        json_std::Value::Null => "null",
+        json_std::Value::Bool(_) => "bool",
+        json_std::Value::Number(_) => "number",
+        json_std::Value::String(_) => "string",
+        json_std::Value::Array(_) => "array",
+        json_std::Value::Object(_) => "object",
     }
 }
 

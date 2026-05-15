@@ -46,11 +46,13 @@ fn drive_to_done(g: &mut Goroutine) -> u32 {
 }
 
 #[test]
-fn panic_inside_goroutine_propagates_to_resume_caller() {
-    // The crate's documented contract is that user-level panics
-    // surface to the resume site. A regression where panics
-    // were swallowed (or, worse, corrupted the worker's stack)
-    // is the canonical "hard to debug after the fact" failure.
+fn panic_inside_goroutine_is_isolated_per_audit_m9() {
+    // a panic inside a spawned goroutine is
+    // CAUGHT inside the coroutine body so the scheduler's
+    // resume call returns cleanly. The panicked flag flips for
+    // observation. Pre-0.6 behaviour (panic propagated to the
+    // resume caller) is intentionally inverted — it abort'd the
+    // worker thread and killed sibling goroutines on it.
     let mut g = Goroutine::new(Box::new(|| {
         panic!("expected panic from goroutine");
     }));
@@ -60,19 +62,14 @@ fn panic_inside_goroutine_propagates_to_resume_caller() {
         clear_current_yielder();
     }));
     assert!(
-        result.is_err(),
-        "expected the goroutine's panic to propagate to the resume caller; \
-         got Ok back, meaning the panic was silently swallowed"
+        result.is_ok(),
+        "goroutine panics must be caught inside the \
+         coroutine body; the resume caller should NOT observe an unwind. \
+         If this assertion ever fails, M9 has regressed."
     );
-    let payload = result.unwrap_err();
-    let msg = payload
-        .downcast_ref::<&'static str>()
-        .copied()
-        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-        .unwrap_or("");
     assert!(
-        msg.contains("expected panic from goroutine"),
-        "panic payload didn't carry the expected message; got {msg:?}"
+        gossamer_coro::any_goroutine_panicked(),
+        "panicked flag must be set after a goroutine panic"
     );
 }
 

@@ -106,6 +106,23 @@ pub fn mem_stats() -> MemStats {
     }
 }
 
+/// Forces a stop-the-world tracing collection over the raw-pointer
+/// aggregate registry. Returns the number of bytes reclaimed.
+/// Test / diagnostic hook; production code relies on the
+/// safepoint-triggered collector emitted by both backends.
+pub fn collect() -> u64 {
+    gossamer_runtime::c_abi::gos_rt_gc_collect()
+}
+
+/// Returns the count of currently-tracked aggregate allocations
+/// (every block live in the tracing-GC registry). Test /
+/// diagnostic hook for verifying that the collector reclaims
+/// unrooted allocations.
+#[must_use]
+pub fn alloc_count() -> u64 {
+    gossamer_runtime::c_abi::gos_rt_gc_alloc_count()
+}
+
 /// Snapshots every live goroutine for diagnostics. Wraps
 /// [`gossamer_runtime::sigquit::snapshot`].
 #[must_use]

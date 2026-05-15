@@ -36,10 +36,18 @@ impl Parser<'_> {
     /// Parses a pattern that never accepts a top-level `|`.
     pub(crate) fn parse_pattern_no_or(&mut self) -> Pattern {
         let start_span = self.peek_span();
+        if self.enter_recursion(start_span).is_err() {
+            let id = self.alloc_id();
+            if !self.at_eof() {
+                self.bump();
+            }
+            return Pattern::new(id, start_span, PatternKind::Error);
+        }
         let kind = self.parse_pattern_kind();
         let end_span = self.last_span();
         let span = self.join(start_span, end_span);
         let id = self.alloc_id();
+        self.leave_recursion();
         Pattern::new(id, span, kind)
     }
 
@@ -85,7 +93,7 @@ impl Parser<'_> {
             self.peek_span(),
         );
         self.bump();
-        PatternKind::Wildcard
+        PatternKind::Error
     }
 
     fn parse_range_pattern_or_rest(&mut self) -> PatternKind {
@@ -124,7 +132,7 @@ impl Parser<'_> {
                 },
                 token.span,
             );
-            return PatternKind::Wildcard;
+            return PatternKind::Error;
         }
         self.bump();
         let name = Ident::new(self.slice(token.span));
@@ -324,7 +332,7 @@ pub(crate) fn string_literal_value(source: &str) -> String {
 
 fn decode_string_escapes(body: &str) -> String {
     let mut output = String::with_capacity(body.len());
-    let mut chars = body.chars();
+    let mut chars = body.chars().peekable();
     while let Some(current) = chars.next() {
         if current != '\\' {
             output.push(current);
@@ -338,6 +346,8 @@ fn decode_string_escapes(body: &str) -> String {
             Some('\'') => output.push('\''),
             Some('"') => output.push('"'),
             Some('0') => output.push('\0'),
+            Some('u') => decode_unicode_escape(&mut chars, &mut output),
+            Some('x') => decode_hex_escape(&mut chars, &mut output),
             Some(other) => {
                 output.push('\\');
                 output.push(other);
@@ -346,6 +356,84 @@ fn decode_string_escapes(body: &str) -> String {
         }
     }
     output
+}
+
+/// Decodes a `\u{...}` escape. Accepts 1 to 6 hex digits, rejecting
+/// surrogate code points (0xD800..=0xDFFF), values past 0x10FFFF, and
+/// malformed body shapes. On rejection the literal is preserved as
+/// `\u{...}` so the typechecker can emit a structured diagnostic
+/// from the same surface text.
+fn decode_unicode_escape<I: Iterator<Item = char>>(
+    chars: &mut std::iter::Peekable<I>,
+    output: &mut String,
+) {
+    if chars.peek() != Some(&'{') {
+        output.push_str("\\u");
+        return;
+    }
+    chars.next();
+    let mut digits = String::with_capacity(6);
+    while let Some(&c) = chars.peek() {
+        if c == '}' {
+            break;
+        }
+        if !c.is_ascii_hexdigit() || digits.len() >= 6 {
+            break;
+        }
+        digits.push(c);
+        chars.next();
+    }
+    let closed = chars.peek() == Some(&'}');
+    if closed {
+        chars.next();
+    }
+    let value = u32::from_str_radix(&digits, 16).ok();
+    let valid = match value {
+        Some(v) if v <= 0x10FFFF && !(0xD800..=0xDFFF).contains(&v) => char::from_u32(v),
+        _ => None,
+    };
+    match valid {
+        Some(c) if closed && !digits.is_empty() => output.push(c),
+        _ => {
+            output.push_str("\\u{");
+            output.push_str(&digits);
+            if closed {
+                output.push('}');
+            }
+        }
+    }
+}
+
+/// Decodes a `\xNN` escape into an ASCII char (0x00..=0x7F). Per Rust
+/// convention non-ASCII bytes are rejected; the literal is preserved
+/// verbatim so a downstream diagnostic can flag it.
+fn decode_hex_escape<I: Iterator<Item = char>>(
+    chars: &mut std::iter::Peekable<I>,
+    output: &mut String,
+) {
+    let mut digits = String::with_capacity(2);
+    for _ in 0..2 {
+        if let Some(&c) = chars.peek() {
+            if c.is_ascii_hexdigit() {
+                digits.push(c);
+                chars.next();
+                continue;
+            }
+        }
+        break;
+    }
+    let value = if digits.len() == 2 {
+        u8::from_str_radix(&digits, 16).ok()
+    } else {
+        None
+    };
+    match value {
+        Some(byte) if byte <= 0x7F => output.push(byte as char),
+        _ => {
+            output.push_str("\\x");
+            output.push_str(&digits);
+        }
+    }
 }
 
 /// Returns the decoded char value for a `'x'` literal.

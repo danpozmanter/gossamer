@@ -688,7 +688,13 @@ pub(crate) fn lower_program_full(
     intrinsics.extern_fn(module, "malloc", &[ptr_ty], &[ptr_ty])?;
     intrinsics.extern_fn(module, "strlen", &[ptr_ty], &[types::I64])?;
     intrinsics.extern_fn(module, "calloc", &[ptr_ty, ptr_ty], &[ptr_ty])?;
-    for &s in &["", " ", "<value>"] {
+    // Helper-emitted string literals. These are produced by the
+    // codegen itself (bounds-check labels, fallback placeholders,
+    // common format separators) rather than appearing in any
+    // body's ConstValue::Str list. Pre-interning them here so
+    // the parallel-phase `OfflineModule` never sees a fresh
+    // `declare_data` call from one of the helpers.
+    for &s in &["", " ", ", ", "<value>", "array index"] {
         intrinsics.intern_string(module, s)?;
     }
     for body in bodies {
@@ -1080,18 +1086,96 @@ fn lower_body(
         callees_by_name.insert(name.clone(), func_ref);
     }
 
-    // C1 / §6.3 shadow-stack scope is plumbed through to
-    // `lower_terminator` so Track 3 can fill in the save / restore
-    // pair without a function-signature change. Until that work
-    // lands the variable holds a constant zero — declaring it
-    // without an initialising call kept Cranelift's block-fill
-    // invariant happy across older toolchains.
+    // Legacy GcRef-handle shadow stack — `gos_rt_gc_shadow_save` /
+    // `gos_rt_gc_shadow_restore` from `gossamer-runtime::gc`. Used by
+    // the opt-in rooted-allocation API. Production codegen does not
+    // push anything onto it today; keeping the frame at 0 makes the
+    // matching restore a no-op.
     let shadow_frame_var = builder.declare_var(types::I64);
+    // Raw-pointer tracing-GC shadow stack — `gos_rt_gc_root_save` /
+    // `gos_rt_gc_root_restore` from `gossamer-runtime::c_abi`.
+    // Codegen emits a `gos_rt_gc_root_push(ptr)` after every aggregate
+    // allocation site, and `gos_rt_gc_root_restore(raw_frame)` at
+    // every return.
+    let raw_shadow_frame_var = builder.declare_var(types::I64);
+
+    // Pre-scan the body to identify loop-header blocks (blocks that
+    // are the target of a back-edge — a jump from a successor whose
+    // id is >= the target's). Codegen emits a `gos_rt_gc_safepoint`
+    // at the start of each such block so long-running loops give
+    // the collector a chance to advance.
+    let mut loop_headers: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for src in &body.blocks {
+        let src_id = src.id.as_u32();
+        match &src.terminator {
+            Terminator::Goto { target } if target.as_u32() <= src_id => {
+                loop_headers.insert(target.as_u32());
+            }
+            Terminator::SwitchInt { arms, default, .. } => {
+                for (_, t) in arms {
+                    if t.as_u32() <= src_id {
+                        loop_headers.insert(t.as_u32());
+                    }
+                }
+                if default.as_u32() <= src_id {
+                    loop_headers.insert(default.as_u32());
+                }
+            }
+            Terminator::Call {
+                target: Some(t), ..
+            } if t.as_u32() <= src_id => {
+                loop_headers.insert(t.as_u32());
+            }
+            Terminator::Assert { target, .. } | Terminator::Drop { target, .. }
+                if target.as_u32() <= src_id =>
+            {
+                loop_headers.insert(target.as_u32());
+            }
+            _ => {}
+        }
+    }
 
     let cleanup_plan = gossamer_mir::plan_cleanup_with_summary(body, capture_summary);
+    let entry_block_id = body.blocks.first().map(|b| b.id.as_u32());
+    let mut emitted_prologue = false;
     for block in &body.blocks {
         let cl_block = blocks[&block.id.as_u32()];
-        builder.switch_to_block(cl_block);
+        // The entry block is already current from the parameter-
+        // binding section above. Cranelift's debug-assert trips if we
+        // call `switch_to_block` on an unfilled current block, so skip
+        // the redundant switch on that one iteration.
+        if Some(block.id.as_u32()) != entry_block_id || emitted_prologue {
+            builder.switch_to_block(cl_block);
+        }
+
+        // Initialise both shadow-frame variables in the entry block,
+        // immediately after parameter binding and before any user
+        // statement runs. Legacy frame stays at 0; the raw frame
+        // captures the calling thread's current shadow-stack depth so
+        // we can restore to it at return.
+        if !emitted_prologue {
+            let zero = builder.ins().iconst(types::I64, 0);
+            builder.def_var(shadow_frame_var, zero);
+            let save_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_root_save")?;
+            let save_ref = module.declare_func_in_func(save_id, builder.func);
+            let call = builder.ins().call(save_ref, &[]);
+            let frame = builder.inst_results(call)[0];
+            builder.def_var(raw_shadow_frame_var, frame);
+            // Function-prologue safepoint: cheap atomic-load + compare
+            // in the common (under-threshold) case.
+            let safepoint_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_safepoint")?;
+            let safepoint_ref = module.declare_func_in_func(safepoint_id, builder.func);
+            builder.ins().call(safepoint_ref, &[]);
+            emitted_prologue = true;
+        }
+
+        // Loop back-edge safepoint: emit at the start of any block
+        // that is a back-edge target. Cheap atomic-load + compare.
+        if loop_headers.contains(&block.id.as_u32()) {
+            let safepoint_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_safepoint")?;
+            let safepoint_ref = module.declare_func_in_func(safepoint_id, builder.func);
+            builder.ins().call(safepoint_ref, &[]);
+        }
 
         if !cleanup_plan.is_empty() {
             for entry in cleanup_plan.at_block_entry(block.id) {
@@ -1130,6 +1214,7 @@ fn lower_body(
             intrinsics,
             block.id.as_u32(),
             shadow_frame_var,
+            raw_shadow_frame_var,
         )?;
     }
 
@@ -2033,6 +2118,78 @@ fn field_ty_at(tcx: &TyCtxt, ty: Ty, idx: u32) -> Option<Ty> {
     }
 }
 
+/// Audit C6 — dynamic array-index bounds check.
+///
+/// Emits a compare-and-trap for `arr[i]` against the statically-
+/// known length of a fixed-size array. Negative indices wrap to a
+/// large `u64` under the unsigned compare, so a single `>=` covers
+/// both ends without a separate sign branch. On failure we jump to
+/// a side block that calls `gos_rt_panic_oob` and falls into an
+/// unreachable `trap` so the rest of the block remains
+/// well-formed.
+///
+/// Only fires when `ty` (after peeling any `Ref` wrappers) is a
+/// fixed `TyKind::Array { len, .. }`. `Vec` / `Slice` shapes reach
+/// element storage through the `gos_rt_vec_get_*` intrinsics whose
+/// own implementations validate the index, so this projection path
+/// only needs to cover the flat-stack-slot case.
+///
+/// The check is skipped when `GOSSAMER_DISABLE_BOUNDS_CHECK=1` is
+/// set in the build environment — a release-only opt-out for
+/// programs that can prove safety statically.
+fn emit_array_bounds_check(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    current_ty: Ty,
+    idx_val: ir::Value,
+    tcx: &TyCtxt,
+) -> Result<()> {
+    if std::env::var_os("GOSSAMER_DISABLE_BOUNDS_CHECK").is_some() {
+        return Ok(());
+    }
+    let mut peeled = current_ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(peeled).clone() {
+        peeled = inner;
+    }
+    let TyKind::Array { len, .. } = tcx.kind_of(peeled).clone() else {
+        return Ok(());
+    };
+    let len_i64 = i64::try_from(len).unwrap_or(i64::MAX);
+    // Widen the index to i64 for both the compare and the
+    // helper-call payload. Cranelift requires both icmp operands to
+    // share a type.
+    let idx64 = match value_type(idx_val, builder) {
+        t if t == types::I64 => idx_val,
+        t if t.is_int() && t.bits() < 64 => builder.ins().sextend(types::I64, idx_val),
+        _ => idx_val,
+    };
+    let len_val = builder.ins().iconst(types::I64, len_i64);
+    // Unsigned >=: i64 compared as u64 also catches negative idx
+    // (which wrap to >= 2^63 — strictly greater than any sane len).
+    let oob = builder
+        .ins()
+        .icmp(IntCC::UnsignedGreaterThanOrEqual, idx64, len_val);
+    let ok = builder.create_block();
+    let fail = builder.create_block();
+    builder.ins().brif(oob, fail, &[], ok, &[]);
+    builder.switch_to_block(fail);
+    // Call `gos_rt_panic_oob("array index", idx, len)` then fall
+    // into an `unreachable` trap so the verifier sees a terminator
+    // even though the helper is `-> !`. Blocks are sealed
+    // collectively at function-end via `seal_all_blocks`.
+    let panic_fn = intrinsics.extern_fn_by_name(module, "gos_rt_panic_oob")?;
+    let panic_ref = module.declare_func_in_func(panic_fn, builder.func);
+    let what_data = intrinsics.intern_string(module, "array index")?;
+    let what_global = module.declare_data_in_func(what_data, builder.func);
+    let ptr_ty = module.target_config().pointer_type();
+    let what_ptr = builder.ins().global_value(ptr_ty, what_global);
+    let _ = builder.ins().call(panic_ref, &[what_ptr, idx64, len_val]);
+    builder.ins().trap(ir::TrapCode::user(5).unwrap());
+    builder.switch_to_block(ok);
+    Ok(())
+}
+
 /// Computes the byte address of the projected slot within its root
 /// aggregate, returning a pointer-typed value suitable for a
 /// `load` / `store`. Works for `Field(i)` (offset `i*8`) and
@@ -2043,13 +2200,13 @@ fn field_ty_at(tcx: &TyCtxt, ty: Ty, idx: u32) -> Option<Ty> {
     reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
 )]
 fn lower_place_address(
-    module: &dyn Module,
+    module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
     locals: &mut HashMap<Local, Variable>,
     body: &Body,
     tcx: &TyCtxt,
     place: &Place,
-    intrinsics: &IntrinsicContext,
+    intrinsics: &mut IntrinsicContext,
 ) -> Result<ir::Value> {
     let var = ensure_var(
         builder,
@@ -2109,6 +2266,16 @@ fn lower_place_address(
                     *index_local,
                 );
                 let idx_val = builder.use_var(index_var);
+                // Audit C6: bounds-check every dynamic Index against
+                // the statically-known length of a fixed-size array.
+                // Negative indices are caught by the unsigned compare
+                // (i64-as-u64 wraps to a large value that trips the
+                // `>=` test). The check is opt-out via
+                // `GOSSAMER_DISABLE_BOUNDS_CHECK=1` for micro-bench
+                // programs that can prove safety. Vec/Slice indexing
+                // does not reach this path — those go through
+                // `gos_rt_vec_get_*` intrinsics which check internally.
+                emit_array_bounds_check(module, builder, intrinsics, current_ty, idx_val, tcx)?;
                 let idx_ptr = match value_type(idx_val, builder) {
                     t if t == ptr_ty => idx_val,
                     t if t == types::I64 && ptr_ty == types::I32 => {
@@ -2144,8 +2311,29 @@ fn lower_place_address(
                 // this projection the address is just that pointer
                 // value. Subsequent Field/Index projections
                 // compute offsets off of it.
-                let loaded = builder.ins().load(ptr_ty, MemFlags::trusted(), current, 0);
-                current = loaded;
+                //
+                // only emit the indirect load
+                // when the source is a heap-pointer-shaped Adt
+                // (slot_count = None). Inline multi-slot
+                // aggregates already hold the slot address in the
+                // Cranelift Variable — loading would dereference
+                // the stack slot's first 8 bytes (typically a
+                // field, possibly 0) as if it were the pointer,
+                // segfaulting at the next projection. This
+                // mirrors the LLVM fix recorded in
+                // `llvm_call_arg_ref_aggregate_fix.md`.
+                let peeled = match tcx.kind_of(current_ty) {
+                    TyKind::Ref { inner, .. } => *inner,
+                    _ => current_ty,
+                };
+                let inline_aggregate =
+                    matches!(tcx.kind_of(peeled), TyKind::Tuple(_) | TyKind::Array { .. })
+                        || (matches!(tcx.kind_of(peeled), TyKind::Adt { .. })
+                            && type_slot_count(tcx, peeled) > 1);
+                if !inline_aggregate {
+                    let loaded = builder.ins().load(ptr_ty, MemFlags::trusted(), current, 0);
+                    current = loaded;
+                }
                 if let TyKind::Ref { inner, .. } = tcx.kind_of(current_ty).clone() {
                     current_ty = inner;
                 }
@@ -2177,7 +2365,7 @@ fn lower_place_address(
     reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
 )]
 fn lower_place_store(
-    module: &dyn Module,
+    module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
     locals: &mut HashMap<Local, Variable>,
     body: &Body,
@@ -2185,7 +2373,7 @@ fn lower_place_store(
     place: &Place,
     value: ir::Value,
     leaf_ty: ir::Type,
-    intrinsics: &IntrinsicContext,
+    intrinsics: &mut IntrinsicContext,
 ) -> Result<()> {
     let addr = lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?;
     // Coerce the value to the leaf's cranelift type where possible;
@@ -2335,7 +2523,13 @@ fn coerce_arg_to(
             return Ok(builder.ins().ireduce(want, value));
         }
         if have.bits() < want.bits() {
-            return Ok(builder.ins().uextend(want, value));
+            // Gossamer integer types are signed by default (`i8..i128`,
+            // `isize`). Sign-extend on narrow→wide widening so a
+            // negative narrow value preserves its value at the wider
+            // width. The unsigned-widening path is handled by callers
+            // that explicitly hold an unsigned MIR type and route
+            // through `coerce_arg_to_unsigned`.
+            return Ok(builder.ins().sextend(want, value));
         }
     }
     if have.is_float() && want.is_float() {
@@ -2412,10 +2606,12 @@ fn coerce_store_value(
             return Ok(builder.ins().ireduce(leaf_ty, value));
         }
         if src.bits() < leaf_ty.bits() {
-            // Caller wrote a narrower value into a wider slot. Safe
-            // zero-extend (all sites today are same-width by
-            // construction; this branch just avoids a crash).
-            return Ok(builder.ins().uextend(leaf_ty, value));
+            // Caller wrote a narrower value into a wider slot.
+            // Gossamer integer types are signed by default, so sign-
+            // extend the bits. Same-width by construction is the common
+            // case; this branch defends against a typeck-emitted
+            // narrower source feeding a wider aggregate slot.
+            return Ok(builder.ins().sextend(leaf_ty, value));
         }
     }
     if src.is_float() && leaf_ty.is_float() && src.bits() != leaf_ty.bits() {
@@ -2451,33 +2647,39 @@ fn lower_terminator(
     intrinsics: &mut IntrinsicContext,
     src_block: u32,
     shadow_frame_var: Variable,
+    raw_shadow_frame_var: Variable,
 ) -> Result<()> {
-    let _ = shadow_frame_var;
     match terminator {
         Terminator::Goto { target } => {
-            // Loop back-edge → emit a preempt safepoint so the
-            // scheduler can interrupt this goroutine if its budget
-            // is exhausted (H11 / §6.3 of
-            // ~/dev/contexts/lang/adversarial_analysis.md). Detected
-            // as `target <= src_block`, which is correct for the
-            // pre-order block numbering MIR uses.
+            // Loop back-edge — emit a unified safepoint so the
+            // tracing GC threshold check fires and the concurrent
+            // GC can advance. Cheap atomic-load + compare in the
+            // common case.
             if target.as_u32() <= src_block {
-                let _ = (&module, &builder, &intrinsics); // Track 3 / H11: preempt-check at back-edges lands separately.
+                let safepoint_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_safepoint")?;
+                let safepoint_ref = module.declare_func_in_func(safepoint_id, builder.func);
+                builder.ins().call(safepoint_ref, &[]);
             }
             let block = blocks[&target.as_u32()];
             builder.ins().jump(block, &[]);
         }
         Terminator::Return => {
-            // C1 / §6.3 shadow-stack scope close: restore the per-
-            // thread shadow stack to the depth observed at function
-            // entry, dropping every root that
-            // `gos_rt_gc_alloc_rooted` / `gos_rt_gc_shadow_push`
-            // introduced inside the body.
+            // Legacy GcRef-handle shadow stack close (no-op when
+            // nothing was pushed, which is the production path).
             {
                 let restore_id =
                     intrinsics.extern_fn_by_name(module, "gos_rt_gc_shadow_restore")?;
                 let restore_ref = module.declare_func_in_func(restore_id, builder.func);
                 let frame = builder.use_var(shadow_frame_var);
+                builder.ins().call(restore_ref, &[frame]);
+            }
+            // Raw-pointer tracing-GC shadow stack close: truncate
+            // back to the depth captured at function entry so every
+            // aggregate root pushed inside this body is removed.
+            {
+                let restore_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_root_restore")?;
+                let restore_ref = module.declare_func_in_func(restore_id, builder.func);
+                let frame = builder.use_var(raw_shadow_frame_var);
                 builder.ins().call(restore_ref, &[frame]);
             }
             // Emit cleanup calls for every owning heap-typed local
@@ -2563,6 +2765,13 @@ fn lower_terminator(
                             ir::immediates::Offset32::new(off),
                         );
                     }
+                    // Aggregate-return: push the heap copy onto the
+                    // shadow stack AFTER the function's restore so
+                    // the entry persists into the caller's frame.
+                    // The caller's own `gos_rt_gc_root_restore` at
+                    // its return will pop this entry alongside its
+                    // own pushes.
+                    emit_root_push(module, builder, intrinsics, heap)?;
                     builder.ins().return_(&[heap]);
                 }
             } else {
@@ -2934,6 +3143,23 @@ fn lower_terminator(
                 // destination so the program still builds. Wrong
                 // semantics but better than refusing to compile
                 // when the user calls an unknown stdlib helper.
+                //
+                // 0.6.0 stability hardening: surface every soft-zero
+                // call at compile time. With `GOSSAMER_STRICT_LOWER=1`
+                // this becomes a hard error; otherwise the previous
+                // behaviour (zero-stub) is preserved for in-flight
+                // programs that depend on it, but a warning is
+                // emitted so typos are not silently miscompiled.
+                eprintln!(
+                    "warning: gossamer codegen: emitting zero-stub for unknown call '{name}' — \
+                    typos produce silent zeros that may segfault on later dereference; \
+                    set GOSSAMER_STRICT_LOWER=1 to refuse compilation"
+                );
+                if std::env::var_os("GOSSAMER_STRICT_LOWER").is_some() {
+                    bail!(
+                        "native codegen: refusing to emit zero-stub for unknown call '{name}' (GOSSAMER_STRICT_LOWER set)"
+                    );
+                }
                 let zero = builder.ins().iconst(types::I64, 0);
                 store_call_result(
                     module,
@@ -2959,8 +3185,15 @@ fn lower_terminator(
             // Soft fallback for unknown FnRef defs: zero out the
             // destination and continue. Common producer is enum
             // variant constructors whose DefId the resolver
-            // allocates without ever emitting a body.
+            // allocates without ever emitting a body. Under
+            // `GOSSAMER_STRICT_LOWER=1` this is an error (same
+            // policy as the unknown-name path above).
             let Ok(func_ref) = resolve_callee(callee, callees_by_def, callees_by_name) else {
+                if std::env::var_os("GOSSAMER_STRICT_LOWER").is_some() {
+                    bail!(
+                        "native codegen: refusing to emit zero-stub for unresolved FnRef callee (GOSSAMER_STRICT_LOWER set)"
+                    );
+                }
                 let zero = builder.ins().iconst(types::I64, 0);
                 store_call_result(
                     module,
@@ -3602,6 +3835,72 @@ fn emit_args_to_concat_string(
     Ok(builder.inst_results(call)[0])
 }
 
+/// 0.6.0 deep-free element-kind tags. Mirrors `vec_elem_kind` in
+/// `gossamer-runtime/src/c_abi.rs` so the codegen can pass the
+/// right discriminator to `gos_rt_vec_new_typed`. Keep these in
+/// sync with the runtime constants.
+mod vec_elem_kind_codegen {
+    pub(super) const PRIMITIVE: i32 = 0;
+    pub(super) const STRING: i32 = 1;
+    pub(super) const VEC: i32 = 2;
+    pub(super) const MAP: i32 = 3;
+    #[allow(dead_code, reason = "reserved for errors::Error deep-free wiring")]
+    pub(super) const ERROR: i32 = 4;
+}
+
+/// Derives the `elem_kind` discriminator for a `Vec<T>` destination
+/// local. Inspects the local's MIR type and returns the tag the
+/// runtime's deep-free path uses to reclaim element payloads.
+///
+/// Returns `PRIMITIVE` for unresolved types and non-Vec shapes —
+/// the runtime treats PRIMITIVE as shallow-free, which is correct
+/// for any element type that owns no further heap memory.
+fn vec_elem_kind_from_dest(body: &Body, tcx: &TyCtxt, dest_local: gossamer_mir::Local) -> i32 {
+    let ty = body.local_ty(dest_local);
+    let inner = match tcx.kind_of(ty) {
+        TyKind::Vec(inner) => *inner,
+        _ => return vec_elem_kind_codegen::PRIMITIVE,
+    };
+    match tcx.kind_of(inner) {
+        TyKind::String => vec_elem_kind_codegen::STRING,
+        TyKind::Vec(_) => vec_elem_kind_codegen::VEC,
+        TyKind::HashMap { .. } => vec_elem_kind_codegen::MAP,
+        // `errors::Error` is a pointer-bearing opaque type whose
+        // payload (message + cause chain) lives on the heap. The
+        // runtime's deep-free path drops the outer Box; the inner
+        // chain's Drop impl reclaims the rest.
+        TyKind::Adt { .. } => {
+            // No structural way to tell "this Adt is `errors::Error`"
+            // from a TyKind::Adt without DefId comparison. Default
+            // to PRIMITIVE — Adts whose payload is reference-only
+            // (i.e. every field is a primitive) won't leak, and
+            // Adts containing heap fields will leak the inner
+            // payload either way (the codegen doesn't currently
+            // emit aggregate-typed vec elements). This is an
+            // additional safety boundary, not the primary leak fix.
+            vec_elem_kind_codegen::PRIMITIVE
+        }
+        _ => vec_elem_kind_codegen::PRIMITIVE,
+    }
+}
+
+/// Returns `true` when the operand's MIR type is an unsigned
+/// integer (`u8..u128` or `usize`). Used by binop dispatch to pick
+/// logical vs arithmetic right-shift. Conservative: returns `false`
+/// for projected reads, constants, fn refs, or unresolved types so
+/// the signed default applies; the bare-local case covers the
+/// overwhelming majority of real shift call sites.
+fn operand_is_unsigned_int(body: &Body, tcx: &TyCtxt, op: &Operand) -> bool {
+    let Operand::Copy(p) = op else { return false };
+    if !p.projection.is_empty() {
+        return false;
+    }
+    matches!(
+        tcx.kind_of(body.local_ty(p.local)),
+        TyKind::Int(int_ty) if !int_ty.is_signed()
+    )
+}
+
 /// True when the operand's MIR type / constant value is a `char`
 /// — used to detect call sites where the user passed a `char`
 /// literal where a `String` was expected.
@@ -3637,6 +3936,25 @@ fn operand_aggregate_slots(body: &Body, tcx: &TyCtxt, op: &Operand) -> Option<u3
     }
 }
 
+/// Push `ptr` onto the calling thread's raw-pointer tracing-GC
+/// shadow stack so the next safepoint-driven collect treats it as
+/// a root. Emitted after every `gos_rt_aggr_alloc` /
+/// `gos_rt_gc_alloc` call site and after every aggregate-typed
+/// `Terminator::Call` return value lands in a destination local.
+fn emit_root_push(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    ptr: ir::Value,
+) -> Result<()> {
+    let ptr_ty = module.target_config().pointer_type();
+    let push_id = intrinsics.extern_fn(module, "gos_rt_gc_root_push", &[ptr_ty], &[])?;
+    let push_ref = module.declare_func_in_func(push_id, builder.func);
+    let coerced = coerce_arg_to(builder, ptr, ptr_ty).unwrap_or(ptr);
+    builder.ins().call(push_ref, &[coerced]);
+    Ok(())
+}
+
 /// Allocates a fresh `slots * 8` heap region via `gos_rt_gc_alloc`
 /// and copies `slots` 8-byte words from `src` into it. Returns the
 /// new heap pointer. Used by call lowering to defensively copy
@@ -3656,6 +3974,7 @@ fn clone_aggregate_value(
     let bytes_v = builder.ins().iconst(types::I64, bytes as i64);
     let call = builder.ins().call(alloc_ref, &[bytes_v]);
     let dst = builder.inst_results(call)[0];
+    emit_root_push(module, builder, intrinsics, dst)?;
     let src_ptr = match value_type(src, builder) {
         t if t == ptr_ty => src,
         t if t == types::I64 && ptr_ty == types::I32 => builder.ins().ireduce(ptr_ty, src),
@@ -6214,8 +6533,7 @@ fn lower_intrinsic_call(
         // slot elements like `(String, i64)` reach the runtime
         // with the right stride.
         "Vec::new" | "gos_rt_vec_new" => {
-            let new_fn = intrinsics.extern_fn_by_name(module, "gos_rt_vec_new")?;
-            let fref = module.declare_func_in_func(new_fn, builder.func);
+            let kind = vec_elem_kind_from_dest(body, tcx, destination.local);
             let eb_raw = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -6231,8 +6549,22 @@ fn lower_intrinsic_call(
             };
             let eb_i64 = coerce_arg_to(builder, eb_raw, types::I64)?;
             let eb = builder.ins().ireduce(types::I32, eb_i64);
-            let call = builder.ins().call(fref, &[eb]);
-            let ptr = builder.inst_results(call)[0];
+            let ptr = if kind == vec_elem_kind_codegen::PRIMITIVE {
+                let new_fn = intrinsics.extern_fn_by_name(module, "gos_rt_vec_new")?;
+                let fref = module.declare_func_in_func(new_fn, builder.func);
+                let call = builder.ins().call(fref, &[eb]);
+                builder.inst_results(call)[0]
+            } else {
+                // Typed-allocation path: the runtime's deep-free
+                // walks element pointers at vec_free time so a
+                // `Vec<String>` / `Vec<Vec<T>>` / `Vec<HashMap<...>>`
+                // does not leak its element payloads.
+                let new_fn = intrinsics.extern_fn_by_name(module, "gos_rt_vec_new_typed")?;
+                let fref = module.declare_func_in_func(new_fn, builder.func);
+                let kind_val = builder.ins().iconst(types::I32, i64::from(kind));
+                let call = builder.ins().call(fref, &[eb, kind_val]);
+                builder.inst_results(call)[0]
+            };
             define_var_to(
                 builder,
                 locals,
@@ -6243,13 +6575,7 @@ fn lower_intrinsic_call(
             Ok(true)
         }
         "Vec::with_capacity" | "gos_rt_vec_with_capacity" => {
-            let new_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_vec_with_capacity",
-                &[types::I32, types::I64],
-                &[ptr_ty],
-            )?;
-            let fref = module.declare_func_in_func(new_fn, builder.func);
+            let kind = vec_elem_kind_from_dest(body, tcx, destination.local);
             let eb_raw = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -6279,8 +6605,28 @@ fn lower_intrinsic_call(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let cap64 = coerce_arg_to(builder, cap, types::I64)?;
-            let call = builder.ins().call(fref, &[eb, cap64]);
-            let ptr = builder.inst_results(call)[0];
+            let ptr = if kind == vec_elem_kind_codegen::PRIMITIVE {
+                let new_fn = intrinsics.extern_fn(
+                    module,
+                    "gos_rt_vec_with_capacity",
+                    &[types::I32, types::I64],
+                    &[ptr_ty],
+                )?;
+                let fref = module.declare_func_in_func(new_fn, builder.func);
+                let call = builder.ins().call(fref, &[eb, cap64]);
+                builder.inst_results(call)[0]
+            } else {
+                let new_fn = intrinsics.extern_fn(
+                    module,
+                    "gos_rt_vec_with_capacity_typed",
+                    &[types::I32, types::I64, types::I32],
+                    &[ptr_ty],
+                )?;
+                let fref = module.declare_func_in_func(new_fn, builder.func);
+                let kind_val = builder.ins().iconst(types::I32, i64::from(kind));
+                let call = builder.ins().call(fref, &[eb, cap64, kind_val]);
+                builder.inst_results(call)[0]
+            };
             define_var_to(
                 builder,
                 locals,
@@ -10025,7 +10371,13 @@ fn lower_rvalue(
                 let call = builder.ins().call(fref, &[a64, b64]);
                 builder.inst_results(call)[0]
             } else {
-                lower_binop(builder, *op, a, b)?
+                // Operand signedness only matters for `Shr` today
+                // (the unsigned types use the same `iadd`/`isub`
+                // hardware ops as signed); pick the LHS as the
+                // canonical signedness source for the dispatch.
+                let unsigned_hint =
+                    matches!(op, BinOp::Shr) && operand_is_unsigned_int(body, tcx, lhs);
+                lower_binop(builder, *op, a, b, unsigned_hint)?
             }
         }
         Rvalue::UnaryOp { op, operand } => {
@@ -10215,23 +10567,21 @@ fn lower_rvalue(
             };
             let size = total_slots * 8;
             let ptr_ty = module.target_config().pointer_type();
-            // Heap-allocate (zeroed) via `calloc`. Stack-slot
+            // Heap-allocate (zeroed) via `gos_rt_aggr_alloc`. Stack-slot
             // allocation breaks the moment the aggregate address
             // escapes the constructing frame (returning a struct
             // from a method, storing it in a vec, …) — the slot
             // dies on epilogue and the next call overwrites it.
-            // We need zero-init to match the old stack-slot
-            // semantics for empty-aggregate / partial-init cases
-            // where the runtime later reads slots the codegen
-            // never wrote (e.g. `gos_rt_arr_len` reads the first
-            // i64 of an empty aggregate and expects 0, not heap
-            // garbage).
-            let calloc_fn = intrinsics.extern_fn(module, "calloc", &[ptr_ty, ptr_ty], &[ptr_ty])?;
-            let calloc_ref = module.declare_func_in_func(calloc_fn, builder.func);
-            let count = builder.ins().iconst(ptr_ty, 1);
-            let size_val = builder.ins().iconst(ptr_ty, i64::from(size.max(8)));
-            let alloc_call = builder.ins().call(calloc_ref, &[count, size_val]);
+            // The runtime helper tracks every allocation so the
+            // MIR drop pass can reclaim it via `gos_rt_aggr_free`
+            // at scope exit
+            let alloc_fn =
+                intrinsics.extern_fn(module, "gos_rt_aggr_alloc", &[types::I64], &[ptr_ty])?;
+            let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
+            let size_val = builder.ins().iconst(types::I64, i64::from(size.max(8)));
+            let alloc_call = builder.ins().call(alloc_ref, &[size_val]);
             let base = builder.inst_results(alloc_call)[0];
+            emit_root_push(module, builder, intrinsics, base)?;
             // Running destination offset (in bytes) for ADT/Tuple
             // aggregates so each prior nested struct's full slot
             // span shifts subsequent fields past its layout.
@@ -10325,13 +10675,15 @@ fn lower_rvalue(
                 .saturating_mul(elem_slots);
             let size = total_slots.saturating_mul(8);
             let ptr_ty = module.target_config().pointer_type();
-            // Heap-allocate (zeroed; see Aggregate path above).
-            let calloc_fn = intrinsics.extern_fn(module, "calloc", &[ptr_ty, ptr_ty], &[ptr_ty])?;
-            let calloc_ref = module.declare_func_in_func(calloc_fn, builder.func);
-            let calloc_count = builder.ins().iconst(ptr_ty, 1);
-            let size_val = builder.ins().iconst(ptr_ty, i64::from(size.max(8)));
-            let alloc_call = builder.ins().call(calloc_ref, &[calloc_count, size_val]);
+            // Heap-allocate (zeroed) via gos_rt_aggr_alloc (see
+            // Aggregate path above; same tracking semantics).
+            let alloc_fn =
+                intrinsics.extern_fn(module, "gos_rt_aggr_alloc", &[types::I64], &[ptr_ty])?;
+            let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
+            let size_val = builder.ins().iconst(types::I64, i64::from(size.max(8)));
+            let alloc_call = builder.ins().call(alloc_ref, &[size_val]);
             let base = builder.inst_results(alloc_call)[0];
+            emit_root_push(module, builder, intrinsics, base)?;
             // Threshold for switching from unrolled stores to a counted
             // loop. Unrolling beyond this generates O(count) Cranelift
             // instructions — for `[f64; 6000]` that inflates the JIT IR
@@ -10557,14 +10909,14 @@ fn lower_operand(
     reason = "cranelift codegen plumbing — module/builder/locals/body/tcx/intrinsics threaded through every helper"
 )]
 fn lower_place_read(
-    module: &dyn Module,
+    module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
     locals: &mut HashMap<Local, Variable>,
     body: &Body,
     tcx: &TyCtxt,
     place: &Place,
     hint: Option<ir::Type>,
-    intrinsics: &IntrinsicContext,
+    intrinsics: &mut IntrinsicContext,
 ) -> Result<ir::Value> {
     if place.projection.is_empty() {
         let var = ensure_var(
@@ -10662,14 +11014,16 @@ fn i64_truncate(n: i128) -> i64 {
 }
 
 /// Dispatches a binary op based on the operand type. Integer ops
-/// use signed semantics (matches MIR's signed-int assumption for
-/// the default widths); float ops use IEEE-754 semantics and
+/// default to signed semantics (matches MIR's signed-int assumption
+/// for the default widths); `unsigned_hint = true` switches `Shr`
+/// to logical (`ushr`). Float ops use IEEE-754 semantics and
 /// compares use `Ordered` `FloatCC` so NaN propagates to `false`.
 fn lower_binop(
     builder: &mut FunctionBuilder<'_>,
     op: BinOp,
     a: ir::Value,
     b: ir::Value,
+    unsigned_hint: bool,
 ) -> Result<ir::Value> {
     let mut a_ty = value_type(a, builder);
     let mut b_ty = value_type(b, builder);
@@ -10741,7 +11095,13 @@ fn lower_binop(
         BinOp::BitOr => builder.ins().bor(a, b),
         BinOp::BitXor => builder.ins().bxor(a, b),
         BinOp::Shl => builder.ins().ishl(a, b),
-        BinOp::Shr => builder.ins().sshr(a, b),
+        BinOp::Shr => {
+            if unsigned_hint {
+                builder.ins().ushr(a, b)
+            } else {
+                builder.ins().sshr(a, b)
+            }
+        }
         BinOp::Eq => compare_bool(builder, ir::condcodes::IntCC::Equal, a, b),
         BinOp::Ne => compare_bool(builder, ir::condcodes::IntCC::NotEqual, a, b),
         BinOp::Lt => compare_bool(builder, ir::condcodes::IntCC::SignedLessThan, a, b),

@@ -188,6 +188,7 @@ impl Printer {
                 }
                 self.print_pattern(inner);
             }
+            PatternKind::Error => self.write("<error>"),
         }
     }
 

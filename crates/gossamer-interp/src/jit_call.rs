@@ -99,17 +99,25 @@ pub(crate) fn invoke(jit: &JitFn, args: &[Value]) -> Dispatch {
     // after its parameter and return types were classified into
     // `JitKind`s, so each fn-pointer cast below pairs with a slot
     // shape we know cranelift produced.
-    let outcome = unsafe {
-        dispatch(
-            jit.ptr,
-            &jit.params,
-            &slots[..jit.params.len()],
-            jit.returns,
-        )
-    };
+    //
+    // A panic raised through a `gos_rt_*` runtime helper would otherwise
+    // unwind through the `extern "C"` boundary into JIT-emitted code,
+    // which is UB. `catch_unwind` here demotes that failure to a
+    // `Fallback`; the bytecode path then runs and surfaces the panic
+    // through the usual Rust unwind path.
+    let n = jit.params.len();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        dispatch(jit.ptr, &jit.params, &slots[..n], jit.returns)
+    }));
     match outcome {
-        Some(value) => Dispatch::Ok(value),
-        None => Dispatch::Fallback,
+        Ok(Some(value)) => Dispatch::Ok(value),
+        Ok(None) => Dispatch::Fallback,
+        Err(_) => {
+            eprintln!(
+                "jit: panic inside JIT-compiled body (or runtime helper); falling back to bytecode"
+            );
+            Dispatch::Fallback
+        }
     }
 }
 
@@ -575,11 +583,35 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static JIT_DISABLED: AtomicBool = AtomicBool::new(false);
 
 /// CLI hook used by `gos run --no-jit` to suppress every JIT
-/// compile attempt regardless of `GOS_JIT`. The flag is process-
-/// wide and set once at startup; flipping it back on requires a
-/// fresh process.
+/// compile attempt regardless of `GOS_JIT`. Pair with
+/// [`force_jit_enable`] to scope the disable to a defined region in
+/// long-lived processes (REPL, test runners, etc.) — see the
+/// `set_stdout_writer` companion in `builtins.rs` for the canonical
+/// scoped-disable shape.
 pub fn force_jit_disabled() {
     JIT_DISABLED.store(true, Ordering::Relaxed);
+}
+
+/// Reverses a prior [`force_jit_disabled`] call. Long-lived processes
+/// (REPLs, test harnesses that swap stdout writers between cases)
+/// previously lost the JIT permanently once any caller flipped the
+/// flag; this companion lets them restore it.
+///
+/// `gos run --no-jit` does not call this — the flag stays set for the
+/// process lifetime in CLI mode. Test code that installs a custom
+/// stdout writer should bracket the override with
+/// `force_jit_disabled` / `force_jit_enable` if it wants to recover
+/// the JIT path after the test exits.
+pub fn force_jit_enable() {
+    JIT_DISABLED.store(false, Ordering::Relaxed);
+}
+
+/// Returns `true` when [`force_jit_disabled`] has been called and not
+/// yet reversed by [`force_jit_enable`]. Lets callers inspect the
+/// flag without flipping it.
+#[must_use]
+pub fn jit_force_disabled_state() -> bool {
+    JIT_DISABLED.load(Ordering::Relaxed)
 }
 
 /// Returns `true` when JIT compilation is permitted in this

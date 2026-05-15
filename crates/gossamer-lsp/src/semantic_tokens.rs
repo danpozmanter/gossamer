@@ -340,7 +340,8 @@ fn visit_pattern(pattern: &Pattern, kind: TokenKind, out: &mut Vec<RawToken>) {
         | PatternKind::Literal(_)
         | PatternKind::Path(_)
         | PatternKind::Range { .. }
-        | PatternKind::Rest => {}
+        | PatternKind::Rest
+        | PatternKind::Error => {}
     }
 }
 

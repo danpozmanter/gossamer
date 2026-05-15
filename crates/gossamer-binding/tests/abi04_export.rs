@@ -9,7 +9,9 @@
 
 use std::collections::HashMap;
 
-use gossamer_binding::native::{BindingAbi, GosBytes, GosDynVariant, GosMap, NativeCallback};
+use gossamer_binding::native::{
+    BindingAbi, BindingGosMap, GosBytes, GosDynVariant, NativeCallback,
+};
 use gossamer_binding::{Bytes, DynValue};
 
 gossamer_binding::register_module! {
@@ -90,9 +92,9 @@ unsafe extern "C" {
     fn gos_binding_test__abi04__upper(b: *const GosBytes) -> *mut GosBytes;
     fn gos_binding_test__abi04__double_bytes(b: *const GosBytes) -> *mut GosBytes;
     fn gos_binding_test__abi04__empty_bytes() -> *mut GosBytes;
-    fn gos_binding_test__abi04__headers_count(headers: *const GosMap) -> i64;
-    fn gos_binding_test__abi04__build_headers() -> *mut GosMap;
-    fn gos_binding_test__abi04__build_int_map() -> *mut GosMap;
+    fn gos_binding_test__abi04__headers_count(headers: *const BindingGosMap) -> i64;
+    fn gos_binding_test__abi04__build_headers() -> *mut BindingGosMap;
+    fn gos_binding_test__abi04__build_int_map() -> *mut BindingGosMap;
     fn gos_binding_test__abi04__make_resp_integer(n: i64) -> *mut GosDynVariant;
     fn gos_binding_test__abi04__make_resp_array() -> *mut GosDynVariant;
     fn gos_binding_test__abi04__reflect_dyn(v: *const GosDynVariant) -> *mut GosDynVariant;

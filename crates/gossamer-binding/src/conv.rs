@@ -695,14 +695,25 @@ fn dyn_to_value(d: DynValue) -> Value {
 // `Value::variant` takes `&'static str` for the arm name. The
 // binding can produce arbitrary runtime strings via
 // `DynValue::Tagged { name, .. }`, so we intern them in a
-// process-global pool. The pool is intentionally one-way; entries
-// are never reclaimed (variant names are a small, stable set per
-// binding crate, so leakage is bounded).
+// process-global pool.
+//
+// the pool is **bounded at
+// `INTERN_ARM_NAME_LIMIT = 1024`** entries. The previous design
+// was a one-way unbounded `Box::leak`; a binding that returned
+// `DynValue::Tagged { name: format!("Item-{n}"), .. }` from a
+// loop would have OOM'd the process. Past the cap, the function
+// returns a static `"<arm-name-pool-exhausted>"` sentinel and
+// eprintln's a clear diagnostic on the first overflow so the
+// binding author can switch to a stable arm-name set.
+const INTERN_ARM_NAME_LIMIT: usize = 1024;
+
 fn intern_arm_name(name: &str) -> &'static str {
     use parking_lot::RwLock;
     use std::collections::HashMap;
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
     static POOL: OnceLock<RwLock<HashMap<String, &'static str>>> = OnceLock::new();
+    static WARNED: AtomicBool = AtomicBool::new(false);
     let pool = POOL.get_or_init(|| RwLock::new(HashMap::new()));
     if let Some(s) = pool.read().get(name) {
         return s;
@@ -710,6 +721,18 @@ fn intern_arm_name(name: &str) -> &'static str {
     let mut guard = pool.write();
     if let Some(s) = guard.get(name) {
         return s;
+    }
+    if guard.len() >= INTERN_ARM_NAME_LIMIT {
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            eprintln!(
+                "gossamer-binding: intern_arm_name pool reached its {INTERN_ARM_NAME_LIMIT}-entry \
+                cap. Subsequent unseen arm names return the `<arm-name-pool-exhausted>` \
+                sentinel. Variant arm names must be a small, stable set — bindings that \
+                synthesise names dynamically (e.g. `format!(\"Item-{{n}}\")`) leak \
+                unboundedly. Switch to `Type::Opaque` or a stable name set."
+            );
+        }
+        return "<arm-name-pool-exhausted>";
     }
     let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
     guard.insert(name.to_string(), leaked);

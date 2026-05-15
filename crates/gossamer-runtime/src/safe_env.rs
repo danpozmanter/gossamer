@@ -32,21 +32,57 @@
 
 #![allow(unsafe_code)]
 
-/// Sets the environment variable `name` to `value`. **Call before
-/// spawning any goroutine / thread**; concurrent readers from
-/// other threads or external libraries can otherwise observe a
-/// torn value.
+use parking_lot::Mutex;
+
+/// Process-global serialisation mutex.
+///
+/// every `safe_env` call acquires this lock so
+/// concurrent Gossamer goroutines / threads can't race their
+/// `setenv` calls against each other. This does NOT help against
+/// third-party C libraries reading the env table without
+/// coordinating through this lock — POSIX `setenv` is
+/// fundamentally racy against any reader that doesn't share the
+/// lock, and Rust has no way to retrofit thread-safety onto libc.
+///
+/// What this lock buys: callers that exclusively use
+/// `safe_env::set_env` / `unset_env` are mutually consistent.
+/// Combined with the "call before goroutine spawn" idiom in the
+/// module docs, the practical race surface shrinks to "Gossamer
+/// code calls `os::set_env` while a linked Rust dependency
+/// concurrently reads `getenv`", which is a documented limit, not
+/// a silent corruption.
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Sets the environment variable `name` to `value`.
+///
+/// 0.6.0 changed this to acquire a process-global mutex so
+/// concurrent Gossamer-side env mutations are serialised. The
+/// "call before spawning any goroutine / thread" idiom from the
+/// module docs is still recommended for portability against
+/// third-party C libraries that read the env without going
+/// through this API.
 pub fn set_env(name: &str, value: &str) {
-    // SAFETY: contained-unsafe pattern. The contract above forbids
-    // concurrent env reads; the rest of the workspace can call
-    // this from safe Rust because the unsafe-ness is structural,
-    // not memory-corruption-shaped from the caller's perspective.
+    let _guard = ENV_MUTEX.lock();
+    // SAFETY: ENV_MUTEX serialises every Gossamer-side mutation
+    // of the env table. POSIX `setenv` remains racy against
+    // external readers; the lock contains the in-process race.
     unsafe { std::env::set_var(name, value) }
 }
 
 /// Unsets `name`. Same threading contract as [`set_env`].
 pub fn unset_env(name: &str) {
-    // SAFETY: same as `set_env` — POSIX `unsetenv` shares the
-    // same thread-safety contract as `setenv`.
+    let _guard = ENV_MUTEX.lock();
+    // SAFETY: same lock as `set_env`. POSIX `unsetenv` shares the
+    // thread-safety contract.
     unsafe { std::env::remove_var(name) }
+}
+
+/// Lock the env mutex for the duration of a closure. Lets
+/// callers that need a read-modify-write sequence (compute
+/// envvar value from another envvar, then write it back) keep
+/// the mutex held across the read so no other Gossamer goroutine
+/// can race them.
+pub fn with_env_lock<R>(f: impl FnOnce() -> R) -> R {
+    let _guard = ENV_MUTEX.lock();
+    f()
 }

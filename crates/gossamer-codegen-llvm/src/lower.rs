@@ -23,8 +23,13 @@ use crate::ty::{
 
 /// Adds the typed `declare` for `name` from the ABI registry into `refs`.
 ///
-/// Panics if `name` is not in the registry — this catches typos at
-/// compile time of the test suite rather than at LLVM `llc` time.
+/// This is the single source of truth for every `gos_rt_*`
+/// declaration in the emitted LLVM IR. Panics if `name` is not in
+/// the registry — that surface is intentional: a missing entry is a
+/// compiler bug (the lowerer is about to emit a call whose ABI the
+/// codebase has not committed to), and failing at LLVM IR emission
+/// time gives a clearer signal than waiting for the verifier or
+/// runtime to surface the mismatch.
 fn declare_rt(refs: &mut std::collections::BTreeSet<String>, name: &str) {
     let entry = gossamer_abi::lookup(name).unwrap_or_else(|| {
         panic!(
@@ -83,6 +88,11 @@ pub(crate) struct Lowerer<'a> {
     /// per-block drops for owning bindings whose only outbound use
     /// is a non-capturing user fn.
     pub(crate) capture_summary: gossamer_mir::CaptureSummary,
+    /// Loop-header block ids (targets of back-edges). Each such
+    /// block opens with a `gos_rt_gc_safepoint()` call so
+    /// long-running loops give the tracing GC + concurrent GC
+    /// chances to advance.
+    pub(crate) loop_headers: std::collections::HashSet<u32>,
 }
 
 /// Module-scoped string intern pool.
@@ -170,6 +180,39 @@ fn int_ty_is_unsigned_llvm(t: IntTy) -> bool {
     )
 }
 
+/// 0.6.0 deep-free element-kind tags. Mirrors `vec_elem_kind` in
+/// `gossamer-runtime/src/c_abi.rs`. Keep in sync with the runtime
+/// constants and the Cranelift backend's `vec_elem_kind_codegen`.
+mod vec_elem_kind_llvm {
+    pub(super) const PRIMITIVE: i32 = 0;
+    pub(super) const STRING: i32 = 1;
+    pub(super) const VEC: i32 = 2;
+    pub(super) const MAP: i32 = 3;
+    #[allow(dead_code, reason = "reserved for errors::Error deep-free wiring")]
+    pub(super) const ERROR: i32 = 4;
+}
+
+/// Derives the `elem_kind` discriminator for a `Vec<T>` destination
+/// local. Inspects the local's MIR type and returns the tag the
+/// runtime's deep-free path uses to reclaim element payloads.
+///
+/// Returns `PRIMITIVE` for unresolved types and non-Vec shapes —
+/// the runtime treats PRIMITIVE as shallow-free, which is correct
+/// for any element type that owns no further heap memory.
+fn llvm_vec_elem_kind_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -> i32 {
+    let ty = body.local_ty(dest_local);
+    let inner = match tcx.kind(ty) {
+        Some(TyKind::Vec(inner)) => *inner,
+        _ => return vec_elem_kind_llvm::PRIMITIVE,
+    };
+    match tcx.kind(inner) {
+        Some(TyKind::String) => vec_elem_kind_llvm::STRING,
+        Some(TyKind::Vec(_)) => vec_elem_kind_llvm::VEC,
+        Some(TyKind::HashMap { .. }) => vec_elem_kind_llvm::MAP,
+        _ => vec_elem_kind_llvm::PRIMITIVE,
+    }
+}
+
 impl<'a> Lowerer<'a> {
     pub(crate) fn new(body: &'a Body, tcx: &'a TyCtxt) -> Self {
         Self {
@@ -184,7 +227,90 @@ impl<'a> Lowerer<'a> {
             current_block: None,
             preempt_seq: 0,
             capture_summary: gossamer_mir::CaptureSummary::default(),
+            loop_headers: std::collections::HashSet::new(),
         }
+    }
+
+    /// Computes the set of loop-header blocks for the current body
+    /// (any block that is the target of a back-edge — a jump from
+    /// a block whose id is >= the target's). Called once at the
+    /// start of `lower` so `lower_block` can emit a safepoint at
+    /// each header.
+    fn compute_loop_headers(&mut self) {
+        self.loop_headers.clear();
+        for src in &self.body.blocks {
+            let src_id = src.id.as_u32();
+            match &src.terminator {
+                gossamer_mir::Terminator::Goto { target } if target.as_u32() <= src_id => {
+                    self.loop_headers.insert(target.as_u32());
+                }
+                gossamer_mir::Terminator::SwitchInt { arms, default, .. } => {
+                    for (_, t) in arms {
+                        if t.as_u32() <= src_id {
+                            self.loop_headers.insert(t.as_u32());
+                        }
+                    }
+                    if default.as_u32() <= src_id {
+                        self.loop_headers.insert(default.as_u32());
+                    }
+                }
+                gossamer_mir::Terminator::Call {
+                    target: Some(t), ..
+                } if t.as_u32() <= src_id => {
+                    self.loop_headers.insert(t.as_u32());
+                }
+                gossamer_mir::Terminator::Assert { target, .. }
+                | gossamer_mir::Terminator::Drop { target, .. }
+                    if target.as_u32() <= src_id =>
+                {
+                    self.loop_headers.insert(target.as_u32());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Per-function alloca slot name holding the calling thread's
+    /// raw-pointer shadow-stack depth at function entry. The slot
+    /// is read at every `Terminator::Return` to compute the
+    /// restore frame and at the aggregate-return heap-copy site so
+    /// the returned pointer outlives the restore.
+    fn gc_frame_slot_name() -> &'static str {
+        "%gc_root_frame_slot"
+    }
+
+    /// Emits the function-prologue safepoint hook + raw-pointer
+    /// shadow-stack save. The save's result is stored in a
+    /// dedicated alloca'd i64 slot which the return path loads.
+    fn emit_gc_prologue(&mut self) {
+        declare_rt(&mut self.runtime_refs, "gos_rt_gc_root_save");
+        declare_rt(&mut self.runtime_refs, "gos_rt_gc_safepoint");
+        let slot = Self::gc_frame_slot_name();
+        writeln!(self.out, "  {slot} = alloca i64").unwrap();
+        let frame = self.fresh();
+        writeln!(self.out, "  {frame} = call i64 @gos_rt_gc_root_save()").unwrap();
+        writeln!(self.out, "  store i64 {frame}, ptr {slot}").unwrap();
+        writeln!(self.out, "  call void @gos_rt_gc_safepoint()").unwrap();
+    }
+
+    /// Emits a raw-pointer shadow-stack push for `ptr_ssa`. Called
+    /// after every aggregate-allocation site so the next safepoint
+    /// treats the new allocation as a root for the rest of the
+    /// function's lifetime.
+    pub(crate) fn emit_gc_root_push(&mut self, ptr_ssa: &str) {
+        declare_rt(&mut self.runtime_refs, "gos_rt_gc_root_push");
+        writeln!(self.out, "  call void @gos_rt_gc_root_push(ptr {ptr_ssa})").unwrap();
+    }
+
+    /// Emits the matching shadow-stack restore for `emit_gc_prologue`.
+    /// Used by `Terminator::Return` lowering just before the `ret`
+    /// instruction.
+    fn emit_gc_root_restore(&mut self) {
+        declare_rt(&mut self.runtime_refs, "gos_rt_gc_root_restore");
+        let slot = Self::gc_frame_slot_name();
+        let frame = self.fresh();
+        writeln!(self.out, "  {frame} = load i64, ptr {slot}").unwrap();
+        writeln!(self.out, "  call void @gos_rt_gc_root_restore(i64 {frame})").unwrap();
     }
 
     /// Main entry point — emits the function's IR text in its
@@ -221,6 +347,7 @@ impl<'a> Lowerer<'a> {
         // through the same pipeline as user functions and the
         // generated `define`s become visible to the IR-shape
         // gates.
+        self.compute_loop_headers();
         self.emit_prelude();
         // Entry block opens with `alloca`s for every local.
         self.emit_allocas();
@@ -229,6 +356,10 @@ impl<'a> Lowerer<'a> {
         // `local_slot`. MIR reserves `_1..=_arity` as
         // parameter locals.
         self.emit_param_stores();
+        // Raw-pointer tracing-GC prologue: alloca a frame slot,
+        // record the current shadow-stack depth, then run the
+        // unified safepoint hook.
+        self.emit_gc_prologue();
         // Unconditional jump into the MIR entry block.
         writeln!(self.out, "  br label %bb0").unwrap();
         for block in &self.body.blocks {
@@ -320,6 +451,13 @@ impl<'a> Lowerer<'a> {
 
     fn lower_block(&mut self, block: &gossamer_mir::BasicBlock) -> Result<(), BuildError> {
         writeln!(self.out, "bb{}:", block.id.as_u32()).unwrap();
+        // Loop back-edge safepoint: emit at the start of any
+        // block reached by a back-edge so long-running loops
+        // give the unified GC safepoint a chance to advance.
+        if self.loop_headers.contains(&block.id.as_u32()) {
+            declare_rt(&mut self.runtime_refs, "gos_rt_gc_safepoint");
+            writeln!(self.out, "  call void @gos_rt_gc_safepoint()").unwrap();
+        }
         let cleanup = gossamer_mir::plan_cleanup_with_summary(self.body, &self.capture_summary);
         for entry in cleanup.at_block_entry(block.id) {
             self.emit_cleanup_call(entry);
@@ -1355,6 +1493,12 @@ impl<'a> Lowerer<'a> {
                     let idx_slot = local_slot(*index_local);
                     let idx_raw = self.fresh();
                     writeln!(self.out, "  {idx_raw} = load i64, ptr {idx_slot}").unwrap();
+                    // Audit C6: bounds-check the dynamic index
+                    // against the statically-known fixed-array
+                    // length. Skipped for non-Array shapes — Vec /
+                    // Slice indexing routes through the runtime
+                    // intrinsics which validate independently.
+                    self.emit_array_bounds_check(current_ty, &idx_raw);
                     let next = self.fresh();
                     if stride_slots == 1 {
                         writeln!(
@@ -1406,6 +1550,62 @@ impl<'a> Lowerer<'a> {
             }
         }
         current
+    }
+
+    /// Audit C6 — dynamic array-index bounds check.
+    ///
+    /// Emits a compare + conditional branch around the
+    /// `getelementptr` for `arr[i]`. The compare is unsigned
+    /// (`uge`) so negative indices (which wrap to large `u64`)
+    /// trip the check without a separate sign branch. On
+    /// out-of-bounds we land in a side block that calls
+    /// `gos_rt_panic_oob` and falls through to `unreachable`,
+    /// keeping the rest of the function well-formed.
+    ///
+    /// Only fires when `ty` (after peeling `Ref` wrappers)
+    /// resolves to `TyKind::Array { len, .. }`. Vec / Slice
+    /// indexing reaches element storage through
+    /// `gos_rt_vec_get_*` intrinsics which check internally —
+    /// the projection path only needs to cover flat fixed
+    /// arrays.
+    ///
+    /// Skipped entirely when `GOSSAMER_DISABLE_BOUNDS_CHECK=1`
+    /// is set in the build environment.
+    fn emit_array_bounds_check(&mut self, ty: Ty, idx_ssa: &str) {
+        if std::env::var_os("GOSSAMER_DISABLE_BOUNDS_CHECK").is_some() {
+            return;
+        }
+        let mut peeled = ty;
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(peeled) {
+            peeled = *inner;
+        }
+        let Some(TyKind::Array { len, .. }) = self.tcx.kind(peeled) else {
+            return;
+        };
+        let len_val = *len;
+        declare_rt(&mut self.runtime_refs, "gos_rt_panic_oob");
+        // Intern the `"array index"` label through the shared
+        // module-wide string pool so multiple checks (in this
+        // body and across the rest of the module) collapse to a
+        // single `@.gstr_*` global.
+        let (label_global, _) = self.strings.borrow_mut().intern("array index");
+        let cond = self.fresh();
+        writeln!(self.out, "  {cond} = icmp uge i64 {idx_ssa}, {len_val}").unwrap();
+        let oob_label = self.fresh_label("oob");
+        let ok_label = self.fresh_label("oob_ok");
+        writeln!(
+            self.out,
+            "  br i1 {cond}, label %{oob_label}, label %{ok_label}"
+        )
+        .unwrap();
+        writeln!(self.out, "{oob_label}:").unwrap();
+        writeln!(
+            self.out,
+            "  call void @gos_rt_panic_oob(ptr {label_global}, i64 {idx_ssa}, i64 {len_val})"
+        )
+        .unwrap();
+        writeln!(self.out, "  unreachable").unwrap();
+        writeln!(self.out, "{ok_label}:").unwrap();
     }
 
     /// Resolves the leaf type of a projection chain: the type
@@ -1914,17 +2114,17 @@ impl<'a> Lowerer<'a> {
                 // Emit cleanup calls for owning heap-typed locals before
                 // the actual `ret`. Mirrors the Cranelift Return path —
                 // see `gossamer_mir::plan_cleanup` for the analysis.
-                // Each entry is `(local, free_fn)`: load the alloca
-                // backing the local and call the runtime reclamation
-                // helper. Without this loop the `_free` symbols ship in
-                // the runtime but are never called and every owning
-                // `Vec<i64>` / `Vec<u8>` / channel leaks until process
-                // exit (C2 in `~/dev/contexts/lang/adversarial_analysis.md`).
                 let cleanup =
                     gossamer_mir::plan_cleanup_with_summary(self.body, &self.capture_summary);
                 for entry in cleanup.at_return() {
                     self.emit_cleanup_call(entry);
                 }
+                // Raw-pointer tracing-GC shadow-stack restore. Pops
+                // every root pushed inside this body. For the
+                // aggregate-return path the heap copy below is
+                // pushed AFTER the restore so the entry persists
+                // into the caller's frame (matching Cranelift).
+                self.emit_gc_root_restore();
                 let ret_ty = self.body.local_ty(Local::RETURN);
                 let ret_llvm = render_ty(self.tcx, ret_ty);
                 if is_unit(self.tcx, ret_ty) {
@@ -1950,6 +2150,9 @@ impl<'a> Lowerer<'a> {
                         slot = local_slot(Local::RETURN)
                     )
                     .unwrap();
+                    // Push after the restore so the entry persists
+                    // into the caller's frame.
+                    self.emit_gc_root_push(&heap);
                     writeln!(self.out, "  ret ptr {heap}").unwrap();
                 } else {
                     let tmp = self.fresh();
@@ -2384,13 +2587,18 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         let bytes = u64::from(slots) * 8;
-        declare_rt(&mut self.runtime_refs, "gos_rt_gc_alloc");
+        // Use the tracked aggregate allocator so the MIR drop
+        // pass can reclaim this block via `gos_rt_aggr_free` at
+        // end of scope Behaviour is identical to
+        // `gos_rt_gc_alloc` — both share the same registry.
+        declare_rt(&mut self.runtime_refs, "gos_rt_aggr_alloc");
         let heap = self.fresh();
         writeln!(
             self.out,
-            "  {heap} = call ptr @gos_rt_gc_alloc(i64 {bytes})"
+            "  {heap} = call ptr @gos_rt_aggr_alloc(i64 {bytes})"
         )
         .unwrap();
+        self.emit_gc_root_push(&heap);
         let src = local_slot(place.local);
         writeln!(
             self.out,
@@ -3278,7 +3486,7 @@ impl<'a> Lowerer<'a> {
         // `gos_rt_vec_new(elem_bytes: u32)`. MIR passes the element
         // width as `i64`, so we truncate to `i32` before the call.
         if matches!(name.as_str(), "Vec::new" | "gos_rt_vec_new") {
-            declare_rt(&mut self.runtime_refs, "gos_rt_vec_new");
+            let kind = llvm_vec_elem_kind_from_local(self.body, self.tcx, destination.local);
             let dst = local_slot(destination.local);
             let eb_i64 = if let Some(a) = args.first() {
                 self.lower_operand(a)?
@@ -3288,7 +3496,17 @@ impl<'a> Lowerer<'a> {
             let eb_i32 = self.fresh();
             writeln!(self.out, "  {eb_i32} = trunc i64 {eb_i64} to i32").unwrap();
             let tmp = self.fresh();
-            writeln!(self.out, "  {tmp} = call ptr @gos_rt_vec_new(i32 {eb_i32})").unwrap();
+            if kind == vec_elem_kind_llvm::PRIMITIVE {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_new");
+                writeln!(self.out, "  {tmp} = call ptr @gos_rt_vec_new(i32 {eb_i32})").unwrap();
+            } else {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_new_typed");
+                writeln!(
+                    self.out,
+                    "  {tmp} = call ptr @gos_rt_vec_new_typed(i32 {eb_i32}, i8 {kind})"
+                )
+                .unwrap();
+            }
             writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
@@ -3299,7 +3517,7 @@ impl<'a> Lowerer<'a> {
             name.as_str(),
             "Vec::with_capacity" | "gos_rt_vec_with_capacity"
         ) {
-            declare_rt(&mut self.runtime_refs, "gos_rt_vec_with_capacity");
+            let kind = llvm_vec_elem_kind_from_local(self.body, self.tcx, destination.local);
             let dst = local_slot(destination.local);
             let eb_i64 = if let Some(a) = args.first() {
                 self.lower_operand(a)?
@@ -3314,11 +3532,21 @@ impl<'a> Lowerer<'a> {
             let eb_i32 = self.fresh();
             writeln!(self.out, "  {eb_i32} = trunc i64 {eb_i64} to i32").unwrap();
             let tmp = self.fresh();
-            writeln!(
-                self.out,
-                "  {tmp} = call ptr @gos_rt_vec_with_capacity(i32 {eb_i32}, i64 {cap_i64})"
-            )
-            .unwrap();
+            if kind == vec_elem_kind_llvm::PRIMITIVE {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_with_capacity");
+                writeln!(
+                    self.out,
+                    "  {tmp} = call ptr @gos_rt_vec_with_capacity(i32 {eb_i32}, i64 {cap_i64})"
+                )
+                .unwrap();
+            } else {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_with_capacity_typed");
+                writeln!(
+                    self.out,
+                    "  {tmp} = call ptr @gos_rt_vec_with_capacity_typed(i32 {eb_i32}, i64 {cap_i64}, i8 {kind})"
+                )
+                .unwrap();
+            }
             writeln!(self.out, "  store ptr {tmp}, ptr {dst}").unwrap();
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
@@ -4494,74 +4722,18 @@ impl<'a> Lowerer<'a> {
         let dest_ty_mir = self.body.local_ty(destination.local);
         let dest_ty = render_ty(self.tcx, dest_ty_mir);
 
-        // Auto-declare gos_rt_* symbols that reach the generic call path using
-        // the CALL-SITE types (not registry types). Using registry types here
-        // would cause declaration/call-site mismatches for functions like
-        // `gos_rt_result_payload` where the LLVM lowerer passes a `ptr` but
-        // the C ABI returns `i64` — on x86_64 both are in rax and behave
-        // identically, but a conflicting explicit declaration causes LLVM to
-        // miscompile. User-defined functions are defined in this module and
-        // need no `declare`.
+        // Every `gos_rt_*` declaration MUST come from the typed
+        // ABI registry — that's the single source of truth for the
+        // LLVM IR shape. `declare_rt` panics on an unknown symbol,
+        // which is the correct behaviour: the prior synthesised
+        // path invented a signature from operand types at the call
+        // site, and a stale or mistyped operand would silently
+        // emit a `declare` whose params didn't match the runtime's
+        // C-ABI definition, producing miscompiles instead of a
+        // build-time error. User-defined functions are defined in
+        // this module and need no `declare`.
         if symbol.starts_with("gos_rt_") {
-            // Prefer the canonical declaration from the runtime
-            // registry when one exists: it gives the right types
-            // for both return and parameters, sidestepping the
-            // call-site-derived guessing that breaks when an
-            // operand has Unit / void type or a different-but-
-            // ABI-compatible spelling (i64 vs ptr).
-            if gossamer_abi::lookup(symbol).is_some() {
-                declare_rt(&mut self.runtime_refs, symbol);
-            } else {
-                let decl_ret = if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
-                    "void"
-                } else {
-                    &dest_ty
-                };
-                let decl_args = args
-                    .iter()
-                    .enumerate()
-                    .map(|(i, arg)| {
-                        // Mirror lower_call_arg's type selection: aggregate
-                        // params that are expected by a callee expecting Ref<T>
-                        // or another aggregate get "ptr"; everything else uses
-                        // the operand's own LLVM type.
-                        let want = expected_param_tys.get(i).copied().flatten();
-                        if let Some(w) = want
-                            && let Operand::Copy(place) = arg
-                            && place.projection.is_empty()
-                        {
-                            let local_ty = self.body.local_ty(place.local);
-                            if matches!(self.tcx.kind(w), Some(TyKind::Ref { .. }))
-                                && matches!(self.tcx.kind(local_ty), Some(TyKind::Adt { .. }))
-                                && slot_count(self.tcx, local_ty).is_none()
-                            {
-                                return "ptr".to_string();
-                            }
-                            if is_aggregate(self.tcx, w) && is_aggregate(self.tcx, local_ty) {
-                                return "ptr".to_string();
-                            }
-                        }
-                        let t = self.operand_llvm_ty(arg);
-                        // Replace void/empty operand types with i64 — `void`
-                        // is invalid as a parameter type in LLVM IR.
-                        if t == "void" || t.is_empty() {
-                            "i64".to_string()
-                        } else {
-                            t
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let needle = format!("@{symbol}(");
-                if !self
-                    .runtime_refs
-                    .iter()
-                    .any(|d| d.contains(needle.as_str()))
-                {
-                    self.runtime_refs
-                        .insert(format!("declare {decl_ret} @{symbol}({decl_args})"));
-                }
-            }
+            declare_rt(&mut self.runtime_refs, symbol);
         }
 
         // Look up the registry's canonical return type for

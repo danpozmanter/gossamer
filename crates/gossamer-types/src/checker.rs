@@ -52,6 +52,11 @@ pub fn typecheck_source_file(
     (checker.table, checker.diagnostics)
 }
 
+/// Hard limit on type-checker recursion depth. Mirrors the parser's
+/// guard and keeps adversarial input that survives parsing from
+/// blowing the C stack inside [`TypeChecker::check_expr`].
+const RECURSION_LIMIT: u32 = 256;
+
 struct TypeChecker<'a> {
     tcx: &'a mut TyCtxt,
     infer: InferCtxt,
@@ -60,6 +65,15 @@ struct TypeChecker<'a> {
     resolutions: &'a Resolutions,
     scopes: Vec<HashMap<gossamer_lex::Symbol, Ty>>,
     binding_types: HashMap<NodeId, Ty>,
+    /// Running depth of recursive entries into expression / block /
+    /// pattern type checks. Reaching [`RECURSION_LIMIT`] short-circuits
+    /// the offending subtree to `tcx.error_ty()` after emitting one
+    /// diagnostic.
+    recursion_depth: u32,
+    /// `true` once the recursion-limit diagnostic has been emitted in
+    /// the current source file. Prevents flooding the diagnostic
+    /// stream with duplicates.
+    recursion_limit_reported: bool,
     /// Ordered field name + type for every named struct, keyed by
     /// the struct's `DefId`. Built during `collect_signatures` so
     /// field-access and struct-literal expressions can resolve leaf
@@ -111,12 +125,40 @@ impl<'a> TypeChecker<'a> {
             resolutions,
             scopes: vec![HashMap::new()],
             binding_types: HashMap::new(),
+            recursion_depth: 0,
+            recursion_limit_reported: false,
             struct_fields: checker_struct_fields,
             fn_sigs: HashMap::new(),
             const_tys: HashMap::new(),
             struct_generic_arity: HashMap::new(),
             current_generic_scope: HashMap::new(),
         }
+    }
+
+    /// Returns `Err(())` once the recursion counter hits
+    /// [`RECURSION_LIMIT`], emitting a one-shot diagnostic at `span`.
+    /// Callers should respond by returning `tcx.error_ty()` so the
+    /// caller's caller stops walking into the doomed subtree.
+    fn enter_recursion(&mut self, span: Span) -> Result<(), ()> {
+        if self.recursion_depth >= RECURSION_LIMIT {
+            if !self.recursion_limit_reported {
+                self.recursion_limit_reported = true;
+                self.emit(
+                    TypeError::RecursionLimit {
+                        limit: RECURSION_LIMIT,
+                    },
+                    span,
+                );
+            }
+            return Err(());
+        }
+        self.recursion_depth += 1;
+        Ok(())
+    }
+
+    /// Pairs with [`Self::enter_recursion`]. Decrements the counter.
+    fn leave_recursion(&mut self) {
+        self.recursion_depth = self.recursion_depth.saturating_sub(1);
     }
 
     /// Pushes a generic-parameter scope while walking a declaration
@@ -663,7 +705,12 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_expr(&mut self, expr: &Expr) -> Ty {
+        if self.enter_recursion(expr.span).is_err() {
+            let err = self.tcx.error_ty();
+            return self.record(expr.id, err);
+        }
         let ty = self.check_expr_kind(expr);
+        self.leave_recursion();
         self.record(expr.id, ty)
     }
 
@@ -673,7 +720,7 @@ impl<'a> TypeChecker<'a> {
     )]
     fn check_expr_kind(&mut self, expr: &Expr) -> Ty {
         match &expr.kind {
-            ExprKind::Literal(lit) => self.type_of_literal(lit),
+            ExprKind::Literal(lit) => self.type_of_literal(lit, expr.span),
             ExprKind::Path(path) => self.check_path_expr(expr.id, path, expr.span),
             ExprKind::Call { callee, args } => self.check_call(callee, args),
             ExprKind::MethodCall { receiver, args, .. } => self.check_method_call(receiver, args),
@@ -1382,7 +1429,7 @@ impl<'a> TypeChecker<'a> {
             ArrayExpr::Repeat { value, count } => {
                 let elem_ty = self.check_expr(value);
                 self.check_expr(count);
-                let len = evaluate_const_int(count).unwrap_or(0);
+                let len = self.evaluate_array_len(count).unwrap_or(0);
                 self.tcx.intern(TyKind::Array { elem: elem_ty, len })
             }
         }
@@ -1448,9 +1495,9 @@ impl<'a> TypeChecker<'a> {
         crate::Substs::from_args(args)
     }
 
-    fn type_of_literal(&mut self, lit: &Literal) -> Ty {
+    fn type_of_literal(&mut self, lit: &Literal, span: Span) -> Ty {
         match lit {
-            Literal::Int(text) => self.type_of_int_literal(text),
+            Literal::Int(text) => self.type_of_int_literal(text, span),
             Literal::Float(text) => self.type_of_float_literal(text),
             Literal::String(_) | Literal::RawString { .. } => self.tcx.string_ty(),
             Literal::Char(_) => self.tcx.char_ty(),
@@ -1464,9 +1511,19 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn type_of_int_literal(&mut self, text: &str) -> Ty {
+    fn type_of_int_literal(&mut self, text: &str, span: Span) -> Ty {
         for (suffix, int_ty) in INT_SUFFIXES {
             if text.ends_with(suffix) {
+                if !int_literal_fits(text, *int_ty) {
+                    self.emit(
+                        TypeError::IntLiteralOverflow {
+                            literal: text.to_string(),
+                            ty: (*suffix).to_string(),
+                        },
+                        span,
+                    );
+                    return self.tcx.error_ty();
+                }
                 return self.tcx.int_ty(*int_ty);
             }
         }
@@ -1479,7 +1536,26 @@ impl<'a> TypeChecker<'a> {
         // The fresh var is integer-constrained so it can only
         // unify with concrete integer types; if no use-site
         // constraints arise it defaults to `i64` at the end of
-        // typechecking.
+        // typechecking. Validate magnitude against the widest
+        // integer bucket the language exposes (`u128`/`i128`),
+        // not against `i64` alone — `let x: u64 = u64::MAX` is
+        // a legitimate program; the use-site unification will
+        // either succeed (assign to u64) or fail with a normal
+        // type-mismatch diagnostic. Only literals whose
+        // magnitude is genuinely impossible to represent in any
+        // Gossamer integer type get the GT0009 here.
+        if let Some(magnitude) = parse_int_magnitude(text)
+            && magnitude > u128::from(u64::MAX)
+        {
+            self.emit(
+                TypeError::IntLiteralOverflow {
+                    literal: text.to_string(),
+                    ty: "any integer type".to_string(),
+                },
+                span,
+            );
+            return self.tcx.error_ty();
+        }
         self.infer.fresh_int_var(self.tcx)
     }
 
@@ -1518,7 +1594,7 @@ impl<'a> TypeChecker<'a> {
             }
             AstTypeKind::Array { elem, len } => {
                 let elem_ty = self.type_from_ast(elem);
-                let count = evaluate_const_int(len).unwrap_or(0);
+                let count = self.evaluate_array_len(len).unwrap_or(0);
                 self.tcx.intern(TyKind::Array {
                     elem: elem_ty,
                     len: count,
@@ -1713,8 +1789,7 @@ impl<'a> TypeChecker<'a> {
                         args.push(crate::GenericArg::Type(self.type_from_ast(ast_ty)));
                     }
                     AstGenericArg::Const(expr) => {
-                        let raw = evaluate_const_int_from_expr(expr).unwrap_or(0);
-                        let value = i128::try_from(raw).unwrap_or(0);
+                        let value = self.evaluate_generic_const_arg(expr);
                         args.push(crate::GenericArg::Const(value));
                     }
                 }
@@ -1727,7 +1802,56 @@ impl<'a> TypeChecker<'a> {
         matches!(self.tcx.kind(ty), Some(TyKind::Int(_)))
     }
 
+    /// Evaluates an array-length expression to a `usize`, emitting a
+    /// diagnostic when the literal magnitude exceeds `usize::MAX`.
+    /// Returns `None` for non-literal forms (the caller falls back to
+    /// `0`, matching the historical lenient behaviour).
+    fn evaluate_array_len(&mut self, expr: &Expr) -> Option<usize> {
+        let raw = evaluate_const_int_from_expr(expr)?;
+        if raw > usize::MAX as u128 {
+            self.emit(
+                TypeError::IntLiteralOverflow {
+                    literal: format!("{raw}"),
+                    ty: "usize".to_string(),
+                },
+                expr.span,
+            );
+            return None;
+        }
+        Some(raw as usize)
+    }
+
+    /// Evaluates a `const` generic argument to an `i128`, emitting a
+    /// diagnostic when the literal magnitude does not fit. Returns
+    /// `0` on overflow so the surrounding `Substs` stays well-formed.
+    fn evaluate_generic_const_arg(&mut self, expr: &Expr) -> i128 {
+        let Some(raw) = evaluate_const_int_from_expr(expr) else {
+            return 0;
+        };
+        if let Ok(value) = i128::try_from(raw) {
+            value
+        } else {
+            self.emit(
+                TypeError::IntLiteralOverflow {
+                    literal: format!("{raw}"),
+                    ty: "i128".to_string(),
+                },
+                expr.span,
+            );
+            0
+        }
+    }
+
     fn type_of_pattern(&mut self, pattern: &Pattern) -> Ty {
+        if self.enter_recursion(pattern.span).is_err() {
+            return self.tcx.error_ty();
+        }
+        let ty = self.type_of_pattern_kind(pattern);
+        self.leave_recursion();
+        ty
+    }
+
+    fn type_of_pattern_kind(&mut self, pattern: &Pattern) -> Ty {
         match &pattern.kind {
             PatternKind::Wildcard
             | PatternKind::Ident { .. }
@@ -1735,12 +1859,13 @@ impl<'a> TypeChecker<'a> {
             | PatternKind::Struct { .. }
             | PatternKind::TupleStruct { .. }
             | PatternKind::Rest => self.fresh(),
-            PatternKind::Literal(lit) => self.type_of_literal(lit),
+            PatternKind::Error => self.tcx.error_ty(),
+            PatternKind::Literal(lit) => self.type_of_literal(lit, pattern.span),
             PatternKind::Tuple(parts) => {
                 let tys: Vec<Ty> = parts.iter().map(|p| self.type_of_pattern(p)).collect();
                 self.tcx.intern(TyKind::Tuple(tys))
             }
-            PatternKind::Range { lo, .. } => self.type_of_literal(lo),
+            PatternKind::Range { lo, .. } => self.type_of_literal(lo, pattern.span),
             PatternKind::Or(alts) => match alts.first() {
                 Some(first) => self.type_of_pattern(first),
                 None => self.fresh(),
@@ -1820,7 +1945,8 @@ impl<'a> TypeChecker<'a> {
             | PatternKind::Literal(_)
             | PatternKind::Path(_)
             | PatternKind::Range { .. }
-            | PatternKind::Rest => {}
+            | PatternKind::Rest
+            | PatternKind::Error => {}
         }
     }
 
@@ -1859,10 +1985,6 @@ impl<'a> TypeChecker<'a> {
             _ => None,
         }
     }
-}
-
-fn evaluate_const_int(expr: &Expr) -> Option<usize> {
-    evaluate_const_int_from_expr(expr).map(|v| v as usize)
 }
 
 /// Pre-registers field types for stdlib structs that user source can
@@ -1958,6 +2080,54 @@ fn evaluate_const_int_from_expr(expr: &Expr) -> Option<u128> {
         return parse_int(&cleaned);
     }
     None
+}
+
+/// Parses the magnitude of an integer literal as a `u128`. The leading
+/// `-` is dropped before parsing; callers that care about signedness
+/// must apply it externally. Returns `None` for non-parseable text.
+fn parse_int_magnitude(text: &str) -> Option<u128> {
+    let cleaned = strip_int_suffix(text).replace('_', "");
+    let trimmed = cleaned.strip_prefix('-').unwrap_or(&cleaned);
+    parse_int(trimmed)
+}
+
+/// Returns `true` when the unsigned magnitude of `text` fits in the
+/// declared integer type. Treats a leading `-` as the literal's
+/// negation, applying the signed-range bound from the negative side.
+fn int_literal_fits(text: &str, ty: IntTy) -> bool {
+    let Some(magnitude) = parse_int_magnitude(text) else {
+        return true;
+    };
+    let negative = text.trim_start().starts_with('-');
+    let (signed_max, signed_min_abs, unsigned_max) = int_bounds(ty);
+    if let Some(unsigned_max) = unsigned_max {
+        if negative {
+            return false;
+        }
+        return magnitude <= unsigned_max;
+    }
+    let limit = if negative { signed_min_abs } else { signed_max };
+    magnitude <= limit
+}
+
+/// Returns `(signed_max, signed_min_abs, unsigned_max)` for `ty`. The
+/// unsigned slot is `None` for signed widths. The signed-minimum is
+/// stored as a positive magnitude (`-i8::MIN` is reported as `128`).
+fn int_bounds(ty: IntTy) -> (u128, u128, Option<u128>) {
+    match ty {
+        IntTy::I8 => (i8::MAX as u128, 1u128 << 7, None),
+        IntTy::I16 => (i16::MAX as u128, 1u128 << 15, None),
+        IntTy::I32 => (i32::MAX as u128, 1u128 << 31, None),
+        IntTy::I64 => (i64::MAX as u128, 1u128 << 63, None),
+        IntTy::I128 => (i128::MAX as u128, 1u128 << 127, None),
+        IntTy::Isize => (i64::MAX as u128, 1u128 << 63, None),
+        IntTy::U8 => (0, 0, Some(u128::from(u8::MAX))),
+        IntTy::U16 => (0, 0, Some(u128::from(u16::MAX))),
+        IntTy::U32 => (0, 0, Some(u128::from(u32::MAX))),
+        IntTy::U64 => (0, 0, Some(u128::from(u64::MAX))),
+        IntTy::U128 => (0, 0, Some(u128::MAX)),
+        IntTy::Usize => (0, 0, Some(u128::from(u64::MAX))),
+    }
 }
 
 fn parse_int(text: &str) -> Option<u128> {

@@ -736,12 +736,12 @@ impl Interpreter {
 
     fn eval_path(&self, segments: &[Ident], env: &Env) -> RuntimeResult<Flow> {
         if let Some(first) = segments.first() {
-            if let Some(value) = env.lookup(&first.name) {
-                return Ok(Flow::Value(value.clone()));
-            }
-            // Try the fully-qualified join first so stdlib builtins
-            // registered under `module::name` win over same-named
-            // user-defined functions.
+            // Multi-segment path: the head is a module / type / trait,
+            // never a local binding. Skip the env lookup so a local
+            // that happens to share a module's name (e.g.
+            // `let provider = "...";` plus `mod provider`) can't
+            // capture `provider::xxx` paths and silently downgrade
+            // the call's return to the captured value.
             if segments.len() > 1 {
                 let joined: String = segments
                     .iter()
@@ -751,25 +751,21 @@ impl Interpreter {
                 if let Some(value) = self.globals.get(&joined) {
                     return Ok(Flow::Value(value.clone()));
                 }
-            }
-            if let Some(value) = self.globals.get(&first.name) {
-                return Ok(Flow::Value(value.clone()));
-            }
-            // Try resolving a stdlib-style alias for the full path's
-            // tail (e.g. `fmt::println` → `println`). The frontend
-            // treats imported namespaces opaquely, so this is how the
-            // tree-walker bridges to its built-in table.
-            if segments.len() > 1 {
                 if let Some(last) = segments.last() {
                     if let Some(value) = self.globals.get(&last.name) {
                         return Ok(Flow::Value(value.clone()));
                     }
                 }
                 // Multi-segment path whose head and tail are both
-                // unknown — typical for stdlib constants like
-                // `Ordering::Relaxed`. Degrade to Unit so programs
-                // using them as opaque arguments keep running.
+                // unknown — degrade to Unit so opaque-argument
+                // shapes (e.g. `Ordering::Relaxed`) keep flowing.
                 return Ok(Flow::Value(Value::Unit));
+            }
+            if let Some(value) = env.lookup(&first.name) {
+                return Ok(Flow::Value(value.clone()));
+            }
+            if let Some(value) = self.globals.get(&first.name) {
+                return Ok(Flow::Value(value.clone()));
             }
             return Err(RuntimeError::UnresolvedName(first.name.clone()));
         }
@@ -782,6 +778,48 @@ impl Interpreter {
         args: &[HirExpr],
         env: &mut Env,
     ) -> RuntimeResult<Flow> {
+        // Synthetic `<TypeName>::from_json(text)` / `<TypeName>::to_json(value)`
+        // dispatch. Triggered when the callee is a bare two-segment path
+        // and the first segment names a struct registered for JSON I/O
+        // at `Vm::load` time. We evaluate args first (so any side-effects
+        // there happen exactly once), then route directly into the typed
+        // (de)serializer without touching the globals table.
+        if let HirExprKind::Path { segments, .. } = &callee.kind {
+            if segments.len() == 2 {
+                let type_name = segments[0].name.as_str();
+                let method = segments[1].name.as_str();
+                if matches!(method, "from_json" | "to_json")
+                    && crate::builtins::has_json_schema(type_name)
+                {
+                    let mut arg_values = Vec::with_capacity(args.len());
+                    for arg in args {
+                        match self.eval_expr(arg, env)? {
+                            Flow::Value(v) => arg_values.push(v),
+                            early => return Ok(early),
+                        }
+                    }
+                    let result = match method {
+                        "from_json" => crate::builtins::json_from_str_for_type(
+                            type_name,
+                            arg_values
+                                .first()
+                                .and_then(crate::builtins::as_str)
+                                .unwrap_or(""),
+                        ),
+                        "to_json" => {
+                            let Some(receiver) = arg_values.first() else {
+                                return Ok(Flow::Value(crate::builtins::err_variant(format!(
+                                    "{type_name}::to_json: missing receiver"
+                                ))));
+                            };
+                            crate::builtins::json_to_string_for_type(type_name, receiver)
+                        }
+                        _ => unreachable!(),
+                    };
+                    return Ok(Flow::Value(result));
+                }
+            }
+        }
         let callee_value = self.eval_expr_to_value(callee, env)?;
         let mut arg_values = Vec::with_capacity(args.len());
         for arg in args {

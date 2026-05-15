@@ -544,12 +544,17 @@ pub(crate) enum Global {
 /// pair cost ~160 KB of Rust stack. The default OS thread stack is 8 MB,
 /// leaving roughly 40 safe levels after process and CLI startup.
 ///
-/// 40 is conservative for debug builds. Release builds incur ~10× smaller
-/// frames, so the effective safe depth there is ~400+ — but since this
-/// constant governs both tiers, the lower debug-safe value is used. For
+/// Debug builds use a conservative 40-frame cap (each VM frame holds
+/// several KB of `Value` slots in the register pool). Release builds
+/// have ~10× smaller frames in practice; the cap is raised to 512 so
+/// typical recursive shapes (mergesort over moderate inputs, parser
+/// combinators, tree walkers) run without hitting the limit. For
 /// deeply recursive programs use `gos build`, where the native codegen
 /// produces standard call instructions the OS can grow to handle.
+#[cfg(debug_assertions)]
 const MAX_CALL_DEPTH: usize = 40;
+#[cfg(not(debug_assertions))]
+const MAX_CALL_DEPTH: usize = 512;
 
 impl Vm {
     /// Builds a VM pre-populated with the built-in intrinsics.
@@ -715,6 +720,36 @@ impl Vm {
             }
         }
         crate::builtins::set_struct_layouts(name_layouts);
+        // Build JSON schemas for every named struct so
+        // `<Type>::from_json(text)` can deserialize strictly.
+        // Pulls field types from `tcx.struct_field_tys(def)` and
+        // pairs them with the field names from HIR. Nested ADTs
+        // are referenced by source name and resolved lazily at
+        // decode time.
+        let mut json_schemas: HashMap<String, crate::builtins::JsonStructSchema> = HashMap::new();
+        for item in &program.items {
+            if let HirItemKind::Adt(adt) = &item.kind {
+                if let gossamer_hir::HirAdtKind::Struct(field_names) = &adt.kind {
+                    let Some(def) = item.def else { continue };
+                    let Some(field_tys) = tcx.struct_field_tys(def) else {
+                        continue;
+                    };
+                    if field_names.len() != field_tys.len() {
+                        continue;
+                    }
+                    let fields: Vec<(String, crate::builtins::JsonSchemaKind)> = field_names
+                        .iter()
+                        .zip(field_tys.iter().copied())
+                        .map(|(name, ty)| (name.name.clone(), ty_to_json_schema_kind(tcx, ty)))
+                        .collect();
+                    json_schemas.insert(
+                        adt.name.name.clone(),
+                        crate::builtins::JsonStructSchema { fields },
+                    );
+                }
+            }
+        }
+        crate::builtins::set_json_struct_schemas(json_schemas);
         // Snapshot every top-level `const NAME = ...` value the
         // tree-walker has already evaluated. Passed to `compile_fn`
         // so a path that resolves to one of these inlines as a
@@ -923,6 +958,7 @@ impl Vm {
             HirItemKind::Fn(decl) => {
                 let mut chunk = compile_fn(decl, tcx, layouts, wrappers, module_consts)?;
                 chunk.compact();
+                debug_validate_chunk(&chunk)?;
                 let shared = chunk.into_shared();
                 if let Some(prefix) = &module_prefix {
                     let qualified = format!("{prefix}::{}", decl.name.name);
@@ -938,6 +974,7 @@ impl Vm {
                 for method in &decl.methods {
                     let mut chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
                     chunk.compact();
+                    debug_validate_chunk(&chunk)?;
                     let shared = chunk.into_shared();
                     // Register both the short name and the
                     // `TypeName::method` qualified key so runtime
@@ -962,6 +999,7 @@ impl Vm {
                     if method.body.is_some() {
                         let mut chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
                         chunk.compact();
+                        debug_validate_chunk(&chunk)?;
                         let shared = chunk.into_shared();
                         if let Some(prefix) = &module_prefix {
                             globals.insert(
@@ -3566,6 +3604,23 @@ impl Default for Vm {
     }
 }
 
+/// Runs [`crate::validate::validate_chunk`] in debug builds; no-op
+/// in release. Catches `compile_fn` regressions before they reach
+/// the unsafe dispatch loop in [`Vm::run`].
+#[cfg(debug_assertions)]
+fn debug_validate_chunk(chunk: &FnChunk) -> RuntimeResult<()> {
+    crate::validate::validate_chunk(chunk)
+        .map_err(|e| RuntimeError::Type(format!("invalid bytecode for `{}`: {e}", chunk.name)))
+}
+
+/// Release-build stub — production execution trusts the unverified
+/// "compiler emits in-bounds indices" invariant for speed.
+#[cfg(not(debug_assertions))]
+#[inline(always)]
+fn debug_validate_chunk(_chunk: &FnChunk) -> RuntimeResult<()> {
+    Ok(())
+}
+
 /// Recognises `fn name(p) { intrinsic_path(p) }` (a single
 /// parameter, no other statements, body is exactly one call
 /// forwarding the parameter) and returns the intrinsic's
@@ -4098,6 +4153,55 @@ fn compare(
 /// override (the bytecode VM always runs `main` on its own path,
 /// so a program whose only function is `main` never benefits from
 /// the cranelift compile).
+/// Translates a typechecker `Ty` into the runtime schema enum
+/// consumed by strict JSON deserialization. Drops to `Any` for
+/// shapes the JSON decoder cannot validate against (closures,
+/// channels, references, generic params, …) — the parsed value
+/// passes through untouched in that case.
+fn ty_to_json_schema_kind(
+    tcx: &gossamer_types::TyCtxt,
+    ty: gossamer_types::Ty,
+) -> crate::builtins::JsonSchemaKind {
+    use crate::builtins::JsonSchemaKind as K;
+    use gossamer_types::TyKind;
+    let Some(kind) = tcx.kind(ty) else {
+        return K::Any;
+    };
+    match kind {
+        TyKind::Bool => K::Bool,
+        TyKind::Int(_) | TyKind::Char => K::Int,
+        TyKind::Float(_) => K::Float,
+        TyKind::String => K::String,
+        TyKind::JsonValue => K::Json,
+        TyKind::Tuple(elems) => K::Tuple(
+            elems
+                .iter()
+                .map(|t| ty_to_json_schema_kind(tcx, *t))
+                .collect(),
+        ),
+        TyKind::Array { elem, len } => K::Array(Box::new(ty_to_json_schema_kind(tcx, *elem)), *len),
+        TyKind::Slice(elem) | TyKind::Vec(elem) => {
+            K::Vec(Box::new(ty_to_json_schema_kind(tcx, *elem)))
+        }
+        TyKind::HashMap { value, .. } => K::Map(Box::new(ty_to_json_schema_kind(tcx, *value))),
+        TyKind::Adt { def, substs } => {
+            let name = tcx.def_name(*def).unwrap_or("");
+            // Option<T> is represented as the Adt named "Option" with
+            // a single ok-type substitution. Walk the substs to fish
+            // the inner type out without hard-coding generics here.
+            if name == "Option" {
+                let tys = substs.types();
+                if let Some(inner) = tys.first().copied() {
+                    return K::Option(Box::new(ty_to_json_schema_kind(tcx, inner)));
+                }
+            }
+            K::Struct(name.to_string())
+        }
+        TyKind::Ref { inner, .. } => ty_to_json_schema_kind(tcx, *inner),
+        _ => K::Any,
+    }
+}
+
 fn has_jit_eligible_fn(program: &HirProgram) -> bool {
     program
         .items
@@ -4162,4 +4266,53 @@ fn field_set(receiver: &mut Value, name: &str, new_value: Value) -> RuntimeResul
     }
     slots.push((Ident::new(name), new_value));
     Ok(())
+}
+
+#[cfg(all(test, debug_assertions))]
+mod tests {
+    use super::*;
+    use crate::bytecode::Op;
+    use crate::validate::validate_chunk;
+
+    fn empty_chunk(register_count: u16) -> FnChunk {
+        FnChunk {
+            name: "vm_test".to_string(),
+            arity: 0,
+            register_count,
+            float_count: 0,
+            int_count: 0,
+            instrs: Vec::new(),
+            wide_ops: Vec::new(),
+            consts: vec![Value::Int(0)],
+            f64_consts: Vec::new(),
+            i64_consts: Vec::new(),
+            globals: Vec::new(),
+            deferred_exprs: Vec::new(),
+            deferred_envs: Vec::new(),
+            deferred_env_regs: Vec::new(),
+            call_cache_count: 0,
+            arith_cache_count: 0,
+            field_cache_count: 0,
+        }
+    }
+
+    #[test]
+    fn debug_validate_chunk_accepts_well_formed_bytecode() {
+        let mut chunk = empty_chunk(2);
+        chunk.instrs.push(Op::LoadConst { dst: 0, idx: 0 });
+        chunk.instrs.push(Op::Return { value: 0 });
+        assert!(validate_chunk(&chunk).is_ok());
+        assert!(debug_validate_chunk(&chunk).is_ok());
+    }
+
+    #[test]
+    fn debug_validate_chunk_rejects_malformed_bytecode() {
+        let mut chunk = empty_chunk(2);
+        chunk.instrs.push(Op::Move { dst: 99, src: 0 });
+        let err = debug_validate_chunk(&chunk).expect_err("must reject");
+        match err {
+            RuntimeError::Type(msg) => assert!(msg.contains("invalid bytecode")),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
 }

@@ -20,7 +20,7 @@ use gossamer_types::Ty;
 
 /// Local variable index within a [`Body`]. `Local(0)` is the return
 /// slot; subsequent indices are parameters followed by temporaries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Local(pub u32);
 
 impl Local {

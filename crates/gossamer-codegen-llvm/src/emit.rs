@@ -814,12 +814,33 @@ fn extern_declare(body: &Body, tcx: &TyCtxt) -> String {
 }
 
 /// Returns the temp directory the LLVM pipeline emits its
-/// intermediate IR / opt-bitcode artifacts into. Reproducible mode
-/// pins a stable name; otherwise the directory is namespaced with
-/// the process id so concurrent builds don't clobber each other.
+/// intermediate IR / opt-bitcode artifacts into.
+///
+/// the reproducible-mode name was a fixed
+/// `gos-llvm-reproducible`, so parallel reproducible builds (two
+/// `gos build --reproducible` of distinct projects on the same
+/// host) raced on `unit.ll` / `unit.opt.bc` / `unit.o`. We now
+/// keep the deterministic-prefix invariant the reproducible mode
+/// needs (same input → same path → same artifact bytes) by
+/// hashing the entry source path into the directory name. Two
+/// builds of the same source still land in the same dir; two
+/// concurrent builds of different sources get distinct dirs.
 fn pipeline_tmp_dir() -> Result<PathBuf> {
+    use std::hash::Hasher as _;
     let tmp_dir = if want_reproducible() {
-        std::env::temp_dir().join("gos-llvm-reproducible")
+        // Hash the CWD + program path so parallel reproducible
+        // builds of different inputs don't collide on a fixed
+        // directory name. Same input → same hash → same dir →
+        // bit-identical artifacts across two builds.
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        if let Ok(cwd) = std::env::current_dir() {
+            hasher.write(cwd.as_os_str().as_encoded_bytes());
+        }
+        if let Some(arg0) = std::env::args_os().next() {
+            hasher.write(arg0.as_encoded_bytes());
+        }
+        let h = hasher.finish();
+        std::env::temp_dir().join(format!("gos-llvm-repro-{h:016x}"))
     } else {
         std::env::temp_dir().join(format!("gos-llvm-{}", std::process::id()))
     };
@@ -832,6 +853,12 @@ fn pipeline_tmp_dir() -> Result<PathBuf> {
 /// writes the resulting object directly to `obj_out`. The previous
 /// API forced callers to round-trip the IR + the object through
 /// memory; this one keeps both on disk and returns nothing.
+///
+/// Pipeline order: explicit IR verification via `opt -passes=verify`
+/// → mid-end optimisation (`opt -O1`/`-O3`) → backend (`llc`). The
+/// verify pass runs first so shape regressions surface with source-
+/// level context (the verifier's stderr is forwarded verbatim)
+/// before any optimisation rewrites obscure the offending value.
 fn invoke_llc_pipeline(
     ll_path: &std::path::Path,
     obj_out: &std::path::Path,
@@ -851,6 +878,7 @@ fn invoke_llc_pipeline(
         // the IR file without guessing a temp-dir layout.
         eprintln!("llvm backend: IR at {}", ll_path.display());
     }
+    verify_ir(ll_path, triple, keep_artifacts)?;
     let profile = opt_profile();
     let mcpu = mcpu_target();
     // Both profiles run `opt` because the lowerer emits some
@@ -1018,6 +1046,53 @@ fn invoke_llc_pipeline(
     Ok(())
 }
 
+/// Runs LLVM's IR verifier (`opt -passes=verify`) against the
+/// emitted text before the optimisation pipeline rewrites it.
+///
+/// `opt -O3` runs its own verifier implicitly, but the failure
+/// surface is the same opaque "opt failed (...)" string used for
+/// every other mid-end issue, which masks shape regressions in
+/// the lowerer. Running the verifier as a separate pass first
+/// gives the user a focused diagnostic (the verifier's own
+/// stderr, forwarded verbatim) before any pass has a chance to
+/// rewrite the offending value.
+///
+/// On verifier failure: surface the captured stderr in the
+/// returned error so the user sees the LLVM verifier's exact
+/// complaint — the actionable signal is in there (offending
+/// function name, value, expected vs actual type).
+fn verify_ir(ll_path: &std::path::Path, triple: &str, keep_artifacts: bool) -> Result<()> {
+    let opt_tool = find_opt()?;
+    let mut verify_cmd = std::process::Command::new(&opt_tool);
+    verify_cmd
+        .arg("-passes=verify")
+        .arg(format!("-mtriple={triple}"))
+        .arg(ll_path)
+        .arg("-o")
+        .arg(std::path::Path::new(if cfg!(windows) {
+            "NUL"
+        } else {
+            "/dev/null"
+        }));
+    let output = run_with_timeout(verify_cmd, opt_timeout(), "opt -passes=verify")
+        .with_context(|| format!("spawn {}", opt_tool.display()))?;
+    if !output.status.success() {
+        if keep_artifacts {
+            eprintln!("llvm backend: failing IR kept at {}", ll_path.display());
+        }
+        return Err(anyhow!(
+            "LLVM IR verification failed ({status}): {stderr}\n\
+             hint: an `opt -passes=verify` failure indicates the lowerer \
+             emitted malformed IR; dump the offending module with \
+             GOS_LLVM_DUMP=1 and search the IR for the function or value \
+             named in the verifier output above.",
+            status = output.status,
+            stderr = String::from_utf8_lossy(&output.stderr),
+        ));
+    }
+    Ok(())
+}
+
 /// Returns the wall-clock cap for the `opt` and `llc` subprocesses.
 /// `GOS_LLVM_OPT_TIMEOUT_SECS=N` overrides; defaults to 10 minutes,
 /// generous enough for huge monomorph fan-outs but tight enough
@@ -1029,8 +1104,25 @@ fn invoke_llc_pipeline(
 /// for short-running benchmarks where the AVX-512 dirty-state
 /// transition penalty dominates the savings (§5 release-perf
 /// investigation, fannkuch).
+/// Default LLVM `-mcpu` target used when `GOS_LLVM_MCPU` is unset.
+///
+/// **0.6.0 changed the default from `native` to a stable ISA
+/// baseline so release artifacts are bit-reproducible across
+/// hosts** `x86-64-v3` (AVX2 + BMI2 + FMA, ~2013+
+/// hardware) is a reasonable floor for modern targets; users who
+/// want host-targeted codegen can still opt in with
+/// `GOS_LLVM_MCPU=native`. On non-x86_64 targets we fall back to
+/// `native` because there's no portable ISA-version tag in the
+/// same shape (`apple-m1`, `neoverse-n1`, etc. vary too much).
 fn mcpu_target() -> String {
-    std::env::var("GOS_LLVM_MCPU").unwrap_or_else(|_| "native".to_string())
+    if let Ok(s) = std::env::var("GOS_LLVM_MCPU") {
+        return s;
+    }
+    if cfg!(target_arch = "x86_64") {
+        "x86-64-v3".to_string()
+    } else {
+        "native".to_string()
+    }
 }
 
 fn opt_timeout() -> std::time::Duration {

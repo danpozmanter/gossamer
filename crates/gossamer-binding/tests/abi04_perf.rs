@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use gossamer_binding::native::{BindingAbi, GosBytes, GosDynVariant, GosMap};
+use gossamer_binding::native::{BindingAbi, BindingGosMap, GosBytes, GosDynVariant};
 use gossamer_binding::{Bytes, DynValue};
 
 gossamer_binding::register_module! {
@@ -32,7 +32,7 @@ gossamer_binding::register_module! {
 
 unsafe extern "C" {
     fn gos_binding_test__abi04_perf__echo_bytes(b: *const GosBytes) -> *mut GosBytes;
-    fn gos_binding_test__abi04_perf__echo_map(m: *const GosMap) -> *mut GosMap;
+    fn gos_binding_test__abi04_perf__echo_map(m: *const BindingGosMap) -> *mut BindingGosMap;
     fn gos_binding_test__abi04_perf__echo_dyn(v: *const GosDynVariant) -> *mut GosDynVariant;
 }
 

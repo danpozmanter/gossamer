@@ -31,6 +31,22 @@ impl Parser<'_> {
 
     /// Precedence-climbing core used by `parse_expr`.
     fn parse_expr_with_prec(&mut self, max_prec: u8, allow_assign: bool) -> Expr {
+        let entry_span = self.peek_span();
+        if self.enter_recursion(entry_span).is_err() {
+            let id = self.alloc_id();
+            // Skip one token so the outer driver cannot loop on the same
+            // input forever after the limit fires.
+            if !self.at_eof() {
+                self.bump();
+            }
+            return Expr::new(id, entry_span, ExprKind::Error);
+        }
+        let result = self.parse_expr_with_prec_inner(max_prec, allow_assign);
+        self.leave_recursion();
+        result
+    }
+
+    fn parse_expr_with_prec_inner(&mut self, max_prec: u8, allow_assign: bool) -> Expr {
         let mut lhs = self.parse_prefix();
         loop {
             if allow_assign && self.peek_assign_op().is_some() {
@@ -242,6 +258,20 @@ impl Parser<'_> {
 
     /// Parses a prefix (primary + unary) expression.
     fn parse_prefix(&mut self) -> Expr {
+        let entry_span = self.peek_span();
+        if self.enter_recursion(entry_span).is_err() {
+            let id = self.alloc_id();
+            if !self.at_eof() {
+                self.bump();
+            }
+            return Expr::new(id, entry_span, ExprKind::Error);
+        }
+        let result = self.parse_prefix_inner();
+        self.leave_recursion();
+        result
+    }
+
+    fn parse_prefix_inner(&mut self) -> Expr {
         if let Some(prefix_op) = self.peek_unary_op() {
             let op_span = self.peek_span();
             self.bump();
@@ -561,7 +591,7 @@ impl Parser<'_> {
             self.peek_span(),
         );
         self.bump();
-        ExprKind::Literal(Literal::Unit)
+        ExprKind::Error
     }
 
     fn parse_paren_or_tuple(&mut self) -> ExprKind {
@@ -874,7 +904,7 @@ impl Parser<'_> {
     }
 
     fn parse_labelled_loop(&mut self) -> ExprKind {
-        ExprKind::Literal(Literal::Unit)
+        ExprKind::Error
     }
 
     fn parse_closure_expr(&mut self) -> ExprKind {

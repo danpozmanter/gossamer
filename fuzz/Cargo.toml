@@ -5,11 +5,15 @@ edition = "2024"
 rust-version = "1.88"
 publish = false
 
+[lib]
+path = "src/lib.rs"
+
 [package.metadata]
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+arbitrary = { version = "1", features = ["derive"] }
 gossamer-hir = { path = "../crates/gossamer-hir" }
 gossamer-interp = { path = "../crates/gossamer-interp" }
 gossamer-lex = { path = "../crates/gossamer-lex" }
@@ -64,5 +68,23 @@ doc = false
 [[bin]]
 name = "vm_compile"
 path = "fuzz_targets/vm_compile.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "resolve"
+path = "fuzz_targets/resolve.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "hir_lower"
+path = "fuzz_targets/hir_lower.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "vm_run"
+path = "fuzz_targets/vm_run.rs"
 test = false
 doc = false

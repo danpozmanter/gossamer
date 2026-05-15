@@ -196,20 +196,42 @@ pub struct GosBytes {
     pub ptr: *mut u8,
 }
 
-/// Aggregate matching the runtime's `Map<K, V>` ABI.
+/// Aggregate matching the binding-side `Map<K, V>` ABI.
 ///
 /// ABI 0.4. Two parallel [`GosVec`]s: `keys[i]` pairs with
 /// `values[i]`. Order is not significant for set semantics; for
 /// `HashMap::from_gos`, the keys vec is walked in declaration
 /// order and the first entry for a duplicate key wins.
+///
+/// This struct is DELIBERATELY NOT the same layout as the
+/// runtime's `GosMap` (which uses a `parking_lot::Mutex<...>` over
+/// an internal storage enum, not parallel `GosVec`s). The binding-
+/// side layout is a wire shape: it crosses the C-ABI between
+/// generated thunks and the Gossamer runtime only at well-defined
+/// transfer points. Pointers of this type MUST NOT be handed to
+/// `gos_rt_map_free` — that helper `Box::from_raw`s the runtime
+/// layout and would drop a `parking_lot::Mutex` over garbage. Use
+/// [`gos_rt_binding_map_free`](gossamer_runtime::c_abi::gos_rt_binding_map_free)
+/// or let the GC arena reclaim the allocation.
 #[repr(C)]
 #[derive(Debug)]
-pub struct GosMap {
+pub struct BindingGosMap {
     /// Keys vec header.
     pub keys: *mut GosVec,
     /// Values vec header.
     pub values: *mut GosVec,
 }
+
+/// Compatibility alias for the pre-0.6 spelling of
+/// [`BindingGosMap`]. Existing downstream binding crates referenced
+/// the binding-side aggregate as `GosMap`; the alias keeps that
+/// surface working for one release. Remove on the next ABI bump
+/// once consumers have migrated.
+#[deprecated(
+    since = "0.6.0",
+    note = "rename to BindingGosMap; the binding-side struct is not layout-compatible with the runtime's GosMap"
+)]
+pub use BindingGosMap as GosMap;
 
 /// Aggregate matching the runtime's `Variant` ABI.
 ///
@@ -723,21 +745,23 @@ impl BindingAbi for Bytes {
 
 // --- ABI 0.4: Map<K, V> (HashMap<K, V>) ------------------------------
 
-/// Builds a `GosMap` from parallel-vec halves. Each half is a
-/// heap-owned `GosVec` produced through [`make_gos_vec`]; the
-/// outer `GosMap` is arena-allocated because the runtime's
-/// `gos_rt_map_free` only consults the two inner `GosVec`
-/// pointers.
-fn make_gos_map<K: Copy, V: Copy>(keys: &[K], values: &[V]) -> *mut GosMap {
+/// Builds a `BindingGosMap` from parallel-vec halves. Each half is
+/// a heap-owned `GosVec` produced through [`make_gos_vec`]; the
+/// outer `BindingGosMap` is heap-allocated via `Box::into_raw`.
+/// Reclamation is the consumer's responsibility — bindings MUST
+/// NOT call `gos_rt_map_free` on this pointer (that helper
+/// targets the runtime's incompatible `GosMap` layout); use
+/// `gos_rt_binding_map_free` instead.
+fn make_gos_map<K: Copy, V: Copy>(keys: &[K], values: &[V]) -> *mut BindingGosMap {
     let keys_ptr = make_gos_vec(keys);
     let values_ptr = make_gos_vec(values);
-    Box::into_raw(Box::new(GosMap {
+    Box::into_raw(Box::new(BindingGosMap {
         keys: keys_ptr,
         values: values_ptr,
     }))
 }
 
-unsafe fn read_gos_map_keys_values_i64(p: *const GosMap) -> (Vec<i64>, Vec<i64>) {
+unsafe fn read_gos_map_keys_values_i64(p: *const BindingGosMap) -> (Vec<i64>, Vec<i64>) {
     if p.is_null() {
         return (Vec::new(), Vec::new());
     }
@@ -747,7 +771,7 @@ unsafe fn read_gos_map_keys_values_i64(p: *const GosMap) -> (Vec<i64>, Vec<i64>)
     (keys, values)
 }
 
-unsafe fn read_gos_map_keys_values_str_str(p: *const GosMap) -> (Vec<String>, Vec<String>) {
+unsafe fn read_gos_map_keys_values_str_str(p: *const BindingGosMap) -> (Vec<String>, Vec<String>) {
     if p.is_null() {
         return (Vec::new(), Vec::new());
     }
@@ -757,7 +781,7 @@ unsafe fn read_gos_map_keys_values_str_str(p: *const GosMap) -> (Vec<String>, Ve
     (keys, values)
 }
 
-unsafe fn read_gos_map_keys_values_str_i64(p: *const GosMap) -> (Vec<String>, Vec<i64>) {
+unsafe fn read_gos_map_keys_values_str_i64(p: *const BindingGosMap) -> (Vec<String>, Vec<i64>) {
     if p.is_null() {
         return (Vec::new(), Vec::new());
     }
@@ -772,11 +796,11 @@ unsafe fn read_gos_map_keys_values_str_i64(p: *const GosMap) -> (Vec<String>, Ve
     reason = "ABI surface; binding receives a freshly built HashMap."
 )]
 impl BindingAbi for std::collections::HashMap<i64, i64> {
-    type Input = *const GosMap;
-    type Output = *mut GosMap;
+    type Input = *const BindingGosMap;
+    type Output = *mut BindingGosMap;
     const TYPE: Type = Type::Map(&Type::I64, &Type::I64);
 
-    unsafe fn from_input(input: *const GosMap) -> Self {
+    unsafe fn from_input(input: *const BindingGosMap) -> Self {
         let (keys, values) = unsafe { read_gos_map_keys_values_i64(input) };
         let mut out = HashMap::with_capacity(keys.len());
         for (k, v) in keys.into_iter().zip(values) {
@@ -785,7 +809,7 @@ impl BindingAbi for std::collections::HashMap<i64, i64> {
         out
     }
 
-    fn to_output(self) -> *mut GosMap {
+    fn to_output(self) -> *mut BindingGosMap {
         let mut keys: Vec<i64> = Vec::with_capacity(self.len());
         let mut values: Vec<i64> = Vec::with_capacity(self.len());
         for (k, v) in self {
@@ -801,11 +825,11 @@ impl BindingAbi for std::collections::HashMap<i64, i64> {
     reason = "ABI surface; binding receives a freshly built HashMap."
 )]
 impl BindingAbi for std::collections::HashMap<String, String> {
-    type Input = *const GosMap;
-    type Output = *mut GosMap;
+    type Input = *const BindingGosMap;
+    type Output = *mut BindingGosMap;
     const TYPE: Type = Type::Map(&Type::String, &Type::String);
 
-    unsafe fn from_input(input: *const GosMap) -> Self {
+    unsafe fn from_input(input: *const BindingGosMap) -> Self {
         let (keys, values) = unsafe { read_gos_map_keys_values_str_str(input) };
         let mut out = HashMap::with_capacity(keys.len());
         for (k, v) in keys.into_iter().zip(values) {
@@ -814,7 +838,7 @@ impl BindingAbi for std::collections::HashMap<String, String> {
         out
     }
 
-    fn to_output(self) -> *mut GosMap {
+    fn to_output(self) -> *mut BindingGosMap {
         let mut key_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
         let mut val_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
         for (k, v) in self {
@@ -830,11 +854,11 @@ impl BindingAbi for std::collections::HashMap<String, String> {
     reason = "ABI surface; binding receives a freshly built HashMap."
 )]
 impl BindingAbi for std::collections::HashMap<String, i64> {
-    type Input = *const GosMap;
-    type Output = *mut GosMap;
+    type Input = *const BindingGosMap;
+    type Output = *mut BindingGosMap;
     const TYPE: Type = Type::Map(&Type::String, &Type::I64);
 
-    unsafe fn from_input(input: *const GosMap) -> Self {
+    unsafe fn from_input(input: *const BindingGosMap) -> Self {
         let (keys, values) = unsafe { read_gos_map_keys_values_str_i64(input) };
         let mut out = HashMap::with_capacity(keys.len());
         for (k, v) in keys.into_iter().zip(values) {
@@ -843,7 +867,7 @@ impl BindingAbi for std::collections::HashMap<String, i64> {
         out
     }
 
-    fn to_output(self) -> *mut GosMap {
+    fn to_output(self) -> *mut BindingGosMap {
         let mut key_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
         let mut values: Vec<i64> = Vec::with_capacity(self.len());
         for (k, v) in self {

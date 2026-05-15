@@ -340,10 +340,85 @@ fn missing_variants(all: &[String], patterns: &[&Pat]) -> Vec<String> {
             return Vec::new();
         }
     }
-    all.iter()
+    // for each named variant we've seen, check
+    // whether the patterns that match it are exhaustive over its
+    // payload's finite domain. The first uncovered payload shape
+    // becomes the missing witness. Today we only know how to
+    // enumerate finite domains for `Pat::Bool` payloads (`true` /
+    // `false`); non-bool payloads default to "exhaustive" because
+    // we lack the type context here.
+    let mut out: Vec<String> = all
+        .iter()
         .filter(|name| !seen.contains(name.as_str()))
         .cloned()
-        .collect()
+        .collect();
+    for name in all {
+        if !seen.contains(name.as_str()) {
+            continue;
+        }
+        if let Some(witness) = missing_payload_witness(name, patterns) {
+            out.push(witness);
+        }
+    }
+    out
+}
+
+/// Returns a missing payload witness for `variant_name` when its
+/// matched arms don't cover every shape its payload can take.
+/// Currently handles single-field bool payloads
+/// (`enum E { V(bool) }` — missing `V(true)` if only `V(false)`
+/// was matched).
+fn missing_payload_witness(variant_name: &str, patterns: &[&Pat]) -> Option<String> {
+    let mut bool_field_seen_true = false;
+    let mut bool_field_seen_false = false;
+    let mut bool_field_seen_wild = false;
+    let mut any_with_bool_payload = false;
+    for pat in patterns {
+        match pat {
+            Pat::Variant { name, fields } if name == variant_name && fields.len() == 1 => {
+                match &fields[0] {
+                    Pat::Bool(true) => {
+                        any_with_bool_payload = true;
+                        bool_field_seen_true = true;
+                    }
+                    Pat::Bool(false) => {
+                        any_with_bool_payload = true;
+                        bool_field_seen_false = true;
+                    }
+                    Pat::Wild => {
+                        // Wildcard payload covers both. Only treat
+                        // as bool-domain if we've also seen a real
+                        // bool field elsewhere — otherwise a
+                        // wildcard payload is a wildcard over an
+                        // unknown type.
+                        bool_field_seen_wild = true;
+                    }
+                    _ => return None,
+                }
+            }
+            Pat::Or(alts) => {
+                if let Some(w) =
+                    missing_payload_witness(variant_name, &alts.iter().collect::<Vec<_>>())
+                {
+                    return Some(w);
+                }
+            }
+            _ => {}
+        }
+    }
+    if !any_with_bool_payload {
+        return None;
+    }
+    if bool_field_seen_wild {
+        return None;
+    }
+    if !bool_field_seen_true {
+        return Some(format!("{variant_name}(true)"));
+    }
+    if !bool_field_seen_false {
+        return Some(format!("{variant_name}(false)"));
+    }
+    None
 }
 
 fn scan_variants(pat: &Pat, seen: &mut std::collections::HashSet<String>) {
@@ -371,16 +446,66 @@ fn is_catch_all(pat: &Pat) -> bool {
     }
 }
 
+/// True when `earlier` matches every input `later` matches.
+///
+/// element-aware for `Tuple` and `Variant`.
+/// Previously `Pat::Tuple(_)` subsumed every other `Pat::Tuple(_)`
+/// regardless of element shape, so `match (b, x) { (true, false)
+/// => .., (true, true) => .. }` reported the second arm as
+/// unreachable. Now subsumption descends through fields: a tuple
+/// `(P1, P2)` subsumes `(Q1, Q2)` iff `P1 ⊃ Q1` and `P2 ⊃ Q2`.
+/// Variant subsumption is the same shape plus the name-match
+/// gate.
 fn subsumes(earlier: &Pat, later: &Pat) -> bool {
     match earlier {
         Pat::Wild => true,
         Pat::Or(alts) => alts.iter().any(|a| subsumes(a, later)),
-        Pat::Bool(b) => matches!(later, Pat::Bool(other) if other == b),
-        Pat::Variant { name, .. } => {
-            matches!(later, Pat::Variant { name: other, .. } if other == name)
-        }
-        Pat::Literal(text) => matches!(later, Pat::Literal(other) if other == text),
-        Pat::Tuple(_) => matches!(later, Pat::Tuple(_)),
+        Pat::Bool(b) => match later {
+            Pat::Bool(other) => other == b,
+            Pat::Or(alts) => alts.iter().all(|a| subsumes(earlier, a)),
+            _ => false,
+        },
+        Pat::Variant {
+            name: en,
+            fields: ef,
+        } => match later {
+            Pat::Variant {
+                name: ln,
+                fields: lf,
+            } => {
+                if en != ln {
+                    return false;
+                }
+                // No fields recorded on the earlier pattern means
+                // a name-only test (`SomeVariant` / `Path` form);
+                // treat as wildcard over fields so it subsumes
+                // every later occurrence of the same variant.
+                if ef.is_empty() {
+                    return true;
+                }
+                if lf.len() != ef.len() {
+                    return false;
+                }
+                ef.iter().zip(lf.iter()).all(|(e, l)| subsumes(e, l))
+            }
+            Pat::Or(alts) => alts.iter().all(|a| subsumes(earlier, a)),
+            _ => false,
+        },
+        Pat::Literal(text) => match later {
+            Pat::Literal(other) => other == text,
+            Pat::Or(alts) => alts.iter().all(|a| subsumes(earlier, a)),
+            _ => false,
+        },
+        Pat::Tuple(ef) => match later {
+            Pat::Tuple(lf) => {
+                if lf.len() != ef.len() {
+                    return false;
+                }
+                ef.iter().zip(lf.iter()).all(|(e, l)| subsumes(e, l))
+            }
+            Pat::Or(alts) => alts.iter().all(|a| subsumes(earlier, a)),
+            _ => false,
+        },
         Pat::Opaque => false,
     }
 }
@@ -438,6 +563,7 @@ fn lower_pattern(pattern: &Pattern) -> Pat {
         PatternKind::Or(alts) => Pat::Or(alts.iter().map(lower_pattern).collect()),
         PatternKind::Range { .. } => Pat::Opaque,
         PatternKind::Ref { inner, .. } => lower_pattern(inner),
+        PatternKind::Error => Pat::Opaque,
     }
 }
 
@@ -577,4 +703,108 @@ fn format_missing(missing: &[String]) -> String {
         .map(|item| format!("`{item}`"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod m13_tests {
+    use super::*;
+
+    /// Audit M13 bug #2: element-blind subsumption flagged the
+    /// second arm of `(true, false) => .., (true, true) => ..`
+    /// as redundant because both lowered to `Pat::Tuple(_)`. The
+    /// 0.6.0 fix recurses field-by-field; (true, false) does NOT
+    /// subsume (true, true) because Bool(false) does not subsume
+    /// Bool(true).
+    #[test]
+    fn tuple_subsumption_recurses_through_fields() {
+        let earlier = Pat::Tuple(vec![Pat::Bool(true), Pat::Bool(false)]);
+        let later = Pat::Tuple(vec![Pat::Bool(true), Pat::Bool(true)]);
+        assert!(
+            !subsumes(&earlier, &later),
+            "(true, false) must NOT subsume (true, true) — they're disjoint"
+        );
+    }
+
+    /// Wildcard fields still propagate: `(true, _)` does subsume
+    /// `(true, true)` because the wildcard covers every concrete
+    /// shape.
+    #[test]
+    fn tuple_subsumption_propagates_wildcard_fields() {
+        let earlier = Pat::Tuple(vec![Pat::Bool(true), Pat::Wild]);
+        let later = Pat::Tuple(vec![Pat::Bool(true), Pat::Bool(true)]);
+        assert!(subsumes(&earlier, &later));
+    }
+
+    /// Audit M13 bug #1: `Foo::A(true)` matched alone is NOT
+    /// exhaustive for `enum Foo { A(bool) }`; `Foo::A(false)`
+    /// is missing. The 0.6.0 fix recurses into the payload's
+    /// finite domain.
+    #[test]
+    fn variant_with_bool_payload_reports_missing_false() {
+        let all = vec!["A".to_string()];
+        let pat = Pat::Variant {
+            name: "A".to_string(),
+            fields: vec![Pat::Bool(true)],
+        };
+        let pats: Vec<&Pat> = vec![&pat];
+        let missing = missing_variants(&all, &pats);
+        assert!(
+            missing.iter().any(|m| m == "A(false)"),
+            "expected `A(false)` missing, got {missing:?}"
+        );
+    }
+
+    /// Both bool payloads present → exhaustive.
+    #[test]
+    fn variant_with_bool_payload_both_seen_is_exhaustive() {
+        let all = vec!["A".to_string()];
+        let true_pat = Pat::Variant {
+            name: "A".to_string(),
+            fields: vec![Pat::Bool(true)],
+        };
+        let false_pat = Pat::Variant {
+            name: "A".to_string(),
+            fields: vec![Pat::Bool(false)],
+        };
+        let pats: Vec<&Pat> = vec![&true_pat, &false_pat];
+        let missing = missing_variants(&all, &pats);
+        assert!(missing.is_empty(), "expected no missing, got {missing:?}");
+    }
+
+    /// Variant subsumption is name-AND-field aware: same-name but
+    /// disjoint payload does NOT subsume.
+    #[test]
+    fn variant_subsumption_name_and_field_aware() {
+        let earlier = Pat::Variant {
+            name: "A".to_string(),
+            fields: vec![Pat::Bool(true)],
+        };
+        let later = Pat::Variant {
+            name: "A".to_string(),
+            fields: vec![Pat::Bool(false)],
+        };
+        assert!(
+            !subsumes(&earlier, &later),
+            "A(true) must NOT subsume A(false)"
+        );
+    }
+
+    /// `x @ p` should be treated as `p` for usefulness purposes.
+    /// We verify by lowering through the standard path and
+    /// checking field-aware subsumption holds.
+    #[test]
+    fn name_only_variant_treated_as_wildcard_over_fields() {
+        let earlier = Pat::Variant {
+            name: "A".to_string(),
+            fields: Vec::new(),
+        };
+        let later = Pat::Variant {
+            name: "A".to_string(),
+            fields: vec![Pat::Bool(true)],
+        };
+        assert!(
+            subsumes(&earlier, &later),
+            "name-only `A` should subsume `A(true)`"
+        );
+    }
 }

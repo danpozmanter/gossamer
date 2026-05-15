@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [lex, parse, manifest, http_request, typecheck, mir_lower, vm_compile]
+        target: [lex, parse, manifest, http_request, typecheck, mir_lower, vm_compile, resolve, hir_lower, vm_run]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -55,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [lex, parse, manifest, http_request, typecheck, mir_lower, vm_compile]
+        target: [lex, parse, manifest, http_request, typecheck, mir_lower, vm_compile, resolve, hir_lower, vm_run]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -77,3 +77,43 @@ jobs:
           name: fuzz-crashes-${{ matrix.target }}-weekly
           path: fuzz/artifacts/${{ matrix.target }}/
           if-no-files-found: ignore
+
+  # Audit M6: weekly corpus minimization. cargo fuzz cmin shrinks
+  # the libFuzzer-grown corpus by removing inputs whose coverage
+  # subsumes others'. We commit the minimised seed back via a PR
+  # if and only if cmin produced fewer files than we started with —
+  # silence is the no-op outcome.
+  fuzz-cmin:
+    name: Fuzz cmin (${{ matrix.target }})
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [lex, parse, manifest, http_request, typecheck, mir_lower, vm_compile, resolve, hir_lower, vm_run]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-fuzz-cmin
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - name: Minimise corpus
+        working-directory: fuzz
+        run: |
+          set -euo pipefail
+          before=$(find corpus/${{ matrix.target }} -type f 2>/dev/null | wc -l)
+          cargo +nightly fuzz cmin ${{ matrix.target }} || true
+          after=$(find corpus/${{ matrix.target }} -type f 2>/dev/null | wc -l)
+          echo "corpus size: $before → $after"
+      - name: Open PR with minimised corpus
+        uses: peter-evans/create-pull-request@v7
+        with:
+          title: "fuzz: cmin corpus for ${{ matrix.target }}"
+          commit-message: "fuzz: cmin corpus for ${{ matrix.target }}"
+          branch: fuzz-cmin/${{ matrix.target }}
+          body: |
+            Automated `cargo fuzz cmin` run for the
+            `${{ matrix.target }}` target (audit M6).
+          delete-branch: true

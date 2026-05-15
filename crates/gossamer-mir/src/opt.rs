@@ -536,7 +536,10 @@ fn fold_binary(op: BinOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<ConstVal
 
 fn fold_unary(op: crate::ir::UnOp, operand: &ConstValue) -> Option<ConstValue> {
     match (op, operand) {
-        (crate::ir::UnOp::Neg, ConstValue::Int(x)) => Some(ConstValue::Int(-x)),
+        // `i128::MIN`'s negation overflows; folding through `-x` would
+        // panic in debug builds. Skip the fold and leave the runtime to
+        // produce the wrapping result if the program reaches that path.
+        (crate::ir::UnOp::Neg, ConstValue::Int(x)) => x.checked_neg().map(ConstValue::Int),
         (crate::ir::UnOp::Not, ConstValue::Bool(b)) => Some(ConstValue::Bool(!b)),
         _ => None,
     }

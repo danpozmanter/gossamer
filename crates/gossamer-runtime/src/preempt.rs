@@ -63,10 +63,21 @@ fn install_signal_handler() {
     });
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn install_signal_handler() {
-    // Windows: APC-based preemption is a future iteration. The
-    // cooperative-only path still works.
+    // Windows preemption via QueueUserAPC. No
+    // signal-style dispatcher thread is needed because APCs deliver
+    // directly to the targeted worker thread; the APC routine
+    // simply calls `request_yield_all`, mirroring the Unix SIGURG
+    // handler. Initialisation is a no-op — the work happens at
+    // `signal_thread_sigurg`-equivalent time inside
+    // [`signal_thread_sigurg`].
+}
+
+#[cfg(not(any(unix, windows)))]
+fn install_signal_handler() {
+    // Other platforms: cooperative-only path still works; targeted
+    // preemption is a no-op.
 }
 
 /// Signals every active worker to reach a safepoint. The actual
@@ -184,9 +195,69 @@ pub fn current_thread_handle() -> u64 {
         let raw = unsafe { libc::pthread_self() };
         raw as u64
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // use a duplicated Win32 thread handle
+        // with THREAD_SET_CONTEXT access so the scheduler can later
+        // queue an APC. The duplicated handle is opened against the
+        // current thread (`GetCurrentThread` returns a pseudo-handle
+        // that's only valid in-process; `DuplicateHandle` upgrades
+        // it to a real handle with stable identity).
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE,
+        };
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread};
+        // SAFETY: GetCurrentThread / GetCurrentProcess return
+        // pseudo-handles that DuplicateHandle resolves into real
+        // handles. The duplicated handle is owned by us; the caller
+        // is responsible for eventually invoking
+        // `release_thread_handle(h)` so the kernel object doesn't
+        // leak across goroutine spawn churn. The scheduler nulls
+        // the slot at thread-exit time, mirroring the Unix path's
+        // `pthread_t`-after-join cleanup.
+        let mut dup: HANDLE = std::ptr::null_mut();
+        let proc_handle = unsafe { GetCurrentProcess() };
+        let thread_handle = unsafe { GetCurrentThread() };
+        let ok = unsafe {
+            DuplicateHandle(
+                proc_handle,
+                thread_handle,
+                proc_handle,
+                &raw mut dup,
+                0,
+                0,
+                DUPLICATE_SAME_ACCESS,
+            )
+        };
+        if ok == 0 || dup.is_null() {
+            return 0;
+        }
+        dup as u64
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         0
+    }
+}
+
+/// Releases a duplicated Win32 thread handle returned by
+/// [`current_thread_handle`]. No-op on Unix and unsupported
+/// platforms (the Unix `pthread_t` is not refcounted; the kernel
+/// reclaims it on thread exit).
+pub fn release_thread_handle(handle: u64) {
+    #[cfg(windows)]
+    {
+        if handle == 0 {
+            return;
+        }
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        // SAFETY: every non-zero handle returned by
+        // current_thread_handle is a fresh DuplicateHandle output.
+        let _ = unsafe { CloseHandle(handle as HANDLE) };
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = handle;
     }
 }
 
@@ -214,10 +285,36 @@ pub fn signal_thread_sigurg(handle: u64) -> bool {
         let rc = unsafe { libc::pthread_kill(handle as libc::pthread_t, libc::SIGURG) };
         rc == 0
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // queue a user-mode APC into the
+        // targeted worker thread. The APC routine bumps the
+        // global preempt phase, mirroring the Unix SIGURG handler.
+        // APCs only fire at alertable wait points by default — for
+        // tight CPU loops the cooperative `gos_rt_preempt_check`
+        // emitted by codegen still handles preemption. The APC is
+        // the mechanism that handles blocking syscalls; without
+        // it, a worker stuck in `WaitForSingleObject` would never
+        // observe a cooperative request.
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::System::Threading::QueueUserAPC;
+        // SAFETY: `apc_callback` is `extern "system" fn(usize)`
+        // (the APC ABI); `handle` is a duplicated thread handle
+        // with QUEUE_USER_APC access. QueueUserAPC is documented
+        // safe to invoke from any thread.
+        let rc = unsafe { QueueUserAPC(Some(apc_callback), handle as HANDLE, 0) };
+        rc != 0
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         false
     }
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn apc_callback(_arg: usize) {
+    // Async-signal-safe-ish: only atomic stores happen here.
+    request_yield_all();
 }
 
 /// Decrements pending pressure. Called by the safepoint handler when
