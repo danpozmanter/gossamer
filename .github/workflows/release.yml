@@ -9,6 +9,16 @@ on:
 permissions:
   contents: write
 
+env:
+  # See ci.yml for the full explanation. rustup proxies are not
+  # concurrent-safe (rustup#988); build scripts in proc-macro deps
+  # invoke `rustc` through the shim in parallel, each shim reads
+  # rust-toolchain.toml, and the override-file consistency check
+  # trips into a rust-src channel re-sync that races on file rename.
+  # RUSTUP_TOOLCHAIN suppresses the override-file read entirely,
+  # making the shim a pure pass-through to the named toolchain.
+  RUSTUP_TOOLCHAIN: 1.95.0
+
 jobs:
   build-linux-x86_64:
     name: Linux x86_64

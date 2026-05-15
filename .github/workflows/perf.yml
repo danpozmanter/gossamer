@@ -13,6 +13,11 @@ jobs:
     timeout-minutes: 30
     env:
       CARGO_TERM_COLOR: always
+      # See ci.yml for the full explanation. rustup proxies are not
+      # concurrent-safe (rustup#988); RUSTUP_TOOLCHAIN suppresses the
+      # rust-toolchain.toml override-file read in every proxy
+      # invocation, eliminating the rust-src download race.
+      RUSTUP_TOOLCHAIN: 1.95.0
     steps:
       - uses: actions/checkout@v4
 

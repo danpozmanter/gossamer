@@ -12,6 +12,14 @@ env:
   # uninit-memory + ODR rules; the workspace `-D warnings` is too
   # strict for the libfuzzer-generated entry points.
   RUSTFLAGS: ""
+  # See ci.yml for the full explanation. rustup proxies are not
+  # concurrent-safe (rustup#988); RUSTUP_TOOLCHAIN suppresses the
+  # rust-toolchain.toml override-file read in every proxy
+  # invocation, eliminating the rust-src download race. cargo-fuzz
+  # requires nightly; we pin a specific date so the build is
+  # reproducible. Must match `toolchain:` on the dtolnay step and
+  # the `+<toolchain>` flag on every cargo invocation below.
+  RUSTUP_TOOLCHAIN: nightly-2026-04-14
 
 permissions:
   contents: write
@@ -28,6 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-04-14
       - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
@@ -38,7 +48,7 @@ jobs:
         working-directory: fuzz
         run: |
           set -euo pipefail
-          cargo +nightly fuzz run ${{ matrix.target }} \
+          cargo +nightly-2026-04-14 fuzz run ${{ matrix.target }} \
             -- -max_total_time=3600 -max_len=65536
       - name: Upload any crash inputs
         if: failure()
@@ -63,6 +73,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-04-14
       - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
@@ -74,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           before=$(find corpus/${{ matrix.target }} -type f 2>/dev/null | wc -l)
-          cargo +nightly fuzz cmin ${{ matrix.target }} || true
+          cargo +nightly-2026-04-14 fuzz cmin ${{ matrix.target }} || true
           after=$(find corpus/${{ matrix.target }} -type f 2>/dev/null | wc -l)
           echo "corpus size: $before -> $after"
       - name: Open PR with minimised corpus

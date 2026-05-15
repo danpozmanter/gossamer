@@ -1,28 +1,33 @@
 [toolchain]
 # Conscious lock — bump deliberately, not via `stable` drift.
 #
-# `profile = "minimal"` is LOAD-BEARING for CI. Without it,
-# rustup-the-shim (invoked by `cargo` via `$RUSTC`) reads this
-# file, sees a channel + components list but no profile, and
-# falls back to the *user-default* profile to decide which
-# components SHOULD be installed. GitHub Actions runner images
-# set the user-default to `complete`, which lists rust-src. The
-# shim then races against every other concurrent `rustc`
-# invocation (parent cargo + nested `build.rs` cargo) trying to
-# download rust-src — one of them dies with "could not rename
-# 'downloaded' .partial" (Linux) or "detected conflict:
-# rust-src Cargo.lock" (macOS / Windows, the runner image left
-# a half-installed rust-src behind from a previous stable run).
-# Locking the profile here tells rustup the project wants
-# *only* minimal + the components below, so it stops auto-
-# installing rust-src and the race goes away.
+# This file is the source of truth for *local* development:
+# `cargo` (via the rustup proxy in ~/.cargo/bin) reads it on
+# every invocation, installs the listed components if missing,
+# and dispatches to the named toolchain. Run `cargo` once after
+# bumping `channel` and rustup will sync.
 #
-# CI must call `dtolnay/rust-toolchain@1.95.0` (which itself
-# installs with `--profile minimal`) so its install and this
-# file agree, and `rustup set profile minimal` must run in CI
-# before any cargo invocation so the user-default profile is
-# pinned too — defense in depth against future rustup versions
-# that ignore the file's profile.
+# In CI we deliberately *bypass* this file. Every workflow sets
+# `RUSTUP_TOOLCHAIN: 1.95.0` (or `nightly`) at the workflow env
+# level, which makes the rustup proxy a pure pass-through —
+# suppressing the override-file read — and side-steps a known
+# rustup race documented at
+# https://github.com/rust-lang/rustup/issues/988 :
+# rustup proxies are not concurrent-safe, and the
+# override-file consistency check that each proxy invocation
+# runs is enough to trip a parallel channel-resync on the GHA
+# runner's pre-installed-Rust metadata. Two concurrent proxies
+# then race on the same `<hash>.partial → <hash>` rename and
+# one of them dies with "could not rename / No such file"
+# (Linux) or "detected conflict: ... Cargo.lock"
+# (macOS / Windows).
+#
+# Bypassing the file in CI is safe because every workflow that
+# needs `rustfmt` or `clippy` passes them through
+# `dtolnay/rust-toolchain`'s `components:` input — that install
+# is serial, runs once, and is unaffected by `RUSTUP_TOOLCHAIN`.
+# Workflows that don't need those components just don't install
+# them.
 channel = "1.95.0"
 profile = "minimal"
 components = ["rustfmt", "clippy"]

@@ -22,6 +22,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # See ci.yml for the full explanation. rustup proxies are not
+  # concurrent-safe (rustup#988); RUSTUP_TOOLCHAIN suppresses the
+  # rust-toolchain.toml override-file read in every proxy
+  # invocation, eliminating the rust-src download race. Miri
+  # requires nightly; we pin a specific date so the build is
+  # reproducible (`miri` and `-Z` flags shift across nightlies).
+  # Must match `toolchain:` on the dtolnay step.
+  RUSTUP_TOOLCHAIN: nightly-2026-04-14
 
 jobs:
   miri:
@@ -52,6 +60,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
         with:
+          toolchain: nightly-2026-04-14
           components: miri
       - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
