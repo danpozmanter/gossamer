@@ -18,6 +18,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
+      - run: rustup set profile minimal
       - run: cargo fmt --all --check
 
   clippy:
@@ -28,6 +29,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-clippy-stdio
@@ -132,6 +134,7 @@ jobs:
           "GOS_LLVM_OPT=$opt" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "GOS_LLC=$llc"      | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@1.95.0
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           # Bumped after the runtime stdio rewrite (extern POSIX
@@ -211,6 +214,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-idle-stdio
@@ -225,6 +229,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: x86_64-unknown-linux-musl
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-musl-stdio
@@ -244,6 +249,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-audit-stdio
@@ -267,6 +273,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-stdlib-docs-drift
@@ -281,6 +288,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-spec-banners

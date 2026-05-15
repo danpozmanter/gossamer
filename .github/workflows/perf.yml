@@ -18,6 +18,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.95.0
 
+      - run: rustup set profile minimal
       - name: Install LLVM 18
         run: |
           sudo apt-get update

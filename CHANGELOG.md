@@ -157,19 +157,24 @@ The compiled tier now has an active tracing collector.
 
 ### Tooling
 
-- Toolchain locked to Rust 1.95.0 (`channel = "1.95.0"` in
-  `rust-toolchain.toml`); workspace MSRV bumped to 1.95; CI
-  workflows call `dtolnay/rust-toolchain@1.95.0` so the action
-  install matches the file. The `rustup default stable` step in
-  the shim-guard was replaced with `rustup show` (which is
-  idempotent and serial); the old call was triggering a parallel
-  `stable` toolchain install that raced with nested `build.rs`
-  cargo invocations on rust-src component download. The
-  `rust-toolchain.toml` profile directive was intentionally
-  omitted — declaring `profile = "minimal"` against a dtolnay
-  default-profile install triggers a delete-and-reinstall path
-  that drops `core`/`std` mid-build on Linux. The redundant MSRV
-  CI job is gone.
+- Toolchain locked to Rust 1.95.0 across the repo: `channel =
+  "1.95.0"` and `profile = "minimal"` in `rust-toolchain.toml`,
+  workspace MSRV bumped to 1.95, every CI `dtolnay/rust-toolchain`
+  reference pinned to `@1.95.0`, the `rustup default stable` step
+  in the shim-guard replaced with `rustup show` (idempotent,
+  serial), and a `rustup set profile minimal` step inserted after
+  every dtolnay install (including the nightly fuzz / miri /
+  sanitizer jobs). The redundant MSRV CI job is gone.
+  Without all three locks in place, the GitHub Actions runner
+  images' user-default rustup profile is `complete`, so the
+  rustup-shim invoked by cargo decides the project needs rust-src
+  and races the parent + every nested `build.rs` cargo invocation
+  to download it — one of them dies with `could not rename
+  'downloaded' .partial` (Linux) or `detected conflict:
+  rust-src Cargo.lock` (macOS / Windows, where the runner image
+  has a partial rust-src dir from a previous stable build). The
+  three locks make rustup stop deciding rust-src "should be
+  there".
 - Weekly fuzz + corpus-minimization jobs moved out of `fuzz.yml`
   into a separate `fuzz-weekly.yml`. The `if: github.event_name
   == 'schedule'` gate hid them on push / PR, but the GitHub UI

@@ -28,6 +28,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
+      - run: rustup set profile minimal
       - name: Install LLVM
         run: sudo apt-get update && sudo apt-get install -y llvm-18 clang-18
       - uses: Swatinem/rust-cache@v2
@@ -61,6 +62,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
+      - run: rustup set profile minimal
       - name: Install LLVM
         run: sudo apt-get update && sudo apt-get install -y llvm-18 clang-18
       - uses: Swatinem/rust-cache@v2

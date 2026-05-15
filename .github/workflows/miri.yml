@@ -53,6 +53,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v1-miri-${{ matrix.crate }}

@@ -28,6 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v1-fuzz-weekly
@@ -62,6 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
+      - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v1-fuzz-cmin
