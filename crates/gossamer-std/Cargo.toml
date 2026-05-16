@@ -88,6 +88,7 @@ sha1 = { version = "0.10", default-features = false, features = ["std"] }
 
 # Encodings (`std::encoding::{xml,yaml}`).
 serde = { workspace = true }
+serde_json = { workspace = true }
 serde_yaml = "0.9"
 quick-xml = "0.37"
 
@@ -111,3 +112,22 @@ num-integer = "0.1"
 num-traits = "0.2"
 
 libloading = "0.8"
+
+# UUID generation (`std::uuid`). v4 (random) + v7 (timestamp-ordered).
+uuid = { version = "1", features = ["v4", "v7"] }
+
+# User-facing TOML (`std::encoding::toml`). Used internally for
+# project.toml by gossamer-pkg; now exposed to user code.
+toml = "0.8"
+
+# CSV codec (`std::encoding::csv`). Already partially present; the
+# `csv` crate gives the canonical row-shape API and now also backs
+# the from_csv / to_csv auto-derive entries.
+csv = "1"
+
+# Media type parsing (`std::mime`).
+mime = "0.3"
+mime_guess = "2"
+
+# POSIX user / group lookup (`std::os::user`).
+nix = { version = "0.29", default-features = false, features = ["user"] }

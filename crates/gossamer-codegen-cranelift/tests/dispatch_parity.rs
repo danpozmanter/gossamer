@@ -148,11 +148,44 @@ const RUST_ONLY: &[&str] = &[
 ];
 
 fn read_to_string(rel: &str) -> String {
+    // The split of `c_abi.rs` → `c_abi/` directory and `native.rs` →
+    // `native/` directory means a single file read is no longer
+    // enough. Resolve `<rel>` to either the literal file (if it
+    // still exists) or, if the same path stem refers to a directory
+    // sibling, concatenate every `.rs` under that directory.
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = crate_root.join(rel);
-    fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!("failed to read {}: {e}", path.display());
-    })
+    let direct = crate_root.join(rel);
+    if direct.is_file() {
+        return fs::read_to_string(&direct)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", direct.display()));
+    }
+    // Try the directory form: drop ".rs" and look for files inside.
+    let dir = if let Some(stripped) = rel.strip_suffix(".rs") {
+        crate_root.join(stripped)
+    } else {
+        direct.clone()
+    };
+    if dir.is_dir() {
+        let mut entries: Vec<PathBuf> = fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("failed to read_dir {}: {e}", dir.display()))
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("rs"))
+            .collect();
+        entries.sort();
+        let mut out = String::new();
+        for path in entries {
+            out.push_str(&fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!("failed to read {}: {e}", path.display());
+            }));
+            out.push('\n');
+        }
+        return out;
+    }
+    panic!(
+        "failed to locate {} or its directory form",
+        direct.display()
+    );
 }
 
 fn declared_helpers(src: &str) -> BTreeSet<String> {

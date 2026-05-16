@@ -356,6 +356,11 @@ share these methods:</p>
 <td>Blocks until a value is available.</td>
 </tr>
 <tr>
+<td><code>rx.recv_ctx(&amp;ctx)</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Blocks like <code>recv()</code> but returns <code>None</code> when the supplied <a href="../stdlib/#stdcontext"><code>std::context::Context</code></a> fires. Goroutine callers observe cancellation immediately via the scheduler unpark path; OS-thread callers within 50ms via a bounded condvar timeout.</td>
+</tr>
+<tr>
 <td><code>tx.try_send(v)</code></td>
 <td><code>bool</code></td>
 <td>Non-blocking; false if full.</td>
@@ -536,7 +541,9 @@ calls) are listed in <a href="../stdlib_coverage/"><code>stdlib_coverage.md</cod
 <p>If you need a method that isn't listed:</p>
 <ol>
 <li>Add the runtime helper in <code>crates/gossamer-runtime/src/c_abi.rs</code>
-   under <code>extern "C"</code>.</li>
+   as a <code>#[unsafe(no_mangle)] pub unsafe extern "C" fn</code> (Rust-side
+   declaration; this is internal runtime ABI, not the Gossamer
+   source-level FFI surface — see SPEC.md §12 for the latter).</li>
 <li>Add the dispatch arm in
    <code>crates/gossamer-mir/src/lower.rs::lower_method_call</code>.</li>
 <li>Add the LLVM declaration in

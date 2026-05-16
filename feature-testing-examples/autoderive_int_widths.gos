@@ -1,0 +1,30 @@
+// JSON / YAML / TOML auto-derive support for narrow integer fields
+// (`i8`/`i16`/`i32`/`u8`/`u16`/`u32`). Before 0.7.0 the synthesizer
+// silently skipped any struct that named one of these widths, so
+// `Comic::from_json(text)` returned `Unit` and downstream field
+// access printed `()`. The fix promotes narrow integers into the
+// `FieldKind` table and extract them with an explicit `as <W>`
+// cast at the JSON boundary.
+
+use std::errors
+
+struct Mixed {
+    a: i32,
+    b: i16,
+    c: u8,
+    d: i64,
+    e: f64,
+    f: bool,
+    g: String,
+}
+
+fn main() -> Result<(), errors::Error> {
+    let text = "{\"a\":-1,\"b\":300,\"c\":255,\"d\":9000000000,\"e\":1.5,\"f\":true,\"g\":\"hi\"}".to_string()
+    let m = Mixed::from_json(&text)?
+    println!("a={} b={} c={} d={} e={} f={} g={}", m.a, m.b, m.c, m.d, m.e, m.f, m.g)
+
+    let back = m.to_json()?
+    let again = Mixed::from_json(&back)?
+    println!("round a={} c={} d={}", again.a, again.c, again.d)
+    Ok(())
+}

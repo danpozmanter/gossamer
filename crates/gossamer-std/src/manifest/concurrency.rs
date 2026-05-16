@@ -1,0 +1,181 @@
+#![allow(
+    unused_imports,
+    dead_code,
+    unreachable_pub,
+    missing_docs,
+    clippy::wildcard_imports,
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::similar_names,
+    clippy::many_single_char_names,
+    clippy::items_after_statements,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::option_if_let_else,
+    clippy::match_same_arms,
+    clippy::if_not_else,
+    clippy::single_match_else,
+    clippy::needless_pass_by_value,
+    clippy::manual_let_else,
+    clippy::redundant_else,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::map_unwrap_or,
+    clippy::struct_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::unnecessary_wraps,
+    clippy::large_enum_variant,
+    clippy::if_same_then_else,
+    clippy::single_match,
+    clippy::useless_conversion,
+    clippy::needless_borrows_for_generic_args,
+    clippy::let_and_return,
+    clippy::needless_collect,
+    clippy::elidable_lifetime_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::needless_range_loop,
+    clippy::ptr_arg,
+    clippy::ptr_as_ptr,
+    clippy::redundant_closure,
+    clippy::redundant_closure_for_method_calls,
+    clippy::semicolon_if_nothing_returned,
+    clippy::single_call_fn,
+    clippy::unused_self,
+    clippy::range_plus_one,
+    clippy::missing_safety_doc,
+    clippy::not_unsafe_ptr_arg_deref,
+    clippy::cast_ptr_alignment,
+    clippy::manual_assert,
+    clippy::manual_string_new,
+    clippy::match_bool,
+    clippy::nonminimal_bool,
+    clippy::redundant_pattern_matching,
+    clippy::useless_let_if_seq
+)]
+//! Static manifest of every registered stdlib module.
+//! Each stdlib milestone extends this table with
+//! the modules it adds. Entries are listed in phase-introduction order
+//! so a `gos doc` walk renders modules in the same sequence as the
+//! implementation plan.
+
+#![forbid(unsafe_code)]
+use crate::registry::{StdItem, StdItemKind, StdModule};
+
+use super::*;
+
+pub const CONTEXT: StdModule = StdModule {
+    path: "std::context",
+    summary: "Request-scoped cancellation, deadlines, and timeouts.",
+    items: &[
+        StdItem {
+            name: "Context",
+            kind: StdItemKind::Type,
+            doc: "Cancellation-aware context handle.",
+        },
+        StdItem {
+            name: "background",
+            kind: StdItemKind::Function,
+            doc: "Root context — never cancelled.",
+        },
+        StdItem {
+            name: "with_cancel",
+            kind: StdItemKind::Function,
+            doc: "Child context plus explicit cancel handle.",
+        },
+        StdItem {
+            name: "with_deadline",
+            kind: StdItemKind::Function,
+            doc: "Child context that cancels at the supplied instant.",
+        },
+        StdItem {
+            name: "with_timeout",
+            kind: StdItemKind::Function,
+            doc: "Child context that cancels after the supplied duration.",
+        },
+    ],
+};
+
+pub const THREAD: StdModule = StdModule {
+    path: "std::thread",
+    summary: "Native OS threads. For goroutines use the `go expr` syntax.",
+    items: &[
+        StdItem {
+            name: "spawn",
+            kind: StdItemKind::Function,
+            doc: "Spawns a new OS thread; returns a JoinHandle.",
+        },
+        StdItem {
+            name: "JoinHandle",
+            kind: StdItemKind::Type,
+            doc: "Owned handle to a spawned OS thread.",
+        },
+        StdItem {
+            name: "join",
+            kind: StdItemKind::Function,
+            doc: "Waits for the thread to finish; returns its result.",
+        },
+        StdItem {
+            name: "yield_now",
+            kind: StdItemKind::Function,
+            doc: "Hints to the scheduler to switch to another runnable thread.",
+        },
+        StdItem {
+            name: "num_cpus",
+            kind: StdItemKind::Function,
+            doc: "Returns the number of logical CPUs available.",
+        },
+    ],
+};
+
+pub const SYNC: StdModule = StdModule {
+    path: "std::sync",
+    summary: "Synchronisation primitives beyond channels.",
+    items: &[
+        StdItem {
+            name: "Mutex",
+            kind: StdItemKind::Type,
+            doc: "Mutual-exclusion lock.",
+        },
+        StdItem {
+            name: "RwLock",
+            kind: StdItemKind::Type,
+            doc: "Reader-writer lock.",
+        },
+        StdItem {
+            name: "Once",
+            kind: StdItemKind::Type,
+            doc: "One-shot initialisation latch.",
+        },
+        StdItem {
+            name: "WaitGroup",
+            kind: StdItemKind::Type,
+            doc: "Counts goroutines and waits for them to finish.",
+        },
+        StdItem {
+            name: "Barrier",
+            kind: StdItemKind::Type,
+            doc: "Synchronisation barrier across goroutines.",
+        },
+        StdItem {
+            name: "AtomicI64",
+            kind: StdItemKind::Type,
+            doc: "Atomic 64-bit signed integer.",
+        },
+        StdItem {
+            name: "AtomicU64",
+            kind: StdItemKind::Type,
+            doc: "Atomic 64-bit unsigned integer.",
+        },
+        StdItem {
+            name: "AtomicBool",
+            kind: StdItemKind::Type,
+            doc: "Atomic boolean.",
+        },
+    ],
+};

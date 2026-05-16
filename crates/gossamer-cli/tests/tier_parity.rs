@@ -132,6 +132,9 @@ const SPECS: &[Spec] = &[
         ..spec("examples/cli_args.gos")
     },
     spec("examples/concurrency.gos"),
+    spec("examples/containers_ordered_demo.gos"),
+    spec("examples/containers_seq_demo.gos"),
+    spec("examples/containers_setmap_demo.gos"),
     spec("examples/control_flow.gos"),
     spec("examples/data_structures.gos"),
     spec("examples/digit_sum.gos"),
@@ -156,7 +159,9 @@ const SPECS: &[Spec] = &[
         stdin: b"alpha line\nneedle hidden here\nanother needle\nclosing\n",
         ..spec("examples/grep.gos")
     },
+    spec("examples/heap_demo.gos"),
     spec("examples/hello_world.gos"),
+    spec("examples/json_derive_test.gos"),
     Spec {
         skip_all: Some("needs live web_server.gos on :8080 — covered by web_server smoke tests"),
         ..spec("examples/http_client.gos")
@@ -164,6 +169,9 @@ const SPECS: &[Spec] = &[
     spec("examples/line_count.gos"),
     spec("examples/linked_list.gos"),
     spec("examples/list_dir.gos"),
+    spec("examples/mime_demo.gos"),
+    spec("examples/netip_demo.gos"),
+    spec("examples/os_user_demo.gos"),
     spec("examples/prime_check.gos"),
     spec("examples/range_sum.gos"),
     spec("examples/regex.gos"),
@@ -176,6 +184,16 @@ const SPECS: &[Spec] = &[
             "fn main is empty stub — coverage comes from `gos test examples/testing.gos`",
         ),
         ..spec("examples/testing.gos")
+    },
+    spec("examples/toml_demo.gos"),
+    spec("examples/url_escape_demo.gos"),
+    Spec {
+        // v4/v7 produce fresh random / time-ordered values each run;
+        // exit code is 0 and the format checks (lengths, validity,
+        // normalize, simple) deterministic across tiers — but the
+        // raw stdout bytes differ run-to-run.
+        nondeterministic: true,
+        ..spec("examples/uuid_demo.gos")
     },
     spec("examples/vowel_count.gos"),
     Spec {
@@ -268,6 +286,10 @@ const SPECS: &[Spec] = &[
     },
     spec("feature-testing-examples/static_mut_basic.gos"),
     spec("feature-testing-examples/closure_goroutine.gos"),
+    spec("feature-testing-examples/yaml_autoderive.gos"),
+    spec("feature-testing-examples/sync_map_demo.gos"),
+    spec("feature-testing-examples/autoderive_int_widths.gos"),
+    spec("feature-testing-examples/write_file_bytes.gos"),
 ];
 
 #[derive(Debug)]

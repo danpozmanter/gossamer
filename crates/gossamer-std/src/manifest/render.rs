@@ -1,0 +1,185 @@
+#![allow(
+    unused_imports,
+    dead_code,
+    unreachable_pub,
+    missing_docs,
+    clippy::wildcard_imports,
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::similar_names,
+    clippy::many_single_char_names,
+    clippy::items_after_statements,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::option_if_let_else,
+    clippy::match_same_arms,
+    clippy::if_not_else,
+    clippy::single_match_else,
+    clippy::needless_pass_by_value,
+    clippy::manual_let_else,
+    clippy::redundant_else,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::map_unwrap_or,
+    clippy::struct_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::unnecessary_wraps,
+    clippy::large_enum_variant,
+    clippy::if_same_then_else,
+    clippy::single_match,
+    clippy::useless_conversion,
+    clippy::needless_borrows_for_generic_args,
+    clippy::let_and_return,
+    clippy::needless_collect,
+    clippy::elidable_lifetime_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::needless_range_loop,
+    clippy::ptr_arg,
+    clippy::ptr_as_ptr,
+    clippy::redundant_closure,
+    clippy::redundant_closure_for_method_calls,
+    clippy::semicolon_if_nothing_returned,
+    clippy::single_call_fn,
+    clippy::unused_self,
+    clippy::range_plus_one,
+    clippy::missing_safety_doc,
+    clippy::not_unsafe_ptr_arg_deref,
+    clippy::cast_ptr_alignment,
+    clippy::manual_assert,
+    clippy::manual_string_new,
+    clippy::match_bool,
+    clippy::nonminimal_bool,
+    clippy::redundant_pattern_matching,
+    clippy::useless_let_if_seq
+)]
+//! Static manifest of every registered stdlib module.
+//! Each stdlib milestone extends this table with
+//! the modules it adds. Entries are listed in phase-introduction order
+//! so a `gos doc` walk renders modules in the same sequence as the
+//! implementation plan.
+
+#![forbid(unsafe_code)]
+use crate::registry::{StdItem, StdItemKind, StdModule};
+
+use super::*;
+
+/// Renders one stdlib module as a Markdown page (Python-style
+/// per-module reference). Used by `gos doc --emit-stdlib`.
+#[must_use]
+pub fn render_module_markdown(module: &StdModule) -> String {
+    let mut out = String::with_capacity(1024);
+    out.push_str(&format!("# `{}`\n\n", module.path));
+    out.push_str(&format!("{}\n\n", module.summary));
+    out.push_str("## Public items\n\n");
+    out.push_str("| Name | Kind | Description |\n");
+    out.push_str("|---|---|---|\n");
+    for item in module.items {
+        let kind = match item.kind {
+            StdItemKind::Function => "fn",
+            StdItemKind::Type => "type",
+            StdItemKind::Trait => "trait",
+            StdItemKind::Macro => "macro",
+            StdItemKind::Const => "const",
+        };
+        out.push_str(&format!(
+            "| `{}` | {} | {} |\n",
+            item.name,
+            kind,
+            item.doc.replace('|', "\\|"),
+        ));
+    }
+    out.push('\n');
+    out
+}
+
+/// Renders the `docs_src/stdlib/index.md` landing page listing
+/// every module with its one-line summary.
+#[must_use]
+pub fn render_index_markdown() -> String {
+    let mut out = String::new();
+    out.push_str("# Gossamer standard library\n\n");
+    out.push_str(
+        "One page per module. Source is `crates/gossamer-std/src/`; \
+this index is regenerated from `manifest::ALL_MODULES` by \
+`gos doc --emit-stdlib`.\n\n",
+    );
+    out.push_str("| Module | Summary |\n");
+    out.push_str("|---|---|\n");
+    use std::collections::BTreeSet;
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut sorted: Vec<&StdModule> = ALL_MODULES.iter().collect();
+    sorted.sort_by_key(|m| m.path);
+    for m in sorted {
+        if !seen.insert(m.path) {
+            continue;
+        }
+        let slug = module_slug(m.path);
+        out.push_str(&format!(
+            "| [`{}`]({}.md) | {} |\n",
+            m.path, slug, m.summary
+        ));
+    }
+    out.push('\n');
+    out
+}
+
+/// Canonical slug for a module path — `std::http::router`
+/// becomes `http_router`.
+#[must_use]
+pub fn module_slug(path: &str) -> String {
+    path.strip_prefix("std::")
+        .unwrap_or(path)
+        .replace("::", "_")
+}
+
+/// Returns every `(slug, markdown)` pair for the docs site.
+/// Includes the `index` page plus one page per module.
+///
+/// Multiple manifest entries sharing the same module path are
+/// merged into one page with the union of their item lists. The
+/// historical reason was a split `ENCODING_BINARY` /
+/// `ENCODING_BINARY_FULL` pair; that's gone but the merge logic
+/// is cheap and stays as a safety net for future additions.
+#[must_use]
+pub fn render_all_docs() -> Vec<(String, String)> {
+    use std::collections::BTreeMap;
+    // Group items by module path, preserving insertion order.
+    let mut order: Vec<&'static str> = Vec::new();
+    let mut merged: BTreeMap<&'static str, (String, Vec<&'static StdItem>)> = BTreeMap::new();
+    for m in ALL_MODULES {
+        let entry = merged.entry(m.path).or_insert_with(|| {
+            order.push(m.path);
+            (m.summary.to_string(), Vec::new())
+        });
+        for item in m.items {
+            // Dedupe by item name within the merged set.
+            if !entry.1.iter().any(|i| i.name == item.name) {
+                entry.1.push(item);
+            }
+        }
+    }
+    let mut out: Vec<(String, String)> = Vec::with_capacity(order.len() + 1);
+    out.push(("index".to_string(), render_index_markdown()));
+    for path in order {
+        let (summary, items) = &merged[path];
+        let synthetic = StdModule {
+            path,
+            summary: Box::leak(summary.clone().into_boxed_str()),
+            items: Box::leak(
+                items
+                    .iter()
+                    .map(|i| **i)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
+        };
+        out.push((module_slug(path), render_module_markdown(&synthetic)));
+    }
+    out
+}

@@ -326,6 +326,10 @@ fn load_config(path: &String) -> Result<String, errors::Error> {
 ```
 
 - `errors::new(msg)` — build a free-standing error.
+- `errors::newf(fmt, args…)` (0.7.0) — format-shaped error
+  constructor, e.g. `errors::newf("status {}", code)`. Same
+  `{}` placeholder rules as `format!`. Saves the surrounding
+  `format!(...)` wrap on the dominant call shape.
 - `errors::wrap(cause, msg)` — add a higher-level message.
 - `errors::is(err, needle)` — walk the cause chain.
 - `errors::chain(err)` — iterate the cause chain.
@@ -540,7 +544,15 @@ executed by `gos test`. Mark non-runnable fences as
   `trim_start`, `trim_end`, `contains`, `find`, `rfind`,
   `replace`, `replacen`, `to_lower`, `to_upper`, `starts_with`,
   `ends_with`, `repeat`, `lines`, `join`, `strip_prefix`,
-  `strip_suffix`, `pad_left`, `pad_right`.
+  `strip_suffix`, `pad_left`, `pad_right`. **0.7.0 additions**
+  (also available as `String` methods on a String receiver):
+  `split_once(sep) -> Option<(String, String)>`,
+  `rsplit_once(sep) -> Option<(String, String)>`,
+  `count(needle) -> i64`, `strip_chars(cutset)` / `lstrip_chars` /
+  `rstrip_chars`, `zfill(width)`, `center(width, pad_char)`, and
+  `slice(start, end) -> Result<String, errors::Error>` — the
+  non-panicking byte-range slice. Use `String::slice(s, a, b)?` to
+  propagate.
 - `std::strconv` — `parse_int`, `parse_i64`, `parse_u64`,
   `parse_float`, `parse_f64`, `parse_bool`, `format_int`,
   `format_i64`, `format_float`, `format_f64`, `itoa`, `atoi`.
@@ -549,7 +561,24 @@ executed by `gos test`. Mark non-runnable fences as
 - `std::utf8` — `count_runes`, `rune_len`, `is_valid`.
 - `std::collections` — `Vec`, `HashMap`, `HashSet` (real set
   with `insert`, `remove`, `contains`, `len`, `is_empty`,
-  `clear`, `to_vec`, `iter`), `BTreeMap`.
+  `clear`, `to_vec`, `iter`), `BTreeMap`. **0.7.0 Vec method
+  additions:** `contains(&v) -> bool` (also works on `[T]` /
+  `[T; N]`), `index_of(&v) -> Option<i64>`,
+  `count_of(&v) -> i64`, `first() -> Option<T>`,
+  `last() -> Option<T>`, `reversed() -> Vec<T>` (non-mutating;
+  pair with the existing `reverse()` for in-place). The safe
+  Result-returning sub-range slicer is
+  `xs.slice(start, end) -> Result<Vec<T>, errors::Error>` —
+  inverted or out-of-range bounds return Err rather than
+  panicking. The Result-returning mutation entries
+  `Vec::insert(xs, i, v) -> Result<Vec<T>, errors::Error>` and
+  `Vec::remove(xs, i) -> Result<T, errors::Error>` are exposed
+  as qualified free functions; the legacy `xs.insert(i, v)` /
+  `xs.remove(i)` method-call shape keeps its silent
+  in-place semantics. **0.7.0 HashMap additions:** `keys()` and
+  `values()` return `Vec<K>` / `Vec<V>` directly;
+  `HashMap::pop(m, k) -> Option<V>` removes and returns the
+  previous value Python-style.
 - `std::net` — `TcpListener::{bind, accept, local_addr, close}`,
   `TcpStream::{connect, read, read_to_string, write, close}`,
   `UdpSocket::{bind, send_to, recv_from, local_addr, close}`,
@@ -581,9 +610,31 @@ executed by `gos test`. Mark non-runnable fences as
   `let user: User = User::from_json(&text)?` is the canonical
   shape. The dynamic `json::parse` / `json::decode` /
   `json::render` surface from the prior release stays available
-  for documents whose shape isn't known at compile time.
+  for documents whose shape isn't known at compile time. The
+  same synth also emits `from_yaml` / `to_yaml` (piggybacks on
+  `to_json` + `yaml::from_json`) so `Config::from_yaml(&text)?`
+  works against the same struct definition. Narrow integer
+  fields (`i8`/`i16`/`i32`/`u8`/`u16`/`u32`) are accepted and
+  round-trip through the `as <width>` cast at the JSON boundary.
+- `std::encoding::yaml` — YAML 1.2 parse/encode plus
+  `yaml::to_json(text)` / `yaml::from_json(text)` text-shape
+  converters that mirror `toml::to_json` / `from_json`. The
+  auto-derived `from_yaml` / `to_yaml` methods on every user
+  struct compose these with the JSON pair.
 - `std::sync` — `Mutex`, `RwLock`, atomics, `channel`, `Once`,
-  `WaitGroup` (`new`, `add`, `done`, `wait`).
+  `WaitGroup` (`new`, `add`, `done`, `wait`), and `Map` (a
+  concurrent string-keyed string-value map; `set`/`get`/`delete`/
+  `len`/`contains`/`keys`). For non-string payloads, wrap a
+  `HashMap` in `Mutex` directly — `sync::Map` is the optimized
+  shape for caches and feature-flag tables.
+- `std::os::write_file(path, &Vec<u8>)` preserves binary bytes
+  (images, gzip, embedded NULs); the c-string-shaped string
+  overload still works for text writes. `std::os::read_file(path)`
+  returns `Result<Vec<u8>, errors::Error>` — pair with
+  `os::read_file_to_string` for UTF-8 text.
+- `std::http::Response.raw_bytes` exposes the response body as
+  `Vec<u8>` for binary downloads (counterpart to the
+  UTF-8-lossy `.body` field).
 - `std::time` — `Instant::{now, elapsed_ms}`, `Duration::{from_millis,
   from_secs, from_micros, as_millis, as_secs, as_micros}`,
   `sleep`, `now`, `now_nanos`, `monotonic_ms`, `monotonic_nanos`,
@@ -591,7 +642,18 @@ executed by `gos test`. Mark non-runnable fences as
 - `std::context` — cancellation, deadlines, `Context::background()`.
 - `std::bytes` / `std::bufio` — binary buffers and buffered IO.
 - `std::errors` — wrap / chain / join.
-- `std::flag` — CLI flag parser.
+- `std::flag` — CLI flag parser. **0.7.0:** `flag::Cell<T>`
+  auto-derefs at every value-context expression on all three
+  tiers (VM, cranelift, LLVM): binary comparisons (`flags.output
+  == "text"`), function-call arguments (`get_comic(flags.number)`),
+  conditional positions (`if flags.verbose { … }`), typed-i64 /
+  f64 register unboxes. The explicit `*flags.output` still works
+  if the user wants the resolved value as a local binding.
+- **Scalar `min` / `max` / `clamp`** (0.7.0) — bare prelude
+  functions, no import needed. `min(3, 7) == 3`,
+  `clamp(15, 0, 10) == 10`. The Vec-shaped `min(xs)` /
+  `max(xs)` fallback returns `Option<T>` for callers already
+  on the collection form.
 - `std::sort` / `std::utf8` / `std::path` / `std::fs`.
 - `std::math::rand` — deterministic RNG.
 - `std::crypto::{rand, sha256, hmac, subtle}` — narrow, audited.
@@ -643,8 +705,11 @@ fn main() -> Result<(), flag::Error> {
     let verbose = fs.bool("verbose", false, "chatty output")
     let _ = fs.parse(env::args())?
 
-    if *verbose {
-        println!("starting on port {}", *port)
+    // 0.7.0: flag cells auto-deref at value contexts —
+    // `verbose` and `port` work bare in `if`, comparisons,
+    // and function-call args without the leading `*`.
+    if verbose {
+        println!("starting on port {}", port)
     }
     Ok(())
 }

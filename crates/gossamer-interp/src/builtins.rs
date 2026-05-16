@@ -1,7 +1,7 @@
 //! Built-in callables exposed to interpreted programs.
 
 #![forbid(unsafe_code)]
-#![allow(clippy::unnecessary_wraps)]
+#![allow(dead_code, unused_imports, clippy::unnecessary_wraps)]
 
 use std::cell::RefCell;
 use std::fmt::Write;
@@ -267,6 +267,13 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Stream::read_to_string",
         builtin("Stream::read_to_string", builtin_stream_read_to_string),
     ));
+    // io::ReadAll(reader) / io::Copy(dst, src) — Go-shaped helpers
+    // for moving bytes around. Drain the source stream to a String,
+    // or shovel from src to dst returning the byte count. Both work
+    // on the fd-shaped `Stream` value the existing io::stdout / stdin
+    // helpers return.
+    globals.push(("io::ReadAll", builtin("io::ReadAll", builtin_io_read_all)));
+    globals.push(("io::Copy", builtin("io::Copy", builtin_io_copy)));
     globals.push(("eprintln", builtin("eprintln", builtin_eprintln)));
     globals.push(("eprint", builtin("eprint", builtin_eprint)));
     globals.push(("format", builtin("format", builtin_format)));
@@ -2017,6 +2024,51 @@ fn builtin_stream_read_to_string(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+/// `io::ReadAll(reader) -> String` — drains the reader until EOF
+/// and returns the accumulated bytes as a String. Mirrors Go's
+/// `io.ReadAll`. Today the only Reader-shaped value the interp
+/// surfaces is the stdin Stream (fd 0); other fds return an empty
+/// String. `io::Copy(dst, src)` uses the same drain.
+fn builtin_io_read_all(args: &[Value]) -> RuntimeResult<Value> {
+    use std::io::Read;
+    let fd = args.first().map_or(0, stream_fd);
+    if fd != 0 {
+        return Ok(Value::String(SmolStr::from(String::new())));
+    }
+    let stdin = std::io::stdin();
+    let mut buf = String::new();
+    match stdin.lock().read_to_string(&mut buf) {
+        Ok(_) => Ok(Value::String(buf.into())),
+        Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
+    }
+}
+
+/// `io::Copy(dst, src) -> i64` — drains `src` byte-by-byte into
+/// `dst`, returning the byte count copied. Mirrors Go's `io.Copy`.
+/// Works on the fd-shaped streams returned by `io::stdin` /
+/// `io::stdout` / `io::stderr`: stdin → stdout/stderr is the only
+/// pair supported today (other fds map to empty / no-op).
+fn builtin_io_copy(args: &[Value]) -> RuntimeResult<Value> {
+    use std::io::Read;
+    let dst_fd = args.first().map_or(1, stream_fd);
+    let src_fd = args.get(1).map_or(0, stream_fd);
+    if src_fd != 0 {
+        return Ok(Value::Int(0));
+    }
+    let stdin = std::io::stdin();
+    let mut buf = String::new();
+    let n = match stdin.lock().read_to_string(&mut buf) {
+        Ok(n) => n as i64,
+        Err(_) => return Ok(Value::Int(0)),
+    };
+    if dst_fd == 2 {
+        write_stderr(&buf);
+    } else {
+        write_stdout(&buf);
+    }
+    Ok(Value::Int(n))
+}
+
 fn builtin_eprintln(args: &[Value]) -> RuntimeResult<Value> {
     let rendered = render_args(args);
     write_stderr(&rendered);
@@ -2639,6 +2691,14 @@ fn builtin_os_write_file(args: &[Value]) -> RuntimeResult<Value> {
                 _ => None,
             })
             .collect(),
+        // Typed-primitive integer array literals (`[u8] = [..]`,
+        // `[i32] = [..]`) — the VM collapses these to `IntArray`,
+        // not `Array`, so the previous arm silently fell through
+        // to the error case and the binary write returned
+        // `Err("contents must be string or byte array")`.
+        Some(Value::IntArray(parts)) => {
+            parts.iter().filter_map(|n| u8::try_from(*n).ok()).collect()
+        }
         _ => {
             return Ok(err_variant(
                 "write_file: contents must be string or byte array",

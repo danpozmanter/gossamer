@@ -228,6 +228,51 @@
 <td>fn</td>
 <td>Returns whether the string ends with the given suffix.</td>
 </tr>
+<tr>
+<td><code>split_once</code></td>
+<td>fn</td>
+<td>Splits on the first occurrence of <code>sep</code>; returns Option&lt;(String, String)&gt;.</td>
+</tr>
+<tr>
+<td><code>rsplit_once</code></td>
+<td>fn</td>
+<td>Splits on the last occurrence of <code>sep</code>; returns Option&lt;(String, String)&gt;.</td>
+</tr>
+<tr>
+<td><code>count</code></td>
+<td>fn</td>
+<td>Counts non-overlapping occurrences of <code>needle</code>.</td>
+</tr>
+<tr>
+<td><code>strip_chars</code></td>
+<td>fn</td>
+<td>Trims any character in <code>cutset</code> from both ends.</td>
+</tr>
+<tr>
+<td><code>lstrip_chars</code></td>
+<td>fn</td>
+<td>Trims any character in <code>cutset</code> from the left end.</td>
+</tr>
+<tr>
+<td><code>rstrip_chars</code></td>
+<td>fn</td>
+<td>Trims any character in <code>cutset</code> from the right end.</td>
+</tr>
+<tr>
+<td><code>zfill</code></td>
+<td>fn</td>
+<td>Pads with <code>'0'</code> on the left until at least <code>width</code> wide.</td>
+</tr>
+<tr>
+<td><code>center</code></td>
+<td>fn</td>
+<td>Symmetric pad to <code>width</code> using the given pad character.</td>
+</tr>
+<tr>
+<td><code>slice</code></td>
+<td>fn</td>
+<td>Safe byte-range slice returning Result<String, errors::Error>.</td>
+</tr>
 </tbody>
 </table>
               

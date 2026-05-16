@@ -1,0 +1,1864 @@
+#![allow(clippy::too_many_lines, clippy::wildcard_imports)]
+use super::*;
+
+impl<'tcx> FnBuilder<'tcx> {
+    pub(crate) fn bind_pattern_locals(
+        &mut self,
+        pattern: &HirPat,
+        init_reg: Reg,
+    ) -> RuntimeResult<()> {
+        match &pattern.kind {
+            HirPatKind::Binding { name, .. } => {
+                self.bind_local(
+                    &name.name,
+                    TypedReg {
+                        reg: init_reg,
+                        kind: RegKind::Value,
+                    },
+                );
+                Ok(())
+            }
+            HirPatKind::Tuple(elems) => {
+                let rest_pos = elems
+                    .iter()
+                    .position(|p| matches!(p.kind, HirPatKind::Rest));
+                let n_after = rest_pos.map_or(0, |r| elems.len() - r - 1);
+                for (i, sub) in elems.iter().enumerate() {
+                    if matches!(sub.kind, HirPatKind::Rest) {
+                        continue;
+                    }
+                    let dst = self.alloc_reg();
+                    match rest_pos {
+                        None => {
+                            self.emit(Op::TupleIndex {
+                                dst,
+                                receiver: init_reg,
+                                index: i as u32,
+                            });
+                        }
+                        Some(rest_idx) if i < rest_idx => {
+                            self.emit(Op::TupleIndex {
+                                dst,
+                                receiver: init_reg,
+                                index: i as u32,
+                            });
+                        }
+                        Some(_) => {
+                            // Tail-anchored: offset_from_end = n_after - (i - rest_idx - 1) - 1
+                            let offset = n_after - (i - rest_pos.unwrap() - 1) - 1;
+                            self.emit(Op::TupleTailIndex {
+                                dst,
+                                receiver: init_reg,
+                                offset_from_end: offset as u32,
+                            });
+                        }
+                    }
+                    self.bind_pattern_locals(sub, dst)?;
+                }
+                Ok(())
+            }
+            HirPatKind::Wildcard | HirPatKind::Literal(_) | HirPatKind::Rest => Ok(()),
+            other => Err(RuntimeError::Type(format!(
+                "let-pattern shape {other:?} is not yet handled by the VM compiler"
+            ))),
+        }
+    }
+
+    /// Attempts a native lowering of `go callable(args)`. Returns
+    /// `Ok(true)` when the spawn was emitted; `Ok(false)` when the
+    /// shape is something the VM doesn't yet handle natively (and
+    /// the caller should fall back to `compile_deferred`).
+    pub(crate) fn try_compile_go_native(&mut self, expr: &HirExpr) -> RuntimeResult<bool> {
+        // The HIR shapes we native-lower are:
+        //   `go callable(args)`     — a `Call`, dispatched via
+        //                              `Op::Spawn` against the
+        //                              resolved callee `Value`.
+        //   `go obj.method(args)`   — a `MethodCall`, dispatched via
+        //                              `Op::SpawnMethod` which
+        //                              resolves the method by name
+        //                              the same way the synchronous
+        //                              `Op::MethodCall` does.
+        //
+        // Anything else (bare blocks, closures defined inline at
+        // the spawn site, etc.) falls through to the deferred
+        // walker — those shapes don't appear in the bench-game
+        // programs but are flagged for follow-up.
+        if let HirExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+        } = &expr.kind
+        {
+            let receiver_reg = self.compile_expr(receiver)?;
+            let argc = u16::try_from(args.len()).map_err(|_| RuntimeError::Arity {
+                expected: u16::MAX as usize,
+                found: args.len(),
+            })?;
+            let arg_regs: Vec<Reg> = args
+                .iter()
+                .map(|arg| self.compile_expr(arg))
+                .collect::<RuntimeResult<Vec<_>>>()?;
+            let args_start = self.next_reg;
+            self.next_reg = self
+                .next_reg
+                .checked_add(argc)
+                .expect("register overflow reserving spawn-method args");
+            for (i, arg_reg) in arg_regs.iter().enumerate() {
+                let slot = args_start
+                    .checked_add(u16::try_from(i).expect("argc fits u16"))
+                    .expect("register overflow");
+                self.emit(Op::Move {
+                    dst: slot,
+                    src: *arg_reg,
+                });
+            }
+            let name_idx = self.global_idx(name.name.as_str());
+            self.emit(Op::SpawnMethod {
+                receiver: receiver_reg,
+                name_idx,
+                args: args_start,
+                argc,
+            });
+            return Ok(true);
+        }
+        let HirExprKind::Call { callee, args } = &expr.kind else {
+            return Ok(false);
+        };
+        let callee_reg = self.compile_expr(callee)?;
+        let argc = u16::try_from(args.len()).map_err(|_| RuntimeError::Arity {
+            expected: u16::MAX as usize,
+            found: args.len(),
+        })?;
+        // Compile each arg first so any intermediate register
+        // allocations land above the not-yet-reserved span. Then
+        // reserve a fresh contiguous block and move the results
+        // into it. Reserving up front and *then* compiling — the
+        // shape this method used to have — is fine for trivial
+        // args (paths, literals) but slips on any arg that itself
+        // emits a fused fast-path opcode that pre-bumps `next_reg`
+        // for its own scratch use; that scratch can land inside
+        // the reserved span and corrupt the spawn's `args`
+        // payload before the move runs.
+        let arg_regs: Vec<Reg> = args
+            .iter()
+            .map(|arg| self.compile_expr(arg))
+            .collect::<RuntimeResult<Vec<_>>>()?;
+        let args_start = self.next_reg;
+        self.next_reg = self
+            .next_reg
+            .checked_add(argc)
+            .expect("register overflow reserving spawn args");
+        for (i, arg_reg) in arg_regs.iter().enumerate() {
+            let slot = args_start
+                .checked_add(u16::try_from(i).expect("argc fits u16"))
+                .expect("register overflow");
+            self.emit(Op::Move {
+                dst: slot,
+                src: *arg_reg,
+            });
+        }
+        self.emit(Op::Spawn {
+            callee: callee_reg,
+            args: args_start,
+            argc,
+        });
+        Ok(true)
+    }
+
+    /// Allocates a fresh `arith_caches` slot for a Tier-C2
+    /// adaptive op and returns its index. Each emit site gets
+    /// its own slot so observed shapes don't bleed across call
+    /// sites that happen to flow through the same handler.
+    pub(crate) fn next_arith_cache(&mut self) -> u16 {
+        let idx = self.next_arith_cache_idx;
+        self.next_arith_cache_idx = self.next_arith_cache_idx.saturating_add(1);
+        idx
+    }
+
+    /// Builds the boxed-`Value` op for `op` on `(lhs, rhs)`
+    /// destined for `dst`. Adaptive arith variants (Add/Sub/Mul/
+    /// Div/Rem) allocate a fresh cache slot here so the runtime
+    /// has somewhere to record the observed shape (Tier C2).
+    pub(crate) fn binary_op(
+        &mut self,
+        op: HirBinaryOp,
+        dst: Reg,
+        lhs: Reg,
+        rhs: Reg,
+    ) -> Option<Op> {
+        Some(match op {
+            HirBinaryOp::Add => Op::AddInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
+            },
+            HirBinaryOp::Sub => Op::SubInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
+            },
+            HirBinaryOp::Mul => Op::MulInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
+            },
+            HirBinaryOp::Div => Op::DivInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
+            },
+            HirBinaryOp::Rem => Op::RemInt {
+                dst,
+                lhs,
+                rhs,
+                cache_idx: self.next_arith_cache(),
+            },
+            HirBinaryOp::Eq => Op::Eq { dst, lhs, rhs },
+            HirBinaryOp::Ne => Op::Ne { dst, lhs, rhs },
+            HirBinaryOp::Lt => Op::Lt { dst, lhs, rhs },
+            HirBinaryOp::Le => Op::Le { dst, lhs, rhs },
+            HirBinaryOp::Gt => Op::Gt { dst, lhs, rhs },
+            HirBinaryOp::Ge => Op::Ge { dst, lhs, rhs },
+            _ => return None,
+        })
+    }
+
+    /// Matches `a * b + c`, `c + a * b`, or `c - a * b` in the
+    /// HIR and emits a single fused-multiply-{add,sub} op
+    /// instead of the two-op sequence. All three operands must
+    /// resolve to concrete f64 kinds.
+    pub(crate) fn try_compile_fma(
+        &mut self,
+        op: HirBinaryOp,
+        lhs: &HirExpr,
+        rhs: &HirExpr,
+    ) -> RuntimeResult<Option<TypedReg>> {
+        match op {
+            HirBinaryOp::Add => {
+                // a * b + c
+                if let HirExprKind::Binary {
+                    op: HirBinaryOp::Mul,
+                    lhs: ma,
+                    rhs: mb,
+                } = &lhs.kind
+                {
+                    if self.expr_kind(ma) == RegKind::F64
+                        && self.expr_kind(mb) == RegKind::F64
+                        && self.expr_kind(rhs) == RegKind::F64
+                    {
+                        let a_tr = self.compile_expr_ex(ma)?;
+                        let b_tr = self.compile_expr_ex(mb)?;
+                        let c_tr = self.compile_expr_ex(rhs)?;
+                        let a_f = self.as_f64(a_tr);
+                        let b_f = self.as_f64(b_tr);
+                        let c_f = self.as_f64(c_tr);
+                        let dst = self.alloc_float();
+                        self.emit(Op::MulAddF64 {
+                            dst_f: dst,
+                            a_f,
+                            b_f,
+                            c_f,
+                        });
+                        return Ok(Some(TypedReg {
+                            reg: dst,
+                            kind: RegKind::F64,
+                        }));
+                    }
+                }
+                // c + a * b
+                if let HirExprKind::Binary {
+                    op: HirBinaryOp::Mul,
+                    lhs: ma,
+                    rhs: mb,
+                } = &rhs.kind
+                {
+                    if self.expr_kind(ma) == RegKind::F64
+                        && self.expr_kind(mb) == RegKind::F64
+                        && self.expr_kind(lhs) == RegKind::F64
+                    {
+                        let c_tr = self.compile_expr_ex(lhs)?;
+                        let a_tr = self.compile_expr_ex(ma)?;
+                        let b_tr = self.compile_expr_ex(mb)?;
+                        let a_f = self.as_f64(a_tr);
+                        let b_f = self.as_f64(b_tr);
+                        let c_f = self.as_f64(c_tr);
+                        let dst = self.alloc_float();
+                        self.emit(Op::MulAddF64 {
+                            dst_f: dst,
+                            a_f,
+                            b_f,
+                            c_f,
+                        });
+                        return Ok(Some(TypedReg {
+                            reg: dst,
+                            kind: RegKind::F64,
+                        }));
+                    }
+                }
+            }
+            HirBinaryOp::Sub => {
+                // c - a * b
+                if let HirExprKind::Binary {
+                    op: HirBinaryOp::Mul,
+                    lhs: ma,
+                    rhs: mb,
+                } = &rhs.kind
+                {
+                    if self.expr_kind(ma) == RegKind::F64
+                        && self.expr_kind(mb) == RegKind::F64
+                        && self.expr_kind(lhs) == RegKind::F64
+                    {
+                        let c_tr = self.compile_expr_ex(lhs)?;
+                        let a_tr = self.compile_expr_ex(ma)?;
+                        let b_tr = self.compile_expr_ex(mb)?;
+                        let a_f = self.as_f64(a_tr);
+                        let b_f = self.as_f64(b_tr);
+                        let c_f = self.as_f64(c_tr);
+                        let dst = self.alloc_float();
+                        self.emit(Op::MulSubF64 {
+                            dst_f: dst,
+                            a_f,
+                            b_f,
+                            c_f,
+                        });
+                        return Ok(Some(TypedReg {
+                            reg: dst,
+                            kind: RegKind::F64,
+                        }));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn emit_binary_f64(
+        &mut self,
+        op: HirBinaryOp,
+        lhs_f: Reg,
+        rhs_f: Reg,
+    ) -> RuntimeResult<TypedReg> {
+        match op {
+            HirBinaryOp::Add => {
+                let dst = self.alloc_float();
+                self.emit(Op::AddF64 {
+                    dst_f: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
+            }
+            HirBinaryOp::Sub => {
+                let dst = self.alloc_float();
+                self.emit(Op::SubF64 {
+                    dst_f: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
+            }
+            // (handled by the caller via `try_compile_fma` —
+            // this arm is the non-fused fallback)
+            HirBinaryOp::Mul => {
+                let dst = self.alloc_float();
+                self.emit(Op::MulF64 {
+                    dst_f: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
+            }
+            HirBinaryOp::Div => {
+                let dst = self.alloc_float();
+                self.emit(Op::DivF64 {
+                    dst_f: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::F64,
+                })
+            }
+            HirBinaryOp::Lt => {
+                let dst = self.alloc_reg();
+                self.emit(Op::LtF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Le => {
+                let dst = self.alloc_reg();
+                self.emit(Op::LeF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Gt => {
+                let dst = self.alloc_reg();
+                self.emit(Op::GtF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Ge => {
+                let dst = self.alloc_reg();
+                self.emit(Op::GeF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Eq => {
+                let dst = self.alloc_reg();
+                self.emit(Op::EqF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Ne => {
+                let dst = self.alloc_reg();
+                self.emit(Op::NeF64 {
+                    dst_v: dst,
+                    lhs_f,
+                    rhs_f,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            _ => Err(RuntimeError::Unsupported("f64 binary op kind")),
+        }
+    }
+
+    pub(crate) fn emit_binary_i64(
+        &mut self,
+        op: HirBinaryOp,
+        lhs_i: Reg,
+        rhs_i: Reg,
+    ) -> RuntimeResult<TypedReg> {
+        match op {
+            HirBinaryOp::Add => {
+                let dst = self.alloc_int();
+                self.emit(Op::AddI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::Sub => {
+                let dst = self.alloc_int();
+                self.emit(Op::SubI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::Mul => {
+                let dst = self.alloc_int();
+                self.emit(Op::MulI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::Div => {
+                let dst = self.alloc_int();
+                self.emit(Op::DivI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::Rem => {
+                let dst = self.alloc_int();
+                self.emit(Op::RemI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::Lt => {
+                let dst = self.alloc_reg();
+                self.emit(Op::LtI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Le => {
+                let dst = self.alloc_reg();
+                self.emit(Op::LeI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Gt => {
+                let dst = self.alloc_reg();
+                self.emit(Op::GtI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Ge => {
+                let dst = self.alloc_reg();
+                self.emit(Op::GeI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Eq => {
+                let dst = self.alloc_reg();
+                self.emit(Op::EqI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::Ne => {
+                let dst = self.alloc_reg();
+                self.emit(Op::NeI64 {
+                    dst_v: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::Value,
+                })
+            }
+            HirBinaryOp::BitAnd => {
+                let dst = self.alloc_int();
+                self.emit(Op::BitAndI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::BitOr => {
+                let dst = self.alloc_int();
+                self.emit(Op::BitOrI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::BitXor => {
+                let dst = self.alloc_int();
+                self.emit(Op::BitXorI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::Shl => {
+                let dst = self.alloc_int();
+                self.emit(Op::ShlI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            HirBinaryOp::Shr => {
+                let dst = self.alloc_int();
+                self.emit(Op::ShrI64 {
+                    dst_i: dst,
+                    lhs_i,
+                    rhs_i,
+                });
+                Ok(TypedReg {
+                    reg: dst,
+                    kind: RegKind::I64,
+                })
+            }
+            _ => Err(RuntimeError::Unsupported("i64 binary op kind")),
+        }
+    }
+
+    /// Detects `[S; N]` array literals where `S` is a struct
+    /// whose fields are all `f64`, and emits a flat-f64
+    /// `Op::BuildFloatArray` instead of constructing the
+    /// boxed `Value::Array<Value::Struct>` form. Subsequent
+    /// indexed field access on the resulting local routes
+    /// through the flat fast path in the VM.
+    pub(crate) fn try_build_float_array(
+        &mut self,
+        array_ty: Ty,
+        elems: &[HirExpr],
+    ) -> RuntimeResult<Option<TypedReg>> {
+        // Require a concrete array-of-struct shape.
+        let elem_ty = match self.tcx.kind(array_ty) {
+            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
+            _ => return Ok(None),
+        };
+        let (def, struct_name) = match self.tcx.kind(elem_ty) {
+            Some(TyKind::Adt { def, .. }) => {
+                let Some(layout) = self.layouts.get(def) else {
+                    return Ok(None);
+                };
+                // Need a name for rehydration; grab it from
+                // any layout key. We don't have a DefId→Name
+                // table here, so rely on each element `__struct`
+                // call carrying the name string.
+                let _ = layout;
+                (*def, "")
+            }
+            _ => return Ok(None),
+        };
+        let Some(field_names) = self.layouts.get(&def).cloned() else {
+            return Ok(None);
+        };
+        // If the type context knows the declared field types,
+        // require every one to be `f64`. When the types aren't
+        // registered (e.g. for programs whose resolver didn't
+        // populate `struct_field_tys`) we still try the fast
+        // path as long as every element in the literal is
+        // clearly the same struct — the `__struct` parse below
+        // sees the actual field values, so a later type mismatch
+        // would just fall back at runtime.
+        if let Some(tys) = self.tcx.struct_field_tys(def) {
+            let all_f64 = tys
+                .iter()
+                .all(|t| matches!(self.tcx.kind(*t), Some(TyKind::Float(FloatTy::F64))));
+            if !all_f64 {
+                return Ok(None);
+            }
+        }
+        if field_names.is_empty() {
+            return Ok(None);
+        }
+        let Ok(stride) = u16::try_from(field_names.len()) else {
+            return Ok(None);
+        };
+        let Ok(elem_count) = u16::try_from(elems.len()) else {
+            return Ok(None);
+        };
+        // Pick up the struct name from the first element's
+        // `__struct(name, ...)` call; fall back to the layout
+        // map if we've seen an explicit name before.
+        let _ = struct_name;
+        let mut struct_name_found: Option<String> = None;
+        // Each element must be a `Call(__struct, args)` whose
+        // arg layout matches `name, fname, value, fname, value, …`.
+        // Collect the per-element field expressions, keyed by
+        // field name.
+        let mut per_elem: Vec<std::collections::HashMap<String, &HirExpr>> =
+            Vec::with_capacity(elems.len());
+        for elem in elems {
+            let HirExprKind::Call { callee, args } = &elem.kind else {
+                return Ok(None);
+            };
+            let HirExprKind::Path { segments, .. } = &callee.kind else {
+                return Ok(None);
+            };
+            if segments.len() != 1 || segments[0].name != "__struct" {
+                return Ok(None);
+            }
+            // args: [String(name), String(field1), Value1, ...]
+            if args.is_empty() {
+                return Ok(None);
+            }
+            if let HirExprKind::Literal(HirLiteral::String(s)) = &args[0].kind {
+                if struct_name_found.is_none() {
+                    struct_name_found = Some(s.clone());
+                }
+            }
+            let mut map = std::collections::HashMap::new();
+            let rest = &args[1..];
+            let mut i = 0;
+            while i + 1 < rest.len() {
+                let HirExprKind::Literal(HirLiteral::String(fname)) = &rest[i].kind else {
+                    return Ok(None);
+                };
+                map.insert(fname.clone(), &rest[i + 1]);
+                i += 2;
+            }
+            per_elem.push(map);
+        }
+        let struct_name = struct_name_found.unwrap_or_default();
+        // Allocate `stride * elem_count` contiguous float regs.
+        let first_f = self.next_float_reg;
+        let total = u32::from(stride) * u32::from(elem_count);
+        if total > u32::from(u16::MAX - first_f) {
+            return Ok(None);
+        }
+        self.next_float_reg = first_f + total as u16;
+        // Compile each field's value expression into the matching
+        // float slot.
+        for (elem_idx, fields) in per_elem.iter().enumerate() {
+            for (field_idx, fname) in field_names.iter().enumerate() {
+                let target = first_f + elem_idx as u16 * stride + field_idx as u16;
+                if let Some(value_expr) = fields.get(fname) {
+                    let tr = self.compile_expr_ex(value_expr)?;
+                    let src_f = self.as_f64(tr);
+                    self.emit(Op::MoveF64 {
+                        dst_f: target,
+                        src_f,
+                    });
+                } else {
+                    let idx = self.f64_const_idx(0.0);
+                    self.emit(Op::LoadConstF64 { dst_f: target, idx });
+                }
+            }
+        }
+        // Intern the struct name + field-name metadata in the
+        // const pool so the `BuildFloatArray` op can rehydrate
+        // lazily.
+        let name_idx = self.const_idx(
+            ConstKey::String(struct_name.clone()),
+            Value::String(struct_name.into()),
+        );
+        let fields_key = field_names.join("\0");
+        let fields_value = Value::Array(Arc::new(
+            field_names
+                .iter()
+                .map(|n| Value::String(SmolStr::from(n.clone())))
+                .collect::<Vec<_>>(),
+        ));
+        let fields_idx = self.const_idx(ConstKey::String(fields_key), fields_value);
+        let dst = self.alloc_reg();
+        let wide_idx = u16::try_from(self.wide_ops.len()).expect("wide_ops index overflow");
+        self.wide_ops
+            .push(crate::bytecode::WideOp::BuildFloatArray {
+                dst_v: dst,
+                name_idx,
+                fields_idx,
+                stride,
+                elem_count,
+                first_f,
+            });
+        self.emit(Op::Wide { idx: wide_idx });
+        // Record the register as known-flat so subsequent
+        // indexed-field reads / writes can emit
+        // `Flat{Get,Set}F64` and skip the runtime
+        // discriminant check.
+        self.flat_locals.insert(dst, stride);
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
+    }
+
+    /// Mirror of [`Self::try_build_float_array`] for the
+    /// primitive `[i64; N]` shape. When the literal's element
+    /// type is `i64` we emit `Op::BuildIntArray` (writing into
+    /// the typed `i64` register file) instead of the
+    /// general-purpose boxed-`Value::Array<Value::Int>` form.
+    /// fasta's TWO/THREE inner loops index two such arrays
+    /// (`iub_cut`, `iub_ch`) several times per output byte;
+    /// keeping their storage as raw `Vec<i64>` lets
+    /// [`Op::IntArrayGetI64`] feed the typed `i64` registers
+    /// directly.
+    pub(crate) fn try_build_int_array(
+        &mut self,
+        array_ty: Ty,
+        elems: &[HirExpr],
+    ) -> RuntimeResult<Option<TypedReg>> {
+        if !is_array_elem_kind(self.tcx, array_ty, elems.first().map(|e| e.ty), |k| {
+            matches!(k, TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
+        }) {
+            return Ok(None);
+        }
+        let Ok(count) = u16::try_from(elems.len()) else {
+            return Ok(None);
+        };
+        // Allocate `count` contiguous i64 registers. `compile_expr_ex`
+        // on each element returns a TypedReg; we coerce to i64 via
+        // `as_i64`.
+        let first_i = self.next_int_reg;
+        if u32::from(count) > u32::from(u16::MAX - first_i) {
+            return Ok(None);
+        }
+        self.next_int_reg = first_i + count;
+        for (i, elem) in elems.iter().enumerate() {
+            let target = first_i + u16::try_from(i).expect("count overflow");
+            let tr = self.compile_expr_ex(elem)?;
+            let src_i = self.as_i64(tr);
+            self.emit(Op::MoveI64 {
+                dst_i: target,
+                src_i,
+            });
+        }
+        let dst = self.alloc_reg();
+        self.emit(Op::BuildIntArray {
+            dst_v: dst,
+            first_i,
+            count,
+        });
+        // Track for the indexing fast path so subsequent
+        // `arr[k]` reads route through `Op::IntArrayGetI64`.
+        self.flat_int_locals.insert(dst);
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
+    }
+
+    /// Repeat-form variant of [`Self::try_build_float_vec`] for
+    /// `[value; count]` shapes where the count is a literal that
+    /// fits in `u16`. Evaluates `value` once into an f64 register
+    /// and broadcasts it across the `FloatVec`'s storage with a
+    /// constant-fill loop.
+    pub(crate) fn try_build_float_vec_repeat(
+        &mut self,
+        array_ty: Ty,
+        value: &HirExpr,
+        count: &HirExpr,
+    ) -> RuntimeResult<Option<TypedReg>> {
+        if !is_array_elem_kind(self.tcx, array_ty, Some(value.ty), |k| {
+            matches!(k, TyKind::Float(FloatTy::F64))
+        }) {
+            return Ok(None);
+        }
+        let Some(n) = resolve_const_count(count) else {
+            return Ok(None);
+        };
+        let Ok(count_u) = u16::try_from(n) else {
+            return Ok(None);
+        };
+        let first_f = self.next_float_reg;
+        if u32::from(count_u) > u32::from(u16::MAX - first_f) {
+            return Ok(None);
+        }
+        self.next_float_reg = first_f + count_u;
+        // Compile the source value once; broadcast into every slot.
+        let src_tr = self.compile_expr_ex(value)?;
+        let src_f = self.as_f64(src_tr);
+        for i in 0..count_u {
+            let target = first_f + i;
+            self.emit(Op::MoveF64 {
+                dst_f: target,
+                src_f,
+            });
+        }
+        let dst = self.alloc_reg();
+        self.emit(Op::BuildFloatVec {
+            dst_v: dst,
+            first_f,
+            count: count_u,
+        });
+        self.flat_float_locals.insert(dst);
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
+    }
+
+    /// Repeat-form mirror of [`Self::try_build_int_array`] for
+    /// `[value; count]` `[i64]` literals — used by integer scratch
+    /// buffers initialised at function entry.
+    pub(crate) fn try_build_int_array_repeat(
+        &mut self,
+        array_ty: Ty,
+        value: &HirExpr,
+        count: &HirExpr,
+    ) -> RuntimeResult<Option<TypedReg>> {
+        if !is_array_elem_kind(self.tcx, array_ty, Some(value.ty), |k| {
+            matches!(k, TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
+        }) {
+            return Ok(None);
+        }
+        let Some(n) = resolve_const_count(count) else {
+            return Ok(None);
+        };
+        let Ok(count_u) = u16::try_from(n) else {
+            return Ok(None);
+        };
+        let first_i = self.next_int_reg;
+        if u32::from(count_u) > u32::from(u16::MAX - first_i) {
+            return Ok(None);
+        }
+        self.next_int_reg = first_i + count_u;
+        let src_tr = self.compile_expr_ex(value)?;
+        let src_i = self.as_i64(src_tr);
+        for i in 0..count_u {
+            let target = first_i + i;
+            self.emit(Op::MoveI64 {
+                dst_i: target,
+                src_i,
+            });
+        }
+        let dst = self.alloc_reg();
+        self.emit(Op::BuildIntArray {
+            dst_v: dst,
+            first_i,
+            count: count_u,
+        });
+        self.flat_int_locals.insert(dst);
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
+    }
+
+    /// Mirror of [`Self::try_build_int_array`] for `[f64; N]`
+    /// literals. Compiles each element into a contiguous f64
+    /// register span and emits [`Op::BuildFloatVec`], which wraps
+    /// the span into a `Value::FloatVec`. Subsequent indexed reads
+    /// / writes route through [`Op::FloatVecGetF64`] and
+    /// [`Op::FloatVecSetF64`] so each element load lands directly
+    /// in the typed-`f64` register file.
+    pub(crate) fn try_build_float_vec(
+        &mut self,
+        array_ty: Ty,
+        elems: &[HirExpr],
+    ) -> RuntimeResult<Option<TypedReg>> {
+        if !is_array_elem_kind(self.tcx, array_ty, elems.first().map(|e| e.ty), |k| {
+            matches!(k, TyKind::Float(FloatTy::F64))
+        }) {
+            return Ok(None);
+        }
+        let Ok(count) = u16::try_from(elems.len()) else {
+            return Ok(None);
+        };
+        let first_f = self.next_float_reg;
+        if u32::from(count) > u32::from(u16::MAX - first_f) {
+            return Ok(None);
+        }
+        self.next_float_reg = first_f + count;
+        for (i, elem) in elems.iter().enumerate() {
+            let target = first_f + u16::try_from(i).expect("count overflow");
+            let tr = self.compile_expr_ex(elem)?;
+            let src_f = self.as_f64(tr);
+            self.emit(Op::MoveF64 {
+                dst_f: target,
+                src_f,
+            });
+        }
+        let dst = self.alloc_reg();
+        self.emit(Op::BuildFloatVec {
+            dst_v: dst,
+            first_f,
+            count,
+        });
+        self.flat_float_locals.insert(dst);
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
+    }
+
+    /// Recognise pure single-arg f64 math intrinsics
+    /// (`math::sqrt`, `math::sin`, …) and emit the dedicated
+    /// typed opcode instead of going through `Op::Call`.
+    /// Both the bare and `math::` spellings are accepted to
+    /// match the stdlib's dual registration.
+    pub(crate) fn try_intrinsic_call(
+        &mut self,
+        callee: &HirExpr,
+        args: &[HirExpr],
+    ) -> RuntimeResult<Option<TypedReg>> {
+        if args.len() != 1 {
+            return Ok(None);
+        }
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return Ok(None);
+        };
+        let full: Vec<String> = segments.iter().map(|s| s.name.clone()).collect();
+        // If the callee is a single-segment user function that
+        // the prepass flagged as a trivial wrapper around an
+        // intrinsic (`fn f(x) { math::sqrt(x) }`), redirect to
+        // the intrinsic's path and inline directly.
+        let effective_segs = if full.len() == 1 {
+            match self.wrappers.get(&full[0]) {
+                Some(target) => target.clone(),
+                None => full.clone(),
+            }
+        } else {
+            full.clone()
+        };
+        let segs_str: Vec<&str> = effective_segs
+            .iter()
+            .map(std::string::String::as_str)
+            .collect();
+        let kind = match segs_str.as_slice() {
+            ["math", "sqrt"] | ["sqrt"] => "sqrt",
+            ["math", "sin"] | ["sin"] => "sin",
+            ["math", "cos"] | ["cos"] => "cos",
+            ["math", "abs"] | ["abs"] => "abs",
+            ["math", "floor"] | ["floor"] => "floor",
+            ["math", "ceil"] | ["ceil"] => "ceil",
+            ["math", "exp"] | ["exp"] => "exp",
+            ["math", "ln" | "log"] | ["ln"] => "ln",
+            _ => return Ok(None),
+        };
+        if self.expr_kind(&args[0]) != RegKind::F64 {
+            return Ok(None);
+        }
+        let arg_tr = self.compile_expr_ex(&args[0])?;
+        let src_f = self.as_f64(arg_tr);
+        let dst = self.alloc_float();
+        let op = match kind {
+            "sqrt" => Op::SqrtF64 { dst_f: dst, src_f },
+            "sin" => Op::SinF64 { dst_f: dst, src_f },
+            "cos" => Op::CosF64 { dst_f: dst, src_f },
+            "abs" => Op::AbsF64 { dst_f: dst, src_f },
+            "floor" => Op::FloorF64 { dst_f: dst, src_f },
+            "ceil" => Op::CeilF64 { dst_f: dst, src_f },
+            "exp" => Op::ExpF64 { dst_f: dst, src_f },
+            "ln" => Op::LnF64 { dst_f: dst, src_f },
+            _ => unreachable!(),
+        };
+        self.emit(op);
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::F64,
+        }))
+    }
+
+    /// Mirrors the tree-walker's `is_mutating_method` list. Methods
+    /// here have a "returns the new aggregate" interp builtin that
+    /// the VM has to thread back into the receiver's slot.
+    pub(crate) fn is_mutating_method_name(name: &str) -> bool {
+        matches!(
+            name,
+            "push"
+                | "pop"
+                | "insert"
+                | "remove"
+                | "clear"
+                | "extend"
+                | "append"
+                | "truncate"
+                | "sort"
+                | "sort_by"
+                | "sort_by_key"
+                | "reverse"
+                | "retain"
+                | "drain"
+                | "swap"
+        )
+    }
+
+    /// Routes the typed-`HashMap<i64, i64>` method-call surface
+    /// through dedicated typed ops. Returns `Some(reg)` when the
+    /// method is handled here; the caller falls through to the
+    /// generic dispatch otherwise.
+    pub(crate) fn try_compile_int_map_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &str,
+        args: &[HirExpr],
+    ) -> RuntimeResult<Option<Reg>> {
+        match (method, args.len()) {
+            ("insert", 2) => {
+                let map_reg = self.compile_expr(receiver)?;
+                let key_tr = self.compile_expr_ex(&args[0])?;
+                let key_i = self.as_i64(key_tr);
+                let val_tr = self.compile_expr_ex(&args[1])?;
+                let val_i = self.as_i64(val_tr);
+                let dst = self.alloc_reg();
+                self.emit(Op::IntMapInsert {
+                    dst_v: dst,
+                    map_reg,
+                    key_i,
+                    value_i: val_i,
+                });
+                Ok(Some(dst))
+            }
+            ("get_or", 2) => {
+                let map_reg = self.compile_expr(receiver)?;
+                let key_tr = self.compile_expr_ex(&args[0])?;
+                let key_i = self.as_i64(key_tr);
+                let def_tr = self.compile_expr_ex(&args[1])?;
+                let def_i = self.as_i64(def_tr);
+                let dst_i = self.alloc_int();
+                self.emit(Op::IntMapGetOr {
+                    dst_i,
+                    map_reg,
+                    key_i,
+                    default_i: def_i,
+                });
+                let dst = self.alloc_reg();
+                self.emit(Op::BoxI64 {
+                    dst_v: dst,
+                    src_i: dst_i,
+                });
+                Ok(Some(dst))
+            }
+            ("len", 0) => {
+                let map_reg = self.compile_expr(receiver)?;
+                let dst_i = self.alloc_int();
+                self.emit(Op::IntMapLen { dst_i, map_reg });
+                let dst = self.alloc_reg();
+                self.emit(Op::BoxI64 {
+                    dst_v: dst,
+                    src_i: dst_i,
+                });
+                Ok(Some(dst))
+            }
+            ("contains_key", 1) => {
+                let map_reg = self.compile_expr(receiver)?;
+                let key_tr = self.compile_expr_ex(&args[0])?;
+                let key_i = self.as_i64(key_tr);
+                let dst = self.alloc_reg();
+                self.emit(Op::IntMapContainsKey {
+                    dst_v: dst,
+                    map_reg,
+                    key_i,
+                });
+                Ok(Some(dst))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub(crate) fn ensure_reg_slot(&mut self, slot: Reg) {
+        if slot >= self.next_reg {
+            self.next_reg = slot.checked_add(1).expect("register overflow");
+        }
+    }
+
+    /// Hoists literal-and-local comparison operands out of
+    /// `while` loops so the compare operands are evaluated
+    /// once up front rather than per iteration. Returns
+    /// `(lhs_reg, rhs_reg, op, kind)` when the condition
+    /// has a hoistable shape — specifically
+    /// `Path(local) <op> Literal` or `Literal <op> Path(local)`
+    /// over typed numeric kinds.
+    pub(crate) fn try_hoist_condition_literals(
+        &mut self,
+        condition: &HirExpr,
+    ) -> RuntimeResult<Option<(Reg, Reg, HirBinaryOp, RegKind)>> {
+        let HirExprKind::Binary { op, lhs, rhs } = &condition.kind else {
+            return Ok(None);
+        };
+        if !matches!(
+            op,
+            HirBinaryOp::Lt | HirBinaryOp::Le | HirBinaryOp::Gt | HirBinaryOp::Ge
+        ) {
+            return Ok(None);
+        }
+        let lk = self.expr_kind(lhs);
+        let rk = self.expr_kind(rhs);
+        if lk != rk || lk == RegKind::Value {
+            return Ok(None);
+        }
+        // Hoist only when neither operand would require an
+        // `Unbox*` at evaluation: that would snapshot a
+        // `Value::Int` local into a typed int reg once,
+        // and subsequent writes back through the `Value`
+        // reg wouldn't update it. Safe cases:
+        //   * typed literals — always produce a typed reg
+        //   * locals whose stored `TypedReg` already matches
+        //     the operand kind — reads update through the
+        //     same typed reg the compare uses.
+        if !self.is_hoistable_operand(lhs, lk) {
+            return Ok(None);
+        }
+        if !self.is_hoistable_operand(rhs, lk) {
+            return Ok(None);
+        }
+        let lhs_tr = self.compile_expr_ex(lhs)?;
+        let rhs_tr = self.compile_expr_ex(rhs)?;
+        let (lhs_reg, rhs_reg) = match lk {
+            RegKind::I64 => (self.as_i64(lhs_tr), self.as_i64(rhs_tr)),
+            RegKind::F64 => (self.as_f64(lhs_tr), self.as_f64(rhs_tr)),
+            RegKind::Value => unreachable!(),
+        };
+        Ok(Some((lhs_reg, rhs_reg, *op, lk)))
+    }
+
+    /// Returns `true` when `expr`'s operand register can be
+    /// pre-computed before a loop body without going stale.
+    /// Typed literals qualify (their reg is write-once), as do
+    /// locals already bound in the matching typed register
+    /// file. Anything else — most importantly a local bound as
+    /// `Value` that would need an `Unbox*` snapshot — is
+    /// rejected so the fused branch re-emits it each iteration.
+    pub(crate) fn is_hoistable_operand(&self, expr: &HirExpr, kind: RegKind) -> bool {
+        match &expr.kind {
+            HirExprKind::Literal(_) => true,
+            HirExprKind::Path { segments, .. } if segments.len() == 1 => {
+                match self.lookup_local(&segments[0].name) {
+                    Some(tr) => tr.kind == kind,
+                    None => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Emits the inverted compare-and-branch op that exits a
+    /// loop when `lhs <op> rhs` is false. Callers have already
+    /// computed the operand registers.
+    pub(crate) fn emit_fused_exit_branch(
+        &mut self,
+        op: HirBinaryOp,
+        kind: RegKind,
+        lhs_reg: Reg,
+        rhs_reg: Reg,
+    ) -> InstrIdx {
+        let op_emit = match (kind, op) {
+            (RegKind::I64, HirBinaryOp::Lt) => Op::BranchIfGeI64 {
+                lhs_i: lhs_reg,
+                rhs_i: rhs_reg,
+                target: 0,
+            },
+            (RegKind::I64, HirBinaryOp::Le) => Op::BranchIfLtI64 {
+                lhs_i: rhs_reg,
+                rhs_i: lhs_reg,
+                target: 0,
+            },
+            (RegKind::I64, HirBinaryOp::Gt) => Op::BranchIfGeI64 {
+                lhs_i: rhs_reg,
+                rhs_i: lhs_reg,
+                target: 0,
+            },
+            (RegKind::I64, HirBinaryOp::Ge) => Op::BranchIfLtI64 {
+                lhs_i: lhs_reg,
+                rhs_i: rhs_reg,
+                target: 0,
+            },
+            (RegKind::F64, HirBinaryOp::Lt) => Op::BranchIfGeF64 {
+                lhs_f: lhs_reg,
+                rhs_f: rhs_reg,
+                target: 0,
+            },
+            (RegKind::F64, HirBinaryOp::Le) => Op::BranchIfLtF64 {
+                lhs_f: rhs_reg,
+                rhs_f: lhs_reg,
+                target: 0,
+            },
+            (RegKind::F64, HirBinaryOp::Gt) => Op::BranchIfGeF64 {
+                lhs_f: rhs_reg,
+                rhs_f: lhs_reg,
+                target: 0,
+            },
+            (RegKind::F64, HirBinaryOp::Ge) => Op::BranchIfLtF64 {
+                lhs_f: lhs_reg,
+                rhs_f: rhs_reg,
+                target: 0,
+            },
+            _ => unreachable!(),
+        };
+        self.emit(op_emit)
+    }
+
+    /// Recognises `while lhs <op> rhs { ... }` where `lhs` and
+    /// `rhs` share a concrete numeric kind and emits a fused
+    /// "branch to loop exit when the inverted predicate holds"
+    /// op. Returns the patch index so the caller can fix up
+    /// the target once the loop-end address is known.
+    pub(crate) fn try_compile_fused_exit_branch(
+        &mut self,
+        condition: &HirExpr,
+    ) -> RuntimeResult<Option<InstrIdx>> {
+        let HirExprKind::Binary { op, lhs, rhs } = &condition.kind else {
+            return Ok(None);
+        };
+        let lk = self.expr_kind(lhs);
+        let rk = self.expr_kind(rhs);
+        if lk != rk || lk == RegKind::Value {
+            return Ok(None);
+        }
+        // Check supported op kinds BEFORE compiling operands —
+        // otherwise we'd emit dead operand-evaluation ops when
+        // the comparison falls back to the generic path.
+        if !matches!(
+            op,
+            HirBinaryOp::Lt | HirBinaryOp::Le | HirBinaryOp::Gt | HirBinaryOp::Ge
+        ) {
+            return Ok(None);
+        }
+        if lk == RegKind::I64 {
+            let lhs_tr = self.compile_expr_ex(lhs)?;
+            let rhs_tr = self.compile_expr_ex(rhs)?;
+            let lhs_i = self.as_i64(lhs_tr);
+            let rhs_i = self.as_i64(rhs_tr);
+            // Fire when the predicate is FALSE (the loop
+            // wants to exit). `while lhs < rhs` → exit when
+            // `lhs >= rhs`, etc.
+            //   < → Ge(lhs, rhs)
+            //   <= → Lt(rhs, lhs)      [NOT (lhs <= rhs) ⟺ rhs < lhs]
+            //   > → Ge(rhs, lhs)       [NOT (lhs > rhs) ⟺ rhs >= lhs]
+            //   >= → Lt(lhs, rhs)
+            let op_emit = match op {
+                HirBinaryOp::Lt => Op::BranchIfGeI64 {
+                    lhs_i,
+                    rhs_i,
+                    target: 0,
+                },
+                HirBinaryOp::Le => Op::BranchIfLtI64 {
+                    lhs_i: rhs_i,
+                    rhs_i: lhs_i,
+                    target: 0,
+                },
+                HirBinaryOp::Gt => Op::BranchIfGeI64 {
+                    lhs_i: rhs_i,
+                    rhs_i: lhs_i,
+                    target: 0,
+                },
+                HirBinaryOp::Ge => Op::BranchIfLtI64 {
+                    lhs_i,
+                    rhs_i,
+                    target: 0,
+                },
+                _ => unreachable!(),
+            };
+            return Ok(Some(self.emit(op_emit)));
+        }
+        if lk == RegKind::F64 {
+            let lhs_tr = self.compile_expr_ex(lhs)?;
+            let rhs_tr = self.compile_expr_ex(rhs)?;
+            let lhs_f = self.as_f64(lhs_tr);
+            let rhs_f = self.as_f64(rhs_tr);
+            let op_emit = match op {
+                HirBinaryOp::Lt => Op::BranchIfGeF64 {
+                    lhs_f,
+                    rhs_f,
+                    target: 0,
+                },
+                HirBinaryOp::Le => Op::BranchIfLtF64 {
+                    lhs_f: rhs_f,
+                    rhs_f: lhs_f,
+                    target: 0,
+                },
+                HirBinaryOp::Gt => Op::BranchIfGeF64 {
+                    lhs_f: rhs_f,
+                    rhs_f: lhs_f,
+                    target: 0,
+                },
+                HirBinaryOp::Ge => Op::BranchIfLtF64 {
+                    lhs_f,
+                    rhs_f,
+                    target: 0,
+                },
+                _ => unreachable!(),
+            };
+            return Ok(Some(self.emit(op_emit)));
+        }
+        Ok(None)
+    }
+
+    /// `for var in start..end { body }`, `for _ in start..end { body }`,
+    /// and the inclusive variant `for var in start..=end { body }`.
+    ///
+    /// HIR lowers a `for` into the generic `loop { match iter.next() { Some(p)
+    /// => body, None => break } }` shape so every iterable goes through
+    /// the same machinery. For an integer range that path costs an
+    /// `Option` allocation + a match dispatch *per iteration* — on
+    /// nbody's nested `for a in 0..4 { for b in (a+1)..5 { ... } }` the
+    /// overhead dominated everything inside.
+    ///
+    /// We pattern-match the desugar back out and emit a typed-i64
+    /// counter loop:
+    ///
+    /// ```text
+    ///     start_i = <start>
+    ///     end_i   = <end>
+    /// header:
+    ///     if start_i >= end_i goto exit       (exclusive: BranchIfGeI64)
+    ///     if start_i >  end_i goto exit       (inclusive: BranchIfGtI64)
+    ///     <body>                              (binding sees var via I64 reg)
+    ///     start_i = start_i + 1               (AddI64)
+    ///     jump header
+    /// exit:
+    /// ```
+    ///
+    /// Falls through to the generic match-loop on:
+    ///   - non-i64 range bounds (the typed file is i64-only; f64-step
+    ///     ranges would need a separate fast path nobody currently writes)
+    ///   - non-`Range` iterators with non-trivial state — those still
+    ///     go through `next()`.
+    pub(crate) fn try_compile_for_loop_range(
+        &mut self,
+        body: &HirExpr,
+    ) -> RuntimeResult<Option<Reg>> {
+        let HirExprKind::Block(block) = &body.kind else {
+            return Ok(None);
+        };
+        if !block.stmts.is_empty() {
+            return Ok(None);
+        }
+        let Some(tail) = block.tail.as_deref() else {
+            return Ok(None);
+        };
+        let HirExprKind::Match { scrutinee, arms } = &tail.kind else {
+            return Ok(None);
+        };
+        if arms.len() != 2 {
+            return Ok(None);
+        }
+        let HirExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+        } = &scrutinee.kind
+        else {
+            return Ok(None);
+        };
+        if name.name != "next" || !args.is_empty() {
+            return Ok(None);
+        }
+        let HirExprKind::Range {
+            start: Some(start),
+            end: Some(end),
+            inclusive,
+        } = &receiver.kind
+        else {
+            return Ok(None);
+        };
+        if self.expr_kind(start) != RegKind::I64 || self.expr_kind(end) != RegKind::I64 {
+            return Ok(None);
+        }
+        let some_arm = &arms[0];
+        let none_arm = &arms[1];
+        let HirPatKind::Variant {
+            name: some_name,
+            fields: some_fields,
+        } = &some_arm.pattern.kind
+        else {
+            return Ok(None);
+        };
+        if some_name.name != "Some" || some_fields.len() != 1 {
+            return Ok(None);
+        }
+        let HirPatKind::Variant {
+            name: none_name,
+            fields: none_fields,
+        } = &none_arm.pattern.kind
+        else {
+            return Ok(None);
+        };
+        if none_name.name != "None" || !none_fields.is_empty() {
+            return Ok(None);
+        }
+        // Bind the Some-arm's pattern (an ident or `_`) so the body
+        // can read it. The body is some_arm.body in the desugar.
+        let loop_var = match &some_fields[0].kind {
+            HirPatKind::Binding { name, .. } => Some(name.name.clone()),
+            HirPatKind::Wildcard => None,
+            _ => return Ok(None),
+        };
+        let inclusive = *inclusive;
+
+        let start_tr = self.compile_expr_ex(start)?;
+        let end_tr = self.compile_expr_ex(end)?;
+        let counter_i = self.as_i64(start_tr);
+        let end_i = self.as_i64(end_tr);
+
+        let result = self.alloc_reg();
+        self.push_scope();
+        if let Some(name) = &loop_var {
+            self.bind_local(
+                name,
+                TypedReg {
+                    reg: counter_i,
+                    kind: RegKind::I64,
+                },
+            );
+        }
+
+        // Layout (preserves the original `continue → header`
+        // semantics): a header bounds-check + the body + a fused
+        // `IncJumpIfLt(target=header)` at the bottom that combines
+        // the per-iter AddI64 + Jump into one dispatch. The fall-
+        // through case after the fused op (counter has reached
+        // end) lands directly on the post-loop block, so the
+        // header check on the final exit iteration is the only
+        // one paid; intermediate iterations skip the redundant
+        // header re-check that the straight-translation form does.
+        let header = self.cur_idx();
+        let exit_branch_idx = self.emit(if inclusive {
+            Op::BranchIfGtI64 {
+                lhs_i: counter_i,
+                rhs_i: end_i,
+                target: 0,
+            }
+        } else {
+            Op::BranchIfGeI64 {
+                lhs_i: counter_i,
+                rhs_i: end_i,
+                target: 0,
+            }
+        });
+
+        self.loop_stack.push(LoopCtx {
+            break_patches: Vec::new(),
+            continue_patches: Vec::new(),
+            result_reg: result,
+        });
+        let _ = self.compile_expr(&some_arm.body)?;
+        // `continue` jumps here: the same fused inc-and-test op
+        // the body's bottom fall-through executes. Routing
+        // `continue` directly to `header` would re-test the
+        // bound without advancing the counter and livelock the
+        // loop.
+        let continue_target = self.cur_idx();
+        self.emit(if inclusive {
+            Op::IncJumpIfLeI64 {
+                counter_i,
+                end_i,
+                target: header,
+            }
+        } else {
+            Op::IncJumpIfLtI64 {
+                counter_i,
+                end_i,
+                target: header,
+            }
+        });
+        let after = self.cur_idx();
+        self.patch_jump(exit_branch_idx, after);
+        let ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack underflow on for-range");
+        for patch in ctx.break_patches {
+            self.patch_jump(patch, after);
+        }
+        for patch in ctx.continue_patches {
+            self.patch_jump(patch, continue_target);
+        }
+        self.pop_scope();
+        Ok(Some(result))
+    }
+
+    /// `for x in v.iter() { body }` and `for (i, x) in v.iter().enumerate() { body }`.
+    ///
+    /// Emits a typed counter loop that dereferences `v[counter]` via
+    /// `Op::IndexGet`, sidestepping the per-iteration `Option`
+    /// allocation + match dispatch the generic iterator path would
+    /// pay. The iterator's length is captured once at loop entry
+    /// from `v.len()`; the body sees the element binding through a
+    /// regular Value register.
+    ///
+    /// Falls through to the generic match-loop when the receiver
+    /// shape isn't a recognised `MethodCall` chain (e.g. a stateful
+    /// custom iterator, a `HashMap::keys` view, or a chained
+    /// `filter`/`map` whose bytecode shape isn't fixed).
+    pub(crate) fn try_compile_for_loop_vec_iter(
+        &mut self,
+        body: &HirExpr,
+    ) -> RuntimeResult<Option<Reg>> {
+        let HirExprKind::Block(block) = &body.kind else {
+            return Ok(None);
+        };
+        if !block.stmts.is_empty() {
+            return Ok(None);
+        }
+        let Some(tail) = block.tail.as_deref() else {
+            return Ok(None);
+        };
+        let HirExprKind::Match { scrutinee, arms } = &tail.kind else {
+            return Ok(None);
+        };
+        if arms.len() != 2 {
+            return Ok(None);
+        }
+        let HirExprKind::MethodCall {
+            receiver: next_recv,
+            name: next_name,
+            args: next_args,
+        } = &scrutinee.kind
+        else {
+            return Ok(None);
+        };
+        if next_name.name != "next" || !next_args.is_empty() {
+            return Ok(None);
+        }
+        // Walk the iterator chain. Recognise:
+        //   `vec.iter()`              → element binding, no enumerate
+        //   `vec.iter().enumerate()`  → tuple binding (i, x)
+        let (vec_expr, is_enumerate) = match &next_recv.kind {
+            HirExprKind::MethodCall {
+                receiver: chain_recv,
+                name: chain_name,
+                args: chain_args,
+            } if chain_name.name == "iter" && chain_args.is_empty() => (chain_recv.as_ref(), false),
+            HirExprKind::MethodCall {
+                receiver: enum_recv,
+                name: enum_name,
+                args: enum_args,
+            } if enum_name.name == "enumerate" && enum_args.is_empty() => {
+                let HirExprKind::MethodCall {
+                    receiver: chain_recv,
+                    name: chain_name,
+                    args: chain_args,
+                } = &enum_recv.kind
+                else {
+                    return Ok(None);
+                };
+                if chain_name.name != "iter" || !chain_args.is_empty() {
+                    return Ok(None);
+                }
+                (chain_recv.as_ref(), true)
+            }
+            _ => return Ok(None),
+        };
+
+        let some_arm = &arms[0];
+        let none_arm = &arms[1];
+        let HirPatKind::Variant {
+            name: some_name,
+            fields: some_fields,
+        } = &some_arm.pattern.kind
+        else {
+            return Ok(None);
+        };
+        if some_name.name != "Some" || some_fields.len() != 1 {
+            return Ok(None);
+        }
+        let HirPatKind::Variant {
+            name: none_name,
+            fields: none_fields,
+        } = &none_arm.pattern.kind
+        else {
+            return Ok(None);
+        };
+        if none_name.name != "None" || !none_fields.is_empty() {
+            return Ok(None);
+        }
+        let elem_pat = &some_fields[0];
+        // Pattern shapes we accept:
+        //   non-enumerate: Binding (or Wildcard)
+        //   enumerate:     Tuple of two bindings (or wildcards)
+        let (elem_binding, idx_binding): (Option<String>, Option<String>) = if is_enumerate {
+            let HirPatKind::Tuple(parts) = &elem_pat.kind else {
+                return Ok(None);
+            };
+            if parts.len() != 2 {
+                return Ok(None);
+            }
+            let pick = |p: &HirPat| match &p.kind {
+                HirPatKind::Binding { name, .. } => Some(Some(name.name.clone())),
+                HirPatKind::Wildcard => Some(None),
+                _ => None,
+            };
+            let i_b = pick(&parts[0]).ok_or(RuntimeError::Unsupported(
+                "enumerate: index pat must be ident/_",
+            ))?;
+            let x_b = pick(&parts[1]).ok_or(RuntimeError::Unsupported(
+                "enumerate: elem pat must be ident/_",
+            ))?;
+            (x_b, i_b)
+        } else {
+            let pick = match &elem_pat.kind {
+                HirPatKind::Binding { name, .. } => Some(name.name.clone()),
+                HirPatKind::Wildcard => None,
+                _ => return Ok(None),
+            };
+            (pick, None)
+        };
+
+        // Compile the vec receiver and capture it once.
+        let vec_reg = self.compile_expr(vec_expr)?;
+
+        // Length: emit a `len()` MethodCall whose result we treat as
+        // an i64 by unboxing through `as_i64`.
+        let len_dst = self.alloc_reg();
+        let len_name = self.global_idx("len");
+        let cache_idx = self.alloc_cache_idx();
+        self.emit(Op::MethodCall {
+            dst: len_dst,
+            receiver: vec_reg,
+            name_idx: len_name,
+            args: 0,
+            argc: 0,
+            cache_idx,
+        });
+        let len_tr = TypedReg {
+            reg: len_dst,
+            kind: RegKind::Value,
+        };
+        let len_i = self.as_i64(len_tr);
+
+        // Counter starts at 0.
+        let zero_idx = self.i64_const_idx(0);
+        let counter_i = self.alloc_int();
+        self.emit(Op::LoadConstI64 {
+            dst_i: counter_i,
+            idx: zero_idx,
+        });
+        let one_idx = self.i64_const_idx(1);
+        let one_i = self.alloc_int();
+        self.emit(Op::LoadConstI64 {
+            dst_i: one_i,
+            idx: one_idx,
+        });
+
+        let result = self.alloc_reg();
+        self.push_scope();
+
+        // Element register: a fresh Value reg refilled each iteration.
+        let elem_reg = self.alloc_reg();
+        if let Some(name) = &elem_binding {
+            self.bind_local(
+                name,
+                TypedReg {
+                    reg: elem_reg,
+                    kind: RegKind::Value,
+                },
+            );
+        }
+        // Index binding (enumerate only) — alias the counter i64 reg.
+        if let Some(name) = &idx_binding {
+            self.bind_local(
+                name,
+                TypedReg {
+                    reg: counter_i,
+                    kind: RegKind::I64,
+                },
+            );
+        }
+
+        let header = self.cur_idx();
+        let exit_branch_idx = self.emit(Op::BranchIfGeI64 {
+            lhs_i: counter_i,
+            rhs_i: len_i,
+            target: 0,
+        });
+
+        // Refill element register from `vec[counter]`. We need a
+        // Value register holding the index; `BoxI64` covers that.
+        let idx_v = self.alloc_reg();
+        self.emit(Op::BoxI64 {
+            dst_v: idx_v,
+            src_i: counter_i,
+        });
+        self.emit(Op::IndexGet {
+            dst: elem_reg,
+            base: vec_reg,
+            index: idx_v,
+        });
+
+        self.loop_stack.push(LoopCtx {
+            break_patches: Vec::new(),
+            continue_patches: Vec::new(),
+            result_reg: result,
+        });
+        let _ = self.compile_expr(&some_arm.body)?;
+        // `continue` jumps here so the counter increment + jump
+        // back to the bounds check still run. A direct jump to
+        // `header` would re-check bounds without advancing the
+        // index and produce an infinite loop on any body that
+        // exercises `continue`.
+        let continue_target = self.cur_idx();
+        self.emit(Op::AddI64 {
+            dst_i: counter_i,
+            lhs_i: counter_i,
+            rhs_i: one_i,
+        });
+        self.emit(Op::Jump { target: header });
+        let after = self.cur_idx();
+        self.patch_jump(exit_branch_idx, after);
+        let ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack underflow on for-vec-iter");
+        for patch in ctx.break_patches {
+            self.patch_jump(patch, after);
+        }
+        for patch in ctx.continue_patches {
+            self.patch_jump(patch, continue_target);
+        }
+        self.pop_scope();
+        Ok(Some(result))
+    }
+
+    pub(crate) fn load_unit(&mut self) -> Reg {
+        let idx = self.const_idx(ConstKey::Unit, Value::Unit);
+        let dst = self.alloc_reg();
+        self.emit(Op::LoadConst { dst, idx });
+        dst
+    }
+}

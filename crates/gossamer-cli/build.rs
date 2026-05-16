@@ -78,7 +78,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../gossamer-codegen-cranelift/src/native.rs");
     println!("cargo:rerun-if-changed=../gossamer-codegen-cranelift/src/jit.rs");
     println!("cargo:rerun-if-changed=../gossamer-codegen-llvm/src/emit.rs");
-    println!("cargo:rerun-if-changed=../gossamer-codegen-llvm/src/lower.rs");
+    println!("cargo:rerun-if-changed=../gossamer-codegen-llvm/src/lower");
     println!("cargo:rerun-if-changed=../gossamer-abi/src/registry.rs");
     println!("cargo:rerun-if-env-changed=GOS_RUNTIME_LIB");
     println!("cargo:rerun-if-env-changed=GOSSAMER_SKIP_DISPATCH_PARITY");
@@ -264,13 +264,78 @@ fn build_runtime_into(
 
 /// Fails the build if any `gos_rt_*` symbol declared in `c_abi.rs`
 /// is not referenced by any codegen and is not on the allowlist.
+#[allow(
+    clippy::too_many_lines,
+    reason = "directory-walking scaffold is linear; splitting would obscure the read"
+)]
 fn check_dispatch_parity(workspace_root: &Path) {
-    let c_abi = read_text(workspace_root.join("crates/gossamer-runtime/src/c_abi.rs"));
-    let cl_native =
-        read_text(workspace_root.join("crates/gossamer-codegen-cranelift/src/native.rs"));
+    // c_abi.rs was split into a directory of domain submodules
+    // (crates/gossamer-runtime/src/c_abi/{vec,map,str,...}.rs) plus
+    // a slim hub at crates/gossamer-runtime/src/c_abi.rs that
+    // declares the submodules. Concatenate every .rs under the
+    // c_abi/ directory so the symbol scan covers all submodules.
+    let mut c_abi = read_text(workspace_root.join("crates/gossamer-runtime/src/c_abi.rs"));
+    let c_abi_dir = workspace_root.join("crates/gossamer-runtime/src/c_abi");
+    if c_abi_dir.is_dir() {
+        let mut entries: Vec<_> = std::fs::read_dir(&c_abi_dir)
+            .unwrap_or_else(|e| panic!("dispatch-parity: read_dir {}: {e}", c_abi_dir.display()))
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("rs"))
+            .collect();
+        entries.sort();
+        for path in entries {
+            c_abi.push_str(&read_text(path));
+            c_abi.push('\n');
+        }
+    }
+    // native.rs was split into a `native/` directory of submodules.
+    // Concatenate every .rs under it.
+    let mut cl_native = String::new();
+    let cl_native_dir = workspace_root.join("crates/gossamer-codegen-cranelift/src/native");
+    if cl_native_dir.is_dir() {
+        let mut entries: Vec<_> = std::fs::read_dir(&cl_native_dir)
+            .unwrap_or_else(|e| {
+                panic!("dispatch-parity: read_dir {}: {e}", cl_native_dir.display())
+            })
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("rs"))
+            .collect();
+        entries.sort();
+        for path in entries {
+            cl_native.push_str(&read_text(path));
+            cl_native.push('\n');
+        }
+    } else {
+        cl_native =
+            read_text(workspace_root.join("crates/gossamer-codegen-cranelift/src/native.rs"));
+    }
     let cl_jit = read_text(workspace_root.join("crates/gossamer-codegen-cranelift/src/jit.rs"));
     let llvm_emit = read_text(workspace_root.join("crates/gossamer-codegen-llvm/src/emit.rs"));
-    let llvm_lower = read_text(workspace_root.join("crates/gossamer-codegen-llvm/src/lower.rs"));
+    // codegen-llvm/src/lower.rs was split into lower/ directory
+    let mut llvm_lower = String::new();
+    let llvm_lower_dir = workspace_root.join("crates/gossamer-codegen-llvm/src/lower");
+    if llvm_lower_dir.is_dir() {
+        let mut entries: Vec<_> = std::fs::read_dir(&llvm_lower_dir)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "dispatch-parity: read_dir {}: {e}",
+                    llvm_lower_dir.display()
+                )
+            })
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("rs"))
+            .collect();
+        entries.sort();
+        for path in entries {
+            llvm_lower.push_str(&read_text(path));
+            llvm_lower.push('\n');
+        }
+    } else {
+        llvm_lower = read_text(workspace_root.join("crates/gossamer-codegen-llvm/src/lower.rs"));
+    }
     // The typed ABI registry is the single source of truth for all gos_rt_*
     // symbols used by both LLVM and Cranelift backends. It replaces the
     // old RUNTIME_DECLARATIONS string array, so the scanner must include it.

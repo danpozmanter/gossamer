@@ -1,0 +1,353 @@
+#![allow(
+    unused_imports,
+    dead_code,
+    unreachable_pub,
+    missing_docs,
+    clippy::wildcard_imports,
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::similar_names,
+    clippy::many_single_char_names,
+    clippy::items_after_statements,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::option_if_let_else,
+    clippy::match_same_arms,
+    clippy::if_not_else,
+    clippy::single_match_else,
+    clippy::needless_pass_by_value,
+    clippy::manual_let_else,
+    clippy::redundant_else,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::map_unwrap_or,
+    clippy::struct_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::unnecessary_wraps,
+    clippy::large_enum_variant,
+    clippy::if_same_then_else,
+    clippy::single_match,
+    clippy::useless_conversion,
+    clippy::needless_borrows_for_generic_args,
+    clippy::let_and_return,
+    unsafe_op_in_unsafe_fn,
+    unsafe_code,
+    clippy::missing_safety_doc,
+    clippy::undocumented_unsafe_blocks,
+    clippy::needless_collect,
+    clippy::elidable_lifetime_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::needless_range_loop,
+    clippy::cognitive_complexity,
+    clippy::unused_io_amount,
+    clippy::ptr_arg,
+    clippy::ptr_as_ptr,
+    clippy::redundant_closure,
+    clippy::redundant_closure_for_method_calls,
+    clippy::semicolon_if_nothing_returned,
+    clippy::single_call_fn,
+    clippy::unused_self,
+    clippy::range_plus_one,
+    clippy::not_unsafe_ptr_arg_deref,
+    clippy::cast_ptr_alignment,
+    clippy::manual_assert,
+    clippy::manual_string_new,
+    clippy::match_bool,
+    clippy::nonminimal_bool,
+    clippy::redundant_pattern_matching,
+    clippy::useless_let_if_seq
+)]
+//! Wires up Gossamer-callable builtins for stdlib modules whose
+//! Rust-side implementation already exists but had no user-facing
+//! exposure. Each `install_*` helper is invoked from
+//! `builtins::install` so user code that writes
+//! `strings::join`, `strconv::parse_i64`, `net::TcpStream::connect`,
+//! `time::Instant::now`, etc. resolves to a real callable.
+//!
+//! All builtins return a `Result`-shaped variant (`Ok` / `Err`) on
+//! fallible operations so callers can chain `?` without wrapping.
+
+use std::cell::RefCell;
+use std::collections::HashMap as StdHashMap;
+use std::io::Read as IoRead;
+use std::sync::Arc;
+
+use gossamer_ast::Ident;
+
+use crate::value::SmolStr;
+
+use gossamer_std::bufio as bufio_std;
+use gossamer_std::math as math_std;
+use gossamer_std::net as net_std;
+use gossamer_std::os as os_std;
+use gossamer_std::path as path_std;
+use gossamer_std::strconv as strconv_std;
+use gossamer_std::strings as strings_std;
+use gossamer_std::unicode as unicode_std;
+use gossamer_std::utf8 as utf8_std;
+
+use gossamer_std::iter as iter_std;
+use gossamer_std::utf16 as utf16_std;
+
+use crate::builtins::{
+    BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
+    value_to_int,
+};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+
+pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
+    install_strings(globals);
+    install_strconv(globals);
+    install_path(globals);
+    install_utf8(globals);
+    install_os_extras(globals);
+    install_fs_extras(globals);
+    install_bufio_extras(globals);
+    install_time_extras(globals);
+    install_net(globals);
+    install_set(globals);
+    install_sync_extras(globals);
+    install_math(globals);
+    install_math_bits(globals);
+    install_unicode(globals);
+    install_encoding_binary(globals);
+    install_encoding_csv(globals);
+    install_encoding_pem(globals);
+    install_utf16(globals);
+    install_iter(globals);
+    install_option(globals);
+    install_result(globals);
+    install_crypto(globals);
+    install_encoding_yaml(globals);
+    install_compress(globals);
+    install_hash_fnv(globals);
+    install_archive_zip(globals);
+    install_archive_tar(globals);
+    install_sync_atomic_u64(globals);
+    install_sync_barrier(globals);
+    install_crypto_breadth(globals);
+    install_hash_crc32_adler32(globals);
+    install_json_builtins(globals);
+    install_time_completeness(globals);
+    install_net_ip(globals);
+    install_thread(globals);
+    install_html(globals);
+    install_encoding_base64_hex(globals);
+    install_encoding_base32(globals);
+    install_encoding_ascii85(globals);
+    install_encoding_xml(globals);
+    install_crypto_insecure(globals);
+    install_compress_bzip2(globals);
+    install_math_big(globals);
+    install_http_chunked(globals);
+    install_http_sse(globals);
+    install_http_native_client(globals);
+    install_http_static_files(globals);
+    install_http_proxy(globals);
+    install_http_websocket(globals);
+    install_http_router(globals);
+    install_http_middleware(globals);
+    install_uuid(globals);
+    install_os_user(globals);
+    install_netip(globals);
+    install_mime(globals);
+    install_encoding_toml(globals);
+    install_container_heap(globals);
+    install_container_seq(globals);
+    install_container_ordered(globals);
+    install_container_set_map(globals);
+    install_url_escape(globals);
+}
+
+// ----------------------------------------------------------------------
+// Helpers
+
+pub(crate) fn arg_str_at(
+    args: &[Value],
+    idx: usize,
+    fn_name: &str,
+    label: &str,
+) -> Result<String, Value> {
+    match args.get(idx) {
+        Some(Value::String(s)) => Ok(s.as_str().to_string()),
+        _ => Err(err_variant(format!("{fn_name}: expected string {label}"))),
+    }
+}
+
+pub(crate) fn string_array(values: Vec<String>) -> Value {
+    Value::Array(Arc::new(
+        values
+            .into_iter()
+            .map(|s| Value::String(s.into()))
+            .collect(),
+    ))
+}
+
+// ----------------------------------------------------------------------
+// strings
+
+pub mod archive_tar;
+pub mod archive_zip;
+pub mod bufio;
+pub mod compress;
+pub mod container_heap;
+pub mod container_ordered;
+pub mod container_seq;
+pub mod container_set_map;
+pub mod crypto;
+pub mod crypto_breadth;
+pub mod crypto_insecure;
+pub mod encoding_binary;
+pub mod encoding_csv;
+pub mod encoding_pem;
+pub mod encoding_toml;
+pub mod encoding_xml;
+pub mod encoding_yaml;
+pub mod fs;
+pub mod hash_fnv;
+pub mod html;
+pub mod http_chunked;
+pub mod http_middleware;
+pub mod http_native_client;
+pub mod http_proxy;
+pub mod http_router;
+pub mod http_sse;
+pub mod http_static_files;
+pub mod http_websocket;
+pub mod iter;
+pub mod json_builtins;
+pub mod math;
+pub mod math_big;
+pub mod math_bits;
+pub mod mime;
+pub mod net;
+pub mod net_ip;
+pub mod netip;
+pub mod option;
+pub mod os;
+pub mod os_user;
+pub mod path;
+pub mod result;
+pub mod set;
+pub mod strconv;
+pub mod strings;
+pub mod sync;
+pub mod sync_barrier;
+pub mod thread;
+pub mod time;
+pub mod time_completeness;
+pub mod unicode;
+pub mod url_escape;
+pub mod uuid;
+pub(crate) use archive_tar::install_archive_tar;
+pub use archive_tar::*;
+pub(crate) use archive_zip::install_archive_zip;
+pub use archive_zip::*;
+pub(crate) use bufio::install_bufio_extras;
+pub use bufio::*;
+pub(crate) use compress::install_compress;
+pub use compress::*;
+pub(crate) use container_heap::install_container_heap;
+pub use container_heap::*;
+pub(crate) use container_ordered::install_container_ordered;
+pub use container_ordered::*;
+pub(crate) use container_seq::install_container_seq;
+pub use container_seq::*;
+pub(crate) use container_set_map::install_container_set_map;
+pub use container_set_map::*;
+pub(crate) use crypto::install_crypto;
+pub use crypto::*;
+pub(crate) use crypto_breadth::install_crypto_breadth;
+pub use crypto_breadth::*;
+pub(crate) use crypto_insecure::install_crypto_insecure;
+pub use crypto_insecure::*;
+pub(crate) use encoding_binary::install_encoding_binary;
+pub use encoding_binary::*;
+pub(crate) use encoding_csv::install_encoding_csv;
+pub use encoding_csv::*;
+pub(crate) use encoding_pem::install_encoding_pem;
+pub use encoding_pem::*;
+pub(crate) use encoding_toml::install_encoding_toml;
+pub use encoding_toml::*;
+pub(crate) use encoding_xml::install_encoding_xml;
+pub use encoding_xml::*;
+pub(crate) use encoding_yaml::install_encoding_yaml;
+pub use encoding_yaml::*;
+pub(crate) use fs::install_fs_extras;
+pub use fs::*;
+pub(crate) use hash_fnv::install_hash_fnv;
+pub use hash_fnv::*;
+pub(crate) use html::install_html;
+pub use html::*;
+pub(crate) use http_chunked::install_http_chunked;
+pub use http_chunked::*;
+pub(crate) use http_middleware::install_http_middleware;
+pub use http_middleware::*;
+pub(crate) use http_native_client::install_http_native_client;
+pub use http_native_client::*;
+pub(crate) use http_proxy::install_http_proxy;
+pub use http_proxy::*;
+pub(crate) use http_router::install_http_router;
+pub use http_router::*;
+pub(crate) use http_sse::install_http_sse;
+pub use http_sse::*;
+pub(crate) use http_static_files::install_http_static_files;
+pub use http_static_files::*;
+pub(crate) use http_websocket::install_http_websocket;
+pub use http_websocket::*;
+pub(crate) use iter::install_iter;
+pub use iter::*;
+pub(crate) use json_builtins::install_json_builtins;
+pub use json_builtins::*;
+pub(crate) use math::install_math;
+pub use math::*;
+pub(crate) use math_big::install_math_big;
+pub use math_big::*;
+pub(crate) use math_bits::install_math_bits;
+pub use math_bits::*;
+pub(crate) use mime::install_mime;
+pub use mime::*;
+pub(crate) use net::install_net;
+pub use net::*;
+pub(crate) use net_ip::install_net_ip;
+pub use net_ip::*;
+pub(crate) use netip::install_netip;
+pub use netip::*;
+pub(crate) use option::install_option;
+pub use option::*;
+pub(crate) use os::install_os_extras;
+pub use os::*;
+pub(crate) use os_user::install_os_user;
+pub use os_user::*;
+pub(crate) use path::install_path;
+pub use path::*;
+pub(crate) use result::install_result;
+pub use result::*;
+pub(crate) use set::install_set;
+pub use set::*;
+pub(crate) use strconv::install_strconv;
+pub use strconv::*;
+pub(crate) use strings::install_strings;
+pub use strings::*;
+pub(crate) use sync::install_sync_extras;
+pub use sync::*;
+pub(crate) use sync_barrier::install_sync_barrier;
+pub use sync_barrier::*;
+pub(crate) use thread::install_thread;
+pub use thread::*;
+pub(crate) use time::install_time_extras;
+pub use time::*;
+pub(crate) use time_completeness::install_time_completeness;
+pub use time_completeness::*;
+pub(crate) use unicode::install_unicode;
+pub use unicode::*;
+pub(crate) use url_escape::install_url_escape;
+pub use url_escape::*;
+pub(crate) use uuid::install_uuid;
+pub use uuid::*;

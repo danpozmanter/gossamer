@@ -51,7 +51,7 @@ mod ty;
 
 pub use emit::{
     BuildError, CompileOutcome, NativeObject, OptProfile, compile_to_object,
-    compile_to_object_at_path, compile_with_fallback, compile_with_fallback_at_path,
+    compile_to_object_at_path, compile_with_fallback, compile_with_fallback_at_path, set_cache_dir,
     set_debug_info, set_opt_profile, set_race_instrumentation, set_reproducible,
     set_strict_lowering, want_race_instrumentation,
 };

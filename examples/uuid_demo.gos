@@ -1,0 +1,34 @@
+/*
+ * UUID generation with `std::uuid`.
+ *
+ * Two flavours: v4 (random) and v7 (timestamp-ordered). Use v4 when
+ * you only need uniqueness; use v7 when you also want insertion-order
+ * locality (great for database primary keys — the leading bits encode
+ * milliseconds since the unix epoch, so newer rows cluster together).
+ *
+ * Strings come back in the canonical hyphenated form. Use
+ * `uuid::simple` to strip hyphens, `uuid::is_valid` to check
+ * user-supplied input, and `uuid::normalize` to lowercase a
+ * mixed-case UUID.
+ */
+
+use std::uuid
+
+fn main() {
+    let id4 = uuid::v4()
+    let id7 = uuid::v7()
+
+    println!("v4 length: {}", id4.len())
+    println!("v7 length: {}", id7.len())
+
+    println!("v4 valid: {}", uuid::is_valid(&id4))
+    println!("v7 valid: {}", uuid::is_valid(&id7))
+    println!("garbage valid: {}", uuid::is_valid("not-a-uuid"))
+
+    let mixed_case = "550E8400-E29B-41D4-A716-446655440000"
+    println!("normalize: {}", uuid::normalize(&mixed_case))
+    println!("simple: {}", uuid::simple(&mixed_case))
+
+    let two_uniques = uuid::v4() != uuid::v4()
+    println!("two v4s differ: {}", two_uniques)
+}

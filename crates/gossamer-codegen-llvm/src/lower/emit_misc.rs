@@ -1,0 +1,581 @@
+#![allow(
+    unused_imports,
+    dead_code,
+    unreachable_pub,
+    missing_docs,
+    clippy::wildcard_imports,
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::similar_names,
+    clippy::many_single_char_names,
+    clippy::items_after_statements,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::option_if_let_else,
+    clippy::match_same_arms,
+    clippy::if_not_else,
+    clippy::single_match_else,
+    clippy::needless_pass_by_value,
+    clippy::manual_let_else,
+    clippy::redundant_else,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::map_unwrap_or,
+    clippy::struct_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::unnecessary_wraps,
+    clippy::large_enum_variant,
+    clippy::if_same_then_else,
+    clippy::single_match,
+    clippy::useless_conversion,
+    clippy::needless_borrows_for_generic_args,
+    clippy::let_and_return,
+    clippy::needless_collect,
+    clippy::elidable_lifetime_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::needless_range_loop,
+    clippy::cognitive_complexity,
+    clippy::unused_io_amount,
+    clippy::ptr_arg,
+    clippy::ptr_as_ptr,
+    clippy::redundant_closure,
+    clippy::redundant_closure_for_method_calls,
+    clippy::semicolon_if_nothing_returned,
+    clippy::single_call_fn,
+    clippy::unused_self,
+    clippy::range_plus_one,
+    clippy::missing_safety_doc,
+    clippy::not_unsafe_ptr_arg_deref,
+    clippy::cast_ptr_alignment,
+    clippy::manual_assert,
+    clippy::manual_string_new,
+    clippy::match_bool,
+    clippy::nonminimal_bool,
+    clippy::redundant_pattern_matching,
+    clippy::useless_let_if_seq
+)]
+#![forbid(unsafe_code)]
+use super::*;
+use std::collections::HashMap;
+use std::fmt::Write as _;
+
+use crate::BuildError;
+use anyhow::Result;
+use gossamer_abi as abi;
+use gossamer_mir::{
+    BasicBlock, BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, Statement,
+    StatementKind, Terminator, UnOp,
+};
+use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
+
+impl<'a> Lowerer<'a> {
+    pub(crate) fn emit_cleanup_call(&mut self, entry: &gossamer_mir::CleanupEntry) {
+        declare_rt(&mut self.runtime_refs, entry.free_fn);
+        let tmp = self.fresh();
+        writeln!(
+            self.out,
+            "  {tmp} = load ptr, ptr {slot}",
+            slot = local_slot(entry.local)
+        )
+        .unwrap();
+        writeln!(
+            self.out,
+            "  call void @{free}(ptr {tmp})",
+            free = entry.free_fn
+        )
+        .unwrap();
+    }
+
+    /// Back-edge safepoint for cooperative preemption. Currently a
+    /// no-op: a runtime call inserted on every loop back-edge
+    /// blocks `opt -O3` from vectorising tight numeric inner loops
+    /// (the call is opaque to alias analysis and the loop
+    /// vectoriser refuses to lift it across iterations), which is
+    /// the difference between sub-1-second and 5+ second runs on
+    /// spectral-norm and n-body. Mirrors the Cranelift backend,
+    /// where the matching insertion point in
+    /// `crates/gossamer-codegen-cranelift/src/native.rs:1723` is
+    /// also a stub. Both backends will gain a real safepoint when
+    /// the runtime grows SIGURG-based async preemption (Track 3
+    /// follow-up); until then the function-level safepoint at the
+    /// scheduler boundary is what limits runaway goroutines.
+    pub(crate) fn emit_preempt_check(&mut self) {
+        let _ = self.preempt_seq;
+    }
+
+    pub(crate) fn fresh_label(&mut self, prefix: &str) -> String {
+        let n = self.next_ssa;
+        self.next_ssa += 1;
+        format!("{prefix}_{n}")
+    }
+
+    /// Audit C6 — dynamic array-index bounds check.
+    ///
+    /// Emits a compare + conditional branch around the
+    /// `getelementptr` for `arr[i]`. The compare is unsigned
+    /// (`uge`) so negative indices (which wrap to large `u64`)
+    /// trip the check without a separate sign branch. On
+    /// out-of-bounds we land in a side block that calls
+    /// `gos_rt_panic_oob` and falls through to `unreachable`,
+    /// keeping the rest of the function well-formed.
+    ///
+    /// Only fires when `ty` (after peeling `Ref` wrappers)
+    /// resolves to `TyKind::Array { len, .. }`. Vec / Slice
+    /// indexing reaches element storage through
+    /// `gos_rt_vec_get_*` intrinsics which check internally —
+    /// the projection path only needs to cover flat fixed
+    /// arrays.
+    ///
+    /// Skipped entirely when `GOSSAMER_DISABLE_BOUNDS_CHECK=1`
+    /// is set in the build environment.
+    pub(crate) fn emit_array_bounds_check(&mut self, ty: Ty, idx_ssa: &str) {
+        if std::env::var_os("GOSSAMER_DISABLE_BOUNDS_CHECK").is_some() {
+            return;
+        }
+        let mut peeled = ty;
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(peeled) {
+            peeled = *inner;
+        }
+        let Some(TyKind::Array { len, .. }) = self.tcx.kind(peeled) else {
+            return;
+        };
+        let len_val = *len;
+        declare_rt(&mut self.runtime_refs, "gos_rt_panic_oob");
+        // Intern the `"array index"` label through the shared
+        // module-wide string pool so multiple checks (in this
+        // body and across the rest of the module) collapse to a
+        // single `@.gstr_*` global.
+        let (label_global, _) = self.strings.borrow_mut().intern("array index");
+        let cond = self.fresh();
+        writeln!(self.out, "  {cond} = icmp uge i64 {idx_ssa}, {len_val}").unwrap();
+        let oob_label = self.fresh_label("oob");
+        let ok_label = self.fresh_label("oob_ok");
+        writeln!(
+            self.out,
+            "  br i1 {cond}, label %{oob_label}, label %{ok_label}"
+        )
+        .unwrap();
+        writeln!(self.out, "{oob_label}:").unwrap();
+        writeln!(
+            self.out,
+            "  call void @gos_rt_panic_oob(ptr {label_global}, i64 {idx_ssa}, i64 {len_val})"
+        )
+        .unwrap();
+        writeln!(self.out, "  unreachable").unwrap();
+        writeln!(self.out, "{ok_label}:").unwrap();
+    }
+
+    /// Emits one runtime print call per argument, dispatching
+    /// by the operand's MIR type. When `separator` is non-empty,
+    /// emits a `gos_rt_print_str(separator)` call between each
+    /// pair of args (used by `println(a, b, c)` for the
+    /// space-separated form; empty for `__concat`'s tight join).
+    pub(crate) fn emit_per_arg_print(
+        &mut self,
+        args: &[Operand],
+        separator: &str,
+    ) -> Result<(), BuildError> {
+        for sym in [
+            "gos_rt_print_str",
+            "gos_rt_print_i64",
+            "gos_rt_print_u64",
+            "gos_rt_print_f64",
+            "gos_rt_print_bool",
+            "gos_rt_print_char",
+        ] {
+            declare_rt(&mut self.runtime_refs, sym);
+        }
+        let sep_name = if separator.is_empty() {
+            None
+        } else {
+            Some(self.strings.borrow_mut().intern(separator).0)
+        };
+        for (idx, arg) in args.iter().enumerate() {
+            if idx > 0 {
+                if let Some(name) = &sep_name {
+                    writeln!(self.out, "  call void @gos_rt_print_str(ptr {name})").unwrap();
+                }
+            }
+            let kind = self.concat_print_kind(arg);
+            if matches!(kind, ConcatKind::Unsupported) {
+                // Surface a generic "unsupported" so the driver
+                // routes this body to Cranelift, whose `bail!`
+                // emits a user-facing message naming the
+                // specific operand kind (tuple, Vec, struct, …).
+                return Err(BuildError::Unsupported(
+                    "println/format of aggregate or variant types",
+                ));
+            }
+            let value = self.lower_operand(arg)?;
+            match kind {
+                ConcatKind::StrPtr => {
+                    writeln!(self.out, "  call void @gos_rt_print_str(ptr {value})").unwrap();
+                }
+                ConcatKind::Int => {
+                    let widened = self.widen_to_i64(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_print_i64(i64 {widened})").unwrap();
+                }
+                ConcatKind::Uint => {
+                    let widened = self.widen_to_u64(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_print_u64(i64 {widened})").unwrap();
+                }
+                ConcatKind::Float => {
+                    let widened = self.widen_to_f64(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_print_f64(double {widened})").unwrap();
+                }
+                ConcatKind::Bool => {
+                    let widened = self.widen_bool_to_i32(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_print_bool(i32 {widened})").unwrap();
+                }
+                ConcatKind::Char => {
+                    let widened = self.widen_char_to_i32(arg, &value);
+                    writeln!(self.out, "  call void @gos_rt_print_char(i32 {widened})").unwrap();
+                }
+                kind @ (ConcatKind::VecI64
+                | ConcatKind::VecF64
+                | ConcatKind::VecBool
+                | ConcatKind::VecString
+                | ConcatKind::VecVecI64
+                | ConcatKind::ArrI64(_)
+                | ConcatKind::ArrF64(_)
+                | ConcatKind::ArrBool(_)
+                | ConcatKind::ArrString(_)
+                | ConcatKind::JsonValue
+                | ConcatKind::ErrorMessage) => {
+                    let str_ptr = self.emit_aggregate_format(kind, &value);
+                    writeln!(self.out, "  call void @gos_rt_print_str(ptr {str_ptr})").unwrap();
+                }
+                ConcatKind::Unsupported => unreachable!("checked above"),
+            }
+        }
+        Ok(())
+    }
+
+    /// Builds a single concatenated c-string from every argument
+    /// and stores its pointer in `dest_ssa`. Each arg is
+    /// converted through `gos_rt_*_to_str` (or passed through for
+    /// strings); pieces are joined with `separator` via
+    /// `gos_rt_str_concat`. Used by multi-arg `panic(...)` where
+    /// the runtime takes a single message pointer.
+    pub(crate) fn emit_args_to_concat_string(
+        &mut self,
+        args: &[Operand],
+        separator: &str,
+    ) -> Result<String, BuildError> {
+        declare_rt(&mut self.runtime_refs, "gos_rt_str_concat");
+        let (empty_name, _) = self.strings.borrow_mut().intern("");
+        if args.is_empty() {
+            return Ok(empty_name);
+        }
+        let sep_name = if separator.is_empty() {
+            None
+        } else {
+            Some(self.strings.borrow_mut().intern(separator).0)
+        };
+        let mut acc = self.lower_arg_to_str_ptr(&args[0])?;
+        for arg in &args[1..] {
+            if let Some(name) = &sep_name {
+                let next = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {next} = call ptr @gos_rt_str_concat(ptr {acc}, ptr {name})"
+                )
+                .unwrap();
+                acc = next;
+            }
+            let piece = self.lower_arg_to_str_ptr(arg)?;
+            let next = self.fresh();
+            writeln!(
+                self.out,
+                "  {next} = call ptr @gos_rt_str_concat(ptr {acc}, ptr {piece})"
+            )
+            .unwrap();
+            acc = next;
+        }
+        Ok(acc)
+    }
+
+    /// Emits the result of a variant constructor call without
+    /// going through a real function symbol. `Ok(v)`, `Some(v)`,
+    /// and `Err(e)` write the inner value to the destination;
+    /// payload-less variants write zero. Coerces the inner
+    /// value's LLVM type to the destination's slot type so the
+    /// emitted store is well-formed even when the wrapper Adt
+    /// renders as `ptr` and the inner value is a plain `i64` /
+    /// `double`.
+    pub(crate) fn emit_variant_stub(
+        &mut self,
+        name: &str,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let dest_ty_mir = self.body.local_ty(destination.local);
+        let dest_ty = render_ty(self.tcx, dest_ty_mir);
+        if dest_ty == "void" || is_unit(self.tcx, dest_ty_mir) {
+            emit_terminator_branch(&mut self.out, target);
+            return Ok(());
+        }
+        let (value, value_ty): (String, String) =
+            if matches!(name, "Ok" | "Some" | "Err") && !args.is_empty() {
+                let v = self.lower_operand(&args[0])?;
+                let vt = self.operand_llvm_ty(&args[0]);
+                (v, vt)
+            } else {
+                let zero = match dest_ty.as_str() {
+                    "ptr" => "null".to_string(),
+                    "double" | "float" => "0.0".to_string(),
+                    _ => "0".to_string(),
+                };
+                (zero, dest_ty.clone())
+            };
+        let coerced = self.coerce_llvm_value(&value, &value_ty, &dest_ty);
+        let slot = local_slot(destination.local);
+        writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Direct call to a named symbol: renders args, emits the
+    /// `call`, stores the result if non-unit, and writes the
+    /// outgoing branch / unreachable.
+    pub(crate) fn emit_named_call(
+        &mut self,
+        symbol: &str,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let expected_param_tys: Vec<Option<Ty>> = self
+            .param_tys_by_name
+            .get(symbol)
+            .map(|tys| tys.iter().map(|t| Some(*t)).collect())
+            .unwrap_or_default();
+        // For `gos_rt_*` symbols, the runtime registry gives us
+        // canonical LLVM parameter types — drive the emission off
+        // those rather than the per-call operand types so that a
+        // Unit-typed operand still lands as a valid i64 / ptr at
+        // the call site (matches the dedup'd canonical declare
+        // emitted above).
+        let registry_param_llvm: Vec<String> = if symbol.starts_with("gos_rt_") {
+            gossamer_abi::lookup(symbol)
+                .map(|e| {
+                    e.sig
+                        .params
+                        .iter()
+                        .map(|p| p.llvm_ir().to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        // `gos_rt_chan_send` / `gos_rt_chan_try_send` expect their
+        // second argument to be `*const u8` — a pointer to a
+        // memory slot holding the value bytes (the runtime
+        // memcpys `chan.elem_bytes` from there). Stack-spill the
+        // value and pass the slot address, matching the
+        // Cranelift backend; a bare `inttoptr i64 N to ptr`
+        // produces a wild pointer that segfaults inside the
+        // runtime's `push_back`.
+        let chan_send_spill = matches!(symbol, "gos_rt_chan_send" | "gos_rt_chan_try_send");
+        // See `lower_runtime_call_intrinsic` for rationale: heap-copy
+        // aggregate payloads passed to `gos_rt_result_new` so the
+        // caller's stack alloca doesn't go dangling after return.
+        let result_new_heap_copy = matches!(symbol, "gos_rt_result_new");
+        let mut arg_text = String::new();
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                arg_text.push_str(", ");
+            }
+            let want = expected_param_tys.get(i).copied().flatten();
+            let (a_v, mut a_ty) = self.lower_call_arg(arg, want)?;
+            if result_new_heap_copy
+                && i == 1
+                && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
+            {
+                let _ = write!(arg_text, "i64 {heap_v}");
+                continue;
+            }
+            if chan_send_spill && i == 1 {
+                let slot = self.fresh();
+                writeln!(self.out, "  {slot} = alloca i64").unwrap();
+                let stored_ty;
+                let stored_val;
+                if a_ty == "ptr" {
+                    stored_ty = "ptr".to_string();
+                    stored_val = a_v.clone();
+                } else if a_ty == "double" || a_ty == "float" {
+                    stored_ty = "double".to_string();
+                    stored_val = a_v.clone();
+                } else if a_ty.starts_with('i') && a_ty != "i64" {
+                    let widened = self.fresh();
+                    writeln!(self.out, "  {widened} = zext {a_ty} {a_v} to i64").unwrap();
+                    stored_ty = "i64".to_string();
+                    stored_val = widened;
+                } else {
+                    stored_ty = "i64".to_string();
+                    stored_val = a_v.clone();
+                }
+                writeln!(self.out, "  store {stored_ty} {stored_val}, ptr {slot}").unwrap();
+                let _ = write!(arg_text, "ptr {slot}");
+                continue;
+            }
+            // If `a_ty` came back as `void` (Unit operand) or as
+            // a different ABI-compatible shape than the registry
+            // declares, coerce so the call instruction's argument
+            // types match the dedup'd canonical declaration.
+            if let Some(want_ty) = registry_param_llvm.get(i) {
+                if a_ty == "void" || a_ty.is_empty() {
+                    let zero = match want_ty.as_str() {
+                        "ptr" => "null".to_string(),
+                        "double" => "0.0".to_string(),
+                        _ => "0".to_string(),
+                    };
+                    let _ = write!(arg_text, "{want_ty} {zero}");
+                    continue;
+                }
+                if &a_ty != want_ty {
+                    let coerced = self.coerce_llvm_value(&a_v, &a_ty, want_ty);
+                    let _ = write!(arg_text, "{want_ty} {coerced}");
+                    a_ty.clone_from(want_ty);
+                    let _ = a_ty;
+                    continue;
+                }
+            }
+            let _ = write!(arg_text, "{a_ty} {a_v}");
+        }
+        let dest_ty_mir = self.body.local_ty(destination.local);
+        let dest_ty = render_ty(self.tcx, dest_ty_mir);
+
+        // Every `gos_rt_*` declaration MUST come from the typed
+        // ABI registry — that's the single source of truth for the
+        // LLVM IR shape. `declare_rt` panics on an unknown symbol,
+        // which is the correct behaviour: the prior synthesised
+        // path invented a signature from operand types at the call
+        // site, and a stale or mistyped operand would silently
+        // emit a `declare` whose params didn't match the runtime's
+        // C-ABI definition, producing miscompiles instead of a
+        // build-time error. User-defined functions are defined in
+        // this module and need no `declare`.
+        if symbol.starts_with("gos_rt_") {
+            declare_rt(&mut self.runtime_refs, symbol);
+        }
+
+        // Look up the registry's canonical return type for
+        // `gos_rt_*` symbols. The call instruction's return type
+        // drives the x86_64 calling convention's read register
+        // (rax for integer / ptr, xmm0 for double on both SysV
+        // and Win64). When the surrounding code writes a runtime
+        // helper's result into a destination slot whose type
+        // differs from the helper's declared return (e.g. reading
+        // an f64 element out of a `Vec<f64>` via the i64-shaped
+        // `gos_rt_vec_get_i64`), the call MUST be typed with the
+        // helper's actual return so the caller reads the right
+        // register. Linux SysV LLVM 18 happens to normalise the
+        // mismatch through the `declare i64` line and a memory
+        // spill/reload pair; Windows mingw-w64-x86_64-llvm 18
+        // does NOT — it honours the call-site type literally, so
+        // the caller reads xmm0 while the function wrote rax and
+        // the load yields stale FP state instead of the i64 we
+        // returned. The visible symptom on Windows was
+        // `halved[0] = 2` instead of `0.5` for any `Fn(f64) ->
+        // f64` closure result threaded through
+        // `gos_rt_vec_get_i64` (the closure result bytes never
+        // made it through the read).
+        let registry_ret: Option<String> = if symbol.starts_with("gos_rt_") {
+            gossamer_abi::lookup(symbol).map(|e| e.sig.ret.llvm_ir().to_string())
+        } else {
+            None
+        };
+        let dest_is_void = dest_ty == "void" || is_unit(self.tcx, dest_ty_mir);
+        let registry_says_void = registry_ret.as_deref() == Some("void");
+        if dest_is_void || registry_says_void {
+            // Either the destination is unit-typed (caller
+            // discards the return) or the registry declares the
+            // helper as `void`. Emit a void call; if the dest is
+            // non-unit but the helper returns void, fill the
+            // slot with a zero of the dest's shape so any
+            // accidental read doesn't see undefined memory.
+            writeln!(self.out, "  call void @\"{symbol}\"({arg_text})").unwrap();
+            if !dest_is_void {
+                let slot = local_slot(destination.local);
+                let zero = match dest_ty.as_str() {
+                    "ptr" => "null".to_string(),
+                    "double" | "float" => "0.0".to_string(),
+                    _ => "0".to_string(),
+                };
+                writeln!(self.out, "  store {dest_ty} {zero}, ptr {slot}").unwrap();
+            }
+        } else {
+            let tmp = self.fresh();
+            // Aggregate destinations always come back as a heap
+            // pointer; use dest_ty (typically "ptr") for them so
+            // the subsequent memcpy / store sees the right
+            // shape. Non-aggregate destinations get the
+            // registry's return type when one exists, falling
+            // back to dest_ty otherwise.
+            let call_ret_ty = if is_aggregate(self.tcx, dest_ty_mir) {
+                dest_ty.clone()
+            } else {
+                registry_ret.clone().unwrap_or_else(|| dest_ty.clone())
+            };
+            writeln!(
+                self.out,
+                "  {tmp} = call {call_ret_ty} @\"{symbol}\"({arg_text})"
+            )
+            .unwrap();
+            let slot = local_slot(destination.local);
+            if is_aggregate(self.tcx, dest_ty_mir) {
+                // Aggregate return: the callee handed us a heap
+                // pointer to fresh storage. Copy it into our
+                // destination's inline alloca so subsequent field
+                // reads use the same flat-slot shape that locally
+                // built aggregates use.
+                let bytes = u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8;
+                writeln!(
+                    self.out,
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr {tmp}, i64 {bytes}, i1 false)"
+                )
+                .unwrap();
+            } else if call_ret_ty != dest_ty {
+                // Registry-typed call result differs from the
+                // destination slot's MIR-derived shape. The
+                // runtime helpers (gos_rt_vec_get_i64,
+                // gos_rt_arr_get, …) store and return values as
+                // raw 8-byte slots regardless of source type, so
+                // the i64 → double / i64 → ptr conversion at the
+                // boundary is a bit-reinterpret, NOT a numeric
+                // conversion. Reach for `bitcast` (and ptr-int
+                // detours) directly instead of going through
+                // `coerce_llvm_value`, whose i64↔double path uses
+                // `sitofp` / `fptosi` semantics which would turn
+                // the bit pattern of `0.5` (0x3FE0…) into the
+                // f64 value `4.5e18`.
+                let coerced = if call_ret_ty == "i64" && (dest_ty == "double" || dest_ty == "float")
+                {
+                    let mid = self.fresh();
+                    writeln!(self.out, "  {mid} = bitcast i64 {tmp} to {dest_ty}").unwrap();
+                    mid
+                } else if (call_ret_ty == "double" || call_ret_ty == "float") && dest_ty == "i64" {
+                    let mid = self.fresh();
+                    writeln!(self.out, "  {mid} = bitcast {call_ret_ty} {tmp} to i64").unwrap();
+                    mid
+                } else {
+                    self.coerce_llvm_value(&tmp, &call_ret_ty, &dest_ty)
+                };
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            } else {
+                writeln!(self.out, "  store {dest_ty} {tmp}, ptr {slot}").unwrap();
+            }
+        }
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+}

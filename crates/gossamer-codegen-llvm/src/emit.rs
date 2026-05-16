@@ -90,13 +90,10 @@ pub fn compile_to_object(bodies: &[Body], tcx: &TyCtxt) -> Result<NativeObject> 
     let ll_path = tmp_dir.join("unit.ll");
     let _ = render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ false)?;
     let obj_path = tmp_dir.join("unit.o");
-    invoke_llc_pipeline(&ll_path, &obj_path, &triple)?;
+    invoke_llc_pipeline(&ll_path, &obj_path, &triple, /*announce=*/ true)?;
     let bytes =
         std::fs::read(&obj_path).with_context(|| format!("reading {}", obj_path.display()))?;
-    let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
-    if keep_artifacts {
-        eprintln!("llvm backend: IR at {}", ll_path.display());
-    } else {
+    if std::env::var("GOS_LLVM_DUMP").is_err() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
     Ok(NativeObject { triple, bytes })
@@ -118,14 +115,527 @@ pub fn compile_to_object_at_path(
     let tmp_dir = pipeline_tmp_dir()?;
     let ll_path = tmp_dir.join("unit.ll");
     let _ = render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ false)?;
-    invoke_llc_pipeline(&ll_path, obj_out, &triple)?;
-    let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
-    if keep_artifacts {
-        eprintln!("llvm backend: IR at {}", ll_path.display());
-    } else {
+    invoke_llc_pipeline(&ll_path, obj_out, &triple, /*announce=*/ true)?;
+    if std::env::var("GOS_LLVM_DUMP").is_err() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
     Ok(triple)
+}
+
+// ---------------------------------------------------------------------------
+// P2 + P3: parallel per-body compilation with incremental object cache
+// ---------------------------------------------------------------------------
+
+/// Maximum number of concurrent `opt`+`llc` worker threads.
+const PARALLEL_MAX_THREADS: usize = 8;
+
+/// Minimum bodies per parallel chunk, preserving inlining across small programs.
+///
+/// When a hot helper is compiled in a separate chunk from its caller, opt cannot
+/// inline it across the module boundary. Keeping chunks at >= 10 bodies ensures
+/// small programs stay in one module (full inlining) while large programs still
+/// benefit from parallel codegen.
+const MIN_BODIES_PER_CHUNK: usize = 10;
+
+/// FNV-1a 64-bit hash — deterministic, no `std` hasher randomisation,
+/// so cache keys are stable across process restarts.
+fn fnv1a_64(data: &[u8]) -> u64 {
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut h = OFFSET;
+    for &b in data {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(PRIME);
+    }
+    h
+}
+
+/// Stable cache key for one body: mixes the body name, its complete
+/// MIR debug representation, the target triple, and the opt profile.
+/// Any change to the MIR (new statement, reordered block, type fix)
+/// rotates the key and forces a recompile.
+fn body_cache_key(body: &Body, triple: &str, profile: OptProfile) -> String {
+    let h_name = fnv1a_64(body.name.as_bytes());
+    let h_mir = fnv1a_64(format!("{body:?}").as_bytes());
+    let h_triple = fnv1a_64(triple.as_bytes());
+    let profile_bit: u64 = u64::from(!matches!(profile, OptProfile::Debug));
+    let combined = h_name
+        ^ h_mir.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ h_triple.wrapping_mul(0x6c62_272e_07bb_0142)
+        ^ profile_bit;
+    format!("{combined:016x}")
+}
+
+/// Process-level override for the incremental cache directory.
+/// Set by [`set_cache_dir`]; takes precedence over `GOS_BUILD_CACHE`
+/// and the platform default.
+static CACHE_DIR_OVERRIDE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+
+/// Configures the incremental object cache directory for subsequent
+/// builds. Calling this before the first `compile_with_fallback_at_path`
+/// lets the CLI anchor the cache next to the project (or in a CI-
+/// controlled location) without relying on the `GOS_BUILD_CACHE` env
+/// var. Has no effect if called after the first cache lookup.
+pub fn set_cache_dir(dir: PathBuf) {
+    let _ = CACHE_DIR_OVERRIDE.set(Some(dir));
+}
+
+/// Resolves the active incremental cache directory in priority order:
+/// 1. [`set_cache_dir`] override (process-level)
+/// 2. `GOS_BUILD_CACHE` env var
+/// 3. `XDG_CACHE_HOME/gossamer/ir-cache` (Linux/macOS XDG)
+/// 4. `$HOME/.cache/gossamer/ir-cache`
+/// 5. `%LOCALAPPDATA%\gossamer\ir-cache` (Windows)
+///
+/// Returns `None` when `GOS_NO_CACHE=1` is set or no home dir can be
+/// found.
+fn active_cache_dir() -> Option<PathBuf> {
+    if let Some(Some(dir)) = CACHE_DIR_OVERRIDE.get() {
+        return Some(dir.clone());
+    }
+    if std::env::var("GOS_NO_CACHE").is_ok() {
+        return None;
+    }
+    if let Ok(d) = std::env::var("GOS_BUILD_CACHE") {
+        return Some(PathBuf::from(d));
+    }
+    if cfg!(windows) {
+        return std::env::var_os("LOCALAPPDATA")
+            .map(|d| PathBuf::from(d).join("gossamer").join("ir-cache"));
+    }
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        return Some(PathBuf::from(xdg).join("gossamer").join("ir-cache"));
+    }
+    std::env::var_os("HOME").map(|h| {
+        PathBuf::from(h)
+            .join(".cache")
+            .join("gossamer")
+            .join("ir-cache")
+    })
+}
+
+/// Variant of [`render_shape_thunk`] that uses `linkonce_odr` linkage
+/// instead of the default `define`. Required in per-body modules where
+/// the same thunk shape may be emitted by multiple compilation units —
+/// `linkonce_odr` lets the linker keep one copy and discard the rest
+/// without a duplicate-symbol error.
+fn render_shape_thunk_linkonce(name: &str) -> Option<String> {
+    let suffix = name.strip_prefix("__fn_thunk_")?;
+    let (inputs_str, ret_str) = suffix.rsplit_once('_')?;
+    let ret_char = ret_str.chars().next()?;
+    let ret_ty = shape_char_to_llvm_ty(ret_char)?;
+    let mut input_tys: Vec<&'static str> = Vec::with_capacity(inputs_str.len());
+    for c in inputs_str.chars() {
+        input_tys.push(shape_char_to_llvm_ty(c)?);
+    }
+    let unit_ret = ret_char == 'u';
+    let mut out = String::new();
+    let header_ret = if unit_ret { "void" } else { ret_ty };
+    let mut params = String::from("ptr %env");
+    for (i, t) in input_tys.iter().enumerate() {
+        let _ = write!(params, ", {t} %a{i}");
+    }
+    // `linkonce_odr` — identical definitions across objects; linker keeps one.
+    let _ = writeln!(
+        out,
+        "define linkonce_odr {header_ret} @\"{name}\"({params}) {{"
+    );
+    writeln!(out, "entry:").unwrap();
+    writeln!(out, "  %fn_ptr_addr = getelementptr i8, ptr %env, i64 8").unwrap();
+    writeln!(out, "  %fn_ptr = load ptr, ptr %fn_ptr_addr").unwrap();
+    let mut call_args = String::new();
+    for (i, t) in input_tys.iter().enumerate() {
+        if i > 0 {
+            call_args.push_str(", ");
+        }
+        let _ = write!(call_args, "{t} %a{i}");
+    }
+    if unit_ret {
+        let _ = writeln!(out, "  call void %fn_ptr({call_args})");
+        writeln!(out, "  ret void").unwrap();
+    } else {
+        let _ = writeln!(out, "  %r = call {ret_ty} %fn_ptr({call_args})");
+        let _ = writeln!(out, "  ret {ret_ty} %r");
+    }
+    writeln!(out, "}}").unwrap();
+    Some(out)
+}
+
+/// Shared, program-wide context threaded into each per-body renderer.
+struct ModuleCtx<'a> {
+    all_bodies: &'a [Body],
+    tcx: &'a TyCtxt,
+    fn_name_by_def: &'a std::collections::HashMap<u32, String>,
+    param_tys_by_name: &'a std::collections::HashMap<String, Vec<gossamer_types::Ty>>,
+    capture_summary: &'a gossamer_mir::CaptureSummary,
+    triple: &'a str,
+    allow_fallback: bool,
+}
+
+/// Mixes per-body cache keys for all bodies in a chunk into a single
+/// chunk-level cache key. Stable across process restarts (FNV-1a).
+fn chunk_cache_key(
+    chunk_indices: &[usize],
+    bodies: &[Body],
+    triple: &str,
+    profile: OptProfile,
+) -> String {
+    const PRIME: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut h = fnv1a_64(b"chunk-v1");
+    for (pos, &idx) in chunk_indices.iter().enumerate() {
+        let body_key = body_cache_key(&bodies[idx], triple, profile);
+        h ^= fnv1a_64(body_key.as_bytes()).wrapping_mul(PRIME.wrapping_add(pos as u64));
+    }
+    format!("{h:016x}")
+}
+
+/// Renders all bodies in `chunk_indices` as a single LLVM IR module.
+///
+/// Bodies not in the chunk get `declare` stubs; bodies in the chunk get
+/// `define`. Falls-back bodies (unsupported lowering) are appended to
+/// `fallback_bodies` and emitted as `declare` stubs instead of `define`.
+/// The C `@main` shim is included whenever `main` appears in `chunk_indices`,
+/// regardless of whether it was LLVM-lowered or fell back: when it falls
+/// back, `@"gos_main"` is an extern resolved at link time by Cranelift.
+fn render_chunk_module(
+    chunk_indices: &[usize],
+    ctx: &ModuleCtx<'_>,
+    fallback_bodies: &mut Vec<String>,
+) -> Result<String, BuildError> {
+    let chunk_set: std::collections::HashSet<usize> = chunk_indices.iter().copied().collect();
+
+    let string_pool =
+        std::rc::Rc::new(std::cell::RefCell::new(crate::lower::StringPool::default()));
+
+    let mut body_irs: Vec<String> = Vec::new();
+    let mut globals_raw: Vec<String> = Vec::new();
+    let mut thunk_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut chunk_fallback_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut main_idx: Option<usize> = None;
+
+    for &idx in chunk_indices {
+        let body = &ctx.all_bodies[idx];
+        if body.name == "main" {
+            main_idx = Some(idx);
+        }
+
+        let mut lowerer = crate::lower::Lowerer::new(body, ctx.tcx);
+        lowerer.fn_name_by_def.clone_from(ctx.fn_name_by_def);
+        lowerer.param_tys_by_name.clone_from(ctx.param_tys_by_name);
+        lowerer.strings = string_pool.clone();
+        lowerer.capture_summary = ctx.capture_summary.clone();
+
+        match lowerer.lower() {
+            Ok(text) => {
+                globals_raw.extend(lowerer.take_module_globals());
+                collect_thunk_names_in_body(body, &mut thunk_names);
+                body_irs.push(text);
+            }
+            Err(BuildError::Unsupported(msg)) => {
+                if want_strict_lowering() {
+                    return Err(BuildError::Unsupported(msg));
+                }
+                if ctx.allow_fallback {
+                    if std::env::var("GOS_LLVM_TRACE").is_ok() {
+                        eprintln!(
+                            "llvm backend: routing `{}` to Cranelift fallback ({msg})",
+                            body.name,
+                        );
+                    }
+                    fallback_bodies.push(body.name.clone());
+                    chunk_fallback_set.insert(idx);
+                } else {
+                    return Err(BuildError::Unsupported(msg));
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    let mut out = String::new();
+    writeln!(out, "; ModuleID = \"gossamer\"").unwrap();
+    writeln!(out, "target triple = \"{}\"", ctx.triple).unwrap();
+    writeln!(out).unwrap();
+    for d in LLVM_SPECIAL_DECLS {
+        writeln!(out, "{d}").unwrap();
+    }
+    writeln!(out).unwrap();
+
+    // Extern declares for bodies outside the chunk plus fallback bodies inside it.
+    for (i, body) in ctx.all_bodies.iter().enumerate() {
+        if !chunk_set.contains(&i) || chunk_fallback_set.contains(&i) {
+            let decl = extern_declare(body, ctx.tcx);
+            out.push_str(decl.trim_end());
+            writeln!(out).unwrap();
+        }
+    }
+    writeln!(out).unwrap();
+
+    // Runtime declares — dedup by symbol name.
+    let mut emitted_syms: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for g in &globals_raw {
+        if let Ok(()) = validate_global_decl_shape(g) {
+            if let Some(rest) = g.strip_prefix("declare ") {
+                if let Some(at_idx) = rest.find('@')
+                    && let Some(open_idx) = rest[at_idx..].find('(')
+                {
+                    let sym = &rest[at_idx + 1..at_idx + open_idx];
+                    let sym = sym.trim_matches('"');
+                    if !emitted_syms.insert(sym.to_string()) {
+                        continue;
+                    }
+                }
+            }
+            writeln!(out, "{g}").unwrap();
+        }
+    }
+    if !globals_raw.is_empty() {
+        writeln!(out).unwrap();
+    }
+
+    // String pool — `private` so sequential IDs are safe within the chunk.
+    let pool_text = string_pool.borrow().render();
+    if !pool_text.is_empty() {
+        out.push_str(&pool_text);
+        writeln!(out).unwrap();
+    }
+
+    for ir in &body_irs {
+        out.push_str(ir);
+        writeln!(out).unwrap();
+    }
+
+    // Closure thunks — `linkonce_odr` so the linker deduplicates across chunks.
+    for name in &thunk_names {
+        if let Some(thunk) = render_shape_thunk_linkonce(name) {
+            out.push_str(&thunk);
+            writeln!(out).unwrap();
+        }
+    }
+
+    // C `@main` shim lives in the chunk that owns `main`. Emitted whether
+    // or not `main` was LLVM-lowered: when it fell back, `@"gos_main"` is
+    // declared extern above and resolved at link time by the Cranelift companion.
+    if let Some(idx) = main_idx {
+        let main_body = &ctx.all_bodies[idx];
+        let ret_is_unit = matches!(
+            ctx.tcx
+                .kind(main_body.local_ty(gossamer_mir::Local::RETURN)),
+            Some(gossamer_types::TyKind::Unit)
+        );
+        writeln!(out, "define i32 @main(i32 %argc, ptr %argv) {{").unwrap();
+        writeln!(out, "entry:").unwrap();
+        writeln!(out, "  call void @gos_rt_set_args(i32 %argc, ptr %argv)").unwrap();
+        if ret_is_unit {
+            writeln!(out, "  call void @\"gos_main\"()").unwrap();
+            writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
+            writeln!(out, "  ret i32 0").unwrap();
+        } else {
+            writeln!(out, "  %r = call i64 @\"gos_main\"()").unwrap();
+            writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
+            writeln!(out, "  %code = call i32 @gos_rt_main_exit_code(i64 %r)").unwrap();
+            writeln!(out, "  ret i32 %code").unwrap();
+        }
+        writeln!(out, "}}").unwrap();
+    }
+
+    writeln!(out).unwrap();
+    writeln!(out, "!0 = !{{}}").unwrap();
+
+    Ok(out)
+}
+
+/// Core of the P2+P3 build path.
+///
+/// **Phase 1 (incremental — P3):** bodies are partitioned into N chunks
+/// where N is capped by both `PARALLEL_MAX_THREADS` and a minimum
+/// bodies-per-chunk threshold (10). The threshold keeps hot callees in
+/// the same module as their callers so opt can inline across them; a
+/// 3-body program like `spectralnorm` compiles as one module with full
+/// inlining, while a 78-body program like `ironknight` splits into 8
+/// chunks for parallel compilation. Each chunk's cache key mixes the
+/// per-body MIR hashes for all bodies it covers.
+///
+/// **Phase 2 (rendering — serial):** cache-miss chunks are lowered to
+/// LLVM IR via [`render_chunk_module`]. Each chunk gets one `.ll` with
+/// all its bodies defined plus extern declares for bodies in other chunks.
+/// Rendering is serial because [`Lowerer`] uses `Rc<RefCell<_>>` state
+/// that is not `Send`; at ~microseconds per body the serial cost is
+/// negligible compared to `opt`+`llc`.
+///
+/// **Phase 3 (compilation — parallel — P2):** one `opt`+`llc` process
+/// pair per chunk, all N running concurrently. Process-launch overhead is
+/// bounded to N invocations regardless of program size — for 78 bodies
+/// on 8 threads this is 8 launches instead of 78.
+///
+/// Returns `(object_paths, triple, fallback_body_names)`.
+fn compile_bodies_parallel_incremental(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    obj_dir: &std::path::Path,
+    allow_fallback: bool,
+) -> Result<(Vec<PathBuf>, String, Vec<String>)> {
+    let triple = host_triple();
+    let profile = opt_profile();
+    let dump = std::env::var("GOS_LLVM_DUMP").is_ok();
+
+    // Precompute program-wide lookup tables shared across all lowerers.
+    let mut fn_name_by_def: std::collections::HashMap<u32, String> =
+        std::collections::HashMap::new();
+    let mut param_tys_by_name: std::collections::HashMap<String, Vec<gossamer_types::Ty>> =
+        std::collections::HashMap::new();
+    for body in bodies {
+        if let Some(def) = body.def {
+            fn_name_by_def.insert(def.local, body.name.clone());
+        }
+        let param_tys: Vec<gossamer_types::Ty> = (0..body.arity)
+            .map(|i| body.local_ty(gossamer_mir::Local(i + 1)))
+            .collect();
+        param_tys_by_name.insert(body.name.clone(), param_tys);
+    }
+    let capture_summary = gossamer_mir::build_capture_summary(bodies);
+
+    let cache_dir = active_cache_dir().filter(|_| !dump);
+    if let Some(ref cd) = cache_dir {
+        let _ = std::fs::create_dir_all(cd);
+    }
+
+    let ctx = ModuleCtx {
+        all_bodies: bodies,
+        tcx,
+        fn_name_by_def: &fn_name_by_def,
+        param_tys_by_name: &param_tys_by_name,
+        capture_summary: &capture_summary,
+        triple: &triple,
+        allow_fallback,
+    };
+
+    // Partition all bodies into N chunks. Chunk assignment is deterministic
+    // so the cache key is stable across builds with identical bodies.
+    //
+    let ideal_n_chunks = PARALLEL_MAX_THREADS.min(bodies.len());
+    let n_chunks = ideal_n_chunks
+        .min(bodies.len().div_ceil(MIN_BODIES_PER_CHUNK))
+        .max(1);
+    let chunk_size = bodies.len().div_ceil(n_chunks);
+
+    // ---------------------------------------------------------------
+    // Phase 1 — chunk-level incremental cache check
+    // ---------------------------------------------------------------
+    let mut result_objects: Vec<(usize, PathBuf)> = Vec::new(); // (chunk_idx, path)
+    // (chunk_idx, body_indices, ll_path, obj_path)
+    let mut chunks_to_compile: Vec<(usize, Vec<usize>, PathBuf, PathBuf)> = Vec::new();
+    let mut fallback_bodies: Vec<String> = Vec::new();
+
+    for (chunk_idx, chunk_start) in (0..bodies.len()).step_by(chunk_size).enumerate() {
+        let chunk_end = bodies.len().min(chunk_start + chunk_size);
+        let body_indices: Vec<usize> = (chunk_start..chunk_end).collect();
+        let obj_path = obj_dir.join(format!("chunk{chunk_idx}.o"));
+        let ll_path = obj_dir.join(format!("chunk{chunk_idx}.ll"));
+
+        let key = chunk_cache_key(&body_indices, bodies, &triple, profile);
+        if let Some(hit) = cache_dir
+            .as_ref()
+            .map(|cd| cd.join(format!("{key}.o")))
+            .filter(|p| p.exists())
+        {
+            if std::fs::copy(&hit, &obj_path).is_ok() {
+                result_objects.push((chunk_idx, obj_path));
+                continue;
+            }
+        }
+        chunks_to_compile.push((chunk_idx, body_indices, ll_path, obj_path));
+    }
+
+    if chunks_to_compile.is_empty() {
+        result_objects.sort_by_key(|(i, _)| *i);
+        return Ok((
+            result_objects.into_iter().map(|(_, p)| p).collect(),
+            triple,
+            fallback_bodies,
+        ));
+    }
+
+    // ---------------------------------------------------------------
+    // Phase 2 — render chunk .ll files (serial)
+    // ---------------------------------------------------------------
+    for (_, body_indices, ll_path, _) in &chunks_to_compile {
+        let ir =
+            render_chunk_module(body_indices, &ctx, &mut fallback_bodies).map_err(|e| match e {
+                BuildError::Unsupported(msg) => anyhow!("llvm backend: unsupported: {msg}"),
+                BuildError::Tool(msg) => anyhow!("llvm backend: tool: {msg}"),
+                BuildError::Io(err) => err,
+            })?;
+        std::fs::write(ll_path, ir.as_bytes())
+            .with_context(|| format!("writing {}", ll_path.display()))?;
+    }
+
+    // Stitch chunk files into unit.ll for tools / tests that expect
+    // "llvm backend: IR at <path>" on stderr when GOS_LLVM_DUMP=1.
+    if dump {
+        let dump_path = obj_dir.join("unit.ll");
+        if let Ok(mut f) = std::fs::File::create(&dump_path) {
+            use std::io::Write as _;
+            for (chunk_idx, _, ll_path, _) in &chunks_to_compile {
+                if let Ok(text) = std::fs::read_to_string(ll_path) {
+                    let _ = write!(f, "; === chunk{chunk_idx} ===\n{text}\n");
+                }
+            }
+        }
+        eprintln!("llvm backend: IR at {}", dump_path.display());
+    }
+
+    // ---------------------------------------------------------------
+    // Phase 3 — parallel opt+llc (one process pair per chunk — P2)
+    // ---------------------------------------------------------------
+    let err_slot: std::sync::Mutex<Option<anyhow::Error>> = std::sync::Mutex::new(None);
+    let compiled: std::sync::Mutex<Vec<(usize, PathBuf)>> = std::sync::Mutex::new(Vec::new());
+
+    let err_ref = &err_slot;
+    let compiled_ref = &compiled;
+    let triple_ref: &str = &triple;
+    let cache_ref = &cache_dir;
+    let bodies_ref: &[Body] = bodies;
+
+    std::thread::scope(|scope| {
+        for (chunk_idx, body_indices, ll_path, obj_path) in &chunks_to_compile {
+            let chunk_idx = *chunk_idx;
+            let body_indices = body_indices.clone();
+            let ll_path = ll_path.clone();
+            let obj_path = obj_path.clone();
+            scope.spawn(move || {
+                if err_ref.lock().unwrap().is_some() {
+                    return;
+                }
+                match invoke_llc_pipeline(&ll_path, &obj_path, triple_ref, /*announce=*/ false) {
+                    Ok(()) => {
+                        if !dump {
+                            let _ = std::fs::remove_file(&ll_path);
+                        }
+                        let key = chunk_cache_key(&body_indices, bodies_ref, triple_ref, profile);
+                        if let Some(cd) = cache_ref {
+                            let _ = std::fs::copy(&obj_path, cd.join(format!("{key}.o")));
+                        }
+                        compiled_ref.lock().unwrap().push((chunk_idx, obj_path));
+                    }
+                    Err(e) => {
+                        *err_ref.lock().unwrap() = Some(e);
+                    }
+                }
+            });
+        }
+    });
+
+    if let Some(err) = err_slot.into_inner().unwrap() {
+        return Err(err);
+    }
+    result_objects.extend(compiled.into_inner().unwrap());
+    result_objects.sort_by_key(|(i, _)| *i);
+    Ok((
+        result_objects.into_iter().map(|(_, p)| p).collect(),
+        triple,
+        fallback_bodies,
+    ))
 }
 
 fn dump_mir(bodies: &[Body], _tcx: &TyCtxt) {
@@ -158,13 +668,10 @@ pub fn compile_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<CompileOut
     let fallback_bodies =
         render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ true)?;
     let obj_path = tmp_dir.join("unit.o");
-    invoke_llc_pipeline(&ll_path, &obj_path, &triple)?;
+    invoke_llc_pipeline(&ll_path, &obj_path, &triple, /*announce=*/ true)?;
     let bytes =
         std::fs::read(&obj_path).with_context(|| format!("reading {}", obj_path.display()))?;
-    let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
-    if keep_artifacts {
-        eprintln!("llvm backend: IR at {}", ll_path.display());
-    } else {
+    if std::env::var("GOS_LLVM_DUMP").is_err() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
     Ok(CompileOutcome {
@@ -173,31 +680,46 @@ pub fn compile_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<CompileOut
     })
 }
 
-/// Path-oriented variant of [`compile_with_fallback`]: writes the
-/// LLVM object directly to `obj_out` and returns only the triple
-/// plus the per-function fallback list. The object never lives
-/// in the parent process's heap.
+/// Path-oriented variant of [`compile_with_fallback`].
+///
+/// Writes per-body LLVM objects into `obj_dir` and returns the list
+/// of object paths, the host triple, and the names of bodies that
+/// fell back to Cranelift. When the program has fewer than two bodies
+/// or DWARF emission is requested, the function falls back to the
+/// serial single-file pipeline for simplicity.
+///
+/// The parallel path compiles each body in its own mini `.ll` module
+/// and runs `opt` + `llc` concurrently across up to
+/// [`PARALLEL_MAX_THREADS`] threads. Objects for bodies whose MIR
+/// hash matches a previously cached result are reused directly from
+/// the incremental cache, skipping lowering and compilation entirely.
 pub fn compile_with_fallback_at_path(
     bodies: &[Body],
     tcx: &TyCtxt,
-    obj_out: &std::path::Path,
-) -> Result<(String, Vec<String>)> {
+    obj_dir: &std::path::Path,
+) -> Result<(Vec<PathBuf>, String, Vec<String>)> {
     if std::env::var("GOS_LLVM_DUMP_MIR").is_ok() {
         dump_mir(bodies, tcx);
     }
-    let triple = host_triple();
-    let tmp_dir = pipeline_tmp_dir()?;
-    let ll_path = tmp_dir.join("unit.ll");
-    let fallback_bodies =
-        render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ true)?;
-    invoke_llc_pipeline(&ll_path, obj_out, &triple)?;
-    let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
-    if keep_artifacts {
-        eprintln!("llvm backend: IR at {}", ll_path.display());
-    } else {
-        let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(obj_dir)
+        .with_context(|| format!("creating obj_dir {}", obj_dir.display()))?;
+
+    // Serial path: DWARF needs the whole-module in-memory mutator,
+    // and single-body programs gain nothing from parallelism.
+    if want_dwarf() || bodies.len() < 2 {
+        let triple = host_triple();
+        let ll_path = obj_dir.join("unit.ll");
+        let obj_path = obj_dir.join("unit.o");
+        let fallback_bodies =
+            render_module_to_path(bodies, tcx, &ll_path, /*allow_fallback=*/ true)?;
+        invoke_llc_pipeline(&ll_path, &obj_path, &triple, /*announce=*/ true)?;
+        if std::env::var("GOS_LLVM_DUMP").is_err() {
+            let _ = std::fs::remove_file(&ll_path);
+        }
+        return Ok((vec![obj_path], triple, fallback_bodies));
     }
-    Ok((triple, fallback_bodies))
+
+    compile_bodies_parallel_incremental(bodies, tcx, obj_dir, /*allow_fallback=*/ true)
 }
 
 /// Streaming renderer: writes the full module to `ll_path` without
@@ -859,26 +1381,21 @@ fn pipeline_tmp_dir() -> Result<PathBuf> {
 /// verify pass runs first so shape regressions surface with source-
 /// level context (the verifier's stderr is forwarded verbatim)
 /// before any optimisation rewrites obscure the offending value.
+/// When `announce` is true and `GOS_LLVM_DUMP` is set, emits
+/// `llvm backend: IR at <ll_path>` so callers / test harnesses can
+/// locate the IR file. Pass `false` in the parallel per-body path
+/// where the caller announces the concatenated dump instead.
 fn invoke_llc_pipeline(
     ll_path: &std::path::Path,
     obj_out: &std::path::Path,
     triple: &str,
+    announce: bool,
 ) -> Result<()> {
-    // Reproducible / scratch siblings of `ll_path`. `unit.opt.bc`
-    // is the post-`opt` bitcode; `obj_out` is the caller-chosen
-    // final object (kept across invocations only when GOS_LLVM_DUMP
-    // is set). Locating the bitcode next to the IR keeps the
-    // pipeline self-contained for `llc` invocation.
     let opt_path = ll_path.with_extension("opt.bc");
     let keep_artifacts = std::env::var("GOS_LLVM_DUMP").is_ok();
-    if keep_artifacts {
-        // Emit the canonical dump-path marker the
-        // `llvm_lowering_marker` test (and ad-hoc debug runs)
-        // grep for. Pinning the line shape lets tooling locate
-        // the IR file without guessing a temp-dir layout.
+    if keep_artifacts && announce {
         eprintln!("llvm backend: IR at {}", ll_path.display());
     }
-    verify_ir(ll_path, triple, keep_artifacts)?;
     let profile = opt_profile();
     let mcpu = mcpu_target();
     // Both profiles run `opt` because the lowerer emits some
@@ -886,17 +1403,32 @@ fn invoke_llc_pipeline(
     // floating-point store positions) that `opt`'s
     // instcombine + verifier passes fix up. Skipping `opt`
     // entirely sends those shapes straight to `llc`, which
-    // rejects them. Debug profile runs `opt -O1` (faster, no
-    // vectoriser / loop unroller) and `llc -O0`; release
-    // profile runs `opt -O3 | llc -O3`.
-    let (opt_level, llc_level) = match profile {
-        OptProfile::Debug => ("-O1", "-O0"),
-        OptProfile::Release => ("-O3", "-O3"),
+    // rejects them.
+    //
+    // Debug profile runs only the three passes the lowerer
+    // requires — `mem2reg` (alloca → SSA), `instcombine`
+    // (canonicalise integer casts), `simplifycfg` (dead-branch
+    // elimination) — saving ~50–80 ms vs the full `default<O1>`
+    // pipeline that also runs the loop unroller, SLP vectoriser,
+    // and ~40 other passes unused by our IR shapes.
+    //
+    // Release profile uses `default<O3>` for full optimisation.
+    //
+    // The IR verifier runs first in both pipelines (as the
+    // initial `verify` entry) so malformed IR surfaces with
+    // source-level context before any optimisation rewrites
+    // obscure the offending value.
+    let (opt_passes, llc_level) = match profile {
+        OptProfile::Debug => (
+            "verify,function(mem2reg,instcombine<max-iterations=4>,simplifycfg)",
+            "-O0",
+        ),
+        OptProfile::Release => ("verify,default<O3>", "-O3"),
     };
     let opt_tool = find_opt()?;
     let mut opt_cmd = std::process::Command::new(&opt_tool);
     opt_cmd
-        .arg(opt_level)
+        .arg(format!("-passes={opt_passes}"))
         .arg(format!("-mtriple={triple}"))
         // Match `rustc -C target-cpu=native`: tell the
         // mid-level optimiser the target's feature set so the
@@ -935,25 +1467,17 @@ fn invoke_llc_pipeline(
         })
         // Block `LoopIdiomRecognize` from rewriting trivial
         // copy / shift loops into `llvm.memcpy` / `llvm.memmove`
-        // calls. Once a memcpy/memmove appears with a runtime
-        // size, `llc` has no choice but to emit a libc PLT call
-        // (musl's `memcpy`), and on small `n` (< ~16) the call
-        // overhead — argument setup, PLT trampoline, and YMM
-        // save/restore around it — dwarfs the actual work, so
-        // the "compiled" Cranelift tier (which inlines the loop
-        // verbatim) ends up faster than `--release` LLVM-O3.
-        // Keeping idiom-recognise off matches the inline-loop
-        // shape that beats Cranelift on fannkuch, and leaves
-        // genuinely large copies (compiler-emitted aggregate
-        // moves via explicit `llvm.memcpy` intrinsics) untouched
-        // because those go through a different lowering path
-        // that this flag does not gate.
-        //
-        // The narrower `disable-memcpy-idiom` /
-        // `disable-memmove-idiom` flags exist but no longer take
-        // effect under LLVM 18's new pass manager — see the §5
-        // release-perf investigation in the bench-game audit.
-        .arg("--disable-loop-idiom-all");
+        // calls. Only relevant on release (debug uses a minimal
+        // pass set that doesn't run this recogniser). On release,
+        // the PLT call overhead around musl's `memcpy` dwarfs the
+        // copy work on small n. Leaving idiom-recognise off keeps
+        // the inline-loop shape that beats Cranelift on short-trip
+        // benchmarks. The narrower `disable-memcpy-idiom` flag
+        // no longer takes effect under LLVM 18's new pass manager.
+        ;
+    if matches!(profile, OptProfile::Release) {
+        opt_cmd.arg("--disable-loop-idiom-all");
+    }
     // PGO instrumentation mode: `GOS_PGO_COLLECT=<output.profraw>`
     // builds an instrumented binary that emits raw profile data when
     // the program exits. Link with `libclang_rt.profile-x86_64.a`
@@ -984,9 +1508,10 @@ fn invoke_llc_pipeline(
         }
         return Err(anyhow!(
             "opt failed ({status}): {stderr}\n\
-             hint: largest IR usually drives `opt -O3` blowups; \
-             dump with GOS_LLVM_DUMP=1 and inspect the function \
-             names in the IR to find the offender.",
+             hint: if the error begins with 'Broken module' it is an IR \
+             shape regression in the lowerer (dump with GOS_LLVM_DUMP=1); \
+             otherwise it is an opt mid-end blowup — largest IR usually \
+             drives those, inspect the function names in the IR.",
             status = opt_output.status,
             stderr = String::from_utf8_lossy(&opt_output.stderr)
         ));
@@ -1043,53 +1568,6 @@ fn invoke_llc_pipeline(
         ));
     }
     let _ = std::fs::remove_file(&opt_path);
-    Ok(())
-}
-
-/// Runs LLVM's IR verifier (`opt -passes=verify`) against the
-/// emitted text before the optimisation pipeline rewrites it.
-///
-/// `opt -O3` runs its own verifier implicitly, but the failure
-/// surface is the same opaque "opt failed (...)" string used for
-/// every other mid-end issue, which masks shape regressions in
-/// the lowerer. Running the verifier as a separate pass first
-/// gives the user a focused diagnostic (the verifier's own
-/// stderr, forwarded verbatim) before any pass has a chance to
-/// rewrite the offending value.
-///
-/// On verifier failure: surface the captured stderr in the
-/// returned error so the user sees the LLVM verifier's exact
-/// complaint — the actionable signal is in there (offending
-/// function name, value, expected vs actual type).
-fn verify_ir(ll_path: &std::path::Path, triple: &str, keep_artifacts: bool) -> Result<()> {
-    let opt_tool = find_opt()?;
-    let mut verify_cmd = std::process::Command::new(&opt_tool);
-    verify_cmd
-        .arg("-passes=verify")
-        .arg(format!("-mtriple={triple}"))
-        .arg(ll_path)
-        .arg("-o")
-        .arg(std::path::Path::new(if cfg!(windows) {
-            "NUL"
-        } else {
-            "/dev/null"
-        }));
-    let output = run_with_timeout(verify_cmd, opt_timeout(), "opt -passes=verify")
-        .with_context(|| format!("spawn {}", opt_tool.display()))?;
-    if !output.status.success() {
-        if keep_artifacts {
-            eprintln!("llvm backend: failing IR kept at {}", ll_path.display());
-        }
-        return Err(anyhow!(
-            "LLVM IR verification failed ({status}): {stderr}\n\
-             hint: an `opt -passes=verify` failure indicates the lowerer \
-             emitted malformed IR; dump the offending module with \
-             GOS_LLVM_DUMP=1 and search the IR for the function or value \
-             named in the verifier output above.",
-            status = output.status,
-            stderr = String::from_utf8_lossy(&output.stderr),
-        ));
-    }
     Ok(())
 }
 

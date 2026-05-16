@@ -65,6 +65,8 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#items">Items</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#generic-structs">Generic structs</a>
+    </li>
     <li class="toctree-l2"><a class="reference internal" href="#expressions">Expressions</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#forward-pipe">Forward pipe (|&gt;)</a>
@@ -231,6 +233,32 @@ impl Area for Shape {
     }
 }
 </code></pre>
+<h2 id="generic-structs">Generic structs<a class="headerlink" href="#generic-structs" title="Permanent link">&para;</a></h2>
+<p>A struct may carry one or more type parameters. The typechecker
+infers each parameter from the field values at the construction
+site — no turbofish annotation is needed:</p>
+<pre><code class="language-gossamer">struct Pair&lt;A, B&gt; { fst: A, snd: B }
+struct Cell&lt;T&gt;    { value: T }
+
+fn main() {
+    // Parameters inferred: Pair&lt;i64, String&gt;
+    let p = Pair { fst: 42, snd: &quot;answer&quot; }
+    println!(&quot;{} = {}&quot;, p.fst, p.snd)   // 42 = answer
+
+    // Same struct, different instantiation: Pair&lt;i64, i64&gt;
+    let nums = Pair { fst: 10, snd: 32 }
+    println!(&quot;{}&quot;, nums.fst + nums.snd)  // 42
+
+    let c = Cell { value: 99 }
+    println!(&quot;{}&quot;, c.value)              // 99
+}
+</code></pre>
+<p>Field reads carry the per-instance concrete type. When two fields
+share the same parameter (<code>Pair&lt;i64, i64&gt;</code>), arithmetic across
+them typechecks directly — no extra annotation required.</p>
+<p>Up to three type parameters are supported in 0.5.0. Generic
+methods (<code>impl Pair&lt;A, B&gt; { ... }</code>) are tracked for a later
+release; field access works across all tiers today.</p>
 <h2 id="expressions">Expressions<a class="headerlink" href="#expressions" title="Permanent link">&para;</a></h2>
 <p>Everything is an expression. Blocks evaluate to their tail:</p>
 <pre><code class="language-gossamer">let max = if x &gt; y { x } else { y }

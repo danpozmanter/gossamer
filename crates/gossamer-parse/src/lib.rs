@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod autoderive;
 mod diagnostic;
 mod expressions;
 mod generics;

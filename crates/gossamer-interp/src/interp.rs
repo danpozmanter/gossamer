@@ -778,53 +778,27 @@ impl Interpreter {
         args: &[HirExpr],
         env: &mut Env,
     ) -> RuntimeResult<Flow> {
-        // Synthetic `<TypeName>::from_json(text)` / `<TypeName>::to_json(value)`
-        // dispatch. Triggered when the callee is a bare two-segment path
-        // and the first segment names a struct registered for JSON I/O
-        // at `Vm::load` time. We evaluate args first (so any side-effects
-        // there happen exactly once), then route directly into the typed
-        // (de)serializer without touching the globals table.
-        if let HirExprKind::Path { segments, .. } = &callee.kind {
-            if segments.len() == 2 {
-                let type_name = segments[0].name.as_str();
-                let method = segments[1].name.as_str();
-                if matches!(method, "from_json" | "to_json")
-                    && crate::builtins::has_json_schema(type_name)
-                {
-                    let mut arg_values = Vec::with_capacity(args.len());
-                    for arg in args {
-                        match self.eval_expr(arg, env)? {
-                            Flow::Value(v) => arg_values.push(v),
-                            early => return Ok(early),
-                        }
-                    }
-                    let result = match method {
-                        "from_json" => crate::builtins::json_from_str_for_type(
-                            type_name,
-                            arg_values
-                                .first()
-                                .and_then(crate::builtins::as_str)
-                                .unwrap_or(""),
-                        ),
-                        "to_json" => {
-                            let Some(receiver) = arg_values.first() else {
-                                return Ok(Flow::Value(crate::builtins::err_variant(format!(
-                                    "{type_name}::to_json: missing receiver"
-                                ))));
-                            };
-                            crate::builtins::json_to_string_for_type(type_name, receiver)
-                        }
-                        _ => unreachable!(),
-                    };
-                    return Ok(Flow::Value(result));
-                }
-            }
-        }
+        // (Previously: synthetic `<TypeName>::from_json` / `to_json`
+        // dispatch via a thread-local schema registry. That intercept
+        // was VM-only — the compiled tier never saw the methods.
+        // 0.7.0 replaces it with compile-time codegen in
+        // `gossamer-parse::autoderive`: synthesized impls are real
+        // Gossamer code that compiles through every tier. Nothing to
+        // intercept here anymore.)
         let callee_value = self.eval_expr_to_value(callee, env)?;
         let mut arg_values = Vec::with_capacity(args.len());
         for arg in args {
             match self.eval_expr(arg, env)? {
-                Flow::Value(v) => arg_values.push(v),
+                Flow::Value(v) => {
+                    // 0.7.0 flag::Cell auto-deref at the call
+                    // boundary — same rule the VM applies in
+                    // `Op::Call`. Walker fallback hit by complex
+                    // bodies (`EvalDeferred`) needs the same
+                    // semantics so `f(flags.number)` matches the
+                    // declared `i64` parameter type.
+                    let v = crate::vm::auto_deref_cell(&v).unwrap_or(v);
+                    arg_values.push(v);
+                }
                 early => return Ok(early),
             }
         }
@@ -1208,6 +1182,9 @@ impl Interpreter {
         env: &mut Env,
     ) -> RuntimeResult<Flow> {
         let cond = self.eval_expr_to_value(condition, env)?;
+        // 0.7.0 flag::Cell auto-deref so `if flags.verbose { … }`
+        // works without `*` in the walker fallback.
+        let cond = crate::vm::auto_deref_cell(&cond).unwrap_or(cond);
         let Value::Bool(cond) = cond else {
             return Err(RuntimeError::Type("if condition must be bool".to_string()));
         };

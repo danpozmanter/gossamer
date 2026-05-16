@@ -187,8 +187,10 @@ cargo build --workspace --release
 </code></pre>
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Rust toolchain</strong> — stable, edition 2024, MSRV 1.88. The
-  workspace's <code>rust-toolchain.toml</code> pins a minimum.</li>
+<li><strong>Rust toolchain</strong> — 1.95.0, edition 2024, MSRV 1.95.
+  <code>rust-toolchain.toml</code> pins the exact version and <code>profile =
+  "minimal"</code>; rustup installs it on first <code>cargo</code> invocation.
+  Bumps happen consciously, not via <code>stable</code> drift.</li>
 <li><strong>A C linker</strong> — required by Cargo, not by Gossamer. <code>cc</code> /
   <code>gcc</code> / <code>clang</code> will do.</li>
 </ul>

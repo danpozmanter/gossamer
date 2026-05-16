@@ -28,7 +28,11 @@ use std::path::PathBuf;
 /// across a few files; we scan all of them to catch helpers
 /// declared outside `c_abi` proper. Names are returned in
 /// insertion order for stable failure messages.
-fn extract_runtime_exports() -> Vec<String> {
+/// Yields every Rust source file under
+/// `gossamer-runtime/src/{c_abi,c_abi/*,*}.rs` that may contain
+/// `gos_rt_*` exports. The `c_abi.rs` split into a directory of
+/// per-domain submodules means a flat list is no longer enough.
+fn runtime_source_files() -> Vec<PathBuf> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let runtime_src = PathBuf::from(&manifest_dir)
         .join("..")
@@ -42,9 +46,28 @@ fn extract_runtime_exports() -> Vec<String> {
         "safe_env.rs",
         "race.rs",
     ];
+    let mut out: Vec<PathBuf> = candidate_files
+        .iter()
+        .map(|f| runtime_src.join(f))
+        .filter(|p| p.is_file())
+        .collect();
+    let c_abi_dir = runtime_src.join("c_abi");
+    if c_abi_dir.is_dir() {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(&c_abi_dir)
+            .expect("read c_abi dir")
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("rs"))
+            .collect();
+        entries.sort();
+        out.extend(entries);
+    }
+    out
+}
+
+fn extract_runtime_exports() -> Vec<String> {
     let mut out = Vec::new();
-    for filename in candidate_files {
-        let path = runtime_src.join(filename);
+    for path in runtime_source_files() {
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -241,22 +264,8 @@ fn parse_param_counts(source: &str) -> std::collections::HashMap<String, usize> 
 /// silently produce wrong-code or segfaults at runtime.
 #[test]
 fn registry_param_counts_match_runtime_exports() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let runtime_src = PathBuf::from(&manifest_dir)
-        .join("..")
-        .join("gossamer-runtime")
-        .join("src");
-    let candidate_files = [
-        "c_abi.rs",
-        "gc.rs",
-        "preempt.rs",
-        "lib.rs",
-        "safe_env.rs",
-        "race.rs",
-    ];
     let mut all_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for filename in candidate_files {
-        let path = runtime_src.join(filename);
+    for path in runtime_source_files() {
         if let Ok(source) = std::fs::read_to_string(&path) {
             all_counts.extend(parse_param_counts(&source));
         }

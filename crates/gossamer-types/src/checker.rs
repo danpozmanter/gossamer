@@ -2013,10 +2013,15 @@ fn register_stdlib_struct_fields(tcx: &mut TyCtxt) {
         gossamer_resolve::DefId::local(u32::MAX - 4),
         vec![i64_ty, i64_ty, str_ty],
     );
-    // Response: [status, body, content_type, location]
+    // Response: [status, body, raw_bytes, content_type, location].
+    // raw_bytes is Vec<u8>; the per-name `gos_rt_http_response_*`
+    // helpers handle the actual dispatch, so the field-list ordering
+    // matters only for source-name lookup.
+    let u8_ty = tcx.int_ty(IntTy::U8);
+    let vec_u8 = tcx.intern(TyKind::Vec(u8_ty));
     tcx.register_struct_fields(
         gossamer_resolve::DefId::local(u32::MAX - 5),
-        vec![i64_ty, str_ty, str_ty, str_ty],
+        vec![i64_ty, str_ty, vec_u8, str_ty, str_ty],
     );
 }
 
@@ -2031,6 +2036,8 @@ fn seed_checker_stdlib_struct_fields(
 ) {
     let str_ty = tcx.string_ty();
     let i64_ty = tcx.int_ty(IntTy::I64);
+    let u8_ty = tcx.int_ty(IntTy::U8);
+    let vec_u8 = tcx.intern(TyKind::Vec(u8_ty));
     let bool_ty = tcx.bool_ty();
     let entries: &[(u32, &[(&str, Ty)])] = &[
         (
@@ -2062,6 +2069,7 @@ fn seed_checker_stdlib_struct_fields(
             &[
                 ("status", i64_ty),
                 ("body", str_ty),
+                ("raw_bytes", vec_u8),
                 ("content_type", str_ty),
                 ("location", str_ty),
             ],

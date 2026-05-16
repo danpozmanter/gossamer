@@ -146,6 +146,26 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             Some(elem_slots * (*len as u32))
         }
         TyKind::Adt { def, .. } => {
+            // `http::Response` is the only sentinel stdlib struct
+            // backed by a `repr(Rust)` runtime struct (`GosHttpResponse`)
+            // rather than an inline-flat heap blob. Its accessors
+            // (`gos_rt_http_response_*`) take `*const GosHttpResponse`
+            // and read fields at Rust-decided offsets, so the local
+            // must round-trip the raw pointer instead of memcpy'ing
+            // an inline view (which would truncate / clobber given
+            // the field reordering Rust applies). Reporting `None`
+            // here picks the heap-pointer code path in
+            // `lower_call_arg` and the assignment-of-Ok-payload sites.
+            //
+            // The sibling sentinels (DirInfo @ u32::MAX-2, Output @
+            // u32::MAX-3, ResponseStream @ u32::MAX-4) ARE inline
+            // heap blobs the runtime allocates with raw `*mut i64`
+            // sized for the declared field count — their fields are
+            // read by `Field(idx)` projection, so the existing
+            // inline slot_count path is correct.
+            if def.local == u32::MAX - 5 {
+                return None;
+            }
             // `struct_field_tys` returning `None` is the
             // genuinely-unknown-layout case (recursive enum, opaque
             // sentinel) — keep that as `None` so the caller falls

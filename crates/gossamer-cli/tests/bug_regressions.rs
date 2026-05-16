@@ -1557,3 +1557,213 @@ fn tracing_gc_aggregate_return_chain_survives_collect() {
         "release aggregate-return chain mismatch"
     );
 }
+
+#[test]
+fn autoderive_synthesizes_for_narrow_integer_fields() {
+    // Structs whose fields use `i32` / `u8` / `i16` etc. must
+    // still get `from_json` / `to_json` synthesized. Before the
+    // fix, the FieldKind table only covered `i64`, so any narrow
+    // integer caused the entire struct to be skipped and the
+    // user's `Type::from_json(text)?` call surfaced as
+    // `field access on non-struct ()` at runtime.
+    let src = r#"
+use std::errors
+
+struct Counts {
+    small: u8,
+    medium: i32,
+    big: i64,
+}
+
+fn main() -> Result<(), errors::Error> {
+    let text = "{\"small\":255,\"medium\":-1,\"big\":9000000000}".to_string()
+    let c = Counts::from_json(&text)?
+    println!("small={} medium={} big={}", c.small, c.medium, c.big)
+    Ok(())
+}
+"#;
+    let dir = fresh_dir("autoderive_narrow_int");
+    let path = write_source(&dir, "narrow", src);
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(
+        run.0.trim_end(),
+        "small=255 medium=-1 big=9000000000",
+        "narrow-int autoderive mismatch (vm); stdout: {:?}",
+        run.0
+    );
+
+    let scratch = dir.join("bin");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("build release");
+    let out = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "release stderr: {}", out.1);
+    assert_eq!(
+        out.0.trim_end(),
+        "small=255 medium=-1 big=9000000000",
+        "narrow-int autoderive mismatch (llvm release); stdout: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn write_file_with_vec_u8_preserves_embedded_nul() {
+    // `os::write_file(path, &Vec<u8>)` must route through the
+    // bytes-shaped runtime helper; the c-string helper would
+    // truncate at the first NUL and silently corrupt binary
+    // writes. Reads the file back to confirm every byte
+    // survived round-trip on each tier.
+    let dir = fresh_dir("write_bytes_nul");
+    let tmp_path = dir.join("payload.bin");
+    let tmp_str = tmp_path.display().to_string();
+    let src = format!(
+        r#"
+use std::errors
+use std::os
+
+fn main() -> Result<(), errors::Error> {{
+    let payload: [u8] = [72, 105, 0, 65, 66, 67, 10]
+    os::write_file(&"{tmp}", &payload)?
+    let back = os::read_file(&"{tmp}")?
+    println!("len={{}}", back.len())
+    println!("byte2={{}}", back[2])
+    println!("byte3={{}}", back[3])
+    println!("byte6={{}}", back[6])
+    Ok(())
+}}
+"#,
+        tmp = tmp_str.replace('\\', "\\\\"),
+    );
+    let path = write_source(&dir, "write_nul", &src);
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    let expected = "len=7\nbyte2=0\nbyte3=65\nbyte6=10";
+    assert_eq!(
+        run.0.trim_end(),
+        expected,
+        "binary write round-trip mismatch (vm); stdout: {:?}",
+        run.0
+    );
+
+    let _ = fs::remove_file(&tmp_path);
+    let scratch = dir.join("bin");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("build release");
+    let out = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "release stderr: {}", out.1);
+    assert_eq!(
+        out.0.trim_end(),
+        expected,
+        "binary write round-trip mismatch (llvm release); stdout: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn yaml_autoderive_round_trips_struct_via_yaml() {
+    // Every named struct also gets `from_yaml` / `to_yaml`
+    // alongside the JSON pair. The methods route through
+    // `yaml::to_json` / `yaml::from_json` and reuse the
+    // JSON decoder's strict field-type checks.
+    let src = r#"
+use std::errors
+
+struct AppCfg {
+    name: String,
+    port: i64,
+    debug: bool,
+}
+
+fn main() -> Result<(), errors::Error> {
+    let yaml = "name: gossamer\nport: 8080\ndebug: true\n".to_string()
+    let cfg = AppCfg::from_yaml(&yaml)?
+    println!("{} {} {}", cfg.name, cfg.port, cfg.debug)
+
+    let back = cfg.to_yaml()?
+    let again = AppCfg::from_yaml(&back)?
+    println!("{} {}", again.name, again.port)
+    Ok(())
+}
+"#;
+    let dir = fresh_dir("yaml_autoderive");
+    let path = write_source(&dir, "yaml_derive", src);
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    let expected = "gossamer 8080 true\ngossamer 8080";
+    assert_eq!(
+        run.0.trim_end(),
+        expected,
+        "yaml round-trip mismatch (vm); stdout: {:?}",
+        run.0
+    );
+
+    let scratch = dir.join("bin");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("build release");
+    let out = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "release stderr: {}", out.1);
+    assert_eq!(
+        out.0.trim_end(),
+        expected,
+        "yaml round-trip mismatch (llvm release); stdout: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn sync_map_round_trips_set_get_delete_across_tiers() {
+    // `sync::Map` is a concurrent string-keyed map. set / get /
+    // contains / delete / len must dispatch correctly on every
+    // tier. The Option<String> returned by `.get` was previously
+    // pinned to `i64` in the kind_dispatch fallback, surfacing
+    // as `bar=<raw-pointer-as-number>` for the Some arm and
+    // `Some(_)` being taken even for the None case.
+    let src = r#"
+use std::sync
+
+fn main() {
+    let m = sync::Map::new()
+    m.set("alpha", "1")
+    m.set("beta", "2")
+    println!("len={}", m.len())
+    match m.get("beta") {
+        Some(v) => println!("beta={}", v),
+        None => println!("beta missing"),
+    }
+    match m.get("nope") {
+        Some(_) => println!("nope unexpected"),
+        None => println!("nope=None"),
+    }
+    m.delete("alpha")
+    println!("contains alpha: {}", m.contains("alpha"))
+    println!("after-delete len={}", m.len())
+}
+"#;
+    let dir = fresh_dir("sync_map");
+    let path = write_source(&dir, "sync_map", src);
+    let expected = "len=2\nbeta=2\nnope=None\ncontains alpha: false\nafter-delete len=1";
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(
+        run.0.trim_end(),
+        expected,
+        "sync::Map mismatch (vm); stdout: {:?}",
+        run.0
+    );
+
+    let scratch = dir.join("bin");
+    fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("build release");
+    let out = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "release stderr: {}", out.1);
+    assert_eq!(
+        out.0.trim_end(),
+        expected,
+        "sync::Map mismatch (llvm release); stdout: {:?}",
+        out.0
+    );
+}

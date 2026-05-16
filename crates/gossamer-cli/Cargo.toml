@@ -70,6 +70,7 @@ gossamer-runtime = { workspace = true }
 gossamer-types = { workspace = true }
 rustyline = { version = "14", default-features = false, features = ["with-file-history"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+which = { workspace = true }
 
 gossamer-std = { workspace = true }
 

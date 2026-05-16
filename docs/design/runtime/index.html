@@ -231,11 +231,30 @@ owns the stage so a new contributor can find the real source.</p>
 through a copy-on-write helper that allocates a fresh <code>Rc</code> so alias
 bindings never observe each other's mutations.</p>
 <h2 id="garbage-collector">Garbage collector<a class="headerlink" href="#garbage-collector" title="Permanent link">&para;</a></h2>
-<p><code>gossamer-gc</code> is the off-line design of the real concurrent GC — a
-tri-colour mark-sweep collector with write-barriers for generations
-and weak references. The tree-walker currently piggy-backs on Rust's
-<code>Rc</code> / <code>Arc</code> reference counting; the concurrent GC comes online once
-the Arc-based interpreter lands.</p>
+<p><code>gossamer-gc</code> is the tri-colour concurrent mark-sweep collector with
+generational write-barriers and weak references. Compiled programs
+emit a <code>gos_rt_write_barrier</code> call before every projected heap-pointer
+store via the MIR <code>insert_gc_barriers</code> pass — both the Cranelift and
+LLVM backends share the same emission semantics, so collector
+invariants are tier-agnostic.</p>
+<p>The collector runs in two modes:</p>
+<ul>
+<li><strong>Concurrent (default).</strong> Mark work is interleaved with mutator
+  allocation: each <code>gos_rt_gc_alloc_rooted</code> call drives one
+  <code>STEP_BUDGET = 32</code> chunk of marking when a cycle is active and
+  starts a fresh cycle when allocation pressure crosses the heap
+  threshold (<code>GOSSAMER_GC_TARGET</code> env var overrides the default).</li>
+<li><strong>Stop-the-world.</strong> Set <code>GOSSAMER_GC_MODE=stw</code> to disable the
+  allocation-driven incremental drive. The heap still grows on
+  allocation and explicit <code>gos_rt_gc_concurrent_*</code> calls still
+  run STW; this is the comparison mode used to diagnose collector
+  bugs.</li>
+</ul>
+<p>The tree-walker piggy-backs on Rust's <code>Rc</code> / <code>Arc</code> for object
+lifetime; concurrent collection is a property of the compiled tier
+and the bytecode VM. The <code>gc_mode_parity</code> CI test verifies every
+allocation-heavy example produces identical stdout under both
+modes.</p>
 <h2 id="scheduler">Scheduler<a class="headerlink" href="#scheduler" title="Permanent link">&para;</a></h2>
 <p><code>gossamer-runtime::sched</code> is the work-stealing M:N scheduler.
 Every Gossamer binary links it through <code>libgossamer_runtime.a</code>, so

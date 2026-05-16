@@ -52,6 +52,9 @@ pub struct RuntimeEntry {
     pub tier: Tier,
     /// One-line description for `gos explain` output.
     pub docs: &'static str,
+    /// When true the LLVM declaration gains `noreturn cold nounwind` attributes.
+    /// Only set for functions that provably never return (abort / panic paths).
+    pub noreturn: bool,
 }
 
 impl AbiType {
@@ -71,6 +74,11 @@ impl AbiType {
 
 impl RuntimeEntry {
     /// Produces the full `declare <ret> @<name>(<params>)` LLVM IR string.
+    ///
+    /// When `noreturn` is set the declaration gains `noreturn cold nounwind`
+    /// attributes. LLVM uses these to classify the call site as a trap exit
+    /// rather than a live successor, which lets the loop vectoriser treat
+    /// loops with a guarded bounds check as effectively single-exit.
     #[must_use]
     pub fn llvm_declare(&self) -> String {
         let params = self
@@ -80,11 +88,20 @@ impl RuntimeEntry {
             .map(|t| t.llvm_ir())
             .collect::<Vec<_>>()
             .join(", ");
-        format!(
-            "declare {} @{}({})",
-            self.sig.ret.llvm_ir(),
-            self.name,
-            params
-        )
+        if self.noreturn {
+            format!(
+                "declare {} @{}({}) noreturn cold nounwind",
+                self.sig.ret.llvm_ir(),
+                self.name,
+                params
+            )
+        } else {
+            format!(
+                "declare {} @{}({})",
+                self.sig.ret.llvm_ir(),
+                self.name,
+                params
+            )
+        }
     }
 }

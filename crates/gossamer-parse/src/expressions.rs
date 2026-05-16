@@ -463,6 +463,16 @@ impl Parser<'_> {
         let args = self.parse_call_args();
         let end_span = self.last_span();
         let span = self.join(callee.span, end_span);
+        // 0.7.0: `errors::newf(fmt, args…)` is a format-shaped sibling
+        // of `errors::new`. Rewrite at parse time to
+        // `errors::new(format!(fmt, args…))` so the same parse-time
+        // template expansion that powers `format!` produces a single
+        // `__concat`-based String — keeps all three tiers identical
+        // (the VM gets the same lowered call shape compiled-mode
+        // sees, no separate variadic runtime helper required).
+        if is_errors_newf_path(&callee) {
+            return self.rewrite_errors_newf(span, args);
+        }
         let id = self.alloc_id();
         Expr::new(
             id,
@@ -470,6 +480,28 @@ impl Parser<'_> {
             ExprKind::Call {
                 callee: Box::new(callee),
                 args,
+            },
+        )
+    }
+
+    fn rewrite_errors_newf(&mut self, span: gossamer_lex::Span, args: Vec<Expr>) -> Expr {
+        let concat = self.expand_format_macro("format", args);
+        let concat_id = self.alloc_id();
+        let concat_expr = Expr::new(concat_id, span, concat);
+        // Build a real two-segment `errors::new` path so the
+        // resolver picks up the module-qualified import instead
+        // of trying to look up a single-segment "errors::new"
+        // identifier (which doesn't exist).
+        let new_path = PathExpr::from_names(["errors", "new"]);
+        let callee_id = self.alloc_id();
+        let callee = Expr::new(callee_id, span, ExprKind::Path(new_path));
+        let call_id = self.alloc_id();
+        Expr::new(
+            call_id,
+            span,
+            ExprKind::Call {
+                callee: Box::new(callee),
+                args: vec![concat_expr],
             },
         )
     }
@@ -1732,6 +1764,20 @@ fn literal_string(expr: &Expr) -> Option<String> {
     } else {
         None
     }
+}
+
+/// True when `expr` is a Path expression that resolves to
+/// `errors::newf` (either as a fully qualified two-segment path
+/// or a single-segment `newf` import alias). Used by
+/// [`Parser::parse_call_suffix`] to redirect a `errors::newf(...)`
+/// call into the format-template expansion path so the same
+/// `__concat`-shaped string assembly works on every tier.
+fn is_errors_newf_path(expr: &Expr) -> bool {
+    let ExprKind::Path(path) = &expr.kind else {
+        return false;
+    };
+    let segs: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+    matches!(segs.as_slice(), ["errors", "newf"] | ["newf"])
 }
 
 #[cfg(test)]

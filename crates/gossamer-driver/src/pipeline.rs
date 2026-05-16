@@ -14,7 +14,6 @@ use gossamer_mir::{
     Body, check_generic_layouts, inline_small_callees, inline_trivial_wrappers, lower_program,
     optimise,
 };
-use gossamer_parse::parse_source_file;
 use gossamer_resolve::{Resolutions, resolve_source_file};
 use gossamer_types::{TyCtxt, TypeTable, typecheck_source_file};
 
@@ -155,26 +154,33 @@ pub struct ReleaseBuildPaths {
     pub triple: String,
     /// Names of the bodies that fell back to Cranelift.
     pub fallback_bodies: Vec<String>,
-    /// True iff `cl_obj_out` was actually written (i.e. there was
-    /// at least one fallback body). When false the caller should
-    /// skip the Cranelift companion in the link step.
+    /// True iff the Cranelift companion object was actually written
+    /// (i.e. there was at least one fallback body). When false the
+    /// caller should skip the companion in the link step.
     pub has_cranelift_companion: bool,
+    /// Paths to the LLVM-emitted per-body object files. One entry per
+    /// non-fallback body; pass all of them to the linker alongside
+    /// the optional Cranelift companion.
+    pub llvm_objects: Vec<std::path::PathBuf>,
 }
 
 /// Path-oriented variant of
 /// [`compile_source_native_release_with_fallback_from_frontend`].
-/// Writes both the LLVM-compiled and (if any fallback bodies
-/// exist) the Cranelift-compiled object directly to the supplied
-/// paths so the caller never holds object bytes in memory.
+///
+/// The LLVM backend emits one object per non-fallback body into
+/// `llvm_obj_dir` (P2 parallel compilation + P3 incremental cache).
+/// If any bodies fell back to Cranelift, a single Cranelift companion
+/// object is written to `cl_obj_out`. The caller links all objects
+/// (both LLVM and the optional Cranelift companion) together.
 pub fn compile_release_at_paths_from_frontend(
     checked: CheckedFrontend,
-    llvm_obj_out: &std::path::Path,
+    llvm_obj_dir: &std::path::Path,
     cl_obj_out: &std::path::Path,
 ) -> anyhow::Result<ReleaseBuildPaths> {
     let (bodies, tcx) = lower_to_mir_from_frontend(checked);
     enforce_generic_abi(&bodies, &tcx)?;
-    let (triple, fallback_bodies) =
-        gossamer_codegen_llvm::compile_with_fallback_at_path(&bodies, &tcx, llvm_obj_out)?;
+    let (llvm_objects, triple, fallback_bodies) =
+        gossamer_codegen_llvm::compile_with_fallback_at_path(&bodies, &tcx, llvm_obj_dir)?;
     let has_cranelift_companion = !fallback_bodies.is_empty();
     if has_cranelift_companion {
         let options = CompileOptions {
@@ -190,6 +196,7 @@ pub fn compile_release_at_paths_from_frontend(
         triple,
         fallback_bodies,
         has_cranelift_companion,
+        llvm_objects,
     })
 }
 
@@ -289,9 +296,10 @@ fn enforce_generic_abi(bodies: &[Body], tcx: &TyCtxt) -> anyhow::Result<()> {
 /// (e.g. the native codegen's primitive-type classification) can
 /// walk `body.local_ty(local)` back into the kind table.
 fn lower_to_mir_with_tcx(source: &str, unit_name: &str) -> (Vec<Body>, TyCtxt) {
+    let augmented = gossamer_parse::autoderive::augment_source(source);
     let mut map = SourceMap::new();
-    let file = map.add_file(unit_name, source.to_string());
-    let (sf, _parse_diags) = parse_source_file(source, file);
+    let file = map.add_file(unit_name, augmented.clone());
+    let (sf, _parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file);
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);

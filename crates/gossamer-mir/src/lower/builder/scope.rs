@@ -1,0 +1,423 @@
+#![allow(clippy::missing_safety_doc)]
+#![allow(missing_docs)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::wildcard_imports)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::many_single_char_names)]
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::cast_lossless)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::option_if_let_else)]
+#![allow(clippy::match_same_arms)]
+#![allow(clippy::if_not_else)]
+#![allow(clippy::single_match_else)]
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::manual_let_else)]
+#![allow(clippy::redundant_else)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::map_unwrap_or)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::unnecessary_wraps)]
+#![allow(clippy::large_enum_variant)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::single_match)]
+#![allow(clippy::useless_conversion)]
+
+use std::collections::HashMap;
+
+use gossamer_ast::Ident;
+use gossamer_hir::{
+    HirAdtKind, HirBinaryOp, HirBlock, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind,
+    HirLiteral, HirMatchArm, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind, HirUnaryOp,
+};
+use gossamer_lex::Span;
+use gossamer_types::{Ty, TyCtxt};
+
+use crate::ir::{
+    BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
+    Statement, StatementKind, Terminator, UnOp,
+};
+
+use super::*;
+
+use super::Builder;
+
+impl<'a> Builder<'a> {
+    pub(crate) fn push_local(&mut self, ty: Ty, debug_name: Option<Ident>, mutable: bool) -> Local {
+        let id = u32::try_from(self.locals.len()).expect("local overflow");
+        self.locals.push(LocalDecl {
+            ty,
+            debug_name,
+            mutable,
+        });
+        Local(id)
+    }
+
+    pub(crate) fn fresh(&mut self, ty: Ty) -> Local {
+        self.push_local(ty, None, false)
+    }
+
+    pub(crate) fn bind_local(&mut self, name: &str, local: Local) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_string(), local);
+        }
+    }
+
+    pub(crate) fn lookup_local(&self, name: &str) -> Option<Local> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(local) = scope.get(name) {
+                return Some(*local);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    pub(crate) fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    pub(crate) fn new_block(&mut self, span: Span) -> BlockId {
+        let id = BlockId(u32::try_from(self.blocks.len()).expect("block overflow"));
+        self.blocks.push(BasicBlock {
+            id,
+            stmts: Vec::new(),
+            terminator: Terminator::Unreachable,
+            span,
+        });
+        id
+    }
+
+    pub(crate) fn set_current(&mut self, block: BlockId) {
+        self.current = Some(block);
+    }
+
+    pub(crate) fn current_block(&mut self) -> &mut BasicBlock {
+        let id = self.current.expect("no current block").0 as usize;
+        &mut self.blocks[id]
+    }
+
+    pub(crate) fn emit_assign(&mut self, place: Place, rvalue: Rvalue, span: Span) {
+        if self.current.is_none() {
+            return;
+        }
+        let stmt = Statement {
+            kind: StatementKind::Assign { place, rvalue },
+            span,
+        };
+        self.current_block().stmts.push(stmt);
+    }
+
+    pub(crate) fn auto_deref_cell(&mut self, local: Local, span: Span) -> Local {
+        let Some(kind) = self.local_runtime_kind.get(&local).copied() else {
+            return local;
+        };
+        let (helper, dest_ty): (&'static str, Ty) = match kind {
+            "flag::Cell::String" => ("gos_rt_flag_cell_load_str", self.tcx.string_ty()),
+            "flag::Cell::Int" | "flag::Cell::Uint" | "flag::Cell::Duration" => (
+                "gos_rt_flag_cell_load_i64",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "flag::Cell::Bool" => ("gos_rt_flag_cell_load_bool", self.tcx.bool_ty()),
+            "flag::Cell::Float" => (
+                "gos_rt_flag_cell_load_f64",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            _ => return local,
+        };
+        let dest = self.fresh(dest_ty);
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::CallIntrinsic {
+                name: helper,
+                args: vec![Operand::Copy(Place::local(local))],
+            },
+            span,
+        );
+        dest
+    }
+
+    pub(crate) fn terminate(&mut self, terminator: Terminator) {
+        if self.current.is_some() {
+            let span = self.fn_span;
+            let block = self.current_block();
+            block.terminator = terminator;
+            let _ = span;
+        }
+        self.current = None;
+    }
+
+    pub(crate) fn lower_lifted_closure(
+        &mut self,
+        name: &Ident,
+        captures: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let size = i128::from((captures.len() + 1) as i64 * 8);
+        let size_local = self.fresh(ty);
+        self.emit_assign(
+            Place::local(size_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(size))),
+            span,
+        );
+        let env_local = self.fresh(ty);
+        self.emit_assign(
+            Place::local(env_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_alloc",
+                args: vec![Operand::Copy(Place::local(size_local))],
+            },
+            span,
+        );
+        let fn_addr_local = self.fresh(ty);
+        self.emit_assign(
+            Place::local(fn_addr_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_fn_addr",
+                args: vec![Operand::Const(ConstValue::Str(name.name.clone()))],
+            },
+            span,
+        );
+        let zero_offset_local = self.fresh(ty);
+        self.emit_assign(
+            Place::local(zero_offset_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let sink = self.fresh(ty);
+        self.emit_assign(
+            Place::local(sink),
+            Rvalue::CallIntrinsic {
+                name: "gos_store",
+                args: vec![
+                    Operand::Copy(Place::local(env_local)),
+                    Operand::Copy(Place::local(zero_offset_local)),
+                    Operand::Copy(Place::local(fn_addr_local)),
+                ],
+            },
+            span,
+        );
+        for (i, cap) in captures.iter().enumerate() {
+            let offset = (i as i64 + 1) * 8;
+            let offset_local = self.fresh(ty);
+            self.emit_assign(
+                Place::local(offset_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(offset)))),
+                span,
+            );
+            let value_local = self.lower_expr(cap)?;
+            let sink = self.fresh(ty);
+            self.emit_assign(
+                Place::local(sink),
+                Rvalue::CallIntrinsic {
+                    name: "gos_store",
+                    args: vec![
+                        Operand::Copy(Place::local(env_local)),
+                        Operand::Copy(Place::local(offset_local)),
+                        Operand::Copy(Place::local(value_local)),
+                    ],
+                },
+                span,
+            );
+        }
+        self.local_closure.insert(env_local, name.name.clone());
+        Some(env_local)
+    }
+
+    pub(crate) fn receiver_local_from_path(&self, expr: &HirExpr) -> Option<Local> {
+        if let HirExprKind::Path { segments, .. } = &expr.kind {
+            let first = segments.first()?;
+            return self.lookup_local(&first.name);
+        }
+        None
+    }
+
+    pub(crate) fn peek_collection_type(&self, expr: &HirExpr) -> Option<Ty> {
+        let mut ty = self.peek_struct_type(expr)?;
+        while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        match self.tcx.kind_of(ty) {
+            gossamer_types::TyKind::Vec(_)
+            | gossamer_types::TyKind::Slice(_)
+            | gossamer_types::TyKind::Array { .. } => Some(ty),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn peek_struct_type(&self, expr: &HirExpr) -> Option<Ty> {
+        self.peek_struct_type_with_depth(expr, 0)
+    }
+
+    pub(crate) fn peek_struct_type_with_depth(&self, expr: &HirExpr, depth: u32) -> Option<Ty> {
+        const MAX_PEEK_DEPTH: u32 = 16;
+        if depth >= MAX_PEEK_DEPTH {
+            // Surface the cap during compiler development so a
+            // genuine depth-bomb HIR shape doesn't silently fall
+            // through to the runtime-dispatch path.
+            eprintln!(
+                "gossamer-mir: peek_struct_type recursion cap reached ({MAX_PEEK_DEPTH}) — falling back to runtime dispatch"
+            );
+            return None;
+        }
+        if let Some(local) = self.receiver_local_from_path(expr) {
+            return Some(self.locals[local.0 as usize].ty);
+        }
+        if !matches!(self.tcx.kind_of(expr.ty), gossamer_types::TyKind::Var(_)) {
+            return Some(expr.ty);
+        }
+        if let HirExprKind::Field {
+            receiver: parent,
+            name,
+        } = &expr.kind
+        {
+            let parent_ty = self.peek_struct_type_with_depth(parent, depth + 1)?;
+            let mut peeled = parent_ty;
+            while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+                peeled = *inner;
+            }
+            if let gossamer_types::TyKind::Adt { def, .. } = self.tcx.kind_of(peeled) {
+                let sname = self.struct_defs.get(def)?;
+                let order = self.structs.get(sname)?;
+                let pos = order.iter().position(|f| f == &name.name)?;
+                let tys = self.tcx.struct_field_tys(*def)?;
+                return tys.get(pos).copied();
+            }
+        }
+        None
+    }
+
+    pub(crate) fn peek_method_chain_kind(&self, expr: &HirExpr) -> Option<gossamer_types::TyKind> {
+        use gossamer_types::TyKind;
+        match &expr.kind {
+            HirExprKind::MethodCall { name, .. } => match name.name.as_str() {
+                "len" | "count" | "find" | "byte_at" | "as_i64" | "to_int" | "abs" | "pow"
+                | "signum" => Some(TyKind::Int(gossamer_types::IntTy::I64)),
+                "to_string" | "trim" | "to_lowercase" | "to_uppercase" | "to_lower"
+                | "to_upper" | "replace" | "repeat" | "as_str" | "clone_str" | "message" => {
+                    Some(TyKind::String)
+                }
+                "is_empty" | "contains" | "starts_with" | "ends_with" | "is_some" | "is_none"
+                | "is_ok" | "is_err" => Some(TyKind::Bool),
+                _ => None,
+            },
+            // `args[i].method()` — the receiver is an `Index`
+            // projection whose HIR type can be `Var(_)` when
+            // multi-module typeck loses contact with the element
+            // kind (single-file builds resolve `args[i]` to
+            // `String` and never hit this arm). Pull the base
+            // local's MIR-pinned type and unwrap one Vec / Slice /
+            // Array layer to surface the concrete element kind.
+            // Without this, `args[i].len()` falls through the
+            // `len` dispatch's default arm to `gos_rt_arr_len`,
+            // which reads a Vec header out of a `*const c_char`
+            // string pointer and crashes inside `mov (%rdi),%rax`.
+            HirExprKind::Index { base, .. } => {
+                let base_local = self.receiver_local_from_path(base)?;
+                let mut base_ty = self.locals[base_local.0 as usize].ty;
+                while let TyKind::Ref { inner, .. } = self.tcx.kind_of(base_ty) {
+                    base_ty = *inner;
+                }
+                let elem_ty = match self.tcx.kind_of(base_ty) {
+                    TyKind::Vec(elem) | TyKind::Slice(elem) => *elem,
+                    TyKind::Array { elem, .. } => *elem,
+                    _ => return None,
+                };
+                let mut elem_kind = self.tcx.kind_of(elem_ty).clone();
+                while let TyKind::Ref { inner, .. } = elem_kind {
+                    elem_kind = self.tcx.kind_of(inner).clone();
+                }
+                if matches!(elem_kind, TyKind::Var(_)) {
+                    return None;
+                }
+                Some(elem_kind)
+            }
+            // `<receiver>.<field>.method()` — the field's type is
+            // resolvable from the receiver's local_struct (a known
+            // stdlib or user struct registered in `self.structs`).
+            // The HIR-level type on the field expression itself is
+            // often a `Var` that lost contact with the field
+            // declaration, so the typechecker route is
+            // insufficient — but the structural lookup is.
+            HirExprKind::Field { receiver, name } => {
+                let recv_local = self.receiver_local_from_path(receiver)?;
+                let struct_name = self.local_struct.get(&recv_local).cloned()?;
+                let order = self.structs.get(&struct_name)?;
+                let idx = order.iter().position(|f| f == name.name.as_str())?;
+                // `stdlib_struct_shapes` only ships field names
+                // today; tag the i-th field's `TyKind` from the
+                // typechecker's struct-fields registry. Without
+                // a typed registry we fall back to a default
+                // i64 for the well-known counter / size fields
+                // and String for the rest. Good enough for the
+                // method-chain dispatch (`.to_string()` /
+                // `.is_empty()` decisions).
+                let bool_fields: &[&str] = &["is_dir", "is_file", "is_symlink", "is_empty"];
+                let int_fields: &[&str] = &[
+                    "size",
+                    "modified_ms",
+                    "len",
+                    "code",
+                    "status",
+                    "year",
+                    "month",
+                    "day",
+                    "hour",
+                    "minute",
+                    "second",
+                ];
+                let _ = idx;
+                if bool_fields.contains(&name.name.as_str()) {
+                    Some(TyKind::Bool)
+                } else if int_fields.contains(&name.name.as_str()) {
+                    Some(TyKind::Int(gossamer_types::IntTy::I64))
+                } else {
+                    Some(TyKind::String)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn peek_define_deref_kind(&self, expr: &HirExpr) -> Option<gossamer_types::TyKind> {
+        use gossamer_types::TyKind;
+        let HirExprKind::Unary {
+            op: HirUnaryOp::Deref,
+            operand,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        let HirExprKind::Field {
+            receiver,
+            name: field_name,
+        } = &operand.kind
+        else {
+            return None;
+        };
+        let receiver_local = self.receiver_local_from_path(receiver)?;
+        let layout = self.local_define_layout.get(&receiver_local)?;
+        let (_, cell_kind) = layout
+            .iter()
+            .find(|(long, _)| long == field_name.name.as_str())?;
+        match *cell_kind {
+            "flag::Cell::Int" | "flag::Cell::Uint" | "flag::Cell::Duration" => {
+                Some(TyKind::Int(gossamer_types::IntTy::I64))
+            }
+            "flag::Cell::Float" => Some(TyKind::Float(gossamer_types::FloatTy::F64)),
+            "flag::Cell::Bool" => Some(TyKind::Bool),
+            "flag::Cell::String" => Some(TyKind::String),
+            _ => None,
+        }
+    }
+}

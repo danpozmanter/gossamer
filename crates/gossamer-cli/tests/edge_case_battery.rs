@@ -95,6 +95,8 @@ fn stack_overflow_diagnostic_or_clean_abort() {
     let mut child = Command::new(gos_bin())
         .arg("run")
         .arg(&src)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn gos run");
     let deadline = std::time::Instant::now() + Duration::from_secs(10);

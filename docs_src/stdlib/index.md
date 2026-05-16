@@ -9,6 +9,13 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::bufio`](bufio.md) | Buffered readers, writers, and line scanners. |
 | [`std::bytes`](bytes.md) | Byte buffers, builders, and slice helpers. |
 | [`std::collections`](collections.md) | Built-in container types. |
+| [`std::collections::deque`](collections_deque.md) | Double-ended queue over Vec<i64>. Re-bind shape on every mutator. |
+| [`std::collections::heap`](collections_heap.md) | Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`. |
+| [`std::collections::ordered_map`](collections_ordered_map.md) | Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator. |
+| [`std::collections::ordered_set`](collections_ordered_set.md) | Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator. |
+| [`std::collections::ordered_vec`](collections_ordered_vec.md) | Sorted-on-insert Vec<i64> with binary-search lookups. |
+| [`std::collections::queue`](collections_queue.md) | FIFO queue over Vec<i64>. Re-bind shape: `let q = queue::push(q, v)`. |
+| [`std::collections::stack`](collections_stack.md) | LIFO stack over Vec<i64>. Re-bind shape: `let s = stack::push(s, v)`. |
 | [`std::compress::bzip2`](compress_bzip2.md) | bzip2 encoder / decoder (BZh format). |
 | [`std::compress::flate`](compress_flate.md) | Raw DEFLATE (RFC 1951) encoder / decoder. |
 | [`std::compress::gzip`](compress_gzip.md) | gzip encoder / decoder (RFC 1952; flate2-backed). |
@@ -36,6 +43,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::encoding::hex`](encoding_hex.md) | Lowercase hex encode/decode. |
 | [`std::encoding::json`](encoding_json.md) | JSON parser, emitter, and derive support. |
 | [`std::encoding::pem`](encoding_pem.md) | PEM block encoder and decoder. |
+| [`std::encoding::toml`](encoding_toml.md) | TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive). |
 | [`std::encoding::xml`](encoding_xml.md) | Streaming XML decoder + builder (quick-xml). |
 | [`std::encoding::yaml`](encoding_yaml.md) | YAML 1.2 parser/emitter (serde_yaml-backed). |
 | [`std::env`](env.md) | Process environment, command-line arguments, working directory. |
@@ -61,11 +69,14 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::math::big`](math_big.md) | Arbitrary-precision integers (num-bigint). |
 | [`std::math::bits`](math_bits.md) | Integer bit-manipulation operations (Go's math/bits shape). |
 | [`std::math::rand`](math_rand.md) | Deterministic pseudo-random number generation. |
+| [`std::mime`](mime.md) | RFC 2045 media type parsing, parameter extraction, and extension lookup. |
 | [`std::net`](net.md) | TCP/UDP networking primitives. |
+| [`std::net::netip`](net_netip.md) | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](net_url.md) | URL parsing, rendering, and query escaping. |
 | [`std::os`](os.md) | Operating-system identity and deprecated re-exports of env/process/fs. |
 | [`std::os::exec`](os_exec.md) | Spawn / wait for child processes (Go's os/exec shape). |
 | [`std::os::signal`](os_signal.md) | POSIX-style signal subscription (Go's os/signal shape). |
+| [`std::os::user`](os_user.md) | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
 | [`std::panic`](panic.md) | Panic / `catch_unwind` integration. |
 | [`std::path`](path.md) | POSIX-style path manipulation. |
 | [`std::path::native`](path_native.md) | Native-separator wrappers over `std::path` (backslash on Windows). |
@@ -85,4 +96,5 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::unicode`](unicode.md) | Unicode character property predicates and casing operations. |
 | [`std::utf16`](utf16.md) | UTF-16 encoding/decoding and surrogate pair helpers. |
 | [`std::utf8`](utf8.md) | UTF-8 validation and scalar decoding. |
+| [`std::uuid`](uuid.md) | UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize. |
 

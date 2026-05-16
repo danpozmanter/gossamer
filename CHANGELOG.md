@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.7.0 — Stdlib, stability, refactoring, and build optimizations
+
+### Build
+
+- Debug builds use a minimal opt pass set (`mem2reg`, `instcombine`, `simplifycfg`) instead of `-O1`; cuts `gos build` wall-clock time by 100–200 ms on typical programs.
+- Release builds parallelize per-body `opt`+`llc` across up to 8 threads; wall-clock time falls roughly `(N-1)/N` on N-body programs.
+- Incremental object cache under `~/.cache/gossamer/ir-cache` (or `GOS_BUILD_CACHE`); repeat builds reuse unchanged bodies. Disable with `GOS_NO_CACHE=1`.
+
+### Performance
+
+- `gos_rt_panic_oob`, `gos_rt_panic`, and `gos_rt_process_abort` declared `noreturn cold nounwind` in emitted LLVM IR; restores inner-loop vectorization that the 0.6.0 bounds-check pass had blocked.
+
+### Stdlib — new modules
+
+- `std::encoding::yaml::to_json` / `from_json` — YAML ↔ JSON text converters, mirroring `toml::to_json` / `from_json`.
+- `std::sync::Map` — concurrent string-keyed string-value map: `new`, `set`, `get`, `delete`, `len`, `contains`, `keys`.
+
+### Stdlib — string
+
+All methods also available as `std::strings` free functions.
+
+- `s.split_once(sep)` / `s.rsplit_once(sep)` → `Option<(String, String)>`
+- `s.count(needle) -> i64` — non-overlapping occurrence count
+- `s.strip_chars(cutset)` / `s.lstrip_chars(cutset)` / `s.rstrip_chars(cutset)`
+- `s.zfill(width)` and `s.center(width, pad_char)`
+- `s.slice(start, end) -> Result<String, errors::Error>` — non-panicking byte-range slice
+
+### Stdlib — Vec / `[T]`
+
+- `xs.contains(&v) -> bool`, `xs.index_of(&v) -> Option<i64>`, `xs.count_of(&v) -> i64`
+- `xs.first() -> Option<T>` and `xs.last() -> Option<T>`
+- `xs.reversed() -> Vec<T>` — non-mutating counterpart to the in-place `xs.reverse()`
+- `xs.slice(start, end) -> Result<Vec<T>, errors::Error>`
+- `Vec::insert(xs, i, v) -> Result<Vec<T>, errors::Error>` and `Vec::remove(xs, i) -> Result<T, errors::Error>` — safe qualified forms; the legacy method-call shape keeps its existing behaviour
+
+### Stdlib — HashMap
+
+- `m.keys() -> Vec<K>` and `m.values() -> Vec<V>`
+- `HashMap::pop(m, k) -> Option<V>` — removes and returns the previous value
+
+### Stdlib — scalar prelude
+
+- `min(a, b)`, `max(a, b)`, `clamp(x, lo, hi)` — bare prelude functions for scalar pairs
+
+### Stdlib — auto-derive
+
+- Narrow integer fields (`i8`, `i16`, `i32`, `u8`, `u16`, `u32`, `f32`) now supported in `from_json` / `to_json` auto-derive; previously the entire struct was silently skipped.
+- `from_yaml` / `to_yaml` auto-derived on every eligible struct alongside the existing JSON and TOML pairs.
+
+### Stdlib — misc
+
+- `flag::Cell<T>` auto-derefs at comparisons, function arguments, and typed register unboxes; `*flags.field` still works explicitly.
+- `errors::newf(fmt, args…)` — format-shaped error constructor; rewritten at parse time to `errors::new(format!(fmt, args…))`.
+- `http::Response.raw_bytes` — body as `Vec<u8>` for binary responses; compiled tier now matches the VM tier.
+- `os::write_file(path, &Vec<u8>)` — binary-safe write preserving embedded NULs.
+- `os::read_file(path) -> Result<Vec<u8>, errors::Error>` — raw bytes counterpart to `read_file_to_string`.
+
+### Fixes
+
+- LLVM `slot_count` for `http::Response` corrected to `None`; the previous inline-alloca layout truncated the heap pointer, causing segfaults in LLVM AOT builds when accessing `.body`.
+- Resolver allows user-defined items to shadow prelude entries without collision.
+
 ## 0.6.0 — Stability hardening
 
 ### Safety

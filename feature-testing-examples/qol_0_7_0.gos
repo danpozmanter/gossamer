@@ -1,0 +1,127 @@
+// 0.7.0 Quality-of-Life surface — exercises every helper that
+// 0.7.0 added across all three tiers (VM, cranelift, LLVM).
+//
+// Pair this with `tier_parity` so a regression in any one tier
+// (MIR dispatch missing, runtime helper mis-routed, JIT thunk
+// not registered, …) trips the bit-for-bit-stdout gate.
+
+use std::collections::HashMap
+use std::errors
+use std::path
+use std::strings
+
+fn main() {
+    // ---- String surface ----
+    let url = "http://example.com/a/b/c.gos"
+    match url.rsplit_once("/") {
+        Some((head, tail)) => println!("rsplit_once head={} tail={}", head, tail),
+        None => println!("no slash"),
+    }
+    match "k=v".split_once("=") {
+        Some((k, v)) => println!("split_once k={} v={}", k, v),
+        None => println!("no eq"),
+    }
+    println!("count slashes = {}", url.count("/"))
+    println!("strip_chars |{}|", "  hello  ".strip_chars(" "))
+    println!("lstrip_chars |{}|", "##title".lstrip_chars("#"))
+    println!("rstrip_chars |{}|", "abc.gos".rstrip_chars(".gos"))
+    println!("zfill 000042 = {}", "42".zfill(6))
+    println!("center = {}", "title".center(20, '-'))
+    match "hello".slice(1, 4) {
+        Ok(s) => println!("str.slice ok: {}", s),
+        Err(e) => println!("str.slice err: {}", e.message()),
+    }
+    match "hello".slice(0, 99) {
+        Ok(_) => println!("str.slice wide ok??"),
+        Err(e) => println!("str.slice wide: {}", e.message()),
+    }
+
+    // ---- strings::* free fns ----
+    let parts: Vec<String> = vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    println!("join = {}", strings::join(&parts, &"-".to_string()))
+    match strings::rfind(&"foo/bar/baz".to_string(), &"/".to_string()) {
+        Some(i) => println!("rfind = {}", i),
+        None => println!("rfind = none"),
+    }
+
+    // ---- path::* free fns ----
+    println!("path::base = {}", path::base(&"a/b/c.gos".to_string()))
+    println!("path::dir = {}", path::dir(&"a/b/c.gos".to_string()))
+    match path::ext(&"a/b/c.gos".to_string()) {
+        Some(e) => println!("path::ext = {}", e),
+        None => println!("path::ext = none"),
+    }
+
+    // ---- Vec method surface ----
+    let nums: Vec<i64> = vec![10, 20, 30, 20]
+    match nums.first() {
+        Some(v) => println!("first = {}", v),
+        None => println!("first = none"),
+    }
+    match nums.last() {
+        Some(v) => println!("last = {}", v),
+        None => println!("last = none"),
+    }
+    let rev = nums.reversed()
+    println!("reversed[0] = {}", rev[0])
+    println!("contains 30 = {}", nums.contains(&30))
+    println!("contains 99 = {}", nums.contains(&99))
+    match nums.index_of(&20) {
+        Some(i) => println!("index_of 20 = {}", i),
+        None => println!("index_of 20 = none"),
+    }
+    println!("count_of 20 = {}", nums.count_of(&20))
+    match nums.slice(1, 3) {
+        Ok(s) => println!("vec.slice len = {}", s.len()),
+        Err(e) => println!("vec.slice err: {}", e.message()),
+    }
+    match nums.slice(0, 999) {
+        Ok(_) => println!("vec.slice wide ok??"),
+        Err(e) => println!("vec.slice wide: {}", e.message()),
+    }
+
+    // ---- Vec::insert / Vec::remove free-fn forms ----
+    match Vec::insert(nums, 1, 99) {
+        Ok(out) => println!("after insert: len={} [0]={} [1]={}", out.len(), out[0], out[1]),
+        Err(e) => println!("insert err: {}", e.message()),
+    }
+    match Vec::remove(nums, 0) {
+        Ok(removed) => println!("removed = {}", removed),
+        Err(e) => println!("remove err: {}", e.message()),
+    }
+
+    // ---- Vec<String>.contains ----
+    let langs: Vec<String> = vec!["text".to_string(), "json".to_string()]
+    if langs.contains(&"json".to_string()) {
+        println!("langs has json")
+    }
+    if !langs.contains(&"yaml".to_string()) {
+        println!("langs no yaml")
+    }
+
+    // ---- HashMap surface ----
+    let mut m: HashMap<String, i64> = HashMap::new()
+    m.insert("apple", 1)
+    m.insert("banana", 2)
+    m.insert("cherry", 3)
+    println!("map keys len = {}", m.keys().len())
+    println!("map vals len = {}", m.values().len())
+    match HashMap::pop(m, "banana") {
+        Some(v) => println!("popped banana = {}", v),
+        None => println!("no banana"),
+    }
+    match HashMap::pop(m, "durian") {
+        Some(_) => println!("durian ??"),
+        None => println!("no durian"),
+    }
+
+    // ---- Scalar min / max / clamp prelude ----
+    println!("min = {}", min(3, 7))
+    println!("max = {}", max(3, 7))
+    println!("clamp = {}", clamp(15, 0, 10))
+    println!("clamp neg = {}", clamp(-5, 0, 10))
+
+    // ---- errors::newf format-shaped constructor ----
+    let e = errors::newf("status {} from {}", 503, "example.com")
+    println!("err msg = {}", e.message())
+}

@@ -1,0 +1,655 @@
+#![allow(clippy::missing_safety_doc)]
+#![allow(missing_docs)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::many_single_char_names)]
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::same_length_and_capacity)]
+#![allow(clippy::cast_lossless)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::cast_ptr_alignment)]
+#![allow(clippy::ptr_as_ptr)]
+#![allow(static_mut_refs)]
+#![allow(unused_unsafe)]
+#![allow(clippy::wildcard_imports)]
+
+use std::ffi::CStr;
+use std::os::raw::c_char;
+
+use super::*;
+
+// ---------------------------------------------------------------
+// JSON runtime — wraps `serde_json::Value` behind a heap pointer
+// so user code can do `json::parse(s)`, `value.field`, and
+// `value.as_i64()` from compiled Gossamer. The MIR lowerer
+// rewrites field access on a `json::Value` receiver into a
+// `gos_rt_json_get(value, "field")` call before the cranelift
+// backend sees it.
+// ---------------------------------------------------------------
+
+/// Heap-allocated JSON node. The compiled tier shuttles raw
+/// `*mut GosJson` pointers through normal i64 slots; the runtime
+/// owns every node exclusively (each helper that "returns" a value
+/// boxes a fresh node). Lifetime tied to the next
+/// `gos_rt_gc_reset` only for the cstring helpers — JSON nodes are
+/// Heap-allocated JSON node. The compiled tier shuttles raw
+/// `*mut GosJson` pointers through normal i64 slots; each handle
+/// carries a shared `Arc<serde_json::Value>` keeping the parsed
+/// tree alive plus a stable interior pointer naming the specific
+/// sub-node this handle refers to.
+///
+/// Why this shape: `serde_json::Value::clone()` is O(N) on a
+/// nested tree. Previously every `gos_rt_json_get` call deep-cloned
+/// the matched child and `Box`-leaked the copy, so a single askq
+/// chat round walked a 10-deep delta tree per chunk × 200 chunks
+/// = thousands of multi-KB clones leaking permanently. The
+/// `Arc<Value>`-shared model bumps a refcount instead of cloning;
+/// child views are interior pointers into the same allocation.
+/// Tree storage drops when the last GosJson referencing it is
+/// freed (or, today, when the GC reclaims its leaked Box).
+///
+/// **Pointer stability:** `Arc::new(value)` allocates the Value on
+/// the heap via the global allocator. The Value's address never
+/// moves while any `Arc` referencing it lives, so the
+/// `view: *const Value` field is stable for the GosJson's
+/// lifetime. This is the same trick `Pin<Arc<T>>` uses;
+/// formalising it via `Pin` would not change the layout.
+///
+/// See `~/dev/contexts/lang/fix_architecture_ownership.md`
+/// Stage 2 (final form).
+pub struct GosJson {
+    /// Owning shared reference to the parsed-once value tree. Kept
+    /// alive for the duration of the GosJson; cloning a GosJson
+    /// only bumps this refcount (not a deep copy).
+    tree: std::sync::Arc<serde_json::Value>,
+    /// View into `tree`'s subtree. Always points to a sub-Value of
+    /// `tree`'s root. Stable as long as `tree` is alive.
+    view: SyncRawPtr<serde_json::Value>,
+}
+
+impl GosJson {
+    /// Wraps a fresh `serde_json::Value` as the root of its own
+    /// tree. Allocates one `Arc<Value>` and one `Box<GosJson>`.
+    fn into_raw(value: serde_json::Value) -> *mut GosJson {
+        let tree = std::sync::Arc::new(value);
+        let view = std::sync::Arc::as_ptr(&tree);
+        Box::into_raw(Box::new(GosJson {
+            tree,
+            view: SyncRawPtr::new(view.cast_mut()),
+        }))
+    }
+
+    /// Builds a child handle that shares the same tree as `self`
+    /// and points at `child` inside it. `child` must be a
+    /// reference into `self.tree`'s subtree (the type system
+    /// cannot enforce this here because we cross the FFI; every
+    /// caller below derives `child` via `serde_json::Value::get`
+    /// on `self.view`'s subtree, which is sound).
+    fn child(&self, child: &serde_json::Value) -> *mut GosJson {
+        Box::into_raw(Box::new(GosJson {
+            tree: std::sync::Arc::clone(&self.tree),
+            view: SyncRawPtr::new(std::ptr::from_ref(child).cast_mut()),
+        }))
+    }
+
+    fn null_ptr() -> *mut GosJson {
+        Self::into_raw(serde_json::Value::Null)
+    }
+}
+
+unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
+    if p.is_null() {
+        return None;
+    }
+    // Arc<serde_json::Value> pointers are always >> 1 on any real allocator.
+    // If the first word is 0 or 1 we received a *mut GosResult (disc + payload)
+    // instead of a *const GosJson — unwrap the Option layer transparently.
+    let first_word = unsafe { *(p as *const u64) };
+    if first_word <= 1 {
+        if first_word == 0 {
+            // disc=0 (Some): offset-8 holds the inner *mut GosJson as i64.
+            let payload = unsafe { *((p as *const u64).add(1)) };
+            if payload == 0 {
+                return None;
+            }
+            return unsafe { json_borrow(payload as *const GosJson) };
+        }
+        // disc=1 (None)
+        return None;
+    }
+    let json = unsafe { &*p };
+    if json.view.is_null() {
+        return None;
+    }
+    // SAFETY: `view` was set by `Self::into_raw` (points at the
+    // tree's root) or by `Self::child` (points at a sub-Value of
+    // `self.tree`'s subtree). Either way the pointee lives as
+    // long as `tree` does, which is at least until this `&GosJson`
+    // dies — i.e. at least until this function returns.
+    Some(unsafe { &*json.view.as_const_ptr() })
+}
+
+/// Resolves `p` and returns the GosJson struct itself so the
+/// caller can construct child handles via `Self::child`. Returns
+/// `None` only for null inputs.
+unsafe fn json_handle<'a>(p: *const GosJson) -> Option<&'a GosJson> {
+    if p.is_null() {
+        return None;
+    }
+    // Same GosResult-vs-GosJson guard as json_borrow.
+    let first_word = unsafe { *(p as *const u64) };
+    if first_word <= 1 {
+        if first_word == 0 {
+            let payload = unsafe { *((p as *const u64).add(1)) };
+            if payload == 0 {
+                return None;
+            }
+            return unsafe { json_handle(payload as *const GosJson) };
+        }
+        return None;
+    }
+    Some(unsafe { &*p })
+}
+
+/// `json::parse(text) -> Result<json::Value, String>` runtime
+/// entry point. Returns a real `GosResult` so `match` and `?`
+/// work across function boundaries in compiled code.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> *mut GosResult {
+    ffi_entry!(std::ptr::null_mut(), {
+        let bytes: &[u8] = if text.is_null() {
+            b""
+        } else {
+            unsafe { CStr::from_ptr(text).to_bytes() }
+        };
+        match std::str::from_utf8(bytes).map(serde_json::from_str::<serde_json::Value>) {
+            Ok(Ok(v)) => {
+                let ptr = GosJson::into_raw(v);
+                unsafe { gos_rt_result_new(0, ptr as i64) }
+            }
+            Ok(Err(e)) => {
+                let msg = format!("{e}");
+                let cs = alloc_cstring(msg.as_bytes());
+                unsafe { gos_rt_result_new(1, cs as i64) }
+            }
+            Err(_) => unsafe { gos_rt_result_new(1, alloc_cstring(b"invalid UTF-8") as i64) },
+        }
+    })
+}
+
+/// `json::render(value) -> String`. Always returns a non-null
+/// C-string (empty on null input) into the GC arena.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_render(j: *const GosJson) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(v) = (unsafe { json_borrow(j) }) else {
+            return alloc_cstring(b"");
+        };
+        let s = serde_json::to_string(v).unwrap_or_default();
+        alloc_cstring(s.as_bytes())
+    })
+}
+
+/// Display form of a `json::Value` for `println!("{}", val)`.
+/// Strings are shown without JSON quotes; all other values use
+/// their JSON representation so they stay machine-readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_display(j: *const GosJson) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(v) = (unsafe { json_borrow(j) }) else {
+            return alloc_cstring(b"null");
+        };
+        match v {
+            serde_json::Value::String(s) => alloc_cstring(s.as_bytes()),
+            other => {
+                let s = serde_json::to_string(other).unwrap_or_default();
+                alloc_cstring(s.as_bytes())
+            }
+        }
+    })
+}
+
+/// `value.get(key) -> json::Value`. Returns a fresh `GosJson*`
+/// holding the field's value, or a JSON-null node when the
+/// receiver is not an object or the field is missing. Nested
+/// chains (`root.latency.low_ms`) work because each call returns
+/// a real handle the next call can dereference. The child handle
+/// shares the parent's `Arc<Value>` tree (no deep clone).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_get(j: *const GosJson, key: *const c_char) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(parent) = (unsafe { json_handle(j) }) else {
+            return GosJson::null_ptr();
+        };
+        // SAFETY: `parent.view` is a stable interior pointer into
+        // `parent.tree`'s allocation; see `GosJson` doc. The
+        // dereference produces a borrow that lives only inside this
+        // function call.
+        let v = unsafe { &*parent.view.as_const_ptr() };
+        let key_bytes: &[u8] = if key.is_null() {
+            b""
+        } else {
+            unsafe { CStr::from_ptr(key).to_bytes() }
+        };
+        let Ok(key_str) = std::str::from_utf8(key_bytes) else {
+            return GosJson::null_ptr();
+        };
+        match v.get(key_str) {
+            Some(child) => parent.child(child),
+            None => GosJson::null_ptr(),
+        }
+    })
+}
+
+/// `value.at(idx) -> json::Value`. Sub-array index; child handle
+/// shares the parent's tree.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_at(j: *const GosJson, idx: i64) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(parent) = (unsafe { json_handle(j) }) else {
+            return GosJson::null_ptr();
+        };
+        if idx < 0 {
+            return GosJson::null_ptr();
+        }
+        let v = unsafe { &*parent.view.as_const_ptr() };
+        match v.get(idx as usize) {
+            Some(child) => parent.child(child),
+            None => GosJson::null_ptr(),
+        }
+    })
+}
+
+/// `value.len() -> i64` for arrays and objects; 0 elsewhere.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_len(j: *const GosJson) -> i64 {
+    ffi_entry!(-1, {
+        let Some(v) = (unsafe { json_borrow(j) }) else {
+            return 0;
+        };
+        match v {
+            serde_json::Value::Array(a) => a.len() as i64,
+            serde_json::Value::Object(o) => o.len() as i64,
+            serde_json::Value::String(s) => s.len() as i64,
+            _ => 0,
+        }
+    })
+}
+
+/// `value.is_null() -> bool` (returns 1/0 i32, the codegen ABI).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_is_null(j: *const GosJson) -> i32 {
+    ffi_entry!(-1, {
+        match unsafe { json_borrow(j) } {
+            Some(serde_json::Value::Null) | None => 1,
+            Some(_) => 0,
+        }
+    })
+}
+
+/// `value.as_i64() -> i64`. JSON numbers convert; everything else
+/// returns 0 (matches the interpreter's `unwrap_or(0)` shape).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_i64(j: *const GosJson) -> i64 {
+    ffi_entry!(-1, {
+        let Some(v) = (unsafe { json_borrow(j) }) else {
+            return 0;
+        };
+        match v {
+            serde_json::Value::Number(n) => n
+                .as_i64()
+                .unwrap_or_else(|| n.as_f64().unwrap_or(0.0) as i64),
+            serde_json::Value::Bool(b) => i64::from(*b),
+            serde_json::Value::String(s) => s.parse::<i64>().unwrap_or(0),
+            _ => 0,
+        }
+    })
+}
+
+/// `value.as_f64() -> f64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_f64(j: *const GosJson) -> f64 {
+    ffi_entry!(f64::NAN, {
+        let Some(v) = (unsafe { json_borrow(j) }) else {
+            return 0.0;
+        };
+        match v {
+            serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
+            serde_json::Value::Bool(true) => 1.0,
+            serde_json::Value::Bool(false) => 0.0,
+            serde_json::Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
+            _ => 0.0,
+        }
+    })
+}
+
+/// `value.as_str() -> String`. Strings round-trip; non-string
+/// values render through serde_json::to_string so users can still
+/// log them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_str(j: *const GosJson) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(v) = (unsafe { json_borrow(j) }) else {
+            return alloc_cstring(b"");
+        };
+        match v {
+            serde_json::Value::String(s) => alloc_cstring(s.as_bytes()),
+            other => {
+                let rendered = serde_json::to_string(other).unwrap_or_default();
+                alloc_cstring(rendered.as_bytes())
+            }
+        }
+    })
+}
+
+/// `value.as_bool() -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_bool(j: *const GosJson) -> i32 {
+    ffi_entry!(-1, {
+        match unsafe { json_borrow(j) } {
+            Some(serde_json::Value::Bool(true)) => 1,
+            Some(serde_json::Value::Number(n)) if n.as_f64().unwrap_or(0.0) != 0.0 => 1,
+            Some(serde_json::Value::String(s)) if !s.is_empty() => 1,
+            _ => 0,
+        }
+    })
+}
+
+/// Identity helper for `json::as_array` / similar type
+/// assertions — the runtime doesn't keep separate array vs
+/// object handles, so the as_* coercions just thread the
+/// receiver through unchanged. Lets MIR lowering route these
+/// names without special-casing them at the call site.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_identity(j: *mut GosJson) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), { j })
+}
+
+/// `json::get(value, key) -> Option<json::Value>`. Wraps
+/// `gos_rt_json_get`'s null-on-miss result in the standard
+/// `*mut GosResult` Option shape (`disc 0 = Some, disc 1 = None`)
+/// so user-level `match` / `if let` / `is_some` reads the right
+/// discriminant. The bare `gos_rt_json_get` survives for the MIR
+/// field-access lowering of `root.a.b.c`, which threads raw
+/// `*mut GosJson` pointers through chained calls.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_get_opt(
+    j: *const GosJson,
+    key: *const c_char,
+) -> *mut GosResult {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(parent) = (unsafe { json_handle(j) }) else {
+            return gos_rt_result_new(1, 0);
+        };
+        let key_bytes: &[u8] = if key.is_null() {
+            b""
+        } else {
+            unsafe { CStr::from_ptr(key).to_bytes() }
+        };
+        let Ok(key_str) = std::str::from_utf8(key_bytes) else {
+            return gos_rt_result_new(1, 0);
+        };
+        let v = unsafe { &*parent.view.as_const_ptr() };
+        match v.get(key_str) {
+            Some(child) => gos_rt_result_new(0, parent.child(child) as i64),
+            None => gos_rt_result_new(1, 0),
+        }
+    })
+}
+
+/// `json::keys(value) -> Option<[String]>`. Returns `Some(vec)`
+/// for objects (keys in declaration order), `None` for any other
+/// shape — pinned by `malformed_json_returns_none_not_segfault`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_keys_opt(j: *const GosJson) -> *mut GosResult {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(v) = (unsafe { json_borrow(j) }) else {
+            return unsafe { gos_rt_result_new(1, 0) };
+        };
+        match v {
+            serde_json::Value::Object(map) => {
+                // 8-byte slots (cstring pointers) — same shape `[String]`
+                // values use elsewhere in the runtime.
+                let vec_ptr = unsafe { gos_rt_vec_new(8) };
+                for k in map.keys() {
+                    let cs = alloc_cstring(k.as_bytes()) as i64;
+                    unsafe {
+                        gos_rt_vec_push(vec_ptr, std::ptr::addr_of!(cs).cast::<u8>());
+                    }
+                }
+                unsafe { gos_rt_result_new(0, vec_ptr as i64) }
+            }
+            _ => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `json::as_array(value) -> Option<[json::Value]>`. Returns
+/// `Some(vec)` of element-pointers for an array node, `None`
+/// otherwise. Each element is materialised as a fresh `GosJson*`
+/// so the receiver can be dropped independently.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_array_opt(j: *const GosJson) -> *mut GosResult {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(parent) = (unsafe { json_handle(j) }) else {
+            return gos_rt_result_new(1, 0);
+        };
+        let v = unsafe { &*parent.view.as_const_ptr() };
+        match v {
+            serde_json::Value::Array(items) => {
+                let vec_ptr = unsafe { gos_rt_vec_new(8) };
+                for item in items {
+                    // Each element shares the parent's `Arc<Value>`
+                    // tree — no deep clone, no per-element leak of a
+                    // freshly-boxed Value.
+                    let elem = parent.child(item) as i64;
+                    unsafe {
+                        gos_rt_vec_push(vec_ptr, std::ptr::addr_of!(elem).cast::<u8>());
+                    }
+                }
+                gos_rt_result_new(0, vec_ptr as i64)
+            }
+            _ => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `json::Value::String(s)` constructor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_string(s: *const c_char) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        let text = if s.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(s).to_string_lossy().into_owned() }
+        };
+        GosJson::into_raw(serde_json::Value::String(text))
+    })
+}
+
+/// `json::Value::Int(n)` constructor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_int(n: i64) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        GosJson::into_raw(serde_json::Value::Number(n.into()))
+    })
+}
+
+/// `json::Value::Bool(b)` constructor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_bool(b: i32) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        GosJson::into_raw(serde_json::Value::Bool(b != 0))
+    })
+}
+
+/// `json::Value::Float(x)` constructor used by `json::render` on
+/// struct fields of type `f64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_float(x: f64) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        let n = serde_json::Number::from_f64(x).unwrap_or_else(|| serde_json::Number::from(0));
+        GosJson::into_raw(serde_json::Value::Number(n))
+    })
+}
+
+/// `json::Value::Null` constructor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_null() -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), { GosJson::null_ptr() })
+}
+
+/// `json::Value::Array(vec)` constructor. Takes a `*mut GosVec` of
+/// `*mut GosJson` element pointers and rebuilds a real
+/// `serde_json::Value::Array`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_array(vec: *const GosVec) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        if !vec.is_null() {
+            let header = unsafe { &*vec };
+            let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+            if !header.ptr.is_null() && len > 0 {
+                let elems =
+                    unsafe { std::slice::from_raw_parts(header.ptr.cast::<*const GosJson>(), len) };
+                for elem in elems {
+                    if let Some(v) = unsafe { json_borrow(*elem) } {
+                        out.push(v.clone());
+                    } else {
+                        out.push(serde_json::Value::Null);
+                    }
+                }
+            }
+        }
+        GosJson::into_raw(serde_json::Value::Array(out))
+    })
+}
+
+/// `json::Value::object(n, pairs_ptr)` — fan-out constructor
+/// that takes the pair count and a flat `[k0, v0, k1, v1, …]`
+/// arena buffer. Lets the MIR lowerer materialise an array
+/// literal of `(String, json::Value)` pairs into a 16-B-strided
+/// buffer without going through `gos_rt_vec_push` (which
+/// truncates at 8 bytes today). The legacy
+/// `gos_rt_json_value_object(*mut GosVec)` survives for runner
+/// builds that still pass a real `GosVec`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_object_n(n: i64, pairs: *const i64) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out = serde_json::Map::new();
+        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        if !pairs.is_null() && n > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(pairs, n * 2) };
+            for chunk in slice.chunks_exact(2) {
+                let key_ptr = chunk[0] as *const c_char;
+                let val_ptr = chunk[1] as *mut GosJson;
+                let key = if key_ptr.is_null() {
+                    String::new()
+                } else {
+                    unsafe { CStr::from_ptr(key_ptr).to_string_lossy().into_owned() }
+                };
+                let v = if let Some(v) = unsafe { json_borrow(val_ptr) } {
+                    v.clone()
+                } else {
+                    serde_json::Value::Null
+                };
+                out.insert(key, v);
+            }
+        }
+        GosJson::into_raw(serde_json::Value::Object(out))
+    })
+}
+
+/// `json::Value::object([(k, v), ...])` constructor. Takes a
+/// `*mut GosVec` of `(String, *mut GosJson)` tuple pointers.
+/// Used by the runner-build path; the compiled tier prefers
+/// `gos_rt_json_value_object_n` to dodge `*mut GosVec` plumbing
+/// for the array-literal-of-pairs shape.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_value_object(vec: *const GosVec) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out = serde_json::Map::new();
+        if !vec.is_null() {
+            let header = unsafe { &*vec };
+            let raw_len = usize::try_from(header.len.max(0)).unwrap_or(0);
+            let elem_bytes = header.elem_bytes as usize;
+            // The compiled tier passes raw stack-arrays where the
+            // call site expected a `*mut GosVec`; in that case the
+            // first 8 bytes the runtime reads as `header.len` are
+            // actually the first key's c_char pointer (huge value),
+            // and following the bogus length crashes on the next
+            // strlen. Bail early when the header doesn't look like
+            // a GosVec we built (`elem_bytes` is one of the small
+            // shapes we hand out, the length is plausible).
+            let header_looks_valid =
+                matches!(elem_bytes, 8 | 16 | 24) && raw_len <= 16 * 1024 * 1024;
+            if header_looks_valid && !header.ptr.is_null() && raw_len > 0 {
+                // Tuples in the compiled tier currently get pushed as
+                // flat 8-byte slots — `[("k", v), ("k2", v2)]` lands
+                // as `len = 4` of i64 slots, not `len = 2` of 16-byte
+                // pairs. Detect this by `elem_bytes`: if it's 8, treat
+                // `len` as half the tuple count and stride 8; if it's
+                // 16, treat `len` as the tuple count and stride 16.
+                let tuple_count = if elem_bytes == 16 {
+                    raw_len
+                } else {
+                    raw_len / 2
+                };
+                let pairs = unsafe {
+                    std::slice::from_raw_parts(header.ptr.cast::<[i64; 2]>(), tuple_count)
+                };
+                for pair in pairs {
+                    let key_ptr = pair[0] as *const c_char;
+                    let val_ptr = pair[1] as *mut GosJson;
+                    let key = if key_ptr.is_null() {
+                        String::new()
+                    } else {
+                        unsafe { CStr::from_ptr(key_ptr).to_string_lossy().into_owned() }
+                    };
+                    let v = if let Some(v) = unsafe { json_borrow(val_ptr) } {
+                        v.clone()
+                    } else {
+                        serde_json::Value::Null
+                    };
+                    out.insert(key, v);
+                }
+            }
+        }
+        GosJson::into_raw(serde_json::Value::Object(out))
+    })
+}
+
+/// `json::set(obj, key, val) -> json::Value`. Returns a new JSON
+/// object with `key` updated to `val`. Appends when the key is new.
+/// If `obj` is not an object, returns `obj` unchanged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_set(
+    obj: *const GosJson,
+    key: *const c_char,
+    val: *const GosJson,
+) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(parent) = (unsafe { json_handle(obj) }) else {
+            return GosJson::null_ptr();
+        };
+        let v = unsafe { &*parent.view.as_const_ptr() };
+        let serde_json::Value::Object(existing) = v else {
+            return parent.child(v);
+        };
+        let key_str = if key.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() }
+        };
+        let new_val = if let Some(child) = unsafe { json_borrow(val) } {
+            child.clone()
+        } else {
+            serde_json::Value::Null
+        };
+        let mut out = existing.clone();
+        out.insert(key_str, new_val);
+        GosJson::into_raw(serde_json::Value::Object(out))
+    })
+}

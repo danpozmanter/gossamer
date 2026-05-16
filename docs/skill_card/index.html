@@ -521,19 +521,15 @@ Bare <code>gos</code> drops into the REPL.</p>
 </tr>
 <tr>
 <td><code>gos run FILE</code></td>
-<td>Register-based VM by default; falls back to the tree-walker when the VM hits something it doesn't yet support.</td>
-</tr>
-<tr>
-<td><code>gos run --vm FILE</code></td>
-<td>Require the VM (no fallback).</td>
-</tr>
-<tr>
-<td><code>gos run --tree-walker FILE</code></td>
-<td>Use the tree-walker directly.</td>
+<td>Register-based bytecode VM. The walker is gone as a user-facing mode; if the VM hits an HIR shape it doesn't lower yet, it falls back internally — never user-selectable.</td>
 </tr>
 <tr>
 <td><code>gos build FILE</code></td>
-<td>Native build via Cranelift + system <code>cc</code>.</td>
+<td>Native build via LLVM (<code>opt -O0 \| llc -O0</code>) + system linker.</td>
+</tr>
+<tr>
+<td><code>gos build --release FILE</code></td>
+<td>Native build via LLVM (<code>opt -O3 \| llc -O3 -mcpu=native</code>) + system linker.</td>
 </tr>
 <tr>
 <td><code>gos test PATH</code></td>

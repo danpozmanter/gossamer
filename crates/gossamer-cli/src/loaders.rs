@@ -30,7 +30,12 @@ pub(crate) fn load_or_parse(
         }
         return (cached, Vec::new());
     }
-    gossamer_parse::parse_source_file(source, file_id)
+    // Source has already been augmented by the cli entry point
+    // (`gos run` / `gos build`) before reaching the source map. We
+    // call the autoderive wrapper to also pick up the synthetic
+    // `use std::json` / `use std::errors` injections that the impls
+    // depend on.
+    gossamer_parse::autoderive::parse_with_autoderive(source, file_id)
 }
 
 /// Pretty-prints frontend stage timings for `gos check --timings`.

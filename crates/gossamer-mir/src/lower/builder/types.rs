@@ -1,0 +1,605 @@
+#![allow(clippy::missing_safety_doc)]
+#![allow(missing_docs)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::wildcard_imports)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::many_single_char_names)]
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::cast_lossless)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::option_if_let_else)]
+#![allow(clippy::match_same_arms)]
+#![allow(clippy::if_not_else)]
+#![allow(clippy::single_match_else)]
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::manual_let_else)]
+#![allow(clippy::redundant_else)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::map_unwrap_or)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::unnecessary_wraps)]
+#![allow(clippy::large_enum_variant)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::single_match)]
+#![allow(clippy::useless_conversion)]
+
+use std::collections::HashMap;
+
+use gossamer_ast::Ident;
+use gossamer_hir::{
+    HirAdtKind, HirBinaryOp, HirBlock, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind,
+    HirLiteral, HirMatchArm, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind, HirUnaryOp,
+};
+use gossamer_lex::Span;
+use gossamer_types::{Ty, TyCtxt};
+
+use crate::ir::{
+    BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
+    Statement, StatementKind, Terminator, UnOp,
+};
+
+use super::*;
+
+use super::Builder;
+
+impl<'a> Builder<'a> {
+    pub(crate) fn new(
+        _name: String,
+        span: Span,
+        tcx: &'a mut TyCtxt,
+        structs: &'a HashMap<String, Vec<String>>,
+        struct_defs: &'a HashMap<gossamer_resolve::DefId, String>,
+        enums: &'a EnumIndex,
+        impl_methods: &'a HashMap<String, Option<Ty>>,
+        fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
+        fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+        consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
+    ) -> Self {
+        Self {
+            tcx,
+            locals: Vec::new(),
+            blocks: Vec::new(),
+            current: None,
+            scopes: vec![HashMap::new()],
+            fn_span: span,
+            structs,
+            struct_defs,
+            enums,
+            impl_methods,
+            fn_returns,
+            fn_inputs,
+            consts,
+            local_struct: HashMap::new(),
+            local_elem_struct: HashMap::new(),
+            local_closure: HashMap::new(),
+            local_fn_name: HashMap::new(),
+            local_runtime_kind: HashMap::new(),
+            local_define_layout: HashMap::new(),
+            param_locals: std::collections::HashSet::new(),
+            loop_stack: Vec::new(),
+            payload_defer_block: None,
+        }
+    }
+
+    pub(crate) fn struct_name_of(&self, ty: Ty) -> Option<String> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Adt { def, .. } => {
+                    if let Some(name) = self.struct_defs.get(def).cloned() {
+                        return Some(name);
+                    }
+                    // Fallback: stdlib structs aren't user-
+                    // declared so they don't appear in
+                    // `struct_defs`, but their field layout
+                    // lives in `stdlib_struct_shapes`. Match on
+                    // the rendered type name (last `::`-segment).
+                    let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
+                    let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
+                    if self.structs.contains_key(bare) {
+                        return Some(bare.to_string());
+                    }
+                    return None;
+                }
+                TyKind::Ref { inner, .. } => cur = *inner,
+                // The typechecker resolves stdlib types whose path
+                // isn't declared in the resolver (e.g.
+                // `&fs::DirInfo`) to `JsonValue` as a default. The
+                // path information is lost in the typed `Ty`, but
+                // the rendered form still reports the original
+                // segment when the path matched a stdlib module
+                // directly. Probe `stdlib_struct_shapes` against
+                // the bare last segment to recover the layout.
+                TyKind::JsonValue => {
+                    let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
+                    let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
+                    if self.structs.contains_key(bare) {
+                        return Some(bare.to_string());
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    pub(crate) fn router_bare_variant(symbol: &str) -> Option<&'static str> {
+        match symbol {
+            "gos_rt_router_get" => Some("gos_rt_router_get_fn"),
+            "gos_rt_router_post" => Some("gos_rt_router_post_fn"),
+            "gos_rt_router_put" => Some("gos_rt_router_put_fn"),
+            "gos_rt_router_delete" => Some("gos_rt_router_delete_fn"),
+            "gos_rt_router_patch" => Some("gos_rt_router_patch_fn"),
+            "gos_rt_router_head" => Some("gos_rt_router_head_fn"),
+            "gos_rt_router_options" => Some("gos_rt_router_options_fn"),
+            "gos_rt_router_add" => Some("gos_rt_router_add_fn"),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn emit_router_handler_abi(
+        &mut self,
+        handler_local: Local,
+        span: Span,
+    ) -> RouterHandlerAbi {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        if let Some(fn_name) = self.local_fn_name.get(&handler_local).cloned() {
+            let fn_addr_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(fn_addr_local),
+                Rvalue::CallIntrinsic {
+                    name: "gos_fn_addr",
+                    args: vec![Operand::Const(ConstValue::Str(fn_name))],
+                },
+                span,
+            );
+            return RouterHandlerAbi::Bare(Operand::Copy(Place::local(fn_addr_local)));
+        }
+        let handler_ty = self.locals[handler_local.0 as usize].ty;
+        let handler_struct = self
+            .struct_name_of(handler_ty)
+            .unwrap_or_else(|| "Handler".to_string());
+        let serve_fn_name = format!("{handler_struct}::serve");
+        let fn_addr_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(fn_addr_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_fn_addr",
+                args: vec![Operand::Const(ConstValue::Str(serve_fn_name))],
+            },
+            span,
+        );
+        RouterHandlerAbi::WithEnv {
+            env: Operand::Copy(Place::local(handler_local)),
+            fn_addr: Operand::Copy(Place::local(fn_addr_local)),
+        }
+    }
+
+    pub(crate) fn lookup_define_field(
+        &mut self,
+        receiver_local: Local,
+        long_name: &str,
+        span: Span,
+    ) -> Option<Local> {
+        let layout = self.local_define_layout.get(&receiver_local)?.clone();
+        let (idx, &(_, cell_kind)) = layout
+            .iter()
+            .enumerate()
+            .find(|(_, (n, _))| n == long_name)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let dest = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::Use(Operand::Copy(Place {
+                local: receiver_local,
+                projection: vec![crate::Projection::Field(idx as u32)],
+            })),
+            span,
+        );
+        self.local_runtime_kind.insert(dest, cell_kind);
+        Some(dest)
+    }
+
+    pub(crate) fn is_json_value_ty(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::JsonValue => return true,
+                TyKind::Ref { inner, .. } => cur = *inner,
+                _ => return false,
+            }
+        }
+    }
+
+    pub(crate) fn hash_map_value_kind(&self, ty: Ty) -> Option<MapValueKind> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::HashMap { value, .. } => {
+                    return Some(map_value_kind_from(self.tcx, *value));
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    pub(crate) fn hash_map_key_kind(&self, ty: Ty) -> Option<MapKeyKind> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::HashMap { key, .. } => {
+                    return Some(map_key_kind_from(self.tcx, *key));
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    pub(crate) fn first_generic_of(&self, ty: Ty) -> Option<Ty> {
+        use gossamer_types::{GenericArg, TyKind};
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { substs, .. } => {
+                    for arg in substs.as_slice() {
+                        if let GenericArg::Type(t) = arg {
+                            return Some(*t);
+                        }
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    pub(crate) fn second_generic_of(&self, ty: Ty) -> Option<Ty> {
+        use gossamer_types::{GenericArg, TyKind};
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { substs, .. } => {
+                    let types: Vec<Ty> = substs
+                        .as_slice()
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            GenericArg::Type(t) => Some(*t),
+                            GenericArg::Const(_) => None,
+                        })
+                        .collect();
+                    return types.get(1).copied();
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    pub(crate) fn option_adt_ty(&mut self) -> Ty {
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs: gossamer_types::Substs::new(),
+        })
+    }
+
+    pub(crate) fn option_tuple3_i64_i64_str_ty(&mut self) -> Ty {
+        let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let s = self.tcx.string_ty();
+        let tup = self
+            .tcx
+            .intern(gossamer_types::TyKind::Tuple(vec![i, i, s]));
+        let substs = gossamer_types::Substs::from_types([tup]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn option_vec_string_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+        let substs = gossamer_types::Substs::from_types([v]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn option_string_adt_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let substs = gossamer_types::Substs::from_types([s]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn result_string_error_adt_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([s, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    pub(crate) fn result_unit_error_adt_ty(&mut self) -> Ty {
+        let u = self.tcx.unit();
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([u, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    pub(crate) fn result_i64_error_adt_ty(&mut self) -> Ty {
+        let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([i, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    pub(crate) fn result_json_value_error_adt_ty(&mut self) -> Ty {
+        let j = self.tcx.json_value_ty();
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([j, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    pub(crate) fn option_json_value_adt_ty(&mut self) -> Ty {
+        let j = self.tcx.json_value_ty();
+        let substs = gossamer_types::Substs::from_types([j]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn option_json_array_adt_ty(&mut self) -> Ty {
+        let j = self.tcx.json_value_ty();
+        let vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(j));
+        let substs = gossamer_types::Substs::from_types([vec_ty]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn option_string_vec_adt_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+        let substs = gossamer_types::Substs::from_types([vec_ty]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn expr_runtime_kind(&self, expr: &HirExpr) -> Option<&'static str> {
+        let HirExprKind::MethodCall { receiver, name, .. } = &expr.kind else {
+            return None;
+        };
+        let receiver_kind = self
+            .receiver_local_from_path(receiver)
+            .and_then(|l| self.local_runtime_kind.get(&l).copied())
+            .or_else(|| self.expr_runtime_kind(receiver))?;
+        match (receiver_kind, name.name.as_str()) {
+            ("http::Client", "get" | "post") => Some("http::Request"),
+            ("http::Request", "header" | "body") => Some("http::Request"),
+            ("http::Request", "send") => Some("http::Response"),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_result_or_option_adt(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { def, .. } => {
+                    return def.local == u32::MAX || def.local == u32::MAX - 1;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    pub(crate) fn adt_generic_at(&self, ty: Ty, idx: usize) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { substs, .. } => {
+                    return substs.types().get(idx).copied();
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    pub(crate) fn elem_bytes_of(&self, ty: Ty) -> u32 {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Bool => 1,
+            TyKind::Char => 4,
+            TyKind::Int(_) | TyKind::Float(_) => 8,
+            TyKind::String => 8,
+            // Tuples / aggregate ADTs occupy `slot_count * 8` bytes
+            // in the flat-stack representation the native codegen
+            // uses (mirrors `type_slot_count` in cranelift's
+            // native.rs). A `(String, String)` tuple is two i64
+            // slots = 16 bytes; treating it as 8 like any other
+            // compound type would make `[(a, b), (c, d)].to_vec()`
+            // copy only half of each pair.
+            TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. } => {
+                self.type_slot_bytes(ty)
+            }
+            // Default to pointer-sized for everything else (refs,
+            // enums-as-handles, channels, …).
+            _ => 8,
+        }
+    }
+
+    pub(crate) fn type_slot_bytes(&self, ty: Ty) -> u32 {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Tuple(elems) => {
+                let total: u32 = elems
+                    .iter()
+                    .map(|t| self.type_slot_bytes(*t).max(8) / 8)
+                    .sum();
+                total.max(1) * 8
+            }
+            TyKind::Array { elem, len } => {
+                let elem_bytes = self.type_slot_bytes(*elem).max(8);
+                u32::try_from(*len).unwrap_or(1).saturating_mul(elem_bytes)
+            }
+            TyKind::Adt { def, .. } => {
+                // Sentinels for Result / Option (u32::MAX,
+                // u32::MAX - 1) and stdlib-struct sentinels (DirInfo,
+                // Output, …) carry no `struct_field_tys`; treat them
+                // as a pointer (single slot) — those types are
+                // always heap-allocated and passed by reference.
+                let _ = def;
+                8
+            }
+            TyKind::Bool => 1,
+            TyKind::Char => 4,
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::String => 8,
+            _ => 8,
+        }
+    }
+
+    pub(crate) fn binding_type_to_mir(&mut self, t: &gossamer_resolve::BindingType) -> Ty {
+        use gossamer_resolve::BindingType as B;
+        use gossamer_types::TyKind;
+        match t {
+            B::Unit => self.tcx.unit(),
+            B::Bool => self.tcx.bool_ty(),
+            B::I64 => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            B::F64 => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            B::Char => self.tcx.char_ty(),
+            B::String => self.tcx.string_ty(),
+            B::Bytes => {
+                // Bytes is `[u8]` at the source level; the runtime
+                // represents it through the same IntArray path as
+                // `[i64]` so the MIR shape is `Vec<i64>`.
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                self.tcx.intern(TyKind::Vec(u8_ty))
+            }
+            B::Vec(inner) => {
+                let inner_ty = self.binding_type_to_mir(inner);
+                self.tcx.intern(TyKind::Vec(inner_ty))
+            }
+            // Option / Result / Variant map to the runtime's
+            // tagged-union pointer; the codegen treats them as
+            // ptr-sized.
+            B::Option(_) | B::Result(_, _) | B::Variant(_) => {
+                self.tcx.int_ty(gossamer_types::IntTy::I64)
+            }
+            // Map / Callback / Tuple / Opaque / Any all flow as
+            // ptr-sized values (handles or untyped passthroughs).
+            B::Map(_, _) | B::Callback(_, _) | B::Tuple(_) | B::Opaque(_) | B::Any => {
+                self.tcx.int_ty(gossamer_types::IntTy::I64)
+            }
+        }
+    }
+
+    pub(crate) fn struct_name_from_expr(&self, expr: &HirExpr) -> Option<String> {
+        use gossamer_types::TyKind;
+        if let Some(name) = self.struct_name_of(expr.ty) {
+            return Some(name);
+        }
+        match &expr.kind {
+            HirExprKind::Index { base, .. } => {
+                // Prefer the element-type registration (survives
+                // inference-variable leakage) before walking the
+                // base's static type.
+                if let HirExprKind::Path { segments, .. } = &base.kind {
+                    if let Some(first) = segments.first() {
+                        if let Some(local) = self.lookup_local(&first.name) {
+                            if let Some(name) = self.local_elem_struct.get(&local).cloned() {
+                                return Some(name);
+                            }
+                        }
+                    }
+                }
+                let mut cur = base.ty;
+                loop {
+                    match self.tcx.kind_of(cur) {
+                        TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                            return self.struct_name_of(*elem);
+                        }
+                        TyKind::Ref { inner, .. } => cur = *inner,
+                        _ => return self.struct_name_from_expr(base),
+                    }
+                }
+            }
+            HirExprKind::TupleIndex { receiver, index } => {
+                let mut cur = receiver.ty;
+                loop {
+                    match self.tcx.kind_of(cur) {
+                        TyKind::Tuple(elems) => {
+                            let elem = *elems.get(*index as usize)?;
+                            return self.struct_name_of(elem);
+                        }
+                        TyKind::Ref { inner, .. } => cur = *inner,
+                        _ => return self.struct_name_from_expr(receiver),
+                    }
+                }
+            }
+            HirExprKind::Path { segments, .. } => {
+                let first = segments.first()?;
+                let local = self.lookup_local(&first.name)?;
+                let ty = self.locals.get(local.0 as usize)?.ty;
+                self.struct_name_of(ty)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn substs_of(&self, ty: Ty) -> gossamer_types::Substs {
+        match self.tcx.kind(ty) {
+            Some(gossamer_types::TyKind::FnDef { substs, .. }) => substs.clone(),
+            _ => gossamer_types::Substs::new(),
+        }
+    }
+
+    pub(crate) fn iter_element_kind(&self, ty: Ty) -> Option<gossamer_types::TyKind> {
+        use gossamer_types::TyKind;
+        let kind = self.tcx.kind_of(ty).clone();
+        let kind = match kind {
+            TyKind::Ref { inner, .. } => self.tcx.kind_of(inner).clone(),
+            other => other,
+        };
+        match kind {
+            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                Some(self.tcx.kind_of(elem).clone())
+            }
+            _ => None,
+        }
+    }
+}

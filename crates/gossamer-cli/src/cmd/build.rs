@@ -198,12 +198,14 @@ fn validate_source(
     gossamer_types::TypeTable,
     gossamer_types::TyCtxt,
 )> {
+    // Compile-time codegen pass for from_json/to_json (and friends).
+    let augmented = gossamer_parse::autoderive::augment_source(source);
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file.to_string_lossy().into_owned(), source.to_string());
+    let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: crate::paths::stderr_supports_colour(),
     };
-    let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file_id);
+    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file_id);
     if !parse_diags.is_empty() {
         for diag in &parse_diags {
             let structured = diag.to_diagnostic();
@@ -395,7 +397,9 @@ fn try_native_build(
     } else {
         link_posix(&object_paths, &runtime_lib, &extra_archives, out_path, opts)
     };
-    let _ = fs::remove_dir_all(&tmp_dir);
+    if std::env::var("GOS_LLVM_DUMP").is_err() {
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
     let _ = input_path;
     link_result.map(|()| {
         if let Some(profraw) = &pgo_collect {
@@ -527,6 +531,20 @@ fn link_posix(
 
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let mut cmd = std::process::Command::new(&cc);
+    // Prefer a fast linker when available.
+    // Linux: mold (3–8× faster than GNU ld; 0.018 s vs 0.069 s measured).
+    // macOS: ld.lld from brew llvm (2–4× faster than Apple ld64 on large
+    //   archives; available after `brew install llvm`). `-fuse-ld=lld` tells
+    //   Apple's clang driver to pick up ld.lld from PATH.
+    if cfg!(target_os = "linux") {
+        if which::which("mold").is_ok() {
+            cmd.arg("-fuse-ld=mold");
+        }
+    } else if cfg!(target_os = "macos") {
+        if which::which("ld.lld").is_ok() {
+            cmd.arg("-fuse-ld=lld");
+        }
+    }
     for p in object_paths {
         cmd.arg(p);
     }
@@ -844,12 +862,24 @@ fn emit_native_objects(
     } else {
         gossamer_codegen_llvm::OptProfile::Debug
     });
-    let llvm_path = tmp_dir.join(format!("{unit_name}.llvm.o"));
+    // Anchor the incremental cache next to the project when possible
+    // so repeated `gos build` invocations share a warm cache.
+    let cache_dir = std::env::current_dir()
+        .ok()
+        .map(|d| d.join(".gos-cache").join("ir-cache"));
+    if let Some(ref cd) = cache_dir {
+        gossamer_codegen_llvm::set_cache_dir(cd.clone());
+    }
+    // Per-body LLVM objects land in their own subdirectory so the
+    // Cranelift companion sits alongside without filename collisions.
+    let llvm_obj_dir = tmp_dir.join("llvm");
+    fs::create_dir_all(&llvm_obj_dir)
+        .map_err(|e| NativeBuildError::Io(anyhow!("creating {}: {e}", llvm_obj_dir.display())))?;
     let cl_path = tmp_dir.join(format!("{unit_name}.cl.o"));
     let build =
-        gossamer_driver::compile_release_at_paths_from_frontend(checked, &llvm_path, &cl_path)
+        gossamer_driver::compile_release_at_paths_from_frontend(checked, &llvm_obj_dir, &cl_path)
             .map_err(|err| NativeBuildError::LowerFailed(err.to_string()))?;
-    let mut object_paths: Vec<PathBuf> = vec![llvm_path];
+    let mut object_paths: Vec<PathBuf> = build.llvm_objects;
     if build.has_cranelift_companion {
         object_paths.push(cl_path);
         if std::env::var("GOS_LLVM_TRACE").is_ok() {

@@ -1,0 +1,40 @@
+// Concurrent string-keyed map (`std::sync::Map`).
+//
+// Covers: new, set, get (Some/None), contains, len, delete,
+// rebinding after delete. Exercises the runtime-kind tagging
+// path so subsequent method dispatch picks the right runtime
+// helper across VM + cranelift + LLVM.
+
+use std::sync
+
+fn main() {
+    let m = sync::Map::new()
+    m.set("alpha", "1")
+    m.set("beta", "2")
+    m.set("gamma", "3")
+    println!("len: {}", m.len())
+
+    match m.get("beta") {
+        Some(v) => println!("beta = {}", v),
+        None => println!("beta missing"),
+    }
+
+    match m.get("delta") {
+        Some(_) => println!("delta unexpected"),
+        None => println!("delta = None"),
+    }
+
+    println!("contains alpha: {}", m.contains("alpha"))
+    println!("contains delta: {}", m.contains("delta"))
+
+    m.delete("alpha")
+    println!("after delete len: {}", m.len())
+    println!("contains alpha: {}", m.contains("alpha"))
+
+    // Re-set the deleted key and confirm.
+    m.set("alpha", "99")
+    match m.get("alpha") {
+        Some(v) => println!("alpha = {}", v),
+        None => println!("alpha missing after re-set"),
+    }
+}

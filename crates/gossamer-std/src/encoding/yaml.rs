@@ -284,6 +284,73 @@ fn to_serde(value: &Value) -> serde_yaml::Value {
 
 use serde::Deserialize;
 
+/// Parses `yaml_text` as a single YAML document and renders it as
+/// JSON. The shape mirrors `encoding::toml::to_json` so callers can
+/// chain into `json::parse` or auto-derived `<Type>::from_yaml`.
+pub fn to_json(yaml_text: &str) -> Result<String, String> {
+    let v = parse(yaml_text).map_err(|e| e.message)?;
+    let jv = value_to_json(&v);
+    serde_json::to_string(&jv).map_err(|e| e.to_string())
+}
+
+/// Renders a JSON document as YAML. Round-trips through the dynamic
+/// [`Value`] representation; YAML-only constructs (tags, multi-doc
+/// anchors) are not produced.
+pub fn from_json(json_text: &str) -> Result<String, String> {
+    let jv: serde_json::Value = serde_json::from_str(json_text).map_err(|e| e.to_string())?;
+    let yv = json_to_value(&jv);
+    encode(&yv).map_err(|e| e.message)
+}
+
+fn value_to_json(v: &Value) -> serde_json::Value {
+    match v {
+        Value::Null => serde_json::Value::Null,
+        Value::Bool(b) => serde_json::Value::Bool(*b),
+        Value::Int(i) => serde_json::Value::Number((*i).into()),
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+        Value::String(s) => serde_json::Value::String(s.clone()),
+        Value::Seq(items) => serde_json::Value::Array(items.iter().map(value_to_json).collect()),
+        Value::Map(entries) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in entries {
+                let key = match k {
+                    Value::String(s) => s.clone(),
+                    Value::Int(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Null => "null".to_string(),
+                    other => format!("{other:?}"),
+                };
+                map.insert(key, value_to_json(v));
+            }
+            serde_json::Value::Object(map)
+        }
+    }
+}
+
+fn json_to_value(v: &serde_json::Value) -> Value {
+    match v {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(b) => Value::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                Value::Float(f)
+            } else {
+                Value::Null
+            }
+        }
+        serde_json::Value::String(s) => Value::String(s.clone()),
+        serde_json::Value::Array(items) => Value::Seq(items.iter().map(json_to_value).collect()),
+        serde_json::Value::Object(map) => Value::Map(
+            map.iter()
+                .map(|(k, v)| (Value::String(k.clone()), json_to_value(v)))
+                .collect(),
+        ),
+    }
+}
+
 /// Re-exposes [`Value`] as a `BTreeMap`-keyed view for callers that
 /// only ever produce string-keyed maps. Returns `Err` when any key
 /// is not a string.
@@ -353,5 +420,22 @@ mod tests {
         let back = parse(&text).unwrap();
         assert_eq!(back.get("a").unwrap().as_i64(), Some(1));
         assert_eq!(back.get("b").unwrap().as_str(), Some("two"));
+    }
+
+    #[test]
+    fn yaml_to_json_round_trip() {
+        let yaml = "name: gossamer\nversion: 7\nflags:\n  - fast\n  - small\n";
+        let json = to_json(yaml).unwrap();
+        assert!(json.contains("\"name\":\"gossamer\""));
+        assert!(json.contains("\"version\":7"));
+        assert!(json.contains("\"flags\":[\"fast\",\"small\"]"));
+    }
+
+    #[test]
+    fn yaml_from_json_round_trip() {
+        let json = r#"{"name":"gossamer","port":8080}"#;
+        let yaml = from_json(json).unwrap();
+        assert!(yaml.contains("name: gossamer"));
+        assert!(yaml.contains("port: 8080"));
     }
 }

@@ -1,0 +1,579 @@
+#![allow(
+    unused_imports,
+    dead_code,
+    unreachable_pub,
+    missing_docs,
+    clippy::wildcard_imports,
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::similar_names,
+    clippy::many_single_char_names,
+    clippy::items_after_statements,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::option_if_let_else,
+    clippy::match_same_arms,
+    clippy::if_not_else,
+    clippy::single_match_else,
+    clippy::needless_pass_by_value,
+    clippy::manual_let_else,
+    clippy::redundant_else,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::map_unwrap_or,
+    clippy::struct_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::unnecessary_wraps,
+    clippy::large_enum_variant,
+    clippy::if_same_then_else,
+    clippy::single_match,
+    clippy::useless_conversion,
+    clippy::needless_borrows_for_generic_args,
+    clippy::let_and_return,
+    clippy::needless_collect,
+    clippy::elidable_lifetime_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::needless_range_loop,
+    clippy::cognitive_complexity,
+    clippy::unused_io_amount,
+    clippy::ptr_arg,
+    clippy::ptr_as_ptr,
+    clippy::redundant_closure,
+    clippy::redundant_closure_for_method_calls,
+    clippy::semicolon_if_nothing_returned,
+    clippy::single_call_fn,
+    clippy::unused_self,
+    clippy::range_plus_one,
+    clippy::missing_safety_doc,
+    clippy::not_unsafe_ptr_arg_deref,
+    clippy::cast_ptr_alignment,
+    clippy::manual_assert,
+    clippy::manual_string_new,
+    clippy::match_bool,
+    clippy::nonminimal_bool,
+    clippy::redundant_pattern_matching,
+    clippy::useless_let_if_seq
+)]
+//! Real Cranelift-backed native codegen.
+//! Lowers a slice of MIR [`Body`]s into a `cranelift-object` module
+//! and serialises the result as ELF (or the host's equivalent object
+//! format). Supported today:
+//! - `fn main() -> i64` with integer arithmetic (`+`, `-`, `*`, `/`,
+//!   `%`, `&`, `|`, `^`, `<<`, `>>`, unary `-`, `!`),
+//! - integer constants,
+//! - direct calls between lowered functions,
+//! - `return` of an `i64`.
+//!
+//! A C-ABI shim `main(argc, argv) -> i32` is emitted automatically:
+//! it calls the Gossamer `main` and truncates the `i64` result into
+//! the process exit code, so the object file links through a
+//! standard `cc` invocation.
+//! Aggregates (tuples/arrays/structs), strings, closures, and
+//! anything that needs a GC heap are not yet lowered — those
+//! constructs fall back to [`super::emit::emit_module`] for
+//! inspection.
+
+// Allow patterns the Cranelift lowering deliberately uses:
+//   - `similar_names` fires on `print_str`/`print_i64`/etc.
+//     intrinsic-name shadowing within the same arm. The
+//     parallel naming makes the dispatch table readable.
+//   - `many_single_char_names` fires on hot inner-loop locals
+//     (`a`, `b`, `n`, `m`, `k`) where longer names would
+//     overflow the 100-col limit.
+//   - `items_after_statements` flags inline `extern "C"` decls
+//     localised to the one helper that uses them. Hoisting them
+//     to module scope spreads the FFI surface; localised wins.
+//   - `too_many_lines` / `cognitive_complexity` fire on the
+//     intrinsic-dispatch arm and the `lower_intrinsic_call`
+//     match. Splitting either hides the one-arm-per-symbol
+//     structure that makes the table grep-able.
+//   - `unnecessary_wraps` flags helpers whose `Result` exists
+//     so call sites can still `?` them once a future lowering
+//     can fail.
+//   - `if_chain_can_be_rewritten_with_match` would flatten
+//     short `if let Some(x) = .. else if let Some(y) = ..`
+//     chains into match-on-tuple-of-options that's strictly
+//     uglier here.
+//   - `doc_markdown` flags identifiers like `i64`, `f64`,
+//     etc. in plain-prose docs. Backticking every numeric
+//     type name in every comment is noise.
+//   - `manual_debug_impl` flags `JitModule`'s `Debug` impl
+//     (which deliberately omits the JIT module pointer to keep
+//     debug output stable across runs).
+#![forbid(unsafe_code)]
+#![allow(clippy::comparison_chain)]
+
+use std::collections::HashMap;
+
+use std::collections::HashSet;
+
+use anyhow::{Result, anyhow, bail};
+use cranelift_codegen::ir::{
+    AbiParam, ExtFuncData, Function, GlobalValueData, InstBuilder, MemFlags, Signature,
+    StackSlotData, StackSlotKind, UserExternalName, UserFuncName, condcodes::IntCC,
+    immediates::Imm64, types,
+};
+use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
+use cranelift_codegen::settings::{self, Configurable};
+use cranelift_codegen::{Context, ir};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleDeclarations};
+use cranelift_object::{ObjectBuilder, ObjectModule};
+use gossamer_mir::{
+    BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, StatementKind, Terminator,
+    UnOp,
+};
+use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
+use rayon::prelude::*;
+
+use super::*;
+
+use super::*;
+
+pub(super) fn emit_per_arg_print(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    body: &Body,
+    tcx: &TyCtxt,
+    args: &[Operand],
+    intrinsics: &mut IntrinsicContext,
+    separator: &str,
+) -> Result<()> {
+    let ptr_ty = module.target_config().pointer_type();
+    let print_str = intrinsics.extern_fn_by_name(module, "gos_rt_print_str")?;
+    let print_i64 = intrinsics.extern_fn_by_name(module, "gos_rt_print_i64")?;
+    let print_f64 = intrinsics.extern_fn_by_name(module, "gos_rt_print_f64")?;
+    let print_bool = intrinsics.extern_fn_by_name(module, "gos_rt_print_bool")?;
+    let print_char = intrinsics.extern_fn_by_name(module, "gos_rt_print_char")?;
+    let sep_data = if separator.is_empty() {
+        None
+    } else {
+        Some(intrinsics.intern_string(module, separator)?)
+    };
+    for (idx, arg) in args.iter().enumerate() {
+        if idx > 0 {
+            if let Some(data) = sep_data {
+                let data_ref = module.declare_data_in_func(data, builder.func);
+                let ptr = builder.ins().global_value(ptr_ty, data_ref);
+                let fref = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref, &[ptr]);
+            }
+        }
+        let kind = operand_print_kind(body, tcx, arg);
+        if let PrintKind::Unsupported(_label) = kind {
+            // Soft fallback: print the type's name as a
+            // placeholder so the program runs. Programs that
+            // need the actual stringification have to write it
+            // by hand (or wait for proper Display dispatch).
+            let placeholder = intrinsics.intern_string(module, "<value>")?;
+            let data_ref = module.declare_data_in_func(placeholder, builder.func);
+            let p = builder.ins().global_value(ptr_ty, data_ref);
+            let fref = module.declare_func_in_func(print_str, builder.func);
+            builder.ins().call(fref, &[p]);
+            continue;
+        }
+        let value = lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
+        let ty = value_type(value, builder);
+        // When Var(_) resolves to StrPtr but the value is a non-pointer int (e.g. `!bool`
+        // returning I8), use the correct formatter rather than passing a narrow int as a ptr.
+        let kind = if matches!(kind, PrintKind::StrPtr) && ty.is_int() && ty != ptr_ty {
+            if ty == types::I8 {
+                PrintKind::Bool
+            } else {
+                PrintKind::Int
+            }
+        } else {
+            kind
+        };
+        match kind {
+            PrintKind::StrPtr => {
+                let fref = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref, &[value]);
+            }
+            PrintKind::Int => {
+                let n = if ty.bits() < 64 {
+                    builder.ins().sextend(types::I64, value)
+                } else {
+                    value
+                };
+                let fref = module.declare_func_in_func(print_i64, builder.func);
+                builder.ins().call(fref, &[n]);
+            }
+            PrintKind::Uint => {
+                // Zero-extend to 64 bits so we don't sign-extend
+                // a sub-i64 unsigned value into a giant negative
+                // number. Then route to `gos_rt_print_u64`.
+                let n = if ty.bits() < 64 {
+                    builder.ins().uextend(types::I64, value)
+                } else {
+                    value
+                };
+                let print_u64 = intrinsics.extern_fn_by_name(module, "gos_rt_print_u64")?;
+                let fref = module.declare_func_in_func(print_u64, builder.func);
+                builder.ins().call(fref, &[n]);
+            }
+            PrintKind::Float => {
+                let d = if ty == types::F32 {
+                    builder.ins().fpromote(types::F64, value)
+                } else {
+                    value
+                };
+                let fref = module.declare_func_in_func(print_f64, builder.func);
+                builder.ins().call(fref, &[d]);
+            }
+            PrintKind::Bool => {
+                let b = if ty.bits() < 32 {
+                    builder.ins().uextend(types::I32, value)
+                } else if ty.bits() > 32 {
+                    builder.ins().ireduce(types::I32, value)
+                } else {
+                    value
+                };
+                let fref = module.declare_func_in_func(print_bool, builder.func);
+                builder.ins().call(fref, &[b]);
+            }
+            PrintKind::Char => {
+                let c = if ty.bits() > 32 {
+                    builder.ins().ireduce(types::I32, value)
+                } else if ty.bits() < 32 {
+                    builder.ins().uextend(types::I32, value)
+                } else {
+                    value
+                };
+                let fref = module.declare_func_in_func(print_char, builder.func);
+                builder.ins().call(fref, &[c]);
+            }
+            PrintKind::VecI64 => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_i64",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::VecF64 => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_f64",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::VecBool => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_bool",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::VecString => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_string",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::VecVecI64 => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_vec_i64",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ArrI64(len) => emit_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_i64",
+                value,
+                len,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ArrF64(len) => emit_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_f64",
+                value,
+                len,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ArrBool(len) => emit_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_bool",
+                value,
+                len,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ArrString(len) => emit_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_string",
+                value,
+                len,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::JsonValue => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_json_display",
+                value,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ErrorMessage => {
+                let error_msg_fn = intrinsics.extern_fn_by_name(module, "gos_rt_error_message")?;
+                let fref = module.declare_func_in_func(error_msg_fn, builder.func);
+                let call = builder.ins().call(fref, &[value]);
+                let msg = builder.inst_results(call)[0];
+                let fref2 = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref2, &[msg]);
+            }
+            PrintKind::Unsupported(_) => unreachable!("checked above"),
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn emit_arr_print(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    helper_name: &'static str,
+    value: ir::Value,
+    len: i64,
+    print_str: cranelift_module::FuncId,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<()> {
+    let ptr_ty = module.target_config().pointer_type();
+    let f = intrinsics.extern_fn(module, helper_name, &[ptr_ty, types::I64], &[ptr_ty])?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let len_v = builder.ins().iconst(types::I64, len);
+    let call = builder.ins().call(fref, &[value, len_v]);
+    let result = builder.inst_results(call)[0];
+    let print_ref = module.declare_func_in_func(print_str, builder.func);
+    builder.ins().call(print_ref, &[result]);
+    Ok(())
+}
+
+pub(super) fn emit_vec_print(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    helper_name: &'static str,
+    value: ir::Value,
+    print_str: cranelift_module::FuncId,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<()> {
+    let ptr_ty = module.target_config().pointer_type();
+    let f = intrinsics.extern_fn(module, helper_name, &[ptr_ty], &[ptr_ty])?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let call = builder.ins().call(fref, &[value]);
+    let s = builder.inst_results(call)[0];
+    let pref = module.declare_func_in_func(print_str, builder.func);
+    builder.ins().call(pref, &[s]);
+    Ok(())
+}
+
+pub(super) fn emit_args_to_concat_string(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    body: &Body,
+    tcx: &TyCtxt,
+    args: &[Operand],
+    intrinsics: &mut IntrinsicContext,
+    separator: &str,
+) -> Result<ir::Value> {
+    let ptr_ty = module.target_config().pointer_type();
+    let empty_data = intrinsics.intern_string(module, "")?;
+    if args.is_empty() {
+        let data_ref = module.declare_data_in_func(empty_data, builder.func);
+        return Ok(builder.ins().global_value(ptr_ty, data_ref));
+    }
+
+    // Use the runtime's thread-local concat buffer (the same path
+    // `__concat` takes for `format!`) instead of chaining N-1
+    // `gos_rt_str_concat` calls. Each pairwise concat allocates a
+    // throwaway String and then drops the previous accumulator; the
+    // batched buffer appends bytes into one growing buffer and
+    // hands back a single owned String at the end.
+    let init = intrinsics.extern_fn_by_name(module, "gos_rt_concat_init")?;
+    let init_ref = module.declare_func_in_func(init, builder.func);
+    builder.ins().call(init_ref, &[]);
+
+    let sep_data = if separator.is_empty() {
+        None
+    } else {
+        Some(intrinsics.intern_string(module, separator)?)
+    };
+
+    for (idx, arg) in args.iter().enumerate() {
+        if idx > 0 {
+            if let Some(data) = sep_data {
+                let data_ref = module.declare_data_in_func(data, builder.func);
+                let sep_ptr = builder.ins().global_value(ptr_ty, data_ref);
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[sep_ptr]);
+            }
+        }
+        let kind = operand_print_kind(body, tcx, arg);
+        if let PrintKind::Unsupported(label) = kind {
+            bail!(
+                "native codegen: cannot stringify a value of {label} type — \
+                 the compiled tier has no Display dispatch yet"
+            );
+        }
+        let value = lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
+        let ty = value_type(value, builder);
+        // Same guard as in emit_per_arg_print: Var(_) → StrPtr but value is a narrow int.
+        let kind = if matches!(kind, PrintKind::StrPtr) && ty.is_int() && ty != ptr_ty {
+            if ty == types::I8 {
+                PrintKind::Bool
+            } else {
+                PrintKind::Int
+            }
+        } else {
+            kind
+        };
+        match kind {
+            PrintKind::StrPtr => {
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[value]);
+            }
+            PrintKind::Int => {
+                let n = if ty.bits() < 64 {
+                    builder.ins().sextend(types::I64, value)
+                } else {
+                    value
+                };
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_i64")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[n]);
+            }
+            PrintKind::Uint => {
+                let n = if ty.bits() < 64 {
+                    builder.ins().uextend(types::I64, value)
+                } else {
+                    value
+                };
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_u64")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[n]);
+            }
+            PrintKind::Float => {
+                let d = if ty == types::F32 {
+                    builder.ins().fpromote(types::F64, value)
+                } else {
+                    value
+                };
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_f64")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[d]);
+            }
+            PrintKind::Bool => {
+                let b = if ty.bits() < 32 {
+                    builder.ins().uextend(types::I32, value)
+                } else if ty.bits() > 32 {
+                    builder.ins().ireduce(types::I32, value)
+                } else {
+                    value
+                };
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_bool")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[b]);
+            }
+            PrintKind::Char => {
+                let c = if ty.bits() > 32 {
+                    builder.ins().ireduce(types::I32, value)
+                } else if ty.bits() < 32 {
+                    builder.ins().uextend(types::I32, value)
+                } else {
+                    value
+                };
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_char")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[c]);
+            }
+            PrintKind::VecI64
+            | PrintKind::VecF64
+            | PrintKind::VecBool
+            | PrintKind::VecString
+            | PrintKind::VecVecI64 => {
+                let helper = match kind {
+                    PrintKind::VecI64 => "gos_rt_vec_format_i64",
+                    PrintKind::VecF64 => "gos_rt_vec_format_f64",
+                    PrintKind::VecBool => "gos_rt_vec_format_bool",
+                    PrintKind::VecString => "gos_rt_vec_format_string",
+                    PrintKind::VecVecI64 => "gos_rt_vec_format_vec_i64",
+                    _ => unreachable!(),
+                };
+                let format_fn = intrinsics.extern_fn(module, helper, &[ptr_ty], &[ptr_ty])?;
+                let format_ref = module.declare_func_in_func(format_fn, builder.func);
+                let call = builder.ins().call(format_ref, &[value]);
+                let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::ArrI64(_)
+            | PrintKind::ArrF64(_)
+            | PrintKind::ArrBool(_)
+            | PrintKind::ArrString(_) => {
+                let (helper, len) = match kind {
+                    PrintKind::ArrI64(n) => ("gos_rt_arr_format_i64", n),
+                    PrintKind::ArrF64(n) => ("gos_rt_arr_format_f64", n),
+                    PrintKind::ArrBool(n) => ("gos_rt_arr_format_bool", n),
+                    PrintKind::ArrString(n) => ("gos_rt_arr_format_string", n),
+                    _ => unreachable!(),
+                };
+                let format_fn =
+                    intrinsics.extern_fn(module, helper, &[ptr_ty, types::I64], &[ptr_ty])?;
+                let format_ref = module.declare_func_in_func(format_fn, builder.func);
+                let len_v = builder.ins().iconst(types::I64, len);
+                let call = builder.ins().call(format_ref, &[value, len_v]);
+                let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::JsonValue => {
+                let render_fn = intrinsics.extern_fn_by_name(module, "gos_rt_json_display")?;
+                let render_ref = module.declare_func_in_func(render_fn, builder.func);
+                let call = builder.ins().call(render_ref, &[value]);
+                let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::ErrorMessage => {
+                let error_msg_fn = intrinsics.extern_fn_by_name(module, "gos_rt_error_message")?;
+                let err_ref = module.declare_func_in_func(error_msg_fn, builder.func);
+                let call = builder.ins().call(err_ref, &[value]);
+                let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::Unsupported(_) => unreachable!("filtered above"),
+        }
+    }
+
+    let finish = intrinsics.extern_fn_by_name(module, "gos_rt_concat_finish")?;
+    let finish_ref = module.declare_func_in_func(finish, builder.func);
+    let call = builder.ins().call(finish_ref, &[]);
+    Ok(builder.inst_results(call)[0])
+}

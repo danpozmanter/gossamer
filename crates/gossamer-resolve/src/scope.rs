@@ -18,6 +18,16 @@ use crate::resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution};
 /// corresponding `use` declaration in the source file.
 pub(crate) const PRELUDE_SENTINEL: NodeId = NodeId::DUMMY;
 
+/// True for bindings inserted by [`ScopeStack::with_prelude`].
+/// Those are the only entries `insert_type` / `insert_value`
+/// silently overwrite — a non-prelude collision stays an error.
+fn is_prelude_binding(b: &Binding) -> bool {
+    matches!(
+        b.resolution,
+        Resolution::Import { use_id } if use_id == PRELUDE_SENTINEL
+    )
+}
+
 /// A single entry in the value or type namespace.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Binding {
@@ -63,12 +73,31 @@ pub(crate) struct Scope {
 }
 
 impl Scope {
+    /// Returns `false` when the slot is already occupied by a
+    /// non-prelude binding (a real duplicate). Prelude bindings —
+    /// inserted by `with_prelude` with `PRELUDE_SENTINEL` — get
+    /// silently overwritten so user definitions can shadow them
+    /// (e.g. `fn clamp(...)` overriding the new prelude `clamp`).
     pub(crate) fn insert_type(&mut self, name: impl Into<Symbol>, binding: Binding) -> bool {
-        self.types.insert(name.into(), binding).is_none()
+        let sym = name.into();
+        if let Some(existing) = self.types.get(&sym) {
+            if !is_prelude_binding(existing) {
+                return false;
+            }
+        }
+        self.types.insert(sym, binding);
+        true
     }
 
     pub(crate) fn insert_value(&mut self, name: impl Into<Symbol>, binding: Binding) -> bool {
-        self.values.insert(name.into(), binding).is_none()
+        let sym = name.into();
+        if let Some(existing) = self.values.get(&sym) {
+            if !is_prelude_binding(existing) {
+                return false;
+            }
+        }
+        self.values.insert(sym, binding);
+        true
     }
 
     pub(crate) fn shadow_value(&mut self, name: impl Into<Symbol>, binding: Binding) {
@@ -195,6 +224,14 @@ const PRELUDE_VALUES: &[&str] = &[
     "assert",
     "assert_eq",
     "todo",
+    // 0.7.0 scalar QoL helpers. Routed by `builtin_min_dispatch`
+    // / `builtin_max_dispatch` / `builtin_clamp` in the interp;
+    // compiled tier resolves them through the same bare-name
+    // path. Single-Vec callers still get the iter::min / iter::max
+    // fall-through inside the dispatcher.
+    "min",
+    "max",
+    "clamp",
     // Compile-time intrinsics referenced by macro expansion
     // (`println!` → `println(__concat(…))`) and struct-literal
     // lowering (`Path { f: v }` → `__struct("Path", "f", v)`).

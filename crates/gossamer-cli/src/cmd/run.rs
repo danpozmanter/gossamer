@@ -31,7 +31,11 @@ pub(crate) fn dispatch(path: Option<PathBuf>, mode: RunMode, args: &[String]) ->
 }
 
 fn run(file: &PathBuf, _mode: RunMode, forwarded: &[String]) -> Result<()> {
-    let source = read_entry_source(file)?;
+    let user_source = read_entry_source(file)?;
+    // Compile-time codegen pass: synthesize `from_json` / `to_json`
+    // for every user struct so the resulting program has real
+    // methods (no VM-only intercept).
+    let source = gossamer_parse::autoderive::augment_source(&user_source);
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     // Static checks always run first. A program with parse / resolve /

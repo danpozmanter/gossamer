@@ -19,10 +19,20 @@ pub mod bytes;
 pub mod collections;
 /// Compression and decompression codecs (gzip, flate, zlib, bzip2).
 pub mod compress;
+/// Min-heap (priority queue) over Vec<i64> (`std::container::heap`).
+pub mod container_heap;
+/// Linked list + sorted-on-insert Vec / list variants.
+pub mod container_ordered;
+/// FIFO queue / LIFO stack / double-ended queue over Vec<i64>.
+pub mod container_seq;
+/// Sorted set + map containers backed by Vec<i64>.
+pub mod container_set_map;
 pub mod context;
 pub mod crypto;
 pub mod database;
 pub mod encoding;
+/// TOML 1.0 parsing + emission (`std::encoding::toml`).
+pub mod encoding_toml;
 /// Process environment, command-line arguments, working directory
 /// (Rust `std::env` shape).
 pub mod env;
@@ -79,8 +89,14 @@ pub mod manifest;
 /// Mathematical constants, f64 functions, and integer bit operations.
 pub mod math;
 pub mod mathrand;
+/// Media type parsing + extension lookup (`std::mime`).
+pub mod mime_types;
 pub mod net;
+/// Typed IP address parsing / classification (`std::net::netip`).
+pub mod net_ip_typed;
 pub mod os;
+/// POSIX user / group lookup (`std::os::user`).
+pub mod os_user;
 pub mod panic;
 pub mod path;
 pub mod pprof;
@@ -106,5 +122,7 @@ pub mod unicode;
 pub mod url;
 pub mod utf16;
 pub mod utf8;
+/// UUID generation (v4 random, v7 timestamp-ordered) plus parse/normalize.
+pub mod uuid;
 
 pub use registry::{StdItem, StdItemKind, StdModule, item, module, modules};

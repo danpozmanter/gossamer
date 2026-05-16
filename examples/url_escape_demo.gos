@@ -1,0 +1,22 @@
+/*
+ * URL percent-encoding with `std::net::url`.
+ *
+ * Query-mode encodes space as `+`; path-mode encodes space as %20
+ * and preserves `/ : @`. Decoding reverses each variant.
+ */
+
+use std::url
+
+fn main() {
+    let q = url::query_escape("hello world & friends")
+    println!("q escape: {}", q)
+
+    let q2 = url::query_unescape(&q)
+    println!("q unescape: {}", q2)
+
+    let p = url::path_escape("/users/alice@example.com/files")
+    println!("p escape: {}", p)
+
+    let p2 = url::path_unescape(&p)
+    println!("p unescape: {}", p2)
+}
