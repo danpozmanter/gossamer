@@ -331,6 +331,15 @@ impl Context {
         if let Some(reason) = self.inner.reason.lock().unwrap().clone() {
             return Some(Error::new(reason));
         }
+        // The timer-driven cancel_with may not have fired yet even though
+        // is_cancelled() returned true via the deadline time-check. Emit the
+        // canonical deadline message here so callers don't fall through to
+        // parent.err() and get None (background parent is never cancelled).
+        if let Some(deadline) = *self.inner.deadline.lock().unwrap() {
+            if Instant::now() >= deadline {
+                return Some(Error::new("context deadline exceeded"));
+            }
+        }
         if let Some(parent) = &self.inner.parent {
             return parent.err();
         }

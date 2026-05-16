@@ -15,6 +15,7 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
+use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::Ordering;
 
@@ -619,9 +620,7 @@ pub unsafe extern "C" fn gos_rt_vec_index_of_i64(v: *const GosVec, needle: i64) 
     })
 }
 
-/// `xs.index_of(&needle) -> Option<i64>` for a Vec of c-string
-/// pointers. Compares element bytes against `needle` with
-/// libc::strcmp (byte-exact).
+/// `xs.index_of(&needle) -> Option<i64>` for a Vec of c-string pointers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_index_of_str(
     v: *const GosVec,
@@ -635,7 +634,7 @@ pub unsafe extern "C" fn gos_rt_vec_index_of_str(
         for i in 0..vec.len {
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
             let elem = unsafe { (p as *const *const c_char).read_unaligned() };
-            if !elem.is_null() && unsafe { libc::strcmp(elem, needle) } == 0 {
+            if !elem.is_null() && unsafe { CStr::from_ptr(elem) == CStr::from_ptr(needle) } {
                 return unsafe { gos_rt_result_new(0, i) };
             }
         }
@@ -674,7 +673,7 @@ pub unsafe extern "C" fn gos_rt_vec_count_of_str(v: *const GosVec, needle: *cons
         for i in 0..vec.len {
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
             let elem = unsafe { (p as *const *const c_char).read_unaligned() };
-            if !elem.is_null() && unsafe { libc::strcmp(elem, needle) } == 0 {
+            if !elem.is_null() && unsafe { CStr::from_ptr(elem) == CStr::from_ptr(needle) } {
                 count += 1;
             }
         }
@@ -711,7 +710,7 @@ pub unsafe extern "C" fn gos_rt_vec_contains_str(v: *const GosVec, needle: *cons
         for i in 0..vec.len {
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
             let elem = unsafe { (p as *const *const c_char).read_unaligned() };
-            if !elem.is_null() && unsafe { libc::strcmp(elem, needle) } == 0 {
+            if !elem.is_null() && unsafe { CStr::from_ptr(elem) == CStr::from_ptr(needle) } {
                 return 1;
             }
         }
