@@ -48,9 +48,7 @@ use std::path::PathBuf;
 use std::process::{self, ChildStderr, ChildStdout};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
-#[cfg(unix)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::context::Context;
 use crate::io::IoError;
