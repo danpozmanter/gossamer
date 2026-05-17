@@ -203,6 +203,36 @@ impl<'a> Builder<'a> {
                 self.set_current(next);
                 return Some(dest);
             }
+            // Zero-arg `json::Value::object()` — route to the _n variant
+            // with n=0 so the compiled tier always passes explicit args.
+            // The generic path below would emit a call with no arguments,
+            // leaving the GosVec register uninitialized; on Windows the
+            // garbage value is non-null and misaligned, causing a fault.
+            if (last == "object" || last == "Object") && args.is_empty() {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let zero = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(zero),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    span,
+                );
+                let ret_ty = self.tcx.json_value_ty();
+                let dest = self.fresh(ret_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "gos_rt_json_value_object_n".to_string(),
+                    )),
+                    args: vec![
+                        Operand::Copy(Place::local(zero)),
+                        Operand::Copy(Place::local(zero)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
             let rt_name = match last {
                 "String" => "gos_rt_json_value_string",
                 "Int" => "gos_rt_json_value_int",
