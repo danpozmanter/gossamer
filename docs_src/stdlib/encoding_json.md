@@ -1,5 +1,7 @@
 # `std::encoding::json`
 
+Status: shipped
+
 JSON parser, emitter, and derive support.
 
 ## Public items

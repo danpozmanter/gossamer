@@ -1,5 +1,7 @@
 # `std::log`
 
+Status: shipped
+
 Flat line-oriented logging (Go's `log` shape).
 
 ## Public items

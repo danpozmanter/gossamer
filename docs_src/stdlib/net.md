@@ -1,5 +1,7 @@
 # `std::net`
 
+Status: shipped
+
 TCP/UDP networking primitives.
 
 ## Public items

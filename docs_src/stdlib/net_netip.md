@@ -1,5 +1,7 @@
 # `std::net::netip`
 
+Status: shipped
+
 Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape).
 
 ## Public items

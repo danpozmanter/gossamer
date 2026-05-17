@@ -1,5 +1,7 @@
 # `std::strings`
 
+Status: shipped
+
 Polished `String` operations.
 
 ## Public items

@@ -15,6 +15,7 @@ workspace = true
 parking_lot = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+unicode-ident = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

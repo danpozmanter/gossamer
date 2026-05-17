@@ -99,9 +99,49 @@ pub const OS_EXEC: StdModule = StdModule {
             doc: "Handle to a still-running child supporting wait / kill.",
         },
         StdItem {
+            name: "Pipeline",
+            kind: StdItemKind::Type,
+            doc: "Multi-stage subprocess pipeline (stdout-to-stdin chain).",
+        },
+        StdItem {
+            name: "Signal",
+            kind: StdItemKind::Type,
+            doc: "Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit).",
+        },
+        StdItem {
             name: "run",
             kind: StdItemKind::Function,
             doc: "One-shot: runs a program with args, captures stdout/stderr, returns Result<{stdout, stderr, code}, String>.",
+        },
+        StdItem {
+            name: "spawn",
+            kind: StdItemKind::Function,
+            doc: "Non-blocking launch; returns the child PID as Result<i64, errors::Error>.",
+        },
+        StdItem {
+            name: "kill",
+            kind: StdItemKind::Function,
+            doc: "Best-effort SIGTERM by pid; returns true on success.",
+        },
+        StdItem {
+            name: "signal",
+            kind: StdItemKind::Function,
+            doc: "Send an arbitrary signal number to a pid; returns true on success.",
+        },
+        StdItem {
+            name: "kill_group",
+            kind: StdItemKind::Function,
+            doc: "Send SIGTERM to the entire process group (Unix); best-effort TerminateProcess on Windows.",
+        },
+        StdItem {
+            name: "wait_timeout",
+            kind: StdItemKind::Function,
+            doc: "Wait up to N ms for a pid to exit; returns exit code, -1 on timeout, -2 on error.",
+        },
+        StdItem {
+            name: "pipeline_run",
+            kind: StdItemKind::Function,
+            doc: "Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline; returns Result<Output, errors::Error>.",
         },
     ],
 };
@@ -686,4 +726,14 @@ pub const OS_USER: StdModule = StdModule {
             doc: "uid for the user with the given login name, or -1 if not found.",
         },
     ],
+};
+
+pub const LIFECYCLE: StdModule = StdModule {
+    path: "std::lifecycle",
+    summary: "Graceful-shutdown coordinator with signal handling and sd_notify support.",
+    items: &[StdItem {
+        name: "Lifecycle",
+        kind: StdItemKind::Type,
+        doc: "Registers shutdown hooks, listens for SIGTERM / SIGINT, and notifies systemd.",
+    }],
 };

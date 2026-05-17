@@ -1,5 +1,7 @@
 # `std::process`
 
+Status: shipped
+
 Spawn child processes, exit the current process (Rust std::process shape).
 
 ## Public items

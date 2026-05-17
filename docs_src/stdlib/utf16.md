@@ -1,5 +1,7 @@
 # `std::utf16`
 
+Status: shipped
+
 UTF-16 encoding/decoding and surrogate pair helpers.
 
 ## Public items

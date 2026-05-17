@@ -1,5 +1,7 @@
 # `std::time`
 
+Status: shipped
+
 Wall-clock and monotonic time facilities.
 
 ## Public items

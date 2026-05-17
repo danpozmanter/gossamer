@@ -1,5 +1,7 @@
 # `std::crypto::ed25519`
 
+Status: shipped
+
 Ed25519 digital signatures.
 
 ## Public items

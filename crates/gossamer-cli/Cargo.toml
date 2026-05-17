@@ -70,12 +70,24 @@ gossamer-runtime = { workspace = true }
 gossamer-types = { workspace = true }
 rustyline = { version = "14", default-features = false, features = ["with-file-history"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
 which = { workspace = true }
 
 gossamer-std = { workspace = true }
 
 [dev-dependencies]
 gossamer-abi = { workspace = true }
+# In-process HTTP/2 conformance test consumes the h2 crate's
+# client side and drives the Gossamer h2 server through it.
+h2 = "0.4"
+http = "1"
+bytes = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "time"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+webpki-roots = "1"
+rcgen = { version = "0.13", default-features = false, features = ["aws_lc_rs", "pem"] }
 
 [features]
 # Opt-in flag the integration suites consult to enable their full

@@ -82,6 +82,13 @@ impl SigType for crate::conv::Bytes {
     const TYPE: Type = Type::Bytes;
 }
 
+impl SigType for crate::conv::PersistentCallback {
+    /// Persistent callbacks ride on the same `Callback` shape as
+    /// `BindingCallback`. The lifetime distinction is enforced
+    /// runtime-side; the type checker sees a callable.
+    const TYPE: Type = Type::Callback(&[], &Type::Any);
+}
+
 impl SigType for crate::conv::DynValue {
     /// `DynValue` is the variant-erasure type. Its `Type` slot
     /// is filled by the binding author at call site via a const
@@ -98,4 +105,23 @@ impl SigType for crate::conv::DynValue {
 )]
 impl<K: SigType, V: SigType> SigType for std::collections::HashMap<K, V> {
     const TYPE: Type = Type::Map(&K::TYPE, &V::TYPE);
+}
+
+// --- Tuple SigType impls (Phase 1) ------------------------------------
+//
+// Lower N-tuples to `Type::Tuple(&[T1::TYPE, ...])`. Compile-time
+// element-type validation comes for free — each `Ti: SigType` bound
+// is checked at impl-instantiation. The compiled-tier `BindingAbi`
+// for tuples is hand-listed per shape in `native.rs`.
+
+impl<A: SigType, B: SigType> SigType for (A, B) {
+    const TYPE: Type = Type::Tuple(&[A::TYPE, B::TYPE]);
+}
+
+impl<A: SigType, B: SigType, C: SigType> SigType for (A, B, C) {
+    const TYPE: Type = Type::Tuple(&[A::TYPE, B::TYPE, C::TYPE]);
+}
+
+impl<A: SigType, B: SigType, C: SigType, D: SigType> SigType for (A, B, C, D) {
+    const TYPE: Type = Type::Tuple(&[A::TYPE, B::TYPE, C::TYPE, D::TYPE]);
 }

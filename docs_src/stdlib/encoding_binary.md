@@ -1,5 +1,7 @@
 # `std::encoding::binary`
 
+Status: shipped
+
 Big/little-endian integer packing and varint codecs.
 
 ## Public items

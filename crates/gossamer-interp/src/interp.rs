@@ -175,6 +175,12 @@ pub struct Interpreter {
     /// Names of Gossamer functions currently on the call stack, used
     /// to render a best-effort traceback on panic (Stream H.7).
     call_stack: Vec<String>,
+    /// Optional source map used by `gos test --coverage` to map
+    /// statement spans → `(file, line)` for the runtime counter
+    /// table. `None` means coverage is disabled or unset; the
+    /// per-statement hook in `eval_stmt` short-circuits to a
+    /// single global-flag load in that case.
+    source_map: Option<std::sync::Arc<gossamer_lex::SourceMap>>,
 }
 
 impl Interpreter {
@@ -191,7 +197,33 @@ impl Interpreter {
         Self {
             globals,
             call_stack: Vec::new(),
+            source_map: None,
         }
+    }
+
+    /// Sets the source map the coverage hook resolves spans against.
+    /// Called by `gos test --coverage` after the `SourceMap` has
+    /// been populated with the test files. A `None` setting (or
+    /// default) disables coverage recording.
+    pub fn set_source_map(&mut self, map: std::sync::Arc<gossamer_lex::SourceMap>) {
+        self.source_map = Some(map);
+    }
+
+    /// Records one coverage hit at the source line of `span` when
+    /// coverage instrumentation is enabled and a source map has
+    /// been published. Branch index `0` is the sequential-
+    /// statement default; non-zero indices identify `match` arms
+    /// and `if` branches.
+    pub(crate) fn record_coverage(&self, span: gossamer_lex::Span, branch: u32) {
+        if !gossamer_runtime::coverage::enabled() {
+            return;
+        }
+        let Some(map) = self.source_map.as_ref() else {
+            return;
+        };
+        let lc = map.line_col(span.file, span.start);
+        let file = map.file_name(span.file).to_string();
+        let _ = gossamer_runtime::coverage::record(&file, lc.line, branch);
     }
 
     /// Returns a snapshot of the call stack: outermost function
@@ -487,7 +519,9 @@ impl Interpreter {
             .cloned()
             .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
         self.call_stack.push(name.to_string());
+        gossamer_runtime::sigquit::stack_push(name, "", 0);
         let result = self.apply(&callee, args);
+        gossamer_runtime::sigquit::stack_pop();
         self.call_stack.pop();
         result
     }
@@ -805,16 +839,23 @@ impl Interpreter {
         let label = callee_label(callee);
         if let Some(name) = &label {
             self.call_stack.push(name.clone());
+            gossamer_runtime::sigquit::stack_push(name, "", 0);
         }
         let result = self.apply(&callee_value, arg_values);
         match result {
             Ok(value) => {
                 if label.is_some() {
+                    gossamer_runtime::sigquit::stack_pop();
                     self.call_stack.pop();
                 }
                 Ok(Flow::Value(value))
             }
-            Err(err) => Err(err),
+            Err(err) => {
+                if label.is_some() {
+                    gossamer_runtime::sigquit::stack_pop();
+                }
+                Err(err)
+            }
         }
     }
 
@@ -1440,6 +1481,7 @@ impl Interpreter {
     }
 
     fn eval_stmt(&mut self, stmt: &HirStmt, env: &mut Env) -> RuntimeResult<Option<Flow>> {
+        self.record_coverage(stmt.span, 0);
         match &stmt.kind {
             HirStmtKind::Let { pattern, init, .. } => {
                 let value = match init {

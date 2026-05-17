@@ -227,6 +227,8 @@ const SPECS: &[Spec] = &[
         nondeterministic: true,
         ..spec("feature-testing-examples/hashmap_counter_race.gos")
     },
+    spec("feature-testing-examples/http2_push.gos"),
+    spec("feature-testing-examples/http2_trailers.gos"),
     spec("feature-testing-examples/integer_overflow_edges.gos"),
     spec("feature-testing-examples/iter_combinator_chain.gos"),
     spec("feature-testing-examples/json_round_trip_fuzz.gos"),
@@ -260,6 +262,7 @@ const SPECS: &[Spec] = &[
         skip_parity: Some("poll-attempt count is scheduler-dependent; output varies across tiers"),
         ..spec("feature-testing-examples/select_default_timing.gos")
     },
+    spec("feature-testing-examples/slice_methods.gos"),
     spec("feature-testing-examples/slice_subslicing.gos"),
     spec("feature-testing-examples/sort_with_closure.gos"),
     spec("feature-testing-examples/string_concatenation_stress.gos"),
@@ -290,6 +293,32 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/sync_map_demo.gos"),
     spec("feature-testing-examples/autoderive_int_widths.gos"),
     spec("feature-testing-examples/write_file_bytes.gos"),
+    spec("feature-testing-examples/unicode_full.gos"),
+    spec("feature-testing-examples/hashmap_get_some_field.gos"),
+    Spec {
+        skip_all: if cfg!(windows) {
+            Some("uses Unix-only commands (printf, tr, sort, head)")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/exec_pipeline.gos")
+    },
+    Spec {
+        skip_all: if cfg!(windows) {
+            Some("uses Unix-only /bin/true and /bin/sleep")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/exec_wait_timeout.gos")
+    },
+    Spec {
+        skip_all: if cfg!(windows) {
+            Some("uses Unix-only /bin/sleep, /bin/sh, SIGTERM")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/exec_signal_group.gos")
+    },
 ];
 
 #[derive(Debug)]

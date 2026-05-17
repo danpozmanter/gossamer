@@ -1,5 +1,7 @@
 # `std::flag`
 
+Status: shipped
+
 Batteries-included CLI argument parsing.
 
 ## Public items

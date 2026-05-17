@@ -46,10 +46,22 @@ jobs:
       - run: cargo install cargo-fuzz --locked
       - name: Fuzz each target for one hour
         working-directory: fuzz
+        # `-rss_limit_mb` + `-malloc_limit_mb` cap the harness so a
+        # single greedy input can't run the GitHub runner OOM (the
+        # libFuzzer default is 2 GB rss, but combined with cargo +
+        # the harness + corpus the runner's ~7 GB ceiling gets hit
+        # repeatedly on weekly runs). When libFuzzer trips one of
+        # these caps it records the input as a crash artefact and
+        # continues with the next one, so we keep coverage of every
+        # seed instead of losing the entire hour to a single OOM
+        # kill of the parent process. `-timeout=30` similarly caps
+        # individual-input runtime so pathological inputs don't
+        # exhaust the slot.
         run: |
           set -euo pipefail
           cargo +nightly-2026-04-14 fuzz run ${{ matrix.target }} \
-            -- -max_total_time=3600 -max_len=65536
+            -- -max_total_time=3600 -max_len=65536 \
+               -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30
       - name: Upload any crash inputs
         if: failure()
         uses: actions/upload-artifact@v4

@@ -730,7 +730,76 @@ fn render_one(
                 None,
             )
         }
+        RustBindingSpec::Src { src, deps } => {
+            let abs_src = if Path::new(src).is_absolute() {
+                PathBuf::from(src)
+            } else {
+                manifest_dir.join(src)
+            };
+            let wrapper_dir = manifest_dir
+                .join(".gos-bindings")
+                .join(format!("__srcwrap-{name}"));
+            let _ = materialise_src_binding(name, &wrapper_dir, &abs_src, deps);
+            (
+                format!("{name} = {{ {} }}", toml_path_kv("path", &wrapper_dir)),
+                Vec::new(),
+                Some(wrapper_dir),
+            )
+        }
+        RustBindingSpec::Prebuilt { archive, abi: _ } => {
+            // Prebuilt-archive binding: the staticlib is supplied
+            // directly. There is no Cargo dep — the link step in
+            // `gos build` consumes the archive path. The emitted
+            // line is a TOML-friendly comment; the manifest-side
+            // record keeps the archive path reachable through the
+            // resolved-binding metadata.
+            let abs = if Path::new(archive).is_absolute() {
+                PathBuf::from(archive)
+            } else {
+                manifest_dir.join(archive)
+            };
+            (
+                format!("# prebuilt: {name} archive = '{}'", abs.display()),
+                Vec::new(),
+                None,
+            )
+        }
     }
+}
+
+/// Scaffold a wrapper crate around a single-file binding source.
+/// Idempotent — re-rendering is byte-stable, and `write_if_different`
+/// skips the rewrite when the contents match.
+fn materialise_src_binding(
+    name: &str,
+    wrapper_dir: &Path,
+    src_file: &Path,
+    deps: &str,
+) -> io::Result<()> {
+    fs::create_dir_all(wrapper_dir.join("src"))?;
+    let gossamer_root = std::env::var_os("GOSSAMER_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            wrapper_dir
+                .ancestors()
+                .find(|p| p.join("crates").join("gossamer-binding").is_dir())
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+    let cargo_toml = format!(
+        "[package]\nname = \"gos-srcwrap-{name}\"\nversion = \"0.0.1\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[lib]\ncrate-type = [\"rlib\"]\n\n[dependencies]\n{deps}\ngossamer-binding = {{ path = \"{}\" }}\n",
+        gossamer_root.join("crates/gossamer-binding").display(),
+    );
+    let lib_rs = format!(
+        "//! Generated wrapper around `{}` for the `{name}` binding.\n\n#[path = {:?}]\nmod __user;\n\npub use __user::*;\n\n/// Linker-hook anchoring `linkme` registry entries across LTO.\npub fn __bindings_force_link() {{\n    let _ = ::gossamer_binding::modules();\n}}\n",
+        src_file.display(),
+        src_file.display(),
+    );
+    let cargo_path = wrapper_dir.join("Cargo.toml");
+    let lib_path = wrapper_dir.join("src").join("lib.rs");
+    let _ = write_if_different(&cargo_path, &cargo_toml);
+    let _ = write_if_different(&lib_path, &lib_rs);
+    Ok(())
 }
 
 /// Renders a `key = '...'` TOML pair using a single-quoted literal
@@ -1105,7 +1174,9 @@ mod tests {
     fn toml_path_kv_falls_back_to_basic_string_when_path_has_apostrophe() {
         // Single-quoted TOML literal strings disallow `'`; the
         // helper must fall back to a basic string with `\\` doubling.
-        let p = PathBuf::from("/tmp/it's a path/echo");
+        // PathBuf accepts the literal regardless of platform; the
+        // test exercises the quoter, not the filesystem.
+        let p = PathBuf::from("tmp/it's a path/echo");
         let kv = toml_path_kv("path", &p);
         assert!(
             kv.starts_with("path = \""),

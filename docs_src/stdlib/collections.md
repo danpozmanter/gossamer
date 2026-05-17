@@ -1,5 +1,7 @@
 # `std::collections`
 
+Status: shipped
+
 Built-in container types.
 
 ## Public items

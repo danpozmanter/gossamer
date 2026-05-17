@@ -669,13 +669,25 @@ impl<'a> Builder<'a> {
             // return Option<T>; `xs.reversed()` returns a fresh Vec;
             // `xs.contains` / `xs.index_of` / `xs.count_of` need
             // element-type dispatch (String vs i64).
-            "slice"
-                if matches!(
-                    &receiver_kind_flat,
-                    TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
-                ) =>
-            {
+            // `xs.slice(a, b)?` — receiver shape decides which
+            // helper handles the buffer layout. Vec receivers
+            // (`Vec<T>` and `&[T]` after the `to_vec` route) carry
+            // a `GosVec` header; raw `[T; N]` array literals are
+            // a len-prefixed flat `*const i64` buffer the
+            // intarr / floatarr shims walk directly.
+            "slice" if matches!(&receiver_kind_flat, TyKind::Vec(_) | TyKind::Slice(_)) => {
                 Some("gos_rt_vec_slice_result")
+            }
+            "slice" if matches!(&receiver_kind_flat, TyKind::Array { .. }) => {
+                let elem_kind = match &receiver_kind_flat {
+                    TyKind::Array { elem, .. } => self.tcx.kind_of(*elem),
+                    _ => unreachable!(),
+                };
+                if matches!(elem_kind, TyKind::Float(_)) {
+                    Some("gos_rt_floatarr_slice_result")
+                } else {
+                    Some("gos_rt_intarr_slice_result")
+                }
             }
             "first"
                 if matches!(
@@ -924,15 +936,18 @@ impl<'a> Builder<'a> {
             },
             "get" => match &receiver_kind_flat {
                 TyKind::JsonValue => Some("gos_rt_json_get"),
-                TyKind::HashMap { .. } => match self.hash_map_value_kind(receiver_ty) {
-                    Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_get_str_str"),
-                        _ => Some("gos_rt_map_get_i64_str"),
-                    },
-                    _ => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_get_str_i64"),
-                        _ => Some("gos_rt_map_get_i64"),
-                    },
+                // HashMap::get now uniformly returns Option<V> packed
+                // in a *mut GosResult. The MIR pin restores V from the
+                // call's Option<V> substs so `if let Some(p) = m.get(&k)`
+                // binds `p` with the right element type — struct refs
+                // included. Pre-0.8.0 the bare i64-returning helpers
+                // collided None with stored-0 (HashMap<_, i64>) and
+                // produced a silent miscompile on field access through
+                // struct-valued maps. See feature-testing-examples/
+                // hashmap_get_some_field.gos.
+                TyKind::HashMap { .. } => match self.hash_map_key_kind(receiver_ty) {
+                    Some(MapKeyKind::String) => Some("gos_rt_map_get_str_opt"),
+                    _ => Some("gos_rt_map_get_i64_opt"),
                 },
                 _ => None,
             },
@@ -1129,6 +1144,13 @@ impl<'a> Builder<'a> {
             let receiver_local = self.lower_expr(receiver)?;
             let mut arg_operands = Vec::with_capacity(args.len() + 1);
             arg_operands.push(Operand::Copy(Place::local(receiver_local)));
+            // `xs.slice(a, b)` on a `[T; N]` literal needs the
+            // static length: the inline buffer carries no length
+            // prefix, so the runtime helper takes
+            // `(ptr, len, start, end)` instead of the
+            // `(ptr, start, end)` shape used by Vec receivers.
+            // Splice the constant N read from the receiver's MIR
+            // type before the user-supplied start/end args.
             // Router HTTP-verb methods take (router, pattern,
             // env, fn_addr) — synthesize the handler's env+fn_addr
             // from the trailing user argument (must be a struct
@@ -1516,6 +1538,26 @@ impl<'a> Builder<'a> {
         }
         let mut arg_operands = Vec::with_capacity(args.len() + 1);
         arg_operands.push(Operand::Copy(Place::local(receiver_local)));
+        // `xs.slice(a, b)` on a `[T; N]` literal receiver: splice
+        // the static length read from `TyKind::Array { len }` between
+        // the receiver pointer and the user-supplied `start` / `end`.
+        // The runtime helper takes `(ptr, len, start, end)` because
+        // inline `[T; N]` storage carries no length prefix.
+        if matches!(
+            runtime_symbol,
+            Some("gos_rt_intarr_slice_result" | "gos_rt_floatarr_slice_result")
+        ) {
+            let recv_ty_kind = self.tcx.kind_of(receiver.ty);
+            let recv_ty_kind = if let TyKind::Ref { inner, .. } = recv_ty_kind {
+                self.tcx.kind_of(*inner)
+            } else {
+                recv_ty_kind
+            };
+            if let TyKind::Array { len: array_len, .. } = recv_ty_kind {
+                let n = i128::try_from(*array_len).unwrap_or(0);
+                arg_operands.push(Operand::Const(ConstValue::Int(n)));
+            }
+        }
         for arg in args {
             let a = self.lower_expr(arg)?;
             // 0.7.0 flag::Cell auto-deref at the call boundary —

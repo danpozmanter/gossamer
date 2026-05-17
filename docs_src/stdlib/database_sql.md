@@ -1,5 +1,7 @@
 # `std::database::sql`
 
+Status: experimental
+
 Driver-pluggable SQL database access.
 
 ## Public items

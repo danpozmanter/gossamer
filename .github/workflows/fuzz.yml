@@ -43,10 +43,17 @@ jobs:
       - run: cargo install cargo-fuzz --locked
       - name: Smoke each seed corpus for 30 s
         working-directory: fuzz
+        # Mirror fuzz-weekly.yml's rss / malloc / timeout caps so
+        # a single pathological seed can't OOM the runner. 30 s of
+        # smoke fuzz isn't long enough to provoke OOM on its own,
+        # but cargo + the harness + the cached corpus still push
+        # well into hundreds of MB; the explicit limits keep the
+        # smoke job deterministic.
         run: |
           set -euo pipefail
           cargo +nightly-2026-04-14 fuzz run ${{ matrix.target }} \
-            -- -max_total_time=30 -max_len=65536
+            -- -max_total_time=30 -max_len=65536 \
+               -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30
       - name: Upload any crash inputs
         if: failure()
         uses: actions/upload-artifact@v4

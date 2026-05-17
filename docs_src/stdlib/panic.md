@@ -1,5 +1,7 @@
 # `std::panic`
 
+Status: shipped
+
 Panic / `catch_unwind` integration.
 
 ## Public items

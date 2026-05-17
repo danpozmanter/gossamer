@@ -81,6 +81,10 @@ enum Command {
         /// Arguments forwarded to the interpreted program (after `--`).
         #[arg(last = true)]
         args: Vec<String>,
+        /// Require `project.lock` to be present and match the
+        /// resolver's output for every dep. Drift is a hard error.
+        #[arg(long)]
+        locked: bool,
     },
     /// Compile the program to a native executable.
     ///
@@ -130,6 +134,12 @@ enum Command {
         /// created if it does not exist.
         #[arg(long = "out-dir")]
         out_dir: Option<PathBuf>,
+        /// Require `project.lock` to be present and match the
+        /// resolver's output for every dep. Drift is a hard error.
+        /// CI builds should set this so a stale lockfile never
+        /// silently builds against an upgraded dep.
+        #[arg(long)]
+        locked: bool,
     },
     /// Create a `project.toml` in the current directory.
     Init {
@@ -153,7 +163,7 @@ enum Command {
         /// with empty `[workspace.members]` and no source tree.
         #[arg(
             long,
-            value_parser = ["bin", "lib", "service", "workspace"],
+            value_parser = ["bin", "lib", "service", "workspace", "binding"],
             default_value = "bin",
         )]
         template: String,
@@ -200,6 +210,53 @@ enum Command {
         /// present.
         #[arg(long)]
         offline: bool,
+        /// Re-walk the registry index and rewrite `project.lock`
+        /// even when the existing lock pins a satisfying version.
+        #[arg(long)]
+        update: bool,
+    },
+    /// Publish the current project to a registry.
+    Publish {
+        /// Path to the manifest. Defaults to `./project.toml`.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Override the registry URL. Defaults to the project's
+        /// `[registries].default` or `$GOS_REGISTRY_URL`.
+        #[arg(long)]
+        registry: Option<String>,
+        /// Pack + sign + print metadata without uploading.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Yank a previously-published version.
+    Yank {
+        /// Spec of the form `<id>@<version>`.
+        spec: String,
+        /// Optional human-readable reason recorded with the yank.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Save a bearer token for a registry in
+    /// `~/.gossamer/credentials.toml`.
+    Login {
+        /// Registry URL the token authorises against.
+        #[arg(long)]
+        registry: String,
+    },
+    /// Drop the saved bearer token for a registry.
+    Logout {
+        /// Registry URL whose credential to drop.
+        #[arg(long)]
+        registry: String,
+    },
+    /// Manage owners (publisher ACL) of a published project.
+    Owner {
+        /// Operation: `add`, `remove`, or `list`.
+        op: String,
+        /// Project id (e.g. `example.com/widget`).
+        id: String,
+        /// User to add or remove. Omit for `list`.
+        user: Option<String>,
     },
     /// Copy fetched dependencies into a local `./vendor/` directory.
     Vendor {
@@ -222,6 +279,27 @@ enum Command {
         /// Check whether the file is already formatted; exit 1 if not.
         #[arg(long)]
         check: bool,
+    },
+    /// Scaffold a `#[gos_module]` binding skeleton from a Rust
+    /// source file. Walks the supplied file's `pub fn` items,
+    /// classifies each by whether its signature uses types the
+    /// binding ABI supports (`String`, `i64`, `bool`, `Vec<T>`,
+    /// `Option<T>`, `Result<T, E>`, tuples, `Bytes`, user structs
+    /// with `#[derive(GosStruct)]`), and emits a ready-to-edit
+    /// binding crate under the output directory. Functions whose
+    /// signatures use unsupported types are emitted as `///
+    /// Unsupported` comments so the binding author sees the gap.
+    Bindgen {
+        /// Path to the Rust source file or crate root to scan.
+        input: PathBuf,
+        /// Output directory for the scaffolded binding crate.
+        /// Defaults to `./.gos-bindings/<crate-name>/`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Gossamer-side module path to use. Defaults to the
+        /// crate-name with `-` replaced by `_`.
+        #[arg(long)]
+        module: Option<String>,
     },
     /// Emit an item listing derived from doc comments / signatures.
     Doc {
@@ -282,6 +360,18 @@ enum Command {
         /// Write per-test branch coverage to `<path>` in lcov format.
         #[arg(long, value_name = "FILE")]
         coverage: Option<PathBuf>,
+        /// Run the cross-tier parity walk instead of `#[test]`
+        /// discovery. Targets every `.gos` source under `path`
+        /// (defaults to `examples/` + `feature-testing-examples/`),
+        /// running each through the VM and the LLVM-compiled binary.
+        #[arg(long = "tier-parity")]
+        tier_parity: bool,
+        /// Report shape for `--tier-parity`. Only `status` is
+        /// implemented today; it writes
+        /// `target/debug/.feature-status.json` consumed by
+        /// `gos feature-status`.
+        #[arg(long)]
+        report: Option<String>,
     },
     /// Discover and time `#[bench]` functions.
     Bench {
@@ -376,6 +466,36 @@ enum Command {
         #[arg(long, short = 'n')]
         dry_run: bool,
     },
+    /// Print lifecycle status for every language feature and stdlib
+    /// item. Joins the registry in
+    /// `gossamer_std::manifest::FEATURE_STATUS` with per-tier
+    /// outcomes loaded from `target/debug/.feature-status.json`.
+    /// Pass `--check` to enforce the CI gate (every `Shipped` item
+    /// must have a doc page plus an all-tiers-pass test record).
+    #[command(name = "feature-status")]
+    FeatureStatus {
+        /// Output format. Defaults to a pipe-separated table.
+        #[arg(long, default_value = "table")]
+        format: String,
+        /// CI gate mode — exit non-zero with a punch list when any
+        /// `Shipped` item lacks a doc page or a passing tier-parity test.
+        #[arg(long)]
+        check: bool,
+        /// Optional glob filter on the qualified path (`std::http::*`).
+        #[arg(long)]
+        filter: Option<String>,
+        /// Optional status filter (`shipped` / `experimental` / `planned` / `removed`).
+        #[arg(long)]
+        status: Option<String>,
+        /// Override the JSON sidecar path. Defaults to
+        /// `target/debug/.feature-status.json`.
+        #[arg(long)]
+        sidecar: Option<PathBuf>,
+        /// Override the docs root used by `--check`. Defaults to
+        /// `docs_src/` next to the workspace root.
+        #[arg(long = "docs-root")]
+        docs_root: Option<PathBuf>,
+    },
 }
 
 /// Parses `argv`, dispatches the chosen subcommand, and maps any
@@ -407,7 +527,15 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             timings,
             message_format,
         }) => cmd::check::dispatch(file, timings, message_format),
-        Some(Command::Run { file, no_jit, args }) => dispatch_run(file, no_jit, &args),
+        Some(Command::Run {
+            file,
+            no_jit,
+            args,
+            locked,
+        }) => {
+            crate::cmd::pkg::enforce_lockfile_if_requested(locked)?;
+            dispatch_run(file, no_jit, &args)
+        }
         Some(Command::Build {
             file,
             target,
@@ -416,25 +544,29 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             dynamic,
             reproducible,
             out_dir,
-        }) => dispatch_build(
-            file,
-            target.as_deref(),
-            BuildFlags {
-                mode: if release {
-                    BuildMode::Release
-                } else {
-                    BuildMode::Debug
+            locked,
+        }) => {
+            crate::cmd::pkg::enforce_lockfile_if_requested(locked)?;
+            dispatch_build(
+                file,
+                target.as_deref(),
+                BuildFlags {
+                    mode: if release {
+                        BuildMode::Release
+                    } else {
+                        BuildMode::Debug
+                    },
+                    link: if dynamic {
+                        LinkMode::Dynamic
+                    } else {
+                        LinkMode::Static
+                    },
+                    debug_info,
+                    reproducible,
                 },
-                link: if dynamic {
-                    LinkMode::Dynamic
-                } else {
-                    LinkMode::Static
-                },
-                debug_info,
-                reproducible,
-            },
-            out_dir,
-        ),
+                out_dir,
+            )
+        }
         Some(Command::Init { id }) => cmd::scaffold::init(&id),
         Some(Command::New { id, path, template }) => cmd::scaffold::new(&id, path, &template),
         Some(Command::Add {
@@ -450,9 +582,27 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
         }
         Some(Command::Remove { id, manifest }) => cmd::pkg::remove(&id, manifest),
         Some(Command::Tidy { manifest }) => cmd::pkg::tidy(manifest),
-        Some(Command::Fetch { manifest, offline }) => cmd::pkg::fetch(manifest, offline),
+        Some(Command::Fetch {
+            manifest,
+            offline,
+            update,
+        }) => cmd::pkg::fetch(manifest, offline, update),
         Some(Command::Vendor { manifest, out }) => cmd::pkg::vendor(manifest, out),
+        Some(Command::Publish {
+            manifest,
+            registry,
+            dry_run,
+        }) => cmd::pkg::publish(manifest, registry, dry_run),
+        Some(Command::Yank { spec, reason }) => cmd::pkg::yank(&spec, reason),
+        Some(Command::Login { registry }) => cmd::pkg::login(registry),
+        Some(Command::Logout { registry }) => cmd::pkg::logout(registry),
+        Some(Command::Owner { op, id, user }) => cmd::pkg::owner(&op, &id, user),
         Some(Command::Fmt { file, check }) => cmd::fmt_cmd::dispatch(file, check),
+        Some(Command::Bindgen {
+            input,
+            output,
+            module,
+        }) => cmd::bindgen::run(&input, output.as_deref(), module.as_deref()),
         Some(Command::Doc {
             file,
             html,
@@ -478,6 +628,8 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             junit_out,
             race,
             coverage,
+            tier_parity,
+            report,
         }) => {
             let cpu_count =
                 std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
@@ -494,6 +646,8 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
                 junit_out,
                 race,
                 coverage,
+                tier_parity,
+                report,
             })
         }
         Some(Command::Bench { file, iterations }) => {
@@ -526,7 +680,48 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Clean { vendor, dry_run }) => cmd::clean::run(vendor, dry_run),
+        Some(Command::FeatureStatus {
+            format,
+            check,
+            filter,
+            status,
+            sidecar,
+            docs_root,
+        }) => dispatch_feature_status(
+            &format,
+            check,
+            filter,
+            status.as_deref(),
+            sidecar,
+            docs_root,
+        ),
     }
+}
+
+fn dispatch_feature_status(
+    format: &str,
+    check: bool,
+    filter: Option<String>,
+    status: Option<&str>,
+    sidecar: Option<PathBuf>,
+    docs_root: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let format = cmd::feature_status::OutputFormat::parse(format)
+        .ok_or_else(|| anyhow::anyhow!("unknown --format: {format} (table|json|markdown)"))?;
+    let status = match status {
+        Some(tag) => Some(gossamer_std::manifest::Status::parse(tag).ok_or_else(|| {
+            anyhow::anyhow!("unknown --status: {tag} (shipped|experimental|planned|removed)")
+        })?),
+        None => None,
+    };
+    cmd::feature_status::run(cmd::feature_status::FeatureStatusOpts {
+        format,
+        check,
+        filter,
+        status,
+        sidecar,
+        docs_root,
+    })
 }
 
 fn dispatch_run(file: Option<PathBuf>, no_jit: bool, args: &[String]) -> anyhow::Result<()> {

@@ -36,6 +36,14 @@ pub unsafe extern "C" fn gos_rt_panic(msg: *const c_char) {
     // `error[GX0005]` — keeps user-visible stderr identical
     // whether `gos run` took the native path or fell back.
     eprintln!("error[GX0005]: panic: {text}");
+    // Inline the active goroutine's call stack so the operator
+    // can locate the failing frame without a separate SIGQUIT
+    // round-trip. Empty when no frame info has been published
+    // (e.g. a fall-back tier without stack-push hooks).
+    let trace = crate::sigquit::render_active_panic_trace();
+    if !trace.is_empty() {
+        eprint!("{trace}");
+    }
     // per-goroutine panic isolation. If the
     // panic originates inside a spawned goroutine, raise a Rust
     // panic the coroutine wrapper catches — the scheduler
@@ -50,6 +58,51 @@ pub unsafe extern "C" fn gos_rt_panic(msg: *const c_char) {
         std::panic::panic_any(text);
     }
     std::process::abort();
+}
+
+/// Pushes a call-stack frame on entry to a Gossamer function.
+/// Codegen prologues emit one call per function entry; the
+/// interpreter calls this directly. `function`, `file`, and `line`
+/// identify the frame for panic dumps and SIGQUIT renders.
+///
+/// All three pointer arguments must be NUL-terminated C strings
+/// or NULL. NULL is rendered as an empty string in the frame
+/// record. The shim is reentrant-safe; the registry lock is held
+/// only for the insertion.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_stack_push(
+    function: *const c_char,
+    file: *const c_char,
+    line: u32,
+) {
+    let function = unsafe { cstr_to_string(function) };
+    let file = unsafe { cstr_to_string(file) };
+    crate::sigquit::stack_push(function, file, line);
+}
+
+/// Pops the topmost call-stack frame on return from a Gossamer
+/// function. Tolerates over-pop (no-op when the stack is empty).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_stack_pop() {
+    crate::sigquit::stack_pop();
+}
+
+/// Updates the line number of the topmost call-stack frame.
+/// Emitted by codegen at MIR-statement granularity so panic
+/// dumps show the line of the most recent statement, not the
+/// function entry. The frame's file path stays as it was set by
+/// the matching `gos_rt_stack_push`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_stack_set_line(line: u32) {
+    crate::sigquit::set_active_line(line);
+}
+
+unsafe fn cstr_to_string(p: *const c_char) -> String {
+    if p.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
+    }
 }
 
 /// Returns 1 if any spawned goroutine has panicked since process

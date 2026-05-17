@@ -1,5 +1,7 @@
 # `std::encoding::base64`
 
+Status: shipped
+
 RFC 4648 base64 encode/decode.
 
 ## Public items

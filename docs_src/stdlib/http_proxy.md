@@ -1,5 +1,7 @@
 # `std::http::proxy`
 
+Status: shipped
+
 Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler.
 
 ## Public items

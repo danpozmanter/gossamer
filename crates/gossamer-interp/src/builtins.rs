@@ -523,6 +523,10 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("run", builtin_exec_run),
             ("spawn", builtin_exec_spawn),
             ("kill", builtin_exec_kill),
+            ("signal", builtin_exec_signal),
+            ("kill_group", builtin_exec_kill_group),
+            ("wait_timeout", builtin_exec_wait_timeout),
+            ("pipeline_run", builtin_exec_pipeline_run),
         ],
         globals,
     );
@@ -532,6 +536,10 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("run", builtin_exec_run),
             ("spawn", builtin_exec_spawn),
             ("kill", builtin_exec_kill),
+            ("signal", builtin_exec_signal),
+            ("kill_group", builtin_exec_kill_group),
+            ("wait_timeout", builtin_exec_wait_timeout),
+            ("pipeline_run", builtin_exec_pipeline_run),
         ],
         globals,
     );
@@ -541,6 +549,10 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("run", builtin_exec_run),
             ("spawn", builtin_exec_spawn),
             ("kill", builtin_exec_kill),
+            ("signal", builtin_exec_signal),
+            ("kill_group", builtin_exec_kill_group),
+            ("wait_timeout", builtin_exec_wait_timeout),
+            ("pipeline_run", builtin_exec_pipeline_run),
             ("exit", builtin_os_exit),
             ("id", builtin_process_id),
             ("abort", builtin_process_abort),
@@ -1134,6 +1146,14 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "String::substring",
         builtin("String::substring", builtin_str_substring),
     ));
+    // `String::slice(s, a, b) -> Result<String, errors::Error>` —
+    // the non-panicking byte-range slice. Inverted or out-of-range
+    // bounds return Err, not a truncated string. Registered under
+    // both the qualified and bare names so `String::slice(s, a, b)?`
+    // and `s.slice(a, b)?` both dispatch here.
+    globals.push(("String::slice", builtin("String::slice", builtin_str_slice)));
+    globals.push(("Vec::slice", builtin("Vec::slice", builtin_vec_slice)));
+    globals.push(("slice", builtin("slice", builtin_str_or_vec_slice)));
     // `String::to_lower` / `String::to_upper` — short Rust/Go-style
     // names for the existing to_lowercase / to_uppercase shims.
     // Registered as qualified keys so `s.to_lower()` on a `String`
@@ -3067,6 +3087,141 @@ fn builtin_exec_kill(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+/// `exec::signal(pid: i64, signum: i64) -> bool`. Sends an
+/// arbitrary signal number to the target pid. Mirrors
+/// `gos_rt_exec_signal` so the VM matches the compiled tier.
+fn builtin_exec_signal(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Int(pid)) = args.first() else {
+        return Ok(Value::Bool(false));
+    };
+    let Some(Value::Int(signum)) = args.get(1) else {
+        return Ok(Value::Bool(false));
+    };
+    Ok(Value::Bool(exec_std::send_raw_signal(*pid, *signum)))
+}
+
+/// `exec::kill_group(pid: i64) -> bool`. SIGTERMs the entire group
+/// led by `pid` on Unix; best-effort `TerminateProcess` on Windows.
+fn builtin_exec_kill_group(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Int(pid)) = args.first() else {
+        return Ok(Value::Bool(false));
+    };
+    Ok(Value::Bool(exec_std::send_group_term(*pid)))
+}
+
+/// `exec::wait_timeout(pid: i64, ms: i64) -> i64`. Polls the pid
+/// with WNOHANG until it exits or `ms` elapses. Returns the exit
+/// code on success, -1 on timeout, -2 on error.
+fn builtin_exec_wait_timeout(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Int(pid)) = args.first() else {
+        return Ok(Value::Int(-2));
+    };
+    let Some(Value::Int(ms)) = args.get(1) else {
+        return Ok(Value::Int(-2));
+    };
+    Ok(Value::Int(exec_std::wait_pid_timeout(*pid, *ms)))
+}
+
+/// `exec::pipeline_run(commands: [String]) -> Result<Output, errors::Error>`.
+/// Mirrors `gos_rt_exec_pipeline_run`. Each entry is a
+/// whitespace-split shell command; stdout of stage N feeds stdin
+/// of stage N+1.
+fn builtin_exec_pipeline_run(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Array(arr)) = args.first() else {
+        return Ok(err_variant(
+            "exec::pipeline_run: commands must be Vec<String>",
+        ));
+    };
+    let stages: Vec<Vec<String>> = arr
+        .iter()
+        .filter_map(as_str)
+        .map(tokenize_pipeline_shell)
+        .filter(|s: &Vec<String>| !s.is_empty())
+        .collect();
+    if stages.is_empty() {
+        return Ok(err_variant("exec::pipeline_run: empty pipeline"));
+    }
+    match run_pipeline_stages(stages) {
+        Ok((stdout, stderr, code)) => {
+            let fields = vec![
+                (Ident::new("stdout"), Value::String(SmolStr::from(stdout))),
+                (Ident::new("stderr"), Value::String(SmolStr::from(stderr))),
+                (Ident::new("code"), Value::Int(code)),
+            ];
+            Ok(ok_variant(Value::struct_("ExecOutput", Arc::new(fields))))
+        }
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+fn tokenize_pipeline_shell(line: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    for ch in line.chars() {
+        match ch {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn run_pipeline_stages(stages: Vec<Vec<String>>) -> Result<(String, String, i64), String> {
+    use std::io::Read;
+    use std::process::{Command as StdCommand, Stdio as StdStdio};
+    let last = stages.len() - 1;
+    let mut children: Vec<std::process::Child> = Vec::with_capacity(stages.len());
+    for (i, parts) in stages.iter().enumerate() {
+        let mut cmd = StdCommand::new(&parts[0]);
+        if parts.len() > 1 {
+            cmd.args(&parts[1..]);
+        }
+        if i > 0 {
+            let Some(prev_stdout) = children.last_mut().and_then(|c| c.stdout.take()) else {
+                return Err(format!("pipeline stage {i}: predecessor stdout missing"));
+            };
+            cmd.stdin(prev_stdout);
+        }
+        cmd.stdout(StdStdio::piped());
+        if i == last {
+            cmd.stderr(StdStdio::piped());
+        }
+        match cmd.spawn() {
+            Ok(c) => children.push(c),
+            Err(e) => return Err(format!("pipeline stage {i} ({}): {e}", parts[0])),
+        }
+    }
+    let mut tail = children.pop().expect("nonempty");
+    let mut stdout = Vec::new();
+    if let Some(mut s) = tail.stdout.take() {
+        let _ = s.read_to_end(&mut stdout);
+    }
+    let mut stderr = Vec::new();
+    if let Some(mut e) = tail.stderr.take() {
+        let _ = e.read_to_end(&mut stderr);
+    }
+    let tail_status = tail.wait().map_err(|e| format!("tail wait: {e}"))?;
+    for (i, mut c) in children.into_iter().enumerate() {
+        let _ = c.wait().map_err(|e| format!("stage {i} wait: {e}"))?;
+    }
+    Ok((
+        String::from_utf8_lossy(&stdout).into_owned(),
+        String::from_utf8_lossy(&stderr).into_owned(),
+        i64::from(tail_status.code().unwrap_or(-1)),
+    ))
+}
+
 // ---------------------------------------------------------------
 // signal::on / Notifier::wait / Notifier::try_wait
 // ---------------------------------------------------------------
@@ -4078,6 +4233,109 @@ fn builtin_ends_with(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(Value::Bool(false));
     };
     Ok(Value::Bool(s.ends_with(suffix.as_str())))
+}
+
+/// `String::slice(s, a, b) -> Result<String, errors::Error>` — the
+/// non-panicking byte-range slice contract: `a > b` or `b > len`
+/// returns Err; valid ranges return the UTF-8-validated substring.
+fn builtin_str_slice(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::String(s)) = args.first() else {
+        return Ok(slice_err(
+            "String::slice expects a String receiver".to_string(),
+        ));
+    };
+    let (lo, hi) = match slice_bounds(args, "String::slice") {
+        Ok(b) => b,
+        Err(e) => return Ok(e),
+    };
+    let bytes = s.as_str().as_bytes();
+    if hi > bytes.len() {
+        return Ok(slice_err("String::slice end exceeds length".to_string()));
+    }
+    match std::str::from_utf8(&bytes[lo..hi]) {
+        Ok(piece) => Ok(ok_variant(Value::String(SmolStr::from(piece)))),
+        Err(_) => Ok(slice_err(
+            "String::slice range crosses a UTF-8 boundary".to_string(),
+        )),
+    }
+}
+
+/// Dual entry for bare `slice` reaching method dispatch when the
+/// receiver type isn't yet known. Routes by receiver kind to the
+/// String or Vec slice helper. Accepts every flat-storage Vec
+/// variant the interp uses (`Array`, `IntArray`, `FloatArray`).
+fn builtin_str_or_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first() {
+        Some(Value::String(_)) => builtin_str_slice(args),
+        Some(Value::Array(_) | Value::IntArray(_) | Value::FloatArray(_)) => {
+            builtin_vec_slice(args)
+        }
+        _ => Ok(slice_err(
+            "slice expects a String or Vec receiver".to_string(),
+        )),
+    }
+}
+
+fn slice_err(msg: String) -> Value {
+    Value::variant(
+        "Err",
+        Arc::new(vec![errors_struct(
+            msg,
+            Value::variant("None", Arc::new(vec![])),
+        )]),
+    )
+}
+
+fn slice_bounds(args: &[Value], label: &str) -> Result<(usize, usize), Value> {
+    let start = match args.get(1) {
+        Some(Value::Int(n)) => *n,
+        _ => return Err(slice_err(format!("{label} expects an i64 start"))),
+    };
+    let end = match args.get(2) {
+        Some(Value::Int(n)) => *n,
+        _ => return Err(slice_err(format!("{label} expects an i64 end"))),
+    };
+    if start < 0 || end < 0 {
+        return Err(slice_err(format!("{label} bounds must be non-negative")));
+    }
+    if start > end {
+        return Err(slice_err(format!("{label} start exceeds end")));
+    }
+    Ok((start as usize, end as usize))
+}
+
+/// `Vec::slice(xs, a, b) -> Result<Vec<T>, errors::Error>` —
+/// non-panicking element-range slice; same bounds policy as
+/// [`builtin_str_slice`]. Handles each flat-storage Vec variant.
+fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
+    let (lo, hi) = match slice_bounds(args, "Vec::slice") {
+        Ok(b) => b,
+        Err(e) => return Ok(e),
+    };
+    match args.first() {
+        Some(Value::Array(arr)) => {
+            if hi > arr.len() {
+                return Ok(slice_err("Vec::slice end exceeds length".to_string()));
+            }
+            Ok(ok_variant(Value::Array(Arc::new(arr[lo..hi].to_vec()))))
+        }
+        Some(Value::IntArray(arr)) => {
+            if hi > arr.len() {
+                return Ok(slice_err("Vec::slice end exceeds length".to_string()));
+            }
+            Ok(ok_variant(Value::IntArray(Arc::new(arr[lo..hi].to_vec()))))
+        }
+        Some(rx @ Value::FloatArray(_)) => {
+            let Value::Array(view) = rx.float_array_to_value_array() else {
+                return Ok(slice_err("Vec::slice cannot view FloatArray".to_string()));
+            };
+            if hi > view.len() {
+                return Ok(slice_err("Vec::slice end exceeds length".to_string()));
+            }
+            Ok(ok_variant(Value::Array(Arc::new(view[lo..hi].to_vec()))))
+        }
+        _ => Ok(slice_err("Vec::slice expects a Vec receiver".to_string())),
+    }
 }
 
 fn builtin_str_substring(args: &[Value]) -> RuntimeResult<Value> {

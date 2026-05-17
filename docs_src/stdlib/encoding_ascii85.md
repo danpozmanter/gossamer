@@ -1,5 +1,7 @@
 # `std::encoding::ascii85`
 
+Status: shipped
+
 ASCII85 / base85 encode / decode.
 
 ## Public items

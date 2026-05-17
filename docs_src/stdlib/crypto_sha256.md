@@ -1,5 +1,7 @@
 # `std::crypto::sha256`
 
+Status: shipped
+
 SHA-256 hashing.
 
 ## Public items

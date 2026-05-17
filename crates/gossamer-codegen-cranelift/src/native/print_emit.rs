@@ -167,17 +167,15 @@ pub(super) fn emit_per_arg_print(
             }
         }
         let kind = operand_print_kind(body, tcx, arg);
-        if let PrintKind::Unsupported(_label) = kind {
-            // Soft fallback: print the type's name as a
-            // placeholder so the program runs. Programs that
-            // need the actual stringification have to write it
-            // by hand (or wait for proper Display dispatch).
-            let placeholder = intrinsics.intern_string(module, "<value>")?;
-            let data_ref = module.declare_data_in_func(placeholder, builder.func);
-            let p = builder.ins().global_value(ptr_ty, data_ref);
-            let fref = module.declare_func_in_func(print_str, builder.func);
-            builder.ins().call(fref, &[p]);
-            continue;
+        if let PrintKind::Unsupported(label) = kind {
+            // 0.8.0: no `<value>` placeholder fallback. A type the
+            // print path doesn't know how to render is a compile
+            // error, not a runtime "<value>" string — the user
+            // wants real Display lowering, not a stub.
+            bail!(
+                "native codegen: refusing to emit '<value>' placeholder for print of unsupported \
+                operand kind {label}; add a Display dispatch for this type or convert it explicitly"
+            );
         }
         let value = lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
         let ty = value_type(value, builder);

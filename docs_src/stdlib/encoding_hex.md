@@ -1,5 +1,7 @@
 # `std::encoding::hex`
 
+Status: shipped
+
 Lowercase hex encode/decode.
 
 ## Public items

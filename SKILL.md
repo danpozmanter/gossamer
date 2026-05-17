@@ -484,7 +484,7 @@ Bare `gos` drops into the REPL.
 | `gos run FILE` | Register-based bytecode VM. The walker is gone as a user-facing mode; if the VM hits an HIR shape it doesn't lower yet, it falls back internally — never user-selectable. |
 | `gos build FILE` | Native build via LLVM (`opt -O0 \| llc -O0`) + system linker. |
 | `gos build --release FILE` | Native build via LLVM (`opt -O3 \| llc -O3 -mcpu=native`) + system linker. |
-| `gos test PATH` | Discover and run `#[test]` functions. |
+| `gos test PATH` | Discover and run `#[test]` functions. `--coverage <path>` (lcov), `--parallel N` / `--serial`, `--format junit`, `--tier-parity --report=status`. |
 | `gos bench PATH` | Discover and time `#[bench]` functions. |
 | `gos fmt [--check] FILE` | Rewrite canonically. |
 | `gos doc FILE` | Print item listing + doc comments. |
@@ -493,6 +493,8 @@ Bare `gos` drops into the REPL.
 | `gos watch --command CMD PATH` | Re-run on file change. |
 | `gos new ID --path DIR` | Scaffold a project. |
 | `gos add SPEC` / `remove ID` / `tidy` / `fetch` / `vendor` | Package manager. |
+| `gos publish` / `yank` / `login` / `logout` / `owner` | Registry workflow (0.8.0). Credentials in `~/.config/gossamer/credentials.toml`, Ed25519-signed tarballs, `tarball_sha256` pinned in the lockfile. |
+| `gos feature-status` | List or `--check` the feature-status registry. `--status shipped\|experimental\|planned\|removed`, `--format table\|json\|markdown`. |
 
 ## 11. Writing tests
 
@@ -527,7 +529,11 @@ executed by `gos test`. Mark non-runnable fences as
   `current_dir`, `set_current_dir`, `home_dir`, `temp_dir`.
 - `std::process` — child processes and exit:
   `Command`, `Output`, `Stdio`, `Child`, `ExitStatus`,
-  `run`, `spawn`, `kill`, `exit`, `id`, `abort`.
+  `run`, `spawn`, `kill`, `exit`, `id`, `abort`. **0.8.0**:
+  `Pipeline` for stdout→stdin chaining (`pipeline_run`),
+  `Signal` enum, `signal(pid, sig)`, `kill_group(pgid, sig)`,
+  `wait_timeout(child, ms)` — all wired through the compiled
+  tier via `gos_rt_exec_*` shims (POSIX-only).
 - `std::fs` — filesystem (Rust-style):
   `read`, `read_to_string`, `write`, `read_dir`, `walk_dir`,
   `create_dir`, `create_dir_all`, `remove_file`, `remove_dir`,
@@ -558,7 +564,30 @@ executed by `gos test`. Mark non-runnable fences as
   `format_i64`, `format_float`, `format_f64`, `itoa`, `atoi`.
 - `std::path` — `parent`, `file_name`, `stem`, `ext`,
   `is_absolute`, `normalize` (in addition to `join` / `walk`).
-- `std::utf8` — `count_runes`, `rune_len`, `is_valid`.
+- `std::utf8` — `count_runes`, `rune_count`, `rune_count_in_string`,
+  `rune_len`, `is_valid`, `valid_rune`, `valid_string`,
+  `full_rune` / `full_rune_in_string`, `rune_start`,
+  `decode_rune` / `decode_last_rune` / `decode_first` (and
+  the `_in_string` variants), `encode_rune` / `append_rune`.
+- `std::unicode` — **full Unicode 16 surface** (0.8.0). General-category
+  predicates: `is_letter`, `is_digit` (Nd), `is_number` (Nd|Nl|No),
+  `is_space` (Z* + ASCII whitespace), `is_upper` / `is_lower` /
+  `is_title`, `is_punct` (P*), `is_symbol` (S*), `is_mark` (M*),
+  `is_print`, `is_graphic`, `is_control`, `is_assigned`,
+  `combining_class`. Casing: `to_upper` / `to_lower` / `to_title` /
+  `simple_fold` for single runes; `to_upper_str` / `to_lower_str` /
+  `fold_case` for whole strings (handles ß → SS, Σ → σ, etc.).
+  Normalization: `nfc`, `nfd`, `nfkc`, `nfkd`, plus `is_nfc` /
+  `is_nfd` / `is_nfkc` / `is_nfkd`. Segmentation (UAX #29):
+  `graphemes(s) -> Vec<String>`, `grapheme_count(s) -> i64`,
+  `words(s)` / `word_bounds(s)` / `word_count(s)`,
+  `sentences(s)` / `sentence_count(s)`. All entries work on
+  every tier (VM / Cranelift / LLVM) via `gos_rt_unicode_*`
+  C-ABI shims backed by the `unicode-properties`,
+  `unicode-normalization`, and `unicode-segmentation` crates.
+  **Identifier rules** also follow Unicode: `let café = 1`,
+  `let π = 3.14`, `let 名前 = "x"` all parse via UAX #31
+  `XID_Start` / `XID_Continue` (matches Rust 2024).
 - `std::collections` — `Vec`, `HashMap`, `HashSet` (real set
   with `insert`, `remove`, `contains`, `len`, `is_empty`,
   `clear`, `to_vec`, `iter`), `BTreeMap`. **0.7.0 Vec method
@@ -598,6 +627,32 @@ executed by `gos test`. Mark non-runnable fences as
   time. All method-string entry points accept
   `"GET"`/`"POST"`/`"PUT"`/`"DELETE"`/`"PATCH"`/`"HEAD"`/`"OPTIONS"`
   case-insensitively; unknown methods return `Err(transport)`.
+- `std::http` server stack (**0.8.0**):
+  - `http::cookie` — RFC 6265 `Cookie` / `CookieBuilder`,
+    `SameSite`, `parse_cookie_header`, `parse_set_cookie`.
+  - `http::csrf` — double-submit cookie + Origin/Referer check:
+    `issue_token`, `verify_token`, `extract_token`,
+    `origin_allowed`, `check`, `attach_cookie`, `RouteAuth`.
+  - `http::form` — `application/x-www-form-urlencoded` parse +
+    build.
+  - `http::multipart` — streaming RFC 7578 with `parse_boundary`,
+    `parse_bytes`, `parse<R: Read>`, `Part`, `PartData`, `Form`.
+  - `http::query` — typed `Query` wrapper over URL query strings.
+  - `http::session` — signed-cookie sessions: `SessionConfig`,
+    `Session`, `SessionStore` trait, `SignedCookieStore`,
+    `with_session`.
+  - `http::state` — `AppState` typemap + `State<T>(Arc<T>)` DI
+    for handlers.
+  - `http::health` — `Probe` trait + `Health` aggregator,
+    `always_ok` / `always_fail` / `tcp_probe`.
+  - `http::middleware` — `body_limit`, `timeout`, `hsts`,
+    `security_headers`, `cache_control`, `etag`, `bearer_auth`,
+    `rate_limit`, `compress_gzip`, `safe_defaults`, plus the
+    existing `logger`, `recoverer`, `request_id`, `cors`,
+    `basic_auth`.
+  - HTTP/2 server push + trailers: `PushOptions`, `PushStream`,
+    `ResponseWriter::push_promise`, `ResponseWriter::write_trailers`,
+    `Request::trailers`.
 - `std::encoding::{json, base64, hex, binary}`. Every user struct
   auto-derives `<Type>::from_json(text) -> Result<Type, errors::Error>`
   and `<Type>::to_json(self) -> Result<String, errors::Error>` for
@@ -657,6 +712,16 @@ executed by `gos test`. Mark non-runnable fences as
 - `std::sort` / `std::utf8` / `std::path` / `std::fs`.
 - `std::math::rand` — deterministic RNG.
 - `std::crypto::{rand, sha256, hmac, subtle}` — narrow, audited.
+  **0.8.0**: `crypto::password` — Argon2id facade (`hash`,
+  `verify`, `needs_rehash`) producing PHC strings.
+- `std::jwt` (**0.8.0**) — RFC 7519 sign + verify for HS256/384/512,
+  ES256, and EdDSA: `Alg`, `Header`, `Claims`, `VerifyOpts`,
+  `sign_hs` / `verify_hs`, `sign_es256` / `verify_es256`,
+  `sign_eddsa` / `verify_eddsa`.
+- `std::lifecycle` (**0.8.0**) — graceful-shutdown hooks, signal
+  handling, sd_notify.
+- `std::validate` (**0.8.0**) — `Validate` trait plus `FieldError`
+  / `Errors` for form-style field validation.
 - `std::slog` — structured logging.
 - `std::runtime` — scheduler + GC knobs.
 - `std::testing` — `check`, `check_eq`, `Runner`, `check_ok`.

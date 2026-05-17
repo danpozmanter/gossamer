@@ -122,6 +122,33 @@ pub enum RustBindingSpec {
         /// Whether `default-features` is enabled.
         default_features: bool,
     },
+    /// `{ src = "path/to/file.rs", deps = "..." }` — single-file
+    /// binding (Phase 3 of rustergo.md). The CLI scaffolds a
+    /// per-project Cargo crate around the source file with the
+    /// supplied Cargo deps (free-form string of TOML key/value
+    /// pairs) and links it like any other path-deps binding.
+    Src {
+        /// Path to the single Rust source file (relative to the
+        /// manifest dir or absolute).
+        src: String,
+        /// Raw Cargo deps fragment, e.g.
+        /// `unic-segment = "0.9"`. Appended verbatim under
+        /// the scaffolded crate's `[dependencies]` table.
+        deps: String,
+    },
+    /// `{ prebuilt = "path/to/lib.a", abi = "1.0" }` — a
+    /// pre-built static archive (Phase 4 of rustergo.md). `gos
+    /// build` links the archive directly; `gos run` requires
+    /// the JIT-resolvable `gos_binding_*` thunks to be exposed
+    /// from the produced binary.
+    Prebuilt {
+        /// Path to the static archive (`.a` / `.lib`).
+        archive: String,
+        /// Declared ABI version the archive was built against
+        /// (sniffed against `__gos_binding_abi_version` at load
+        /// time).
+        abi: String,
+    },
 }
 
 /// Reference for a `git` rust-binding.
@@ -522,6 +549,16 @@ fn render_rust_binding(spec: &RustBindingSpec) -> String {
             parts.push(format!("version = \"{}\"", version.minimum));
             push_features(&mut parts, features, *default_features);
         }
+        RustBindingSpec::Src { src, deps } => {
+            parts.push(format!("src = \"{src}\""));
+            if !deps.is_empty() {
+                parts.push(format!("deps = \"{}\"", deps.replace('"', "\\\"")));
+            }
+        }
+        RustBindingSpec::Prebuilt { archive, abi } => {
+            parts.push(format!("prebuilt = \"{archive}\""));
+            parts.push(format!("abi = \"{abi}\""));
+        }
     }
     format!("{{ {} }}", parts.join(", "))
 }
@@ -583,6 +620,18 @@ fn canonical_binding_kv(spec: &RustBindingSpec, manifest_dir: &std::path::Path) 
             entries.push(format!("version={}", version.minimum));
             push_canonical_features(&mut entries, features, *default_features);
         }
+        RustBindingSpec::Src { src, deps } => {
+            entries.push("kind=src".to_string());
+            let resolved = resolve_path(manifest_dir, src);
+            entries.push(format!("src={}", resolved.display()));
+            entries.push(format!("deps={deps}"));
+        }
+        RustBindingSpec::Prebuilt { archive, abi } => {
+            entries.push("kind=prebuilt".to_string());
+            let resolved = resolve_path(manifest_dir, archive);
+            entries.push(format!("archive={}", resolved.display()));
+            entries.push(format!("abi={abi}"));
+        }
     }
     entries.sort();
     entries
@@ -633,6 +682,10 @@ fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, M
     let mut rev: Option<String> = None;
     let mut features: Vec<String> = Vec::new();
     let mut default_features: bool = true;
+    let mut src: Option<String> = None;
+    let mut deps: Option<String> = None;
+    let mut prebuilt: Option<String> = None;
+    let mut abi: Option<String> = None;
     for entry in split_top_level_commas(table) {
         let entry = entry.trim();
         if entry.is_empty() {
@@ -691,6 +744,34 @@ fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, M
                     expected: "array of strings",
                 })?;
             }
+            "src" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.src"),
+                    expected: "string",
+                })?;
+                src = Some(s.to_string());
+            }
+            "deps" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.deps"),
+                    expected: "string",
+                })?;
+                deps = Some(s.to_string());
+            }
+            "prebuilt" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.prebuilt"),
+                    expected: "string",
+                })?;
+                prebuilt = Some(s.to_string());
+            }
+            "abi" => {
+                let s = parse_string(v).ok_or_else(|| ManifestError::WrongType {
+                    field: format!("rust-bindings.{key}.abi"),
+                    expected: "string",
+                })?;
+                abi = Some(s.to_string());
+            }
             "default-features" | "default_features" => {
                 let s = v.trim();
                 default_features = match s {
@@ -712,10 +793,15 @@ fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, M
             }
         }
     }
-    let active = [path.is_some(), git.is_some()]
-        .iter()
-        .filter(|b| **b)
-        .count();
+    let active = [
+        path.is_some(),
+        git.is_some(),
+        src.is_some(),
+        prebuilt.is_some(),
+    ]
+    .iter()
+    .filter(|b| **b)
+    .count();
     if active > 1 {
         return Err(ManifestError::AmbiguousRustBinding(key.to_string()));
     }
@@ -725,6 +811,18 @@ fn parse_rust_binding_value(value: &str, key: &str) -> Result<RustBindingSpec, M
         .count();
     if git_ref_count > 1 {
         return Err(ManifestError::AmbiguousGitRef(key.to_string()));
+    }
+    if let Some(src) = src {
+        return Ok(RustBindingSpec::Src {
+            src,
+            deps: deps.unwrap_or_default(),
+        });
+    }
+    if let Some(archive) = prebuilt {
+        return Ok(RustBindingSpec::Prebuilt {
+            archive,
+            abi: abi.unwrap_or_else(|| "1.0".to_string()),
+        });
     }
     if let Some(path) = path {
         return Ok(RustBindingSpec::Path {

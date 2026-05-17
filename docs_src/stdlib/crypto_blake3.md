@@ -1,5 +1,7 @@
 # `std::crypto::blake3`
 
+Status: shipped
+
 BLAKE3 hashing.
 
 ## Public items

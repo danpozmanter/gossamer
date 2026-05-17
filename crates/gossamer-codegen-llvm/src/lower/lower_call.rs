@@ -246,10 +246,11 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Direct-call lowering for `Operand::FnRef` and
-    /// simple prelude-name calls (the MIR lowerer leaves
-    /// prelude targets as `ConstValue::Str("println")` etc.).
-    /// Closure indirect calls aren't covered yet.
+    /// Direct-call lowering for `Operand::FnRef` and simple
+    /// prelude-name calls (the MIR lowerer leaves prelude targets
+    /// as `ConstValue::Str("println")` etc.). Indirect closure
+    /// calls go through [`Self::lower_indirect_call`] via the
+    /// `Operand::Copy` branch.
     pub(crate) fn lower_call(
         &mut self,
         callee: &Operand,
@@ -262,14 +263,14 @@ impl<'a> Lowerer<'a> {
         }
         let target_name: Option<String> = match callee {
             Operand::FnRef { def, .. } => {
-                // Resolve through the per-module
-                // `DefId.local` → name map populated by the
-                // emitter. Unknown `def.local` means the
-                // referenced function isn't in this MIR
-                // module — could be a stdlib function the
-                // frontend is expected to monomorphise, but
-                // didn't. Fall back to unsupported so the
-                // driver routes this body to Cranelift.
+                // Resolve through the per-module `DefId.local` →
+                // name map populated by the emitter. Unknown
+                // `def.local` means the referenced function isn't
+                // in this MIR module — typically a stdlib helper
+                // the frontend was expected to monomorphise but
+                // didn't. 0.8.0: this is a hard error (no
+                // Cranelift fallback) so the missing
+                // monomorphisation surfaces at compile time.
                 self.fn_name_by_def.get(&def.local).cloned()
             }
             Operand::Const(ConstValue::Str(name)) => Some(name.clone()),
@@ -288,9 +289,23 @@ impl<'a> Lowerer<'a> {
             Operand::Const(_) => None,
         };
         let Some(name) = target_name else {
-            return Err(BuildError::Unsupported(
-                "indirect / closure call not yet lowered",
-            ));
+            // 0.8.0: this used to be a silent route-to-Cranelift
+            // fallback. Now it's a hard error: report what was
+            // unresolved so the frontend / MIR side has something
+            // actionable to chase.
+            let kind_label = match callee {
+                Operand::FnRef { def, .. } => format!("FnRef def.local={:?}", def.local),
+                Operand::Const(c) => format!("Const({c:?})"),
+                Operand::Copy(_) => "Copy".to_string(),
+            };
+            return Err(BuildError::Unsupported(Box::leak(
+                format!(
+                    "indirect / closure call not lowered: callee shape {kind_label} \
+                    has no resolvable name in fn_name_by_def — frontend monomorphisation \
+                    bug or missing stdlib registration"
+                )
+                .into_boxed_str(),
+            )));
         };
         // `__concat` is the parser's lowering of `println!`-style
         // formatted output: it takes a heterogeneous arg list,

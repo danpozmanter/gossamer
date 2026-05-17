@@ -1,5 +1,7 @@
 # `std::sort`
 
+Status: shipped
+
 Slice sorting and binary search.
 
 ## Public items

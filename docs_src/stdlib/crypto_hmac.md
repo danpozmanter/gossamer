@@ -1,5 +1,7 @@
 # `std::crypto::hmac`
 
+Status: shipped
+
 HMAC-SHA-256 keyed MACs.
 
 ## Public items

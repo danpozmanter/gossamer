@@ -162,8 +162,46 @@ fn install_native_handlers() {
 
 #[cfg(windows)]
 fn install_native_handlers() {
-    // Console-handler bridging is a Track B follow-up; the `deliver`
-    // path still works for synthetic delivery.
+    use std::sync::Once;
+    use windows_sys::Win32::Foundation::BOOL;
+    use windows_sys::Win32::System::Console::{
+        CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
+        SetConsoleCtrlHandler,
+    };
+    static ONCE: Once = Once::new();
+    if std::env::var("GOSSAMER_SIGNAL_DISABLE_HANDLERS").is_ok() {
+        return;
+    }
+    // Win32 invokes the handler on a fresh worker thread per
+    // event, so taking parking_lot locks + writing to stderr is
+    // safe — this is not an async-signal context like Unix.
+    // CTRL_CLOSE / LOGOFF / SHUTDOWN are last-chance: returning
+    // TRUE keeps the process alive for the system-imposed
+    // ~5-second shutdown deadline so registered shutdown hooks
+    // can drain before the OS force-kills.
+    unsafe extern "system" fn handler(ctrl_type: u32) -> BOOL {
+        let sig = match ctrl_type {
+            CTRL_C_EVENT => sigs::SIGINT,
+            CTRL_BREAK_EVENT => sigs::SIGQUIT,
+            CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT => sigs::SIGTERM,
+            _ => return 0,
+        };
+        deliver(sig);
+        if ctrl_type == CTRL_BREAK_EVENT {
+            let mut stderr = std::io::stderr().lock();
+            let _ = gossamer_runtime::sigquit::render_to(&mut stderr);
+        }
+        1
+    }
+    ONCE.call_once(|| {
+        // SAFETY: the function pointer is valid for the program
+        // lifetime; SetConsoleCtrlHandler accepts NULL or a
+        // handler routine. The cast to the windows-sys
+        // `PHANDLER_ROUTINE` newtype is straightforward.
+        unsafe {
+            SetConsoleCtrlHandler(Some(handler), 1);
+        }
+    });
 }
 
 #[cfg(not(any(unix, windows)))]

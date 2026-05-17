@@ -11,6 +11,7 @@
 
 pub mod builtins;
 pub mod c_abi;
+pub mod coverage;
 pub mod ffi;
 pub mod gc;
 pub mod http2_server;

@@ -315,6 +315,104 @@ impl<'a> Builder<'a> {
             "yaml::to_json" => ("gos_rt_yaml_to_json", self.result_string_error_adt_ty()),
             "yaml::from_json" => ("gos_rt_yaml_from_json", self.result_string_error_adt_ty()),
             "yaml::is_valid" => ("gos_rt_yaml_is_valid", self.tcx.bool_ty()),
+            // ---------------------------------------------------------------
+            // std::unicode — general-category predicates, casing,
+            // normalization, segmentation. Char args lower as u32,
+            // string args as `*const c_char`, bool results as i64
+            // (auto-truncated to i1 by the LLVM lowerer). Vec<String>
+            // returns route through `gos_rt_unicode_*` helpers that
+            // build a GosVec with `elem_kind = STRING`.
+            "unicode::is_letter" => ("gos_rt_unicode_is_letter", self.tcx.bool_ty()),
+            "unicode::is_digit" => ("gos_rt_unicode_is_digit", self.tcx.bool_ty()),
+            "unicode::is_number" => ("gos_rt_unicode_is_number", self.tcx.bool_ty()),
+            "unicode::is_space" => ("gos_rt_unicode_is_space", self.tcx.bool_ty()),
+            "unicode::is_upper" => ("gos_rt_unicode_is_upper", self.tcx.bool_ty()),
+            "unicode::is_lower" => ("gos_rt_unicode_is_lower", self.tcx.bool_ty()),
+            "unicode::is_title" => ("gos_rt_unicode_is_title", self.tcx.bool_ty()),
+            "unicode::is_punct" => ("gos_rt_unicode_is_punct", self.tcx.bool_ty()),
+            "unicode::is_symbol" => ("gos_rt_unicode_is_symbol", self.tcx.bool_ty()),
+            "unicode::is_mark" => ("gos_rt_unicode_is_mark", self.tcx.bool_ty()),
+            "unicode::is_print" => ("gos_rt_unicode_is_print", self.tcx.bool_ty()),
+            "unicode::is_graphic" => ("gos_rt_unicode_is_graphic", self.tcx.bool_ty()),
+            "unicode::is_control" => ("gos_rt_unicode_is_control", self.tcx.bool_ty()),
+            "unicode::is_assigned" => ("gos_rt_unicode_is_assigned", self.tcx.bool_ty()),
+            "unicode::combining_class" => (
+                "gos_rt_unicode_combining_class",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "unicode::to_upper" => ("gos_rt_unicode_to_upper", self.tcx.char_ty()),
+            "unicode::to_lower" => ("gos_rt_unicode_to_lower", self.tcx.char_ty()),
+            "unicode::to_title" => ("gos_rt_unicode_to_title", self.tcx.char_ty()),
+            "unicode::simple_fold" => ("gos_rt_unicode_simple_fold", self.tcx.char_ty()),
+            "unicode::to_upper_str" => ("gos_rt_unicode_to_upper_str", self.tcx.string_ty()),
+            "unicode::to_lower_str" => ("gos_rt_unicode_to_lower_str", self.tcx.string_ty()),
+            "unicode::fold_case" => ("gos_rt_unicode_fold_case", self.tcx.string_ty()),
+            "unicode::nfc" => ("gos_rt_unicode_nfc", self.tcx.string_ty()),
+            "unicode::nfd" => ("gos_rt_unicode_nfd", self.tcx.string_ty()),
+            "unicode::nfkc" => ("gos_rt_unicode_nfkc", self.tcx.string_ty()),
+            "unicode::nfkd" => ("gos_rt_unicode_nfkd", self.tcx.string_ty()),
+            "unicode::is_nfc" => ("gos_rt_unicode_is_nfc", self.tcx.bool_ty()),
+            "unicode::is_nfd" => ("gos_rt_unicode_is_nfd", self.tcx.bool_ty()),
+            "unicode::is_nfkc" => ("gos_rt_unicode_is_nfkc", self.tcx.bool_ty()),
+            "unicode::is_nfkd" => ("gos_rt_unicode_is_nfkd", self.tcx.bool_ty()),
+            "unicode::graphemes" => {
+                let s = self.tcx.string_ty();
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                ("gos_rt_unicode_graphemes", v)
+            }
+            "unicode::grapheme_count" => (
+                "gos_rt_unicode_grapheme_count",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "unicode::words" => {
+                let s = self.tcx.string_ty();
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                ("gos_rt_unicode_words", v)
+            }
+            "unicode::word_bounds" => {
+                let s = self.tcx.string_ty();
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                ("gos_rt_unicode_word_bounds", v)
+            }
+            "unicode::word_count" => (
+                "gos_rt_unicode_word_count",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "unicode::sentences" => {
+                let s = self.tcx.string_ty();
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                ("gos_rt_unicode_sentences", v)
+            }
+            "unicode::sentence_count" => (
+                "gos_rt_unicode_sentence_count",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            // ---------------------------------------------------------------
+            // std::utf8 — high-value helpers. The decode_rune family
+            // returns `(char, usize)` tuples and stays interp-only
+            // until the Adt-by-value ABI lands.
+            "utf8::rune_count_in_string" => (
+                "gos_rt_utf8_rune_count_in_string",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "utf8::count_runes" => (
+                "gos_rt_utf8_count_runes",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "utf8::rune_count" => (
+                "gos_rt_utf8_rune_count_in_string",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "utf8::rune_len" => (
+                "gos_rt_utf8_rune_len",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "utf8::valid_rune" => ("gos_rt_utf8_valid_rune", self.tcx.bool_ty()),
+            "utf8::valid_string" => ("gos_rt_utf8_valid_string", self.tcx.bool_ty()),
+            "utf8::is_valid" => ("gos_rt_utf8_valid_string", self.tcx.bool_ty()),
+            "utf8::full_rune_in_string" => ("gos_rt_utf8_full_rune_in_string", self.tcx.bool_ty()),
+            "utf8::full_rune" => ("gos_rt_utf8_full_rune_in_string", self.tcx.bool_ty()),
+            "utf8::rune_start" => ("gos_rt_utf8_rune_start", self.tcx.bool_ty()),
             "sync::Map::new" | "Map::new" => (
                 "gos_rt_sync_map_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -626,6 +724,40 @@ impl<'a> Builder<'a> {
             // `exec::kill(pid) -> bool` — best-effort SIGTERM.
             "exec::kill" | "os::exec::kill" | "process::kill" => {
                 ("gos_rt_exec_kill", self.tcx.bool_ty())
+            }
+            // `exec::signal(pid, signum) -> bool`.
+            "exec::signal" | "os::exec::signal" | "process::signal" => {
+                ("gos_rt_exec_signal", self.tcx.bool_ty())
+            }
+            // `exec::kill_group(pid) -> bool` — kills the entire
+            // process group on Unix; best-effort on Windows.
+            "exec::kill_group" | "os::exec::kill_group" | "process::kill_group" => {
+                ("gos_rt_exec_kill_group", self.tcx.bool_ty())
+            }
+            // `exec::wait_timeout(pid, ms) -> i64`. Returns the
+            // child's exit code on success, -1 on timeout, -2 on
+            // error (unknown pid, permission denied).
+            "exec::wait_timeout" | "os::exec::wait_timeout" | "process::wait_timeout" => (
+                "gos_rt_exec_wait_timeout",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            // `exec::pipeline_run(cmds: Vec<String>) -> Result<Output, errors::Error>`.
+            // Same Ok-shape sentinel-DefId as `exec::run` so the
+            // existing `Output { stdout, stderr, code }` field
+            // projection lowers identically.
+            "exec::pipeline_run" | "os::exec::pipeline_run" | "process::pipeline_run" => {
+                let output_def = gossamer_resolve::DefId::local(u32::MAX - 3);
+                let output_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: output_def,
+                    substs: gossamer_types::Substs::new(),
+                });
+                let err_ty = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([output_ty, err_ty]);
+                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_exec_pipeline_run", result_ty)
             }
             // `signal::on(sig_raw) -> i64` — registers a notifier.
             "signal::on" | "os::signal::on" => (

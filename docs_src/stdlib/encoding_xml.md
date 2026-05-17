@@ -1,5 +1,7 @@
 # `std::encoding::xml`
 
+Status: shipped
+
 Streaming XML decoder + builder (quick-xml).
 
 ## Public items

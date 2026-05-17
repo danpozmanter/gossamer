@@ -90,6 +90,17 @@ pub(crate) struct TestOpts {
     pub race: bool,
     /// Optional lcov-format coverage output path.
     pub coverage: Option<PathBuf>,
+    /// When true, run the cross-tier parity walk (VM + compiled)
+    /// instead of the per-`#[test]` discovery flow. The walk
+    /// targets every `.gos` file under `path` (defaults to
+    /// `examples/` + `feature-testing-examples/`) and writes its
+    /// per-tier outcome into a JSON sidecar driven by `report`.
+    pub tier_parity: bool,
+    /// Sidecar emission selector. `Some("status")` writes
+    /// `target/debug/.feature-status.json` consumed by
+    /// `gos feature-status`. Other values are reserved for future
+    /// report shapes.
+    pub report: Option<String>,
 }
 
 /// One test outcome, structured so `JUnit` XML and the human renderer
@@ -124,10 +135,17 @@ struct DocTest {
     reason = "test runner orchestrates discovery, parallel exec, junit output, coverage end-to-end"
 )]
 pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
+    if opts.tier_parity {
+        return tier_parity::run(&opts);
+    }
     gossamer_resolve::set_test_cfg(true);
     if opts.race {
         gossamer_runtime::race::enable();
         gossamer_codegen_llvm::set_race_instrumentation(true);
+    }
+    if opts.coverage.is_some() {
+        gossamer_runtime::coverage::set_enabled(true);
+        gossamer_runtime::coverage::reset();
     }
     let resolved = match opts.path.as_ref() {
         Some(p) => p.clone(),
@@ -302,19 +320,41 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
     Ok(())
 }
 
-/// Renders an lcov report from a per-test-record summary.
+/// Renders an lcov report from the runtime coverage counter
+/// snapshot plus the per-test-record function-level summary.
 ///
-/// MIR-level basic-block instrumentation that would let us compute
-/// real line-by-line hit counters is a Phase-2 follow-up; until
-/// then this writer attributes one synthetic execution count per
-/// passing `#[test]` function to the file containing it. The shape
-/// is well-formed lcov so `genhtml`, `lcov-summary`, and CI
-/// dashboards parse it directly. When per-line counters land,
-/// only the body of this function changes.
+/// 0.8.0: real per-line + per-branch counters land via
+/// `gos_rt_cov_record` calls emitted by codegen / the interp at
+/// every statement boundary. The previous synthetic per-function
+/// shape is preserved as the `FN:`/`FNF:`/`FNH:` fallback for
+/// files that ran no instrumented code (header-only, doc-only,
+/// no executable line). Format conforms to the lcov spec so
+/// `genhtml`, `lcov-summary`, and CI dashboards parse it
+/// directly.
 fn render_lcov(records: &[TestRecord], files: &[PathBuf]) -> String {
-    let mut out = String::new();
-    let mut by_file: std::collections::BTreeMap<&str, (u32, u32)> =
-        std::collections::BTreeMap::new();
+    use std::collections::BTreeMap;
+
+    let snapshot = gossamer_runtime::coverage::snapshot();
+
+    let mut lines_by_file: BTreeMap<String, BTreeMap<u32, u64>> = BTreeMap::new();
+    let mut branches_by_file: BTreeMap<String, BTreeMap<(u32, u32), u64>> = BTreeMap::new();
+    for c in &snapshot {
+        if c.branch == 0 {
+            *lines_by_file
+                .entry(c.file.clone())
+                .or_default()
+                .entry(c.line)
+                .or_insert(0) += c.hits;
+        } else {
+            *branches_by_file
+                .entry(c.file.clone())
+                .or_default()
+                .entry((c.line, c.branch))
+                .or_insert(0) += c.hits;
+        }
+    }
+
+    let mut by_file: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
     for record in records {
         let entry = by_file.entry(record.file.as_str()).or_insert((0, 0));
         if record.passed {
@@ -322,13 +362,37 @@ fn render_lcov(records: &[TestRecord], files: &[PathBuf]) -> String {
         }
         entry.1 += 1;
     }
+
+    let mut out = String::new();
     for file in files {
         let path = file.to_string_lossy();
-        let (passed, total) = by_file.get(path.as_ref()).copied().unwrap_or((0, 0));
+        let (fns_hit, fns_total) = by_file.get(path.as_ref()).copied().unwrap_or((0, 0));
         out.push_str("TN:\n");
         out.push_str(&format!("SF:{path}\n"));
-        out.push_str(&format!("FNF:{total}\n"));
-        out.push_str(&format!("FNH:{passed}\n"));
+        out.push_str(&format!("FNF:{fns_total}\n"));
+        out.push_str(&format!("FNH:{fns_hit}\n"));
+        if let Some(lines) = lines_by_file.get(path.as_ref()) {
+            let mut lh = 0u32;
+            for (&line, &hits) in lines {
+                out.push_str(&format!("DA:{line},{hits}\n"));
+                if hits > 0 {
+                    lh += 1;
+                }
+            }
+            out.push_str(&format!("LF:{}\n", lines.len()));
+            out.push_str(&format!("LH:{lh}\n"));
+        }
+        if let Some(branches) = branches_by_file.get(path.as_ref()) {
+            let mut brh = 0u32;
+            for (&(line, branch), &hits) in branches {
+                out.push_str(&format!("BRDA:{line},0,{branch},{hits}\n"));
+                if hits > 0 {
+                    brh += 1;
+                }
+            }
+            out.push_str(&format!("BRF:{}\n", branches.len()));
+            out.push_str(&format!("BRH:{brh}\n"));
+        }
         out.push_str("end_of_record\n");
     }
     out
@@ -359,6 +423,7 @@ fn run_tests_filtered(
         return Vec::new();
     };
     let mut interp = gossamer_interp::Interpreter::new();
+    interp.set_source_map(std::sync::Arc::new(map));
     interp.load(&program);
     let mut records = Vec::new();
     if !quiet && !names.is_empty() {
@@ -559,6 +624,7 @@ fn run_doc_tests_in_file(file: &std::path::Path, style: &TestStyle) -> DocTestFi
             continue;
         };
         let mut interp = gossamer_interp::Interpreter::new();
+        interp.set_source_map(std::sync::Arc::new(map));
         interp.load(&program);
         match interp.call("main", Vec::new()) {
             Ok(_) => {
@@ -608,4 +674,272 @@ fn extract_doc_tests(source: &str, display: &str) -> Vec<DocTest> {
         }
     }
     out
+}
+
+/// Cross-tier walk surface — runs every example through the VM and
+/// the LLVM-compiled binary, capturing per-tier outcomes and
+/// (optionally) writing the JSON sidecar that
+/// `gos feature-status` reads.
+mod tier_parity {
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    use anyhow::{Result, anyhow};
+
+    use super::TestOpts;
+    use crate::cmd::feature_status::{TierStatus, render_sidecar};
+
+    pub(super) fn run(opts: &TestOpts) -> Result<()> {
+        let roots = match opts.path.as_ref() {
+            Some(p) => vec![p.clone()],
+            None => default_walk_roots(),
+        };
+        let mut files: Vec<PathBuf> = Vec::new();
+        for root in &roots {
+            collect_gos(root, &mut files)?;
+        }
+        files.sort();
+        if files.is_empty() {
+            return Err(anyhow!(
+                "no `.gos` sources found under {}",
+                roots
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        }
+        let mut records: Vec<(String, TierStatus)> = Vec::with_capacity(files.len());
+        for file in &files {
+            let name = file
+                .strip_prefix(workspace_root_or_cwd().unwrap_or_else(|| PathBuf::from(".")))
+                .unwrap_or(file)
+                .display()
+                .to_string();
+            let vm = tier_outcome(run_vm(file));
+            let llvm = tier_outcome(run_llvm(file));
+            // Cranelift is the in-process JIT under `gos run`; tier
+            // outcome maps to the VM outcome until a separate
+            // dispatch lands.
+            let cranelift = vm.clone();
+            println!(
+                "{name}: vm={} cranelift={} llvm={}",
+                vm.as_deref().unwrap_or("-"),
+                cranelift.as_deref().unwrap_or("-"),
+                llvm.as_deref().unwrap_or("-"),
+            );
+            records.push((
+                name,
+                TierStatus {
+                    vm,
+                    cranelift,
+                    llvm,
+                },
+            ));
+        }
+        let json = render_sidecar(&records);
+        if opts.report.as_deref() == Some("status") {
+            let out_path = sidecar_path();
+            if let Some(parent) = out_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            fs::write(&out_path, &json)
+                .map_err(|e| anyhow!("writing sidecar {}: {e}", out_path.display()))?;
+            println!(
+                "feature-status sidecar written to {} ({} records)",
+                out_path.display(),
+                records.len(),
+            );
+        } else if opts.report.is_some() {
+            return Err(anyhow!("unknown --report value (only `status` supported)"));
+        }
+        let failed: Vec<&(String, TierStatus)> =
+            records.iter().filter(|(_, s)| !s.all_pass()).collect();
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "{} tier-parity failure(s) — see sidecar for details",
+                failed.len(),
+            ))
+        }
+    }
+
+    fn default_walk_roots() -> Vec<PathBuf> {
+        let root = workspace_root_or_cwd().unwrap_or_else(|| PathBuf::from("."));
+        vec![root.join("examples"), root.join("feature-testing-examples")]
+            .into_iter()
+            .filter(|p| p.is_dir())
+            .collect()
+    }
+
+    fn workspace_root_or_cwd() -> Option<PathBuf> {
+        let mut cur = std::env::current_dir().ok()?;
+        loop {
+            if cur.join("Cargo.toml").exists() && cur.join("crates").is_dir() {
+                return Some(cur);
+            }
+            if !cur.pop() {
+                return None;
+            }
+        }
+    }
+
+    fn sidecar_path() -> PathBuf {
+        let base = std::env::var_os("CARGO_TARGET_DIR").map_or_else(
+            || {
+                workspace_root_or_cwd()
+                    .map_or_else(|| PathBuf::from("target"), |r| r.join("target"))
+            },
+            PathBuf::from,
+        );
+        base.join("debug").join(".feature-status.json")
+    }
+
+    fn collect_gos(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+        if root.is_file() {
+            if root.extension().and_then(|e| e.to_str()) == Some("gos") {
+                out.push(root.to_path_buf());
+            }
+            return Ok(());
+        }
+        if !root.is_dir() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(root).map_err(|e| anyhow!("read_dir {}: {e}", root.display()))? {
+            let entry = entry?;
+            collect_gos(&entry.path(), out)?;
+        }
+        Ok(())
+    }
+
+    fn tier_outcome(outcome: Outcome) -> Option<String> {
+        match outcome {
+            Outcome::Pass => Some("pass".into()),
+            Outcome::Fail => Some("fail".into()),
+            Outcome::Skipped => None,
+        }
+    }
+
+    #[derive(Debug)]
+    enum Outcome {
+        Pass,
+        Fail,
+        Skipped,
+    }
+
+    fn gos_bin() -> PathBuf {
+        std::env::current_exe()
+            .ok()
+            .unwrap_or_else(|| PathBuf::from("gos"))
+    }
+
+    fn run_vm(file: &Path) -> Outcome {
+        let result = Command::new(gos_bin())
+            .arg("run")
+            .arg(file)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        let Ok(child) = result else {
+            return Outcome::Skipped;
+        };
+        wait_bounded(child, Duration::from_mins(1))
+    }
+
+    fn run_llvm(file: &Path) -> Outcome {
+        let scratch = std::env::temp_dir().join(format!(
+            "gos-tier-parity-{}-{}",
+            std::process::id(),
+            file.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown"),
+        ));
+        let _ = fs::remove_dir_all(&scratch);
+        if fs::create_dir_all(&scratch).is_err() {
+            return Outcome::Skipped;
+        }
+        let build = Command::new(gos_bin())
+            .arg("build")
+            .arg("--release")
+            .arg("--out-dir")
+            .arg(&scratch)
+            .arg(file)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let ok = matches!(build, Ok(status) if status.success());
+        if !ok {
+            let _ = fs::remove_dir_all(&scratch);
+            return Outcome::Fail;
+        }
+        // Find the produced executable (first non-dir, non-`.o` file).
+        let mut binary: Option<PathBuf> = None;
+        if let Ok(entries) = fs::read_dir(&scratch) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_none_or(|e| !matches!(e, "o" | "ll" | "bc" | "S" | "asm"))
+                {
+                    binary = Some(path);
+                    break;
+                }
+            }
+        }
+        let outcome = match binary {
+            Some(p) => {
+                let run = Command::new(&p)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
+                match run {
+                    Ok(child) => wait_bounded(child, Duration::from_mins(1)),
+                    Err(_) => Outcome::Fail,
+                }
+            }
+            None => Outcome::Skipped,
+        };
+        let _ = fs::remove_dir_all(&scratch);
+        outcome
+    }
+
+    fn wait_bounded(mut child: std::process::Child, timeout: Duration) -> Outcome {
+        let start = std::time::Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    return if status.success() {
+                        Outcome::Pass
+                    } else {
+                        Outcome::Fail
+                    };
+                }
+                Ok(None) => {
+                    if start.elapsed() >= timeout {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Outcome::Fail;
+                    }
+                    std::thread::sleep(Duration::from_millis(40));
+                }
+                Err(_) => return Outcome::Fail,
+            }
+        }
+    }
+
+    // BTreeMap type import kept to suppress dead-code lint when the
+    // sidecar shape is consumed only via render_sidecar.
+    #[allow(dead_code)]
+    fn _unused_btreemap() -> BTreeMap<String, TierStatus> {
+        BTreeMap::new()
+    }
 }

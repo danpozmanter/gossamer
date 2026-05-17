@@ -1,5 +1,7 @@
 # `std::os::signal`
 
+Status: shipped
+
 POSIX-style signal subscription (Go's os/signal shape).
 
 ## Public items

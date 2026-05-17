@@ -29,6 +29,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::crypto::hmac`](crypto_hmac.md) | HMAC-SHA-256 keyed MACs. |
 | [`std::crypto::insecure`](crypto_insecure.md) | Legacy / broken hashes (MD5, SHA-1). Compat only — never use for new code. |
 | [`std::crypto::kdf`](crypto_kdf.md) | Password-based key-derivation functions. |
+| [`std::crypto::password`](crypto_password.md) | Argon2id password hashing facade: PHC-string hash / verify / re-hash policy. |
 | [`std::crypto::rand`](crypto_rand.md) | Secure random bytes from the host CSPRNG. |
 | [`std::crypto::sha256`](crypto_sha256.md) | SHA-256 hashing. |
 | [`std::crypto::sha512`](crypto_sha512.md) | SHA-512 hashing. |
@@ -55,15 +56,25 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::html::template`](html_template.md) | Context-aware HTML templates with auto-escape. |
 | [`std::http`](http.md) | HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. |
 | [`std::http::chunked`](http_chunked.md) | RFC 7230 §4.1 chunked transfer-encoding reader and writer. |
+| [`std::http::cookie`](http_cookie.md) | RFC 6265 cookie parser and Set-Cookie builder. |
+| [`std::http::csrf`](http_csrf.md) | Double-submit-cookie CSRF protection with Origin / Referer allowlist. |
+| [`std::http::form`](http_form.md) | application/x-www-form-urlencoded parser and builder. |
+| [`std::http::health`](http_health.md) | Liveness / readiness probes for HTTP health endpoints. |
 | [`std::http::middleware`](http_middleware.md) | Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip. |
+| [`std::http::multipart`](http_multipart.md) | RFC 7578 multipart/form-data streaming parser. |
 | [`std::http::native_client`](http_native_client.md) | Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool). |
 | [`std::http::proxy`](http_proxy.md) | Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler. |
+| [`std::http::query`](http_query.md) | Typed wrapper over URL query strings. |
 | [`std::http::router`](http_router.md) | Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes. |
+| [`std::http::session`](http_session.md) | Signed-cookie session store with pluggable backend trait. |
 | [`std::http::sse`](http_sse.md) | Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint. |
+| [`std::http::state`](http_state.md) | Handler-side dependency injection via a typed AppState. |
 | [`std::http::static_files`](http_static_files.md) | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](http_websocket.md) | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
 | [`std::io`](io.md) | Stream-oriented I/O abstractions. |
 | [`std::iter`](iter.md) | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
+| [`std::jwt`](jwt.md) | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
+| [`std::lifecycle`](lifecycle.md) | Graceful-shutdown coordinator with signal handling and sd_notify support. |
 | [`std::log`](log.md) | Flat line-oriented logging (Go's `log` shape). |
 | [`std::math`](math.md) | Mathematical constants and f64 functions (Go's math package shape). |
 | [`std::math::big`](math_big.md) | Arbitrary-precision integers (num-bigint). |
@@ -93,8 +104,9 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::thread`](thread.md) | Native OS threads. For goroutines use the `go expr` syntax. |
 | [`std::time`](time.md) | Wall-clock and monotonic time facilities. |
 | [`std::tls`](tls.md) | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |
-| [`std::unicode`](unicode.md) | Unicode character property predicates and casing operations. |
+| [`std::unicode`](unicode.md) | Unicode general-category predicates, casing, normalization, and segmentation. |
 | [`std::utf16`](utf16.md) | UTF-16 encoding/decoding and surrogate pair helpers. |
 | [`std::utf8`](utf8.md) | UTF-8 validation and scalar decoding. |
 | [`std::uuid`](uuid.md) | UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize. |
+| [`std::validate`](validate.md) | Trait-based field validation: implement Validate, collect FieldErrors into Errors. |
 

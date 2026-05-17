@@ -1,5 +1,7 @@
 # `std::tls`
 
+Status: experimental
+
 TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed.
 
 ## Public items

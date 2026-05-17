@@ -377,92 +377,192 @@ pub const STRCONV: StdModule = StdModule {
 
 pub const UNICODE: StdModule = StdModule {
     path: "std::unicode",
-    summary: "Unicode character property predicates and casing operations.",
+    summary: "Unicode general-category predicates, casing, normalization, and segmentation.",
     items: &[
         StdItem {
             name: "is_letter",
             kind: StdItemKind::Function,
-            doc: "True if r is a Unicode letter.",
+            doc: "True if r is in general-category group L.",
         },
         StdItem {
             name: "is_digit",
             kind: StdItemKind::Function,
-            doc: "True if r is a decimal digit.",
+            doc: "True if r is a decimal digit (category Nd).",
         },
         StdItem {
             name: "is_number",
             kind: StdItemKind::Function,
-            doc: "True if r is a numeric character.",
+            doc: "True if r is any numeric (Nd|Nl|No).",
         },
         StdItem {
             name: "is_space",
             kind: StdItemKind::Function,
-            doc: "True if r is whitespace.",
+            doc: "True if r is whitespace (Z* plus HT/LF/VT/FF/CR/NEL).",
         },
         StdItem {
             name: "is_upper",
             kind: StdItemKind::Function,
-            doc: "True if r is an uppercase letter.",
+            doc: "True if r is category Lu.",
         },
         StdItem {
             name: "is_lower",
             kind: StdItemKind::Function,
-            doc: "True if r is a lowercase letter.",
+            doc: "True if r is category Ll.",
         },
         StdItem {
             name: "is_title",
             kind: StdItemKind::Function,
-            doc: "True if r is a titlecase letter.",
+            doc: "True if r is category Lt.",
         },
         StdItem {
             name: "is_punct",
             kind: StdItemKind::Function,
-            doc: "True if r is a punctuation character.",
+            doc: "True if r is in general-category group P.",
         },
         StdItem {
             name: "is_symbol",
             kind: StdItemKind::Function,
-            doc: "True if r is a symbol character.",
+            doc: "True if r is in general-category group S.",
         },
         StdItem {
             name: "is_mark",
             kind: StdItemKind::Function,
-            doc: "True if r is a combining mark.",
+            doc: "True if r is in general-category group M.",
         },
         StdItem {
             name: "is_print",
             kind: StdItemKind::Function,
-            doc: "True if r is a printable character.",
+            doc: "True if r is printable (not Cc/Cf/Cs/Co/Cn).",
         },
         StdItem {
             name: "is_graphic",
             kind: StdItemKind::Function,
-            doc: "True if r is a graphic character.",
+            doc: "True if r is graphic (printable and not whitespace).",
         },
         StdItem {
             name: "is_control",
             kind: StdItemKind::Function,
-            doc: "True if r is a control character.",
+            doc: "True if r is category Cc.",
+        },
+        StdItem {
+            name: "is_assigned",
+            kind: StdItemKind::Function,
+            doc: "True if r is an assigned code point (not Cn).",
         },
         StdItem {
             name: "to_upper",
             kind: StdItemKind::Function,
-            doc: "Maps r to its uppercase equivalent.",
+            doc: "Simple uppercase mapping for one rune.",
         },
         StdItem {
             name: "to_lower",
             kind: StdItemKind::Function,
-            doc: "Maps r to its lowercase equivalent.",
+            doc: "Simple lowercase mapping for one rune.",
         },
         StdItem {
             name: "to_title",
             kind: StdItemKind::Function,
-            doc: "Maps r to its titlecase equivalent.",
+            doc: "Simple titlecase mapping for one rune.",
         },
         StdItem {
             name: "simple_fold",
             kind: StdItemKind::Function,
             doc: "Next rune in Unicode case-folding cycle.",
+        },
+        StdItem {
+            name: "combining_class",
+            kind: StdItemKind::Function,
+            doc: "Canonical combining class (0-254) for r.",
+        },
+        StdItem {
+            name: "to_upper_str",
+            kind: StdItemKind::Function,
+            doc: "Full uppercase mapping for a string (ss -> SS).",
+        },
+        StdItem {
+            name: "to_lower_str",
+            kind: StdItemKind::Function,
+            doc: "Full lowercase mapping for a string.",
+        },
+        StdItem {
+            name: "fold_case",
+            kind: StdItemKind::Function,
+            doc: "Simple case-folded comparison form for a string.",
+        },
+        StdItem {
+            name: "nfc",
+            kind: StdItemKind::Function,
+            doc: "Normalize a string to NFC (canonical composition).",
+        },
+        StdItem {
+            name: "nfd",
+            kind: StdItemKind::Function,
+            doc: "Normalize a string to NFD (canonical decomposition).",
+        },
+        StdItem {
+            name: "nfkc",
+            kind: StdItemKind::Function,
+            doc: "Normalize a string to NFKC (compat composition).",
+        },
+        StdItem {
+            name: "nfkd",
+            kind: StdItemKind::Function,
+            doc: "Normalize a string to NFKD (compat decomposition).",
+        },
+        StdItem {
+            name: "is_nfc",
+            kind: StdItemKind::Function,
+            doc: "True if a string is already in NFC.",
+        },
+        StdItem {
+            name: "is_nfd",
+            kind: StdItemKind::Function,
+            doc: "True if a string is already in NFD.",
+        },
+        StdItem {
+            name: "is_nfkc",
+            kind: StdItemKind::Function,
+            doc: "True if a string is already in NFKC.",
+        },
+        StdItem {
+            name: "is_nfkd",
+            kind: StdItemKind::Function,
+            doc: "True if a string is already in NFKD.",
+        },
+        StdItem {
+            name: "graphemes",
+            kind: StdItemKind::Function,
+            doc: "UAX #29 extended grapheme clusters of a string.",
+        },
+        StdItem {
+            name: "grapheme_count",
+            kind: StdItemKind::Function,
+            doc: "Number of UAX #29 grapheme clusters in a string.",
+        },
+        StdItem {
+            name: "words",
+            kind: StdItemKind::Function,
+            doc: "UAX #29 Unicode words in a string (skips punct/whitespace).",
+        },
+        StdItem {
+            name: "word_bounds",
+            kind: StdItemKind::Function,
+            doc: "UAX #29 word boundaries (includes punct + whitespace runs).",
+        },
+        StdItem {
+            name: "word_count",
+            kind: StdItemKind::Function,
+            doc: "Number of UAX #29 words in a string.",
+        },
+        StdItem {
+            name: "sentences",
+            kind: StdItemKind::Function,
+            doc: "UAX #29 Unicode sentences in a string.",
+        },
+        StdItem {
+            name: "sentence_count",
+            kind: StdItemKind::Function,
+            doc: "Number of UAX #29 sentences in a string.",
         },
     ],
 };

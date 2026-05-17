@@ -275,6 +275,101 @@ impl ToGos for Value {
     }
 }
 
+// --- Tuple FromGos / ToGos (Phase 1) ----------------------------------
+//
+// Materialises a fixed-arity Rust tuple from a `Value::Tuple`
+// payload. Round-trips through the same `Arc<Vec<Value>>` carrier
+// the existing `Vec<T>` impl uses, so user code that produces a
+// Gossamer tuple via the language's tuple literal flows directly
+// into the binding param.
+
+impl<A: FromGos, B: FromGos> FromGos for (A, B) {
+    fn from_gos(value: &Value) -> RuntimeResult<Self> {
+        match value {
+            Value::Tuple(arc) | Value::Array(arc) => {
+                if arc.len() != 2 {
+                    return Err(RuntimeError::Type(format!(
+                        "expected 2-tuple, found {}-element list",
+                        arc.len()
+                    )));
+                }
+                Ok((A::from_gos(&arc[0])?, B::from_gos(&arc[1])?))
+            }
+            other => type_err("(A, B)", other),
+        }
+    }
+}
+
+impl<A: ToGos, B: ToGos> ToGos for (A, B) {
+    fn to_gos(self) -> Value {
+        Value::Tuple(Arc::new(vec![self.0.to_gos(), self.1.to_gos()]))
+    }
+}
+
+impl<A: FromGos, B: FromGos, C: FromGos> FromGos for (A, B, C) {
+    fn from_gos(value: &Value) -> RuntimeResult<Self> {
+        match value {
+            Value::Tuple(arc) | Value::Array(arc) => {
+                if arc.len() != 3 {
+                    return Err(RuntimeError::Type(format!(
+                        "expected 3-tuple, found {}-element list",
+                        arc.len()
+                    )));
+                }
+                Ok((
+                    A::from_gos(&arc[0])?,
+                    B::from_gos(&arc[1])?,
+                    C::from_gos(&arc[2])?,
+                ))
+            }
+            other => type_err("(A, B, C)", other),
+        }
+    }
+}
+
+impl<A: ToGos, B: ToGos, C: ToGos> ToGos for (A, B, C) {
+    fn to_gos(self) -> Value {
+        Value::Tuple(Arc::new(vec![
+            self.0.to_gos(),
+            self.1.to_gos(),
+            self.2.to_gos(),
+        ]))
+    }
+}
+
+impl<A: FromGos, B: FromGos, C: FromGos, D: FromGos> FromGos for (A, B, C, D) {
+    fn from_gos(value: &Value) -> RuntimeResult<Self> {
+        match value {
+            Value::Tuple(arc) | Value::Array(arc) => {
+                if arc.len() != 4 {
+                    return Err(RuntimeError::Type(format!(
+                        "expected 4-tuple, found {}-element list",
+                        arc.len()
+                    )));
+                }
+                Ok((
+                    A::from_gos(&arc[0])?,
+                    B::from_gos(&arc[1])?,
+                    C::from_gos(&arc[2])?,
+                    D::from_gos(&arc[3])?,
+                ))
+            }
+            other => type_err("(A, B, C, D)", other),
+        }
+    }
+}
+
+impl<A: ToGos, B: ToGos, C: ToGos, D: ToGos> ToGos for (A, B, C, D) {
+    fn to_gos(self) -> Value {
+        Value::Tuple(Arc::new(vec![
+            self.0.to_gos(),
+            self.1.to_gos(),
+            self.2.to_gos(),
+            self.3.to_gos(),
+        ]))
+    }
+}
+
 impl<T: FromGos> FromGos for Vec<T> {
     fn from_gos(value: &Value) -> RuntimeResult<Self> {
         let items: &[Value] = match value {
@@ -813,6 +908,97 @@ impl FromGos for BindingCallback {
 }
 
 impl ToGos for BindingCallback {
+    fn to_gos(self) -> Value {
+        self.inner
+    }
+}
+
+// --- Persistent callbacks (Phase 3) ----------------------------------
+
+/// Long-lived callable handle. Outlives the binding fn that
+/// produced it.
+///
+/// Where [`BindingCallback`] is call-scoped (the wrapped `Value`
+/// reference is borrowed from the dispatcher's argument slice),
+/// `PersistentCallback` owns a strong reference to the underlying
+/// callable. The binding may store one on a registry-tracked
+/// `static`, hand the handle back to Gossamer code, and re-invoke
+/// it later from a different goroutine.
+///
+/// # Lifetime / GC
+///
+/// The wrapped `Value` is an `Arc`-shared closure / native — the
+/// underlying callable stays alive as long as the
+/// `PersistentCallback` does. The Gossamer-side GC scans the
+/// binding's `Registry` so the captured environment is kept
+/// reachable transitively.
+///
+/// # Coroutine safety
+///
+/// `invoke` re-enters the interpreter through the supplied
+/// [`gossamer_interp::value::NativeDispatch`]. Goroutine yielding
+/// works the same as any other Gossamer call.
+///
+/// # Release
+///
+/// Drop the `PersistentCallback` (or call [`Self::release`]) to
+/// stop pinning the callable. Bindings that store handles on a
+/// long-lived registry MUST publish a Gossamer-side "release"
+/// function so user code can avoid leaks.
+#[derive(Debug, Clone)]
+pub struct PersistentCallback {
+    inner: Value,
+}
+
+impl PersistentCallback {
+    /// Wraps the underlying callable.
+    #[must_use]
+    pub fn from_value(v: Value) -> Self {
+        Self { inner: v }
+    }
+
+    /// Invokes the callable with `args`, re-entering the interp
+    /// through `dispatch`.
+    pub fn invoke(
+        &self,
+        dispatch: &mut dyn gossamer_interp::value::NativeDispatch,
+        args: Vec<Value>,
+    ) -> RuntimeResult<Value> {
+        dispatch.call_value(&self.inner, args)
+    }
+
+    /// Borrow the underlying callable for inspection.
+    #[must_use]
+    pub fn as_value(&self) -> &Value {
+        &self.inner
+    }
+
+    /// Consumes `self`, returning the wrapped callable. Useful
+    /// when handing it back to Gossamer code as a stored value.
+    #[must_use]
+    pub fn into_value(self) -> Value {
+        self.inner
+    }
+
+    /// Explicitly drop the strong reference. After this the
+    /// underlying callable is no longer pinned by `self`.
+    pub fn release(self) {
+        drop(self);
+    }
+}
+
+impl FromGos for PersistentCallback {
+    fn from_gos(value: &Value) -> RuntimeResult<Self> {
+        match value {
+            Value::Closure(_) | Value::Native(_) | Value::Builtin(_) => Ok(Self {
+                inner: value.clone(),
+            }),
+            other => type_err("Fn(...) [persistent]", other),
+        }
+    }
+}
+
+impl ToGos for PersistentCallback {
     fn to_gos(self) -> Value {
         self.inner
     }

@@ -1,0 +1,1281 @@
+//! JSON Web Tokens (RFC 7519) with secure defaults.
+//!
+//! Supported algorithms today: HS256 / HS384 / HS512 (HMAC),
+//! ES256 (ECDSA P-256 SHA-256), and EdDSA (Ed25519). RS256 /
+//! RS384 / RS512 are intentionally absent because `gossamer-std`
+//! does not link an RSA implementation (`rsa 0.9.x` carries
+//! RUSTSEC-2023-0071); they will return when a constant-time
+//! pure-Rust replacement lands. ES384 / ES512 are likewise absent
+//! pending p384 / p521 dependencies.
+//!
+//! Security invariants enforced on every verify call:
+//!
+//! * `alg: "none"` is rejected unconditionally and never emitted.
+//! * The token's `alg` header must equal the caller's expected
+//!   algorithm — there is no negotiation.
+//! * HMAC verifiers reject asymmetric `alg` values (`RS*` / `ES*`
+//!   / `Ed*`) and asymmetric verifiers reject HMAC `alg` values,
+//!   so an attacker cannot trick `verify_hs` into treating an
+//!   RSA public key as a shared secret.
+//! * Header `typ` must be `"JWT"` or absent; anything else is
+//!   rejected.
+//! * Header `crit` (RFC 7515 §4.1.11) is always rejected — we
+//!   don't process critical extensions.
+//! * HMAC signature comparison runs through
+//!   [`crate::crypto::subtle::constant_time_eq`].
+
+#![forbid(unsafe_code)]
+
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use sha2::Digest;
+
+use crate::crypto::{sha512, subtle};
+use crate::errors::Error;
+
+/// JWS signing / verification algorithm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Alg {
+    /// HMAC-SHA-256 (RFC 7518 §3.2).
+    Hs256,
+    /// HMAC-SHA-384 (RFC 7518 §3.2).
+    Hs384,
+    /// HMAC-SHA-512 (RFC 7518 §3.2).
+    Hs512,
+    /// ECDSA P-256 with SHA-256 (RFC 7518 §3.4).
+    Es256,
+    /// Edwards-curve DSA on Curve25519 (RFC 8037 §3.1).
+    EdDsa,
+    // TODO: Rs256 / Rs384 / Rs512 — blocked on a constant-time
+    // pure-Rust RSA crate (rsa 0.9.x has RUSTSEC-2023-0071).
+    // TODO: Es384 / Es512 — need p384 / p521 dependencies.
+}
+
+impl Alg {
+    fn as_str(self) -> &'static str {
+        match self {
+            Alg::Hs256 => "HS256",
+            Alg::Hs384 => "HS384",
+            Alg::Hs512 => "HS512",
+            Alg::Es256 => "ES256",
+            Alg::EdDsa => "EdDSA",
+        }
+    }
+
+    fn from_str(s: &str) -> Result<Self, Error> {
+        match s {
+            "HS256" => Ok(Alg::Hs256),
+            "HS384" => Ok(Alg::Hs384),
+            "HS512" => Ok(Alg::Hs512),
+            "ES256" => Ok(Alg::Es256),
+            "EdDSA" => Ok(Alg::EdDsa),
+            "none" => Err(Error::new(
+                "jwt: alg \"none\" is refused on principle (RFC 7515 §4.1.1)",
+            )),
+            other => Err(Error::new(format!("jwt: unsupported alg {other:?}"))),
+        }
+    }
+
+    fn is_hmac(self) -> bool {
+        matches!(self, Alg::Hs256 | Alg::Hs384 | Alg::Hs512)
+    }
+}
+
+/// JOSE header — only the fields we care about. Unknown header
+/// parameters are tolerated for forward compatibility, with the
+/// sole exception of `crit`, which is fatal per RFC 7515.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Header {
+    /// Signature algorithm.
+    pub alg: Alg,
+    /// Token type. Conventionally `"JWT"`; only `"JWT"` (or absent
+    /// on the wire) is accepted on verify.
+    pub typ: String,
+    /// Optional key identifier (`kid`) — opaque to JWS itself; an
+    /// application may use it to select a verification key.
+    pub kid: Option<String>,
+}
+
+impl Header {
+    fn new(alg: Alg) -> Self {
+        Self {
+            alg,
+            typ: "JWT".to_string(),
+            kid: None,
+        }
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        let mut obj = serde_json::Map::new();
+        obj.insert("alg".to_string(), self.alg.as_str().into());
+        obj.insert("typ".to_string(), self.typ.clone().into());
+        if let Some(kid) = &self.kid {
+            obj.insert("kid".to_string(), kid.clone().into());
+        }
+        serde_json::Value::Object(obj)
+    }
+
+    fn from_json(v: &serde_json::Value) -> Result<Self, Error> {
+        let obj = v
+            .as_object()
+            .ok_or_else(|| Error::new("jwt: header is not a JSON object"))?;
+
+        if obj.contains_key("crit") {
+            return Err(Error::new(
+                "jwt: header carries crit; refusing (RFC 7515 §4.1.11 — unknown critical extensions)",
+            ));
+        }
+
+        let alg_str = obj
+            .get("alg")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| Error::new("jwt: header missing alg"))?;
+        let alg = Alg::from_str(alg_str)?;
+
+        if let Some(t) = obj.get("typ") {
+            let s = t
+                .as_str()
+                .ok_or_else(|| Error::new("jwt: header typ is not a string"))?;
+            if !s.eq_ignore_ascii_case("JWT") {
+                return Err(Error::new(format!(
+                    "jwt: unsupported header typ {s:?} (expected \"JWT\")"
+                )));
+            }
+        }
+
+        let kid = obj.get("kid").and_then(|x| x.as_str()).map(String::from);
+
+        Ok(Self {
+            alg,
+            typ: "JWT".to_string(),
+            kid,
+        })
+    }
+}
+
+/// JWT claims set (RFC 7519 §4). The seven registered claims are
+/// surfaced directly; everything else goes into `custom`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Claims {
+    /// `iss` — token issuer.
+    pub iss: Option<String>,
+    /// `sub` — token subject.
+    pub sub: Option<String>,
+    /// `aud` — token audience (one or many).
+    pub aud: Option<Vec<String>>,
+    /// `exp` — expiration time, seconds since the Unix epoch.
+    pub exp: Option<i64>,
+    /// `nbf` — not-before time, seconds since the Unix epoch.
+    pub nbf: Option<i64>,
+    /// `iat` — issue time, seconds since the Unix epoch.
+    pub iat: Option<i64>,
+    /// `jti` — opaque, application-chosen token identifier.
+    pub jti: Option<String>,
+    /// Application-defined extra claims. Round-tripped verbatim.
+    pub custom: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Default for Claims {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Claims {
+    /// Empty claim set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            iss: None,
+            sub: None,
+            aud: None,
+            exp: None,
+            nbf: None,
+            iat: None,
+            jti: None,
+            custom: serde_json::Map::new(),
+        }
+    }
+
+    /// Sets the `iss` claim.
+    #[must_use]
+    pub fn issuer(mut self, iss: impl Into<String>) -> Self {
+        self.iss = Some(iss.into());
+        self
+    }
+
+    /// Sets the `sub` claim.
+    #[must_use]
+    pub fn subject(mut self, sub: impl Into<String>) -> Self {
+        self.sub = Some(sub.into());
+        self
+    }
+
+    /// Sets a single-element `aud` claim.
+    #[must_use]
+    pub fn audience(mut self, aud: impl Into<String>) -> Self {
+        self.aud = Some(vec![aud.into()]);
+        self
+    }
+
+    /// Sets a multi-element `aud` claim.
+    #[must_use]
+    pub fn audiences(mut self, auds: Vec<String>) -> Self {
+        self.aud = Some(auds);
+        self
+    }
+
+    /// Sets `exp` to an absolute Unix timestamp (seconds).
+    #[must_use]
+    pub fn expires_at(mut self, unix_secs: i64) -> Self {
+        self.exp = Some(unix_secs);
+        self
+    }
+
+    /// Sets `exp` to `now + secs`.
+    #[must_use]
+    pub fn expires_in_secs(mut self, secs: i64) -> Self {
+        self.exp = Some(now_unix_secs().saturating_add(secs));
+        self
+    }
+
+    /// Sets the `nbf` claim.
+    #[must_use]
+    pub fn not_before(mut self, unix_secs: i64) -> Self {
+        self.nbf = Some(unix_secs);
+        self
+    }
+
+    /// Sets the `iat` claim.
+    #[must_use]
+    pub fn issued_at(mut self, unix_secs: i64) -> Self {
+        self.iat = Some(unix_secs);
+        self
+    }
+
+    /// Sets the `jti` claim.
+    #[must_use]
+    pub fn id(mut self, jti: impl Into<String>) -> Self {
+        self.jti = Some(jti.into());
+        self
+    }
+
+    /// Adds or replaces a single custom claim. Reserved-name
+    /// keys (`iss`/`sub`/`aud`/`exp`/`nbf`/`iat`/`jti`) are
+    /// silently ignored — use the typed setters instead.
+    #[must_use]
+    pub fn custom(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+        let key = key.into();
+        if !is_reserved_claim(&key) {
+            self.custom.insert(key, value.into());
+        }
+        self
+    }
+
+    /// Render to a `serde_json::Value` object suitable for the
+    /// JWS payload segment.
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut obj = serde_json::Map::new();
+        if let Some(v) = &self.iss {
+            obj.insert("iss".to_string(), v.clone().into());
+        }
+        if let Some(v) = &self.sub {
+            obj.insert("sub".to_string(), v.clone().into());
+        }
+        if let Some(v) = &self.aud {
+            // RFC 7519 §4.1.3: a single audience MAY be a bare string.
+            if v.len() == 1 {
+                obj.insert("aud".to_string(), v[0].clone().into());
+            } else {
+                obj.insert(
+                    "aud".to_string(),
+                    serde_json::Value::Array(v.iter().map(|s| s.clone().into()).collect()),
+                );
+            }
+        }
+        if let Some(v) = self.exp {
+            obj.insert("exp".to_string(), v.into());
+        }
+        if let Some(v) = self.nbf {
+            obj.insert("nbf".to_string(), v.into());
+        }
+        if let Some(v) = self.iat {
+            obj.insert("iat".to_string(), v.into());
+        }
+        if let Some(v) = &self.jti {
+            obj.insert("jti".to_string(), v.clone().into());
+        }
+        for (k, val) in &self.custom {
+            obj.insert(k.clone(), val.clone());
+        }
+        serde_json::Value::Object(obj)
+    }
+
+    /// Parse a `serde_json::Value` object into a `Claims` set.
+    /// Registered claims that are present with the wrong type
+    /// produce an error; unknown keys go into `custom`.
+    pub fn from_json(v: serde_json::Value) -> Result<Self, Error> {
+        let serde_json::Value::Object(obj) = v else {
+            return Err(Error::new("jwt: claims payload is not a JSON object"));
+        };
+        let mut out = Claims::new();
+        for (k, val) in obj {
+            match k.as_str() {
+                "iss" => {
+                    out.iss = Some(
+                        val.as_str()
+                            .ok_or_else(|| Error::new("jwt: iss is not a string"))?
+                            .to_string(),
+                    );
+                }
+                "sub" => {
+                    out.sub = Some(
+                        val.as_str()
+                            .ok_or_else(|| Error::new("jwt: sub is not a string"))?
+                            .to_string(),
+                    );
+                }
+                "aud" => {
+                    out.aud = Some(parse_aud(&val)?);
+                }
+                "exp" => out.exp = Some(parse_numeric_date(&val, "exp")?),
+                "nbf" => out.nbf = Some(parse_numeric_date(&val, "nbf")?),
+                "iat" => out.iat = Some(parse_numeric_date(&val, "iat")?),
+                "jti" => {
+                    out.jti = Some(
+                        val.as_str()
+                            .ok_or_else(|| Error::new("jwt: jti is not a string"))?
+                            .to_string(),
+                    );
+                }
+                _ => {
+                    out.custom.insert(k, val);
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Options controlling claim validation on `verify_*` calls.
+#[derive(Debug, Clone)]
+pub struct VerifyOpts {
+    /// Clock-skew tolerance applied to `exp` and `nbf`.
+    pub leeway_secs: i64,
+    /// If set, the token's `iss` must equal this value.
+    pub required_iss: Option<String>,
+    /// If set, this value must appear in the token's `aud` array.
+    pub required_aud: Option<String>,
+    /// If set, the token's `sub` must equal this value.
+    pub required_sub: Option<String>,
+    /// If set, reject any token whose `iat` is older than this
+    /// many seconds. Tokens without an `iat` claim are accepted
+    /// (the application can require `iat` separately).
+    pub max_age_secs: Option<i64>,
+    /// Apply `exp` checking. Defaults to `true`.
+    pub validate_exp: bool,
+    /// Apply `nbf` checking. Defaults to `true`.
+    pub validate_nbf: bool,
+}
+
+impl Default for VerifyOpts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl VerifyOpts {
+    /// Default-strict options: zero leeway, both `exp` and `nbf`
+    /// checked, no required claims.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            leeway_secs: 0,
+            required_iss: None,
+            required_aud: None,
+            required_sub: None,
+            max_age_secs: None,
+            validate_exp: true,
+            validate_nbf: true,
+        }
+    }
+
+    /// Sets the clock-skew tolerance.
+    #[must_use]
+    pub fn leeway(mut self, secs: i64) -> Self {
+        self.leeway_secs = secs;
+        self
+    }
+
+    /// Require a specific `iss`.
+    #[must_use]
+    pub fn iss(mut self, v: impl Into<String>) -> Self {
+        self.required_iss = Some(v.into());
+        self
+    }
+
+    /// Require a specific entry in `aud`.
+    #[must_use]
+    pub fn aud(mut self, v: impl Into<String>) -> Self {
+        self.required_aud = Some(v.into());
+        self
+    }
+
+    /// Require a specific `sub` claim value. The builder method's
+    /// name shadows `std::ops::Sub::sub` only by spelling; the
+    /// signature (`(self, impl Into<String>) -> Self`) is
+    /// unambiguous in context.
+    #[must_use]
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "RFC 7519 names this claim `sub`; the JWT API mirrors that"
+    )]
+    pub fn sub(mut self, v: impl Into<String>) -> Self {
+        self.required_sub = Some(v.into());
+        self
+    }
+
+    /// Reject tokens whose `iat` is older than `secs` seconds.
+    #[must_use]
+    pub fn max_age(mut self, secs: i64) -> Self {
+        self.max_age_secs = Some(secs);
+        self
+    }
+}
+
+// -- HMAC signing/verification ---------------------------------------------
+
+/// Signs a claims set with an HMAC algorithm and shared key.
+/// `alg` must be one of `HS256` / `HS384` / `HS512`; anything
+/// else is a hard error so callers can't accidentally produce
+/// asymmetric tokens through the symmetric entry point.
+pub fn sign_hs(alg: Alg, claims: &Claims, key: &[u8]) -> Result<String, Error> {
+    if !alg.is_hmac() {
+        return Err(Error::new(format!(
+            "jwt: sign_hs called with non-HMAC alg {}",
+            alg.as_str()
+        )));
+    }
+    let header = Header::new(alg);
+    let signing_input = build_signing_input(&header, claims)?;
+    let sig = hmac_sign(alg, key, signing_input.as_bytes());
+    Ok(format!("{signing_input}.{}", b64url_encode(&sig)))
+}
+
+/// Verifies an HMAC-signed token and returns the parsed claims.
+///
+/// Rejects the token if (a) the header `alg` is not exactly
+/// `expected_alg`, (b) the header `alg` is asymmetric (avoiding
+/// the classic HMAC-vs-RSA-public-key confusion attack), or
+/// (c) the registered claims fall outside `opts`.
+pub fn verify_hs(
+    token: &str,
+    expected_alg: Alg,
+    key: &[u8],
+    opts: &VerifyOpts,
+) -> Result<Claims, Error> {
+    if !expected_alg.is_hmac() {
+        return Err(Error::new(format!(
+            "jwt: verify_hs called with non-HMAC alg {}",
+            expected_alg.as_str()
+        )));
+    }
+    let (header, claims, signing_input, sig) = split_and_decode(token)?;
+
+    if !header.alg.is_hmac() {
+        return Err(Error::new(format!(
+            "jwt: HMAC verifier refusing asymmetric token alg {}",
+            header.alg.as_str()
+        )));
+    }
+    if header.alg != expected_alg {
+        return Err(Error::new(format!(
+            "jwt: alg mismatch — token says {} but verifier expected {}",
+            header.alg.as_str(),
+            expected_alg.as_str()
+        )));
+    }
+
+    let expected = hmac_sign(expected_alg, key, signing_input.as_bytes());
+    if !subtle::constant_time_eq(&expected, &sig) {
+        return Err(Error::new("jwt: signature invalid"));
+    }
+
+    validate_claims(&claims, opts)?;
+    Ok(claims)
+}
+
+// -- ECDSA P-256 (ES256) ---------------------------------------------------
+
+/// Signs a claims set with ECDSA P-256 + SHA-256, using a
+/// PKCS#8-PEM-encoded signing key.
+pub fn sign_es256(claims: &Claims, signing_key_pem: &str) -> Result<String, Error> {
+    use p256::ecdsa::{Signature, SigningKey, signature::Signer};
+    use p256::pkcs8::DecodePrivateKey;
+
+    let header = Header::new(Alg::Es256);
+    let signing_input = build_signing_input(&header, claims)?;
+    let signing = SigningKey::from_pkcs8_pem(signing_key_pem)
+        .map_err(|e| Error::new(format!("jwt: ES256 secret pem: {e}")))?;
+    let sig: Signature = signing.sign(signing_input.as_bytes());
+    // RFC 7518 §3.4: the JWS signature is fixed-length raw r||s
+    // (64 bytes for P-256), not the ASN.1 DER envelope.
+    let raw = sig.to_bytes();
+    Ok(format!("{signing_input}.{}", b64url_encode(&raw[..])))
+}
+
+/// Verifies an ES256 token against an SPKI-PEM-encoded public key.
+pub fn verify_es256(
+    token: &str,
+    verifying_key_pem: &str,
+    opts: &VerifyOpts,
+) -> Result<Claims, Error> {
+    use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
+    use p256::pkcs8::DecodePublicKey;
+
+    let (header, claims, signing_input, sig) = split_and_decode(token)?;
+    if header.alg.is_hmac() {
+        return Err(Error::new(format!(
+            "jwt: ES256 verifier refusing HMAC token alg {}",
+            header.alg.as_str()
+        )));
+    }
+    if header.alg != Alg::Es256 {
+        return Err(Error::new(format!(
+            "jwt: alg mismatch — token says {} but verifier expected ES256",
+            header.alg.as_str()
+        )));
+    }
+    if sig.len() != 64 {
+        return Err(Error::new(format!(
+            "jwt: ES256 signature must be 64 bytes (r||s), got {}",
+            sig.len()
+        )));
+    }
+
+    let key = VerifyingKey::from_public_key_pem(verifying_key_pem)
+        .map_err(|e| Error::new(format!("jwt: ES256 public pem: {e}")))?;
+    let signature = Signature::from_slice(&sig)
+        .map_err(|e| Error::new(format!("jwt: ES256 signature: {e}")))?;
+    key.verify(signing_input.as_bytes(), &signature)
+        .map_err(|_| Error::new("jwt: signature invalid"))?;
+
+    validate_claims(&claims, opts)?;
+    Ok(claims)
+}
+
+// -- Ed25519 (EdDSA) -------------------------------------------------------
+
+/// Signs a claims set with Ed25519, using a PKCS#8-PEM-encoded
+/// signing key.
+pub fn sign_eddsa(claims: &Claims, signing_key_pem: &str) -> Result<String, Error> {
+    use ed25519_dalek::pkcs8::DecodePrivateKey;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let header = Header::new(Alg::EdDsa);
+    let signing_input = build_signing_input(&header, claims)?;
+    let signing = SigningKey::from_pkcs8_pem(signing_key_pem)
+        .map_err(|e| Error::new(format!("jwt: EdDSA secret pem: {e}")))?;
+    // Ed25519 signatures are natively 64 raw bytes — no DER detour.
+    let sig = signing.sign(signing_input.as_bytes());
+    Ok(format!(
+        "{signing_input}.{}",
+        b64url_encode(&sig.to_bytes())
+    ))
+}
+
+/// Verifies an `EdDSA` token against an SPKI-PEM-encoded public key.
+pub fn verify_eddsa(
+    token: &str,
+    verifying_key_pem: &str,
+    opts: &VerifyOpts,
+) -> Result<Claims, Error> {
+    use ed25519_dalek::pkcs8::DecodePublicKey;
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    let (header, claims, signing_input, sig) = split_and_decode(token)?;
+    if header.alg.is_hmac() {
+        return Err(Error::new(format!(
+            "jwt: EdDSA verifier refusing HMAC token alg {}",
+            header.alg.as_str()
+        )));
+    }
+    if header.alg != Alg::EdDsa {
+        return Err(Error::new(format!(
+            "jwt: alg mismatch — token says {} but verifier expected EdDSA",
+            header.alg.as_str()
+        )));
+    }
+    if sig.len() != 64 {
+        return Err(Error::new(format!(
+            "jwt: EdDSA signature must be 64 bytes, got {}",
+            sig.len()
+        )));
+    }
+
+    let key = VerifyingKey::from_public_key_pem(verifying_key_pem)
+        .map_err(|e| Error::new(format!("jwt: EdDSA public pem: {e}")))?;
+    let sig_arr: [u8; 64] = sig
+        .as_slice()
+        .try_into()
+        .map_err(|_| Error::new("jwt: EdDSA signature: bad length"))?;
+    let signature = Signature::from_bytes(&sig_arr);
+    key.verify(signing_input.as_bytes(), &signature)
+        .map_err(|_| Error::new("jwt: signature invalid"))?;
+
+    validate_claims(&claims, opts)?;
+    Ok(claims)
+}
+
+// -- internals -------------------------------------------------------------
+
+fn is_reserved_claim(k: &str) -> bool {
+    matches!(k, "iss" | "sub" | "aud" | "exp" | "nbf" | "iat" | "jti")
+}
+
+fn now_unix_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+fn parse_aud(v: &serde_json::Value) -> Result<Vec<String>, Error> {
+    match v {
+        serde_json::Value::String(s) => Ok(vec![s.clone()]),
+        serde_json::Value::Array(arr) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for entry in arr {
+                let s = entry
+                    .as_str()
+                    .ok_or_else(|| Error::new("jwt: aud array contains non-string"))?;
+                out.push(s.to_string());
+            }
+            Ok(out)
+        }
+        _ => Err(Error::new("jwt: aud must be a string or array of strings")),
+    }
+}
+
+fn parse_numeric_date(v: &serde_json::Value, name: &str) -> Result<i64, Error> {
+    // RFC 7519 §2 NumericDate: "A JSON numeric value representing
+    // the number of seconds from 1970-01-01T00:00:00Z UTC". Both
+    // integer and float forms are valid on the wire.
+    if let Some(n) = v.as_i64() {
+        return Ok(n);
+    }
+    if let Some(f) = v.as_f64() {
+        if f.is_finite() {
+            return Ok(f as i64);
+        }
+    }
+    Err(Error::new(format!("jwt: {name} is not a numeric date")))
+}
+
+fn build_signing_input(header: &Header, claims: &Claims) -> Result<String, Error> {
+    let header_json = serde_json::to_vec(&header.to_json())
+        .map_err(|e| Error::new(format!("jwt: encode header: {e}")))?;
+    let claims_json = serde_json::to_vec(&claims.to_json())
+        .map_err(|e| Error::new(format!("jwt: encode claims: {e}")))?;
+    Ok(format!(
+        "{}.{}",
+        b64url_encode(&header_json),
+        b64url_encode(&claims_json)
+    ))
+}
+
+/// Splits a JWS compact-serialization token into
+/// `(header, claims, signing_input, signature_bytes)`. Performs
+/// every structural decode but no signature verification and no
+/// claim validation.
+fn split_and_decode(token: &str) -> Result<(Header, Claims, String, Vec<u8>), Error> {
+    // Reject tokens with stray dots before doing any allocation —
+    // a JWS compact token is exactly three segments.
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return Err(Error::new(format!(
+            "jwt: expected 3 segments, got {}",
+            parts.len()
+        )));
+    }
+    let header_b = b64url_decode(parts[0])?;
+    let payload_b = b64url_decode(parts[1])?;
+    let sig_b = b64url_decode(parts[2])?;
+
+    let header_v: serde_json::Value = serde_json::from_slice(&header_b)
+        .map_err(|e| Error::new(format!("jwt: header json: {e}")))?;
+    let header = Header::from_json(&header_v)?;
+
+    let payload_v: serde_json::Value = serde_json::from_slice(&payload_b)
+        .map_err(|e| Error::new(format!("jwt: payload json: {e}")))?;
+    let claims = Claims::from_json(payload_v)?;
+
+    let signing_input = format!("{}.{}", parts[0], parts[1]);
+    Ok((header, claims, signing_input, sig_b))
+}
+
+fn validate_claims(claims: &Claims, opts: &VerifyOpts) -> Result<(), Error> {
+    let now = now_unix_secs();
+    let leeway = opts.leeway_secs;
+
+    if opts.validate_exp {
+        if let Some(exp) = claims.exp {
+            // exp is the absolute deadline — token is valid while
+            // now <= exp + leeway. Use saturating math to avoid
+            // wrap on pathological leeway values.
+            if now > exp.saturating_add(leeway) {
+                return Err(Error::new("jwt: token expired"));
+            }
+        }
+    }
+
+    if opts.validate_nbf {
+        if let Some(nbf) = claims.nbf {
+            if now.saturating_add(leeway) < nbf {
+                return Err(Error::new("jwt: token not yet valid (nbf)"));
+            }
+        }
+    }
+
+    if let Some(max_age) = opts.max_age_secs {
+        if let Some(iat) = claims.iat {
+            if now > iat.saturating_add(max_age).saturating_add(leeway) {
+                return Err(Error::new("jwt: token exceeds max age"));
+            }
+        }
+    }
+
+    if let Some(want) = &opts.required_iss {
+        match &claims.iss {
+            Some(got) if got == want => {}
+            _ => {
+                return Err(Error::new(format!("jwt: iss mismatch (expected {want:?})")));
+            }
+        }
+    }
+
+    if let Some(want) = &opts.required_aud {
+        let ok = claims
+            .aud
+            .as_ref()
+            .is_some_and(|v| v.iter().any(|a| a == want));
+        if !ok {
+            return Err(Error::new(format!(
+                "jwt: aud does not contain required value {want:?}"
+            )));
+        }
+    }
+
+    if let Some(want) = &opts.required_sub {
+        match &claims.sub {
+            Some(got) if got == want => {}
+            _ => {
+                return Err(Error::new(format!("jwt: sub mismatch (expected {want:?})")));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// -- HMAC dispatch ---------------------------------------------------------
+
+fn hmac_sign(alg: Alg, key: &[u8], message: &[u8]) -> Vec<u8> {
+    match alg {
+        Alg::Hs256 => crate::crypto::hmac::sha256_mac(key, message).to_vec(),
+        Alg::Hs384 => hmac_sha384(key, message).to_vec(),
+        Alg::Hs512 => hmac_sha512(key, message).to_vec(),
+        // Unreachable: callers gate on `alg.is_hmac()`.
+        _ => Vec::new(),
+    }
+}
+
+// Block size for both SHA-384 and SHA-512 is 128 bytes.
+const SHA512_BLOCK: usize = 128;
+
+fn hmac_sha512(key: &[u8], message: &[u8]) -> [u8; 64] {
+    // Standard HMAC construction per RFC 2104, parameterized for
+    // SHA-512. Mirrors the in-tree sha256_mac shape so the audit
+    // trail is identical.
+    let mut block = [0u8; SHA512_BLOCK];
+    if key.len() > SHA512_BLOCK {
+        block[..64].copy_from_slice(&sha512::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let mut inner_key = [0u8; SHA512_BLOCK];
+    let mut outer_key = [0u8; SHA512_BLOCK];
+    for i in 0..SHA512_BLOCK {
+        inner_key[i] = block[i] ^ 0x36;
+        outer_key[i] = block[i] ^ 0x5c;
+    }
+    let mut inner = sha2::Sha512::new();
+    inner.update(inner_key);
+    inner.update(message);
+    let inner_hash = inner.finalize();
+    let mut outer = sha2::Sha512::new();
+    outer.update(outer_key);
+    outer.update(inner_hash);
+    outer.finalize().into()
+}
+
+fn hmac_sha384(key: &[u8], message: &[u8]) -> [u8; 48] {
+    // SHA-384 uses the same 128-byte block size as SHA-512.
+    let mut block = [0u8; SHA512_BLOCK];
+    if key.len() > SHA512_BLOCK {
+        let mut h = sha2::Sha384::new();
+        h.update(key);
+        let digest: [u8; 48] = h.finalize().into();
+        block[..48].copy_from_slice(&digest);
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let mut inner_key = [0u8; SHA512_BLOCK];
+    let mut outer_key = [0u8; SHA512_BLOCK];
+    for i in 0..SHA512_BLOCK {
+        inner_key[i] = block[i] ^ 0x36;
+        outer_key[i] = block[i] ^ 0x5c;
+    }
+    let mut inner = sha2::Sha384::new();
+    inner.update(inner_key);
+    inner.update(message);
+    let inner_hash = inner.finalize();
+    let mut outer = sha2::Sha384::new();
+    outer.update(outer_key);
+    outer.update(inner_hash);
+    outer.finalize().into()
+}
+
+// -- base64url (RFC 4648 §5, no padding) -----------------------------------
+
+const B64URL_ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+fn b64url_encode(input: &[u8]) -> String {
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    let mut i = 0;
+    while i + 3 <= input.len() {
+        let n =
+            (u32::from(input[i]) << 16) | (u32::from(input[i + 1]) << 8) | u32::from(input[i + 2]);
+        out.push(B64URL_ALPHA[((n >> 18) & 0x3f) as usize] as char);
+        out.push(B64URL_ALPHA[((n >> 12) & 0x3f) as usize] as char);
+        out.push(B64URL_ALPHA[((n >> 6) & 0x3f) as usize] as char);
+        out.push(B64URL_ALPHA[(n & 0x3f) as usize] as char);
+        i += 3;
+    }
+    let remaining = input.len() - i;
+    if remaining == 1 {
+        let n = u32::from(input[i]) << 16;
+        out.push(B64URL_ALPHA[((n >> 18) & 0x3f) as usize] as char);
+        out.push(B64URL_ALPHA[((n >> 12) & 0x3f) as usize] as char);
+    } else if remaining == 2 {
+        let n = (u32::from(input[i]) << 16) | (u32::from(input[i + 1]) << 8);
+        out.push(B64URL_ALPHA[((n >> 18) & 0x3f) as usize] as char);
+        out.push(B64URL_ALPHA[((n >> 12) & 0x3f) as usize] as char);
+        out.push(B64URL_ALPHA[((n >> 6) & 0x3f) as usize] as char);
+    }
+    out
+}
+
+fn b64url_decode(input: &str) -> Result<Vec<u8>, Error> {
+    // Strip any trailing padding the producer may have included.
+    let trimmed = input.trim_end_matches('=');
+    let bytes = trimmed.as_bytes();
+
+    // Compute final output length up front: every 4 input chars
+    // become 3 output bytes; the trailing 2/3 chars become 1/2.
+    let n = bytes.len();
+    let out_len = match n % 4 {
+        0 => n / 4 * 3,
+        2 => n / 4 * 3 + 1,
+        3 => n / 4 * 3 + 2,
+        // A length of 1 mod 4 cannot occur in valid base64.
+        _ => return Err(Error::new("jwt: base64url: invalid length")),
+    };
+
+    let mut out = Vec::with_capacity(out_len);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    for &b in bytes {
+        let v = decode_b64url_char(b)?;
+        acc = (acc << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((acc >> bits) & 0xff) as u8);
+        }
+    }
+    // Remaining bits must be zero — otherwise this is malformed.
+    if bits > 0 && (acc & ((1u32 << bits) - 1)) != 0 {
+        return Err(Error::new("jwt: base64url: non-zero padding bits"));
+    }
+    Ok(out)
+}
+
+fn decode_b64url_char(c: u8) -> Result<u8, Error> {
+    match c {
+        b'A'..=b'Z' => Ok(c - b'A'),
+        b'a'..=b'z' => Ok(c - b'a' + 26),
+        b'0'..=b'9' => Ok(c - b'0' + 52),
+        b'-' => Ok(62),
+        b'_' => Ok(63),
+        _ => Err(Error::new(format!(
+            "jwt: base64url: invalid character 0x{c:02x}"
+        ))),
+    }
+}
+
+// --------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key_hs() -> &'static [u8] {
+        b"super-secret-test-key-do-not-reuse"
+    }
+
+    #[test]
+    fn b64url_round_trips() {
+        for input in [
+            &b""[..],
+            &b"f"[..],
+            &b"fo"[..],
+            &b"foo"[..],
+            &b"foob"[..],
+            &b"fooba"[..],
+            &b"foobar"[..],
+            &[0xff, 0xfe, 0xfd, 0xfc, 0x00, 0x01][..],
+        ] {
+            let enc = b64url_encode(input);
+            // No padding ever, no '+' / '/' ever.
+            assert!(!enc.contains('='));
+            assert!(!enc.contains('+'));
+            assert!(!enc.contains('/'));
+            let dec = b64url_decode(&enc).unwrap();
+            assert_eq!(dec, input);
+        }
+    }
+
+    #[test]
+    fn b64url_accepts_optional_padding() {
+        // Tokens emitted by other libraries sometimes include '='.
+        let raw = b"hello";
+        let mut enc = b64url_encode(raw);
+        enc.push('=');
+        assert_eq!(b64url_decode(&enc).unwrap(), raw);
+    }
+
+    #[test]
+    fn b64url_rejects_invalid_chars() {
+        assert!(b64url_decode("abc!").is_err());
+    }
+
+    #[test]
+    fn hs256_round_trip() {
+        let claims = Claims::new()
+            .issuer("issuer.example")
+            .subject("user-42")
+            .audience("clients.example")
+            .id("token-1")
+            .issued_at(1_700_000_000);
+        let token = sign_hs(Alg::Hs256, &claims, key_hs()).unwrap();
+        // JWS compact serialization has exactly two dots.
+        assert_eq!(token.matches('.').count(), 2);
+        let back = verify_hs(&token, Alg::Hs256, key_hs(), &VerifyOpts::new()).unwrap();
+        assert_eq!(back.iss.as_deref(), Some("issuer.example"));
+        assert_eq!(back.sub.as_deref(), Some("user-42"));
+        assert_eq!(back.aud, Some(vec!["clients.example".to_string()]));
+        assert_eq!(back.jti.as_deref(), Some("token-1"));
+        assert_eq!(back.iat, Some(1_700_000_000));
+    }
+
+    #[test]
+    fn hs256_matches_rfc7515_a1_vector() {
+        // RFC 7515 Appendix A.1 — known HS256 test vector.
+        // Header: {"typ":"JWT","alg":"HS256"}
+        // Payload: {"iss":"joe","exp":1300819380,"http://example.com/is_root":true}
+        // Key: the 64-byte octet string from Appendix A.1.
+        let key: [u8; 64] = [
+            3, 35, 53, 75, 43, 15, 165, 188, 131, 126, 6, 101, 119, 123, 166, 143, 90, 179, 40,
+            230, 240, 84, 201, 40, 169, 15, 132, 178, 210, 80, 46, 191, 211, 251, 90, 146, 210, 6,
+            71, 239, 150, 138, 180, 195, 119, 98, 61, 34, 61, 46, 33, 114, 5, 46, 79, 8, 192, 205,
+            154, 245, 103, 208, 128, 163,
+        ];
+        let claims = Claims::new()
+            .issuer("joe")
+            .expires_at(1_300_819_380)
+            .custom("http://example.com/is_root", serde_json::Value::Bool(true));
+        let token = sign_hs(Alg::Hs256, &claims, &key).unwrap();
+        let opts = VerifyOpts::new().leeway(i64::MAX / 4);
+        let back = verify_hs(&token, Alg::Hs256, &key, &opts).unwrap();
+        assert_eq!(back.iss.as_deref(), Some("joe"));
+        assert_eq!(back.exp, Some(1_300_819_380));
+        assert_eq!(
+            back.custom.get("http://example.com/is_root"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn hs512_round_trip() {
+        let claims = Claims::new().subject("u1").issued_at(now_unix_secs());
+        let token = sign_hs(Alg::Hs512, &claims, key_hs()).unwrap();
+        let back = verify_hs(&token, Alg::Hs512, key_hs(), &VerifyOpts::new()).unwrap();
+        assert_eq!(back.sub.as_deref(), Some("u1"));
+    }
+
+    #[test]
+    fn hs384_round_trip() {
+        let claims = Claims::new().subject("u2");
+        let token = sign_hs(Alg::Hs384, &claims, key_hs()).unwrap();
+        let back = verify_hs(&token, Alg::Hs384, key_hs(), &VerifyOpts::new()).unwrap();
+        assert_eq!(back.sub.as_deref(), Some("u2"));
+    }
+
+    #[test]
+    fn tampered_signature_rejected() {
+        let token = sign_hs(Alg::Hs256, &Claims::new().subject("u"), key_hs()).unwrap();
+        // Flip a bit in the signature segment.
+        let mut bytes = token.into_bytes();
+        let len = bytes.len();
+        // Last char of base64url alphabet is always safe to swap with the first.
+        bytes[len - 1] = if bytes[len - 1] == b'A' { b'B' } else { b'A' };
+        let tampered = String::from_utf8(bytes).unwrap();
+        assert!(verify_hs(&tampered, Alg::Hs256, key_hs(), &VerifyOpts::new()).is_err());
+    }
+
+    #[test]
+    fn alg_none_rejected_on_verify() {
+        // Construct a token with alg "none" by hand — no signature
+        // segment computed, but the third segment is present and
+        // empty so the token has the expected three-segment shape.
+        let header = serde_json::json!({"alg":"none","typ":"JWT"});
+        let payload = serde_json::json!({"sub":"hacker"});
+        let h = b64url_encode(&serde_json::to_vec(&header).unwrap());
+        let p = b64url_encode(&serde_json::to_vec(&payload).unwrap());
+        let token = format!("{h}.{p}.");
+        let err = verify_hs(&token, Alg::Hs256, key_hs(), &VerifyOpts::new()).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("none"),
+            "expected mention of alg none, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn alg_mismatch_rejected() {
+        let token = sign_hs(Alg::Hs256, &Claims::new(), key_hs()).unwrap();
+        // Signed with HS256, verifier asks for HS512.
+        let err = verify_hs(&token, Alg::Hs512, key_hs(), &VerifyOpts::new()).unwrap_err();
+        assert!(format!("{err}").contains("alg mismatch"));
+    }
+
+    #[test]
+    fn hs_vs_es_confusion_rejected() {
+        // Sign a token with HS256, then try to verify it as ES256.
+        // verify_es256 must reject HS256 outright, regardless of
+        // whether any cryptographic operation could succeed.
+        let (_secret_pem, public_pem) = crate::crypto::ecdsa::keypair_pem().unwrap();
+        let hs_token = sign_hs(Alg::Hs256, &Claims::new().subject("u"), key_hs()).unwrap();
+        let err = verify_es256(&hs_token, &public_pem, &VerifyOpts::new()).unwrap_err();
+        assert!(
+            format!("{err}").to_lowercase().contains("refusing")
+                || format!("{err}").to_lowercase().contains("mismatch"),
+            "expected HMAC-rejection error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn expired_token_rejected_without_leeway() {
+        let claims = Claims::new().expires_at(now_unix_secs() - 60);
+        let token = sign_hs(Alg::Hs256, &claims, key_hs()).unwrap();
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &VerifyOpts::new()).is_err());
+    }
+
+    #[test]
+    fn expired_token_accepted_with_leeway() {
+        let claims = Claims::new().expires_at(now_unix_secs() - 60);
+        let token = sign_hs(Alg::Hs256, &claims, key_hs()).unwrap();
+        let opts = VerifyOpts::new().leeway(120);
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &opts).is_ok());
+    }
+
+    #[test]
+    fn nbf_in_future_rejected_then_accepted_with_leeway() {
+        let claims = Claims::new().not_before(now_unix_secs() + 60);
+        let token = sign_hs(Alg::Hs256, &claims, key_hs()).unwrap();
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &VerifyOpts::new()).is_err());
+        let opts = VerifyOpts::new().leeway(120);
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &opts).is_ok());
+    }
+
+    #[test]
+    fn max_age_enforced() {
+        let claims = Claims::new().issued_at(now_unix_secs() - 3600);
+        let token = sign_hs(Alg::Hs256, &claims, key_hs()).unwrap();
+        let strict = VerifyOpts::new().max_age(600);
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &strict).is_err());
+        let lenient = VerifyOpts::new().max_age(7200);
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &lenient).is_ok());
+    }
+
+    #[test]
+    fn required_iss_enforced() {
+        let claims = Claims::new().issuer("real.example");
+        let token = sign_hs(Alg::Hs256, &claims, key_hs()).unwrap();
+        let opts = VerifyOpts::new().iss("real.example");
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &opts).is_ok());
+        let opts_wrong = VerifyOpts::new().iss("attacker.example");
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &opts_wrong).is_err());
+        let token_missing = sign_hs(Alg::Hs256, &Claims::new(), key_hs()).unwrap();
+        assert!(verify_hs(&token_missing, Alg::Hs256, key_hs(), &opts).is_err());
+    }
+
+    #[test]
+    fn required_aud_enforced() {
+        let claims =
+            Claims::new().audiences(vec!["api.example".to_string(), "web.example".to_string()]);
+        let token = sign_hs(Alg::Hs256, &claims, key_hs()).unwrap();
+        let opts = VerifyOpts::new().aud("api.example");
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &opts).is_ok());
+        let opts_wrong = VerifyOpts::new().aud("admin.example");
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &opts_wrong).is_err());
+    }
+
+    #[test]
+    fn required_sub_enforced() {
+        let claims = Claims::new().subject("alice");
+        let token = sign_hs(Alg::Hs256, &claims, key_hs()).unwrap();
+        let opts = VerifyOpts::new().sub("alice");
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &opts).is_ok());
+        let opts_wrong = VerifyOpts::new().sub("bob");
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &opts_wrong).is_err());
+    }
+
+    #[test]
+    fn es256_round_trip() {
+        let (secret_pem, public_pem) = crate::crypto::ecdsa::keypair_pem().unwrap();
+        let claims = Claims::new()
+            .subject("ecdsa-user")
+            .issued_at(now_unix_secs());
+        let token = sign_es256(&claims, &secret_pem).unwrap();
+        let back = verify_es256(&token, &public_pem, &VerifyOpts::new()).unwrap();
+        assert_eq!(back.sub.as_deref(), Some("ecdsa-user"));
+    }
+
+    #[test]
+    fn es256_rejects_hs_alg_in_header() {
+        // Mint a fake header that claims ES256 but the body is HS-signed;
+        // this is covered by alg-mismatch already, but the inverse
+        // direction (HS token vs ES verifier) is also a hard reject.
+        let (_secret_pem, public_pem) = crate::crypto::ecdsa::keypair_pem().unwrap();
+        let token = sign_hs(Alg::Hs256, &Claims::new(), key_hs()).unwrap();
+        assert!(verify_es256(&token, &public_pem, &VerifyOpts::new()).is_err());
+    }
+
+    #[test]
+    fn eddsa_round_trip() {
+        // Both ed25519_dalek and p256 depend on `pkcs8 = 0.10`, so
+        // `p256::pkcs8::LineEnding` is the same type ed25519_dalek's
+        // `to_pkcs8_pem` / `to_public_key_pem` accept. Saves pulling
+        // a direct dep on `pkcs8` just for the test.
+        use ed25519_dalek::SigningKey;
+        use ed25519_dalek::pkcs8::{EncodePrivateKey, EncodePublicKey};
+        let mut rng = crate::crypto::rand::OsRng;
+        let signing = SigningKey::generate(&mut rng);
+        let verifying = signing.verifying_key();
+        let secret_pem = signing
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .unwrap()
+            .to_string();
+        let public_pem = verifying
+            .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+            .unwrap();
+
+        let claims = Claims::new().subject("ed-user").issued_at(now_unix_secs());
+        let token = sign_eddsa(&claims, &secret_pem).unwrap();
+        let back = verify_eddsa(&token, &public_pem, &VerifyOpts::new()).unwrap();
+        assert_eq!(back.sub.as_deref(), Some("ed-user"));
+
+        // HS tokens must not pass an EdDSA verifier.
+        let hs = sign_hs(Alg::Hs256, &Claims::new(), key_hs()).unwrap();
+        assert!(verify_eddsa(&hs, &public_pem, &VerifyOpts::new()).is_err());
+    }
+
+    #[test]
+    fn crit_header_rejected() {
+        // Build a token whose header carries a crit parameter.
+        // The signature is HS256 so the structural rejection is
+        // unambiguously the crit reject, not the alg.
+        let header = serde_json::json!({
+            "alg":"HS256",
+            "typ":"JWT",
+            "crit":["exp"],
+        });
+        let payload = serde_json::json!({"sub":"x"});
+        let h = b64url_encode(&serde_json::to_vec(&header).unwrap());
+        let p = b64url_encode(&serde_json::to_vec(&payload).unwrap());
+        let signing_input = format!("{h}.{p}");
+        let sig = crate::crypto::hmac::sha256_mac(key_hs(), signing_input.as_bytes());
+        let token = format!("{signing_input}.{}", b64url_encode(&sig));
+        let err = verify_hs(&token, Alg::Hs256, key_hs(), &VerifyOpts::new()).unwrap_err();
+        assert!(
+            format!("{err}").to_lowercase().contains("crit"),
+            "expected crit-rejection error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn claims_round_trip_through_json() {
+        let claims = Claims::new()
+            .issuer("iss")
+            .subject("sub")
+            .audiences(vec!["a".to_string(), "b".to_string()])
+            .expires_at(100)
+            .not_before(50)
+            .issued_at(25)
+            .id("jti-1")
+            .custom("role", serde_json::Value::String("admin".to_string()));
+        let json = claims.to_json();
+        let back = Claims::from_json(json).unwrap();
+        assert_eq!(back, claims);
+    }
+
+    #[test]
+    fn single_audience_serializes_as_string_per_rfc() {
+        let claims = Claims::new().audience("solo");
+        let v = claims.to_json();
+        assert_eq!(
+            v.as_object().unwrap().get("aud"),
+            Some(&serde_json::Value::String("solo".to_string()))
+        );
+        // ...and round-trips back into a single-element Vec.
+        let back = Claims::from_json(v).unwrap();
+        assert_eq!(back.aud, Some(vec!["solo".to_string()]));
+    }
+
+    #[test]
+    fn unsupported_alg_rejected() {
+        let header = serde_json::json!({"alg":"RS256","typ":"JWT"});
+        let payload = serde_json::json!({});
+        let h = b64url_encode(&serde_json::to_vec(&header).unwrap());
+        let p = b64url_encode(&serde_json::to_vec(&payload).unwrap());
+        let token = format!("{h}.{p}.AAAA");
+        assert!(verify_hs(&token, Alg::Hs256, key_hs(), &VerifyOpts::new()).is_err());
+    }
+
+    #[test]
+    fn malformed_token_rejected() {
+        assert!(
+            verify_hs(
+                "not.a.token.extra",
+                Alg::Hs256,
+                key_hs(),
+                &VerifyOpts::new()
+            )
+            .is_err()
+        );
+        assert!(verify_hs("only.two", Alg::Hs256, key_hs(), &VerifyOpts::new()).is_err());
+        assert!(verify_hs("", Alg::Hs256, key_hs(), &VerifyOpts::new()).is_err());
+    }
+}

@@ -1,5 +1,7 @@
 # `std::math`
 
+Status: shipped
+
 Mathematical constants and f64 functions (Go's math package shape).
 
 ## Public items

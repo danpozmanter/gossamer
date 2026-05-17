@@ -254,7 +254,13 @@ pub fn suspend() {
     yielder.suspend(());
 }
 
-#[cfg(test)]
+// `corosensei` allocates each goroutine's stack via `mmap(PROT_NONE)` for
+// the guard page, then `mprotect` to make it readable. Miri doesn't
+// simulate guard-page protection toggles, so the entire goroutine test
+// suite is gated behind `not(miri)`. Runtime-level coroutine coverage
+// stays exercised by the host-CPU tests; Miri continues to check the
+// non-coroutine paths (channels, schedulers, GC, FFI argument coercion).
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::sync::Mutex;

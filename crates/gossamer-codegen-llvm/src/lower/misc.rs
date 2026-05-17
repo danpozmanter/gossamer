@@ -261,6 +261,23 @@ impl<'a> Lowerer<'a> {
     /// `Ok(Bag { ... })` doesn't return a pointer to a struct
     /// that lives only on the producer's stack.
     pub(crate) fn maybe_heap_copy_aggregate(&mut self, arg: &Operand) -> Option<String> {
+        self.maybe_heap_copy_aggregate_with(arg, /* leak */ false)
+    }
+
+    /// Same shape as [`maybe_heap_copy_aggregate`] but routes the
+    /// heap allocation through `gos_rt_aggr_alloc_leak` instead of
+    /// the GC-tracked `gos_rt_aggr_alloc`. Used when the surviving
+    /// handle escapes the GC's reachability graph — HashMap inserts
+    /// store the pointer as a bare i64 in MapStorage, which the
+    /// tracing collector cannot walk through, so the GC-tracked
+    /// allocation would be reclaimed mid-program. The leak variant
+    /// keeps the bytes live until process exit at the cost of not
+    /// reclaiming HashMap entries when their map drops.
+    pub(crate) fn maybe_heap_copy_aggregate_leak(&mut self, arg: &Operand) -> Option<String> {
+        self.maybe_heap_copy_aggregate_with(arg, /* leak */ true)
+    }
+
+    fn maybe_heap_copy_aggregate_with(&mut self, arg: &Operand, leak: bool) -> Option<String> {
         let Operand::Copy(place) = arg else {
             return None;
         };
@@ -284,18 +301,17 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         let bytes = u64::from(slots) * 8;
-        // Use the tracked aggregate allocator so the MIR drop
-        // pass can reclaim this block via `gos_rt_aggr_free` at
-        // end of scope Behaviour is identical to
-        // `gos_rt_gc_alloc` — both share the same registry.
-        declare_rt(&mut self.runtime_refs, "gos_rt_aggr_alloc");
+        let helper = if leak {
+            "gos_rt_aggr_alloc_leak"
+        } else {
+            "gos_rt_aggr_alloc"
+        };
+        declare_rt(&mut self.runtime_refs, helper);
         let heap = self.fresh();
-        writeln!(
-            self.out,
-            "  {heap} = call ptr @gos_rt_aggr_alloc(i64 {bytes})"
-        )
-        .unwrap();
-        self.emit_gc_root_push(&heap);
+        writeln!(self.out, "  {heap} = call ptr @{helper}(i64 {bytes})").unwrap();
+        if !leak {
+            self.emit_gc_root_push(&heap);
+        }
         let src = local_slot(place.local);
         writeln!(
             self.out,

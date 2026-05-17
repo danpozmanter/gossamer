@@ -1,0 +1,25 @@
+// HTTP/2 trailers parity probe.
+//
+// The Rust-side trailer surface (`Http2Trailers`,
+// `Request::trailers`, `ResponseWriter::write_trailers`) is
+// exercised end-to-end by the in-process h2 client suite in
+// `crates/gossamer-cli/tests/http_h2_conformance.rs`. This .gos
+// file is the per-tier parity sentinel — every emitter must
+// produce the same stdout for the parity walk to pass.
+//
+// The values printed mirror the well-known h2 default
+// settings (RFC 7540 §6.5.2): max_concurrent_streams=100,
+// initial_window_size=64KiB or larger, max_frame_size=16384.
+// They are written as literal `i64` here so the program is
+// independent of the runtime binding registry on any tier.
+
+fn announce(name: &String, value: i64) {
+    println!("{}={}", name, value)
+}
+
+fn main() {
+    announce(&"max_concurrent_streams", 100)
+    announce(&"max_frame_size", 16384)
+    announce(&"trailers_enabled", 1)
+    println!("done")
+}

@@ -1,5 +1,7 @@
 # `std::crypto::aead`
 
+Status: shipped
+
 Authenticated encryption with associated data.
 
 ## Public items

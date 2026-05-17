@@ -1,5 +1,7 @@
 # `std::text::template`
 
+Status: experimental
+
 Plain-text templates (no escaping).
 
 ## Public items

@@ -245,6 +245,7 @@ pub(crate) fn install_utf8(globals: &mut Vec<(&'static str, Value)>) {
             ("valid_string", builtin_utf8_valid_string),
             ("valid_rune", builtin_utf8_valid_rune),
             ("full_rune", builtin_utf8_full_rune),
+            ("full_rune_in_string", builtin_utf8_full_rune_in_string),
             ("rune_start", builtin_utf8_rune_start),
             ("decode_rune", builtin_utf8_decode_rune),
             ("decode_rune_in_string", builtin_utf8_decode_rune_in_string),
@@ -315,6 +316,11 @@ pub(crate) fn builtin_utf8_rune_count_in_string(args: &[Value]) -> RuntimeResult
 pub(crate) fn builtin_utf8_full_rune(args: &[Value]) -> RuntimeResult<Value> {
     let bytes = bytes_from_utf8_arg(args.first());
     Ok(Value::Bool(utf8_std::full_rune(&bytes)))
+}
+
+pub(crate) fn builtin_utf8_full_rune_in_string(args: &[Value]) -> RuntimeResult<Value> {
+    let s = args.first().and_then(as_str).unwrap_or("");
+    Ok(Value::Bool(utf8_std::full_rune_in_string(s)))
 }
 
 pub(crate) fn builtin_utf8_rune_start(args: &[Value]) -> RuntimeResult<Value> {

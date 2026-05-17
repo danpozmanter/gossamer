@@ -11,9 +11,19 @@ description = "Package manager for Gossamer."
 [lints]
 workspace = true
 
+[features]
+default = []
+# Opt-in to the `synthetic_source_for_test` helper outside of unit
+# tests (e.g. integration tests in `tests/`). Production crates must
+# never enable this.
+synthetic-source = []
+
 [dependencies]
 thiserror = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 rustls-pki-types = "1"
 sha2 = { workspace = true }
 webpki-roots = "1"
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "rand_core"] }
+rand_core = { version = "0.6", features = ["std", "getrandom"] }
+parking_lot = { workspace = true }

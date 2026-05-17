@@ -195,6 +195,13 @@ impl<'a> Lowerer<'a> {
         // pops. Heap-copy the aggregate before passing so the
         // pointer outlives the function return.
         let result_new_heap_copy = matches!(name, "gos_rt_result_new");
+        // HashMap insert with struct value — same rationale as
+        // `gos_rt_result_new`: the value lives on the inserting
+        // frame's stack and goes dangling once that frame returns.
+        let map_insert_heap_copy = matches!(
+            name,
+            "gos_rt_map_insert_i64_i64" | "gos_rt_map_insert_str_i64"
+        );
         let mut arg_text = String::new();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
@@ -204,6 +211,13 @@ impl<'a> Lowerer<'a> {
             let a_v = self.lower_operand(arg)?;
             if result_new_heap_copy
                 && i == 1
+                && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
+            {
+                let _ = write!(arg_text, "i64 {heap_v}");
+                continue;
+            }
+            if map_insert_heap_copy
+                && i == 2
                 && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
             {
                 let _ = write!(arg_text, "i64 {heap_v}");

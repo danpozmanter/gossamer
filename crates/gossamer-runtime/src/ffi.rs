@@ -161,6 +161,10 @@ impl Symbol {
 mod tests {
     use super::*;
 
+    // Miri can't simulate `dlopen` (no real OS dynamic linker); the
+    // libloading crate aborts before any of our code runs. Skip
+    // under Miri so the rest of the runtime suite stays exercisable.
+    #[cfg_attr(miri, ignore = "libloading::dlopen unsupported under Miri")]
     #[test]
     fn opens_libc_and_calls_strlen() {
         let Ok(lib) = Library::open("libc.so.6") else {

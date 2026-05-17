@@ -22,14 +22,70 @@ macro_rules! __binding_count {
 /// Declares one or more Gossamer-callable functions and registers
 /// them as a single [`crate::Module`].
 ///
-/// The required `symbol_prefix` literal is the C-ABI export
-/// prefix the macro stamps on every plain `fn` thunk
-/// (`gos_binding_<symbol_prefix>__<fn_name>`). It must match the
-/// scheme [`crate::mangle_binding_symbol`] uses against the
-/// `path` literal — the codegen relies on that equivalence to
-/// emit calls into the binding from compiled `.gos` source.
+/// Three top-level forms are accepted; pick whichever is least
+/// boilerplate for the call site.
+///
+/// **New ergonomic form (single-segment path):**
+///
+/// ```ignore
+/// register_module!(
+///     name: echo,                            // both the Gossamer-side spelling
+///                                            // and the C-ABI symbol prefix.
+///     doc: "String helpers exposed by echo.",
+///
+///     /// Uppercase the input.                // `///` docs flow through to
+///     fn shout(s: String) -> String { ... }   // `gos doc echo::shout`.
+/// );
+/// ```
+///
+/// **Legacy form (explicit `symbol_prefix:`):** keeps working for
+/// nested paths like `"tuigoose::layout"` where mangling has to
+/// be supplied by hand.
+///
+/// ```ignore
+/// register_module!(
+///     binding,                               // internal mod ident
+///     path: "tuigoose::layout",
+///     symbol_prefix: tuigoose__layout,
+///     doc: "...",
+///     fn rect(...) -> ... { ... }
+/// );
+/// ```
+///
+/// **Interp-only form (no `symbol_prefix:`):** legacy compat;
+/// modules declared this way are not reachable from `gos build`.
 #[macro_export]
 macro_rules! register_module {
+    // New ergonomic form — single-segment path: `name: <ident>`
+    // doubles as both the Gossamer-side spelling and the symbol
+    // prefix. An auto-generated internal mod (`__gos_<name>`)
+    // wraps the items. No explicit `__bindings_force_link()`
+    // needed at crate root — the force-link entry is published
+    // through the link-time `__GOS_FORCE_LINK_FNS` distributed
+    // slice and the runner walks it automatically.
+    (
+        name: $name:ident,
+        doc: $doc:literal,
+        $($body:tt)*
+    ) => {
+        $crate::__paste::paste! {
+            $crate::__rm_munch! {
+                [< __gos_ $name >], stringify!($name), $name, $doc,
+                simple = [],
+                cb = [],
+                rest = [ $($body)* ]
+            }
+        }
+        // Publish a link-time force-link entry so the runner
+        // doesn't need a per-crate `__bindings_force_link()` shim.
+        $crate::__paste::paste! {
+            #[$crate::linkme::distributed_slice($crate::FORCE_LINK_FNS)]
+            #[linkme(crate = $crate::linkme)]
+            #[allow(non_upper_case_globals, unreachable_pub)]
+            static [< __GOS_FORCE_LINK_ $name >]: fn() = [< __gos_ $name >]::force_link;
+        }
+    };
+
     (
         $modname:ident,
         path: $path:literal,
@@ -42,6 +98,12 @@ macro_rules! register_module {
             simple = [],
             cb = [],
             rest = [ $($body)* ]
+        }
+        $crate::__paste::paste! {
+            #[$crate::linkme::distributed_slice($crate::FORCE_LINK_FNS)]
+            #[linkme(crate = $crate::linkme)]
+            #[allow(non_upper_case_globals, unreachable_pub)]
+            static [< __GOS_FORCE_LINK_ $sym >]: fn() = $modname::force_link;
         }
     };
 
@@ -62,6 +124,12 @@ macro_rules! register_module {
             cb = [],
             rest = [ $($body)* ]
         }
+        $crate::__paste::paste! {
+            #[$crate::linkme::distributed_slice($crate::FORCE_LINK_FNS)]
+            #[linkme(crate = $crate::linkme)]
+            #[allow(non_upper_case_globals, unreachable_pub)]
+            static [< __GOS_FORCE_LINK_ $modname >]: fn() = $modname::force_link;
+        }
     };
 }
 
@@ -73,19 +141,21 @@ macro_rules! register_module {
 macro_rules! __rm_munch {
     // ---- terminal: emit module ---------------------------------
     (
-        $modname:ident, $path:literal, $sym:tt, $doc:literal,
+        $modname:tt, $path:expr, $sym:tt, $doc:literal,
         simple = [ $({
             $sn:ident,
             ( $($sa:ident : $st:ty),* ),
             $sr:ty,
-            $sb:block
+            $sb:block,
+            doc = [ $($sd:literal)* ]
         })* ],
         cb = [ $({
             $cn:ident,
             $cdisp:ident,
             ( $($ca:ident : $ct:ty),* ),
             $cr:ty,
-            $cb_body:block
+            $cb_body:block,
+            doc = [ $($cd:literal)* ]
         })* ],
         rest = []
     ) => {
@@ -162,7 +232,7 @@ macro_rules! __rm_munch {
                                 ],
                                 ret: <$sr as $crate::SigType>::TYPE,
                             },
-                            doc: "",
+                            doc: concat!( "" $(, $sd, "\n")* ),
                         },
                     )*
                     $(
@@ -175,10 +245,34 @@ macro_rules! __rm_munch {
                                 ],
                                 ret: <$cr as $crate::SigType>::TYPE,
                             },
-                            doc: "",
+                            doc: concat!( "" $(, $cd, "\n")* ),
                         },
                     )*
                 ];
+
+                // Compile-time signature validation: every param
+                // and return type must implement both `SigType`
+                // (for the type-checker) and `FromGos`/`ToGos`
+                // (for the interp thunk). A binding fn that names
+                // an unsupported type fails here with a clear
+                // trait-bound error at the binding's compile,
+                // rather than as a runtime install_all() panic.
+                const _: () = {
+                    $(
+                        const fn [< __validate_ $sn >]() {
+                            let _ = <$sr as $crate::SigType>::TYPE;
+                            $( let _ = <$st as $crate::SigType>::TYPE; )*
+                        }
+                        let _ = [< __validate_ $sn >];
+                    )*
+                    $(
+                        const fn [< __validate_ $cn >]() {
+                            let _ = <$cr as $crate::SigType>::TYPE;
+                            $( let _ = <$ct as $crate::SigType>::TYPE; )*
+                        }
+                        let _ = [< __validate_ $cn >];
+                    )*
+                };
             }
 
             pub static MODULE: $crate::Module = $crate::Module {
@@ -218,10 +312,11 @@ macro_rules! __rm_munch {
 
     // ---- munch: cb_fn ------------------------------------------
     (
-        $modname:ident, $path:literal, $sym:tt, $doc:literal,
+        $modname:tt, $path:expr, $sym:tt, $doc:literal,
         simple = [ $($simple:tt)* ],
         cb = [ $($cb:tt)* ],
         rest = [
+            $(#[doc = $fdoc:literal])*
             cb_fn $name:ident( $disp:ident, $($arg:ident : $argty:ty),* $(,)? ) -> $ret:ty $body:block
             $($rest:tt)*
         ]
@@ -234,7 +329,8 @@ macro_rules! __rm_munch {
                 $disp,
                 ( $($arg : $argty),* ),
                 $ret,
-                $body
+                $body,
+                doc = [ $($fdoc)* ]
             } ],
             rest = [ $($rest)* ]
         }
@@ -242,10 +338,11 @@ macro_rules! __rm_munch {
 
     // ---- munch: plain fn ---------------------------------------
     (
-        $modname:ident, $path:literal, $sym:tt, $doc:literal,
+        $modname:tt, $path:expr, $sym:tt, $doc:literal,
         simple = [ $($simple:tt)* ],
         cb = [ $($cb:tt)* ],
         rest = [
+            $(#[doc = $fdoc:literal])*
             fn $name:ident( $($arg:ident : $argty:ty),* $(,)? ) -> $ret:ty $body:block
             $($rest:tt)*
         ]
@@ -256,7 +353,8 @@ macro_rules! __rm_munch {
                 $name,
                 ( $($arg : $argty),* ),
                 $ret,
-                $body
+                $body,
+                doc = [ $($fdoc)* ]
             } ],
             cb = [ $($cb)* ],
             rest = [ $($rest)* ]

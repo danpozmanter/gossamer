@@ -1,5 +1,7 @@
 # `std::fmt`
 
+Status: shipped
+
 Formatted printing and string interpolation.
 
 ## Public items

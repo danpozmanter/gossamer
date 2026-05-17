@@ -1,5 +1,7 @@
 # `std::os`
 
+Status: shipped
+
 Operating-system identity and deprecated re-exports of env/process/fs.
 
 ## Public items

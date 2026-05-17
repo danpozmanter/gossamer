@@ -126,7 +126,7 @@ pub struct GosVariant {
 /// a [`GosTuple`] field array. The tag picks which member of the
 /// `data` field is live.
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct GosVariantValue {
     /// Tag (`0` = i64, `1` = f64, `2` = bool, `3` = char,
     /// `4` = string, `5` = vec, `6` = variant, `7` = tuple,
@@ -275,11 +275,19 @@ pub struct GosCallback {
 /// The macro reads `Input` for parameter types and `Output` for
 /// the return type; the codegen emits the call with the same
 /// shapes determined from the binding's declared `Signature`.
+///
+/// `Output: Copy + Default` is required because:
+/// - `Default` produces the panic-fallback value the
+///   `register_module!` thunk returns when the binding body
+///   unwinds inside `std::panic::catch_unwind`.
+/// - `Copy` lets generic container impls (`Vec<T>`, `Option<T>`,
+///   etc.) write `T::Output` cells into a buffer for the wire
+///   shape without owning-move bookkeeping.
 pub trait BindingAbi: Sized {
     /// C-ABI shape used in argument position.
     type Input: Copy;
     /// C-ABI shape used in return position.
-    type Output;
+    type Output: Copy + Default;
 
     /// Picks the [`Type`] variant the codegen sees in the
     /// binding's advertised signature; used by the codegen to
@@ -1320,6 +1328,919 @@ unsafe fn read_gos_vec_u8(p: *const GosVec) -> Vec<u8> {
 // already have one (null ptr). The non-pointer outputs (i64, etc.)
 // also already have one. The new shapes here all return pointers
 // or `u64`, both `Default`. No additional code needed.
+
+// ---------------------------------------------------------------------
+// Phase 1 — expanded type vocabulary.
+//
+// Helpers + impls for the most-asked-for binding shapes the
+// pre-1.0 allowlist did not cover. See `~/dev/contexts/gos/rustergo.md`
+// §4.7 for the design and §6 for the file/line boundary.
+// ---------------------------------------------------------------------
+
+// --- variant payload tag constants -----------------------------------
+
+const VAR_TAG_I64: i32 = 0;
+const VAR_TAG_F64: i32 = 1;
+const VAR_TAG_BOOL: i32 = 2;
+const VAR_TAG_CHAR: i32 = 3;
+const VAR_TAG_STRING: i32 = 4;
+const VAR_TAG_VEC: i32 = 5;
+#[allow(dead_code, reason = "documents the GosVariantValue tag namespace")]
+const VAR_TAG_VARIANT: i32 = 6;
+#[allow(dead_code, reason = "documents the GosVariantValue tag namespace")]
+const VAR_TAG_TUPLE: i32 = 7;
+#[allow(dead_code, reason = "documents the GosVariantValue tag namespace")]
+const VAR_TAG_OPAQUE: i32 = 8;
+
+// --- variant-value pack / unpack primitives --------------------------
+
+unsafe fn variant_value_f64(v: f64) -> GosVariantValue {
+    GosVariantValue {
+        tag: VAR_TAG_F64,
+        data: GosVariantPayload { f64_: v },
+    }
+}
+
+unsafe fn variant_value_bool(v: bool) -> GosVariantValue {
+    GosVariantValue {
+        tag: VAR_TAG_BOOL,
+        data: GosVariantPayload { bool_: v },
+    }
+}
+
+unsafe fn variant_value_char(v: char) -> GosVariantValue {
+    GosVariantValue {
+        tag: VAR_TAG_CHAR,
+        data: GosVariantPayload { char_: v as u32 },
+    }
+}
+
+unsafe fn variant_value_string_owned(s: String) -> GosVariantValue {
+    GosVariantValue {
+        tag: VAR_TAG_STRING,
+        data: GosVariantPayload {
+            string: s.to_output(),
+        },
+    }
+}
+
+unsafe fn variant_value_vec(p: *mut GosVec) -> GosVariantValue {
+    GosVariantValue {
+        tag: VAR_TAG_VEC,
+        data: GosVariantPayload { vec: p },
+    }
+}
+
+unsafe fn variant_value_unit() -> GosVariantValue {
+    // `()` packs as an i64 zero; the consumer is expected to ignore
+    // the payload anyway (tag 0 with no semantic content).
+    GosVariantValue {
+        tag: VAR_TAG_I64,
+        data: GosVariantPayload { i64_: 0 },
+    }
+}
+
+// --- Option<T> impls (additions) -------------------------------------
+
+/// Helper: read a single-payload variant header into `(tag, payload)`.
+unsafe fn read_single_payload(p: *const GosVariant) -> Option<(i32, GosVariantValue)> {
+    if p.is_null() {
+        return None;
+    }
+    let v = unsafe { &*p };
+    if v.payload_len == 0 || v.payload.is_null() {
+        return None;
+    }
+    let payload = unsafe { *v.payload };
+    Some((v.tag, payload))
+}
+
+impl BindingAbi for Option<String> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Option(&Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return None,
+        };
+        if tag == 0 {
+            return None;
+        }
+        if payload.tag != VAR_TAG_STRING {
+            return None;
+        }
+        Some(unsafe { String::from_input(payload.data.string) })
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            None => make_variant(0, Vec::new()),
+            Some(s) => make_variant(1, vec![unsafe { variant_value_string_owned(s) }]),
+        }
+    }
+}
+
+impl BindingAbi for Option<bool> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Option(&Type::Bool);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return None,
+        };
+        if tag == 0 {
+            return None;
+        }
+        Some(unsafe { payload.data.bool_ })
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            None => make_variant(0, Vec::new()),
+            Some(b) => make_variant(1, vec![unsafe { variant_value_bool(b) }]),
+        }
+    }
+}
+
+impl BindingAbi for Option<f64> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Option(&Type::F64);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return None,
+        };
+        if tag == 0 {
+            return None;
+        }
+        Some(unsafe { payload.data.f64_ })
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            None => make_variant(0, Vec::new()),
+            Some(v) => make_variant(1, vec![unsafe { variant_value_f64(v) }]),
+        }
+    }
+}
+
+impl BindingAbi for Option<char> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Option(&Type::Char);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return None,
+        };
+        if tag == 0 {
+            return None;
+        }
+        char::from_u32(unsafe { payload.data.char_ })
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            None => make_variant(0, Vec::new()),
+            Some(c) => make_variant(1, vec![unsafe { variant_value_char(c) }]),
+        }
+    }
+}
+
+impl BindingAbi for Option<Vec<i64>> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Option(&Type::Vec(&Type::I64));
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return None,
+        };
+        if tag == 0 {
+            return None;
+        }
+        Some(unsafe { read_gos_vec_i64(payload.data.vec) })
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            None => make_variant(0, Vec::new()),
+            Some(v) => {
+                let inner = make_gos_vec(&v);
+                make_variant(1, vec![unsafe { variant_value_vec(inner) }])
+            }
+        }
+    }
+}
+
+impl BindingAbi for Option<Vec<String>> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Option(&Type::Vec(&Type::String));
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return None,
+        };
+        if tag == 0 {
+            return None;
+        }
+        Some(unsafe { read_gos_vec_strings(payload.data.vec) })
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            None => make_variant(0, Vec::new()),
+            Some(v) => {
+                let ptrs: Vec<*mut c_char> = v.into_iter().map(BindingAbi::to_output).collect();
+                let inner = make_gos_vec(&ptrs);
+                make_variant(1, vec![unsafe { variant_value_vec(inner) }])
+            }
+        }
+    }
+}
+
+// --- Result<T, String> impls (additions) -----------------------------
+
+impl BindingAbi for Result<String, String> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::String, &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(String::new()),
+        };
+        let s = unsafe { String::from_input(payload.data.string) };
+        if tag == 1 { Ok(s) } else { Err(s) }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(s) => make_variant(1, vec![unsafe { variant_value_string_owned(s) }]),
+            Err(s) => make_variant(0, vec![unsafe { variant_value_string_owned(s) }]),
+        }
+    }
+}
+
+impl BindingAbi for Result<bool, String> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::Bool, &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(String::new()),
+        };
+        if tag == 1 {
+            Ok(unsafe { payload.data.bool_ })
+        } else {
+            Err(unsafe { String::from_input(payload.data.string) })
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(b) => make_variant(1, vec![unsafe { variant_value_bool(b) }]),
+            Err(s) => make_variant(0, vec![unsafe { variant_value_string_owned(s) }]),
+        }
+    }
+}
+
+impl BindingAbi for Result<f64, String> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::F64, &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(String::new()),
+        };
+        if tag == 1 {
+            Ok(unsafe { payload.data.f64_ })
+        } else {
+            Err(unsafe { String::from_input(payload.data.string) })
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(v) => make_variant(1, vec![unsafe { variant_value_f64(v) }]),
+            Err(s) => make_variant(0, vec![unsafe { variant_value_string_owned(s) }]),
+        }
+    }
+}
+
+impl BindingAbi for Result<(), String> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::Unit, &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(String::new()),
+        };
+        if tag == 1 {
+            Ok(())
+        } else {
+            Err(unsafe { String::from_input(payload.data.string) })
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(()) => make_variant(1, vec![unsafe { variant_value_unit() }]),
+            Err(s) => make_variant(0, vec![unsafe { variant_value_string_owned(s) }]),
+        }
+    }
+}
+
+impl BindingAbi for Result<Vec<i64>, String> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::Vec(&Type::I64), &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(String::new()),
+        };
+        if tag == 1 {
+            Ok(unsafe { read_gos_vec_i64(payload.data.vec) })
+        } else {
+            Err(unsafe { String::from_input(payload.data.string) })
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(v) => {
+                let inner = make_gos_vec(&v);
+                make_variant(1, vec![unsafe { variant_value_vec(inner) }])
+            }
+            Err(s) => make_variant(0, vec![unsafe { variant_value_string_owned(s) }]),
+        }
+    }
+}
+
+impl BindingAbi for Result<Vec<String>, String> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::Vec(&Type::String), &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(String::new()),
+        };
+        if tag == 1 {
+            Ok(unsafe { read_gos_vec_strings(payload.data.vec) })
+        } else {
+            Err(unsafe { String::from_input(payload.data.string) })
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(v) => {
+                let ptrs: Vec<*mut c_char> = v.into_iter().map(BindingAbi::to_output).collect();
+                let inner = make_gos_vec(&ptrs);
+                make_variant(1, vec![unsafe { variant_value_vec(inner) }])
+            }
+            Err(s) => make_variant(0, vec![unsafe { variant_value_string_owned(s) }]),
+        }
+    }
+}
+
+// --- HashMap impls (additions) ---------------------------------------
+
+unsafe fn read_gos_map_keys_values_str_vec_i64(
+    p: *const BindingGosMap,
+) -> (Vec<String>, Vec<*const GosVec>) {
+    if p.is_null() {
+        return (Vec::new(), Vec::new());
+    }
+    let m = unsafe { &*p };
+    let keys = unsafe { read_gos_vec_strings(m.keys) };
+    // values is a GosVec of *const GosVec pointers
+    if m.values.is_null() {
+        return (keys, Vec::new());
+    }
+    let vh = unsafe { &*m.values };
+    let len = usize::try_from(vh.len.max(0)).unwrap_or(0);
+    if vh.ptr.is_null() || len == 0 {
+        return (keys, Vec::new());
+    }
+    let slice = unsafe { std::slice::from_raw_parts(vh.ptr.cast::<*const GosVec>(), len) };
+    (keys, slice.to_vec())
+}
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface; binding receives a freshly built HashMap."
+)]
+impl BindingAbi for std::collections::HashMap<String, Vec<i64>> {
+    type Input = *const BindingGosMap;
+    type Output = *mut BindingGosMap;
+    const TYPE: Type = Type::Map(&Type::String, &Type::Vec(&Type::I64));
+
+    unsafe fn from_input(input: *const BindingGosMap) -> Self {
+        let (keys, value_ptrs) = unsafe { read_gos_map_keys_values_str_vec_i64(input) };
+        let mut out = HashMap::with_capacity(keys.len());
+        for (k, vptr) in keys.into_iter().zip(value_ptrs) {
+            let v = unsafe { read_gos_vec_i64(vptr) };
+            out.entry(k).or_insert(v);
+        }
+        out
+    }
+
+    fn to_output(self) -> *mut BindingGosMap {
+        let mut key_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
+        let mut value_ptrs: Vec<*mut GosVec> = Vec::with_capacity(self.len());
+        for (k, v) in self {
+            key_ptrs.push(k.to_output());
+            value_ptrs.push(make_gos_vec(&v));
+        }
+        make_gos_map(&key_ptrs, &value_ptrs)
+    }
+}
+
+unsafe fn read_gos_map_keys_values_i64_str(p: *const BindingGosMap) -> (Vec<i64>, Vec<String>) {
+    if p.is_null() {
+        return (Vec::new(), Vec::new());
+    }
+    let m = unsafe { &*p };
+    let keys = unsafe { read_gos_vec_i64(m.keys) };
+    let values = unsafe { read_gos_vec_strings(m.values) };
+    (keys, values)
+}
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface; binding receives a freshly built HashMap."
+)]
+impl BindingAbi for std::collections::HashMap<i64, String> {
+    type Input = *const BindingGosMap;
+    type Output = *mut BindingGosMap;
+    const TYPE: Type = Type::Map(&Type::I64, &Type::String);
+
+    unsafe fn from_input(input: *const BindingGosMap) -> Self {
+        let (keys, values) = unsafe { read_gos_map_keys_values_i64_str(input) };
+        let mut out = HashMap::with_capacity(keys.len());
+        for (k, v) in keys.into_iter().zip(values) {
+            out.entry(k).or_insert(v);
+        }
+        out
+    }
+
+    fn to_output(self) -> *mut BindingGosMap {
+        let mut keys: Vec<i64> = Vec::with_capacity(self.len());
+        let mut val_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
+        for (k, v) in self {
+            keys.push(k);
+            val_ptrs.push(v.to_output());
+        }
+        make_gos_map(&keys, &val_ptrs)
+    }
+}
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface; binding receives a freshly built HashMap."
+)]
+impl BindingAbi for std::collections::HashMap<String, bool> {
+    type Input = *const BindingGosMap;
+    type Output = *mut BindingGosMap;
+    const TYPE: Type = Type::Map(&Type::String, &Type::Bool);
+
+    unsafe fn from_input(input: *const BindingGosMap) -> Self {
+        if input.is_null() {
+            return HashMap::new();
+        }
+        let m = unsafe { &*input };
+        let keys = unsafe { read_gos_vec_strings(m.keys) };
+        let values = unsafe { read_gos_vec_bools(m.values) };
+        let mut out = HashMap::with_capacity(keys.len());
+        for (k, v) in keys.into_iter().zip(values) {
+            out.entry(k).or_insert(v);
+        }
+        out
+    }
+
+    fn to_output(self) -> *mut BindingGosMap {
+        let mut key_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
+        let mut values: Vec<u8> = Vec::with_capacity(self.len());
+        for (k, v) in self {
+            key_ptrs.push(k.to_output());
+            values.push(u8::from(v));
+        }
+        make_gos_map(&key_ptrs, &values)
+    }
+}
+
+#[allow(
+    clippy::implicit_hasher,
+    reason = "ABI surface; binding receives a freshly built HashMap."
+)]
+impl BindingAbi for std::collections::HashMap<String, f64> {
+    type Input = *const BindingGosMap;
+    type Output = *mut BindingGosMap;
+    const TYPE: Type = Type::Map(&Type::String, &Type::F64);
+
+    unsafe fn from_input(input: *const BindingGosMap) -> Self {
+        if input.is_null() {
+            return HashMap::new();
+        }
+        let m = unsafe { &*input };
+        let keys = unsafe { read_gos_vec_strings(m.keys) };
+        let values = unsafe { read_gos_vec_f64(m.values) };
+        let mut out = HashMap::with_capacity(keys.len());
+        for (k, v) in keys.into_iter().zip(values) {
+            out.entry(k).or_insert(v);
+        }
+        out
+    }
+
+    fn to_output(self) -> *mut BindingGosMap {
+        let mut key_ptrs: Vec<*mut c_char> = Vec::with_capacity(self.len());
+        let mut values: Vec<f64> = Vec::with_capacity(self.len());
+        for (k, v) in self {
+            key_ptrs.push(k.to_output());
+            values.push(v);
+        }
+        make_gos_map(&key_ptrs, &values)
+    }
+}
+
+// --- Tuple impls -----------------------------------------------------
+//
+// Tuples lower to `GosTuple { len, fields: *mut GosVariantValue }`.
+// Each field's type tag picks the live `GosVariantPayload` member.
+// Supported field types per element: i64, f64, bool, char, String.
+// Nested aggregates inside a tuple field go via `Type::Tuple/Vec/etc.`
+// — bindings author the explicit `BindingAbi` for the outer tuple
+// shape.
+
+fn make_gos_tuple(fields: Vec<GosVariantValue>) -> *mut GosTuple {
+    let len = i32::try_from(fields.len()).unwrap_or(0);
+    let fields_ptr: *mut GosVariantValue = if fields.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        let bytes = std::mem::size_of_val(fields.as_slice());
+        let buf = arena_alloc(bytes).cast::<GosVariantValue>();
+        if !buf.is_null() {
+            // SAFETY: arena buffer is `bytes` long, fresh, and
+            // exclusively ours; payload slice is non-overlapping.
+            unsafe {
+                std::ptr::copy_nonoverlapping(fields.as_ptr(), buf, fields.len());
+            }
+        }
+        buf
+    };
+    arena_box(GosTuple {
+        len,
+        fields: fields_ptr,
+    })
+}
+
+/// Reads the GosTuple's payload buffer into a Vec of variant values.
+unsafe fn read_gos_tuple(p: *const GosTuple) -> Vec<GosVariantValue> {
+    if p.is_null() {
+        return Vec::new();
+    }
+    let t = unsafe { &*p };
+    let len = usize::try_from(t.len.max(0)).unwrap_or(0);
+    if t.fields.is_null() || len == 0 {
+        return Vec::new();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(t.fields, len) };
+    slice.to_vec()
+}
+
+/// Materialise a single tuple element from a `GosVariantValue`.
+/// Dispatches on the value's tag; returns `Default::default()` if
+/// the wire layout disagrees with the expected type.
+unsafe fn unpack_i64(v: GosVariantValue) -> i64 {
+    if v.tag == VAR_TAG_I64 {
+        unsafe { v.data.i64_ }
+    } else {
+        0
+    }
+}
+unsafe fn unpack_f64(v: GosVariantValue) -> f64 {
+    if v.tag == VAR_TAG_F64 {
+        unsafe { v.data.f64_ }
+    } else {
+        0.0
+    }
+}
+unsafe fn unpack_bool(v: GosVariantValue) -> bool {
+    if v.tag == VAR_TAG_BOOL {
+        unsafe { v.data.bool_ }
+    } else {
+        false
+    }
+}
+unsafe fn unpack_string(v: GosVariantValue) -> String {
+    if v.tag == VAR_TAG_STRING {
+        unsafe { String::from_input(v.data.string) }
+    } else {
+        String::new()
+    }
+}
+
+impl BindingAbi for (i64, String) {
+    type Input = *const GosTuple;
+    type Output = *mut GosTuple;
+    const TYPE: Type = Type::Tuple(&[Type::I64, Type::String]);
+
+    unsafe fn from_input(input: *const GosTuple) -> Self {
+        let fields = unsafe { read_gos_tuple(input) };
+        let mut iter = fields.into_iter();
+        let a = iter.next().map_or(0, |v| unsafe { unpack_i64(v) });
+        let b = iter
+            .next()
+            .map_or_else(String::new, |v| unsafe { unpack_string(v) });
+        (a, b)
+    }
+
+    fn to_output(self) -> *mut GosTuple {
+        let (a, b) = self;
+        make_gos_tuple(vec![unsafe { variant_value_i64(a) }, unsafe {
+            variant_value_string_owned(b)
+        }])
+    }
+}
+
+impl BindingAbi for (String, i64) {
+    type Input = *const GosTuple;
+    type Output = *mut GosTuple;
+    const TYPE: Type = Type::Tuple(&[Type::String, Type::I64]);
+
+    unsafe fn from_input(input: *const GosTuple) -> Self {
+        let fields = unsafe { read_gos_tuple(input) };
+        let mut iter = fields.into_iter();
+        let a = iter
+            .next()
+            .map_or_else(String::new, |v| unsafe { unpack_string(v) });
+        let b = iter.next().map_or(0, |v| unsafe { unpack_i64(v) });
+        (a, b)
+    }
+
+    fn to_output(self) -> *mut GosTuple {
+        let (a, b) = self;
+        make_gos_tuple(vec![unsafe { variant_value_string_owned(a) }, unsafe {
+            variant_value_i64(b)
+        }])
+    }
+}
+
+impl BindingAbi for (i64, i64) {
+    type Input = *const GosTuple;
+    type Output = *mut GosTuple;
+    const TYPE: Type = Type::Tuple(&[Type::I64, Type::I64]);
+
+    unsafe fn from_input(input: *const GosTuple) -> Self {
+        let fields = unsafe { read_gos_tuple(input) };
+        let mut iter = fields.into_iter();
+        let a = iter.next().map_or(0, |v| unsafe { unpack_i64(v) });
+        let b = iter.next().map_or(0, |v| unsafe { unpack_i64(v) });
+        (a, b)
+    }
+
+    fn to_output(self) -> *mut GosTuple {
+        let (a, b) = self;
+        make_gos_tuple(vec![unsafe { variant_value_i64(a) }, unsafe {
+            variant_value_i64(b)
+        }])
+    }
+}
+
+impl BindingAbi for (f64, f64) {
+    type Input = *const GosTuple;
+    type Output = *mut GosTuple;
+    const TYPE: Type = Type::Tuple(&[Type::F64, Type::F64]);
+
+    unsafe fn from_input(input: *const GosTuple) -> Self {
+        let fields = unsafe { read_gos_tuple(input) };
+        let mut iter = fields.into_iter();
+        let a = iter.next().map_or(0.0, |v| unsafe { unpack_f64(v) });
+        let b = iter.next().map_or(0.0, |v| unsafe { unpack_f64(v) });
+        (a, b)
+    }
+
+    fn to_output(self) -> *mut GosTuple {
+        let (a, b) = self;
+        make_gos_tuple(vec![unsafe { variant_value_f64(a) }, unsafe {
+            variant_value_f64(b)
+        }])
+    }
+}
+
+impl BindingAbi for (String, String) {
+    type Input = *const GosTuple;
+    type Output = *mut GosTuple;
+    const TYPE: Type = Type::Tuple(&[Type::String, Type::String]);
+
+    unsafe fn from_input(input: *const GosTuple) -> Self {
+        let fields = unsafe { read_gos_tuple(input) };
+        let mut iter = fields.into_iter();
+        let a = iter
+            .next()
+            .map_or_else(String::new, |v| unsafe { unpack_string(v) });
+        let b = iter
+            .next()
+            .map_or_else(String::new, |v| unsafe { unpack_string(v) });
+        (a, b)
+    }
+
+    fn to_output(self) -> *mut GosTuple {
+        let (a, b) = self;
+        make_gos_tuple(vec![unsafe { variant_value_string_owned(a) }, unsafe {
+            variant_value_string_owned(b)
+        }])
+    }
+}
+
+// --- Result<T, GosError> impls (Phase 2) -----------------------------
+//
+// Wire-equivalent to `Result<T, String>` — the rendered message
+// is the Err payload. Cause chains are flattened at the boundary
+// by `GosError::render()`. Bindings get `?`-propagation with rich
+// causes (interp tier preserves the full chain via the Variant
+// payload); the compiled tier sees the rendered string.
+
+impl BindingAbi for Result<i64, crate::error::GosError> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::I64, &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(crate::error::GosError::new("")),
+        };
+        if tag == 1 {
+            Ok(unsafe { payload.data.i64_ })
+        } else {
+            let msg = unsafe { String::from_input(payload.data.string) };
+            Err(crate::error::GosError::new(msg))
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(v) => make_variant(1, vec![unsafe { variant_value_i64(v) }]),
+            Err(e) => make_variant(0, vec![unsafe { variant_value_string_owned(e.render()) }]),
+        }
+    }
+}
+
+impl BindingAbi for Result<String, crate::error::GosError> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::String, &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(crate::error::GosError::new("")),
+        };
+        let s = unsafe { String::from_input(payload.data.string) };
+        if tag == 1 {
+            Ok(s)
+        } else {
+            Err(crate::error::GosError::new(s))
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(s) => make_variant(1, vec![unsafe { variant_value_string_owned(s) }]),
+            Err(e) => make_variant(0, vec![unsafe { variant_value_string_owned(e.render()) }]),
+        }
+    }
+}
+
+impl BindingAbi for Result<(), crate::error::GosError> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::Unit, &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(crate::error::GosError::new("")),
+        };
+        if tag == 1 {
+            Ok(())
+        } else {
+            let msg = unsafe { String::from_input(payload.data.string) };
+            Err(crate::error::GosError::new(msg))
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(()) => make_variant(1, vec![unsafe { variant_value_unit() }]),
+            Err(e) => make_variant(0, vec![unsafe { variant_value_string_owned(e.render()) }]),
+        }
+    }
+}
+
+impl BindingAbi for Result<bool, crate::error::GosError> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::Bool, &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(crate::error::GosError::new("")),
+        };
+        if tag == 1 {
+            Ok(unsafe { payload.data.bool_ })
+        } else {
+            let msg = unsafe { String::from_input(payload.data.string) };
+            Err(crate::error::GosError::new(msg))
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(b) => make_variant(1, vec![unsafe { variant_value_bool(b) }]),
+            Err(e) => make_variant(0, vec![unsafe { variant_value_string_owned(e.render()) }]),
+        }
+    }
+}
+
+impl BindingAbi for Result<Vec<i64>, crate::error::GosError> {
+    type Input = *const GosVariant;
+    type Output = *mut GosVariant;
+    const TYPE: Type = Type::Result(&Type::Vec(&Type::I64), &Type::String);
+
+    unsafe fn from_input(input: *const GosVariant) -> Self {
+        let (tag, payload) = match unsafe { read_single_payload(input) } {
+            Some(x) => x,
+            None => return Err(crate::error::GosError::new("")),
+        };
+        if tag == 1 {
+            Ok(unsafe { read_gos_vec_i64(payload.data.vec) })
+        } else {
+            let msg = unsafe { String::from_input(payload.data.string) };
+            Err(crate::error::GosError::new(msg))
+        }
+    }
+
+    fn to_output(self) -> *mut GosVariant {
+        match self {
+            Ok(v) => {
+                let inner = make_gos_vec(&v);
+                make_variant(1, vec![unsafe { variant_value_vec(inner) }])
+            }
+            Err(e) => make_variant(0, vec![unsafe { variant_value_string_owned(e.render()) }]),
+        }
+    }
+}
+
+impl BindingAbi for (i64, String, bool) {
+    type Input = *const GosTuple;
+    type Output = *mut GosTuple;
+    const TYPE: Type = Type::Tuple(&[Type::I64, Type::String, Type::Bool]);
+
+    unsafe fn from_input(input: *const GosTuple) -> Self {
+        let fields = unsafe { read_gos_tuple(input) };
+        let mut iter = fields.into_iter();
+        let a = iter.next().map_or(0, |v| unsafe { unpack_i64(v) });
+        let b = iter
+            .next()
+            .map_or_else(String::new, |v| unsafe { unpack_string(v) });
+        let c = iter.next().is_some_and(|v| unsafe { unpack_bool(v) });
+        (a, b, c)
+    }
+
+    fn to_output(self) -> *mut GosTuple {
+        let (a, b, c) = self;
+        make_gos_tuple(vec![
+            unsafe { variant_value_i64(a) },
+            unsafe { variant_value_string_owned(b) },
+            unsafe { variant_value_bool(c) },
+        ])
+    }
+}
 
 #[cfg(test)]
 mod tests {

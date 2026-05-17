@@ -1,5 +1,7 @@
 # `std::errors`
 
+Status: shipped
+
 Error construction, wrapping, and chain traversal.
 
 ## Public items

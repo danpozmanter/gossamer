@@ -77,6 +77,13 @@ pin-project-lite = "0.2"
 # UUID generation (`std::uuid` compiled-tier helpers).
 uuid = { version = "1", features = ["v4", "v7"] }
 
+# Unicode tables (`std::unicode` compiled-tier helpers). Same
+# crates as gossamer-std so the property data is single-sourced
+# (Unicode 16 via unicode-rs).
+unicode-properties = { workspace = true }
+unicode-normalization = { workspace = true }
+unicode-segmentation = { workspace = true }
+
 # User-facing TOML (`std::encoding::toml` compiled-tier helpers).
 toml = "0.8"
 

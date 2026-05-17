@@ -470,11 +470,50 @@ impl<'a> Builder<'a> {
                     substs,
                 })
             }
+            // HashMap::get returns Option<V>. Prefer the HIR call type
+            // when it's already an Adt (proper Option<V> wrapper from
+            // typeck); otherwise synthesise Option<V> from the receiver's
+            // HashMap value Ty. The pattern lowerer reads `adt_generic_at`
+            // to recover V for the Some-binding's payload type, so
+            // struct-valued maps bind `p: &Struct` instead of `i64` and
+            // `p.field` lowers as a Ref<Struct> field projection.
+            "gos_rt_map_get_i64_opt" | "gos_rt_map_get_str_opt" => {
+                use gossamer_types::TyKind;
+                let ty_kind = self.tcx.kind_of(ty).clone();
+                if matches!(ty_kind, TyKind::Adt { .. }) {
+                    ty
+                } else {
+                    let mut flat = receiver_ty;
+                    while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                        flat = *inner;
+                    }
+                    let value_ty = if let TyKind::HashMap { value, .. } = self.tcx.kind_of(flat) {
+                        *value
+                    } else {
+                        self.tcx.int_ty(gossamer_types::IntTy::I64)
+                    };
+                    let substs = gossamer_types::Substs::from_types([value_ty]);
+                    self.tcx.intern(TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                        substs,
+                    })
+                }
+            }
             // `path::ext` returns `Option<String>`.
             "gos_rt_path_ext" => self.option_string_adt_ty(),
-            "gos_rt_vec_slice_result" | "gos_rt_vec_insert_safe" => {
+            "gos_rt_vec_slice_result" | "gos_rt_vec_insert_safe" | "gos_rt_intarr_slice_result" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(i));
+                let e = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([v, e]);
+                self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                })
+            }
+            "gos_rt_floatarr_slice_result" => {
+                let f = self.tcx.float_ty(gossamer_types::FloatTy::F64);
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(f));
                 let e = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([v, e]);
                 self.tcx.intern(gossamer_types::TyKind::Adt {

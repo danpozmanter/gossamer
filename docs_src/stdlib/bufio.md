@@ -1,5 +1,7 @@
 # `std::bufio`
 
+Status: shipped
+
 Buffered readers, writers, and line scanners.
 
 ## Public items

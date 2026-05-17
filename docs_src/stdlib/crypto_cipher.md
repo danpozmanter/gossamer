@@ -1,5 +1,7 @@
 # `std::crypto::cipher`
 
+Status: shipped
+
 AES key handling + CBC / CTR block-cipher modes.
 
 ## Public items

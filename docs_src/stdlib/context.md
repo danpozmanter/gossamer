@@ -1,5 +1,7 @@
 # `std::context`
 
+Status: shipped
+
 Request-scoped cancellation, deadlines, and timeouts.
 
 ## Public items

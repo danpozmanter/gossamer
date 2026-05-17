@@ -865,7 +865,13 @@ impl<T: Task> Task for GidStamped<T> {
     fn step(&mut self) -> Step {
         crate::race::set_current_gid(self.gid.as_u32());
         crate::sched_global::set_current_gid(self.gid);
+        // Bind the active goroutine to this OS thread so the
+        // call-stack-push helpers attribute frames to the right
+        // entry. Cleared after the step so unrelated work the
+        // worker picks up between tasks doesn't reuse the gid.
+        crate::sigquit::set_active_gid(self.gid.as_u32());
         let result = self.inner.step();
+        crate::sigquit::set_active_gid(u32::MAX);
         crate::sched_global::clear_current_gid();
         crate::race::set_current_gid(0);
         result

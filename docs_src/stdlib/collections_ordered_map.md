@@ -1,5 +1,7 @@
 # `std::collections::ordered_map`
 
+Status: shipped
+
 Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator.
 
 ## Public items

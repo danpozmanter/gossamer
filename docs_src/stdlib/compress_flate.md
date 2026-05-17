@@ -1,5 +1,7 @@
 # `std::compress::flate`
 
+Status: shipped
+
 Raw DEFLATE (RFC 1951) encoder / decoder.
 
 ## Public items

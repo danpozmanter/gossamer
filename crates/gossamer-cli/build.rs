@@ -69,6 +69,23 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // when `GOSSAMER_WRITE_BARRIER=1` is set; production codegen
     // does not currently emit calls.
     "gos_rt_write_barrier_ptr",
+    // Extended exec surface (kill_group / pipeline_run / signal /
+    // wait_timeout). Reachable from Rust callers (`std::os::exec`
+    // builder); the user-facing language dispatch has not been
+    // wired through MIR yet, so the codegen tables don't reference
+    // these symbols even though they exist in the runtime.
+    "gos_rt_exec_kill_group",
+    "gos_rt_exec_pipeline_run",
+    "gos_rt_exec_signal",
+    "gos_rt_exec_wait_timeout",
+    // Branch-coverage hooks. Codegen for `gos test --coverage` is
+    // staged but not yet emitting bump/record calls — the runtime
+    // surface ships ahead so the harness can install the global
+    // table at startup. Wired through codegen in a follow-up patch.
+    "gos_rt_cov_bump",
+    "gos_rt_cov_record",
+    "gos_rt_cov_reset",
+    "gos_rt_cov_set_enabled",
 ];
 
 fn main() {

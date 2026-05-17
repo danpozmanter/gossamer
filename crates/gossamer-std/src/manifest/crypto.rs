@@ -327,3 +327,35 @@ pub const CRYPTO_CIPHER: StdModule = StdModule {
         },
     ],
 };
+
+pub const CRYPTO_PASSWORD: StdModule = StdModule {
+    path: "std::crypto::password",
+    summary: "Argon2id password hashing facade: PHC-string hash / verify / re-hash policy.",
+    items: &[
+        StdItem {
+            name: "hash",
+            kind: StdItemKind::Function,
+            doc: "Argon2id hash of plaintext; returns a PHC-format string for storage.",
+        },
+        StdItem {
+            name: "verify",
+            kind: StdItemKind::Function,
+            doc: "Constant-time verify of plaintext against a stored PHC string.",
+        },
+        StdItem {
+            name: "needs_rehash",
+            kind: StdItemKind::Function,
+            doc: "True iff the stored PHC's parameters are below the current defaults.",
+        },
+        StdItem {
+            name: "current_algorithm",
+            kind: StdItemKind::Function,
+            doc: "Active password-hash algorithm name (currently `argon2id`).",
+        },
+        StdItem {
+            name: "current_params",
+            kind: StdItemKind::Function,
+            doc: "Active parameters: (m_cost_kib, t_cost_iters, p_cost_parallelism).",
+        },
+    ],
+};

@@ -1,5 +1,7 @@
 # `std::testing`
 
+Status: shipped
+
 Assertions and sub-test harness helpers.
 
 ## Public items

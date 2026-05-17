@@ -1,5 +1,7 @@
 # `std::hash::fnv`
 
+Status: shipped
+
 FNV-1a non-cryptographic hash (32-bit, 64-bit).
 
 ## Public items

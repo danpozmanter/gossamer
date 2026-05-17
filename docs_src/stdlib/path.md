@@ -1,5 +1,7 @@
 # `std::path`
 
+Status: shipped
+
 POSIX-style path manipulation.
 
 ## Public items

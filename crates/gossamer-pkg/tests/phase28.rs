@@ -1,4 +1,4 @@
-//!: cache, fetcher, vendor.
+//! Cache, fetcher, vendor integration tests.
 
 use std::collections::BTreeMap;
 
@@ -62,38 +62,38 @@ fn fetcher_caches_path_sources_from_disk() {
 }
 
 #[test]
-fn fetcher_records_synthetic_payloads_for_git_and_registry() {
-    let entries = vec![
-        synth_resolved(
-            "example.com/git",
-            ResolvedSource::Git {
-                url: "https://git/x.git".to_string(),
-                reference: "v1.0.0".to_string(),
-            },
-        ),
-        synth_resolved(
-            "example.com/reg",
-            ResolvedSource::Registry(Version::new(1, 2, 3)),
-        ),
-    ];
+fn registry_fetch_without_catalogue_entry_reports_unsupported() {
+    // 0.8.0 dropped the synthetic-source fallback for the
+    // registry path. A registry fetch with no catalogue entry must
+    // surface a clear error, not silently invent a stub tree.
+    let resolved = synth_resolved(
+        "example.com/reg",
+        ResolvedSource::Registry(Version::new(1, 2, 3)),
+    );
     let mut cache = Cache::new();
-    let fetched = Fetcher::default().fetch_all(&entries, &mut cache).unwrap();
-    assert_eq!(fetched.len(), 2);
-    assert_ne!(fetched[0].source.digest, fetched[1].source.digest);
-    assert_eq!(cache.len(), 2);
+    let err = Fetcher::default()
+        .fetch_all(&[resolved], &mut cache)
+        .unwrap_err();
+    assert!(matches!(err, CacheError::Unsupported(_)));
 }
 
 #[test]
 fn offline_mode_refuses_unseen_entries() {
+    // Use a tarball pin (whose transport is empty) — its initial
+    // fetch fails, then offline mode reports the entry-absent error.
     let resolved = synth_resolved(
-        "example.com/git",
-        ResolvedSource::Git {
-            url: "https://git/x.git".to_string(),
-            reference: "main".to_string(),
+        "example.com/tar",
+        ResolvedSource::Tarball {
+            url: "https://example.com/missing.tar".to_string(),
+            sha256: "0".repeat(64),
         },
     );
     let mut cache = Cache::new();
-    let result = Fetcher::new(FetchOptions { offline: true }).fetch_all(&[resolved], &mut cache);
+    let result = Fetcher::new(FetchOptions {
+        offline: true,
+        ..FetchOptions::default()
+    })
+    .fetch_all(&[resolved], &mut cache);
     assert!(matches!(result, Err(CacheError::Unsupported(_))));
 }
 
@@ -118,9 +118,16 @@ fn tarball_without_transport_entry_reports_transport_error() {
 
 #[test]
 fn vendor_writes_per_project_subdirs() {
+    // Build a Path-source so the fetch is filesystem-only and
+    // produces a real cached tree to vendor out.
+    let mut tmp = std::env::temp_dir();
+    tmp.push(format!("gossamer-vendor-src-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(tmp.join("src/main.gos"), b"fn main() {}\n").unwrap();
     let entries = vec![synth_resolved(
         "example.com/widget",
-        ResolvedSource::Registry(Version::new(0, 1, 0)),
+        ResolvedSource::Path(tmp.to_string_lossy().into_owned()),
     )];
     let mut cache = Cache::new();
     let fetched = Fetcher::default().fetch_all(&entries, &mut cache).unwrap();
@@ -133,4 +140,5 @@ fn vendor_writes_per_project_subdirs() {
     let project_dir = dest.join("example.com__widget");
     assert!(project_dir.join("src/main.gos").exists());
     let _ = std::fs::remove_dir_all(&dest);
+    let _ = std::fs::remove_dir_all(&tmp);
 }

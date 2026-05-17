@@ -7,11 +7,13 @@
 
 pub(crate) mod attr_walk;
 pub(crate) mod bench;
+pub(crate) mod bindgen;
 pub(crate) mod build;
 pub(crate) mod check;
 pub(crate) mod clean;
 pub(crate) mod env_cmd;
 pub(crate) mod explain;
+pub mod feature_status;
 pub(crate) mod fmt_cmd;
 pub(crate) mod lint_cmd;
 pub(crate) mod lsp_cmd;

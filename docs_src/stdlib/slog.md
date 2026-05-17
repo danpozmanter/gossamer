@@ -1,5 +1,7 @@
 # `std::slog`
 
+Status: shipped
+
 Structured, levelled logging.
 
 ## Public items

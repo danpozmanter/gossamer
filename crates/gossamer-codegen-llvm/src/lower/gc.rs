@@ -160,4 +160,26 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  {frame} = load i64, ptr {slot}").unwrap();
         writeln!(self.out, "  call void @gos_rt_gc_root_restore(i64 {frame})").unwrap();
     }
+
+    /// Emits `gos_rt_stack_push(function_name, "", 0)` at function
+    /// entry so panic traces and SIGQUIT dumps carry the active
+    /// goroutine's call chain. Cheap (one FFI call); matches the
+    /// matching `emit_stack_pop` in `Terminator::Return`.
+    pub(crate) fn emit_stack_push_prologue(&mut self) {
+        declare_rt(&mut self.runtime_refs, "gos_rt_stack_push");
+        let (name_global, _) = self.strings.borrow_mut().intern(&self.body.name);
+        let (empty_global, _) = self.strings.borrow_mut().intern("");
+        writeln!(
+            self.out,
+            "  call void @gos_rt_stack_push(ptr {name_global}, ptr {empty_global}, i32 0)"
+        )
+        .unwrap();
+    }
+
+    /// Emits `gos_rt_stack_pop()` immediately before the `ret`
+    /// in `Terminator::Return`.
+    pub(crate) fn emit_stack_pop(&mut self) {
+        declare_rt(&mut self.runtime_refs, "gos_rt_stack_pop");
+        writeln!(self.out, "  call void @gos_rt_stack_pop()").unwrap();
+    }
 }

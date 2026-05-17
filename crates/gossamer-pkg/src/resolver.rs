@@ -1,26 +1,54 @@
-//! Minimum-version-selection (MVS) resolver per SPEC §16.4.
-//! Each project declares a caret range for every dependency. The
-//! resolver collects every consumer's range for each project id and
-//! picks the smallest version that satisfies them all. This matches
-//! Go modules' MVS behaviour: predictable, no surprise upgrades, no
-//! search.
+//! Dependency resolver.
+//!
+//! For each `(id, range)` consumer requirement, the resolver picks
+//! the *highest* registry version that satisfies every range the
+//! graph imposes. Two consumers requiring incompatible ranges (no
+//! version satisfies their intersection) raise
+//! [`ResolveError::IncompatibleVersions`]. Inline (git / path /
+//! tarball) pins pass through unchanged; two inline pins for the
+//! same id that disagree raise [`ResolveError::ConflictingPins`].
+//!
+//! The resolver is transitive — after picking a concrete version for
+//! a direct dep, the dep's own `project.toml` (read out of the
+//! cached source tree) is parsed and its dependencies are pushed
+//! onto the work queue. A visited set keyed on `(id, source-pin)`
+//! breaks cycles.
 
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use thiserror::Error;
 
+use crate::cache::{Cache, CachedSource};
 use crate::id::ProjectId;
 use crate::manifest::{DependencySpec, InlineDependency, Manifest};
+use crate::transport::{Transport, TransportError};
 use crate::version::{CaretRange, Version};
 
+/// One published version of a project as advertised by the registry
+/// index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogueEntry {
+    /// Concrete version.
+    pub version: Version,
+    /// Whether this version is yanked.
+    pub yanked: bool,
+    /// Optional download URL — required for tarball fetches.
+    pub download_url: Option<String>,
+    /// SHA-256 of the on-the-wire tarball, if known.
+    pub tarball_sha256: Option<String>,
+    /// Optional yank reason for surfacing to users.
+    pub yank_reason: Option<String>,
+}
+
 /// Catalogue of every version known for a project. Tests inject a
-/// catalogue directly; the production resolver populates it from the
-/// fetcher.
+/// catalogue directly; the production resolver populates it from
+/// [`VersionCatalogue::from_registry`].
 #[derive(Debug, Clone, Default)]
 pub struct VersionCatalogue {
-    entries: BTreeMap<String, Vec<Version>>,
+    entries: BTreeMap<String, Vec<CatalogueEntry>>,
 }
 
 impl VersionCatalogue {
@@ -30,21 +58,241 @@ impl VersionCatalogue {
         Self::default()
     }
 
-    /// Records that `id` is available at `version`.
+    /// Records that `id` is available at `version`. Convenience for
+    /// tests; production fetches go through [`Self::add_entry`].
     pub fn add(&mut self, id: &ProjectId, version: Version) {
+        self.add_entry(
+            id,
+            CatalogueEntry {
+                version,
+                yanked: false,
+                download_url: None,
+                tarball_sha256: None,
+                yank_reason: None,
+            },
+        );
+    }
+
+    /// Records a full `CatalogueEntry`.
+    pub fn add_entry(&mut self, id: &ProjectId, entry: CatalogueEntry) {
         let bucket = self.entries.entry(id.as_str().to_string()).or_default();
-        if !bucket.contains(&version) {
-            bucket.push(version);
-            bucket.sort();
+        if !bucket.iter().any(|e| e.version == entry.version) {
+            bucket.push(entry);
+            bucket.sort_by_key(|e| e.version);
         }
     }
 
     /// Returns every recorded version for `id`.
     #[must_use]
-    pub fn versions(&self, id: &ProjectId) -> &[Version] {
+    pub fn versions(&self, id: &ProjectId) -> Vec<Version> {
         self.entries
             .get(id.as_str())
-            .map_or(&[] as &[Version], |v| v.as_slice())
+            .map(|v| v.iter().map(|e| e.version).collect())
+            .unwrap_or_default()
+    }
+
+    /// Returns every recorded entry for `id`.
+    #[must_use]
+    pub fn entries(&self, id: &ProjectId) -> &[CatalogueEntry] {
+        self.entries
+            .get(id.as_str())
+            .map_or(&[] as &[CatalogueEntry], Vec::as_slice)
+    }
+
+    /// Returns the catalogue entry for `id @ version`, if known.
+    #[must_use]
+    pub fn entry(&self, id: &ProjectId, version: Version) -> Option<&CatalogueEntry> {
+        self.entries(id).iter().find(|e| e.version == version)
+    }
+
+    /// Fetches the registry index for `id` from `registry_url` via
+    /// `transport` and folds every advertised version into the
+    /// catalogue. The index document lives at
+    /// `<registry_url>/v1/index/<id>.json`. Returns `Ok(false)` when
+    /// no entries were added and `Ok(true)` otherwise.
+    pub fn load_from_registry(
+        &mut self,
+        transport: &dyn Transport,
+        registry_url: &str,
+        id: &ProjectId,
+    ) -> Result<bool, TransportError> {
+        let url = format!(
+            "{base}/v1/index/{id}.json",
+            base = registry_url.trim_end_matches('/'),
+            id = id.as_str(),
+        );
+        let body = transport.get(&url)?;
+        let added = parse_index_json(&body, id, self)
+            .map_err(|e| TransportError::Io(format!("index parse: {e}")))?;
+        Ok(added)
+    }
+
+    /// Constructs a catalogue pre-populated by walking every dep in
+    /// `ids` via `transport` against `registry_url`.
+    pub fn from_registry(
+        transport: &dyn Transport,
+        registry_url: &str,
+        ids: &[ProjectId],
+    ) -> Result<Self, TransportError> {
+        let mut out = Self::new();
+        for id in ids {
+            let _ = out.load_from_registry(transport, registry_url, id)?;
+        }
+        Ok(out)
+    }
+}
+
+fn parse_index_json(
+    bytes: &[u8],
+    id: &ProjectId,
+    catalogue: &mut VersionCatalogue,
+) -> Result<bool, String> {
+    let text = std::str::from_utf8(bytes).map_err(|e| format!("utf-8: {e}"))?;
+    let versions_array = extract_array(text, "versions").ok_or("missing `versions` array")?;
+    let mut added = false;
+    for object_text in iter_objects(versions_array) {
+        let version_text = extract_string(object_text, "version").ok_or("missing `version`")?;
+        let version = Version::parse(&version_text).map_err(|e| format!("version: {e}"))?;
+        let yanked = extract_bool(object_text, "yanked").unwrap_or(false);
+        let download_url = extract_string(object_text, "url");
+        let tarball_sha256 = extract_string(object_text, "sha256");
+        let yank_reason = extract_string(object_text, "yank_reason");
+        catalogue.add_entry(
+            id,
+            CatalogueEntry {
+                version,
+                yanked,
+                download_url,
+                tarball_sha256,
+                yank_reason,
+            },
+        );
+        added = true;
+    }
+    Ok(added)
+}
+
+fn extract_array<'a>(text: &'a str, field: &str) -> Option<&'a str> {
+    let needle = format!("\"{field}\"");
+    let start = text.find(&needle)?;
+    let after = &text[start + needle.len()..];
+    let bracket = after.find('[')?;
+    let array_start = start + needle.len() + bracket;
+    let bytes = text.as_bytes();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escape = false;
+    let mut idx = array_start;
+    while idx < bytes.len() {
+        let b = bytes[idx];
+        if in_string {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+        } else {
+            match b {
+                b'"' => in_string = true,
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&text[array_start + 1..idx]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        idx += 1;
+    }
+    None
+}
+
+fn iter_objects(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut out: Vec<&str> = Vec::new();
+    let mut depth = 0i32;
+    let mut start: Option<usize> = None;
+    let mut in_string = false;
+    let mut escape = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if in_string {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                if depth == 0
+                    && let Some(s) = start.take()
+                {
+                    out.push(&text[s..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn extract_string(text: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\"");
+    let mut cursor = text.find(&needle)?;
+    cursor += needle.len();
+    let bytes = text.as_bytes();
+    while cursor < bytes.len() && (bytes[cursor] == b' ' || bytes[cursor] == b':') {
+        cursor += 1;
+    }
+    if cursor >= bytes.len() || bytes[cursor] != b'"' {
+        return None;
+    }
+    cursor += 1;
+    let value_start = cursor;
+    let mut escape = false;
+    while cursor < bytes.len() {
+        if escape {
+            escape = false;
+        } else if bytes[cursor] == b'\\' {
+            escape = true;
+        } else if bytes[cursor] == b'"' {
+            return Some(text[value_start..cursor].to_string());
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn extract_bool(text: &str, field: &str) -> Option<bool> {
+    let needle = format!("\"{field}\"");
+    let mut cursor = text.find(&needle)?;
+    cursor += needle.len();
+    let bytes = text.as_bytes();
+    while cursor < bytes.len() && (bytes[cursor] == b' ' || bytes[cursor] == b':') {
+        cursor += 1;
+    }
+    let rest = &text[cursor..];
+    if rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with("false") {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -54,8 +302,7 @@ pub struct Requirement {
     /// Project being depended on.
     pub id: ProjectId,
     /// Source kind. Inline (git/path/tarball) declarations are
-    /// surfaced unchanged so [`Resolver::resolve`] can record them in
-    /// the lockfile without consulting the version catalogue.
+    /// surfaced unchanged.
     pub spec: RequirementSpec,
 }
 
@@ -128,9 +375,17 @@ pub enum ResolveError {
         /// Project being resolved.
         id: String,
     },
+    /// Two consumers asked for ranges that have no version in common.
+    #[error("incompatible versions for {id}: {detail}")]
+    IncompatibleVersions {
+        /// Project being resolved.
+        id: String,
+        /// Human-readable summary of the conflict.
+        detail: String,
+    },
 }
 
-/// MVS resolver entry point.
+/// Resolver entry point.
 #[derive(Debug, Default)]
 pub struct Resolver {
     catalogue: VersionCatalogue,
@@ -143,10 +398,8 @@ impl Resolver {
         Self { catalogue }
     }
 
-    /// Resolves every dependency listed in `manifest` and returns the
-    /// concrete pin per project. Inline dependencies pass through
-    /// verbatim; registry dependencies pick the minimum version that
-    /// satisfies the range.
+    /// Resolves the direct dependencies listed in `manifest`. Picks
+    /// the *highest* version satisfying every consumer's range.
     pub fn resolve(&self, manifest: &Manifest) -> Result<Vec<Resolved>, ResolveError> {
         let mut requirements: BTreeMap<String, (ProjectId, Vec<RequirementSpec>)> = BTreeMap::new();
         for (raw_id, spec) in &manifest.dependencies {
@@ -199,17 +452,175 @@ impl Resolver {
             })
             .collect();
         let candidates = self.catalogue.versions(id);
-        for &version in candidates {
+        // Highest matching wins. Iterate in reverse to pick the
+        // highest version that satisfies every consumer's range.
+        for &version in candidates.iter().rev() {
             if ranges.iter().all(|r| r.matches(version)) {
+                if let Some(entry) = self.catalogue.entry(id, version)
+                    && entry.yanked
+                {
+                    continue;
+                }
                 return Ok(Resolved {
                     id: id.clone(),
                     pin: ResolvedSource::Registry(version),
                 });
             }
         }
-        Err(ResolveError::Unsatisfiable {
+        if candidates.is_empty() {
+            return Err(ResolveError::Unsatisfiable {
+                id: raw_id.to_string(),
+            });
+        }
+        let detail = format!(
+            "tried versions [{}], requirements [{}]",
+            candidates
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            ranges
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        Err(ResolveError::IncompatibleVersions {
             id: raw_id.to_string(),
+            detail,
         })
+    }
+}
+
+/// Tooling to resolve a dependency graph transitively.
+pub trait TransitiveLoader {
+    /// Returns the manifest of the dependency rooted at `resolved`,
+    /// or `Ok(None)` when no manifest is reachable.
+    fn load(&self, resolved: &Resolved) -> Result<Option<Manifest>, ResolveError>;
+}
+
+/// Walks the dependency graph rooted at `root`, returning every
+/// `(id, pin)` reachable from the root. Cycles terminate via a
+/// visited set keyed on `(id, pin)`.
+pub fn resolve_transitive(
+    root: &Manifest,
+    catalogue: &VersionCatalogue,
+    loader: &dyn TransitiveLoader,
+) -> Result<Vec<Resolved>, ResolveError> {
+    let mut ranges: BTreeMap<String, Vec<CaretRange>> = BTreeMap::new();
+    let mut inlines: BTreeMap<String, Vec<InlineDependency>> = BTreeMap::new();
+    let mut id_index: BTreeMap<String, ProjectId> = BTreeMap::new();
+    let mut visited: BTreeSet<String> = BTreeSet::new();
+    let mut work: Vec<Manifest> = vec![root.clone()];
+    while let Some(m) = work.pop() {
+        for (raw_id, spec) in &m.dependencies {
+            let id = ProjectId::parse(raw_id)
+                .map_err(|_| ResolveError::Unsatisfiable { id: raw_id.clone() })?;
+            id_index.entry(raw_id.clone()).or_insert(id.clone());
+            match spec {
+                DependencySpec::Registry(range) => {
+                    ranges.entry(raw_id.clone()).or_default().push(*range);
+                }
+                DependencySpec::Inline(inline) => {
+                    inlines
+                        .entry(raw_id.clone())
+                        .or_default()
+                        .push(inline.clone());
+                }
+            }
+        }
+        for (raw_id, spec) in &m.dependencies {
+            let id = id_index
+                .get(raw_id)
+                .cloned()
+                .ok_or_else(|| ResolveError::Unsatisfiable { id: raw_id.clone() })?;
+            let pin = if let DependencySpec::Inline(inline) = spec {
+                inline_pin_to_resolved(inline)
+            } else {
+                let range_set = ranges.get(raw_id).cloned().unwrap_or_default();
+                pick_highest(&id, &range_set, catalogue)?
+            };
+            let key = format!("{raw_id}|{}", debug_pin(&pin));
+            if visited.insert(key) {
+                let resolved = Resolved {
+                    id: id.clone(),
+                    pin: pin.clone(),
+                };
+                if let Some(child) = loader.load(&resolved)? {
+                    work.push(child);
+                }
+            }
+        }
+    }
+    let mut out: Vec<Resolved> = Vec::with_capacity(id_index.len());
+    for (raw_id, id) in &id_index {
+        if let Some(pin_set) = inlines.get(raw_id) {
+            if pin_set.iter().any(|p| !inline_eq(p, &pin_set[0])) {
+                return Err(ResolveError::ConflictingPins { id: raw_id.clone() });
+            }
+            out.push(Resolved {
+                id: id.clone(),
+                pin: inline_pin_to_resolved(&pin_set[0]),
+            });
+            continue;
+        }
+        let range_set = ranges.get(raw_id).cloned().unwrap_or_default();
+        let pin = pick_highest(id, &range_set, catalogue)?;
+        out.push(Resolved {
+            id: id.clone(),
+            pin,
+        });
+    }
+    out.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+    Ok(out)
+}
+
+fn pick_highest(
+    id: &ProjectId,
+    ranges: &[CaretRange],
+    catalogue: &VersionCatalogue,
+) -> Result<ResolvedSource, ResolveError> {
+    let candidates = catalogue.versions(id);
+    if candidates.is_empty() {
+        return Err(ResolveError::Unsatisfiable {
+            id: id.as_str().to_string(),
+        });
+    }
+    for &v in candidates.iter().rev() {
+        if ranges.iter().all(|r| r.matches(v)) {
+            if let Some(entry) = catalogue.entry(id, v)
+                && entry.yanked
+            {
+                continue;
+            }
+            return Ok(ResolvedSource::Registry(v));
+        }
+    }
+    let detail = format!(
+        "tried versions [{}], requirements [{}]",
+        candidates
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+        ranges
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    Err(ResolveError::IncompatibleVersions {
+        id: id.as_str().to_string(),
+        detail,
+    })
+}
+
+fn debug_pin(pin: &ResolvedSource) -> String {
+    match pin {
+        ResolvedSource::Registry(v) => format!("registry/{v}"),
+        ResolvedSource::Git { url, reference } => format!("git/{url}@{reference}"),
+        ResolvedSource::Path(p) => format!("path/{p}"),
+        ResolvedSource::Tarball { url, sha256 } => format!("tarball/{url}#{sha256}"),
     }
 }
 
@@ -230,3 +641,81 @@ fn inline_pin_to_resolved(pin: &InlineDependency) -> ResolvedSource {
 fn inline_eq(a: &InlineDependency, b: &InlineDependency) -> bool {
     a == b
 }
+
+/// Loader that reads `project.toml` out of a [`Cache`] hit. Returns
+/// `Ok(None)` when the digest is not in the cache or the cached tree
+/// contains no `project.toml`.
+pub struct CacheBackedLoader<'a> {
+    /// Cache to consult.
+    pub cache: &'a Cache,
+    /// Map of `(id, pin)` → cached digest so the loader can find
+    /// the right tree for a given dep. The caller (the fetch driver)
+    /// populates this as each dep is fetched.
+    pub digests: BTreeMap<String, String>,
+}
+
+impl CacheBackedLoader<'_> {
+    /// Returns the key used in `digests` for the given dep.
+    #[must_use]
+    pub fn key(resolved: &Resolved) -> String {
+        format!("{}|{}", resolved.id.as_str(), debug_pin(&resolved.pin))
+    }
+}
+
+impl TransitiveLoader for CacheBackedLoader<'_> {
+    fn load(&self, resolved: &Resolved) -> Result<Option<Manifest>, ResolveError> {
+        let key = Self::key(resolved);
+        let Some(digest) = self.digests.get(&key) else {
+            return Ok(None);
+        };
+        let Some(src) = lookup_cache(self.cache, digest) else {
+            return Ok(None);
+        };
+        load_manifest_from_source(src)
+    }
+}
+
+fn lookup_cache<'a>(cache: &'a Cache, digest: &str) -> Option<&'a CachedSource> {
+    cache
+        .iter()
+        .find_map(|(d, src)| (d == digest).then_some(src))
+}
+
+fn load_manifest_from_source(src: &CachedSource) -> Result<Option<Manifest>, ResolveError> {
+    let Some(toml) = src.files.get("project.toml") else {
+        return Ok(None);
+    };
+    let text = std::str::from_utf8(toml).map_err(|e| ResolveError::Unsatisfiable {
+        id: format!("{} (utf-8 in project.toml: {e})", src.id),
+    })?;
+    let manifest = Manifest::parse(text).map_err(|e| ResolveError::Unsatisfiable {
+        id: format!("{} (project.toml parse: {e})", src.id),
+    })?;
+    Ok(Some(manifest))
+}
+
+/// Convenience adaptor — wraps a closure as a [`TransitiveLoader`].
+pub struct FnLoader<F>(pub F);
+
+impl<F> TransitiveLoader for FnLoader<F>
+where
+    F: Fn(&Resolved) -> Result<Option<Manifest>, ResolveError>,
+{
+    fn load(&self, resolved: &Resolved) -> Result<Option<Manifest>, ResolveError> {
+        (self.0)(resolved)
+    }
+}
+
+/// Empty loader — every dep reports "no manifest". Useful for tests
+/// and for the direct-deps-only fast path.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopLoader;
+
+impl TransitiveLoader for NoopLoader {
+    fn load(&self, _: &Resolved) -> Result<Option<Manifest>, ResolveError> {
+        Ok(None)
+    }
+}
+
+/// Shared loader handle.
+pub type SharedLoader = Arc<dyn TransitiveLoader>;

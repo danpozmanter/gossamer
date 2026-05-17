@@ -1,5 +1,7 @@
 # `std::http::static_files`
 
+Status: shipped
+
 Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff.
 
 ## Public items

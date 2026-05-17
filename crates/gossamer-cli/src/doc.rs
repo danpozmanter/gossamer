@@ -9,42 +9,69 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::paths::read_source;
 
-/// Emits one Markdown page per stdlib module under `out_dir`.
+/// Emits one Markdown page per stdlib module under `out_dir`, plus
+/// one page per documented language feature under a sibling
+/// `language/` directory derived from `out_dir`'s parent. Both
+/// surfaces carry the `Status: ...` marker driven by
+/// `manifest::feature_status::FEATURE_STATUS`.
+///
 /// When `check` is true, no files are written; instead the
 /// committed pages are compared against the would-be output
 /// and a mismatch returns an error (non-zero exit suitable
-/// for CI).
+/// for CI). The check covers both the stdlib and language
+/// directories.
 pub(crate) fn cmd_emit_stdlib(out_dir: &Path, check: bool) -> Result<()> {
-    let pages = gossamer_std::manifest::render_all_docs();
+    let stdlib_pages = gossamer_std::manifest::render_all_docs();
+    let language_pages = gossamer_std::manifest::render_all_language_docs();
+    let language_dir = out_dir.parent().map_or_else(
+        || Path::new("docs_src/language").to_path_buf(),
+        |p| p.join("language"),
+    );
     if check {
         let mut drift: Vec<String> = Vec::new();
-        for (slug, body) in &pages {
+        for (slug, body) in &stdlib_pages {
             let path = out_dir.join(format!("{slug}.md"));
             let on_disk = fs::read_to_string(&path).unwrap_or_default();
             if on_disk.trim_end() != body.trim_end() {
                 drift.push(format!("{}", path.display()));
             }
         }
+        for (slug, body) in &language_pages {
+            let path = language_dir.join(format!("{slug}.md"));
+            let on_disk = fs::read_to_string(&path).unwrap_or_default();
+            if on_disk.trim_end() != body.trim_end() {
+                drift.push(format!("{}", path.display()));
+            }
+        }
+        let total = stdlib_pages.len() + language_pages.len();
         if drift.is_empty() {
-            println!("doc: stdlib docs in sync ({} pages)", pages.len());
+            println!("doc: stdlib + language docs in sync ({total} pages)");
             Ok(())
         } else {
             Err(anyhow!(
-                "stdlib docs drift detected ({} files): {}",
+                "stdlib/language docs drift detected ({} files): {}",
                 drift.len(),
                 drift.join(", ")
             ))
         }
     } else {
         fs::create_dir_all(out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
-        for (slug, body) in &pages {
+        fs::create_dir_all(&language_dir)
+            .with_context(|| format!("creating {}", language_dir.display()))?;
+        for (slug, body) in &stdlib_pages {
             let path = out_dir.join(format!("{slug}.md"));
             fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
         }
+        for (slug, body) in &language_pages {
+            let path = language_dir.join(format!("{slug}.md"));
+            fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
+        }
         println!(
-            "doc: wrote {} stdlib pages to {}",
-            pages.len(),
-            out_dir.display()
+            "doc: wrote {} stdlib pages to {}, {} language pages to {}",
+            stdlib_pages.len(),
+            out_dir.display(),
+            language_pages.len(),
+            language_dir.display(),
         );
         Ok(())
     }

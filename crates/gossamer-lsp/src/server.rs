@@ -32,7 +32,9 @@ use crate::semantic_tokens::{TOKEN_MODIFIERS, TOKEN_TYPES, full_tokens};
 use crate::session::{CursorContext, DocumentAnalysis, analyse};
 use crate::stdlib_index::{MemberSpec, StdlibIndex};
 use crate::symbols::{document_symbols, folding_ranges, workspace_symbols};
-use crate::workspace_index::{WorkspaceIndex, WorkspaceItem};
+use crate::workspace_index::{
+    SymbolBucket, SymbolKey, SymbolOccurrence, UseOccurrence, WorkspaceIndex, WorkspaceItem,
+};
 
 /// Runs the server over the supplied reader/writer streams. Returns
 /// `Ok(())` when the client sends `exit` after `shutdown`.
@@ -56,6 +58,7 @@ fn run<R: Read, W: Write>(reader: R, writer: W) -> std::io::Result<()> {
 
         match method {
             "initialize" => {
+                state.discover_workspace_roots(&params);
                 transport.write_message(&response_ok(id, initialize_result()))?;
             }
             "initialized" | "$/cancelRequest" => {}
@@ -259,6 +262,16 @@ fn semantic_tokens_capability() -> Value {
     Value::Object(cap)
 }
 
+/// Converts a `file://...` URI into a filesystem path. Returns
+/// `None` for non-`file://` schemes (e.g. `inmemory://`) and for
+/// URIs that don't decode cleanly. Percent-decoding is not
+/// performed — the discovery path tolerates raw paths the editor
+/// hands us.
+fn file_uri_to_path(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("file://")?;
+    Some(rest.to_string())
+}
+
 fn extract_did_open(params: &Value) -> Option<(String, String)> {
     let doc = field(params, "textDocument");
     let uri = field_str(doc, "uri")?.to_string();
@@ -304,6 +317,85 @@ impl ServerState {
     fn close(&mut self, uri: &str) {
         self.documents.remove(uri);
         self.workspace.remove(uri);
+    }
+
+    /// Walks the workspace root advertised by `initialize` for
+    /// `.gos` files and seeds the analysis cache + workspace index
+    /// with each one. Honours a simple `.gitignore` (only the
+    /// `target/`, `.git/`, and dotfile excludes the typical Rust
+    /// project ships); caps the discovery at 1000 files to keep
+    /// large monorepos responsive.
+    fn discover_workspace_roots(&mut self, params: &Value) {
+        let mut roots: Vec<String> = Vec::new();
+        if let Some(uri) = field_str(params, "rootUri") {
+            if let Some(path) = file_uri_to_path(uri) {
+                roots.push(path);
+            }
+        }
+        if let Value::Array(folders) = field(params, "workspaceFolders") {
+            for folder in folders {
+                if let Some(uri) = field_str(folder, "uri") {
+                    if let Some(path) = file_uri_to_path(uri) {
+                        roots.push(path);
+                    }
+                }
+            }
+        }
+        let mut budget = 1000usize;
+        for root in roots {
+            self.scan_workspace_path(&root, &mut budget);
+        }
+    }
+
+    /// Recursive helper for [`Self::discover_workspace_roots`].
+    fn scan_workspace_path(&mut self, path: &str, budget: &mut usize) {
+        if *budget == 0 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if *budget == 0 {
+                return;
+            }
+            let entry_path = entry.path();
+            let Some(name) = entry_path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            // Skip the usual junk drawers without parsing a full
+            // .gitignore. Editors typically already exclude these.
+            if matches!(name, "target" | ".git" | "node_modules") || name.starts_with('.') {
+                continue;
+            }
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.is_dir() {
+                if let Some(p) = entry_path.to_str() {
+                    self.scan_workspace_path(p, budget);
+                }
+                continue;
+            }
+            if !std::path::Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("gos"))
+            {
+                continue;
+            }
+            let Some(path_str) = entry_path.to_str() else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(&entry_path) else {
+                continue;
+            };
+            let uri = format!("file://{path_str}");
+            if self.documents.contains_key(&uri) {
+                continue;
+            }
+            self.update(&uri, &text);
+            *budget -= 1;
+        }
     }
 
     /// Returns the `CodeAction[]` for `textDocument/codeAction`.
@@ -730,9 +822,7 @@ impl ServerState {
         let Some((doc, offset)) = self.locate(params) else {
             return Value::Array(Vec::new());
         };
-        let spans = self.references_spans(doc, offset);
-        let locations: Vec<Value> = spans.into_iter().map(|s| location(doc, s)).collect();
-        Value::Array(locations)
+        Value::Array(self.workspace_reference_locations(doc, offset))
     }
 
     fn document_highlight(&self, params: &Value) -> Value {
@@ -754,15 +844,88 @@ impl ServerState {
         Value::Array(highlights)
     }
 
+    /// Resolves a cursor position to a workspace-wide [`SymbolKey`] when
+    /// possible. Local bindings, unresolved identifiers, and
+    /// out-of-vocabulary names return `None`.
+    pub(crate) fn workspace_key_at(
+        &self,
+        doc: &DocumentAnalysis,
+        offset: u32,
+    ) -> Option<SymbolKey> {
+        if let Some(loc) = self.cursor(doc, offset) {
+            if let Some(key) = symbol_key_for_locate(doc, &loc) {
+                return Some(key);
+            }
+        }
+        // Cursor sits on a declaration name (the locator's visit
+        // surface doesn't traverse fn / struct / enum names because
+        // they're not refutable patterns). Use the word at the
+        // cursor + the DefinitionIndex to bridge.
+        //
+        // The DefinitionIndex's `name_span` is unreliable for items
+        // that start with `pub` (it stretches from the item span
+        // start, missing the visibility prefix), so the
+        // word-equality check is the source of truth here.
+        let word = doc.word_at(offset)?;
+        for (_, info) in doc.index.def_iter() {
+            if info.name != word {
+                continue;
+            }
+            let bucket = match info.kind {
+                DefKind::Fn
+                | DefKind::Struct
+                | DefKind::Enum
+                | DefKind::Trait
+                | DefKind::Const
+                | DefKind::Static
+                | DefKind::TypeAlias => SymbolBucket::Item,
+                DefKind::Variant => SymbolBucket::Variant,
+                DefKind::Mod | DefKind::TypeParam => continue,
+            };
+            return Some(SymbolKey {
+                bucket,
+                name: info.name.clone(),
+            });
+        }
+        None
+    }
+
+    /// Returns every cross-file occurrence of the symbol under the
+    /// cursor, as a `Vec<Value>` of LSP `Location` objects (each
+    /// carrying its own `uri`). Falls back to the document-local
+    /// text-fallback only when the cursor sits inside a string
+    /// literal or doctest fence.
+    fn workspace_reference_locations(&self, doc: &DocumentAnalysis, offset: u32) -> Vec<Value> {
+        if let Some(key) = self.workspace_key_at(doc, offset) {
+            let by_uri = self.workspace.occurrences_of(&key);
+            if !by_uri.is_empty() {
+                return cross_file_locations(self, by_uri);
+            }
+        }
+        // Single-file semantic refs (locals, fields/methods without
+        // resolved receivers).
+        let spans = self.references_spans(doc, offset);
+        if !spans.is_empty() {
+            return spans.into_iter().map(|s| location(doc, s)).collect();
+        }
+        // Semantic resolution failed everywhere. Only honour the
+        // text-based whole-word fallback when the cursor sits inside
+        // a string literal or fenced doctest.
+        if cursor_in_string_or_doctest(doc.source(), offset) {
+            if let Some(word) = doc.word_at(offset) {
+                return doc
+                    .find_references(word)
+                    .into_iter()
+                    .map(|s| location(doc, s))
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
+
     fn references_spans(&self, doc: &DocumentAnalysis, offset: u32) -> Vec<Span> {
         let Some(loc) = self.cursor(doc, offset) else {
-            // Fallback to the whole-word text scan when we can't pin
-            // down a semantic node — keeps "find usages" useful even
-            // mid-edit on a partially-parseable file.
-            let Some(word) = doc.word_at(offset) else {
-                return Vec::new();
-            };
-            return doc.find_references(word);
+            return Vec::new();
         };
         let target = match &loc {
             Locate::PathExpr {
@@ -777,10 +940,7 @@ impl ServerState {
             _ => None,
         };
         let Some(target) = target else {
-            // Fields and unresolved paths: text-based fallback on the
-            // identifier under the cursor.
-            let name = locate_name(&loc);
-            return doc.find_references(&name);
+            return Vec::new();
         };
         let mut spans: Vec<Span> = Vec::new();
         if let Resolution::Local(node) = target {
@@ -796,11 +956,6 @@ impl ServerState {
             if occurrence.resolution == Some(target) {
                 spans.push(occurrence.span);
             }
-        }
-        if spans.is_empty() {
-            // Resolver didn't tag anything (e.g. type-only path that
-            // missed the resolver). Fall back to whole-word search.
-            return doc.find_references(&locate_name(&loc));
         }
         spans.sort_by_key(|s| (s.start, s.end));
         spans.dedup_by_key(|s| (s.start, s.end));
@@ -846,24 +1001,85 @@ impl ServerState {
         let Some(new_name) = field_str(params, "newName") else {
             return Value::Null;
         };
-        if new_name.is_empty() || !is_valid_identifier(new_name) {
+        if !is_valid_identifier(new_name) {
             return Value::Null;
         }
-        let spans = self.references_spans(doc, offset);
-        let edits: Vec<Value> = spans
+        self.build_rename_edit(doc, offset, new_name)
+            .unwrap_or(Value::Null)
+    }
+
+    /// Computes the `WorkspaceEdit` for renaming the symbol under
+    /// `offset` to `new_name`. Returns `None` when no semantic target
+    /// is available at that position.
+    pub(crate) fn build_rename_edit(
+        &self,
+        doc: &DocumentAnalysis,
+        offset: u32,
+        new_name: &str,
+    ) -> Option<Value> {
+        let mut changes: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        if let Some(key) = self.workspace_key_at(doc, offset) {
+            // Workspace-wide: every doc carrying an occurrence of this
+            // symbol contributes one edit per span.
+            for (uri, occurrences) in self.workspace.occurrences_of(&key) {
+                let Some(target_doc) = self.documents.get(&uri) else {
+                    continue;
+                };
+                let edits: Vec<Value> = occurrences
+                    .into_iter()
+                    .map(|occ: SymbolOccurrence| build_text_edit(target_doc, occ.span, new_name))
+                    .collect();
+                if !edits.is_empty() {
+                    changes.entry(uri.clone()).or_default().extend(edits);
+                }
+            }
+            // `use util::foo` re-exports — rewrite only the matching
+            // leaf identifier in every importing file. Only items
+            // (top-level fn/struct/...) participate; fields, methods,
+            // and variants aren't imported via `use`.
+            if matches!(key.bucket, SymbolBucket::Item) {
+                for (uri, use_occs) in self.workspace.use_occurrences_of(key.leaf()) {
+                    let Some(target_doc) = self.documents.get(&uri) else {
+                        continue;
+                    };
+                    let leaf_edits: Vec<Value> = use_occs
+                        .into_iter()
+                        .map(|UseOccurrence { span, .. }| {
+                            build_text_edit(target_doc, span, new_name)
+                        })
+                        .collect();
+                    if !leaf_edits.is_empty() {
+                        changes.entry(uri.clone()).or_default().extend(leaf_edits);
+                    }
+                }
+            }
+        }
+        // File-local fallback for locals and other symbols that don't
+        // enter the workspace index. The file-local spans are always
+        // safe to rewrite even when no workspace key resolved.
+        let local_spans = self.references_spans(doc, offset);
+        if !local_spans.is_empty() {
+            let edits: Vec<Value> = local_spans
+                .into_iter()
+                .map(|span| build_text_edit(doc, span, new_name))
+                .collect();
+            let existing = changes.entry(doc.uri.clone()).or_default();
+            for edit in edits {
+                if !existing.iter().any(|e| edits_overlap(e, &edit)) {
+                    existing.push(edit);
+                }
+            }
+        }
+        if changes.is_empty() {
+            return None;
+        }
+        let changes_obj: BTreeMap<String, Value> = changes
             .into_iter()
-            .map(|span| {
-                let mut edit = BTreeMap::new();
-                edit.insert("range".to_string(), span_to_range(doc, span));
-                edit.insert("newText".to_string(), Value::String(new_name.to_string()));
-                Value::Object(edit)
-            })
+            .map(|(uri, edits)| (uri, Value::Array(edits)))
             .collect();
-        let mut changes = BTreeMap::new();
-        changes.insert(doc.uri.clone(), Value::Array(edits));
         let mut workspace_edit = BTreeMap::new();
-        workspace_edit.insert("changes".to_string(), Value::Object(changes));
-        Value::Object(workspace_edit)
+        workspace_edit.insert("changes".to_string(), Value::Object(changes_obj));
+        Some(Value::Object(workspace_edit))
     }
 
     fn inlay_hints(&self, params: &Value) -> Value {
@@ -1325,15 +1541,172 @@ fn inlay_to_lsp(hint: InlayHint) -> Value {
     Value::Object(out)
 }
 
+/// Validates that `name` is a legal Gossamer identifier.
+///
+/// Follows the same `XID_Start` / `XID_Continue` rules the lexer
+/// applies (matches Rust 2024). Underscores are allowed as a start
+/// character in addition to `XID_Start`. Empty strings and reserved
+/// keywords are rejected.
 fn is_valid_identifier(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if RESERVED_KEYWORDS.contains(&name) {
+        return false;
+    }
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
     };
-    if !(first.is_ascii_alphabetic() || first == '_') {
+    if first != '_' && !unicode_ident::is_xid_start(first) {
         return false;
     }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    chars.all(unicode_ident::is_xid_continue)
+}
+
+/// Reserved keywords the parser rejects as identifiers. Distinct
+/// from the broader `KEYWORDS` constant (which feeds completion)
+/// so rename validation stays narrow and predictable.
+const RESERVED_KEYWORDS: &[&str] = &[
+    "as", "break", "const", "continue", "defer", "else", "enum", "false", "fn", "for", "go", "if",
+    "impl", "in", "let", "loop", "match", "mod", "mut", "pub", "return", "select", "static",
+    "struct", "trait", "true", "type", "unsafe", "use", "where", "while",
+];
+
+/// Builds a single LSP `TextEdit` JSON value that replaces the source
+/// range covered by `span` with `new_text`.
+fn build_text_edit(doc: &DocumentAnalysis, span: Span, new_text: &str) -> Value {
+    let mut edit = BTreeMap::new();
+    edit.insert("range".to_string(), span_to_range(doc, span));
+    edit.insert("newText".to_string(), Value::String(new_text.to_string()));
+    Value::Object(edit)
+}
+
+/// Returns `true` when two LSP `TextEdit` values target the same
+/// `range`. Used to dedup overlapping edits when the workspace
+/// fan-out and the file-local fallback both produce the same span.
+fn edits_overlap(a: &Value, b: &Value) -> bool {
+    let (Value::Object(am), Value::Object(bm)) = (a, b) else {
+        return false;
+    };
+    am.get("range") == bm.get("range")
+}
+
+/// Renders a `[(uri, Vec<SymbolOccurrence>)]` fan-out into a flat
+/// list of LSP `Location` objects. Each location carries its own
+/// `uri` so the editor can group results per file.
+fn cross_file_locations(
+    state: &ServerState,
+    by_uri: Vec<(String, Vec<SymbolOccurrence>)>,
+) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for (uri, occurrences) in by_uri {
+        let Some(doc) = state.documents.get(&uri) else {
+            continue;
+        };
+        for occ in occurrences {
+            out.push(location(doc, occ.span));
+        }
+    }
+    out
+}
+
+/// Resolves the cursor onto a [`SymbolKey`] when the locate result
+/// names a workspace-tracked symbol. Local bindings always return
+/// `None` so they stay file-local; field / method positions return
+/// `None` when the receiver's type couldn't be resolved.
+fn symbol_key_for_locate(doc: &DocumentAnalysis, loc: &Locate) -> Option<SymbolKey> {
+    match loc {
+        Locate::PathExpr {
+            resolution: Some(Resolution::Def { def, kind }),
+            ..
+        }
+        | Locate::TypePath {
+            resolution: Some(Resolution::Def { def, kind }),
+            ..
+        } => {
+            let info = doc.index.def(*def)?;
+            let bucket = match kind {
+                DefKind::Fn
+                | DefKind::Struct
+                | DefKind::Enum
+                | DefKind::Trait
+                | DefKind::Const
+                | DefKind::Static
+                | DefKind::TypeAlias => SymbolBucket::Item,
+                DefKind::Variant => SymbolBucket::Variant,
+                DefKind::Mod | DefKind::TypeParam => return None,
+            };
+            Some(SymbolKey {
+                bucket,
+                name: info.name.clone(),
+            })
+        }
+        Locate::Field { name, owner_id, .. } => {
+            let receiver_name = owner_adt_name(doc, *owner_id)?;
+            // Prefer field bucket for `receiver.name` — method-only
+            // names still match because the workspace lookup also
+            // surfaces method-bucket entries when the field bucket
+            // is empty (the test surface exercises both).
+            Some(SymbolKey::field(&receiver_name, name))
+        }
+        _ => None,
+    }
+}
+
+/// Resolves the owning expression's AST node to its ADT name when
+/// the type-checker can reach a concrete struct or enum.
+fn owner_adt_name(doc: &DocumentAnalysis, owner_id: gossamer_ast::NodeId) -> Option<String> {
+    use gossamer_types::TyKind;
+    let ty = doc.types.get(owner_id)?;
+    let kind = doc.tcx.kind(ty)?;
+    let def = match kind {
+        TyKind::Adt { def, .. } | TyKind::Alias { def, .. } => Some(*def),
+        TyKind::Ref { inner, .. } => match doc.tcx.kind(*inner)? {
+            TyKind::Adt { def, .. } | TyKind::Alias { def, .. } => Some(*def),
+            _ => None,
+        },
+        _ => None,
+    }?;
+    for item in &doc.sf.items {
+        let Some(item_def) = doc.resolutions.definition_of(item.id) else {
+            continue;
+        };
+        if item_def != def {
+            continue;
+        }
+        return match &item.kind {
+            gossamer_ast::ItemKind::Struct(decl) => Some(decl.name.name.clone()),
+            gossamer_ast::ItemKind::Enum(decl) => Some(decl.name.name.clone()),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Heuristic: returns `true` when `offset` sits inside a string
+/// literal or a fenced doctest block. Walks the source from the
+/// start, toggling state on each matched delimiter. Used to gate
+/// the syntactic whole-word fallback for references.
+fn cursor_in_string_or_doctest(source: &str, offset: u32) -> bool {
+    let cap = std::cmp::min(offset as usize, source.len());
+    let bytes = source.as_bytes();
+    let mut in_string = false;
+    let mut in_doctest = false;
+    let mut i = 0;
+    while i < cap {
+        let b = bytes[i];
+        if !in_string && i + 3 <= bytes.len() && &bytes[i..i + 3] == b"```" {
+            in_doctest = !in_doctest;
+            i += 3;
+            continue;
+        }
+        if !in_doctest && b == b'"' && !(in_string && i > 0 && bytes[i - 1] == b'\\') {
+            in_string = !in_string;
+        }
+        i += 1;
+    }
+    in_string || in_doctest
 }
 
 fn severity_tag(severity: Severity) -> f64 {
@@ -3028,5 +3401,103 @@ fn main() { Color::R| }
             panic!("data not array");
         };
         assert!(!data.is_empty(), "expected at least one semantic token");
+    }
+}
+
+/// Test-only API surface exposed via `lib::testing` for the
+/// integration tests under `crates/gossamer-lsp/tests/`.
+///
+/// The handlers normally drive the server through a JSON-RPC stdio
+/// loop; this module re-exports the in-memory state plus a couple of
+/// helpers so the cross-file references / rename behaviour can be
+/// asserted without spinning up a transport.
+#[doc(hidden)]
+pub mod testing {
+    use std::collections::BTreeMap;
+
+    use gossamer_std::json::Value;
+
+    use super::ServerState;
+
+    /// Thin wrapper around [`ServerState`] mirroring the request
+    /// surface used by the JSON-RPC loop.
+    pub struct ServerHandle {
+        state: ServerState,
+    }
+
+    impl Default for ServerHandle {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ServerHandle {
+        /// Constructs a handle around a fresh server state.
+        #[must_use]
+        pub fn new() -> Self {
+            Self {
+                state: ServerState::new(),
+            }
+        }
+
+        /// Mirrors `textDocument/didOpen` / `didChange`.
+        pub fn update(&mut self, uri: &str, text: &str) {
+            self.state.update(uri, text);
+        }
+
+        /// Mirrors `textDocument/didClose`.
+        pub fn close(&mut self, uri: &str) {
+            self.state.close(uri);
+        }
+
+        /// Mirrors `textDocument/references`.
+        #[must_use]
+        pub fn references(&self, params: &Value) -> Value {
+            self.state.references(params)
+        }
+
+        /// Mirrors `textDocument/rename`.
+        #[must_use]
+        pub fn rename(&self, params: &Value) -> Value {
+            self.state.rename(params)
+        }
+
+        /// Mirrors `textDocument/prepareRename`.
+        #[must_use]
+        pub fn prepare_rename(&self, params: &Value) -> Value {
+            self.state.prepare_rename(params)
+        }
+
+        /// Mirrors `textDocument/completion`.
+        #[must_use]
+        pub fn completion(&self, params: &Value) -> Value {
+            self.state.completion(params)
+        }
+    }
+
+    /// Builds the JSON-RPC params payload for a position-aware
+    /// request (`textDocument/{references, rename, ...}`).
+    #[must_use]
+    pub fn position_params(uri: &str, line: u32, character: u32) -> Value {
+        let mut text_doc = BTreeMap::new();
+        text_doc.insert("uri".to_string(), Value::String(uri.to_string()));
+        let mut pos = BTreeMap::new();
+        pos.insert("line".to_string(), Value::Number(f64::from(line)));
+        pos.insert("character".to_string(), Value::Number(f64::from(character)));
+        let mut params = BTreeMap::new();
+        params.insert("textDocument".to_string(), Value::Object(text_doc));
+        params.insert("position".to_string(), Value::Object(pos));
+        Value::Object(params)
+    }
+
+    /// Convenience wrapper that adds a `newName` field to a
+    /// position-shaped params payload.
+    #[must_use]
+    pub fn rename_params(uri: &str, line: u32, character: u32, new_name: &str) -> Value {
+        let mut params = position_params(uri, line, character);
+        if let Value::Object(map) = &mut params {
+            map.insert("newName".to_string(), Value::String(new_name.to_string()));
+        }
+        params
     }
 }

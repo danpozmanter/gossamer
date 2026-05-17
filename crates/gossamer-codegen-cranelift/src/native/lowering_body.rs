@@ -332,6 +332,28 @@ pub(super) fn lower_body(
                 // the gate at one end without the other.
                 builder.def_var(raw_shadow_frame_var, zero);
             }
+            // Call-stack push for panic-trace + SIGQUIT dump support.
+            // The function name pointer is interned per body so the
+            // address is stable across recursive calls; file + line
+            // are placeholders today (no per-body source span carried
+            // through MIR — `gos_rt_stack_set_line` updates them on
+            // statement entry once that wiring lands).
+            let name_data = intrinsics.intern_string(module, &body.name)?;
+            let name_ref = module.declare_data_in_func(name_data, builder.func);
+            let name_ptr = builder
+                .ins()
+                .global_value(module.target_config().pointer_type(), name_ref);
+            let empty_data = intrinsics.intern_string(module, "")?;
+            let empty_ref = module.declare_data_in_func(empty_data, builder.func);
+            let empty_ptr = builder
+                .ins()
+                .global_value(module.target_config().pointer_type(), empty_ref);
+            let line_zero = builder.ins().iconst(types::I32, 0);
+            let push_id = intrinsics.extern_fn_by_name(module, "gos_rt_stack_push")?;
+            let push_ref = module.declare_func_in_func(push_id, builder.func);
+            builder
+                .ins()
+                .call(push_ref, &[name_ptr, empty_ptr, line_zero]);
             emitted_prologue = true;
         }
 

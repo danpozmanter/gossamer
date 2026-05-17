@@ -1,5 +1,7 @@
 # `std::strconv`
 
+Status: shipped
+
 Conversions between strings and primitive numeric types.
 
 ## Public items

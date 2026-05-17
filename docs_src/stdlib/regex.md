@@ -1,5 +1,7 @@
 # `std::regex`
 
+Status: shipped
+
 Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around).
 
 ## Public items

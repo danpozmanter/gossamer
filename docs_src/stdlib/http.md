@@ -1,5 +1,7 @@
 # `std::http`
 
+Status: shipped
+
 HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.
 
 ## Public items
@@ -24,4 +26,7 @@ HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS autom
 | `serve_h2_connection_streaming` | fn | Same shape for Http2StreamingHandler. |
 | `serve_h2c` | fn | Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext). |
 | `serve_h2c_streaming` | fn | Same shape for Http2StreamingHandler. |
+| `Trailers` | type | HTTP/2 trailing HEADERS (alias for Headers) — used by `ResponseWriter::write_trailers` and `Request::trailers`. |
+| `PushOptions` | type | Prioritization knobs for `ResponseWriter::push_promise` (weight, depends_on, exclusive). |
+| `PushStream` | type | Server-initiated push stream returned by `ResponseWriter::push_promise`. Supports send_head / write / write_trailers / end. |
 

@@ -84,9 +84,22 @@ pub(crate) fn new(id: &str, path: Option<PathBuf>, template: &str) -> Result<()>
             )?;
             fs::write(dir.join("README.md"), workspace_template_readme(&project))?;
         }
+        "binding" => {
+            // Phase-0 `gos new --template binding`: scaffolds a
+            // ready-to-edit Rust binding crate under the project
+            // directory. The user fills in fn signatures inside
+            // the `#[gos_module]`-annotated module body; no
+            // `Cargo.toml`/`__bindings_force_link()` boilerplate.
+            fs::create_dir_all(dir.join("src"))
+                .with_context(|| format!("creating {}", dir.display()))?;
+            let cargo_toml = binding_template_cargo_toml(project.tail());
+            let lib_rs = binding_template_lib_rs(project.tail());
+            fs::write(dir.join("Cargo.toml"), cargo_toml)?;
+            fs::write(dir.join("src/lib.rs"), lib_rs)?;
+        }
         other => {
             return Err(anyhow!(
-                "unknown template `{other}` — expected bin, lib, service, or workspace"
+                "unknown template `{other}` — expected bin, lib, service, workspace, or binding"
             ));
         }
     }
@@ -175,5 +188,56 @@ fn workspace_template_readme(project: &gossamer_pkg::ProjectId) -> String {
          \n\
          A Gossamer workspace. Add members under `members/` and list\n\
          their ids under `[workspace.members]` in `project.toml`.\n",
+    )
+}
+
+/// Returns the seed `Cargo.toml` for `--template binding`.
+fn binding_template_cargo_toml(crate_name: &str) -> String {
+    let safe = crate_name.replace('/', "-");
+    format!(
+        "[package]\n\
+         name = \"{safe}-binding\"\n\
+         version = \"0.0.1\"\n\
+         edition = \"2024\"\n\
+         publish = false\n\
+         \n\
+         [workspace]\n\
+         \n\
+         [lib]\n\
+         crate-type = [\"rlib\"]\n\
+         \n\
+         [dependencies]\n\
+         # Point this at your local gossamer checkout (or use the\n\
+         # registry version once 1.0 is published):\n\
+         gossamer-binding = \"1\"\n",
+    )
+}
+
+/// Returns the seed `src/lib.rs` for `--template binding`.
+fn binding_template_lib_rs(crate_name: &str) -> String {
+    let mod_name = crate_name.replace('-', "_");
+    format!(
+        "//! `{crate_name}` — Rust bindings exposed to Gossamer.\n\
+         //!\n\
+         //! Drop fn definitions inside the `#[gos_module]` block.\n\
+         //! `///` doc-comments above each fn flow through to\n\
+         //! `gos doc {mod_name}::<fn>`.\n\
+         \n\
+         use gossamer_binding::{{GosError, gos_module}};\n\
+         \n\
+         #[gos_module(\"{mod_name}\")]\n\
+         mod bindings {{\n\
+         \x20\x20\x20\x20use super::*;\n\
+         \n\
+         \x20\x20\x20\x20/// Greet the supplied name.\n\
+         \x20\x20\x20\x20pub fn greet(name: String) -> String {{\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20format!(\"hello, {{name}}\")\n\
+         \x20\x20\x20\x20}}\n\
+         \n\
+         \x20\x20\x20\x20/// Fallible example: parse an integer.\n\
+         \x20\x20\x20\x20pub fn parse_int(s: String) -> Result<i64, GosError> {{\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20Ok(s.parse::<i64>()?)\n\
+         \x20\x20\x20\x20}}\n\
+         }}\n",
     )
 }

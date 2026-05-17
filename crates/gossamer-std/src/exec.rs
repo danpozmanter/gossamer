@@ -17,17 +17,40 @@
 //! - `cmd.status()` runs to completion and returns the `ExitStatus`.
 //! - `cmd.spawn()` returns a `Child` handle that the caller can
 //!   wait on later.
+//! - `cmd.with_context(ctx)` ties the spawned child to a
+//!   cancellation `Context` — SIGTERM on cancel, SIGKILL after the
+//!   grace window (configurable via `cmd.cancel_grace(ms)`).
+//! - `cmd.process_group(true)` puts the child in a fresh process
+//!   group on Unix (and `CREATE_NEW_PROCESS_GROUP` on Windows) so
+//!   `child.kill_group()` can take down forked descendants too.
+//! - `cmd.signal(sig)` sends an arbitrary signal to the child.
+//!
+//! Pipelines are built via `Pipeline::of(vec![cmd1, cmd2, ...])`;
+//! `Pipeline::output()` runs every stage with stdout→stdin pipes
+//! and captures the tail's stdout/stderr.
 //!
 //! Goroutine semantics: `output()` and `status()` block the calling
 //! goroutine on `wait`; the runtime scheduler releases the OS thread
-//! while waiting. `spawn()` does not block.
+//! while waiting. `spawn()` does not block. The streaming readers
+//! returned by `Child::stdout_reader()` cooperatively yield to the
+//! scheduler when no bytes are immediately available.
 
-#![forbid(unsafe_code)]
+// Narrow `unsafe` carve-out for the POSIX `libc::kill` shim and the
+// Windows `TerminateProcess` shim in `send_signal`. Every other site
+// in this file is safe-Rust; the two FFI calls validate their inputs
+// (positive pid, recognised signum) before crossing the FFI line.
+#![allow(unsafe_code)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
-use std::process::{self};
+use std::process::{self, ChildStderr, ChildStdout};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
+use crate::context::Context;
 use crate::io::IoError;
 
 /// Spec for spawning a child process. Built up via the builder
@@ -42,6 +65,9 @@ pub struct Command {
     stdin: Stdio,
     stdout: Stdio,
     stderr: Stdio,
+    process_group: bool,
+    ctx: Option<Context>,
+    cancel_grace: Duration,
 }
 
 /// What to wire a child's stdin/stdout/stderr to.
@@ -90,34 +116,268 @@ impl ExitStatus {
     }
 }
 
+/// Portable signal selector. Crosses platforms via the
+/// `signum()` mapping; Windows treats `Term`/`Kill`/`Int` as
+/// `TerminateProcess` and rejects the rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Signal {
+    /// SIGTERM — polite termination.
+    Term,
+    /// SIGKILL — unconditional termination.
+    Kill,
+    /// SIGSTOP — pause the process.
+    Stop,
+    /// SIGCONT — resume a stopped process.
+    Cont,
+    /// SIGHUP — terminal hangup.
+    Hup,
+    /// SIGINT — interactive interrupt.
+    Int,
+    /// SIGUSR1 — user-defined signal 1.
+    Usr1,
+    /// SIGUSR2 — user-defined signal 2.
+    Usr2,
+    /// SIGPIPE — broken pipe.
+    Pipe,
+    /// SIGQUIT — quit + dump core.
+    Quit,
+}
+
+impl Signal {
+    /// POSIX signal number for this variant. The values match the
+    /// portable numbering used by `kill(1)`'s `-N` flag on Linux /
+    /// macOS / BSD.
+    #[must_use]
+    pub const fn signum(self) -> i32 {
+        match self {
+            Self::Hup => 1,
+            Self::Int => 2,
+            Self::Quit => 3,
+            Self::Kill => 9,
+            Self::Usr1 => 10,
+            Self::Usr2 => 12,
+            Self::Pipe => 13,
+            Self::Term => 15,
+            Self::Stop => 19,
+            Self::Cont => 18,
+        }
+    }
+
+    /// Short uppercase name (`"TERM"`, `"KILL"`, ...). Useful for
+    /// shelling out to `kill -<name>` portability.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Term => "TERM",
+            Self::Kill => "KILL",
+            Self::Stop => "STOP",
+            Self::Cont => "CONT",
+            Self::Hup => "HUP",
+            Self::Int => "INT",
+            Self::Usr1 => "USR1",
+            Self::Usr2 => "USR2",
+            Self::Pipe => "PIPE",
+            Self::Quit => "QUIT",
+        }
+    }
+}
+
 /// Handle to a running child process.
 #[derive(Debug)]
 pub struct Child {
-    inner: process::Child,
+    inner: Arc<Mutex<Option<process::Child>>>,
+    pid: u32,
+    process_group: bool,
+    stdout_taken: bool,
+    stderr_taken: bool,
+    raw_stdout: Option<ChildStdout>,
+    raw_stderr: Option<ChildStderr>,
+    _cancel_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Child {
     /// Blocks until the child exits; returns its [`ExitStatus`].
-    pub fn wait(mut self) -> Result<ExitStatus, IoError> {
-        let status = self
+    pub fn wait(self) -> Result<ExitStatus, IoError> {
+        let mut guard = self
             .inner
-            .wait()
-            .map_err(|e| IoError::from_std(e, "wait"))?;
+            .lock()
+            .map_err(|_| IoError::Other("wait: poisoned child mutex".into()))?;
+        let Some(child) = guard.as_mut() else {
+            return Err(IoError::Other("wait: child already reaped".into()));
+        };
+        let status = child.wait().map_err(|e| IoError::from_std(e, "wait"))?;
+        *guard = None;
         Ok(ExitStatus {
             code: status.code(),
         })
     }
 
+    /// Waits up to `ms` milliseconds for the child to exit. Returns
+    /// `Some(status)` if it finished in time, `None` on timeout
+    /// (the child is left alive). Polls with a 25 ms backoff —
+    /// short enough to feel responsive, long enough to avoid burning
+    /// CPU on long waits.
+    pub fn wait_with_timeout(&mut self, ms: u64) -> Result<Option<ExitStatus>, IoError> {
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        loop {
+            {
+                let mut guard = self
+                    .inner
+                    .lock()
+                    .map_err(|_| IoError::Other("wait_with_timeout: poisoned".into()))?;
+                let Some(child) = guard.as_mut() else {
+                    return Ok(Some(ExitStatus { code: None }));
+                };
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        *guard = None;
+                        return Ok(Some(ExitStatus {
+                            code: status.code(),
+                        }));
+                    }
+                    Ok(None) => {}
+                    Err(e) => return Err(IoError::from_std(e, "try_wait")),
+                }
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+
     /// Sends SIGKILL (Unix) / `TerminateProcess` (Windows). The
     /// caller must still `wait` on the child afterwards to reap it.
     pub fn kill(&mut self) -> Result<(), IoError> {
-        self.inner.kill().map_err(|e| IoError::from_std(e, "kill"))
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| IoError::Other("kill: poisoned child mutex".into()))?;
+        let Some(child) = guard.as_mut() else {
+            return Ok(());
+        };
+        child.kill().map_err(|e| IoError::from_std(e, "kill"))
+    }
+
+    /// Sends an arbitrary signal. On Unix uses `libc::kill`; on
+    /// Windows only `Term`/`Kill`/`Int` map to `TerminateProcess`
+    /// and the rest return `IoError::Other`.
+    pub fn signal(&mut self, sig: Signal) -> Result<(), IoError> {
+        send_signal(self.pid as i32, sig, false)
+    }
+
+    /// Sends a signal to the whole process group. Requires
+    /// `Command::process_group(true)`; otherwise behaves like
+    /// `signal()` on Unix. Windows uses
+    /// `GenerateConsoleCtrlEvent` for Ctrl-Break when the group flag
+    /// is set, and falls back to `TerminateProcess` otherwise.
+    pub fn kill_group(&mut self) -> Result<(), IoError> {
+        send_signal(self.pid as i32, Signal::Term, self.process_group)
     }
 
     /// Returns the child's PID.
     #[must_use]
-    pub fn pid(&self) -> u32 {
-        self.inner.id()
+    pub const fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    /// Returns a streaming line/chunk reader over the child's
+    /// stdout. The child must have been spawned with
+    /// `Stdio::Piped`; calling twice (or after `output()`) returns
+    /// `None`.
+    pub fn stdout_reader(&mut self) -> Option<ChildStdoutReader> {
+        if self.stdout_taken {
+            return None;
+        }
+        let raw = self.raw_stdout.take()?;
+        self.stdout_taken = true;
+        Some(ChildStdoutReader {
+            inner: BufReader::new(raw),
+        })
+    }
+
+    /// Like [`Self::stdout_reader`] but for stderr.
+    pub fn stderr_reader(&mut self) -> Option<ChildStderrReader> {
+        if self.stderr_taken {
+            return None;
+        }
+        let raw = self.raw_stderr.take()?;
+        self.stderr_taken = true;
+        Some(ChildStderrReader {
+            inner: BufReader::new(raw),
+        })
+    }
+}
+
+/// Streaming line/chunk reader over a child's stdout. Returned by
+/// [`Child::stdout_reader`].
+pub struct ChildStdoutReader {
+    inner: BufReader<ChildStdout>,
+}
+
+impl ChildStdoutReader {
+    /// Blocking read of the next newline-terminated line. The
+    /// trailing newline is stripped. Returns `None` at EOF.
+    pub fn read_line(&mut self) -> Option<String> {
+        read_one_line(&mut self.inner)
+    }
+
+    /// Reads up to `n` bytes, yielding to the scheduler if no
+    /// data is immediately available.
+    pub fn read_chunk(&mut self, n: usize) -> Vec<u8> {
+        read_chunk_yielding(&mut self.inner, n)
+    }
+}
+
+/// Streaming line/chunk reader over a child's stderr.
+pub struct ChildStderrReader {
+    inner: BufReader<ChildStderr>,
+}
+
+impl ChildStderrReader {
+    /// Blocking read of the next newline-terminated line.
+    pub fn read_line(&mut self) -> Option<String> {
+        read_one_line(&mut self.inner)
+    }
+
+    /// Reads up to `n` bytes, yielding to the scheduler if no
+    /// data is immediately available.
+    pub fn read_chunk(&mut self, n: usize) -> Vec<u8> {
+        read_chunk_yielding(&mut self.inner, n)
+    }
+}
+
+fn read_one_line<R: BufRead>(reader: &mut R) -> Option<String> {
+    let mut line = String::new();
+    match reader.read_line(&mut line) {
+        Ok(0) => None,
+        Ok(_) => {
+            while line.ends_with('\n') || line.ends_with('\r') {
+                line.pop();
+            }
+            Some(line)
+        }
+        Err(_) => None,
+    }
+}
+
+fn read_chunk_yielding<R: Read>(reader: &mut R, n: usize) -> Vec<u8> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut buf = vec![0u8; n];
+    // Cooperative yield: hand off the OS thread before we block on
+    // `read`. Safe whether the caller is a plain OS thread or a
+    // goroutine-backed worker; the cost is one syscall on hot
+    // streaming loops which is dominated by the I/O wait itself.
+    thread::yield_now();
+    match reader.read(&mut buf) {
+        Ok(0) => Vec::new(),
+        Ok(read) => {
+            buf.truncate(read);
+            buf
+        }
+        Err(_) => Vec::new(),
     }
 }
 
@@ -135,6 +395,9 @@ impl Command {
             stdin: Stdio::Inherit,
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
+            process_group: false,
+            ctx: None,
+            cancel_grace: Duration::from_secs(5),
         }
     }
 
@@ -200,6 +463,33 @@ impl Command {
         self
     }
 
+    /// Spawns the child in its own process group. Unix calls
+    /// `setpgid(0,0)` after fork via `process::Command::process_group`
+    /// (Rust 1.64+). Windows passes `CREATE_NEW_PROCESS_GROUP`. The
+    /// group flag enables [`Child::kill_group`].
+    #[must_use]
+    pub const fn process_group(mut self, enabled: bool) -> Self {
+        self.process_group = enabled;
+        self
+    }
+
+    /// Ties the spawned child to a [`Context`]. When the context
+    /// cancels (or its deadline elapses), a watcher thread sends
+    /// SIGTERM, waits the grace window, then sends SIGKILL.
+    #[must_use]
+    pub fn with_context(mut self, ctx: &Context) -> Self {
+        self.ctx = Some(ctx.clone());
+        self
+    }
+
+    /// Time between SIGTERM and SIGKILL when a context cancels
+    /// the child. Defaults to 5000 ms.
+    #[must_use]
+    pub const fn cancel_grace(mut self, ms: u64) -> Self {
+        self.cancel_grace = Duration::from_millis(ms);
+        self
+    }
+
     fn build(&self) -> process::Command {
         let mut cmd = process::Command::new(&self.program);
         cmd.args(&self.args);
@@ -215,6 +505,7 @@ impl Command {
         cmd.stdin(map_stdio(self.stdin));
         cmd.stdout(map_stdio(self.stdout));
         cmd.stderr(map_stdio(self.stderr));
+        apply_process_group(&mut cmd, self.process_group);
         cmd
     }
 
@@ -246,12 +537,71 @@ impl Command {
     /// Starts the child and returns a [`Child`] handle without
     /// waiting.
     pub fn spawn(&self) -> Result<Child, IoError> {
-        let raw = self
+        let mut raw = self
             .build()
             .spawn()
             .map_err(|e| IoError::from_std(e, &self.program))?;
-        Ok(Child { inner: raw })
+        let pid = raw.id();
+        let raw_stdout = raw.stdout.take();
+        let raw_stderr = raw.stderr.take();
+        let inner = Arc::new(Mutex::new(Some(raw)));
+        let cancel_thread = self
+            .ctx
+            .as_ref()
+            .map(|ctx| spawn_cancel_watcher(ctx, pid, self.cancel_grace, &inner));
+        Ok(Child {
+            inner,
+            pid,
+            process_group: self.process_group,
+            stdout_taken: false,
+            stderr_taken: false,
+            raw_stdout,
+            raw_stderr,
+            _cancel_thread: cancel_thread,
+        })
     }
+}
+
+fn spawn_cancel_watcher(
+    ctx: &Context,
+    pid: u32,
+    grace: Duration,
+    inner: &Arc<Mutex<Option<process::Child>>>,
+) -> thread::JoinHandle<()> {
+    let ctx = ctx.clone();
+    let inner = Arc::clone(inner);
+    thread::spawn(move || {
+        // Poll-wait on cancellation so we don't depend on the
+        // context's hook plumbing.
+        loop {
+            if ctx.is_cancelled() {
+                break;
+            }
+            if has_exited(&inner) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        let _ = send_signal(pid as i32, Signal::Term, false);
+        let deadline = Instant::now() + grace;
+        while Instant::now() < deadline {
+            if has_exited(&inner) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        let _ = send_signal(pid as i32, Signal::Kill, false);
+    })
+}
+
+fn has_exited(inner: &Arc<Mutex<Option<process::Child>>>) -> bool {
+    let Ok(mut guard) = inner.lock() else {
+        return true;
+    };
+    let Some(child) = guard.as_mut() else {
+        return true;
+    };
+    matches!(child.try_wait(), Ok(Some(_)))
 }
 
 fn map_stdio(s: Stdio) -> process::Stdio {
@@ -260,6 +610,363 @@ fn map_stdio(s: Stdio) -> process::Stdio {
         Stdio::Piped => process::Stdio::piped(),
         Stdio::Null => process::Stdio::null(),
     }
+}
+
+#[cfg(unix)]
+fn apply_process_group(cmd: &mut process::Command, enabled: bool) {
+    if enabled {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+}
+
+#[cfg(windows)]
+fn apply_process_group(cmd: &mut process::Command, enabled: bool) {
+    if enabled {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NEW_PROCESS_GROUP = 0x0000_0200.
+        cmd.creation_flags(0x0000_0200);
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn apply_process_group(_cmd: &mut process::Command, _enabled: bool) {}
+
+#[cfg(unix)]
+#[allow(
+    unsafe_code,
+    reason = "POSIX kill(2) shim; pid + signum validated before FFI call"
+)]
+fn send_signal(pid: i32, sig: Signal, group: bool) -> Result<(), IoError> {
+    if pid <= 0 {
+        return Err(IoError::Other(format!("invalid pid {pid}")));
+    }
+    let target: libc::pid_t = if group { -pid } else { pid };
+    // SAFETY: libc::kill validates pid + sig and returns -1 on
+    // failure; never crashes the caller.
+    let rc = unsafe { libc::kill(target, sig.signum()) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        let err = std::io::Error::last_os_error();
+        Err(IoError::from_std(err, "kill"))
+    }
+}
+
+#[cfg(windows)]
+fn send_signal(pid: i32, sig: Signal, group: bool) -> Result<(), IoError> {
+    if pid <= 0 {
+        return Err(IoError::Other(format!("invalid pid {pid}")));
+    }
+    match sig {
+        Signal::Term | Signal::Kill | Signal::Int => terminate_process(pid as u32, group),
+        other => Err(IoError::Other(format!(
+            "signal {} is not supported on Windows",
+            other.name()
+        ))),
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process(pid: u32, _group: bool) -> Result<(), IoError> {
+    // SAFETY: Win32 OpenProcess / TerminateProcess / CloseHandle.
+    unsafe {
+        unsafe extern "system" {
+            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> isize;
+            fn TerminateProcess(process: isize, exit_code: u32) -> i32;
+            fn CloseHandle(object: isize) -> i32;
+        }
+        const PROCESS_TERMINATE: u32 = 0x0001;
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle == 0 {
+            return Err(IoError::Other(format!("OpenProcess({pid}) failed")));
+        }
+        let ok = TerminateProcess(handle, 1);
+        let _ = CloseHandle(handle);
+        if ok != 0 {
+            Ok(())
+        } else {
+            Err(IoError::Other(format!("TerminateProcess({pid}) failed")))
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn send_signal(_pid: i32, _sig: Signal, _group: bool) -> Result<(), IoError> {
+    Err(IoError::Other(
+        "signals are not supported on this platform".into(),
+    ))
+}
+
+/// Sends a raw signal number to a target pid. Wraps the unsafe
+/// `libc::kill` on Unix and `TerminateProcess` on Windows.
+/// Returns true on success. Used by the interp builtin so the
+/// VM can call into the same audited unsafe surface the compiled
+/// tiers use.
+#[must_use]
+pub fn send_raw_signal(pid: i64, signum: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: libc::kill returns -1 on failure rather than
+        // crashing the caller; pid/signum are integer values.
+        let rc = unsafe { libc::kill(pid as libc::pid_t, signum as libc::c_int) };
+        rc == 0
+    }
+    #[cfg(windows)]
+    {
+        let _ = signum;
+        terminate_pid(pid as u32)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (pid, signum);
+        false
+    }
+}
+
+/// Sends SIGTERM to an entire process group on Unix; best-effort
+/// `TerminateProcess` on Windows.
+#[must_use]
+pub fn send_group_term(pid: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: libc::kill with a negative pid targets the group.
+        let rc = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
+        rc == 0
+    }
+    #[cfg(windows)]
+    {
+        terminate_pid(pid as u32)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+/// Polls `pid` via `waitpid(WNOHANG)` (Unix) or
+/// `WaitForSingleObject` (Windows) for up to `ms` milliseconds.
+/// Returns the child's exit code on success, `-1` on timeout, or
+/// `-2` on unknown-pid / permission-denied / OS error.
+#[must_use]
+pub fn wait_pid_timeout(pid: i64, ms: i64) -> i64 {
+    if pid <= 0 {
+        return -2;
+    }
+    let deadline = Instant::now() + Duration::from_millis(ms.max(0) as u64);
+    #[cfg(unix)]
+    {
+        loop {
+            let mut status: libc::c_int = 0;
+            // SAFETY: waitpid(WNOHANG) returns 0 if still running,
+            // the pid on reap, -1 on error.
+            let status_ptr: *mut libc::c_int = &raw mut status;
+            let rc = unsafe { libc::waitpid(pid as libc::pid_t, status_ptr, libc::WNOHANG) };
+            if rc > 0 {
+                if libc::WIFEXITED(status) {
+                    return i64::from(libc::WEXITSTATUS(status));
+                }
+                if libc::WIFSIGNALED(status) {
+                    return i64::from(128 + libc::WTERMSIG(status));
+                }
+                return 0;
+            }
+            if rc < 0 {
+                return -2;
+            }
+            if Instant::now() >= deadline {
+                return -1;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+    #[cfg(windows)]
+    {
+        wait_pid_timeout_windows(pid as u32, ms.max(0) as u32)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = deadline;
+        let _ = ms;
+        -2
+    }
+}
+
+#[cfg(windows)]
+fn terminate_pid(pid: u32) -> bool {
+    // SAFETY: see `terminate_process` above.
+    unsafe {
+        unsafe extern "system" {
+            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> isize;
+            fn TerminateProcess(process: isize, exit_code: u32) -> i32;
+            fn CloseHandle(object: isize) -> i32;
+        }
+        const PROCESS_TERMINATE: u32 = 0x0001;
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle == 0 {
+            return false;
+        }
+        let ok = TerminateProcess(handle, 1);
+        let _ = CloseHandle(handle);
+        ok != 0
+    }
+}
+
+#[cfg(windows)]
+fn wait_pid_timeout_windows(pid: u32, ms: u32) -> i64 {
+    // SAFETY: OpenProcess / WaitForSingleObject / GetExitCodeProcess
+    // / CloseHandle — every error path returns a sentinel.
+    unsafe {
+        unsafe extern "system" {
+            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> isize;
+            fn WaitForSingleObject(handle: isize, ms: u32) -> u32;
+            fn GetExitCodeProcess(handle: isize, exit_code: *mut u32) -> i32;
+            fn CloseHandle(object: isize) -> i32;
+        }
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const WAIT_OBJECT_0: u32 = 0;
+        const WAIT_TIMEOUT: u32 = 0x0000_0102;
+        let handle = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle == 0 {
+            return -2;
+        }
+        let r = WaitForSingleObject(handle, ms);
+        if r == WAIT_TIMEOUT {
+            let _ = CloseHandle(handle);
+            return -1;
+        }
+        if r != WAIT_OBJECT_0 {
+            let _ = CloseHandle(handle);
+            return -2;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut code);
+        let _ = CloseHandle(handle);
+        if ok == 0 {
+            return -2;
+        }
+        code as i64
+    }
+}
+
+/// Subprocess pipeline. Each stage's stdout is wired to the next
+/// stage's stdin; the final stage's stdout (and stderr) feed the
+/// pipeline's captured `Output`.
+#[derive(Debug, Clone)]
+pub struct Pipeline {
+    stages: Vec<Command>,
+}
+
+impl Pipeline {
+    /// Builds a pipeline from `commands` (front-to-back data flow).
+    /// At least one stage is required; an empty pipeline returns
+    /// `IoError::Other` from `output()` / `status()`.
+    #[must_use]
+    pub const fn of(commands: Vec<Command>) -> Self {
+        Self { stages: commands }
+    }
+
+    /// Number of stages in the pipeline.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.stages.len()
+    }
+
+    /// Returns whether the pipeline has zero stages.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.stages.is_empty()
+    }
+
+    /// Runs every stage, returning the final stage's captured
+    /// output. Stages are spawned in order; failures to spawn
+    /// produce `IoError::Other` with the offending stage index.
+    pub fn output(&self) -> Result<Output, IoError> {
+        let children = self.spawn_all()?;
+        finalize_pipeline(children)
+    }
+
+    /// Runs every stage and returns each stage's exit status in
+    /// order. Useful for diagnosing which stage of a long pipe
+    /// failed.
+    pub fn status(&self) -> Result<Vec<ExitStatus>, IoError> {
+        let children = self.spawn_all()?;
+        let mut statuses = Vec::with_capacity(children.len());
+        for (i, mut child) in children.into_iter().enumerate() {
+            let raw = child
+                .wait()
+                .map_err(|e| IoError::from_std(e, &format!("pipeline stage {i}")))?;
+            statuses.push(ExitStatus { code: raw.code() });
+        }
+        Ok(statuses)
+    }
+
+    fn spawn_all(&self) -> Result<Vec<process::Child>, IoError> {
+        if self.stages.is_empty() {
+            return Err(IoError::Other("pipeline: empty".into()));
+        }
+        let last = self.stages.len() - 1;
+        let mut children: Vec<process::Child> = Vec::with_capacity(self.stages.len());
+        for (i, stage) in self.stages.iter().enumerate() {
+            let mut cmd = stage.build();
+            if i > 0 {
+                let Some(prev_stdout) = children.last_mut().and_then(|c| c.stdout.take()) else {
+                    return Err(IoError::Other(format!(
+                        "pipeline stage {i}: predecessor has no piped stdout"
+                    )));
+                };
+                cmd.stdin(prev_stdout);
+            }
+            if i < last {
+                cmd.stdout(process::Stdio::piped());
+            } else {
+                cmd.stdout(process::Stdio::piped());
+                cmd.stderr(process::Stdio::piped());
+            }
+            let child = cmd.spawn().map_err(|e| {
+                IoError::from_std(e, &format!("pipeline stage {i}: {}", stage.program))
+            })?;
+            children.push(child);
+        }
+        Ok(children)
+    }
+}
+
+fn finalize_pipeline(mut children: Vec<process::Child>) -> Result<Output, IoError> {
+    let Some(mut tail) = children.pop() else {
+        return Err(IoError::Other("pipeline: no stages".into()));
+    };
+    let mut stdout = Vec::new();
+    if let Some(mut s) = tail.stdout.take() {
+        let _ = s.read_to_end(&mut stdout);
+    }
+    let mut stderr = Vec::new();
+    if let Some(mut e) = tail.stderr.take() {
+        let _ = e.read_to_end(&mut stderr);
+    }
+    let tail_status = tail
+        .wait()
+        .map_err(|e| IoError::from_std(e, "pipeline tail wait"))?;
+    for (i, mut c) in children.into_iter().enumerate() {
+        let _ = c
+            .wait()
+            .map_err(|e| IoError::from_std(e, &format!("pipeline stage {i} wait")))?;
+    }
+    Ok(Output {
+        status: ExitStatus {
+            code: tail_status.code(),
+        },
+        stdout,
+        stderr,
+    })
 }
 
 #[cfg(test)]
@@ -361,6 +1068,151 @@ mod tests {
         child.kill().expect("kill");
         let status = child.wait().expect("wait");
         // Killed by signal: exit code is None on Unix.
+        assert!(!status.success());
+    }
+
+    #[test]
+    fn pipeline_chains_echo_tr_to_uppercase() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        let stage1 = Command::new("sh").args(["-c", "printf 'hello'"].map(String::from));
+        let stage2 = Command::new("tr").args(["a-z", "A-Z"].map(String::from));
+        let pipe = Pipeline::of(vec![stage1, stage2]);
+        let out = pipe.output().expect("pipeline output");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(text.trim(), "HELLO", "stdout was: {text:?}");
+        assert!(out.status.success());
+    }
+
+    #[test]
+    fn pipeline_status_reports_every_stage() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        let stage1 = Command::new("sh").args(["-c", "printf 'abc'"].map(String::from));
+        let stage2 = Command::new("cat");
+        let pipe = Pipeline::of(vec![stage1, stage2]);
+        let statuses = pipe.status().expect("status");
+        assert_eq!(statuses.len(), 2);
+        for (i, s) in statuses.iter().enumerate() {
+            assert!(s.success(), "stage {i} did not succeed: {:?}", s.code());
+        }
+    }
+
+    #[test]
+    fn wait_with_timeout_returns_none_on_long_sleep() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        let mut child = Command::new("sleep")
+            .arg("5")
+            .stdout(Stdio::Null)
+            .spawn()
+            .expect("spawn sleep");
+        let r = child.wait_with_timeout(200).expect("timeout");
+        assert!(r.is_none(), "expected timeout, got {r:?}");
+        child.kill().ok();
+        child.wait().ok();
+    }
+
+    #[test]
+    fn wait_with_timeout_returns_status_when_child_finishes_fast() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        let mut child = Command::new("sh")
+            .args(["-c", "exit 4"].map(String::from))
+            .spawn()
+            .expect("spawn quick");
+        let r = child.wait_with_timeout(5000).expect("ok");
+        let Some(status) = r else {
+            panic!("expected status, got None");
+        };
+        assert_eq!(status.code(), Some(4));
+    }
+
+    #[test]
+    fn stdout_reader_yields_lines_in_order() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        let mut child = Command::new("sh")
+            .args(["-c", "for i in 1 2 3 4 5; do echo line$i; done"].map(String::from))
+            .stdout(Stdio::Piped)
+            .spawn()
+            .expect("spawn");
+        let mut reader = child.stdout_reader().expect("reader");
+        let mut got = Vec::new();
+        while let Some(line) = reader.read_line() {
+            got.push(line);
+        }
+        child.wait().ok();
+        assert_eq!(got, vec!["line1", "line2", "line3", "line4", "line5"]);
+    }
+
+    #[test]
+    fn signal_term_kills_long_sleep() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        let mut child = Command::new("sleep")
+            .arg("60")
+            .stdout(Stdio::Null)
+            .spawn()
+            .expect("spawn");
+        child.signal(Signal::Term).expect("signal");
+        let status = child.wait().expect("wait");
+        assert!(!status.success());
+    }
+
+    #[test]
+    fn context_cancel_kills_child_within_grace() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        let (ctx, cancel) = crate::context::with_cancel(&Context::background());
+        let mut child = Command::new("sleep")
+            .arg("60")
+            .stdout(Stdio::Null)
+            .with_context(&ctx)
+            .cancel_grace(500)
+            .spawn()
+            .expect("spawn");
+        // Cancel after a short delay so the watcher thread observes
+        // the live child first.
+        let _ = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(80));
+            cancel.cancel();
+        });
+        let start = Instant::now();
+        let r = child.wait_with_timeout(3000).expect("timeout");
+        let elapsed = start.elapsed();
+        assert!(r.is_some(), "child should have exited within 3 s");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "child took {elapsed:?} to die after cancel"
+        );
+    }
+
+    #[test]
+    fn kill_group_signals_descendants() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        // Parent forks two background sleeps; killing the group
+        // should reap them all. We assert the parent exits (via
+        // kill_group) — we can't trivially observe the grandchildren
+        // without ps, so the lifecycle assertion is the proxy.
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30 & sleep 30 & wait"].map(String::from))
+            .stdout(Stdio::Null)
+            .process_group(true)
+            .spawn()
+            .expect("spawn group");
+        std::thread::sleep(Duration::from_millis(100));
+        child.kill_group().expect("kill group");
+        let status = child.wait().expect("wait");
         assert!(!status.success());
     }
 }

@@ -173,4 +173,19 @@ pub const ALL_MODULES: &[StdModule] = &[
     CONTAINER_ORDERED_VEC,
     CONTAINER_ORDERED_SET,
     CONTAINER_ORDERED_MAP,
+    // 0.8.0 — HTTP server stack (cookie / csrf / form / health /
+    // multipart / query / session / state), JWT, lifecycle,
+    // validate, argon2id password facade.
+    HTTP_COOKIE,
+    HTTP_CSRF,
+    HTTP_FORM,
+    HTTP_HEALTH,
+    HTTP_MULTIPART,
+    HTTP_QUERY,
+    HTTP_SESSION,
+    HTTP_STATE,
+    JWT,
+    LIFECYCLE,
+    VALIDATE,
+    CRYPTO_PASSWORD,
 ];

@@ -1,5 +1,7 @@
 # `std::crypto::ecdsa`
 
+Status: shipped
+
 ECDSA over the NIST P-256 curve.
 
 ## Public items

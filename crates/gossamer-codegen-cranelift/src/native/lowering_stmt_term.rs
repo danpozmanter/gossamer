@@ -387,6 +387,15 @@ pub(super) fn lower_terminator(
             builder.ins().jump(block, &[]);
         }
         Terminator::Return => {
+            // Pop the call-stack frame pushed in the function prologue
+            // so panic dumps and SIGQUIT renders walk the right stack.
+            // Cheap (one FFI call); matches the matching `stack_push`
+            // emitted by `lowering_body::lower_body`.
+            {
+                let pop_id = intrinsics.extern_fn_by_name(module, "gos_rt_stack_pop")?;
+                let pop_ref = module.declare_func_in_func(pop_id, builder.func);
+                builder.ins().call(pop_ref, &[]);
+            }
             // Legacy GcRef-handle shadow stack close (no-op when
             // nothing was pushed, which is the production path).
             {
@@ -866,83 +875,28 @@ pub(super) fn lower_terminator(
                     }
                     return Ok(());
                 }
-                // Soft fallback: emit a typed zero into the
-                // destination so the program still builds. Wrong
-                // semantics but better than refusing to compile
-                // when the user calls an unknown stdlib helper.
-                //
-                // 0.6.0 stability hardening: surface every soft-zero
-                // call at compile time. With `GOSSAMER_STRICT_LOWER=1`
-                // this becomes a hard error; otherwise the previous
-                // behaviour (zero-stub) is preserved for in-flight
-                // programs that depend on it, but a warning is
-                // emitted so typos are not silently miscompiled.
-                eprintln!(
-                    "warning: gossamer codegen: emitting zero-stub for unknown call '{name}' — \
-                    typos produce silent zeros that may segfault on later dereference; \
-                    set GOSSAMER_STRICT_LOWER=1 to refuse compilation"
+                // 0.8.0: no soft-zero fallback. An unknown call
+                // name is a hard error — silent zero stubs hide
+                // typos and miscompiled stdlib paths. The legacy
+                // `GOSSAMER_STRICT_LOWER=1` env var was the opt-in;
+                // it is now the only behaviour.
+                bail!(
+                    "native codegen: refusing to emit zero-stub for unknown call '{name}' — \
+                    typos and missing dispatch entries are a compile error, not a runtime crash"
                 );
-                if std::env::var_os("GOSSAMER_STRICT_LOWER").is_some() {
-                    bail!(
-                        "native codegen: refusing to emit zero-stub for unknown call '{name}' (GOSSAMER_STRICT_LOWER set)"
-                    );
-                }
-                let zero = builder.ins().iconst(types::I64, 0);
-                store_call_result(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    destination,
-                    zero,
-                    intrinsics,
-                )?;
-                match target {
-                    Some(block_id) => {
-                        let block = blocks[&block_id.as_u32()];
-                        builder.ins().jump(block, &[]);
-                    }
-                    None => {
-                        builder.ins().trap(ir::TrapCode::user(1).unwrap());
-                    }
-                }
-                return Ok(());
             }
-            // Soft fallback for unknown FnRef defs: zero out the
-            // destination and continue. Common producer is enum
-            // variant constructors whose DefId the resolver
-            // allocates without ever emitting a body. Under
-            // `GOSSAMER_STRICT_LOWER=1` this is an error (same
-            // policy as the unknown-name path above).
-            let Ok(func_ref) = resolve_callee(callee, callees_by_def, callees_by_name) else {
-                if std::env::var_os("GOSSAMER_STRICT_LOWER").is_some() {
-                    bail!(
-                        "native codegen: refusing to emit zero-stub for unresolved FnRef callee (GOSSAMER_STRICT_LOWER set)"
-                    );
-                }
-                let zero = builder.ins().iconst(types::I64, 0);
-                store_call_result(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    destination,
-                    zero,
-                    intrinsics,
-                )?;
-                match target {
-                    Some(block_id) => {
-                        let block = blocks[&block_id.as_u32()];
-                        builder.ins().jump(block, &[]);
-                    }
-                    None => {
-                        builder.ins().trap(ir::TrapCode::user(1).unwrap());
-                    }
-                }
-                return Ok(());
-            };
+            // 0.8.0: same policy as the unknown-name path above —
+            // an unresolved FnRef callee is a hard error rather
+            // than a silent zero. The historical zero-stub bypass
+            // was the opt-in under `GOSSAMER_STRICT_LOWER=1`; it
+            // is now the only behaviour.
+            let func_ref =
+                resolve_callee(callee, callees_by_def, callees_by_name).map_err(|_| {
+                    anyhow!(
+                        "native codegen: refusing to emit zero-stub for unresolved FnRef callee \
+                    (likely a variant constructor missing from the codegen dispatch table)"
+                    )
+                })?;
             let expected = builder
                 .func
                 .dfg

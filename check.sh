@@ -63,6 +63,12 @@ run_step "cargo test --workspace --no-fail-fast"           cargo test --workspac
 # so the check uses the freshly built crate.
 run_step "cargo build --bin gos"                           cargo build --bin gos
 run_step "gos doc --emit-stdlib --check"                   ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
+# Feature-status sanity — every `Experimental` registry entry has a
+# doc page on disk. (Shipped items also need a passing tier-parity
+# sidecar; that requires the full cross-tier walk and is gated by
+# the dedicated `gos test --tier-parity --report=status` job rather
+# than this fast pre-commit pass.)
+run_step "gos feature-status --status experimental --check" ./target/debug/gos feature-status --status experimental --check
 
 # Fuzz smoke — mirrors `.github/workflows/fuzz.yml` so adversarial
 # inputs that CI would flag also fail locally. Each target runs
@@ -78,12 +84,12 @@ if command -v cargo-fuzz >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | 
         if [[ $full -eq 1 ]]; then
             echo "  -> $target"
             if ! ( cd fuzz && cargo +nightly fuzz run "$target" -- \
-                    -max_total_time="$fuzz_secs" -max_len=65536 ); then
+                    -max_total_time="$fuzz_secs" -max_len=65536 -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30 ); then
                 exit 1
             fi
         else
             if ! ( cd fuzz && cargo +nightly fuzz run "$target" -- \
-                    -max_total_time="$fuzz_secs" -max_len=65536 ) \
+                    -max_total_time="$fuzz_secs" -max_len=65536 -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30 ) \
                     >"$fuzz_log" 2>&1; then
                 echo "fuzz target '$target' failed:" >&2
                 tail -c 4096 "$fuzz_log" >&2

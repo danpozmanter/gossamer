@@ -1,5 +1,7 @@
 # `std::net::url`
 
+Status: shipped
+
 URL parsing, rendering, and query escaping.
 
 ## Public items

@@ -19,3 +19,4 @@ gossamer-parse = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-std = { workspace = true }
 gossamer-types = { workspace = true }
+unicode-ident = { workspace = true }

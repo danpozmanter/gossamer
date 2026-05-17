@@ -1,5 +1,7 @@
 # `std::os::user`
 
+Status: shipped
+
 POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars.
 
 ## Public items

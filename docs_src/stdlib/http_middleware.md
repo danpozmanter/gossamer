@@ -1,5 +1,7 @@
 # `std::http::middleware`
 
+Status: shipped
+
 Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.
 
 ## Public items

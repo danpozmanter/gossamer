@@ -1,5 +1,7 @@
 # `std::io`
 
+Status: shipped
+
 Stream-oriented I/O abstractions.
 
 ## Public items

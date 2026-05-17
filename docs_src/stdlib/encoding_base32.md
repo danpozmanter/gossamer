@@ -1,5 +1,7 @@
 # `std::encoding::base32`
 
+Status: shipped
+
 RFC 4648 base32 (uppercase) encode / decode.
 
 ## Public items

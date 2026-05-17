@@ -1,5 +1,7 @@
 # `std::thread`
 
+Status: shipped
+
 Native OS threads. For goroutines use the `go expr` syntax.
 
 ## Public items

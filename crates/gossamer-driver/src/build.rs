@@ -56,9 +56,10 @@ pub struct Crate {
     /// Human-readable crate name (used for diagnostics and mangling).
     pub name: String,
     /// Source files belonging to this crate, each paired with its
-    /// contents. The pipeline currently only honours the first entry
-    /// (single-file crates); the rest participate in fingerprinting
-    /// so adding a stray file invalidates the cache.
+    /// contents. The first entry is the crate root (the file that
+    /// contains `fn main`); every subsequent entry is auto-bundled
+    /// as an inline `mod <stem> { ... }` so cross-file calls resolve
+    /// without a manual `mod` declaration in the entry source.
     pub sources: Vec<(String, String)>,
     /// Upstream crate names this crate depends on.
     pub deps: Vec<String>,
@@ -466,12 +467,8 @@ fn compile_one(
             from_cache: true,
         });
     }
-    let source = item
-        .krate
-        .sources
-        .first()
-        .map_or("", |(_, body)| body.as_str());
-    let artifact: Artifact = compile_source(source, &item.krate.name, options);
+    let source = bundle_crate_sources(&item.krate.sources);
+    let artifact: Artifact = compile_source(&source, &item.krate.name, options);
     cache.write(target, &item.fingerprint, &artifact.bytes)?;
     Ok(BuildOutput {
         crate_name: item.krate.name.clone(),
@@ -479,6 +476,91 @@ fn compile_one(
         bytes: artifact.bytes,
         from_cache: false,
     })
+}
+
+/// Bundles every source in a crate into a single string suitable for
+/// the compiler pipeline. The first source is the crate entry; every
+/// remaining source is wrapped as `mod <stem> { ... }` and appended so
+/// cross-file calls (`util::helper()` in `main.gos` referencing
+/// `src/util.gos::helper`) resolve. Matches the CLI's sibling
+/// auto-bundle contract so single-file and workspace builds produce
+/// the same merged source.
+///
+/// Sources whose path stem is not a valid module identifier, or that
+/// start with `_` / end in `_test`, are skipped (mirroring the CLI
+/// rule). If a sibling stem appears in the entry source as a bare
+/// `mod NAME;` declaration, that line is commented out so the
+/// auto-bundled body is the sole definition.
+#[must_use]
+pub fn bundle_crate_sources(sources: &[(String, String)]) -> String {
+    let Some(((entry_path, entry_body), rest)) = sources.split_first() else {
+        return String::new();
+    };
+    let entry_stem = path_stem(entry_path);
+    let mut siblings: Vec<(&str, &str)> = Vec::new();
+    for (path, body) in rest {
+        let stem = path_stem(path);
+        if stem.is_empty()
+            || stem == entry_stem
+            || stem.starts_with('_')
+            || stem.ends_with("_test")
+            || !is_valid_module_ident(stem)
+        {
+            continue;
+        }
+        siblings.push((stem, body.as_str()));
+    }
+    if siblings.is_empty() {
+        return entry_body.clone();
+    }
+    siblings.sort_by(|a, b| a.0.cmp(b.0));
+    let stems: Vec<&str> = siblings.iter().map(|(n, _)| *n).collect();
+    let mut out = neutralize_external_mod_decls(entry_body, &stems);
+    for (stem, body) in &siblings {
+        out.push('\n');
+        out.push_str("// auto-bundled module: ");
+        out.push_str(stem);
+        out.push('\n');
+        out.push_str("mod ");
+        out.push_str(stem);
+        out.push_str(" {\n");
+        out.push_str(body);
+        out.push_str("\n}\n");
+    }
+    out
+}
+
+fn path_stem(path: &str) -> &str {
+    let base = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    base.strip_suffix(".gos").unwrap_or(base)
+}
+
+fn is_valid_module_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn neutralize_external_mod_decls(source: &str, sibling_stems: &[&str]) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("mod ")
+            && let Some(name) = rest.strip_suffix(';')
+            && sibling_stems.contains(&name.trim())
+        {
+            out.push_str("// (auto-bundled) ");
+            out.push_str(line);
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 /// Measures how long `closure` takes to run. Used by the no-op
@@ -596,6 +678,60 @@ mod tests {
         };
         let err = topological_order(&graph).unwrap_err();
         assert!(matches!(err, BuildError::Cycle { .. }));
+    }
+
+    #[test]
+    fn bundle_multi_file_wraps_non_entry_as_mod() {
+        let sources = vec![
+            (
+                "src/main.gos".to_string(),
+                "fn main() -> i64 { util::ten() }\n".to_string(),
+            ),
+            (
+                "src/util.gos".to_string(),
+                "pub fn ten() -> i64 { 10 }\n".to_string(),
+            ),
+        ];
+        let bundled = bundle_crate_sources(&sources);
+        assert!(bundled.contains("fn main()"));
+        assert!(bundled.contains("mod util {"));
+        assert!(bundled.contains("pub fn ten()"));
+    }
+
+    #[test]
+    fn bundle_single_file_returns_entry_unchanged() {
+        let sources = vec![("src/main.gos".to_string(), "fn main() {}\n".to_string())];
+        let bundled = bundle_crate_sources(&sources);
+        assert_eq!(bundled, "fn main() {}\n");
+    }
+
+    #[test]
+    fn bundle_neutralizes_external_mod_decl() {
+        let sources = vec![
+            (
+                "src/main.gos".to_string(),
+                "mod util;\nfn main() {}\n".to_string(),
+            ),
+            (
+                "src/util.gos".to_string(),
+                "pub fn ten() -> i64 { 10 }\n".to_string(),
+            ),
+        ];
+        let bundled = bundle_crate_sources(&sources);
+        assert!(bundled.contains("// (auto-bundled) mod util;"));
+        assert!(bundled.contains("mod util {"));
+    }
+
+    #[test]
+    fn bundle_skips_underscore_and_test_files() {
+        let sources = vec![
+            ("src/main.gos".to_string(), "fn main() {}\n".to_string()),
+            ("src/_internal.gos".to_string(), "fn x() {}\n".to_string()),
+            ("src/foo_test.gos".to_string(), "fn y() {}\n".to_string()),
+        ];
+        let bundled = bundle_crate_sources(&sources);
+        assert!(!bundled.contains("mod _internal"));
+        assert!(!bundled.contains("mod foo_test"));
     }
 
     #[test]

@@ -373,6 +373,577 @@ pub fn compress_gzip<H: Handler + 'static>(min_bytes: usize, inner: H) -> impl H
     }
 }
 
+// --- Body limit -------------------------------------------------------
+
+/// Rejects requests whose body exceeds `max_bytes` with 413.
+///
+/// Checked against `Content-Length` when present, then against
+/// `request.body.len()` (post-read). Streaming bodies that arrive
+/// without `Content-Length` are accepted up to the read cap; the
+/// caller should also configure the HTTP server's max body size.
+pub fn body_limit<H: Handler + 'static>(max_bytes: usize, inner: H) -> impl Handler {
+    let inner = Arc::new(inner);
+    move |req: &Request, params: &Params| -> Response {
+        if let Some(cl) = req.headers.get("content-length")
+            && let Ok(n) = cl.parse::<usize>()
+            && n > max_bytes
+        {
+            return payload_too_large();
+        }
+        if req.body.len() > max_bytes {
+            return payload_too_large();
+        }
+        inner.serve(req, params)
+    }
+}
+
+fn payload_too_large() -> Response {
+    let mut h = Headers::new();
+    h.insert("content-type", "text/plain; charset=utf-8");
+    Response {
+        status: StatusCode(413),
+        headers: h,
+        body: b"payload too large".to_vec(),
+    }
+}
+
+// --- Timeout ----------------------------------------------------------
+
+/// Wraps the handler in a deadline. If it does not return within
+/// `limit`, the wrapper returns 504 Gateway Timeout. The
+/// underlying handler keeps running (we have no preemption);
+/// cooperative cancellation is the caller's job via
+/// `request.context`.
+///
+/// Uses a fresh OS thread per request to enforce the deadline.
+/// For request rates > a few hundred QPS, prefer co-operating
+/// with `request.context` deadlines in the handler.
+pub fn timeout<H: Handler + 'static>(limit: std::time::Duration, inner: H) -> impl Handler {
+    let inner = Arc::new(inner);
+    move |req: &Request, params: &Params| -> Response {
+        let inner_clone = Arc::clone(&inner);
+        let req = req.clone();
+        let params = params.clone();
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Response>(1);
+        std::thread::spawn(move || {
+            let resp = inner_clone.serve(&req, &params);
+            let _ = tx.send(resp);
+        });
+        match rx.recv_timeout(limit) {
+            Ok(resp) => resp,
+            Err(_) => gateway_timeout(),
+        }
+    }
+}
+
+fn gateway_timeout() -> Response {
+    let mut h = Headers::new();
+    h.insert("content-type", "text/plain; charset=utf-8");
+    Response {
+        status: StatusCode(504),
+        headers: h,
+        body: b"gateway timeout".to_vec(),
+    }
+}
+
+// --- HSTS -------------------------------------------------------------
+
+/// Strict-Transport-Security configuration.
+#[derive(Clone, Debug)]
+pub struct HstsConfig {
+    /// `max-age` in seconds. RFC 6797 recommends >= 1 year for
+    /// production after rollout (default = 31536000).
+    pub max_age_secs: u64,
+    /// `includeSubDomains` directive.
+    pub include_subdomains: bool,
+    /// `preload` directive — only set if the domain is enrolled
+    /// in the HSTS preload list.
+    pub preload: bool,
+}
+
+impl Default for HstsConfig {
+    fn default() -> Self {
+        Self {
+            max_age_secs: 31_536_000,
+            include_subdomains: true,
+            preload: false,
+        }
+    }
+}
+
+impl HstsConfig {
+    /// Conservative starter config for a domain not yet enrolled
+    /// in the HSTS preload list.
+    #[must_use]
+    pub fn safe_default() -> Self {
+        Self::default()
+    }
+
+    /// Strictest practical config — set after the domain has run
+    /// HSTS-only for a quarter and is preload-eligible.
+    #[must_use]
+    pub fn strict() -> Self {
+        Self {
+            max_age_secs: 63_072_000,
+            include_subdomains: true,
+            preload: true,
+        }
+    }
+
+    fn header_value(&self) -> String {
+        let mut v = format!("max-age={}", self.max_age_secs);
+        if self.include_subdomains {
+            v.push_str("; includeSubDomains");
+        }
+        if self.preload {
+            v.push_str("; preload");
+        }
+        v
+    }
+}
+
+/// Adds `Strict-Transport-Security` to every response.
+pub fn hsts<H: Handler + 'static>(config: HstsConfig, inner: H) -> impl Handler {
+    let inner = Arc::new(inner);
+    let value = config.header_value();
+    move |req: &Request, params: &Params| -> Response {
+        let mut resp = inner.serve(req, params);
+        resp.headers.insert("strict-transport-security", &value);
+        resp
+    }
+}
+
+// --- Security headers -------------------------------------------------
+
+/// Bundle of restrictive default security headers.
+#[derive(Clone, Debug)]
+pub struct SecurityHeaders {
+    /// When `true`, emit `X-Content-Type-Options: nosniff`.
+    pub content_type_options_nosniff: bool,
+    /// Optional `X-Frame-Options` value (e.g. `DENY`, `SAMEORIGIN`).
+    pub frame_options: Option<String>,
+    /// Optional `Referrer-Policy` value
+    /// (e.g. `strict-origin-when-cross-origin`).
+    pub referrer_policy: Option<String>,
+    /// Optional `Permissions-Policy` directive list.
+    pub permissions_policy: Option<String>,
+    /// Optional `Content-Security-Policy` directive string.
+    pub content_security_policy: Option<String>,
+    /// Optional `Cross-Origin-Opener-Policy` value
+    /// (e.g. `same-origin`, `same-origin-allow-popups`).
+    pub cross_origin_opener_policy: Option<String>,
+    /// Optional `Cross-Origin-Resource-Policy` value
+    /// (e.g. `same-origin`, `same-site`, `cross-origin`).
+    pub cross_origin_resource_policy: Option<String>,
+}
+
+impl Default for SecurityHeaders {
+    fn default() -> Self {
+        Self::strict()
+    }
+}
+
+impl SecurityHeaders {
+    /// Restrictive defaults suitable for an API or admin app.
+    /// Apps that embed in iframes / consume third-party scripts
+    /// must override `frame_options` and `content_security_policy`.
+    #[must_use]
+    pub fn strict() -> Self {
+        Self {
+            content_type_options_nosniff: true,
+            frame_options: Some("DENY".to_string()),
+            referrer_policy: Some("strict-origin-when-cross-origin".to_string()),
+            permissions_policy: Some("geolocation=(), microphone=(), camera=()".to_string()),
+            content_security_policy: Some(
+                "default-src 'self'; frame-ancestors 'none'; base-uri 'self'".to_string(),
+            ),
+            cross_origin_opener_policy: Some("same-origin".to_string()),
+            cross_origin_resource_policy: Some("same-origin".to_string()),
+        }
+    }
+
+    /// Headers off — explicit opt-out for cases where the user
+    /// configures them upstream (e.g. behind a reverse proxy).
+    #[must_use]
+    pub fn off() -> Self {
+        Self {
+            content_type_options_nosniff: false,
+            frame_options: None,
+            referrer_policy: None,
+            permissions_policy: None,
+            content_security_policy: None,
+            cross_origin_opener_policy: None,
+            cross_origin_resource_policy: None,
+        }
+    }
+}
+
+/// Injects [`SecurityHeaders`] into every response (only when the
+/// header is not already set — the handler can override).
+pub fn security_headers<H: Handler + 'static>(config: SecurityHeaders, inner: H) -> impl Handler {
+    let inner = Arc::new(inner);
+    move |req: &Request, params: &Params| -> Response {
+        let mut resp = inner.serve(req, params);
+        if config.content_type_options_nosniff && !resp.headers.contains("x-content-type-options") {
+            resp.headers.insert("x-content-type-options", "nosniff");
+        }
+        if let Some(v) = &config.frame_options
+            && !resp.headers.contains("x-frame-options")
+        {
+            resp.headers.insert("x-frame-options", v);
+        }
+        if let Some(v) = &config.referrer_policy
+            && !resp.headers.contains("referrer-policy")
+        {
+            resp.headers.insert("referrer-policy", v);
+        }
+        if let Some(v) = &config.permissions_policy
+            && !resp.headers.contains("permissions-policy")
+        {
+            resp.headers.insert("permissions-policy", v);
+        }
+        if let Some(v) = &config.content_security_policy
+            && !resp.headers.contains("content-security-policy")
+        {
+            resp.headers.insert("content-security-policy", v);
+        }
+        if let Some(v) = &config.cross_origin_opener_policy
+            && !resp.headers.contains("cross-origin-opener-policy")
+        {
+            resp.headers.insert("cross-origin-opener-policy", v);
+        }
+        if let Some(v) = &config.cross_origin_resource_policy
+            && !resp.headers.contains("cross-origin-resource-policy")
+        {
+            resp.headers.insert("cross-origin-resource-policy", v);
+        }
+        resp
+    }
+}
+
+// --- Cache-Control ----------------------------------------------------
+
+/// `Cache-Control` directive builder. The bool fields each map
+/// 1:1 to a distinct RFC 7234 directive; bundling them as a bitset
+/// would lose the named-field clarity callers rely on.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each bool maps 1:1 to a named RFC 7234 directive; collapsing to a bitset \
+    loses the per-field clarity callers rely on when building Cache-Control values"
+)]
+#[derive(Clone, Debug, Default)]
+pub struct CacheControl {
+    /// Emit the `no-store` directive.
+    pub no_store: bool,
+    /// Emit the `no-cache` directive.
+    pub no_cache: bool,
+    /// Emit the `public` directive.
+    pub public: bool,
+    /// Emit the `private` directive.
+    pub private: bool,
+    /// When set, emit `max-age=<secs>`.
+    pub max_age_secs: Option<u64>,
+    /// When set, emit `s-maxage=<secs>` (shared cache lifetime).
+    pub s_maxage_secs: Option<u64>,
+    /// Emit the `immutable` directive.
+    pub immutable: bool,
+    /// Emit the `must-revalidate` directive.
+    pub must_revalidate: bool,
+}
+
+impl CacheControl {
+    /// `no-store, no-cache, must-revalidate` — appropriate for
+    /// any response carrying personal or session-tied data.
+    #[must_use]
+    pub fn no_store() -> Self {
+        Self {
+            no_store: true,
+            no_cache: true,
+            must_revalidate: true,
+            ..Self::default()
+        }
+    }
+
+    /// `public, max-age=N, immutable` — for fingerprinted assets
+    /// like `app-3f9c2a.css`.
+    #[must_use]
+    pub fn immutable_for(secs: u64) -> Self {
+        Self {
+            public: true,
+            max_age_secs: Some(secs),
+            immutable: true,
+            ..Self::default()
+        }
+    }
+
+    fn header_value(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.no_store {
+            parts.push("no-store".into());
+        }
+        if self.no_cache {
+            parts.push("no-cache".into());
+        }
+        if self.public {
+            parts.push("public".into());
+        }
+        if self.private {
+            parts.push("private".into());
+        }
+        if let Some(n) = self.max_age_secs {
+            parts.push(format!("max-age={n}"));
+        }
+        if let Some(n) = self.s_maxage_secs {
+            parts.push(format!("s-maxage={n}"));
+        }
+        if self.immutable {
+            parts.push("immutable".into());
+        }
+        if self.must_revalidate {
+            parts.push("must-revalidate".into());
+        }
+        parts.join(", ")
+    }
+}
+
+/// Stamps `Cache-Control` onto every response (unless the
+/// handler already set it).
+pub fn cache_control<H: Handler + 'static>(config: CacheControl, inner: H) -> impl Handler {
+    let inner = Arc::new(inner);
+    let value = config.header_value();
+    move |req: &Request, params: &Params| -> Response {
+        let mut resp = inner.serve(req, params);
+        if !resp.headers.contains("cache-control") {
+            resp.headers.insert("cache-control", &value);
+        }
+        resp
+    }
+}
+
+// --- ETag -------------------------------------------------------------
+
+/// Adds an `ETag` header (SHA-256 hex-truncated) and short-circuits
+/// to 304 on a matching `If-None-Match`.
+pub fn etag<H: Handler + 'static>(inner: H) -> impl Handler {
+    let inner = Arc::new(inner);
+    move |req: &Request, params: &Params| -> Response {
+        let mut resp = inner.serve(req, params);
+        if resp.body.is_empty() || !resp.status.is_success() {
+            return resp;
+        }
+        let tag = compute_etag(&resp.body);
+        if let Some(client_tag) = req.headers.get("if-none-match")
+            && client_tag.trim_matches('"') == tag.trim_matches('"')
+        {
+            let mut h = Headers::new();
+            h.insert("etag", &tag);
+            return Response {
+                status: StatusCode(304),
+                headers: h,
+                body: Vec::new(),
+            };
+        }
+        resp.headers.insert("etag", &tag);
+        resp
+    }
+}
+
+fn compute_etag(body: &[u8]) -> String {
+    use crate::crypto::sha256;
+    let digest = sha256::digest(body);
+    let mut hex = String::with_capacity(34);
+    hex.push('"');
+    for b in &digest[..16] {
+        hex.push(nibble(b >> 4));
+        hex.push(nibble(b & 0xf));
+    }
+    hex.push('"');
+    hex
+}
+
+const fn nibble(n: u8) -> char {
+    match n {
+        0..=9 => (b'0' + n) as char,
+        10..=15 => (b'a' + n - 10) as char,
+        _ => '?',
+    }
+}
+
+// --- Bearer auth ------------------------------------------------------
+
+/// HTTP Bearer token authentication. The `verify` closure receives
+/// the raw token (everything after `Bearer `) and returns
+/// `Ok(())` to admit the request or `Err(reason)` to reject with
+/// 401.
+///
+/// `verify` should run in constant time relative to the token —
+/// any HMAC / JWT verifier built on `crate::crypto::subtle` is
+/// safe; raw string equality is not.
+pub fn bearer_auth<H, V>(realm: impl Into<String>, verify: V, inner: H) -> impl Handler
+where
+    H: Handler + 'static,
+    V: Fn(&str) -> Result<(), String> + Send + Sync + 'static,
+{
+    let inner = Arc::new(inner);
+    let realm = realm.into();
+    move |req: &Request, params: &Params| -> Response {
+        let header = req.headers.get("authorization").unwrap_or("");
+        let token = header
+            .strip_prefix("Bearer ")
+            .or_else(|| header.strip_prefix("bearer "));
+        match token {
+            Some(t) => match verify(t.trim()) {
+                Ok(()) => inner.serve(req, params),
+                Err(reason) => unauthorized_bearer(&realm, Some(&reason)),
+            },
+            None => unauthorized_bearer(&realm, None),
+        }
+    }
+}
+
+fn unauthorized_bearer(realm: &str, error: Option<&str>) -> Response {
+    let mut h = Headers::new();
+    let challenge = match error {
+        Some(e) => {
+            format!(r#"Bearer realm="{realm}", error="invalid_token", error_description="{e}""#)
+        }
+        None => format!(r#"Bearer realm="{realm}""#),
+    };
+    h.insert("www-authenticate", &challenge);
+    h.insert("content-type", "text/plain; charset=utf-8");
+    Response {
+        status: StatusCode(401),
+        headers: h,
+        body: b"unauthorized".to_vec(),
+    }
+}
+
+// --- Rate limiter (token bucket per IP) -------------------------------
+
+/// Per-key token-bucket rate limiter. Keys are typically the
+/// peer IP, but any string extractor works.
+#[derive(Clone)]
+pub struct RateLimit {
+    inner: Arc<RateLimitState>,
+}
+
+struct RateLimitState {
+    capacity: f64,
+    refill_per_sec: f64,
+    buckets: parking_lot::Mutex<std::collections::HashMap<String, (f64, std::time::Instant)>>,
+    max_keys: usize,
+}
+
+impl RateLimit {
+    /// `capacity` tokens; refill rate `capacity / window` per second.
+    #[must_use]
+    pub fn new(capacity: u32, window: std::time::Duration) -> Self {
+        let refill = f64::from(capacity) / window.as_secs_f64().max(0.001);
+        Self {
+            inner: Arc::new(RateLimitState {
+                capacity: f64::from(capacity),
+                refill_per_sec: refill,
+                buckets: parking_lot::Mutex::new(std::collections::HashMap::new()),
+                max_keys: 100_000,
+            }),
+        }
+    }
+
+    /// Per-IP convenience (uses `X-Forwarded-For` first hop, then
+    /// `X-Real-IP`, then a literal `"unknown"`).
+    #[must_use]
+    pub fn per_ip(capacity: u32, window: std::time::Duration) -> Self {
+        Self::new(capacity, window)
+    }
+
+    /// Returns `true` if a token is available (and consumes it),
+    /// `false` if the bucket is empty.
+    #[must_use]
+    pub fn try_consume(&self, key: &str) -> bool {
+        let mut guard = self.inner.buckets.lock();
+        if guard.len() > self.inner.max_keys {
+            // Hard cap: drop the oldest half to prevent unbounded growth.
+            let half = guard.len() / 2;
+            let drop_keys: Vec<String> = guard.keys().take(half).cloned().collect();
+            for k in drop_keys {
+                guard.remove(&k);
+            }
+        }
+        let now = std::time::Instant::now();
+        let entry = guard
+            .entry(key.to_string())
+            .or_insert_with(|| (self.inner.capacity, now));
+        let (tokens, last) = *entry;
+        let elapsed = now.saturating_duration_since(last).as_secs_f64();
+        let mut new_tokens =
+            (tokens + elapsed * self.inner.refill_per_sec).min(self.inner.capacity);
+        let allowed = new_tokens >= 1.0;
+        if allowed {
+            new_tokens -= 1.0;
+        }
+        *entry = (new_tokens, now);
+        allowed
+    }
+}
+
+fn extract_client_key(req: &Request) -> String {
+    if let Some(xff) = req.headers.get("x-forwarded-for")
+        && let Some(first) = xff.split(',').next()
+        && !first.trim().is_empty()
+    {
+        return first.trim().to_string();
+    }
+    if let Some(real) = req.headers.get("x-real-ip")
+        && !real.trim().is_empty()
+    {
+        return real.trim().to_string();
+    }
+    "unknown".to_string()
+}
+
+/// Rate-limit middleware. Rejects with 429 when the bucket for the
+/// extracted key is empty.
+pub fn rate_limit<H: Handler + 'static>(limiter: RateLimit, inner: H) -> impl Handler {
+    let inner = Arc::new(inner);
+    move |req: &Request, params: &Params| -> Response {
+        let key = extract_client_key(req);
+        if !limiter.try_consume(&key) {
+            return too_many_requests();
+        }
+        inner.serve(req, params)
+    }
+}
+
+fn too_many_requests() -> Response {
+    let mut h = Headers::new();
+    h.insert("content-type", "text/plain; charset=utf-8");
+    h.insert("retry-after", "1");
+    Response {
+        status: StatusCode(429),
+        headers: h,
+        body: b"too many requests".to_vec(),
+    }
+}
+
+// --- Safe defaults composer -------------------------------------------
+
+/// Composes the recommended "safe defaults" middleware chain in
+/// the canonical order:
+///
+/// `request_id -> logger -> recoverer -> security_headers -> body_limit -> timeout`
+///
+/// CSRF, CORS, session, and rate-limit are intentionally NOT
+/// included — they require app-specific configuration. Wire them
+/// explicitly above the safe-defaults chain.
+pub fn safe_defaults<H: Handler + std::panic::RefUnwindSafe + 'static>(inner: H) -> impl Handler {
+    let chain = body_limit(1024 * 1024, inner);
+    let chain = timeout(std::time::Duration::from_secs(30), chain);
+    let chain = security_headers(SecurityHeaders::strict(), chain);
+    let chain = recoverer(chain);
+    let chain = logger(chain);
+    request_id(chain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +958,7 @@ mod tests {
             headers: Headers::new(),
             body: Vec::new(),
             context: Context::background(),
+            trailers: None,
         }
     }
 
@@ -558,5 +1130,281 @@ mod tests {
         let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
         assert!(resp.headers.get("content-encoding").is_none());
         assert_eq!(resp.body.len(), payload.len());
+    }
+
+    // ----- body_limit -----
+
+    #[test]
+    fn body_limit_rejects_too_large_content_length() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "ok");
+        let wrapped = body_limit(1024, inner);
+        let mut r = req(Method::Post, "/x");
+        r.headers.insert("content-length", "2048");
+        let resp = wrapped.serve(&r, &Params::default());
+        assert_eq!(resp.status, StatusCode(413));
+    }
+
+    #[test]
+    fn body_limit_rejects_too_large_body() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "ok");
+        let wrapped = body_limit(8, inner);
+        let mut r = req(Method::Post, "/x");
+        r.body = b"this is more than eight bytes".to_vec();
+        let resp = wrapped.serve(&r, &Params::default());
+        assert_eq!(resp.status, StatusCode(413));
+    }
+
+    #[test]
+    fn body_limit_passes_under_threshold() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "ok");
+        let wrapped = body_limit(1024, inner);
+        let mut r = req(Method::Post, "/x");
+        r.body = b"tiny".to_vec();
+        let resp = wrapped.serve(&r, &Params::default());
+        assert_eq!(resp.status, StatusCode(200));
+    }
+
+    // ----- timeout -----
+
+    #[test]
+    fn timeout_returns_504_when_handler_too_slow() {
+        let inner = |_req: &Request, _p: &Params| -> Response {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            text_response(200, "late")
+        };
+        let wrapped = timeout(std::time::Duration::from_millis(20), inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        assert_eq!(resp.status, StatusCode(504));
+    }
+
+    #[test]
+    fn timeout_passes_fast_handler() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "fast");
+        let wrapped = timeout(std::time::Duration::from_secs(5), inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        assert_eq!(resp.status, StatusCode(200));
+        assert_eq!(resp.body, b"fast");
+    }
+
+    // ----- HSTS -----
+
+    #[test]
+    fn hsts_adds_header() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "");
+        let wrapped = hsts(HstsConfig::default(), inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        let v = resp.headers.get("strict-transport-security").unwrap_or("");
+        assert!(v.contains("max-age=31536000"));
+        assert!(v.contains("includeSubDomains"));
+    }
+
+    #[test]
+    fn hsts_strict_includes_preload() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "");
+        let wrapped = hsts(HstsConfig::strict(), inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        let v = resp.headers.get("strict-transport-security").unwrap_or("");
+        assert!(v.contains("preload"));
+        assert!(v.contains("max-age=63072000"));
+    }
+
+    // ----- Security headers -----
+
+    #[test]
+    fn security_headers_inserts_full_bundle() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "");
+        let wrapped = security_headers(SecurityHeaders::strict(), inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        assert_eq!(resp.headers.get("x-content-type-options"), Some("nosniff"));
+        assert_eq!(resp.headers.get("x-frame-options"), Some("DENY"));
+        assert!(resp.headers.get("referrer-policy").is_some());
+        assert!(resp.headers.get("content-security-policy").is_some());
+    }
+
+    #[test]
+    fn security_headers_does_not_override_existing() {
+        let inner = |_req: &Request, _p: &Params| -> Response {
+            let mut h = Headers::new();
+            h.insert("x-frame-options", "SAMEORIGIN");
+            Response {
+                status: StatusCode(200),
+                headers: h,
+                body: Vec::new(),
+            }
+        };
+        let wrapped = security_headers(SecurityHeaders::strict(), inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        assert_eq!(resp.headers.get("x-frame-options"), Some("SAMEORIGIN"));
+    }
+
+    // ----- Cache-control -----
+
+    #[test]
+    fn cache_control_no_store() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "");
+        let wrapped = cache_control(CacheControl::no_store(), inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        let v = resp.headers.get("cache-control").unwrap_or("");
+        assert!(v.contains("no-store"));
+        assert!(v.contains("no-cache"));
+        assert!(v.contains("must-revalidate"));
+    }
+
+    #[test]
+    fn cache_control_immutable_for_assets() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "");
+        let wrapped = cache_control(CacheControl::immutable_for(31_536_000), inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        let v = resp.headers.get("cache-control").unwrap_or("");
+        assert!(v.contains("public"));
+        assert!(v.contains("max-age=31536000"));
+        assert!(v.contains("immutable"));
+    }
+
+    // ----- ETag -----
+
+    #[test]
+    fn etag_adds_header_for_body() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "hello");
+        let wrapped = etag(inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        assert!(resp.headers.get("etag").is_some());
+    }
+
+    #[test]
+    fn etag_returns_304_on_matching_if_none_match() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "hello");
+        let wrapped = etag(inner);
+        // First request gets the tag.
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        let tag = resp.headers.get("etag").unwrap().to_string();
+        // Second request with If-None-Match.
+        let mut r = req(Method::Get, "/x");
+        r.headers.insert("if-none-match", &tag);
+        let resp2 = wrapped.serve(&r, &Params::default());
+        assert_eq!(resp2.status, StatusCode(304));
+        assert!(resp2.body.is_empty());
+    }
+
+    // ----- Bearer auth -----
+
+    #[test]
+    fn bearer_auth_accepts_valid_token() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "secret");
+        let wrapped = bearer_auth(
+            "api",
+            |t| {
+                if t == "tok-abc" {
+                    Ok(())
+                } else {
+                    Err("nope".into())
+                }
+            },
+            inner,
+        );
+        let mut r = req(Method::Get, "/x");
+        r.headers.insert("authorization", "Bearer tok-abc");
+        let resp = wrapped.serve(&r, &Params::default());
+        assert_eq!(resp.status, StatusCode(200));
+    }
+
+    #[test]
+    fn bearer_auth_rejects_missing_token() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "secret");
+        let wrapped = bearer_auth("api", |_| Ok(()), inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        assert_eq!(resp.status, StatusCode(401));
+        assert!(
+            resp.headers
+                .get("www-authenticate")
+                .unwrap_or("")
+                .starts_with("Bearer")
+        );
+    }
+
+    #[test]
+    fn bearer_auth_rejects_wrong_token() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "secret");
+        let wrapped = bearer_auth(
+            "api",
+            |t| {
+                if t == "good" {
+                    Ok(())
+                } else {
+                    Err("bad token".into())
+                }
+            },
+            inner,
+        );
+        let mut r = req(Method::Get, "/x");
+        r.headers.insert("authorization", "Bearer wrong");
+        let resp = wrapped.serve(&r, &Params::default());
+        assert_eq!(resp.status, StatusCode(401));
+    }
+
+    // ----- Rate limit -----
+
+    #[test]
+    fn rate_limit_allows_within_capacity_blocks_overflow() {
+        let limiter = RateLimit::new(2, std::time::Duration::from_mins(1));
+        let inner = |_req: &Request, _p: &Params| text_response(200, "ok");
+        let wrapped = rate_limit(limiter, inner);
+        let mut r = req(Method::Get, "/x");
+        r.headers.insert("x-forwarded-for", "1.2.3.4");
+        // first two pass
+        assert_eq!(
+            wrapped.serve(&r, &Params::default()).status,
+            StatusCode(200)
+        );
+        assert_eq!(
+            wrapped.serve(&r, &Params::default()).status,
+            StatusCode(200)
+        );
+        // third gets 429
+        assert_eq!(
+            wrapped.serve(&r, &Params::default()).status,
+            StatusCode(429)
+        );
+    }
+
+    #[test]
+    fn rate_limit_separates_keys() {
+        let limiter = RateLimit::new(1, std::time::Duration::from_mins(1));
+        let inner = |_req: &Request, _p: &Params| text_response(200, "ok");
+        let wrapped = rate_limit(limiter, inner);
+        let mut r1 = req(Method::Get, "/x");
+        r1.headers.insert("x-forwarded-for", "1.1.1.1");
+        let mut r2 = req(Method::Get, "/x");
+        r2.headers.insert("x-forwarded-for", "2.2.2.2");
+        assert_eq!(
+            wrapped.serve(&r1, &Params::default()).status,
+            StatusCode(200)
+        );
+        assert_eq!(
+            wrapped.serve(&r2, &Params::default()).status,
+            StatusCode(200)
+        );
+        // each key exhausted independently
+        assert_eq!(
+            wrapped.serve(&r1, &Params::default()).status,
+            StatusCode(429)
+        );
+        assert_eq!(
+            wrapped.serve(&r2, &Params::default()).status,
+            StatusCode(429)
+        );
+    }
+
+    // ----- Safe defaults composer -----
+
+    #[test]
+    fn safe_defaults_composes_chain() {
+        let inner = |_req: &Request, _p: &Params| text_response(200, "ok");
+        let wrapped = safe_defaults(inner);
+        let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
+        // request-id, security headers should be present.
+        assert!(resp.headers.get("x-request-id").is_some());
+        assert_eq!(resp.headers.get("x-content-type-options"), Some("nosniff"));
+        assert_eq!(resp.headers.get("x-frame-options"), Some("DENY"));
     }
 }

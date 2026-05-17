@@ -192,14 +192,18 @@ fn is_whitespace(character: char) -> bool {
     matches!(character, ' ' | '\t' | '\r' | '\n')
 }
 
-/// Returns `true` when `character` may start an identifier.
+/// Returns `true` when `character` may start an identifier. Follows
+/// UAX #31 `XID_Start` plus `_`, matching Rust 2024's identifier
+/// surface. Lets user code name bindings with letters from any
+/// script (e.g. `let café = 1`, `let π = 3.14159`, `let 名前 = "x"`).
 fn is_ident_start(character: char) -> bool {
-    character == '_' || character.is_ascii_alphabetic()
+    character == '_' || unicode_ident::is_xid_start(character)
 }
 
 /// Returns `true` when `character` may continue an identifier.
+/// Follows UAX #31 `XID_Continue`.
 fn is_ident_continue(character: char) -> bool {
-    character == '_' || character.is_ascii_alphanumeric()
+    unicode_ident::is_xid_continue(character)
 }
 
 /// Convenience helper: collect every token of `source` into a `Vec`.

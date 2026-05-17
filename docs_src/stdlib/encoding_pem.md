@@ -1,5 +1,7 @@
 # `std::encoding::pem`
 
+Status: shipped
+
 PEM block encoder and decoder.
 
 ## Public items

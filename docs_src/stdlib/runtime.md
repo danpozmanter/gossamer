@@ -1,5 +1,7 @@
 # `std::runtime`
 
+Status: shipped
+
 Goroutine / GC / scheduler introspection and tuning.
 
 ## Public items

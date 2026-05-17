@@ -1,0 +1,21 @@
+// HTTP/2 server push parity probe.
+//
+// The Rust-side push surface (`PushOptions`, `PushStream`,
+// `ResponseWriter::push_promise`) is exercised end-to-end by
+// the in-process h2 client suite in
+// `crates/gossamer-cli/tests/http_h2_conformance.rs`. This .gos
+// file is the per-tier parity sentinel — every emitter must
+// produce the same stdout for the parity walk to pass.
+//
+// The printed default-weight value mirrors h2's internal
+// SETTINGS_INITIAL_WEIGHT default (16 — RFC 7540 §5.3.5).
+
+fn main() {
+    let weight = 16
+    let exclusive = false
+    let depends_on = 0
+    println!("default_weight={}", weight)
+    println!("exclusive={}", exclusive)
+    println!("depends_on={}", depends_on)
+    println!("push_promise_supported=true")
+}

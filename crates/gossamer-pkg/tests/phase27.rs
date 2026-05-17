@@ -1,9 +1,9 @@
 //!: manifest, MVS resolver, lockfile, scaffolders.
 
 use gossamer_pkg::{
-    CaretRange, DependencySpec, InlineDependency, Lockfile, Manifest, ManifestError, ProjectId,
-    ProjectIdError, Resolved, ResolvedSource, Resolver, Version, VersionCatalogue, add_registry,
-    pin_to_resolved, remove, render_initial_manifest, render_main_source, tidy,
+    CaretRange, DependencySpec, InlineDependency, LockedEntry, Lockfile, Manifest, ManifestError,
+    ProjectId, ProjectIdError, Resolved, ResolvedSource, Resolver, Version, VersionCatalogue,
+    add_registry, pin_to_resolved, remove, render_initial_manifest, render_main_source, tidy,
 };
 
 #[test]
@@ -104,7 +104,10 @@ fn manifest_rejects_missing_id_or_version() {
 }
 
 #[test]
-fn resolver_picks_minimum_version_from_catalogue() {
+fn resolver_picks_highest_matching_version_from_catalogue() {
+    // 0.8.0 flipped from MVS to highest-matching to match Cargo
+    // semantics. Range `^1.2.0` admits everything in `1.x.x`, so
+    // 1.4.0 wins over 1.2.3 / 1.2.5 / 2.0.0.
     let manifest = Manifest::parse(
         r#"[project]
 id = "example.com/app"
@@ -123,7 +126,7 @@ version = "0.1.0"
     let resolved = Resolver::new(catalogue).resolve(&manifest).unwrap();
     assert_eq!(resolved.len(), 1);
     match &resolved[0].pin {
-        ResolvedSource::Registry(v) => assert_eq!(*v, Version::new(1, 2, 3)),
+        ResolvedSource::Registry(v) => assert_eq!(*v, Version::new(1, 4, 0)),
         other => panic!("unexpected: {other:?}"),
     }
 }
@@ -175,7 +178,14 @@ version = "0.1.0"
     let lib = ProjectId::parse("example.org/lib").unwrap();
     catalogue.add(&lib, Version::new(1, 9, 0));
     let err = Resolver::new(catalogue).resolve(&manifest).unwrap_err();
-    assert!(format!("{err:?}").contains("Unsatisfiable"));
+    // 0.8.0: when candidates exist but none satisfy the consumer
+    // ranges, the resolver returns `IncompatibleVersions`. When the
+    // catalogue is empty, it still returns `Unsatisfiable`.
+    let text = format!("{err:?}");
+    assert!(
+        text.contains("Unsatisfiable") || text.contains("IncompatibleVersions"),
+        "unexpected: {text}"
+    );
 }
 
 #[test]
@@ -196,7 +206,14 @@ fn lockfile_round_trips_through_render() {
     let lock = Lockfile::from_resolved(&entries);
     let rendered = lock.render();
     let reparsed = Lockfile::parse(&rendered).unwrap();
-    assert_eq!(reparsed.entries, entries);
+    let expected: Vec<LockedEntry> = entries
+        .into_iter()
+        .map(|resolved| LockedEntry {
+            resolved,
+            sha256: None,
+        })
+        .collect();
+    assert_eq!(reparsed.entries, expected);
 }
 
 #[test]

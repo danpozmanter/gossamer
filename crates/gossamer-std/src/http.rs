@@ -15,9 +15,9 @@ use std::collections::BTreeMap;
 // because the h2 crate carries enough machinery to deserve its
 // own file; user-facing names land here.
 pub use crate::http_h2::{
-    Config as Http2Config, Error as Http2Error, Handler as Http2Handler,
+    Config as Http2Config, Error as Http2Error, Handler as Http2Handler, PushOptions, PushStream,
     ResponseWriter as StreamingResponseWriter, ServerHandle as Http2ServerHandle,
-    StreamingHandler as Http2StreamingHandler, bind_and_run_h2c as serve_h2c,
+    StreamingHandler as Http2StreamingHandler, Trailers, bind_and_run_h2c as serve_h2c,
     bind_and_run_h2c_streaming as serve_h2c_streaming, serve_connection as serve_h2_connection,
     serve_connection_streaming as serve_h2_connection_streaming,
 };
@@ -205,6 +205,12 @@ pub struct Request {
     /// does not override it. Shutting down the server cancels the
     /// per-connection context so long-running handlers notice.
     pub context: crate::context::Context,
+    /// HTTP/2 request-side trailers. `None` for h1 and for h2
+    /// requests that did not carry a trailing HEADERS frame.
+    /// `Some(headers)` once the body has been fully consumed by
+    /// the server-side bridge and the peer sent a `END_STREAM`
+    /// trailing HEADERS frame.
+    pub trailers: Option<Headers>,
 }
 
 impl Request {
@@ -245,6 +251,15 @@ impl Request {
     #[must_use]
     pub fn context(&self) -> &crate::context::Context {
         &self.context
+    }
+
+    /// Returns the HTTP/2 request-side trailers if any were
+    /// received. `None` for HTTP/1.1 requests and for HTTP/2
+    /// requests where the peer did not send a trailing HEADERS
+    /// frame.
+    #[must_use]
+    pub fn trailers(&self) -> Option<&Headers> {
+        self.trailers.as_ref()
     }
 }
 
@@ -1094,6 +1109,7 @@ pub mod server {
                 headers: head.headers,
                 body,
                 context: ctx,
+                trailers: None,
             },
             head.http10,
             client_close,

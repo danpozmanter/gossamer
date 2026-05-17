@@ -1,5 +1,7 @@
 # `std::math::big`
 
+Status: shipped
+
 Arbitrary-precision integers (num-bigint).
 
 ## Public items

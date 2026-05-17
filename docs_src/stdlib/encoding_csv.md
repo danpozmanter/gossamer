@@ -1,5 +1,7 @@
 # `std::encoding::csv`
 
+Status: shipped
+
 CSV record reader and writer.
 
 ## Public items

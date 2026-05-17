@@ -1,5 +1,7 @@
 # `std::encoding::yaml`
 
+Status: shipped
+
 YAML 1.2 parser/emitter (serde_yaml-backed).
 
 ## Public items

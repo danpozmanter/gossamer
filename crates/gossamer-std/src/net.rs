@@ -661,6 +661,70 @@ impl UnixStream {
     }
 }
 
+// Windows / non-unix stubs: every method returns the same error so
+// the import resolves and `use std::net::UnixListener` doesn't
+// fail at compile time on Gossamer code that conditionally falls
+// back to TcpListener at runtime. Real AF_UNIX support on Windows
+// 10 1803+ is a separate work item — std's `os::windows::net` has
+// no UnixListener and the surface needs path-prefix coercion and
+// abstract-namespace handling that the unix path doesn't share.
+#[cfg(not(unix))]
+fn unix_unsupported(op: &str) -> IoError {
+    IoError::Other(format!(
+        "{op}: AF_UNIX sockets are not supported on this platform"
+    ))
+}
+
+/// Bound Unix domain socket listener (stub on non-Unix targets).
+#[cfg(not(unix))]
+#[derive(Debug)]
+pub struct UnixListener {
+    _private: (),
+}
+
+#[cfg(not(unix))]
+impl UnixListener {
+    /// Always returns an unsupported-platform error.
+    pub fn bind(_path: &str) -> Result<Self, IoError> {
+        Err(unix_unsupported("UnixListener::bind"))
+    }
+    /// Always returns an unsupported-platform error.
+    pub fn accept(&self) -> Result<UnixStream, IoError> {
+        Err(unix_unsupported("UnixListener::accept"))
+    }
+    /// Always returns an unsupported-platform error.
+    pub fn local_addr(&self) -> Result<String, IoError> {
+        Err(unix_unsupported("UnixListener::local_addr"))
+    }
+}
+
+/// Connected Unix domain socket stream (stub on non-Unix targets).
+#[cfg(not(unix))]
+#[derive(Debug)]
+pub struct UnixStream {
+    _private: (),
+}
+
+#[cfg(not(unix))]
+impl UnixStream {
+    /// Always returns an unsupported-platform error.
+    pub fn connect(_path: &str) -> Result<Self, IoError> {
+        Err(unix_unsupported("UnixStream::connect"))
+    }
+    /// Always returns an unsupported-platform error.
+    pub fn read(&mut self, _buf: &mut [u8]) -> Result<usize, IoError> {
+        Err(unix_unsupported("UnixStream::read"))
+    }
+    /// Always returns an unsupported-platform error.
+    pub fn write(&mut self, _buf: &[u8]) -> Result<usize, IoError> {
+        Err(unix_unsupported("UnixStream::write"))
+    }
+    /// Always returns an unsupported-platform error.
+    pub fn shutdown(&self) -> Result<(), IoError> {
+        Err(unix_unsupported("UnixStream::shutdown"))
+    }
+}
+
 /// IP address parsing and inspection utilities.
 pub mod ip;
 

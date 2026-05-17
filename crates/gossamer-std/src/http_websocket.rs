@@ -548,6 +548,7 @@ mod tests {
             headers: h,
             body: Vec::new(),
             context: Context::background(),
+            trailers: None,
         }
     }
 

@@ -55,13 +55,36 @@ enum MapStorage {
     Bytes(FxHashMap<Box<[u8]>, Box<[u8]>>),
 }
 
+/// Snapshot every i64-shaped value stored in `map` so the tracing
+/// GC can treat each as a candidate pointer. Called by
+/// `super::gc::scan_all_gos_maps` after the normal mark drain.
+///
+/// Only the `I64I64` shape carries values whose 8-byte payload is
+/// a candidate pointer in practice (struct heap pointers stored
+/// via `gos_rt_map_insert_i64_i64`'s fallthrough for non-primitive
+/// values). `StrI64` is the symmetric case for string-keyed maps.
+/// The byte-erased / string-valued variants own their payloads
+/// directly (Box<[u8]>) and don't store user-tracked heap
+/// pointers, so we don't yield from them — the conservative
+/// trace doesn't need to consider those values.
+pub(super) fn storage_values_for_gc(map: &GosMap) -> Vec<i64> {
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::I64I64(inner) => inner.values().copied().collect(),
+        MapStorage::StrI64(inner) => inner.values().copied().collect(),
+        _ => Vec::new(),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mut GosMap {
     ffi_entry!(std::ptr::null_mut(), {
-        Box::into_raw(Box::new(GosMap {
+        let ptr = Box::into_raw(Box::new(GosMap {
             len_cache: 0,
             storage: parking_lot::Mutex::new(MapStorage::Empty),
-        }))
+        }));
+        super::gc::gos_map_register(ptr as *mut u8);
+        ptr
     })
 }
 
@@ -87,10 +110,12 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
         } else {
             MapStorage::Empty
         };
-        Box::into_raw(Box::new(GosMap {
+        let ptr = Box::into_raw(Box::new(GosMap {
             len_cache: 0,
             storage: parking_lot::Mutex::new(storage),
-        }))
+        }));
+        super::gc::gos_map_register(ptr as *mut u8);
+        ptr
     })
 }
 
@@ -312,6 +337,31 @@ pub unsafe extern "C" fn gos_rt_map_get_i64(m: *const GosMap, key: i64) -> i64 {
     })
 }
 
+/// `m.get(k) -> Option<V>` for an i64-keyed map. Returns `*mut GosResult`
+/// with `disc=0, payload=value-as-i64` when present, `disc=1, payload=0`
+/// when absent. Treats every 8-byte value payload (i64, c-string ptr,
+/// struct heap pointer) uniformly: the MIR pin recovers the proper V
+/// from the call expression's `Option<V>` Adt substs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_i64_opt(m: *const GosMap, key: i64) -> *mut GosResult {
+    ffi_entry!(std::ptr::null_mut(), {
+        if m.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let map = unsafe { &*m };
+        let storage = map.storage.lock();
+        let payload: Option<i64> = match &*storage {
+            MapStorage::I64I64(inner) => inner.get(&key).copied(),
+            MapStorage::I64Str(inner) => inner.get(&key).map(|bs| alloc_cstring(bs) as i64),
+            _ => None,
+        };
+        match payload {
+            Some(v) => unsafe { gos_rt_result_new(0, v) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_contains_key_i64(m: *const GosMap, key: i64) -> bool {
     ffi_entry!(false, {
@@ -381,6 +431,35 @@ pub unsafe extern "C" fn gos_rt_map_get_str_i64(m: *const GosMap, key: *const c_
         match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(0),
             _ => 0,
+        }
+    })
+}
+
+/// `m.get(k) -> Option<V>` for a string-keyed map. Same `*mut GosResult`
+/// layout as [`gos_rt_map_get_i64_opt`]: 8-byte payload, MIR pin
+/// recovers V from the call's `Option<V>` substs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_str_opt(
+    m: *const GosMap,
+    key: *const c_char,
+) -> *mut GosResult {
+    ffi_entry!(std::ptr::null_mut(), {
+        if m.is_null() || key.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let map = unsafe { &*m };
+        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let storage = map.storage.lock();
+        let payload: Option<i64> = match &*storage {
+            MapStorage::StrI64(inner) => inner.get(key_bytes).copied(),
+            MapStorage::StrStr(inner) | MapStorage::Bytes(inner) => {
+                inner.get(key_bytes).map(|bs| alloc_cstring(bs) as i64)
+            }
+            _ => None,
+        };
+        match payload {
+            Some(v) => unsafe { gos_rt_result_new(0, v) },
+            None => unsafe { gos_rt_result_new(1, 0) },
         }
     })
 }
@@ -690,6 +769,7 @@ pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
         if m.is_null() {
             return;
         }
+        super::gc::gos_map_deregister(m as *mut u8);
         drop(unsafe { Box::from_raw(m) });
     });
 }

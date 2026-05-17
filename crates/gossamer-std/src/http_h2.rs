@@ -123,9 +123,17 @@ enum WriterState {
         status: u16,
         headers: Headers,
     },
-    Streaming(h2::SendStream<Bytes>),
+    Streaming {
+        sender: h2::SendStream<Bytes>,
+    },
     Closed,
 }
+
+// Note: `WriterState::Streaming` no longer carries the
+// `SendResponse<Bytes>` because push_promise is only valid before
+// the head is flushed; the `respond` value is consumed during
+// `send_head` and the remaining stream lifecycle only needs the
+// `SendStream`. See `ResponseWriter::push_promise`.
 
 impl ResponseWriter {
     /// Sets the HTTP status to emit when the response head is
@@ -154,17 +162,17 @@ impl ResponseWriter {
         if matches!(self.state, WriterState::Pending { .. }) {
             let old = std::mem::replace(&mut self.state, WriterState::Closed);
             let WriterState::Pending {
-                respond,
+                mut respond,
                 status,
                 headers,
             } = old
             else {
                 unreachable!()
             };
-            let sender = send_head(respond, status, &headers, false)?;
-            self.state = WriterState::Streaming(sender);
+            let sender = send_head(&mut respond, status, &headers, false)?;
+            self.state = WriterState::Streaming { sender };
         }
-        let WriterState::Streaming(sender) = &mut self.state else {
+        let WriterState::Streaming { sender, .. } = &mut self.state else {
             return Err(Error::Protocol("writer closed".into()));
         };
         sender
@@ -184,18 +192,103 @@ impl ResponseWriter {
         let state = std::mem::replace(&mut self.state, WriterState::Closed);
         match state {
             WriterState::Pending {
-                respond,
+                mut respond,
                 status,
                 headers,
             } => {
-                let _ = send_head(respond, status, &headers, true)?;
+                let _ = send_head(&mut respond, status, &headers, true)?;
                 Ok(())
             }
-            WriterState::Streaming(mut sender) => sender
+            WriterState::Streaming { mut sender, .. } => sender
                 .send_data(Bytes::new(), true)
                 .map_err(|e| Error::Protocol(format!("send_terminator: {e}"))),
             WriterState::Closed => Ok(()),
         }
+    }
+
+    /// Sends a trailing HEADERS frame with `END_STREAM` after the
+    /// response body's DATA frames. Must be called after at least
+    /// one `write_chunk` (the head must already be flushed and the
+    /// stream must still be open). Consumes the writer.
+    ///
+    /// h2 mandates that trailers carry no pseudo-headers and that
+    /// the `:status` line is delivered in the original HEADERS
+    /// frame, not the trailers frame.
+    pub fn write_trailers(mut self, trailers: Headers) -> Result<(), Error> {
+        let state = std::mem::replace(&mut self.state, WriterState::Closed);
+        match state {
+            WriterState::Streaming { mut sender, .. } => {
+                let map = headers_to_header_map(&trailers);
+                sender
+                    .send_trailers(map)
+                    .map_err(|e| Error::Protocol(format!("send_trailers: {e}")))
+            }
+            WriterState::Pending { .. } => Err(Error::Protocol(
+                "write_trailers requires at least one write_chunk first".into(),
+            )),
+            WriterState::Closed => Err(Error::Protocol("writer closed".into())),
+        }
+    }
+
+    /// Opens a server-initiated push stream. Must be called before
+    /// the first `write_chunk` on the parent stream (h2 requires
+    /// `PUSH_PROMISE` frames to be sent before the parent's
+    /// response head).
+    ///
+    /// `uri` is the absolute or scheme-relative URI of the pushed
+    /// resource — for HTTP/2 this becomes the synthetic request's
+    /// `:path` pseudo-header. The supplied `headers` are added as
+    /// request-side headers on the pushed stream.
+    ///
+    /// `opts` carries the prioritization knobs. Pass
+    /// [`PushOptions::default()`] for the h2-default weight (16,
+    /// no exclusive dependency).
+    pub fn push_promise(
+        &mut self,
+        uri: &str,
+        headers: Headers,
+        _opts: PushOptions,
+    ) -> Result<PushStream, Error> {
+        let respond = match &mut self.state {
+            WriterState::Pending { respond, .. } => respond,
+            WriterState::Streaming { .. } => {
+                return Err(Error::Protocol(
+                    "push_promise must be called before the first write_chunk".into(),
+                ));
+            }
+            WriterState::Closed => {
+                return Err(Error::Protocol("writer closed".into()));
+            }
+        };
+        let mut req_builder = ::http::Request::builder()
+            .method(::http::Method::GET)
+            .uri(uri);
+        {
+            let h = req_builder
+                .headers_mut()
+                .ok_or_else(|| Error::Protocol("push request headers".into()))?;
+            for (name, value) in headers.iter() {
+                if let (Ok(n), Ok(v)) = (
+                    ::http::HeaderName::from_bytes(name.as_bytes()),
+                    ::http::HeaderValue::from_str(value),
+                ) {
+                    h.insert(n, v);
+                }
+            }
+        }
+        let req: ::http::Request<()> = req_builder
+            .body(())
+            .map_err(|e| Error::Protocol(format!("push request build: {e}")))?;
+        let pushed = respond
+            .push_request(req)
+            .map_err(|e| Error::Protocol(format!("push_request: {e}")))?;
+        // Note: h2 ignores the weight / depends_on knobs internally
+        // because h2's prioritization layer is internal; the
+        // `PushOptions` shape is preserved so future versions can
+        // honour them without breaking callers.
+        Ok(PushStream {
+            inner: PushInner::Pending(pushed),
+        })
     }
 }
 
@@ -208,7 +301,7 @@ impl Drop for ResponseWriter {
 }
 
 fn send_head(
-    respond: SendResponse<Bytes>,
+    respond: &mut SendResponse<Bytes>,
     status: u16,
     headers: &Headers,
     end_of_stream: bool,
@@ -232,10 +325,196 @@ fn send_head(
     let head: ::http::Response<()> = builder
         .body(())
         .map_err(|e| Error::Protocol(format!("response build: {e}")))?;
-    let mut respond = respond;
     respond
         .send_response(head, end_of_stream)
         .map_err(|e| Error::Protocol(format!("send_response: {e}")))
+}
+
+/// Converts a Gossamer `Headers` value into the `http::HeaderMap`
+/// type accepted by the `h2` crate. Headers whose name or value
+/// is not valid HTTP token / field-value bytes are skipped (h1
+/// path mirrors the same lenient behaviour).
+fn headers_to_header_map(headers: &Headers) -> ::http::HeaderMap {
+    let mut map = ::http::HeaderMap::new();
+    for (name, value) in headers.iter() {
+        if let (Ok(n), Ok(v)) = (
+            ::http::HeaderName::from_bytes(name.as_bytes()),
+            ::http::HeaderValue::from_str(value),
+        ) {
+            map.insert(n, v);
+        }
+    }
+    map
+}
+
+/// Type alias clarifying that a `Headers` map is being used for
+/// trailing HEADERS frames (as opposed to leading request /
+/// response headers).
+pub type Trailers = Headers;
+
+/// Server-push prioritization knobs. The exact fields mirror the
+/// HTTP/2 priority frame semantics from RFC 7540 §5.3 (deprecated
+/// but still honoured by most clients) — h2's internal
+/// prioritization layer does not currently surface dependency
+/// trees, but the struct shape is preserved so future versions
+/// can wire them through.
+#[derive(Debug, Clone, Copy)]
+pub struct PushOptions {
+    /// Relative weight 1-256. h2 default is 16.
+    pub weight: u8,
+    /// Optional parent stream id that this pushed stream depends on.
+    pub depends_on: Option<u32>,
+    /// Whether the dependency is exclusive (RFC 7540 §5.3.1).
+    pub exclusive: bool,
+}
+
+impl Default for PushOptions {
+    fn default() -> Self {
+        Self {
+            weight: 16,
+            depends_on: None,
+            exclusive: false,
+        }
+    }
+}
+
+/// Server-initiated push stream returned by
+/// [`ResponseWriter::push_promise`]. Lifecycle:
+///
+/// 1. Construction via `push_promise` (synthetic request HEADERS
+///    frame already on the wire).
+/// 2. Caller sets status + headers via `set_status` / `header`.
+/// 3. `write(bytes)` flushes the head on first call, then sends
+///    one DATA frame per call.
+/// 4. `write_trailers(headers)` or `end()` closes the stream.
+pub struct PushStream {
+    inner: PushInner,
+}
+
+enum PushInner {
+    Pending(h2::server::SendPushedResponse<Bytes>),
+    Sending(h2::SendStream<Bytes>),
+    Closed,
+}
+
+impl PushStream {
+    /// Sends one chunk of body data on the pushed stream. The
+    /// first call flushes the synthetic response head with status
+    /// `200` and no extra headers; for non-200 pushed responses,
+    /// chain [`PushStream::send_head`] before the first write.
+    pub fn write(&mut self, data: &[u8]) -> Result<(), Error> {
+        if matches!(self.inner, PushInner::Pending(_)) {
+            self.send_head(200, Headers::new(), false)?;
+        }
+        let PushInner::Sending(sender) = &mut self.inner else {
+            return Err(Error::Protocol("push stream closed".into()));
+        };
+        sender
+            .send_data(Bytes::copy_from_slice(data), false)
+            .map_err(|e| Error::Protocol(format!("push send_data: {e}")))
+    }
+
+    /// Flushes a pushed-response head with the given status and
+    /// headers. Pass `end_of_stream = true` for an empty-body
+    /// response; otherwise the caller should follow with
+    /// `write`/`write_trailers`/`end`.
+    pub fn send_head(
+        &mut self,
+        status: u16,
+        headers: Headers,
+        end_of_stream: bool,
+    ) -> Result<(), Error> {
+        let old = std::mem::replace(&mut self.inner, PushInner::Closed);
+        match old {
+            PushInner::Pending(mut pushed) => {
+                let status = ::http::StatusCode::from_u16(status)
+                    .map_err(|e| Error::Protocol(format!("bad status: {e}")))?;
+                let mut builder = ::http::Response::builder().status(status);
+                {
+                    let h = builder
+                        .headers_mut()
+                        .ok_or_else(|| Error::Protocol("push head headers".into()))?;
+                    for (name, value) in headers.iter() {
+                        if let (Ok(n), Ok(v)) = (
+                            ::http::HeaderName::from_bytes(name.as_bytes()),
+                            ::http::HeaderValue::from_str(value),
+                        ) {
+                            h.insert(n, v);
+                        }
+                    }
+                }
+                let head: ::http::Response<()> = builder
+                    .body(())
+                    .map_err(|e| Error::Protocol(format!("push response build: {e}")))?;
+                let sender = pushed
+                    .send_response(head, end_of_stream)
+                    .map_err(|e| Error::Protocol(format!("push send_response: {e}")))?;
+                if end_of_stream {
+                    self.inner = PushInner::Closed;
+                } else {
+                    self.inner = PushInner::Sending(sender);
+                }
+                Ok(())
+            }
+            PushInner::Sending(_) | PushInner::Closed => Err(Error::Protocol(
+                "push head already flushed or stream closed".into(),
+            )),
+        }
+    }
+
+    /// Sends a trailing HEADERS frame with `END_STREAM` on the
+    /// pushed stream. Mirrors
+    /// [`ResponseWriter::write_trailers`]. Consumes the stream.
+    pub fn write_trailers(mut self, trailers: Headers) -> Result<(), Error> {
+        let state = std::mem::replace(&mut self.inner, PushInner::Closed);
+        match state {
+            PushInner::Sending(mut sender) => {
+                let map = headers_to_header_map(&trailers);
+                sender
+                    .send_trailers(map)
+                    .map_err(|e| Error::Protocol(format!("push send_trailers: {e}")))
+            }
+            PushInner::Pending(_) => Err(Error::Protocol(
+                "push write_trailers requires send_head or write first".into(),
+            )),
+            PushInner::Closed => Err(Error::Protocol("push stream closed".into())),
+        }
+    }
+
+    /// Closes the pushed stream cleanly. If `send_head` has not
+    /// been called this flushes an empty 200 response with
+    /// `END_STREAM`; if `write` has been called this sends an
+    /// empty `DATA` frame with `END_STREAM`. Consumes the stream.
+    pub fn end(mut self) -> Result<(), Error> {
+        match std::mem::replace(&mut self.inner, PushInner::Closed) {
+            PushInner::Pending(pushed) => {
+                self.inner = PushInner::Pending(pushed);
+                self.send_head(200, Headers::new(), true)
+            }
+            PushInner::Sending(mut sender) => sender
+                .send_data(Bytes::new(), true)
+                .map_err(|e| Error::Protocol(format!("push end: {e}"))),
+            PushInner::Closed => Ok(()),
+        }
+    }
+}
+
+impl Drop for PushStream {
+    fn drop(&mut self) {
+        // Best-effort terminator so the peer's pushed request
+        // doesn't dangle. Errors are ignored because Drop may run
+        // during unwind.
+        match std::mem::replace(&mut self.inner, PushInner::Closed) {
+            PushInner::Pending(pushed) => {
+                self.inner = PushInner::Pending(pushed);
+                let _ = self.send_head(200, Headers::new(), true);
+            }
+            PushInner::Sending(mut sender) => {
+                let _ = sender.send_data(Bytes::new(), true);
+            }
+            PushInner::Closed => {}
+        }
+    }
 }
 
 /// Configuration for the h2 server.
@@ -262,6 +541,65 @@ impl Default for Config {
             max_frame_size: 16_384,
             max_header_list_size: 16 * 1024,
         }
+    }
+}
+
+impl Config {
+    /// Overrides `max_concurrent_streams` (SETTINGS frame value
+    /// `SETTINGS_MAX_CONCURRENT_STREAMS`). Returns `self` for
+    /// chained-builder use.
+    #[must_use]
+    pub fn with_max_concurrent_streams(mut self, n: u32) -> Self {
+        self.max_concurrent_streams = n;
+        self
+    }
+
+    /// Overrides `initial_window_size` (SETTINGS frame value
+    /// `SETTINGS_INITIAL_WINDOW_SIZE`). Affects per-stream flow
+    /// control. Returns `self` for chained-builder use.
+    #[must_use]
+    pub fn with_initial_window_size(mut self, bytes: u32) -> Self {
+        self.initial_window_size = bytes;
+        self
+    }
+
+    /// Overrides `initial_connection_window_size`. Affects the
+    /// per-connection flow-control window. Returns `self` for
+    /// chained-builder use.
+    #[must_use]
+    pub fn with_initial_connection_window_size(mut self, bytes: u32) -> Self {
+        self.initial_connection_window_size = bytes;
+        self
+    }
+
+    /// Overrides `max_frame_size` (SETTINGS frame value
+    /// `SETTINGS_MAX_FRAME_SIZE`). Must be in the range
+    /// 16384..=16777215 per RFC 7540 §6.5.2.
+    #[must_use]
+    pub fn with_max_frame_size(mut self, bytes: u32) -> Self {
+        self.max_frame_size = bytes;
+        self
+    }
+
+    /// Overrides `max_header_list_size` (SETTINGS frame value
+    /// `SETTINGS_MAX_HEADER_LIST_SIZE`). Used as a cap on the
+    /// total uncompressed size of HEADERS / CONTINUATION blocks.
+    #[must_use]
+    pub fn with_max_header_list_size(mut self, bytes: u32) -> Self {
+        self.max_header_list_size = bytes;
+        self
+    }
+
+    /// Enables HTTP/2 server push (SETTINGS frame value
+    /// `SETTINGS_ENABLE_PUSH`). The wire-protocol setting is
+    /// controlled by the peer (the client decides whether to
+    /// permit push); this knob is reserved for symmetry with the
+    /// h1 server config and currently has no effect on the h2
+    /// crate's SETTINGS frame because h2 always advertises the
+    /// server side as push-capable.
+    #[must_use]
+    pub const fn with_enable_push(self, _enable: bool) -> Self {
+        self
     }
 }
 
@@ -462,13 +800,16 @@ where
         let _ = body_stream.flow_control().release_capacity(chunk.len());
         body.extend_from_slice(&chunk);
     }
-    let trailers = body_stream.trailers().await.unwrap_or(None);
-    if let Some(tr) = trailers {
+    let raw_trailers = body_stream.trailers().await.unwrap_or(None);
+    let mut trailers: Option<Headers> = None;
+    if let Some(tr) = raw_trailers {
+        let mut t = Headers::new();
         for (name, value) in tr.iter() {
             if let Ok(v) = value.to_str() {
-                headers.insert(name.as_str(), v);
+                t.insert(name.as_str(), v);
             }
         }
+        trailers = Some(t);
     }
 
     let request = Request {
@@ -478,6 +819,7 @@ where
         headers,
         body,
         context: crate::context::Context::background(),
+        trailers,
     };
 
     // Invoke handler (catch panics so a single bad handler does
@@ -703,6 +1045,17 @@ where
         let _ = body_stream.flow_control().release_capacity(chunk.len());
         body.extend_from_slice(&chunk);
     }
+    let raw_trailers = body_stream.trailers().await.unwrap_or(None);
+    let mut trailers: Option<Headers> = None;
+    if let Some(tr) = raw_trailers {
+        let mut t = Headers::new();
+        for (name, value) in tr.iter() {
+            if let Ok(v) = value.to_str() {
+                t.insert(name.as_str(), v);
+            }
+        }
+        trailers = Some(t);
+    }
 
     let request = Request {
         method,
@@ -711,6 +1064,7 @@ where
         headers,
         body,
         context: crate::context::Context::background(),
+        trailers,
     };
 
     let writer = ResponseWriter {
@@ -777,6 +1131,7 @@ mod tests {
             headers: Headers::new(),
             body: Vec::new(),
             context: crate::context::Context::background(),
+            trailers: None,
         });
         assert_eq!(r.status, StatusCode(200));
     }
@@ -835,5 +1190,62 @@ mod tests {
             },
         );
         let _ = Arc::clone(&h);
+    }
+
+    #[test]
+    fn config_builders_set_each_field() {
+        let c = Config::default()
+            .with_max_concurrent_streams(42)
+            .with_initial_window_size(65_535)
+            .with_initial_connection_window_size(131_070)
+            .with_max_frame_size(32_768)
+            .with_max_header_list_size(8_192)
+            .with_enable_push(true);
+        assert_eq!(c.max_concurrent_streams, 42);
+        assert_eq!(c.initial_window_size, 65_535);
+        assert_eq!(c.initial_connection_window_size, 131_070);
+        assert_eq!(c.max_frame_size, 32_768);
+        assert_eq!(c.max_header_list_size, 8_192);
+    }
+
+    #[test]
+    fn push_options_default_carries_weight_16() {
+        let opts = PushOptions::default();
+        assert_eq!(opts.weight, 16);
+        assert!(opts.depends_on.is_none());
+        assert!(!opts.exclusive);
+    }
+
+    #[test]
+    fn push_options_custom_round_trip() {
+        let opts = PushOptions {
+            weight: 128,
+            depends_on: Some(7),
+            exclusive: true,
+        };
+        let cloned = opts;
+        assert_eq!(cloned.weight, 128);
+        assert_eq!(cloned.depends_on, Some(7));
+        assert!(cloned.exclusive);
+    }
+
+    #[test]
+    fn trailers_type_alias_is_headers() {
+        let mut t: Trailers = Headers::new();
+        t.insert("x-trace-id", "abc123");
+        assert_eq!(t.get("x-trace-id"), Some("abc123"));
+    }
+
+    #[test]
+    fn headers_to_header_map_skips_invalid_names() {
+        let mut h = Headers::new();
+        h.insert("x-good", "ok");
+        // Insert a name with a space — not a valid HTTP token.
+        // `Headers::insert` lowercases but doesn't reject; the
+        // h2-bridge converter should drop it.
+        h.insert("bad name", "v");
+        let map = headers_to_header_map(&h);
+        assert!(map.get("x-good").is_some());
+        assert!(map.get("bad name").is_none());
     }
 }

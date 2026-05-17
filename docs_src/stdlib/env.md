@@ -1,5 +1,7 @@
 # `std::env`
 
+Status: shipped
+
 Process environment, command-line arguments, working directory.
 
 ## Public items

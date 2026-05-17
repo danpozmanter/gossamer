@@ -70,11 +70,17 @@ use crate::registry::{StdItem, StdItemKind, StdModule};
 use super::*;
 
 /// Renders one stdlib module as a Markdown page (Python-style
-/// per-module reference). Used by `gos doc --emit-stdlib`.
+/// per-module reference). Used by `gos doc --emit-stdlib`. The
+/// page carries a `Status: ...` marker derived from
+/// `feature_status::lookup` so doc readers can see at a glance
+/// whether a module is `shipped`, `experimental`, `planned`, or
+/// `removed`.
 #[must_use]
 pub fn render_module_markdown(module: &StdModule) -> String {
     let mut out = String::with_capacity(1024);
     out.push_str(&format!("# `{}`\n\n", module.path));
+    let status = super::feature_status::lookup(module.path).map_or("shipped", |e| e.status.tag());
+    out.push_str(&format!("Status: {status}\n\n"));
     out.push_str(&format!("{}\n\n", module.summary));
     out.push_str("## Public items\n\n");
     out.push_str("| Name | Kind | Description |\n");
@@ -136,6 +142,42 @@ pub fn module_slug(path: &str) -> String {
     path.strip_prefix("std::")
         .unwrap_or(path)
         .replace("::", "_")
+}
+
+/// Canonical slug for a language-feature path — `lang::if_let`
+/// becomes `if_let`.
+#[must_use]
+pub fn language_slug(path: &str) -> String {
+    path.strip_prefix("lang::")
+        .unwrap_or(path)
+        .replace("::", "_")
+}
+
+/// Renders one language-feature entry as a Markdown stub. The page
+/// carries the same `Status: ...` marker shape stdlib pages use so
+/// the drift check covers both surfaces with one rule.
+#[must_use]
+pub fn render_language_markdown(entry: &super::feature_status::FeatureStatus) -> String {
+    let mut out = String::with_capacity(256);
+    out.push_str(&format!("# `{}`\n\n", entry.path));
+    out.push_str(&format!("Status: {}\n\n", entry.status.tag()));
+    out.push_str(&format!("{}\n", entry.doc));
+    out
+}
+
+/// Returns every `(slug, markdown)` pair for the language-feature
+/// docs site under `docs_src/language/`. Mirrors `render_all_docs`
+/// for the language surface.
+#[must_use]
+pub fn render_all_language_docs() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for entry in super::feature_status::FEATURE_STATUS {
+        if !entry.path.starts_with("lang::") {
+            continue;
+        }
+        out.push((language_slug(entry.path), render_language_markdown(entry)));
+    }
+    out
 }
 
 /// Returns every `(slug, markdown)` pair for the docs site.

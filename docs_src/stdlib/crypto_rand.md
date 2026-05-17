@@ -1,5 +1,7 @@
 # `std::crypto::rand`
 
+Status: shipped
+
 Secure random bytes from the host CSPRNG.
 
 ## Public items

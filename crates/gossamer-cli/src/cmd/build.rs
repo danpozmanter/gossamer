@@ -433,36 +433,101 @@ fn try_native_build(
     })
 }
 
-/// Locates `libclang_rt.profile-x86_64.a` alongside the active LLVM
+/// Locates `libclang_rt.profile-*.a` alongside the active LLVM
 /// toolchain. Needed when building an instrumented PGO binary
 /// (`GOS_PGO_COLLECT`): the runtime exports `__llvm_profile_write_file`
 /// which the instrumented IR calls on exit to flush raw profile data.
 fn find_clang_rt_profile() -> Option<PathBuf> {
-    // Common system paths for apt-installed LLVM on Debian/Ubuntu.
-    let arch_lib = if cfg!(target_arch = "x86_64") {
-        "libclang_rt.profile-x86_64.a"
+    let arch = if cfg!(target_arch = "x86_64") {
+        "x86_64"
     } else if cfg!(target_arch = "aarch64") {
-        "libclang_rt.profile-aarch64.a"
+        "aarch64"
     } else {
         return None;
     };
-    let candidates = [
-        format!("/usr/lib/llvm-18/lib/clang/18/lib/linux/{arch_lib}"),
-        format!("/usr/lib/llvm-19/lib/clang/19/lib/linux/{arch_lib}"),
-        format!("/usr/lib/llvm-20/lib/clang/20/lib/linux/{arch_lib}"),
-        format!(
-            "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/lib/clang/18/lib/linux/{arch_lib}"
-        ),
-    ];
-    for c in &candidates {
-        let p = PathBuf::from(c);
+    let (lib_name, os_subdir) = if cfg!(target_os = "linux") {
+        (format!("libclang_rt.profile-{arch}.a"), "linux")
+    } else if cfg!(target_os = "macos") {
+        // Apple's clang_rt drops the `-arch` suffix and uses an
+        // `_osx` flavour name; macOS ships only one slice per
+        // archive so the same file covers x86_64 and aarch64.
+        ("libclang_rt.profile_osx.a".to_string(), "darwin")
+    } else if cfg!(target_os = "windows") {
+        (format!("clang_rt.profile-{arch}.lib"), "windows")
+    } else {
+        return None;
+    };
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // Explicit user override: any caller can pin the archive
+    // directly without us guessing.
+    if let Ok(path) = std::env::var("GOS_LLVM_PROFILE_RT") {
+        candidates.push(PathBuf::from(path));
+    }
+
+    // Probe relative to the configured `opt` / `llc`, since the
+    // profile archive ships in the same toolchain layout. Walks
+    // up to the LLVM prefix and joins `lib/clang/<ver>/lib/<os>`.
+    if let Some(prefix) = std::env::var_os("GOS_LLVM_OPT").map(PathBuf::from)
+        && let Some(bin_dir) = prefix.parent()
+        && let Some(llvm_prefix) = bin_dir.parent()
+    {
+        for ver in ["18", "19", "20", "17"] {
+            candidates.push(
+                llvm_prefix
+                    .join("lib")
+                    .join("clang")
+                    .join(ver)
+                    .join("lib")
+                    .join(os_subdir)
+                    .join(&lib_name),
+            );
+        }
+    }
+
+    // Platform-default install paths.
+    if cfg!(target_os = "linux") {
+        for ver in ["18", "19", "20", "17"] {
+            candidates.push(PathBuf::from(format!(
+                "/usr/lib/llvm-{ver}/lib/clang/{ver}/lib/linux/{lib_name}"
+            )));
+        }
+    } else if cfg!(target_os = "macos") {
+        for ver in ["18", "19", "20", "17"] {
+            candidates.push(PathBuf::from(format!(
+                "/opt/homebrew/opt/llvm@{ver}/lib/clang/{ver}/lib/darwin/{lib_name}"
+            )));
+            candidates.push(PathBuf::from(format!(
+                "/usr/local/opt/llvm@{ver}/lib/clang/{ver}/lib/darwin/{lib_name}"
+            )));
+        }
+        candidates.push(PathBuf::from(format!(
+            "/opt/homebrew/opt/llvm/lib/clang/lib/darwin/{lib_name}"
+        )));
+    } else if cfg!(target_os = "windows") {
+        for ver in ["18", "19", "20", "17"] {
+            candidates.push(PathBuf::from(format!(
+                "C:\\msys64\\mingw64\\lib\\clang\\{ver}\\lib\\windows\\{lib_name}"
+            )));
+            candidates.push(PathBuf::from(format!(
+                "C:\\msys64\\clang64\\lib\\clang\\{ver}\\lib\\windows\\{lib_name}"
+            )));
+            candidates.push(PathBuf::from(format!(
+                "C:\\Program Files\\LLVM\\lib\\clang\\{ver}\\lib\\windows\\{lib_name}"
+            )));
+        }
+    }
+
+    for p in &candidates {
         if p.exists() {
-            return Some(p);
+            return Some(p.clone());
         }
     }
     eprintln!(
-        "pgo: warning: {arch_lib} not found — instrumented binary may fail to link.\n\
-         Install `clang-18` or `llvm-18` to get the profile runtime."
+        "pgo: warning: {lib_name} not found — instrumented binary may fail to link.\n\
+         Point GOS_LLVM_PROFILE_RT at the archive, or install LLVM 17-20 \
+         with the compiler-rt profile component."
     );
     None
 }

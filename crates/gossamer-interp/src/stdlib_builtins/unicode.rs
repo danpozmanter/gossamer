@@ -102,6 +102,8 @@ use crate::builtins::{
 };
 use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 
+use super::string_array;
+
 /// Entry point invoked from `builtins::install`.
 use super::*;
 
@@ -122,10 +124,30 @@ pub(crate) fn install_unicode(globals: &mut Vec<(&'static str, Value)>) {
             ("is_print", builtin_unicode_is_print),
             ("is_graphic", builtin_unicode_is_graphic),
             ("is_control", builtin_unicode_is_control),
+            ("is_assigned", builtin_unicode_is_assigned),
             ("to_upper", builtin_unicode_to_upper),
             ("to_lower", builtin_unicode_to_lower),
             ("to_title", builtin_unicode_to_title),
             ("simple_fold", builtin_unicode_simple_fold),
+            ("combining_class", builtin_unicode_combining_class),
+            ("to_upper_str", builtin_unicode_to_upper_str),
+            ("to_lower_str", builtin_unicode_to_lower_str),
+            ("fold_case", builtin_unicode_fold_case),
+            ("nfc", builtin_unicode_nfc),
+            ("nfd", builtin_unicode_nfd),
+            ("nfkc", builtin_unicode_nfkc),
+            ("nfkd", builtin_unicode_nfkd),
+            ("is_nfc", builtin_unicode_is_nfc),
+            ("is_nfd", builtin_unicode_is_nfd),
+            ("is_nfkc", builtin_unicode_is_nfkc),
+            ("is_nfkd", builtin_unicode_is_nfkd),
+            ("graphemes", builtin_unicode_graphemes),
+            ("grapheme_count", builtin_unicode_grapheme_count),
+            ("words", builtin_unicode_words),
+            ("word_bounds", builtin_unicode_word_bounds),
+            ("word_count", builtin_unicode_word_count),
+            ("sentences", builtin_unicode_sentences),
+            ("sentence_count", builtin_unicode_sentence_count),
         ],
         globals,
     );
@@ -181,6 +203,83 @@ pub(crate) fn builtin_unicode_to_title(args: &[Value]) -> RuntimeResult<Value> {
 }
 pub(crate) fn builtin_unicode_simple_fold(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Char(unicode_std::simple_fold(arg_char(args, 0))))
+}
+pub(crate) fn builtin_unicode_is_assigned(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(unicode_std::is_assigned(arg_char(args, 0))))
+}
+pub(crate) fn builtin_unicode_combining_class(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Int(unicode_std::combining_class(arg_char(args, 0))))
+}
+
+fn arg_str(args: &[Value], idx: usize) -> String {
+    match args.get(idx) {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        Some(Value::Char(c)) => c.to_string(),
+        _ => String::new(),
+    }
+}
+
+pub(crate) fn builtin_unicode_to_upper_str(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(
+        unicode_std::to_upper_str(&arg_str(args, 0)).into(),
+    ))
+}
+pub(crate) fn builtin_unicode_to_lower_str(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(
+        unicode_std::to_lower_str(&arg_str(args, 0)).into(),
+    ))
+}
+pub(crate) fn builtin_unicode_fold_case(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(
+        unicode_std::fold_case(&arg_str(args, 0)).into(),
+    ))
+}
+
+pub(crate) fn builtin_unicode_nfc(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(unicode_std::nfc(&arg_str(args, 0)).into()))
+}
+pub(crate) fn builtin_unicode_nfd(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(unicode_std::nfd(&arg_str(args, 0)).into()))
+}
+pub(crate) fn builtin_unicode_nfkc(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(unicode_std::nfkc(&arg_str(args, 0)).into()))
+}
+pub(crate) fn builtin_unicode_nfkd(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(unicode_std::nfkd(&arg_str(args, 0)).into()))
+}
+pub(crate) fn builtin_unicode_is_nfc(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(unicode_std::is_nfc(&arg_str(args, 0))))
+}
+pub(crate) fn builtin_unicode_is_nfd(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(unicode_std::is_nfd(&arg_str(args, 0))))
+}
+pub(crate) fn builtin_unicode_is_nfkc(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(unicode_std::is_nfkc(&arg_str(args, 0))))
+}
+pub(crate) fn builtin_unicode_is_nfkd(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(unicode_std::is_nfkd(&arg_str(args, 0))))
+}
+
+pub(crate) fn builtin_unicode_graphemes(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(string_array(unicode_std::graphemes(&arg_str(args, 0))))
+}
+pub(crate) fn builtin_unicode_grapheme_count(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Int(unicode_std::grapheme_count(&arg_str(args, 0))))
+}
+pub(crate) fn builtin_unicode_words(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(string_array(unicode_std::words(&arg_str(args, 0))))
+}
+pub(crate) fn builtin_unicode_word_bounds(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(string_array(unicode_std::word_bounds(&arg_str(args, 0))))
+}
+pub(crate) fn builtin_unicode_word_count(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Int(unicode_std::word_count(&arg_str(args, 0))))
+}
+pub(crate) fn builtin_unicode_sentences(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(string_array(unicode_std::sentences(&arg_str(args, 0))))
+}
+pub(crate) fn builtin_unicode_sentence_count(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Int(unicode_std::sentence_count(&arg_str(args, 0))))
 }
 
 // ----------------------------------------------------------------------

@@ -1,5 +1,7 @@
 # `std::collections::ordered_vec`
 
+Status: shipped
+
 Sorted-on-insert Vec<i64> with binary-search lookups.
 
 ## Public items

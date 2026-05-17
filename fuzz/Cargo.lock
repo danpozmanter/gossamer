@@ -1103,11 +1103,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-abi"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "gossamer-ast"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1135,14 +1135,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gossamer-lex",
 ]
@@ -1166,11 +1166,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-gc"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "gossamer-hir"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1180,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
@@ -1199,16 +1199,17 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "parking_lot",
  "serde",
  "thiserror 2.0.18",
+ "unicode-ident",
 ]
 
 [[package]]
 name = "gossamer-mir"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-hir",
@@ -1219,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1229,8 +1230,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
+ "ed25519-dalek",
+ "parking_lot",
+ "rand_core",
  "rustls",
  "rustls-pki-types",
  "sha2",
@@ -1240,7 +1244,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-resolve"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1251,7 +1255,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "crossbeam-deque",
@@ -1283,6 +1287,9 @@ dependencies = [
  "signal-hook",
  "tokio",
  "toml",
+ "unicode-normalization",
+ "unicode-properties",
+ "unicode-segmentation",
  "ureq",
  "uuid",
  "windows-sys 0.59.0",
@@ -1290,14 +1297,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-sched"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1326,6 +1333,7 @@ dependencies = [
  "gossamer-sched",
  "h2",
  "http",
+ "libc",
  "libloading",
  "md-5",
  "mime",
@@ -1357,16 +1365,20 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "toml",
+ "unicode-normalization",
+ "unicode-properties",
+ "unicode-segmentation",
  "ureq",
  "uuid",
  "webpki-roots",
+ "windows-sys 0.59.0",
  "x509-parser",
  "zip",
 ]
 
 [[package]]
 name = "gossamer-types"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -2694,6 +2706,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e61e67053d25a4e82c844e8424039d9745781b3fc4f32b8d55ed50f5f667ef3"
+dependencies = [
+ "tinyvec_macros",
+]
+
+[[package]]
+name = "tinyvec_macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
 name = "tokio"
 version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2803,6 +2830,27 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
+name = "unicode-properties"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9629274872b2bfaf8d66f5f15725007f635594914870f65218920345aa11aa8c"
 
 [[package]]
 name = "unicode-xid"

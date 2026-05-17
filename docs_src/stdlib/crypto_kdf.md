@@ -1,5 +1,7 @@
 # `std::crypto::kdf`
 
+Status: shipped
+
 Password-based key-derivation functions.
 
 ## Public items

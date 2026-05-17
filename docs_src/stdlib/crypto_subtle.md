@@ -1,5 +1,7 @@
 # `std::crypto::subtle`
 
+Status: shipped
+
 Constant-time comparison helpers.
 
 ## Public items

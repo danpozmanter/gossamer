@@ -1,5 +1,7 @@
 # `std::path::native`
 
+Status: shipped
+
 Native-separator wrappers over `std::path` (backslash on Windows).
 
 ## Public items

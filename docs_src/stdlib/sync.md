@@ -1,5 +1,7 @@
 # `std::sync`
 
+Status: shipped
+
 Synchronisation primitives beyond channels.
 
 ## Public items

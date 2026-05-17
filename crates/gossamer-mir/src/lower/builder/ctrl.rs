@@ -352,48 +352,26 @@ impl<'a> Builder<'a> {
             // runs unconditionally in the header block and crashes
             // when the scrutinee is None/Err on the next iteration.
             self.payload_defer_block = Some(arm_block);
-            // When `lower_pattern_predicate` doesn't decode the
+            // 0.8.0: no always-matches fallback. When
+            // `lower_pattern_predicate` doesn't decode the
             // pattern shape (tuple/struct/range/or-patterns that
             // need richer destructuring than the SwitchInt path
-            // covers), the conservative path falls back to an
-            // "always matches" predicate. That keeps the program
-            // compiling, but later arms become unreachable —
-            // a real miscompile risk.
-            //
-            // `GOSSAMER_STRICT_LOWER=1` turns the fallback into a
-            // panic so CI can gate against new instances.
-            // Without the env var we still fall back, but a one-line
-            // warning is written to stderr so users see the arm got
-            // treated as always-match instead of silently miscompiling.
-            let pat_match_local = if let Some(local) =
-                self.lower_pattern_predicate(scrutinee_local, &arm.pattern, span)
-            {
-                local
-            } else {
-                let kind = pattern_kind_label(&arm.pattern);
-                if std::env::var("GOSSAMER_STRICT_LOWER")
-                    .ok()
-                    .is_some_and(|v| !v.is_empty() && v != "0")
-                {
-                    panic!(
-                        "MIR lower: match-guard arm has unsupported pattern shape \
-                         ({kind}); GOSSAMER_STRICT_LOWER refuses to silently treat \
-                         this arm as always-matching"
-                    );
-                }
-                eprintln!(
-                    "warning: MIR lower: match-guard arm pattern shape ({kind}) \
-                     not yet decoded — arm treated as always-matching, later arms \
-                     in the same match may become unreachable"
-                );
-                let always = self.fresh(bool_ty);
-                self.emit_assign(
-                    Place::local(always),
-                    Rvalue::Use(Operand::Const(ConstValue::Bool(true))),
-                    span,
-                );
-                always
-            };
+            // covers), MIR refuses to compile rather than silently
+            // miscompiling subsequent arms as unreachable. The
+            // legacy `GOSSAMER_STRICT_LOWER=1` opt-in is now the
+            // only behaviour.
+            let pat_match_local =
+                match self.lower_pattern_predicate(scrutinee_local, &arm.pattern, span) {
+                    Some(local) => local,
+                    None => {
+                        let kind = pattern_kind_label(&arm.pattern);
+                        panic!(
+                            "MIR lower: match-guard arm has unsupported pattern shape \
+                         ({kind}); add explicit destructuring for this pattern shape \
+                         before relying on it in compiled code"
+                        );
+                    }
+                };
             // Clear the defer hint in case the pattern didn't consume it
             // (e.g. wildcard arms have no payload to extract).
             self.payload_defer_block = None;

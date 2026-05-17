@@ -49,24 +49,45 @@ pub mod html;
 pub mod http;
 /// HTTP/1.1 chunked transfer-encoding (RFC 7230 §4.1) reader / writer.
 pub mod http_chunked;
+/// HTTP cookie parsing + builder (RFC 6265).
+pub mod http_cookie;
+/// CSRF protection (double-submit cookie + Origin/Referer).
+pub mod http_csrf;
+/// Form parsing (`application/x-www-form-urlencoded`).
+pub mod http_form;
 /// HTTP/2 server (h2 crate over goroutine future-driver).
 pub mod http_h2;
-/// HTTP middleware suite (logger, recoverer, request-id, CORS, basic-auth, gzip).
+/// Operational health, readiness, and liveness handlers.
+pub mod http_health;
+/// HTTP middleware suite (logger, recoverer, request-id, CORS, basic-auth, gzip,
+/// body_limit, timeout, hsts, security_headers, cache_control, etag, bearer_auth, rate_limit).
 pub mod http_middleware;
+/// Multipart form-data (`multipart/form-data`, RFC 7578) streaming parser.
+pub mod http_multipart;
 /// Native h1 HTTP client over `std::net::TcpStream`.
 pub mod http_native_client;
 /// HTTP reverse proxy (Director, hop-by-hop strip, error handler).
 pub mod http_proxy;
+/// Typed query-string wrapper (URL query component).
+pub mod http_query;
 /// HTTP router (Go 1.22-class ServeMux with captures + method gating).
 pub mod http_router;
+/// HTTP session management (signed-cookie store by default).
+pub mod http_session;
 /// Server-Sent Events (`text/event-stream`).
 pub mod http_sse;
+/// Application state container (TypeMap, dependency injection).
+pub mod http_state;
 /// HTTP static file server (ETag, Last-Modified, Range, MIME sniff).
 pub mod http_static_files;
 /// WebSocket (RFC 6455) — first-party stdlib support.
 pub mod http_websocket;
 pub mod io;
 pub mod iter;
+/// JWT (JSON Web Tokens, RFC 7519) — HS256/384/512, ES256, EdDSA.
+pub mod jwt;
+/// Process lifecycle: graceful-shutdown hooks, signal handling, sd_notify.
+pub mod lifecycle;
 /// Go-style `log` package: flat `Println` / `Printf` / `Fatal`.
 pub mod log;
 /// Goroutine-driven future polling (no tokio runtime). Always
@@ -124,5 +145,7 @@ pub mod utf16;
 pub mod utf8;
 /// UUID generation (v4 random, v7 timestamp-ordered) plus parse/normalize.
 pub mod uuid;
+/// Validation framework: `Validate` trait, builtins (length, range, email, regex, ...).
+pub mod validate;
 
 pub use registry::{StdItem, StdItemKind, StdModule, item, module, modules};

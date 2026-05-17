@@ -987,14 +987,14 @@ static REPRODUCIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// Process-wide flag toggled by [`set_strict_lowering`] requesting
 /// that any `BuildError::Unsupported` produce a top-level error
 /// rather than the historical per-function Cranelift fallback.
-/// `gos build` sets this for itself so the CLI never silently
-/// links Cranelift-emitted bodies into a release binary — under
-/// the canonical-LLVM policy, Cranelift is the JIT-only backend
-/// and `gos build` is LLVM-only. The pre-existing
-/// `GOSSAMER_FAIL_ON_LLVM_FALLBACK` env var continues to enable
-/// the same behaviour for callers that prefer env-driven config
-/// (tier_parity tests already use it).
-static STRICT_LOWERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Default-on as of 0.8.0: any `BuildError::Unsupported` from a
+/// body lowering is a hard error. The historical silent Cranelift
+/// fallback path is forbidden under the user's "no fallbacks"
+/// policy — if something doesn't lower, it's a compiler bug, not
+/// a runtime tier-mismatch. Test runners that need to exercise
+/// the legacy permissive path can call
+/// [`set_strict_lowering(false)`].
+static STRICT_LOWERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// Process-wide flag toggled by [`set_race_instrumentation`]. When on,
 /// the LLVM emitter wraps every `gos_load` / `gos_store` raw-heap
@@ -1746,7 +1746,6 @@ const OPT_CANDIDATES: &[&str] = &[
     "/usr/lib/llvm-19/bin/opt",
     "/usr/lib/llvm-20/bin/opt",
     "/usr/lib/llvm-17/bin/opt",
-    "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/bin/opt",
     // macOS Homebrew (Apple Silicon)
     "/opt/homebrew/opt/llvm@18/bin/opt",
     "/opt/homebrew/opt/llvm@19/bin/opt",
@@ -1786,7 +1785,6 @@ const LLC_CANDIDATES: &[&str] = &[
     "/usr/lib/llvm-19/bin/llc",
     "/usr/lib/llvm-20/bin/llc",
     "/usr/lib/llvm-17/bin/llc",
-    "/home/daniel/dev/.local-llvm-18/usr/lib/llvm-18/bin/llc",
     "/opt/homebrew/opt/llvm@18/bin/llc",
     "/opt/homebrew/opt/llvm@19/bin/llc",
     "/opt/homebrew/opt/llvm@20/bin/llc",

@@ -1,5 +1,7 @@
 # `std::collections::heap`
 
+Status: shipped
+
 Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`.
 
 ## Public items

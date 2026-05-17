@@ -367,6 +367,9 @@ impl<'a> Lowerer<'a> {
     pub(crate) fn lower_terminator(&mut self, term: &Terminator) -> Result<(), BuildError> {
         match term {
             Terminator::Return => {
+                // Pop the call-stack frame pushed in the function
+                // prologue so panic dumps walk the right stack.
+                self.emit_stack_pop();
                 // Emit cleanup calls for owning heap-typed locals before
                 // the actual `ret`. Mirrors the Cranelift Return path —
                 // see `gossamer_mir::plan_cleanup` for the analysis.

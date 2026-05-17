@@ -1,5 +1,7 @@
 # `std::mime`
 
+Status: shipped
+
 RFC 2045 media type parsing, parameter extraction, and extension lookup.
 
 ## Public items

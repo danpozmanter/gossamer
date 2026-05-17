@@ -1,5 +1,7 @@
 # `std::encoding::toml`
 
+Status: shipped
+
 TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive).
 
 ## Public items

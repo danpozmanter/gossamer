@@ -1,5 +1,7 @@
 # `std::fs`
 
+Status: shipped
+
 Filesystem reading, writing, and traversal (Rust std::fs shape).
 
 ## Public items

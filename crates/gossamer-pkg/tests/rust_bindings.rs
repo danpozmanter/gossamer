@@ -30,6 +30,49 @@ fn parses_path_form() {
 }
 
 #[test]
+fn parses_src_single_file_form() {
+    let src = format!(
+        "{HEADER}\n[rust-bindings]\necho = {{ src = \"bindings/echo.rs\", deps = \"unic-segment = \\\"0.9\\\"\" }}\n"
+    );
+    let m = Manifest::parse(&src).unwrap();
+    let spec = &m.rust_bindings["echo"];
+    match spec {
+        RustBindingSpec::Src { src, deps } => {
+            assert_eq!(src, "bindings/echo.rs");
+            assert!(deps.contains("unic-segment"));
+        }
+        other => panic!("expected Src, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_prebuilt_form() {
+    let src = format!(
+        "{HEADER}\n[rust-bindings]\necho = {{ prebuilt = \"lib/libecho.a\", abi = \"1.0\" }}\n"
+    );
+    let m = Manifest::parse(&src).unwrap();
+    let spec = &m.rust_bindings["echo"];
+    match spec {
+        RustBindingSpec::Prebuilt { archive, abi } => {
+            assert_eq!(archive, "lib/libecho.a");
+            assert_eq!(abi, "1.0");
+        }
+        other => panic!("expected Prebuilt, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_mixed_path_and_src() {
+    let src =
+        format!("{HEADER}\n[rust-bindings]\nfoo = {{ path = \"./foo\", src = \"foo.rs\" }}\n");
+    let err = Manifest::parse(&src).unwrap_err();
+    assert!(
+        matches!(err, ManifestError::AmbiguousRustBinding(k) if k == "foo"),
+        "expected AmbiguousRustBinding"
+    );
+}
+
+#[test]
 fn parses_git_form_with_branch() {
     let src = format!(
         "{HEADER}\n[rust-bindings]\nfoo = {{ git = \"https://example.com/foo.git\", branch = \"main\" }}\n"

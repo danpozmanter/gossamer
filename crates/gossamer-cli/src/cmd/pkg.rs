@@ -1,13 +1,121 @@
 //! Package-management subcommands: `add`, `remove`, `tidy`,
-//! `fetch`, `vendor`. Each operates on the nearest enclosing
-//! `project.toml` (or an explicit `--manifest PATH`).
+//! `fetch`, `vendor`, `publish`, `yank`, `login`, `logout`, `owner`.
+//! Each operates on the nearest enclosing `project.toml` (or an
+//! explicit `--manifest PATH`).
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 
 use crate::paths::friendly_io_error;
+
+/// Selects the registry transport. Production builds use
+/// `HttpsTransport::new_mozilla_roots`; test runs can flip to a
+/// `StaticTransport` via `GOS_REGISTRY_TRANSPORT=static`. The static
+/// mode means "no network": `Fetcher` will surface `Unsupported`
+/// errors for every registry/git fetch, which is exactly what tests
+/// want when verifying offline behaviour without dialling out.
+fn registry_transport() -> Arc<dyn gossamer_pkg::Transport> {
+    match std::env::var("GOS_REGISTRY_TRANSPORT").as_deref() {
+        Ok("static") => Arc::new(gossamer_pkg::StaticTransport::new()),
+        _ => Arc::new(gossamer_pkg::HttpsTransport::new_mozilla_roots()),
+    }
+}
+
+/// Returns the registry URL the CLI should consult. Honours the
+/// `GOS_REGISTRY_URL` env var first, falls back to the manifest's
+/// `[registries]` table (when keyed under `default`), and finally
+/// the public default.
+fn registry_url(manifest: &gossamer_pkg::Manifest) -> String {
+    if let Ok(env) = std::env::var("GOS_REGISTRY_URL") {
+        return env;
+    }
+    if let Some(url) = manifest.registries.get("default") {
+        return url.clone();
+    }
+    gossamer_pkg::DEFAULT_REGISTRY_URL.to_string()
+}
+
+/// Loads the optional bearer token for `registry_url` from the
+/// credential store. Silent on missing-file / parse errors so the
+/// CLI keeps working without a credential store.
+fn credential_for(registry_url: &str) -> Option<String> {
+    let store = gossamer_pkg::CredentialStore::load_default().ok()?;
+    store.get(registry_url).map(|c| c.token.clone())
+}
+
+/// Builds a `Fetcher` populated with the chosen transport + auth
+/// token, plus an in-memory catalogue hydrated against the registry
+/// for every direct registry dep declared in `manifest`. Path / git /
+/// tarball deps don't need an index walk, so they're skipped.
+fn build_fetcher(
+    manifest: &gossamer_pkg::Manifest,
+    options: gossamer_pkg::FetchOptions,
+) -> Result<gossamer_pkg::Fetcher> {
+    let transport = registry_transport();
+    let mut catalogue = gossamer_pkg::VersionCatalogue::new();
+    for (raw_id, spec) in &manifest.dependencies {
+        if matches!(spec, gossamer_pkg::DependencySpec::Registry(_)) {
+            let id = gossamer_pkg::ProjectId::parse(raw_id)
+                .with_context(|| format!("invalid id `{raw_id}`"))?;
+            if let Err(err) =
+                catalogue.load_from_registry(transport.as_ref(), &options.registry_url, &id)
+            {
+                eprintln!(
+                    "warning: registry index for {raw_id} unavailable: {err}; \
+                     resolution will fail unless a cached / vendored copy exists"
+                );
+            }
+        }
+    }
+    Ok(gossamer_pkg::Fetcher::with_transport(options, transport).with_catalogue(catalogue))
+}
+
+/// When `locked` is set, looks up the nearest `project.toml`,
+/// re-resolves direct deps, and refuses to continue if the lockfile
+/// is missing or has drifted. Returns `Ok(())` when no lock check is
+/// requested or the lock matches.
+pub(crate) fn enforce_lockfile_if_requested(locked: bool) -> Result<()> {
+    if !locked {
+        return Ok(());
+    }
+    let cwd = std::env::current_dir().context("locating cwd for lockfile check")?;
+    let Some(manifest_path) = gossamer_pkg::find_manifest(&cwd) else {
+        // No manifest means no deps; --locked is vacuously satisfied.
+        return Ok(());
+    };
+    let project_root = manifest_path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let source =
+        fs::read_to_string(&manifest_path).map_err(|e| friendly_io_error(e, &manifest_path))?;
+    let manifest = gossamer_pkg::Manifest::parse(&source)?;
+    let mut options = gossamer_pkg::FetchOptions {
+        offline: true,
+        registry_url: registry_url(&manifest),
+        ..gossamer_pkg::FetchOptions::default()
+    };
+    options.auth_token = credential_for(&options.registry_url);
+    let fetcher = build_fetcher(&manifest, options)?;
+    let plan = gossamer_pkg::Resolver::new(fetcher.catalogue().clone())
+        .resolve(&manifest)
+        .map_err(|e| anyhow!("resolve: {e}"))?;
+    let lock = gossamer_pkg::Lockfile::load_required(&project_root)
+        .map_err(|e| anyhow!("lockfile: {e}"))?;
+    lock.verify_against(&plan)
+        .map_err(|e| anyhow!("lockfile drift: {e}"))?;
+    Ok(())
+}
+
+/// Returns a `Cache` anchored on the per-user cache directory.
+fn build_cache() -> gossamer_pkg::Cache {
+    match gossamer_pkg::default_cache_root() {
+        Some(root) => gossamer_pkg::Cache::with_disk_root(root),
+        None => gossamer_pkg::Cache::new(),
+    }
+}
 
 /// `gos add SPEC [--manifest PATH]` — declares a registry
 /// dependency. `SPEC` is `<id>` or `<id>@<version>`.
@@ -238,19 +346,43 @@ pub(crate) fn tidy(manifest: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// `gos fetch [--manifest PATH] [--offline]` — populates the
-/// download cache for every transitive dependency.
-pub(crate) fn fetch(manifest: Option<PathBuf>, offline: bool) -> Result<()> {
+/// `gos fetch [--manifest PATH] [--offline] [--update]` —
+/// populates the download cache for every transitive dependency and
+/// writes / refreshes `project.lock`. The `--update` flag instructs
+/// the resolver to re-walk the registry index even when a lockfile
+/// already pins a satisfying version.
+pub(crate) fn fetch(manifest: Option<PathBuf>, offline: bool, update: bool) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
+    let project_root = path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let m = gossamer_pkg::Manifest::parse(&source)?;
-    let plan = gossamer_pkg::Resolver::new(gossamer_pkg::VersionCatalogue::new())
+    let mut options = gossamer_pkg::FetchOptions {
+        offline,
+        registry_url: registry_url(&m),
+        ..gossamer_pkg::FetchOptions::default()
+    };
+    options.auth_token = credential_for(&options.registry_url);
+    let fetcher = build_fetcher(&m, options.clone())?;
+    let plan = gossamer_pkg::Resolver::new(fetcher.catalogue().clone())
         .resolve(&m)
         .map_err(|e| anyhow!("resolve failed: {e}"))?;
-    let mut cache = gossamer_pkg::Cache::new();
-    let pkgs = gossamer_pkg::Fetcher::new(gossamer_pkg::FetchOptions { offline })
+    if !update
+        && let Some(existing) = gossamer_pkg::Lockfile::load(&project_root)
+            .map_err(|e| anyhow!("loading lockfile: {e}"))?
+    {
+        existing
+            .verify_against(&plan)
+            .map_err(|e| anyhow!("lockfile check: {e}"))?;
+    }
+    let mut cache = build_cache();
+    let pkgs = fetcher
         .fetch_all(&plan, &mut cache)
         .map_err(|e| anyhow!("fetch failed: {e}"))?;
+    let lock = gossamer_pkg::Lockfile::from_fetched(&pkgs);
+    lock.write(&project_root)
+        .with_context(|| format!("writing {}", project_root.join("project.lock").display()))?;
     println!("fetch: {} project(s) cached", pkgs.len());
     for entry in &pkgs {
         println!("  {} → {}", entry.resolved.id, entry.source.digest);
@@ -265,11 +397,17 @@ pub(crate) fn vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let m = gossamer_pkg::Manifest::parse(&source)?;
-    let plan = gossamer_pkg::Resolver::new(gossamer_pkg::VersionCatalogue::new())
+    let mut options = gossamer_pkg::FetchOptions {
+        registry_url: registry_url(&m),
+        ..gossamer_pkg::FetchOptions::default()
+    };
+    options.auth_token = credential_for(&options.registry_url);
+    let fetcher = build_fetcher(&m, options)?;
+    let plan = gossamer_pkg::Resolver::new(fetcher.catalogue().clone())
         .resolve(&m)
         .map_err(|e| anyhow!("resolve failed: {e}"))?;
-    let mut cache = gossamer_pkg::Cache::new();
-    let pkgs = gossamer_pkg::Fetcher::new(gossamer_pkg::FetchOptions::default())
+    let mut cache = build_cache();
+    let pkgs = fetcher
         .fetch_all(&plan, &mut cache)
         .map_err(|e| anyhow!("fetch failed: {e}"))?;
     let dest = out.unwrap_or_else(|| PathBuf::from("vendor"));
@@ -282,4 +420,177 @@ pub(crate) fn vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<
         dest.display()
     );
     Ok(())
+}
+
+/// `gos publish [--registry URL] [--dry-run]` — pack the current
+/// project deterministically, sha256 it, optionally sign with
+/// ed25519, and POST to `<registry>/v1/upload/<id>/<ver>`.
+pub(crate) fn publish(
+    manifest: Option<PathBuf>,
+    registry: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
+    let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
+    let project_root = path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
+    let m = gossamer_pkg::Manifest::parse(&source)?;
+    let registry_url = registry.unwrap_or_else(|| self::registry_url(&m));
+    let artifact =
+        gossamer_pkg::pack_crate(&project_root).map_err(|e| anyhow!("pack failed: {e}"))?;
+    println!(
+        "publish: packed {bytes} byte(s), sha256 {sha}",
+        bytes = artifact.bytes.len(),
+        sha = artifact.sha256
+    );
+    let signature = match gossamer_pkg::signing::load_publish_key(m.project.id.as_str()) {
+        Ok(key) => {
+            let sig = key.sign(&artifact.bytes);
+            let pk = key.verifying_key().to_bytes();
+            println!(
+                "publish: signed with ed25519 pubkey {pk}",
+                pk = key.verifying_key().to_hex()
+            );
+            Some((sig, pk))
+        }
+        Err(gossamer_pkg::signing::SigningError::Missing(_)) => {
+            eprintln!("publish: no signing key configured; uploading unsigned");
+            None
+        }
+        Err(e) => return Err(anyhow!("signing: {e}")),
+    };
+    if dry_run {
+        println!("publish: --dry-run set; skipping upload to {registry_url}");
+        return Ok(());
+    }
+    let token = credential_for(&registry_url);
+    let transport = registry_transport();
+    let uploader = gossamer_pkg::publish::HttpUploader {
+        transport: transport.as_ref(),
+    };
+    let request = gossamer_pkg::publish::PublishRequest {
+        project_id: m.project.id.as_str(),
+        version: &m.project.version.to_string(),
+        artifact: &artifact,
+        signature: signature.map(|(s, _)| s),
+        public_key: signature.map(|(_, k)| k),
+        auth_token: token.as_deref(),
+    };
+    gossamer_pkg::publish::upload_with(&uploader, &registry_url, &request)
+        .map_err(|e| anyhow!("upload: {e}"))?;
+    println!("publish: uploaded to {registry_url}");
+    Ok(())
+}
+
+/// `gos yank <id>@<ver> [--reason MSG]` — flag a previously published
+/// version as yanked. New installs refuse to use it unless
+/// `--allow-yanked` is set.
+pub(crate) fn yank(spec: &str, reason: Option<String>) -> Result<()> {
+    let (id_text, version_text) = spec
+        .split_once('@')
+        .ok_or_else(|| anyhow!("yank spec must be `<id>@<version>`"))?;
+    let id = gossamer_pkg::ProjectId::parse(id_text)
+        .with_context(|| format!("invalid id `{id_text}`"))?;
+    let _ = gossamer_pkg::Version::parse(version_text)
+        .with_context(|| format!("invalid version `{version_text}`"))?;
+    let registry_url = std::env::var("GOS_REGISTRY_URL")
+        .unwrap_or_else(|_| gossamer_pkg::DEFAULT_REGISTRY_URL.to_string());
+    let token = credential_for(&registry_url);
+    let transport = registry_transport();
+    let uploader = gossamer_pkg::publish::HttpUploader {
+        transport: transport.as_ref(),
+    };
+    gossamer_pkg::publish::yank_with(
+        &uploader,
+        &registry_url,
+        id.as_str(),
+        version_text,
+        reason.as_deref(),
+        token.as_deref(),
+    )
+    .map_err(|e| anyhow!("yank: {e}"))?;
+    println!("yank: marked {id}@{version_text} as yanked");
+    Ok(())
+}
+
+/// `gos login --registry URL` — prompt for a bearer token (or read
+/// from `$GOS_TOKEN`) and write it to the credential store.
+pub(crate) fn login(registry: String) -> Result<()> {
+    let token = if let Ok(token) = std::env::var("GOS_TOKEN") {
+        token
+    } else {
+        prompt_token(&registry)?
+    };
+    let path = gossamer_pkg::CredentialStore::default_path()
+        .map_err(|e| anyhow!("locating credentials: {e}"))?;
+    let mut store =
+        gossamer_pkg::CredentialStore::load(&path).map_err(|e| anyhow!("loading: {e}"))?;
+    store.insert(registry.clone(), gossamer_pkg::Credential { token });
+    store
+        .save(&path)
+        .map_err(|e| anyhow!("writing credentials: {e}"))?;
+    println!("login: token stored for {registry} at {}", path.display());
+    Ok(())
+}
+
+/// `gos logout --registry URL` — drop the saved token.
+pub(crate) fn logout(registry: String) -> Result<()> {
+    let path = gossamer_pkg::CredentialStore::default_path()
+        .map_err(|e| anyhow!("locating credentials: {e}"))?;
+    let mut store =
+        gossamer_pkg::CredentialStore::load(&path).map_err(|e| anyhow!("loading: {e}"))?;
+    let removed = store.remove(&registry);
+    if removed {
+        store
+            .save(&path)
+            .map_err(|e| anyhow!("writing credentials: {e}"))?;
+        println!("logout: dropped credential for {registry}");
+    } else {
+        println!("logout: no credential stored for {registry}");
+    }
+    Ok(())
+}
+
+/// `gos owner [add|remove|list] <id> [<user>]` — manage registry ACLs.
+pub(crate) fn owner(op: &str, id_text: &str, user: Option<String>) -> Result<()> {
+    let id = gossamer_pkg::ProjectId::parse(id_text)
+        .with_context(|| format!("invalid id `{id_text}`"))?;
+    let registry_url = std::env::var("GOS_REGISTRY_URL")
+        .unwrap_or_else(|_| gossamer_pkg::DEFAULT_REGISTRY_URL.to_string());
+    let token = credential_for(&registry_url);
+    let transport = registry_transport();
+    let uploader = gossamer_pkg::publish::HttpUploader {
+        transport: transport.as_ref(),
+    };
+    gossamer_pkg::publish::owner_op_with(
+        &uploader,
+        &registry_url,
+        id.as_str(),
+        op,
+        user.as_deref(),
+        token.as_deref(),
+    )
+    .map_err(|e| anyhow!("owner: {e}"))?;
+    println!("owner: {op} applied to {id}");
+    Ok(())
+}
+
+fn prompt_token(registry: &str) -> Result<String> {
+    use std::io::{BufRead, Write};
+    let stderr = std::io::stderr();
+    let mut err = stderr.lock();
+    write!(err, "token for {registry}: ").map_err(|e| anyhow!("prompt: {e}"))?;
+    err.flush().map_err(|e| anyhow!("prompt flush: {e}"))?;
+    let stdin = std::io::stdin();
+    let mut line = String::new();
+    stdin
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| anyhow!("reading token: {e}"))?;
+    let token = line.trim().to_string();
+    if token.is_empty() {
+        return Err(anyhow!("empty token; aborting"));
+    }
+    Ok(token)
 }

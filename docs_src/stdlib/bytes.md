@@ -1,5 +1,7 @@
 # `std::bytes`
 
+Status: shipped
+
 Byte buffers, builders, and slice helpers.
 
 ## Public items

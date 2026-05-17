@@ -1,5 +1,7 @@
 # `std::http::router`
 
+Status: shipped
+
 Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes.
 
 ## Public items

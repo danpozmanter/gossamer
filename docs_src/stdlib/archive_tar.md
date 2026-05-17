@@ -1,5 +1,7 @@
 # `std::archive::tar`
 
+Status: shipped
+
 Unix tar reader and writer (USTAR / PAX-aware decode).
 
 ## Public items

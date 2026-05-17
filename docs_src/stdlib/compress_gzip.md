@@ -1,5 +1,7 @@
 # `std::compress::gzip`
 
+Status: shipped
+
 gzip encoder / decoder (RFC 1952; flate2-backed).
 
 ## Public items

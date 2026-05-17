@@ -741,6 +741,77 @@ pub unsafe extern "C" fn gos_rt_vec_slice_result(
     })
 }
 
+/// `xs.slice(start, end) -> Result<Vec<i64>, errors::Error>` for
+/// fixed-size i64 array receivers. The buffer is the raw inline
+/// `[i64; N]` storage (no length prefix); MIR splices the
+/// statically-known `len` from `TyKind::Array { len }` as the
+/// second argument. Routed from MIR dispatch when the receiver
+/// type is `[i64; N]` / `&[i64]`. Returns the same
+/// `Result<Vec<i64>, errors::Error>` shape as
+/// [`gos_rt_vec_slice_result`] so callers don't need a separate
+/// match arm.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_intarr_slice_result(
+    p: *const i64,
+    len: i64,
+    start: i64,
+    end: i64,
+) -> *mut GosResult {
+    ffi_entry!(std::ptr::null_mut(), {
+        if p.is_null() || start < 0 || end < 0 || start > end || end > len {
+            let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let count = end - start;
+        let out = unsafe { gos_rt_vec_with_capacity(8, count) };
+        if !out.is_null() && count > 0 {
+            for i in 0..count {
+                let element_index = (start + i) as usize;
+                unsafe {
+                    let src_ptr = p.add(element_index) as *const u8;
+                    gos_rt_vec_push(out, src_ptr);
+                }
+            }
+        }
+        unsafe { gos_rt_result_new(0, out as i64) }
+    })
+}
+
+/// `xs.slice(start, end) -> Result<Vec<f64>, errors::Error>` for
+/// fixed-size f64 array receivers. Same layout contract as
+/// [`gos_rt_intarr_slice_result`] — raw inline buffer plus a
+/// statically-known length spliced by the MIR dispatcher.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_floatarr_slice_result(
+    p: *const i64,
+    len: i64,
+    start: i64,
+    end: i64,
+) -> *mut GosResult {
+    ffi_entry!(std::ptr::null_mut(), {
+        if p.is_null() || start < 0 || end < 0 || start > end || end > len {
+            let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let count = end - start;
+        let out = unsafe { gos_rt_vec_with_capacity(8, count) };
+        if !out.is_null() && count > 0 {
+            for i in 0..count {
+                let element_index = (start + i) as usize;
+                unsafe {
+                    let src_ptr = p.add(element_index) as *const u8;
+                    gos_rt_vec_push(out, src_ptr);
+                }
+            }
+        }
+        unsafe { gos_rt_result_new(0, out as i64) }
+    })
+}
+
 /// `Vec::insert(xs, i, v) -> Result<Vec<T>, errors::Error>`. The
 /// new Vec is returned wrapped in Ok; out-of-range indices return
 /// Err. `value` is the raw 8-byte payload of the element being

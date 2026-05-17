@@ -533,6 +533,10 @@ pub(crate) fn lower_program_full(
                 intrinsics.intern_string(module, &s)?;
             }
         }
+        // Pre-intern the body's name so the call-stack-push prologue
+        // can lift it into a data ref without touching the offline
+        // module mid-parallel-phase.
+        intrinsics.intern_string(module, &body.name)?;
     }
 
     // N9-C: Build the OfflineModule snapshot. From this point the real

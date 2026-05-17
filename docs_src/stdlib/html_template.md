@@ -1,5 +1,7 @@
 # `std::html::template`
 
+Status: experimental
+
 Context-aware HTML templates with auto-escape.
 
 ## Public items

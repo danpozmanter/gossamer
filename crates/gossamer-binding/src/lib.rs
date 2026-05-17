@@ -17,19 +17,30 @@
 // staying pure-safe.
 #![deny(unsafe_code)]
 
+pub mod blocking_pool;
 pub mod conv;
+pub mod error;
 mod macros;
 pub mod native;
 pub mod opaque;
 pub mod registry;
 mod sig;
+pub mod struct_helpers;
 pub mod types;
 
-pub use crate::conv::{BindingCallback, Bytes, DynValue, FromGos, ToGos};
+pub use crate::conv::{BindingCallback, Bytes, DynValue, FromGos, PersistentCallback, ToGos};
+pub use crate::error::GosError;
+
+// Re-export the attribute / derive proc-macros so binding authors
+// only have to add `gossamer-binding` as a dependency. The proc
+// macros live in a separate crate (`gossamer-binding-macros`)
+// because Rust requires `proc-macro = true` crates to be
+// declared standalone.
 pub use crate::opaque::Registry;
 pub use crate::registry::{ItemFn, Module, NativeCall, REGISTRY, Signature};
 pub use crate::sig::SigType;
 pub use crate::types::{Type, VariantArm};
+pub use gossamer_binding_macros::{GosStruct, gos_blocking, gos_module, gos_opaque};
 
 /// Major.minor ABI version of the gossamer-binding surface.
 ///
@@ -39,7 +50,15 @@ pub use crate::types::{Type, VariantArm};
 /// version were linked against a newer runtime. Each released
 /// binding records this constant via the `__GOS_BINDING_ABI_VERSION`
 /// static the runtime sniffs at startup.
-pub const ABI_VERSION: (u8, u8) = (0, 6);
+///
+/// ABI v1.0 (this release) freezes the wire shapes documented in
+/// `ABI_0_4.md`: `GosVec`, `GosVariant`, `GosVariantValue`,
+/// `GosTuple`, `GosBytes`, `BindingGosMap`, `GosDynVariant`,
+/// `GosCallback`, `GosStruct`, plus the `gos_binding_<...>` symbol
+/// scheme. Minor bumps within v1 add new wire shapes or new
+/// `BindingAbi` impls; they do NOT reorder existing fields. Major
+/// bumps (v2) break compatibility.
+pub const ABI_VERSION: (u8, u8) = (1, 0);
 
 /// Linkage-anchored marker so the runtime can verify the binding's
 /// ABI version at load time. The runtime probes for the symbol
@@ -105,6 +124,27 @@ pub fn __register_native_symbol(name: &'static str, addr: *const u8) {
 /// registration call.
 #[doc(hidden)]
 pub use gossamer_codegen_cranelift::{NATIVE_SYMBOLS, NativeSymbolEntry};
+
+/// Link-time slice of every registered module's `force_link` fn.
+///
+/// The `register_module!` macro publishes one entry per call;
+/// [`run_all_force_links`] walks the slice and invokes each. This
+/// replaces the per-crate `__bindings_force_link()` shim — the
+/// runner template just calls `run_all_force_links()` once and
+/// every linked binding's `linkme` registry entries become
+/// reachable. Binding crates with multiple modules contribute one
+/// entry per module, all discovered automatically.
+#[linkme::distributed_slice]
+pub static FORCE_LINK_FNS: [fn()] = [..];
+
+/// Invokes every `force_link()` entry registered via
+/// [`FORCE_LINK_FNS`]. Call this once at runner startup, before
+/// [`install_all`]. Idempotent.
+pub fn run_all_force_links() {
+    for f in FORCE_LINK_FNS.iter() {
+        f();
+    }
+}
 
 /// Returns every module registered via [`register_module!`].
 ///

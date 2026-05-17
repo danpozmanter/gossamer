@@ -1,5 +1,7 @@
 # `std::http::sse`
 
+Status: shipped
+
 Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint.
 
 ## Public items

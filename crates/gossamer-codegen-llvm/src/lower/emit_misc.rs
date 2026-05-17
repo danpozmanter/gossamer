@@ -389,6 +389,17 @@ impl<'a> Lowerer<'a> {
         // aggregate payloads passed to `gos_rt_result_new` so the
         // caller's stack alloca doesn't go dangling after return.
         let result_new_heap_copy = matches!(symbol, "gos_rt_result_new");
+        // HashMap insert with a struct value: the value arg is the
+        // stack address of an Rvalue::Aggregate local that goes out
+        // of scope when the inserting frame returns. Heap-copy so
+        // subsequent `m.get(&k)` calls read live memory rather than
+        // stale stack slots. Applies to `_i64_i64` (i64-key) and
+        // `_str_i64` (str-key) — the `_*_str` variants already pass
+        // a c_char ptr to a heap-allocated string, no copy needed.
+        let map_insert_heap_copy = matches!(
+            symbol,
+            "gos_rt_map_insert_i64_i64" | "gos_rt_map_insert_str_i64"
+        );
         let mut arg_text = String::new();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
@@ -398,6 +409,13 @@ impl<'a> Lowerer<'a> {
             let (a_v, mut a_ty) = self.lower_call_arg(arg, want)?;
             if result_new_heap_copy
                 && i == 1
+                && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
+            {
+                let _ = write!(arg_text, "i64 {heap_v}");
+                continue;
+            }
+            if map_insert_heap_copy
+                && i == 2
                 && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
             {
                 let _ = write!(arg_text, "i64 {heap_v}");

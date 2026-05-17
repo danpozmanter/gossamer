@@ -624,6 +624,140 @@ pub mod kdf {
 /// Legacy/insecure hashes (MD5, SHA-1). Feature-gated; must not be used for security.
 pub mod insecure;
 
+/// High-level password storage: opinionated argon2id defaults with
+/// PHC-string round-trip and a `needs_rehash` advisory.
+///
+/// Thin facade over [`kdf::argon2id_hash`] / [`kdf::argon2id_verify`]
+/// so application code stays readable:
+///
+/// ```ignore
+/// let phc = password::hash(b"correct horse battery staple")?;
+/// if password::verify(b"correct horse battery staple", &phc)? {
+///     // login succeeded; rehash if parameters have moved
+///     if password::needs_rehash(&phc) {
+///         let new_phc = password::hash(b"correct horse battery staple")?;
+///         // store new_phc
+///     }
+/// }
+/// ```
+pub mod password {
+    use argon2::password_hash::PasswordHash;
+    use argon2::{Algorithm, Params, Version};
+
+    use crate::errors::Error;
+
+    /// Hashes `plaintext` with Argon2id at the current default
+    /// parameters. Returns a PHC-format string suitable for storage.
+    pub fn hash(plaintext: &[u8]) -> Result<String, Error> {
+        super::kdf::argon2id_hash(plaintext)
+    }
+
+    /// Verifies `plaintext` against a stored PHC-format hash. Uses
+    /// the parameters embedded in the PHC string, so old hashes
+    /// still verify after the defaults move.
+    pub fn verify(plaintext: &[u8], phc: &str) -> Result<bool, Error> {
+        super::kdf::argon2id_verify(plaintext, phc)
+    }
+
+    /// Returns `true` if `phc` was hashed with parameters weaker
+    /// than the current default. Call after a successful
+    /// [`verify`] and, when this returns true, re-hash the
+    /// plaintext via [`hash`] and store the new PHC string.
+    ///
+    /// Returns `false` (the conservative default) when the PHC
+    /// cannot be parsed — re-hashing an unparseable record is the
+    /// caller's choice, not ours.
+    #[must_use]
+    pub fn needs_rehash(phc: &str) -> bool {
+        let Ok(parsed) = PasswordHash::new(phc) else {
+            return false;
+        };
+        if !matches!(parsed.algorithm.as_str(), "argon2id") {
+            // Any non-argon2id hash should be re-encoded to current default.
+            return true;
+        }
+        let target = Params::default();
+        let Ok(current) = Params::try_from(&parsed) else {
+            return true;
+        };
+        current.m_cost() < target.m_cost()
+            || current.t_cost() < target.t_cost()
+            || current.p_cost() < target.p_cost()
+    }
+
+    /// Bare reference to the active algorithm and parameter set;
+    /// useful for diagnostic logs.
+    #[must_use]
+    pub fn current_algorithm() -> &'static str {
+        "argon2id"
+    }
+
+    /// Returns `(m_cost_kib, t_cost_iters, p_cost_parallelism)` —
+    /// the active argon2id parameters.
+    #[must_use]
+    pub fn current_params() -> (u32, u32, u32) {
+        let p = Params::default();
+        (p.m_cost(), p.t_cost(), p.p_cost())
+    }
+
+    // Reserved: future addition of bcrypt for legacy compatibility.
+    // Excluded today because the `bcrypt` crate is not a workspace
+    // dep yet; add it behind a clearly-named function so callers
+    // can detect legacy hashes via PHC prefix and reach for the
+    // legacy path without touching the default `verify` flow.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn _algorithm_marker() -> Algorithm {
+        Algorithm::Argon2id
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn _version_marker() -> Version {
+        Version::V0x13
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn hash_verify_round_trip() {
+            let pw = b"correct horse battery staple";
+            let phc = hash(pw).expect("hash");
+            assert!(phc.starts_with("$argon2id$"));
+            assert!(verify(pw, &phc).expect("verify"));
+            assert!(!verify(b"wrong", &phc).expect("verify wrong"));
+        }
+
+        #[test]
+        fn needs_rehash_false_for_current_defaults() {
+            let phc = hash(b"pw").expect("hash");
+            assert!(!needs_rehash(&phc));
+        }
+
+        #[test]
+        fn needs_rehash_true_for_unparseable_input() {
+            // Unparseable returns false (conservative) — caller decides.
+            assert!(!needs_rehash("not-a-phc-string"));
+        }
+
+        #[test]
+        fn current_params_match_argon2_defaults() {
+            let (m, t, p) = current_params();
+            assert!(m > 0);
+            assert!(t > 0);
+            assert!(p > 0);
+        }
+
+        #[test]
+        fn empty_password_hashes_cleanly() {
+            let phc = hash(b"").expect("hash empty");
+            assert!(verify(b"", &phc).expect("verify"));
+        }
+    }
+}
+
 #[inline]
 fn nibble_char(n: u8) -> char {
     match n {

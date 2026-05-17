@@ -356,3 +356,25 @@ pub const UUID: StdModule = StdModule {
         },
     ],
 };
+
+pub const VALIDATE: StdModule = StdModule {
+    path: "std::validate",
+    summary: "Trait-based field validation: implement Validate, collect FieldErrors into Errors.",
+    items: &[
+        StdItem {
+            name: "Validate",
+            kind: StdItemKind::Trait,
+            doc: "Implement on a struct to declare field-level validation rules.",
+        },
+        StdItem {
+            name: "FieldError",
+            kind: StdItemKind::Type,
+            doc: "One field-scoped validation failure: dotted path, message, optional code.",
+        },
+        StdItem {
+            name: "Errors",
+            kind: StdItemKind::Type,
+            doc: "Aggregated FieldError set, indexable by dotted path.",
+        },
+    ],
+};

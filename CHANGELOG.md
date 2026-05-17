@@ -1,5 +1,131 @@
 # Changelog
 
+## 0.8.0 — Unicode, web stack, publish flow, LSP, fixes, and Rust-binding ergonomics
+
+### Language
+
+- Identifiers follow UAX #31 `XID_Start` / `XID_Continue` (same surface as Rust 2024) — `let café = 1`, `let π = 3.14`, `let 名前 = "x"` all parse.
+- New `docs_src/language/` reference site (33 pages: `if_let`, `while_let`, `pipe`, patterns, traits, …) generated from the manifest registry.
+
+### Stdlib — std::unicode
+
+The hand-rolled ASCII / BMP-range stubs are gone; every predicate answers against the Unicode 16 tables via `unicode-properties`, `unicode-normalization`, and `unicode-segmentation`.
+
+- General-category predicates now correct for non-ASCII: `is_digit('٧')` (Arabic-Indic), `is_punct('—')` (em dash), `is_symbol('¥')`, `is_mark('\u{0301}')`, `is_number('Ⅴ')`, `is_title('ǅ')`.
+- Added `is_assigned(r) -> bool` and `combining_class(r) -> i64`.
+- Added whole-string casing helpers: `to_upper_str(s)` (ß → SS), `to_lower_str(s)` (Σ → σ), `fold_case(s)`.
+- Added normalization: `nfc(s)`, `nfd(s)`, `nfkc(s)`, `nfkd(s)`, plus `is_nfc` / `is_nfd` / `is_nfkc` / `is_nfkd`.
+- Added segmentation (UAX #29): `graphemes(s) -> Vec<String>`, `grapheme_count(s) -> i64`, `words(s)`, `word_bounds(s)`, `word_count(s)`, `sentences(s)`, `sentence_count(s)`. Family ZWJ sequences count as one grapheme; `cafe\u{0301}` is four.
+
+### Stdlib — std::utf8
+
+- `full_rune_in_string(s) -> bool` exposed alongside the existing byte-slice `full_rune`.
+
+### Stdlib — HTTP server stack
+
+- `std::http::cookie` — RFC 6265 `Cookie` / `CookieBuilder`, `SameSite` enum, `parse_cookie_header`, `parse_set_cookie`.
+- `std::http::csrf` — double-submit cookie + Origin/Referer check: `issue_token`, `verify_token`, `extract_token`, `origin_allowed`, `check`, `attach_cookie`, `RouteAuth`.
+- `std::http::form` — `application/x-www-form-urlencoded` parser and builder.
+- `std::http::multipart` — streaming RFC 7578 parser: `parse_boundary`, `parse_bytes`, `parse<R: Read>`, with `Part` / `PartData` / `Form` types.
+- `std::http::query` — typed `Query` wrapper over URL query strings.
+- `std::http::session` — signed-cookie session store: `SessionConfig`, `Session`, `SessionStore` trait, `SignedCookieStore`, `with_session`.
+- `std::http::state` — `AppState` typemap + `State<T>(Arc<T>)` DI container for handlers.
+- `std::http::health` — `Probe` trait + `Health` aggregator with `always_ok` / `always_fail` / `tcp_probe` helpers.
+
+### Stdlib — HTTP middleware
+
+`std::http::middleware` gained `body_limit`, `timeout`, `hsts`, `security_headers`, `cache_control`, `etag`, `bearer_auth`, `rate_limit`, `compress_gzip`, and a `safe_defaults` bundle — alongside the existing `logger`, `recoverer`, `request_id`, `cors`, and `basic_auth`.
+
+### Stdlib — HTTP/2
+
+- Server push: `PushOptions`, `PushStream`, `ResponseWriter::push_promise`.
+- Trailers: `ResponseWriter::write_trailers`, `Request::trailers`, `Trailers` alias.
+
+### Stdlib — std::process / std::exec
+
+- `Pipeline` for stdout→stdin chaining: `pipeline_run`.
+- `Signal` enum + `spawn`, `kill`, `signal(pid, sig)`, `kill_group(pgid, sig)`, `wait_timeout(child, ms)`.
+
+### Stdlib — new modules
+
+- `std::jwt` — RFC 7519 sign + verify for HS256/384/512, ES256, and EdDSA; `Alg`, `Header`, `Claims`, `VerifyOpts`.
+- `std::lifecycle` — graceful-shutdown hooks, signal handling, sd_notify.
+- `std::validate` — `Validate` trait plus `FieldError` / `Errors` for form/field validation.
+- `std::crypto::password` — Argon2id facade: `hash`, `verify`, `needs_rehash` (PHC strings).
+
+### Package manager
+
+- `gos publish` / `yank` / `login` / `logout` / `owner` — full registry workflow.
+- Credential store (`~/.config/gossamer/credentials.toml`): `CredentialStore`, `Credential`, `load_default`, `get`, `insert`, `remove`.
+- Ed25519 publish keys: `load_publish_key`, `sign_bytes`, `verify_bytes`.
+- `pack_crate`, `upload_with`, `yank_with`, `owner_op_with` round out the publish pipeline.
+- Transitive resolution: `CatalogueEntry`, `resolve_transitive`, `CacheBackedLoader`, `FnLoader`, `NoopLoader`.
+- Disk-backed source cache under `default_cache_root()` (digest-keyed).
+- Tarball + Git + registry sources with sha256 verification; `tarball_sha256` recorded in `LockedEntry`.
+- `[rust-bindings.<name>] src = "bindings/x.rs"` — single-file binding; `gos` auto-scaffolds a wrapper crate under `.gos-bindings/__srcwrap-<name>/` with an optional `deps = "..."` Cargo-deps fragment.
+- `[rust-bindings.<name>] prebuilt = "lib/x.a", abi = "1.0"` — pre-built static archive for hermetic / no-cargo-at-build-time deployments.
+
+### LSP
+
+- New request handlers: `textDocument/typeDefinition`, `references`, `documentHighlight`, `prepareRename`, `rename`, `inlayHint`, `documentSymbol`, `workspace/symbol`, `foldingRange`, `signatureHelp`, `formatting`, `codeAction`, `semanticTokens/full`.
+- Cross-file `WorkspaceIndex` (`SymbolBucket` over Items / Variants / Fields / Methods, qualified `SymbolKey`) rebuilt incrementally on `didOpen` / `didChange`; powers references + rename across files.
+
+### Rust bindings
+
+- `gossamer-binding` ABI frozen at (1, 0). Wire shapes (`GosVec`, `GosVariant`, `GosVariantValue`, `GosTuple`, `GosBytes`, `BindingGosMap`, `GosDynVariant`, `GosCallback`) are stable; minor releases add shapes but never reorder fields.
+- New `#[gos_module("path")]` proc-macro attribute: replaces `register_module!`'s triple-declaration; auto-publishes `__bindings_force_link()` via `FORCE_LINK_FNS`; doc-comments flow through to `gos doc`.
+- `register_module!` gains a `name: <ident>` short form with compile-time `SigType` validation per param + return.
+- New `#[derive(GosStruct)]` for user structs (round-trips through `Value::Struct` / `GosDynVariant`).
+- New `#[gos_opaque]` on `impl Type` blocks: each `pub fn` becomes a binding item named `Type::method`.
+- New `#[gos_blocking]` attribute: dispatches the body through a blocking pool with inline fallback.
+- Extended type vocabulary: `Option<T>`, `Result<T, String>`, `Result<T, GosError>` for common `T`; `HashMap<String, Vec<i64>>`, `<i64, String>`, `<String, bool>`, `<String, f64>`; tuples up to arity 4 with generic `SigType` / `FromGos` / `ToGos`.
+- New `GosError` with `From` for `io::Error`, `ParseIntError`, `ParseFloatError`, `Utf8Error`, `FromUtf8Error`, `fmt::Error`, `SystemTimeError`, `Infallible`; propagates via `?` with full cause chain on render.
+- New `PersistentCallback`: long-lived callable handle that survives past the binding return (complements the call-scoped `BindingCallback`).
+- New `gossamer-binding-macros` proc-macro crate; re-exported transparently from `gossamer-binding`.
+
+### CLI
+
+- `gos test --coverage <path>` writes lcov reports; `--parallel N` / `--serial`, `--format junit`, `--tier-parity --report=status`.
+- `gos feature-status` — list and check the feature-status registry: `--status shipped|experimental|planned|removed`, `--format table|json|markdown`, `--check` drift gate.
+- New `std::manifest::feature_status` registry covers stdlib modules and `lang::*` entries; rendered docs gain a `Status:` marker per page.
+- `gos new --template binding NAME` scaffolds a ready-to-edit binding crate.
+- `gos bindgen INPUT --output DIR --module PATH` walks a Rust source file's `pub fn` surface, classifies each by ABI vocabulary support, and emits a ready-to-edit binding crate; unsupported items are flagged with their blocking type.
+
+### Runtime
+
+- Coverage: `runtime::coverage::{Counter, register, bump, record, snapshot, reset, set_enabled}` plus C-ABI shims `gos_rt_cov_record`, `_bump`, `_reset`, `_set_enabled`.
+- Exec C-ABI shims: `gos_rt_exec_pipeline_run`, `_signal`, `_kill_group`, `_wait_timeout`.
+- Unicode C-ABI: 37 `gos_rt_unicode_*` shims (predicates, case, normalization, segmentation).
+- UTF-8 C-ABI: 9 `gos_rt_utf8_*` shims (rune count, validity, boundaries).
+- Vec/array slice helpers: `gos_rt_intarr_slice_result`, `gos_rt_floatarr_slice_result`, plus the existing string and generic Vec variants.
+- Panic traces: per-goroutine call-stack tracker (`Frame`, `set_active_gid`, `stack_push` / `_pop` / `set_active_line`, `active_frames`, `render_active_panic_trace`); both backends emit prologue/return push+pop calls.
+
+### Compiled tier
+
+- Every new `std::unicode`, `std::utf8`, `std::exec`, and slice helper has a typed entry in the ABI registry and a dispatch arm in MIR `stdlib_free.rs` / `method_call_dispatch.rs`. Bit-identical output across VM, Cranelift, and LLVM tiers — verified by `feature-testing-examples/unicode_full.gos`, `slice_methods.gos`, `exec_pipeline.gos`, `exec_signal_group.gos`, `exec_wait_timeout.gos`, `http2_push.gos`, and `http2_trailers.gos` under `tier_parity`.
+- Cranelift soft-zero fallback for unknown call names removed — unresolved calls are now a hard error (the `GOSSAMER_STRICT_LOWER` env var is retired).
+
+### Fixes
+
+- LLVM tier silent miscompile when `if let Some(p) = m.get(&k); p.field` was used for `HashMap<_, Struct>`: the dispatcher pinned the call's return type to bare `i64`, so the match arm couldn't recover `&V` from `Option<V>` and field projection fell through to `ptr`. New `gos_rt_map_get_i64_opt` / `gos_rt_map_get_str_opt` return `Option<V>` as a `*mut GosResult`, with `pinned_ret` synthesised from the receiver's HashMap value Ty. Side effect: `m.get(missing)` for `HashMap<_, i64>` now correctly returns `None` (previously the no-Adt happy-path encoded missing keys as `Some(0)`).
+- LLVM tier stack-pointer bug on `HashMap.insert` with struct values: the inserted value was the stack address of the literal alloca, so subsequent reads in any other frame saw stale data. `maybe_heap_copy_aggregate` heap-copies the struct via `gos_rt_aggr_alloc` before passing to `gos_rt_map_insert_i64_i64` and `_str_i64`. The wrapper is marked `#[inline(never)]` plus a `#[used]` static anchor (`GOS_RT_AGGR_ALLOC_KEEP`) so neither the rustc inliner nor the linker's dead-strip collapses it back into `gos_rt_gc_alloc` — that collapse silently elides the heap copy and reintroduces the stack-pointer regression. Cross-tier parity verified by `feature-testing-examples/hashmap_get_some_field.gos` and the aether_ecs build benchmark, which now matches the interp tier bit-for-bit (`pos_x_sum=9990959.95`).
+- LLVM tier GC blindness through `HashMap` values: `GosMap` allocations live outside the GC registry (`Box::into_raw` in `gos_rt_map_new`), and the conservative payload scan can't walk the Rust-side bucket allocator, so heap-allocated struct values stored as i64 entries were unreachable from the tracing collector and reclaimed mid-program. `gos_map_register` / `gos_map_deregister` track every live `GosMap` in a dedicated registry; `gos_rt_gc_collect` now adds a second mark drain that walks every registered map's storage and emits each value as a candidate pointer for the registry-presence check. The conservative trace tolerates raw i64 values in primitive maps (`HashMap<_, i64>`) — they don't match registered allocations so they don't over-mark.
+
+### Tooling
+
+- `check.sh` runs `gos feature-status --status experimental --check` to gate accidental drift.
+- New CLI test surface: `feature_status.rs`, `http_h2_alpn.rs`, `http_h2_conformance.rs`; LSP `workspace_refs_rename.rs`; pkg `registry_publish.rs`.
+- Fuzz harnesses (smoke + weekly) now cap inputs with `-rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30` so a single pathological seed records a crash artefact instead of OOM-killing the runner.
+- `gossamer-runtime::ffi::tests::opens_libc_and_calls_strlen` and the `gossamer-coro` test suite gated behind `#[cfg(not(miri))]` (`libloading::dlopen` and `corosensei`'s `mmap(PROT_NONE)` are unsupported by Miri); host-CPU runs still cover both.
+
+### Cross-platform
+
+- `std::signal` on Windows now bridges `SetConsoleCtrlHandler`: Ctrl+C → SIGINT, Ctrl+Break → SIGQUIT (+ goroutine-stack dump via `sigquit::render_to`), close / logoff / shutdown → SIGTERM. Previously `signal::on(SIGINT).wait()` deadlocked because nothing flipped the notifier flag.
+- `std::lifecycle` Windows arm consumes those notifiers — `Lifecycle::install_default()` now runs registered shutdown hooks on Ctrl+C / supervisor close, mirroring the unix dispatcher's double-signal force-exit semantics.
+- `find_clang_rt_profile` searches macOS Homebrew (`/opt/homebrew/opt/llvm@*`, `/usr/local/opt/llvm@*`, `darwin/libclang_rt.profile_osx.a`) and Windows MSYS2 (`C:\msys64\mingw64\lib\clang\*\lib\windows\clang_rt.profile-*.lib`) layouts; honours `$GOS_LLVM_PROFILE_RT` for explicit overrides and walks the `$GOS_LLVM_OPT` parent tree.
+- `std::net::UnixListener` / `UnixStream` gain `#[cfg(not(unix))]` stub arms so `use std::net::UnixListener` resolves on Windows; every method returns `Err("AF_UNIX sockets are not supported on this platform")` until the real Win10+ AF_UNIX surface lands.
+- `gossamer-std`'s `unicode-properties` / `unicode-normalization` / `unicode-segmentation` deps moved out of `[target.'cfg(unix)'.dependencies]` — they were used unconditionally by `std::unicode` and would have failed to resolve on a Windows build.
+
 ## 0.7.0 — Stdlib, stability, refactoring, and build optimizations
 
 ### Build

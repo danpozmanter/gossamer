@@ -1,5 +1,7 @@
 # `std::collections::queue`
 
+Status: shipped
+
 FIFO queue over Vec<i64>. Re-bind shape: `let q = queue::push(q, v)`.
 
 ## Public items

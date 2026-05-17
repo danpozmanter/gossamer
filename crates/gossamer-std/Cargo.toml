@@ -131,3 +131,24 @@ mime_guess = "2"
 
 # POSIX user / group lookup (`std::os::user`).
 nix = { version = "0.29", default-features = false, features = ["user"] }
+
+# Unicode property tables (`std::unicode`). Real general-category
+# tests, normalization forms, and grapheme/word/sentence
+# segmentation — replaces the hand-rolled ASCII-only stubs that
+# shipped through 0.7.0. Platform-agnostic; pure Rust.
+unicode-properties = { workspace = true }
+unicode-normalization = { workspace = true }
+unicode-segmentation = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# Signal delivery + process-group control for `std::exec`.
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Console control handler for `std::signal` (Ctrl+C / Ctrl+Break /
+# close / logoff / shutdown). Mirrors the unix `signal-hook`
+# dispatcher; no equivalent surface ships in std today.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }

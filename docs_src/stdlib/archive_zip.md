@@ -1,5 +1,7 @@
 # `std::archive::zip`
 
+Status: shipped
+
 ZIP archive reader and writer.
 
 ## Public items

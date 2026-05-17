@@ -60,7 +60,37 @@ pub enum TransportError {
 pub trait Transport: Send + Sync {
     /// Fetches the body at `url`. Returns the raw bytes, without
     /// interpreting Content-Type.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TransportError`] when DNS / TCP / TLS / status-line
+    /// parsing fails.
     fn get(&self, url: &str) -> Result<Vec<u8>, TransportError>;
+
+    /// Sends `body` to `url` with the given `content_type` and an
+    /// optional `Authorization: Bearer` token. Returns the
+    /// response body bytes on a 2xx response. Default
+    /// implementation returns [`TransportError::HttpsUnsupported`]
+    /// so existing read-only transports (the in-memory test
+    /// double, the empty default) don't have to opt in.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TransportError`] when DNS / TCP / TLS / status-line
+    /// parsing fails. Non-2xx response status surfaces as
+    /// [`TransportError::BadStatus`].
+    fn post(
+        &self,
+        url: &str,
+        body: &[u8],
+        content_type: &str,
+        auth_token: Option<&str>,
+    ) -> Result<Vec<u8>, TransportError> {
+        let _ = (url, body, content_type, auth_token);
+        Err(TransportError::Io(
+            "transport does not support POST".to_string(),
+        ))
+    }
 }
 
 /// Parsed URL slices.
@@ -113,6 +143,28 @@ impl Transport for HttpTransport {
             .set_read_timeout(Some(Duration::from_secs(30)))
             .map_err(|e| TransportError::Io(format!("read_timeout: {e}")))?;
         write_http_request(&mut stream, &parsed)?;
+        let response = read_entire(&mut stream)?;
+        parse_http_response(&response)
+    }
+
+    fn post(
+        &self,
+        url: &str,
+        body: &[u8],
+        content_type: &str,
+        auth_token: Option<&str>,
+    ) -> Result<Vec<u8>, TransportError> {
+        let parsed = parse_url(url)?;
+        if parsed.scheme != "http" {
+            return Err(TransportError::HttpsUnsupported);
+        }
+        let address = format!("{}:{}", parsed.host, parsed.port);
+        let mut stream = TcpStream::connect(&address)
+            .map_err(|e| TransportError::Io(format!("connect {address}: {e}")))?;
+        stream
+            .set_read_timeout(Some(Duration::from_mins(1)))
+            .map_err(|e| TransportError::Io(format!("read_timeout: {e}")))?;
+        write_http_post(&mut stream, &parsed, body, content_type, auth_token)?;
         let response = read_entire(&mut stream)?;
         parse_http_response(&response)
     }
@@ -169,6 +221,35 @@ impl Transport for HttpsTransport {
         let response = read_entire(&mut tls)?;
         parse_http_response(&response)
     }
+
+    fn post(
+        &self,
+        url: &str,
+        body: &[u8],
+        content_type: &str,
+        auth_token: Option<&str>,
+    ) -> Result<Vec<u8>, TransportError> {
+        let parsed = parse_url(url)?;
+        if parsed.scheme == "http" {
+            return HttpTransport.post(url, body, content_type, auth_token);
+        }
+        if parsed.scheme != "https" {
+            return Err(TransportError::BadUrl(url.to_string()));
+        }
+        let server_name = ServerName::try_from(parsed.host.clone())
+            .map_err(|e| TransportError::BadUrl(format!("{url}: {e}")))?;
+        let mut client = ClientConnection::new(Arc::clone(&self.config), server_name)
+            .map_err(|e| TransportError::Io(format!("tls: {e}")))?;
+        let address = format!("{}:{}", parsed.host, parsed.port);
+        let mut sock = TcpStream::connect(&address)
+            .map_err(|e| TransportError::Io(format!("connect {address}: {e}")))?;
+        sock.set_read_timeout(Some(Duration::from_mins(1)))
+            .map_err(|e| TransportError::Io(format!("read_timeout: {e}")))?;
+        let mut tls = Stream::new(&mut client, &mut sock);
+        write_http_post(&mut tls, &parsed, body, content_type, auth_token)?;
+        let response = read_entire(&mut tls)?;
+        parse_http_response(&response)
+    }
 }
 
 /// In-memory transport keyed by URL. Useful for tests and for the
@@ -211,6 +292,34 @@ fn write_http_request<W: Write>(out: &mut W, parsed: &ParsedUrl) -> Result<(), T
         .map_err(|e| TransportError::Io(format!("write: {e}")))
 }
 
+fn write_http_post<W: Write>(
+    out: &mut W,
+    parsed: &ParsedUrl,
+    body: &[u8],
+    content_type: &str,
+    auth_token: Option<&str>,
+) -> Result<(), TransportError> {
+    let auth_header = match auth_token {
+        Some(token) if !token.is_empty() => format!("Authorization: Bearer {token}\r\n"),
+        _ => String::new(),
+    };
+    let header = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: gos-pkg/{version}\r\nContent-Type: {ct}\r\nContent-Length: {len}\r\n{auth}Accept: */*\r\nConnection: close\r\n\r\n",
+        path = parsed.path,
+        host = parsed.host,
+        version = env!("CARGO_PKG_VERSION"),
+        ct = content_type,
+        len = body.len(),
+        auth = auth_header,
+    );
+    out.write_all(header.as_bytes())
+        .map_err(|e| TransportError::Io(format!("write header: {e}")))?;
+    out.write_all(body)
+        .map_err(|e| TransportError::Io(format!("write body: {e}")))?;
+    out.flush()
+        .map_err(|e| TransportError::Io(format!("flush: {e}")))
+}
+
 fn read_entire<R: Read>(r: &mut R) -> Result<Vec<u8>, TransportError> {
     let mut out = Vec::new();
     let mut buf = [0u8; 8192];
@@ -222,10 +331,18 @@ fn read_entire<R: Read>(r: &mut R) -> Result<Vec<u8>, TransportError> {
             Err(e) => {
                 // TLS close-notify may surface as UnexpectedEof on
                 // some servers; treat any bytes we already read as
-                // the body and return success.
+                // the body and return success. `ConnectionReset` is
+                // also common when a server writes the response and
+                // immediately closes the socket without a graceful
+                // close-notify (most one-shot test servers and a
+                // few production proxies behave this way).
                 if !out.is_empty()
-                    && (e.kind() == std::io::ErrorKind::UnexpectedEof
-                        || e.kind() == std::io::ErrorKind::ConnectionAborted)
+                    && matches!(
+                        e.kind(),
+                        std::io::ErrorKind::UnexpectedEof
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionReset
+                    )
                 {
                     break;
                 }

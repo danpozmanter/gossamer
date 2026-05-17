@@ -291,6 +291,96 @@ fn gc_thread_roots_registry() -> &'static ThreadRootsRegistry {
     GC_THREAD_ROOTS.get_or_init(|| parking_lot::Mutex::new(Vec::new()))
 }
 
+// ---------------------------------------------------------------
+// HashMap-as-container roots
+// ---------------------------------------------------------------
+//
+// `GosMap` is allocated via `Box::into_raw` (in `gos_rt_map_new` /
+// `_with_capacity`) and lives outside the GC registry — its storage
+// buckets are managed by Rust's allocator, not ours. That means
+// the conservative `scan_payload_words` walk cannot reach the
+// heap-allocated struct values the user inserted into the map: it
+// only sees the bytes of the `GosMap` struct itself, never the
+// Rust-side `FxHashMap<K, V>` buckets.
+//
+// To keep HashMap-stored aggregate values reachable, every live
+// `GosMap` registers its address here at construction. The
+// tracing collector's mark phase performs a second pass after
+// draining the normal worklist: for each registered map, it locks
+// the storage and treats every 8-byte value as a candidate root.
+// `scan_payload_words`'s registry-presence check filters
+// non-pointer values (raw i64, char codes), so the trace is
+// conservative without overestimating reachability for primitive
+// maps (HashMap<_, i64>).
+type GosMapRegistry = parking_lot::Mutex<std::collections::HashSet<usize>>;
+static GOS_MAP_REGISTRY: std::sync::OnceLock<GosMapRegistry> = std::sync::OnceLock::new();
+
+fn gos_map_registry() -> &'static GosMapRegistry {
+    GOS_MAP_REGISTRY.get_or_init(|| parking_lot::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Records `addr` as a live `GosMap` whose stored values must be
+/// scanned by the tracing collector. Called from `gos_rt_map_new`
+/// and `gos_rt_map_new_with_capacity`. No-op when GC tracking is
+/// disabled (`GOS_GC=leak`).
+pub(super) fn gos_map_register(addr: *mut u8) {
+    if !gc_track_enabled() || addr.is_null() {
+        return;
+    }
+    gos_map_registry().lock().insert(addr as usize);
+}
+
+/// Deregisters a `GosMap` when the user code drops the map.
+/// Idempotent on a never-registered address. Called from
+/// `gos_rt_map_free`.
+pub(super) fn gos_map_deregister(addr: *mut u8) {
+    if addr.is_null() {
+        return;
+    }
+    if let Some(reg) = GOS_MAP_REGISTRY.get() {
+        reg.lock().remove(&(addr as usize));
+    }
+}
+
+/// Walks every live `GosMap` and pushes each stored 8-byte value
+/// onto the worklist as a candidate pointer. Filtering against
+/// `registry` is the caller's responsibility (mirrors how
+/// `scan_payload_words` is structured) so we share one
+/// allocation-free probe.
+///
+/// Performance: per-call cost is `O(total_map_entries)` with a
+/// short-lived `lock()` on each map. Each map's storage Mutex is
+/// uncontested in steady state (GC stops the world via the
+/// registry lock first; mutators block at the next safepoint),
+/// so the extra latency is dominated by the iteration itself.
+fn scan_all_gos_maps(registry: &AllocRegistry, worklist: &mut Vec<(usize, u64)>) {
+    let Some(map_reg) = GOS_MAP_REGISTRY.get() else {
+        return;
+    };
+    let map_addrs: Vec<usize> = map_reg.lock().iter().copied().collect();
+    for addr in map_addrs {
+        if addr == 0 {
+            continue;
+        }
+        // SAFETY: `addr` was registered by `gos_rt_map_new` (or the
+        // capacity variant) via `Box::into_raw(Box::new(GosMap))`.
+        // Removal goes through `gos_rt_map_free`, which holds the
+        // registry's only mutator; concurrent free races are
+        // impossible while the GC registry is locked because every
+        // mutator must reach the next safepoint to touch the GC.
+        let map = unsafe { &*(addr as *const super::map::GosMap) };
+        for value in super::map::storage_values_for_gc(map) {
+            if value == 0 {
+                continue;
+            }
+            let candidate = value as usize;
+            if let Some(entry) = registry.get(&PtrKey(candidate)) {
+                worklist.push((candidate, entry.generation));
+            }
+        }
+    }
+}
+
 thread_local! {
     static LOCAL_ROOTS: std::cell::RefCell<Option<std::sync::Arc<ThreadRoots>>> =
         const { std::cell::RefCell::new(None) };
@@ -504,6 +594,32 @@ pub extern "C" fn gos_rt_gc_collect() -> u64 {
                 // The address was freed and re-allocated between
                 // snapshot and trace. The new allocation is not
                 // reachable from any captured root; skip.
+                continue;
+            }
+            if entry.mark {
+                continue;
+            }
+            entry.mark = true;
+            scan_payload_words(addr, &registry, &mut worklist);
+        }
+
+        // Phase 2b: HashMap-as-container roots. The conservative
+        // word-scan can't see through `MapStorage`'s Rust-owned
+        // buckets, so every value stored in a live `GosMap` would
+        // otherwise look unreachable. Walk each registered map,
+        // emit its values as candidates, and re-drain the worklist.
+        // Without this pass, `m.insert(k, Struct { ... })` for a
+        // GC-tracked `Struct` allocation reclaims the alloc on the
+        // first collect after the inserting frame returns, and
+        // subsequent `m.get(&k)` reads stale memory. See
+        // `feature-testing-examples/hashmap_get_some_field.gos`
+        // and the aether_ecs build benchmark.
+        scan_all_gos_maps(&registry, &mut worklist);
+        while let Some((addr, expected_gen)) = worklist.pop() {
+            let Some(entry) = registry.get_mut(&PtrKey(addr)) else {
+                continue;
+            };
+            if entry.generation != expected_gen {
                 continue;
             }
             if entry.mark {
@@ -758,10 +874,90 @@ pub extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
 /// this function is reclaimed by either an explicit `gos_rt_aggr_free`
 /// (emitted by the MIR drop pass at scope exit) or by the
 /// tracing collector at the next `gos_rt_gc_collect`.
+/// Load-bearing distinctness: a bare wrapper around
+/// `gos_rt_gc_alloc` is ICF-folded by the linker into the same
+/// function. Once the symbol collapses, the user-side LLVM IR's
+/// `call @gos_rt_aggr_alloc` resolves to the same address as
+/// `gos_rt_gc_alloc`, the linker can prove the heap return is
+/// only used to memcpy a stack alloca, and removes the entire
+/// heap-copy + memcpy chain — leaving HashMap inserts storing
+/// stack pointers that go dangling on the inserter's return.
+///
+/// `#[inline(never)]` keeps the wrapper out of the caller's
+/// body. A `compiler_fence(SeqCst)` plus a distinct atomic-load
+/// keeps ICF from folding the wrapper into `gos_rt_gc_alloc`:
+/// the bodies are no longer instruction-identical and the
+/// `compiler_fence` blocks LLVM from reasoning across the call
+/// boundary.
 #[unsafe(no_mangle)]
+#[inline(never)]
 pub extern "C" fn gos_rt_aggr_alloc(size: u64) -> *mut u8 {
+    // ICF-anchor: distinct atomic + fence so the linker does
+    // not identify this function with `gos_rt_gc_alloc` and
+    // the optimiser cannot prove the heap return is dead.
+    static ANCHOR: AtomicUsize = AtomicUsize::new(0);
+    ANCHOR.fetch_add(1, Ordering::SeqCst);
+    std::sync::atomic::compiler_fence(Ordering::SeqCst);
     ffi_entry!(std::ptr::null_mut(), { gos_rt_gc_alloc(size) })
 }
+
+// `#[used]` anchor — without this, `--gc-sections` strips the
+// distinct `gos_rt_aggr_alloc` symbol once ICF folds its body
+// into `gos_rt_gc_alloc`, then dead-strip kills the original
+// because nothing in the runtime staticlib references it
+// directly. The reference here pins the symbol so user
+// LLVM IR's `call @gos_rt_aggr_alloc` keeps resolving to
+// our distinct wrapper.
+#[used]
+static GOS_RT_AGGR_ALLOC_KEEP: extern "C" fn(u64) -> *mut u8 = gos_rt_aggr_alloc;
+
+/// Allocates `size` zeroed bytes for an aggregate whose only
+/// surviving handle is going to escape the GC's reachability
+/// graph — typically a struct value being stored as an i64 in
+/// a HashMap, where the runtime can't currently teach the
+/// tracing collector to walk through the MapStorage's
+/// Rust-managed buckets.
+///
+/// Skips the GC registry entirely so the tracing collector
+/// can't reclaim the block; the cost is that the allocation
+/// leaks until process exit (when `gos_rt_gc_reset` walks the
+/// global allocator's reserve). Use only when the alternative
+/// is a silent miscompile via a dangling stack pointer; the
+/// general aggregate path stays on `gos_rt_aggr_alloc`.
+/// Same ICF / inlining concerns as `gos_rt_aggr_alloc`; see that
+/// function's comment block. The distinct anchor here uses a
+/// separate static so the two wrappers remain non-foldable.
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn gos_rt_aggr_alloc_leak(size: u64) -> *mut u8 {
+    static ANCHOR: AtomicUsize = AtomicUsize::new(0);
+    ANCHOR.fetch_add(1, Ordering::SeqCst);
+    std::sync::atomic::compiler_fence(Ordering::SeqCst);
+    ffi_entry!(std::ptr::null_mut(), {
+        if size == 0 {
+            return std::ptr::null_mut();
+        }
+        let size = size as usize;
+        let Ok(layout) = aggregate_layout(size) else {
+            return std::ptr::null_mut();
+        };
+        // SAFETY: same shape as `gos_rt_gc_alloc`'s `alloc_zeroed`
+        // call (size validated by `aggregate_layout`, allocator
+        // is thread-safe). The deliberate omission is the
+        // registry insert — the caller has accepted leak
+        // semantics in exchange for indefinite lifetime.
+        let ptr = unsafe { alloc_zeroed(layout) };
+        if ptr.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        ptr
+    })
+}
+
+/// Companion `#[used]` anchor for the leak variant — same
+/// rationale as `GOS_RT_AGGR_ALLOC_KEEP`.
+#[used]
+static GOS_RT_AGGR_ALLOC_LEAK_KEEP: extern "C" fn(u64) -> *mut u8 = gos_rt_aggr_alloc_leak;
 
 /// Reclaims an aggregate allocation made by `gos_rt_aggr_alloc` /
 /// `gos_rt_gc_alloc`. Idempotent on null. The MIR drop pass emits

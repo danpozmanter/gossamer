@@ -37,8 +37,19 @@ float_cmp = "allow"
 unreadable_literal = "allow"
 format_push_string = "allow"
 collapsible_if = "allow"
+# Phase 1/2 BindingAbi impls repeat the same `match <single_payload>
+# { Some(x) => x, None => return Err(...) }` shape across every
+# wire-shape. Rewriting to `let-else` or `?` would obscure the per-
+# arm return value (which varies — `Err(GosError::new(""))` vs
+# `Err(String::new())` vs `return None`).
+question_mark = "allow"
+manual_let_else = "allow"
+explicit_iter_loop = "allow"
+doc_markdown = "allow"
 
 [dependencies]
+gossamer-ast = { workspace = true }
+gossamer-binding-macros = { workspace = true }
 gossamer-codegen-cranelift = { workspace = true }
 gossamer-interp = { workspace = true }
 gossamer-resolve = { workspace = true }

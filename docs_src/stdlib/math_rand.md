@@ -1,5 +1,7 @@
 # `std::math::rand`
 
+Status: shipped
+
 Deterministic pseudo-random number generation.
 
 ## Public items

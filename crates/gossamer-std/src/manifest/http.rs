@@ -240,6 +240,21 @@ pub const HTTP: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Same shape for Http2StreamingHandler.",
         },
+        StdItem {
+            name: "Trailers",
+            kind: StdItemKind::Type,
+            doc: "HTTP/2 trailing HEADERS (alias for Headers) — used by `ResponseWriter::write_trailers` and `Request::trailers`.",
+        },
+        StdItem {
+            name: "PushOptions",
+            kind: StdItemKind::Type,
+            doc: "Prioritization knobs for `ResponseWriter::push_promise` (weight, depends_on, exclusive).",
+        },
+        StdItem {
+            name: "PushStream",
+            kind: StdItemKind::Type,
+            doc: "Server-initiated push stream returned by `ResponseWriter::push_promise`. Supports send_head / write / write_trailers / end.",
+        },
     ],
 };
 
@@ -520,6 +535,297 @@ pub const HTTP_NATIVE_CLIENT: StdModule = StdModule {
             name: "delete",
             kind: StdItemKind::Function,
             doc: "One-shot DELETE → Result<Response, Error>. Interp tier.",
+        },
+    ],
+};
+
+pub const HTTP_COOKIE: StdModule = StdModule {
+    path: "std::http::cookie",
+    summary: "RFC 6265 cookie parser and Set-Cookie builder.",
+    items: &[
+        StdItem {
+            name: "Cookie",
+            kind: StdItemKind::Type,
+            doc: "Parsed cookie with name, value, and Set-Cookie attributes.",
+        },
+        StdItem {
+            name: "CookieBuilder",
+            kind: StdItemKind::Type,
+            doc: "Fluent builder for Set-Cookie response headers.",
+        },
+        StdItem {
+            name: "SameSite",
+            kind: StdItemKind::Type,
+            doc: "SameSite attribute: Strict / Lax / None.",
+        },
+        StdItem {
+            name: "parse_cookie_header",
+            kind: StdItemKind::Function,
+            doc: "Parse a Cookie request header into (name, value) pairs.",
+        },
+        StdItem {
+            name: "parse_set_cookie",
+            kind: StdItemKind::Function,
+            doc: "Parse a Set-Cookie response header into a Cookie.",
+        },
+    ],
+};
+
+pub const HTTP_CSRF: StdModule = StdModule {
+    path: "std::http::csrf",
+    summary: "Double-submit-cookie CSRF protection with Origin / Referer allowlist.",
+    items: &[
+        StdItem {
+            name: "Config",
+            kind: StdItemKind::Type,
+            doc: "Signing key, cookie / header names, and origin allowlist.",
+        },
+        StdItem {
+            name: "RouteAuth",
+            kind: StdItemKind::Type,
+            doc: "Per-route policy: Required, Optional, or Skipped.",
+        },
+        StdItem {
+            name: "issue_token",
+            kind: StdItemKind::Function,
+            doc: "Mint a fresh CSRF token bound to the configured signing key.",
+        },
+        StdItem {
+            name: "verify_token",
+            kind: StdItemKind::Function,
+            doc: "Constant-time verify of a presented token against the cookie value.",
+        },
+        StdItem {
+            name: "extract_token",
+            kind: StdItemKind::Function,
+            doc: "Pull a token from the configured header or form field.",
+        },
+        StdItem {
+            name: "origin_allowed",
+            kind: StdItemKind::Function,
+            doc: "Origin / Referer allowlist check for unsafe methods.",
+        },
+        StdItem {
+            name: "check",
+            kind: StdItemKind::Function,
+            doc: "Combined origin + token gate; returns Err on failure.",
+        },
+        StdItem {
+            name: "attach_cookie",
+            kind: StdItemKind::Function,
+            doc: "Set the CSRF cookie on a Response.",
+        },
+    ],
+};
+
+pub const HTTP_FORM: StdModule = StdModule {
+    path: "std::http::form",
+    summary: "application/x-www-form-urlencoded parser and builder.",
+    items: &[
+        StdItem {
+            name: "Form",
+            kind: StdItemKind::Type,
+            doc: "Parsed url-encoded body, queryable by field name.",
+        },
+        StdItem {
+            name: "FormBuilder",
+            kind: StdItemKind::Type,
+            doc: "Builder for url-encoded request bodies.",
+        },
+    ],
+};
+
+pub const HTTP_HEALTH: StdModule = StdModule {
+    path: "std::http::health",
+    summary: "Liveness / readiness probes for HTTP health endpoints.",
+    items: &[
+        StdItem {
+            name: "Probe",
+            kind: StdItemKind::Trait,
+            doc: "One health check returning Ok or Err with a short message.",
+        },
+        StdItem {
+            name: "Health",
+            kind: StdItemKind::Type,
+            doc: "Aggregates a set of named probes into a single status.",
+        },
+        StdItem {
+            name: "always_ok",
+            kind: StdItemKind::Function,
+            doc: "Probe that always reports healthy.",
+        },
+        StdItem {
+            name: "always_fail",
+            kind: StdItemKind::Function,
+            doc: "Probe that always reports unhealthy with the given message.",
+        },
+        StdItem {
+            name: "tcp_probe",
+            kind: StdItemKind::Function,
+            doc: "Probe that opens a TCP connection within a deadline.",
+        },
+    ],
+};
+
+pub const HTTP_MULTIPART: StdModule = StdModule {
+    path: "std::http::multipart",
+    summary: "RFC 7578 multipart/form-data streaming parser.",
+    items: &[
+        StdItem {
+            name: "Config",
+            kind: StdItemKind::Type,
+            doc: "Per-form size, part-count, and disk-spill limits.",
+        },
+        StdItem {
+            name: "Part",
+            kind: StdItemKind::Type,
+            doc: "One field or file entry from a multipart body.",
+        },
+        StdItem {
+            name: "PartData",
+            kind: StdItemKind::Type,
+            doc: "In-memory bytes or spilled-to-disk path for a part.",
+        },
+        StdItem {
+            name: "Form",
+            kind: StdItemKind::Type,
+            doc: "Parsed multipart envelope: fields + file parts.",
+        },
+        StdItem {
+            name: "parse_boundary",
+            kind: StdItemKind::Function,
+            doc: "Extract the boundary token from a Content-Type header.",
+        },
+        StdItem {
+            name: "parse_bytes",
+            kind: StdItemKind::Function,
+            doc: "Parse a full body buffer into a Form.",
+        },
+        StdItem {
+            name: "parse",
+            kind: StdItemKind::Function,
+            doc: "Stream-parse from any Read source into a Form.",
+        },
+    ],
+};
+
+pub const HTTP_QUERY: StdModule = StdModule {
+    path: "std::http::query",
+    summary: "Typed wrapper over URL query strings.",
+    items: &[StdItem {
+        name: "Query",
+        kind: StdItemKind::Type,
+        doc: "Parsed query string with typed get / get_all / contains.",
+    }],
+};
+
+pub const HTTP_SESSION: StdModule = StdModule {
+    path: "std::http::session",
+    summary: "Signed-cookie session store with pluggable backend trait.",
+    items: &[
+        StdItem {
+            name: "Session",
+            kind: StdItemKind::Type,
+            doc: "Per-request session view; mutations persist on response.",
+        },
+        StdItem {
+            name: "SessionConfig",
+            kind: StdItemKind::Type,
+            doc: "Cookie name, domain, signing key, serialization mode.",
+        },
+        StdItem {
+            name: "SessionStore",
+            kind: StdItemKind::Trait,
+            doc: "Backend interface: load / save / delete by session id.",
+        },
+        StdItem {
+            name: "SignedCookieStore",
+            kind: StdItemKind::Type,
+            doc: "Cookie-backed store with HMAC signature; no server state.",
+        },
+        StdItem {
+            name: "SerializationMode",
+            kind: StdItemKind::Type,
+            doc: "Session payload encoding: Json or Bincode.",
+        },
+        StdItem {
+            name: "with_session",
+            kind: StdItemKind::Function,
+            doc: "Run a closure with the session bound; persist any mutations.",
+        },
+    ],
+};
+
+pub const HTTP_STATE: StdModule = StdModule {
+    path: "std::http::state",
+    summary: "Handler-side dependency injection via a typed AppState.",
+    items: &[
+        StdItem {
+            name: "AppState",
+            kind: StdItemKind::Type,
+            doc: "TypeMap of Arc<T> values shared across handlers.",
+        },
+        StdItem {
+            name: "State",
+            kind: StdItemKind::Type,
+            doc: "Newtype wrapper Arc<T> for ergonomic handler arguments.",
+        },
+    ],
+};
+
+pub const JWT: StdModule = StdModule {
+    path: "std::jwt",
+    summary: "RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens.",
+    items: &[
+        StdItem {
+            name: "Alg",
+            kind: StdItemKind::Type,
+            doc: "Signing algorithm: HS256 / HS384 / HS512 / ES256 / EdDSA.",
+        },
+        StdItem {
+            name: "Header",
+            kind: StdItemKind::Type,
+            doc: "JWS / JWT header (alg, kid, typ).",
+        },
+        StdItem {
+            name: "Claims",
+            kind: StdItemKind::Type,
+            doc: "Standard registered claims plus a free-form custom map.",
+        },
+        StdItem {
+            name: "VerifyOpts",
+            kind: StdItemKind::Type,
+            doc: "Expected issuer / audience / clock leeway used by verify.",
+        },
+        StdItem {
+            name: "sign_hs",
+            kind: StdItemKind::Function,
+            doc: "Sign claims with HMAC-SHA family using a shared key.",
+        },
+        StdItem {
+            name: "verify_hs",
+            kind: StdItemKind::Function,
+            doc: "Verify an HS* token; checks signature plus VerifyOpts.",
+        },
+        StdItem {
+            name: "sign_es256",
+            kind: StdItemKind::Function,
+            doc: "Sign with ECDSA P-256 from a PEM-encoded private key.",
+        },
+        StdItem {
+            name: "verify_es256",
+            kind: StdItemKind::Function,
+            doc: "Verify an ES256 token against a PEM-encoded public key.",
+        },
+        StdItem {
+            name: "sign_eddsa",
+            kind: StdItemKind::Function,
+            doc: "Sign with Ed25519 from a PEM-encoded private key.",
+        },
+        StdItem {
+            name: "verify_eddsa",
+            kind: StdItemKind::Function,
+            doc: "Verify an EdDSA token against a PEM-encoded public key.",
         },
     ],
 };

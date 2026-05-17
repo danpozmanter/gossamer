@@ -1,5 +1,7 @@
 # `std::utf8`
 
+Status: shipped
+
 UTF-8 validation and scalar decoding.
 
 ## Public items

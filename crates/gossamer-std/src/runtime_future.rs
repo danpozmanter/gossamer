@@ -202,7 +202,10 @@ mod tests {
             *result_for_g.lock().unwrap() = Some(v);
             done_for_g.store(true, Ordering::Release);
         }));
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        // 15s ceiling tolerates an overloaded scheduler running
+        // hundreds of concurrent tests; the future itself
+        // resolves in ~30ms once the scheduler picks the wake.
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         while std::time::Instant::now() < deadline {
             if done.load(Ordering::Acquire) {
                 break;

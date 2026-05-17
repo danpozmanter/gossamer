@@ -1,5 +1,7 @@
 # `std::collections::stack`
 
+Status: shipped
+
 LIFO stack over Vec<i64>. Re-bind shape: `let s = stack::push(s, v)`.
 
 ## Public items
