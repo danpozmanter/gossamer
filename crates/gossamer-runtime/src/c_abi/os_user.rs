@@ -124,9 +124,9 @@ pub unsafe extern "C" fn gos_rt_os_user_lookup_name(name: *const c_char) -> i64 
         if name.is_null() {
             return -1;
         }
-        let n = unsafe { CStr::from_ptr(name).to_str().unwrap_or("") };
         #[cfg(unix)]
         {
+            let n = unsafe { CStr::from_ptr(name).to_str().unwrap_or("") };
             use nix::unistd::User;
             match User::from_name(n) {
                 Ok(Some(u)) => i64::from(u.uid.as_raw()),
@@ -135,7 +135,7 @@ pub unsafe extern "C" fn gos_rt_os_user_lookup_name(name: *const c_char) -> i64 
         }
         #[cfg(not(unix))]
         {
-            let _ = n;
+            let _ = name;
             -1_i64
         }
     })

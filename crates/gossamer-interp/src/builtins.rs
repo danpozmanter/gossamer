@@ -2579,7 +2579,7 @@ pub(crate) fn ok_variant(value: Value) -> Value {
 pub(crate) fn err_variant(message: impl Into<String>) -> Value {
     Value::variant(
         "Err",
-        Arc::new(vec![Value::String(SmolStr::from(message.into()))]),
+        Arc::new(vec![errors_struct(message.into(), Value::Unit)]),
     )
 }
 
@@ -3023,7 +3023,8 @@ fn builtin_exec_spawn(args: &[Value]) -> RuntimeResult<Value> {
             "exec::spawn: program argument must be a string",
         ));
     };
-    let mut cmd = StdCommand::new(prog);
+    let prog = prog.to_owned();
+    let mut cmd = StdCommand::new(&prog);
     if let Some(Value::Array(arr)) = args.get(1) {
         for arg in arr.iter() {
             if let Some(s) = as_str(arg) {
@@ -3041,7 +3042,7 @@ fn builtin_exec_spawn(args: &[Value]) -> RuntimeResult<Value> {
             std::mem::forget(child);
             Ok(ok_variant(Value::Int(pid)))
         }
-        Err(e) => Ok(err_variant(format!("{e}"))),
+        Err(e) => Ok(err_variant(format!("exec::spawn({prog}): {e}"))),
     }
 }
 

@@ -236,9 +236,9 @@ pub unsafe extern "C" fn gos_rt_exec_wait_timeout(pid: i64, ms: i64) -> i64 {
         if pid <= 0 {
             return -2;
         }
-        let deadline = Instant::now() + Duration::from_millis(ms.max(0) as u64);
         #[cfg(unix)]
         {
+            let deadline = Instant::now() + Duration::from_millis(ms.max(0) as u64);
             loop {
                 let mut status: libc::c_int = 0;
                 // SAFETY: waitpid with WNOHANG returns 0 if still
@@ -273,7 +273,7 @@ pub unsafe extern "C" fn gos_rt_exec_wait_timeout(pid: i64, ms: i64) -> i64 {
         }
         #[cfg(not(any(unix, windows)))]
         {
-            let _ = (pid, ms, deadline);
+            let _ = (pid, ms);
             -2
         }
     })

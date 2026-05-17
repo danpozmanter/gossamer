@@ -12,7 +12,7 @@ use std::exec
 
 fn main() {
     let empty: [String] = [].to_vec()
-    match exec::spawn(&"/bin/true".to_string(), &empty) {
+    match exec::spawn(&"/usr/bin/true".to_string(), &empty) {
         Ok(pid) => {
             let code = exec::wait_timeout(pid, 5000)
             if code == 0 {
