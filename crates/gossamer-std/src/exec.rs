@@ -48,7 +48,9 @@ use std::path::PathBuf;
 use std::process::{self, ChildStderr, ChildStdout};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use crate::context::Context;
 use crate::io::IoError;
@@ -760,9 +762,9 @@ pub fn wait_pid_timeout(pid: i64, ms: i64) -> i64 {
     if pid <= 0 {
         return -2;
     }
-    let deadline = Instant::now() + Duration::from_millis(ms.max(0) as u64);
     #[cfg(unix)]
     {
+        let deadline = Instant::now() + Duration::from_millis(ms.max(0) as u64);
         loop {
             let mut status: libc::c_int = 0;
             // SAFETY: waitpid(WNOHANG) returns 0 if still running,
@@ -793,7 +795,6 @@ pub fn wait_pid_timeout(pid: i64, ms: i64) -> i64 {
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = deadline;
         let _ = ms;
         -2
     }

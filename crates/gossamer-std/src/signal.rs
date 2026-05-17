@@ -14,7 +14,7 @@
 //!   thread is the one place we observe the atomic and translate it
 //!   into a notify; user code never polls in a 50 ms loop.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -161,6 +161,7 @@ fn install_native_handlers() {
 }
 
 #[cfg(windows)]
+#[allow(unsafe_code)]
 fn install_native_handlers() {
     use std::sync::Once;
     use windows_sys::Win32::Foundation::BOOL;
