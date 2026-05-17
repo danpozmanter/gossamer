@@ -15,6 +15,7 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
+#[cfg(unix)]
 use std::ffi::CStr;
 use std::os::raw::c_char;
 

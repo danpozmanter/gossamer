@@ -14,6 +14,7 @@
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use super::errors::gos_rt_error_new;
