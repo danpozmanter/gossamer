@@ -122,6 +122,29 @@ pub fn compile_to_object_at_path(
     Ok(triple)
 }
 
+/// Lowers `bodies` through the standard LLVM pipeline and returns the
+/// resulting `.ll` IR as a UTF-8 string instead of writing an object.
+/// Used by snapshot / smoke tests that need to inspect the IR shape
+/// without driving `opt`+`llc` over it. `allow_fallback` mirrors
+/// [`compile_to_object`]: when `false`, an unsupported body returns
+/// `Err(BuildError::Unsupported)` instead of a Cranelift-stub
+/// declaration.
+pub fn render_ir_to_string(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    allow_fallback: bool,
+) -> Result<String> {
+    let tmp_dir = pipeline_tmp_dir()?;
+    let ll_path = tmp_dir.join("unit.ll");
+    let _ = render_module_to_path(bodies, tcx, &ll_path, allow_fallback)?;
+    let ir = std::fs::read_to_string(&ll_path)
+        .with_context(|| format!("reading {}", ll_path.display()))?;
+    if std::env::var("GOS_LLVM_DUMP").is_err() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+    Ok(ir)
+}
+
 // ---------------------------------------------------------------------------
 // P2 + P3: parallel per-body compilation with incremental object cache
 // ---------------------------------------------------------------------------

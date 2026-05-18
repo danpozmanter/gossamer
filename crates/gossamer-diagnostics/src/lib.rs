@@ -15,8 +15,10 @@ use std::fmt;
 
 use gossamer_lex::{FileId, Span};
 
+pub mod code_registry;
 pub mod render;
 
+pub use code_registry::{REGISTRY, codes, explain};
 pub use render::{RenderOptions, render, render_json, render_plain};
 
 /// Severity of a diagnostic. Mirrors the standard four-level scale.

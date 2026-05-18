@@ -19,3 +19,4 @@ gossamer-ast = { workspace = true }
 gossamer-parse = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-types = { workspace = true }
+insta = { workspace = true }

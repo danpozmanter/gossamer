@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0005]: `if cond { true } else { false }` is the same as `cond`. The — here
+--- framed ---
+error[GL0005]: `if cond { true } else { false }` is the same as `cond`. The
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

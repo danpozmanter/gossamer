@@ -370,6 +370,7 @@ impl MultiScheduler {
     #[must_use]
     pub fn run(&self) -> MultiStats {
         self.inner.stopping.store(false, Ordering::Release);
+        crate::stack_guard::install_stack_guard();
         crate::preempt::init();
         crate::sigquit::install_handler();
         self.start_watchdog();
@@ -384,6 +385,7 @@ impl MultiScheduler {
     /// to drain workers when done.
     pub fn start(&self) {
         self.inner.stopping.store(false, Ordering::Release);
+        crate::stack_guard::install_stack_guard();
         crate::preempt::init();
         crate::sigquit::install_handler();
         self.start_watchdog();
@@ -600,7 +602,30 @@ impl MultiScheduler {
     }
 }
 
+/// RAII guard around the per-worker thread handle. On drop (panic
+/// unwind or normal return) it zeroes the `WorkerSlot::thread_handle`
+/// and hands the OS handle back to [`preempt::release_thread_handle`].
+///
+/// Without this guard, a panicking goroutine on Windows leaks the
+/// `DuplicateHandle`-allocated thread handle: `preempt::current_thread_handle`
+/// acquires it, the worker hits a panic, the unwinder destroys the
+/// frame without anyone running release. Long-running services hit
+/// the per-process handle limit and start failing thread creation.
+struct WorkerHandleGuard {
+    slot: Arc<WorkerSlot>,
+}
+
+impl Drop for WorkerHandleGuard {
+    fn drop(&mut self) {
+        let prev = self.slot.thread_handle.swap(0, Ordering::AcqRel);
+        if prev != 0 {
+            crate::preempt::release_thread_handle(prev);
+        }
+    }
+}
+
 fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shared: Arc<Shared>) {
+    crate::stack_guard::install_stack_guard();
     // Round-robin steal cursor — biases away from always poking the
     // same peer first, which would imbalance work.
     let mut steal_cursor = index.wrapping_add(1);
@@ -609,6 +634,11 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
     // the value before it tries to use it.
     slot.thread_handle
         .store(crate::preempt::current_thread_handle(), Ordering::Release);
+    // RAII guard: even if the worker panics, the handle is released
+    // and the slot zeroed before this frame unwinds.
+    let _handle_guard = WorkerHandleGuard {
+        slot: Arc::clone(&slot),
+    };
     {
         let mut last = shared.last_yield.lock();
         while last.len() <= index {

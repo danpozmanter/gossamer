@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0046]: `match x { _ => expr }` always runs `expr` — the `match` adds — here
+--- framed ---
+error[GL0046]: `match x { _ => expr }` always runs `expr` — the `match` adds
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0017]: `let x = expr; x` at the tail of a block is just `expr`. Drop — here
+--- framed ---
+error[GL0017]: `let x = expr; x` at the tail of a block is just `expr`. Drop
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

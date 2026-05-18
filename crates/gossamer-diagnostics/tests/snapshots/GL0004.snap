@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0004]: `return expr` at the tail of a block is the same as writing `expr` — here
+--- framed ---
+error[GL0004]: `return expr` at the tail of a block is the same as writing `expr`
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

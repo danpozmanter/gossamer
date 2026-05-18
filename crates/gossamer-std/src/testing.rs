@@ -45,6 +45,51 @@ pub fn check_ok<T, E: std::fmt::Debug>(result: Result<T, E>, message: &str) -> R
     result.map_err(|err| Error::new(format!("{message}: {err:?}")))
 }
 
+/// Marker handed to `#[bench]` functions by the `gos bench` harness.
+///
+/// The bench fn signature is `fn name(b: &mut Bencher)`; the harness
+/// calibrates iteration counts itself and forwards `iter_count` so a
+/// body that wraps its work in `b.iter(|| ...)` runs the inner
+/// closure exactly that many times. `Bencher` is a thin Rust-side
+/// shim today — the harness does the heavy lifting (timing + alloc
+/// delta + reporting) outside the user's bench fn, so existing
+/// zero-argument `#[bench]` fns keep working unchanged.
+#[derive(Debug, Default)]
+pub struct Bencher {
+    iter_count: u64,
+}
+
+impl Bencher {
+    /// Constructs a [`Bencher`] requesting `iter_count` inner-loop
+    /// iterations. The CLI bench harness picks this value via its
+    /// auto-tuning step (start at 100, double until the wall-clock
+    /// total exceeds the calibration window) before invoking the
+    /// user's bench fn.
+    #[must_use]
+    pub fn new(iter_count: u64) -> Self {
+        Self { iter_count }
+    }
+
+    /// Calibrated iteration count selected by the harness for the
+    /// current bench fn. Use this when implementing a bench fn that
+    /// wants to size its own inner loop.
+    #[must_use]
+    pub fn iter_count(&self) -> u64 {
+        self.iter_count
+    }
+
+    /// Runs `f` `iter_count` times and returns the wall-clock
+    /// duration of the inner loop. The bench harness divides the
+    /// returned duration by `iter_count` to compute `ns/op`.
+    pub fn iter<F: FnMut()>(&mut self, mut f: F) -> std::time::Duration {
+        let started = std::time::Instant::now();
+        for _ in 0..self.iter_count {
+            f();
+        }
+        started.elapsed()
+    }
+}
+
 /// Boxed test body: a `FnOnce` that runs the test and returns its
 /// outcome. `Send + 'static` so the parallel runner can move cases
 /// onto worker threads.

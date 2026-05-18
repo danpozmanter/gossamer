@@ -609,13 +609,16 @@ fn test_subcommand_reports_no_tests_when_absent() {
 }
 
 #[test]
-fn bench_subcommand_times_attributed_functions() {
+fn bench_subcommand_reports_ns_and_allocs_per_op() {
+    // No-op bench fn — exercises the `0 allocs/op` formatter and
+    // the calibration cap on a fn that never crosses the 50ms trial
+    // threshold.
     let fixture = write_fixture(
-        "benchharness",
+        "benchharness_noop",
         "#[bench]\nfn bench_noop() { }\nfn main() { }\n",
     );
     let out = Command::new(gos_bin())
-        .args(["bench", "--iterations", "5"])
+        .args(["bench"])
         .arg(&fixture)
         .output()
         .expect("spawn bench");
@@ -625,7 +628,71 @@ fn bench_subcommand_times_attributed_functions() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("ns/iter"));
+    assert!(
+        stdout.contains("ns/op"),
+        "expected ns/op in stdout, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("allocs/op"),
+        "expected allocs/op in stdout, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("bench_noop"),
+        "expected the bench label in stdout, got: {stdout}"
+    );
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn bench_subcommand_handles_microsecond_workload() {
+    // Microsecond-class bench — exercises the per-op timing on a
+    // fn that does observable arithmetic work each call.
+    let fixture = write_fixture(
+        "benchharness_micro",
+        r#"fn add_two(a: i64, b: i64) -> i64 { a + b }
+#[bench]
+fn bench_add_two() { let _ = add_two(1i64, 2i64) }
+fn main() { }
+"#,
+    );
+    let out = Command::new(gos_bin())
+        .args(["bench"])
+        .arg(&fixture)
+        .output()
+        .expect("spawn bench");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout
+        .lines()
+        .find(|l| l.contains("bench_add_two"))
+        .unwrap_or_else(|| panic!("missing bench line in stdout: {stdout}"));
+    assert!(line.contains("ns/op"));
+    assert!(line.contains("allocs/op"));
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn bench_subcommand_reports_no_benches_when_none_present() {
+    let fixture = write_fixture("benchharness_empty", "fn main() { }\n");
+    let out = Command::new(gos_bin())
+        .args(["bench"])
+        .arg(&fixture)
+        .output()
+        .expect("spawn bench");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("no #[bench] functions"),
+        "expected the empty-discovery message, got: {stdout}"
+    );
     let _ = std::fs::remove_file(&fixture);
 }
 
@@ -1381,6 +1448,52 @@ fn examples_web_service_project_tests_all_pass() {
 }
 
 #[test]
+fn examples_rust_binding_add_project_tests_all_pass() {
+    // `examples/projects/rust_binding_add` is the canonical
+    // minimal Rust-binding example: one `fn add(i64, i64) -> i64`
+    // in `addlib/` exposed to Gossamer via `register_module!` and
+    // exercised by `#[test]`s in `src/main.gos`. Confirms the
+    // end-to-end `[rust-bindings]` wiring works through `gos test`.
+    let project = examples_dir().join("projects").join("rust_binding_add");
+    assert!(
+        project.join("project.toml").is_file(),
+        "missing project.toml at {}",
+        project.display()
+    );
+    assert!(
+        project.join("addlib").join("Cargo.toml").is_file(),
+        "missing addlib/Cargo.toml at {}",
+        project.display()
+    );
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .current_dir(&project)
+        .output()
+        .expect("spawn test");
+    assert!(
+        out.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for tname in [
+        "add_combines_two_positive_ints",
+        "add_handles_zero_identity",
+        "add_handles_negative_summands",
+    ] {
+        assert!(
+            stdout.contains(tname),
+            "missing test {tname} in output:\n{stdout}"
+        );
+    }
+    assert!(
+        stdout.contains("3 passed") && stdout.contains("0 failed"),
+        "expected full pass tally; stdout was:\n{stdout}"
+    );
+}
+
+#[test]
 fn skill_prompt_subcommand_prints_skill_card() {
     let out = Command::new(gos_bin())
         .arg("skill-prompt")
@@ -1478,3 +1591,5 @@ fn main() {
         "expected 'ok' in stdout; got: {stdout}"
     );
 }
+
+

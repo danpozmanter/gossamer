@@ -25,13 +25,21 @@ pub struct WeakRef {
     /// Index inside the [`WeakTable`]'s slot vector.
     slot: u32,
     /// Generation captured when this weak handle was minted.
-    generation: u32,
+    ///
+    /// Widened from `u32` to `u64` in 0.9.0 to close a
+    /// theoretical use-after-free on long-running servers that
+    /// churn weak refs (caches, observer patterns): a `u32`
+    /// counter wraps after 2^32 downgrades and a stale weak
+    /// handle could resolve to a freshly reused slot. `u64`
+    /// pushes that to 2^64, and we abort on overflow rather
+    /// than wrap.
+    generation: u64,
 }
 
 #[derive(Debug)]
 struct WeakSlot {
     target: GcRef,
-    generation: u32,
+    generation: u64,
 }
 
 /// Collection of weak handles. Pair one instance with each [`Heap`];
@@ -41,7 +49,7 @@ struct WeakSlot {
 pub struct WeakTable {
     slots: Vec<Option<WeakSlot>>,
     free: Vec<u32>,
-    next_generation: u32,
+    next_generation: u64,
 }
 
 impl WeakTable {
@@ -53,7 +61,12 @@ impl WeakTable {
 
     /// Produces a [`WeakRef`] pointing at `handle`.
     pub fn downgrade(&mut self, handle: GcRef) -> WeakRef {
-        self.next_generation = self.next_generation.wrapping_add(1);
+        self.next_generation = self.next_generation.checked_add(1).unwrap_or_else(|| {
+            eprintln!(
+                "gossamer gc: weak-ref generation counter overflowed u64; aborting"
+            );
+            std::process::abort();
+        });
         let generation = self.next_generation;
         let slot = if let Some(slot) = self.free.pop() {
             self.slots[slot as usize] = Some(WeakSlot {
@@ -62,7 +75,13 @@ impl WeakTable {
             });
             slot
         } else {
-            let slot = u32::try_from(self.slots.len()).expect("weak table overflow");
+            let slot = u32::try_from(self.slots.len()).unwrap_or_else(|_| {
+                eprintln!(
+                    "gossamer gc: weak-table slot index overflowed u32 ({}); aborting",
+                    self.slots.len()
+                );
+                std::process::abort();
+            });
             self.slots.push(Some(WeakSlot {
                 target: handle,
                 generation,

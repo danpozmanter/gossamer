@@ -234,6 +234,35 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo check --workspace --features musl --target x86_64-unknown-linux-musl
 
+  cross-targets:
+    name: cargo check (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu
+          - riscv64gc-unknown-linux-gnu
+          - wasm32-unknown-unknown
+          - wasm32-wasip1
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-cross-${{ matrix.target }}
+      # gossamer-cli (and friends) intentionally aren't expected to
+      # compile against wasm/no-std targets — they pull in tokio /
+      # libc / mio. The contract this job enforces: the runtime,
+      # the binding macros, and the package surface compile clean.
+      - name: cargo check (runtime / ABI / binding / pkg / gc / sched)
+        run: |
+          for crate in gossamer-runtime gossamer-abi gossamer-binding gossamer-binding-macros gossamer-pkg gossamer-gc gossamer-sched; do
+            cargo check -p "$crate" --target ${{ matrix.target }} || exit 1
+          done
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
@@ -264,6 +293,22 @@ jobs:
           python-version: "3.12"
       - run: pip install mkdocs mkdocs-material
       - run: mkdocs build --strict
+
+  cargo-doc:
+    name: cargo doc + doctests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-cargo-doc
+      - name: cargo doc --workspace (deny broken intra-doc links)
+        run: cargo doc --workspace --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+      - name: cargo test --doc --workspace
+        run: cargo test --doc --workspace --release
 
   stdlib-docs-drift:
     name: gos doc --emit-stdlib --check

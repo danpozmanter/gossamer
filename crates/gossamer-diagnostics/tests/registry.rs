@@ -1,0 +1,103 @@
+//! CI-grade invariants on the centralized error-code registry.
+
+use std::collections::HashSet;
+
+use gossamer_diagnostics::{REGISTRY, codes, explain};
+
+/// Codes the compiler currently emits. Keep in sync with the matches
+/// in `gossamer-parse/src/diagnostic.rs`, `gossamer-resolve/src/diagnostic.rs`,
+/// `gossamer-types/src/error.rs`, `gossamer-types/src/exhaustiveness.rs`,
+/// `gossamer-interp/src/value.rs`, and `gossamer-lint/src/lib.rs::lint_code`.
+const EMITTED_CODES: &[&str] = &[
+    // Parser (gossamer-parse/src/diagnostic.rs).
+    "GP0001", "GP0002", "GP0003", "GP0004", "GP0005", "GP0006", "GP0007", "GP0008", "GP0009",
+    "GP0010", "GP0011", "GP0012", "GP0013", "GP0014", "GP0015", "GP0016", "GP0017",
+    // Resolver (gossamer-resolve/src/diagnostic.rs).
+    "GR0001", "GR0002", "GR0003", "GR0004",
+    // Type checker (gossamer-types/src/error.rs).
+    "GT0001", "GT0002", "GT0003", "GT0004", "GT0005", "GT0006", "GT0007", "GT0008", "GT0009",
+    "GT0010",
+    // Match exhaustiveness (gossamer-types/src/exhaustiveness.rs).
+    "GM0001", "GM0002",
+    // Runtime (gossamer-interp/src/value.rs).
+    "GX0001", "GX0002", "GX0003", "GX0004", "GX0005", "GX0006", "GX0007", "GX0008",
+    // Lint registry (gossamer-lint/src/lib.rs::lint_code).
+    "GL0001", "GL0002", "GL0003", "GL0004", "GL0005", "GL0006", "GL0007", "GL0008", "GL0009",
+    "GL0010", "GL0011", "GL0012", "GL0013", "GL0014", "GL0015", "GL0016", "GL0017", "GL0018",
+    "GL0019", "GL0020", "GL0021", "GL0022", "GL0023", "GL0024", "GL0025", "GL0026", "GL0027",
+    "GL0028", "GL0029", "GL0030", "GL0031", "GL0032", "GL0033", "GL0034", "GL0035", "GL0036",
+    "GL0037", "GL0038", "GL0039", "GL0040", "GL0041", "GL0042", "GL0043", "GL0044", "GL0045",
+    "GL0046", "GL0047", "GL0048", "GL0049", "GL0050",
+];
+
+#[test]
+fn every_emitted_code_has_a_registry_entry() {
+    let known: HashSet<&'static str> = codes().collect();
+    let mut missing: Vec<&'static str> = EMITTED_CODES
+        .iter()
+        .copied()
+        .filter(|c| !known.contains(c))
+        .collect();
+    missing.sort_unstable();
+    assert!(
+        missing.is_empty(),
+        "REGISTRY is missing emitted codes: {missing:?}"
+    );
+}
+
+#[test]
+fn registry_has_no_duplicate_codes() {
+    let mut seen: HashSet<&'static str> = HashSet::new();
+    let mut duplicates: Vec<&'static str> = Vec::new();
+    for code in codes() {
+        if !seen.insert(code) {
+            duplicates.push(code);
+        }
+    }
+    assert!(
+        duplicates.is_empty(),
+        "duplicate codes in REGISTRY: {duplicates:?}"
+    );
+}
+
+#[test]
+fn registry_is_sorted_alphabetically() {
+    let codes: Vec<&'static str> = codes().collect();
+    let mut sorted = codes.clone();
+    sorted.sort_unstable();
+    assert_eq!(
+        codes, sorted,
+        "REGISTRY must be sorted alphabetically by code"
+    );
+}
+
+#[test]
+fn registry_explanations_are_non_empty() {
+    let mut empties: Vec<&'static str> = Vec::new();
+    for (code, text) in REGISTRY {
+        if text.trim().is_empty() {
+            empties.push(*code);
+        }
+    }
+    assert!(
+        empties.is_empty(),
+        "REGISTRY entries with empty explanation: {empties:?}"
+    );
+}
+
+#[test]
+fn explain_lookup_round_trips_every_entry() {
+    for (code, text) in REGISTRY {
+        let looked_up = explain(code).expect("registered code must look up");
+        assert_eq!(
+            looked_up, *text,
+            "explain({code}) returned a different body than REGISTRY"
+        );
+    }
+}
+
+#[test]
+fn explain_returns_none_for_unknown_code() {
+    assert!(explain("GZ9999").is_none());
+    assert!(explain("").is_none());
+}

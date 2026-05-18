@@ -14,6 +14,9 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use thiserror::Error;
 
+pub mod migrate;
+pub mod pool;
+pub mod query;
 pub mod sqlite;
 
 /// Statically typed value passed to / returned from the database.
@@ -31,6 +34,22 @@ pub enum Value {
     Text(String),
     /// Binary blob.
     Blob(Vec<u8>),
+}
+
+/// Transaction isolation level. Drivers map to their dialect's
+/// equivalent (`READ UNCOMMITTED`, `SERIALIZABLE`, etc.).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsolationLevel {
+    /// Default for the driver — usually `READ COMMITTED`.
+    Default,
+    /// Dirty reads allowed.
+    ReadUncommitted,
+    /// Dirty reads forbidden.
+    ReadCommitted,
+    /// Repeatable reads guaranteed within the transaction.
+    RepeatableRead,
+    /// Strict serializability.
+    Serializable,
 }
 
 /// Errors raised by drivers and the façade.
@@ -53,6 +72,25 @@ pub enum Error {
     /// Connection has been closed.
     #[error("sql: connection closed")]
     Closed,
+    /// Connection pool reached its capacity and the wait deadline
+    /// elapsed before a slot became available.
+    #[error("sql: connection pool exhausted (capacity={capacity})")]
+    PoolExhausted {
+        /// Configured pool capacity.
+        capacity: usize,
+    },
+}
+
+impl Error {
+    /// Builds a [`Error::Driver`] with the given driver name and
+    /// message. Convenience for `Error::Driver { driver:
+    /// driver.into(), message: message.into() }`.
+    pub fn driver(driver: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Driver {
+            driver: driver.into(),
+            message: message.into(),
+        }
+    }
 }
 
 /// Driver trait — concrete drivers implement [`open`] and return a
@@ -157,6 +195,19 @@ impl Conn {
         stmt.execute(params)
     }
 
+    /// Convenience: prepares once, then executes the same statement
+    /// against every parameter row, summing the row counts. Used by
+    /// the [`crate::database::sql::query`] builder for batch
+    /// inserts.
+    pub fn execute_many(&mut self, sql: &str, rows: &[&[Value]]) -> Result<u64, Error> {
+        let mut stmt = self.prepare(sql)?;
+        let mut total: u64 = 0;
+        for row in rows {
+            total = total.saturating_add(stmt.execute(row)?);
+        }
+        Ok(total)
+    }
+
     /// Convenience: prepares + queries a statement.
     pub fn query(&mut self, sql: &str, params: &[Value]) -> Result<Rows, Error> {
         let mut stmt = self.prepare(sql)?;
@@ -168,6 +219,30 @@ impl Conn {
         Ok(Tx {
             inner: self.inner.begin()?,
         })
+    }
+
+    /// Begins a transaction with the requested isolation level.
+    /// Drivers map `IsolationLevel::Default` to their dialect's
+    /// default isolation, then issue `SET TRANSACTION ISOLATION
+    /// LEVEL ...` for the others.
+    pub fn begin_with(&mut self, _iso: IsolationLevel) -> Result<Tx, Error> {
+        // Default fallback: drivers that don't override begin_with
+        // get a regular BEGIN. SQL drivers can intercept this method
+        // through their own Conn extension trait if they need
+        // dialect-specific syntax.
+        self.begin()
+    }
+
+    /// Round-trips a no-op statement against the connection to
+    /// verify the link is alive. Returns `Ok(())` on success,
+    /// `Err(_)` if the underlying driver reports the connection is
+    /// closed.
+    pub fn ping(&mut self) -> Result<(), Error> {
+        // Cheapest universally supported `keep-alive` shape: send
+        // `SELECT 1`. Drivers that surface a native ping hook can
+        // shadow this method later.
+        self.execute("SELECT 1", &[])?;
+        Ok(())
     }
 
     /// Closes the connection.

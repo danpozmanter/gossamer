@@ -374,12 +374,19 @@ enum Command {
         report: Option<String>,
     },
     /// Discover and time `#[bench]` functions.
+    ///
+    /// With no path, walks `src/` from the nearest `project.toml`.
+    /// With a directory, walks every `.gos` under it. With a file,
+    /// benches just that file.
     Bench {
-        /// Path to a `.gos` source file.
-        file: PathBuf,
-        /// Number of iterations to average. Defaults to 100.
+        /// Path to a `.gos` source file or a directory to walk.
+        /// Optional: defaults to the project's `src/` directory.
+        path: Option<PathBuf>,
+        /// Number of files to bench in parallel. Defaults to 1 so
+        /// per-bench timings stay reproducible — two CPU-bound
+        /// benches sharing a core perturb each other's measurements.
         #[arg(long)]
-        iterations: Option<u32>,
+        parallel: Option<usize>,
     },
     /// Run the built-in lint suite over one file or every `.gos`
     /// source under a directory.
@@ -650,8 +657,11 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
                 report,
             })
         }
-        Some(Command::Bench { file, iterations }) => {
-            cmd::bench::run(&file, iterations.unwrap_or(100))
+        Some(Command::Bench { path, parallel }) => {
+            cmd::bench::run_with_opts(cmd::bench::BenchOpts {
+                path,
+                parallel: parallel.unwrap_or(1),
+            })
         }
         Some(Command::Lint {
             path,

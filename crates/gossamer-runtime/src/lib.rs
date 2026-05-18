@@ -20,8 +20,10 @@ pub mod preempt;
 pub mod race;
 pub mod safe_env;
 pub mod sched;
+pub mod safe_daemon;
 pub mod sched_global;
 pub mod sigquit;
+pub mod stack_guard;
 pub mod value;
 
 pub use layout::{HEAP_ALIGN, ObjHeader, Ptr, TypeInfo, WORD_BYTES, header_align, header_size};

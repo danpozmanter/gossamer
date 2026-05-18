@@ -10,3 +10,5 @@ pub mod flate;
 pub mod gzip;
 /// Zlib (RFC 1950) encoder and decoder.
 pub mod zlib;
+/// Zstandard encoder and decoder (zstd crate, vendored libzstd).
+pub mod zstd;

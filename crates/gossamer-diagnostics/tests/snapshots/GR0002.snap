@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0002]: A path was found in the wrong namespace — for example a value — here
+--- framed ---
+error[GR0002]: A path was found in the wrong namespace — for example a value
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

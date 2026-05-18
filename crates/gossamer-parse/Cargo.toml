@@ -16,3 +16,6 @@ gossamer-ast = { workspace = true }
 gossamer-diagnostics = { workspace = true }
 gossamer-lex = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

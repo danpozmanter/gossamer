@@ -1,10 +1,10 @@
 //! Native HTTP/1.1 client over [`crate::net::TcpStream`].
 //!
 //! Drop-in alternative to the ureq-backed [`crate::http::Client`]
-//! for plaintext HTTP. TLS is deferred to the existing rustls
-//! path; the native client is the seam P6 promises so a
-//! goroutine doing 10k concurrent outbound calls parks on the
-//! netpoller instead of a blocking-pool worker thread.
+//! for both plaintext HTTP and HTTPS. The TLS path wraps the
+//! TCP stream in a `rustls::StreamOwned<ClientConnection, _>`,
+//! reusing the same h1 framing / pool / redirect machinery used
+//! for plaintext.
 //!
 //! Surface mirrors Go's `net/http.Client`:
 //!
@@ -14,9 +14,14 @@
 //! - Connection pool keyed by `(host, port)`
 //! - Configurable redirect policy
 //!
-//! Not yet wired: TLS (use [`crate::http::Client`] for HTTPS),
-//! cookie jar (passthrough), HTTP/2 (P7), websocket upgrade
-//! (use [`crate::http_websocket`] directly after the handshake).
+//! HTTPS: trust roots come from the bundled `webpki-roots`
+//! Mozilla CA set, cached behind a process-global `LazyLock`
+//! `Arc<rustls::ClientConfig>` so per-request setup is one
+//! `Arc::clone`. SNI is the URL host.
+//!
+//! Not yet wired: cookie jar (passthrough), HTTP/2 (P7),
+//! websocket upgrade (use [`crate::http_websocket`] directly
+//! after the handshake).
 
 #![forbid(unsafe_code)]
 #![allow(
@@ -33,10 +38,12 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig as RustlsClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
 use crate::http::{Headers, Method, StatusCode};
 
@@ -77,13 +84,52 @@ pub struct NativeClient {
 struct Inner {
     config: ClientConfig,
     pool: Mutex<Vec<PooledConn>>,
+    tls_override: Option<Arc<RustlsClientConfig>>,
 }
 
 struct PooledConn {
     host: String,
     port: u16,
-    stream: TcpStream,
+    stream: Conn,
     last_used: Instant,
+}
+
+/// Per-connection IO sink: either a bare TCP stream (`http://`)
+/// or a rustls-wrapped one (`https://`). Both variants implement
+/// `Read` + `Write` through the unified [`Conn`] enum.
+enum Conn {
+    Plain(TcpStream),
+    Tls(Box<StreamOwned<ClientConnection, TcpStream>>),
+}
+
+impl Conn {
+    fn is_tls(&self) -> bool {
+        matches!(self, Self::Tls(_))
+    }
+}
+
+impl Read for Conn {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(s) => s.read(buf),
+            Self::Tls(s) => s.read(buf),
+        }
+    }
+}
+
+impl Write for Conn {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(s) => s.write(buf),
+            Self::Tls(s) => s.write(buf),
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Plain(s) => s.flush(),
+            Self::Tls(s) => s.flush(),
+        }
+    }
 }
 
 /// Response from a native-client call.
@@ -105,10 +151,9 @@ pub enum NativeError {
     /// Invalid request URL.
     #[error("native http: bad url: {0}")]
     BadUrl(String),
-    /// TLS scheme requested but not yet implemented in the
-    /// native client. Use [`crate::http::Client`].
-    #[error("native http: https not supported by NativeClient yet (use http::Client)")]
-    HttpsUnsupported,
+    /// TLS handshake or rustls-config failure.
+    #[error("native http: tls: {0}")]
+    Tls(String),
     /// Transport / network failure.
     #[error("native http: {0}")]
     Io(String),
@@ -133,13 +178,30 @@ impl NativeClient {
         Self::with_config(ClientConfig::default())
     }
 
-    /// Builds a client with custom config.
+    /// Builds a client with custom config. HTTPS uses the bundled
+    /// Mozilla webpki-roots trust store.
     #[must_use]
     pub fn with_config(config: ClientConfig) -> Self {
         Self {
             inner: Arc::new(Inner {
                 config,
                 pool: Mutex::new(Vec::new()),
+                tls_override: None,
+            }),
+        }
+    }
+
+    /// Builds a client whose HTTPS connections use the supplied
+    /// rustls `ClientConfig` instead of the default webpki-roots
+    /// trust store. Used for mTLS and for tests that pin a
+    /// self-signed certificate.
+    #[must_use]
+    pub fn with_tls_config(config: ClientConfig, tls: Arc<RustlsClientConfig>) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                config,
+                pool: Mutex::new(Vec::new()),
+                tls_override: Some(tls),
             }),
         }
     }
@@ -217,10 +279,8 @@ impl NativeClient {
         extra_headers: &[(&str, &str)],
     ) -> Result<NativeResponse, NativeError> {
         let parsed = ParsedUrl::parse(url)?;
-        if parsed.scheme == "https" {
-            return Err(NativeError::HttpsUnsupported);
-        }
-        let mut stream = self.dial(&parsed.host, parsed.port)?;
+        let want_tls = parsed.scheme == "https";
+        let mut stream = self.dial(&parsed.host, parsed.port, want_tls)?;
         // Write request head.
         let path_q = if parsed.query.is_empty() {
             parsed.path.clone()
@@ -289,11 +349,15 @@ impl NativeClient {
         Ok(resp)
     }
 
-    fn dial(&self, host: &str, port: u16) -> Result<TcpStream, NativeError> {
-        // Try to pull a live conn out of the pool first.
+    fn dial(&self, host: &str, port: u16, want_tls: bool) -> Result<Conn, NativeError> {
+        // Try to pull a live conn out of the pool first. Only
+        // reuse if the scheme matches — a plain socket cannot
+        // service an https request and vice versa.
         {
             let mut g = self.inner.pool.lock();
-            if let Some(pos) = g.iter().position(|c| c.host == host && c.port == port) {
+            if let Some(pos) = g.iter().position(|c| {
+                c.host == host && c.port == port && c.stream.is_tls() == want_tls
+            }) {
                 let conn = g.remove(pos);
                 if conn.last_used.elapsed() < Duration::from_mins(1) {
                     return Ok(conn.stream);
@@ -301,7 +365,7 @@ impl NativeClient {
             }
         }
         let addr = format!("{host}:{port}");
-        let stream = TcpStream::connect_timeout(
+        let tcp = TcpStream::connect_timeout(
             &addr.parse().or_else(|_| {
                 use std::net::ToSocketAddrs;
                 addr.to_socket_addrs()
@@ -312,13 +376,30 @@ impl NativeClient {
             self.inner.config.timeout,
         )
         .map_err(|e| NativeError::Io(format!("connect: {e}")))?;
-        stream
-            .set_read_timeout(Some(self.inner.config.timeout))
+        tcp.set_read_timeout(Some(self.inner.config.timeout))
             .map_err(|e| NativeError::Io(format!("set_read_timeout: {e}")))?;
-        stream
-            .set_write_timeout(Some(self.inner.config.timeout))
+        tcp.set_write_timeout(Some(self.inner.config.timeout))
             .map_err(|e| NativeError::Io(format!("set_write_timeout: {e}")))?;
-        Ok(stream)
+        if want_tls {
+            let cfg = self.tls_config();
+            let server_name = ServerName::try_from(host.to_string())
+                .map_err(|e| NativeError::Tls(format!("server name {host:?}: {e}")))?;
+            let conn = ClientConnection::new(cfg, server_name)
+                .map_err(|e| NativeError::Tls(format!("client connection: {e}")))?;
+            Ok(Conn::Tls(Box::new(StreamOwned::new(conn, tcp))))
+        } else {
+            Ok(Conn::Plain(tcp))
+        }
+    }
+
+    /// Returns the cached `rustls::ClientConfig`. Lazy-built on
+    /// first call; one `Arc::clone` per HTTPS request thereafter.
+    /// Override via [`NativeClient::with_tls_config`].
+    fn tls_config(&self) -> Arc<RustlsClientConfig> {
+        if let Some(cfg) = &self.inner.tls_override {
+            return Arc::clone(cfg);
+        }
+        Arc::clone(&default_tls_config())
     }
 }
 
@@ -327,6 +408,26 @@ impl Default for NativeClient {
         Self::new()
     }
 }
+
+/// Returns the process-global default rustls `ClientConfig`,
+/// built from the bundled webpki-roots Mozilla CA bundle on
+/// first call and cached as an `Arc` thereafter.
+#[must_use]
+pub fn default_tls_config() -> Arc<RustlsClientConfig> {
+    Arc::clone(&DEFAULT_TLS_CONFIG)
+}
+
+static DEFAULT_TLS_CONFIG: LazyLock<Arc<RustlsClientConfig>> = LazyLock::new(|| {
+    // The ring provider is installed lazily; same shape as the
+    // server-side path in `crate::tls`.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let mut roots = RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let cfg = RustlsClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Arc::new(cfg)
+});
 
 #[derive(Debug)]
 struct ParsedUrl {
@@ -595,10 +696,27 @@ mod tests {
     }
 
     #[test]
-    fn https_returns_https_unsupported() {
-        let client = NativeClient::new();
-        let err = client.get("https://example.com").unwrap_err();
-        assert!(matches!(err, NativeError::HttpsUnsupported));
+    fn parses_https_scheme_and_resolves_port_443() {
+        let p = ParsedUrl::parse("https://example.com/a").unwrap();
+        assert_eq!(p.scheme, "https");
+        assert_eq!(p.port, 443);
+        assert_eq!(p.host, "example.com");
+        assert_eq!(p.host_header(), "example.com");
+        // Explicit non-default port survives.
+        let p2 = ParsedUrl::parse("https://example.com:8443/x").unwrap();
+        assert_eq!(p2.port, 8443);
+        assert_eq!(p2.host_header(), "example.com:8443");
+    }
+
+    #[test]
+    fn loads_rustls_client_config() {
+        // Forces the LazyLock to evaluate. If webpki-roots wasn't
+        // wired correctly, the build would panic at this point.
+        let cfg = super::default_tls_config();
+        assert!(Arc::strong_count(&cfg) >= 1);
+        // Second call must hit the cache — same Arc identity.
+        let cfg2 = super::default_tls_config();
+        assert!(Arc::ptr_eq(&cfg, &cfg2));
     }
 
     #[test]
@@ -686,5 +804,118 @@ mod tests {
         shutdown.store(true, std::sync::atomic::Ordering::Release);
         let _ = std::net::TcpStream::connect(addr);
         join.join().unwrap();
+    }
+
+    // ---- TLS integration tests ----
+    //
+    // Both tests spawn a minimal blocking rustls server bound to
+    // 127.0.0.1:0 and drive it from a `NativeClient` configured
+    // either to trust the generated self-signed cert (happy path)
+    // or to refuse it (error path).
+
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use rustls::{ServerConfig as RustlsServerConfig, ServerConnection, StreamOwned};
+
+    fn gen_localhost_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("rcgen self-signed");
+        let der = cert.cert.der().clone();
+        let key = PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into());
+        (vec![der], key)
+    }
+
+    fn spawn_tls_server(
+        chain: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+        body: &'static [u8],
+    ) -> (u16, thread::JoinHandle<()>) {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let server_cfg = RustlsServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(chain, key)
+            .expect("tls server cfg");
+        let cfg = Arc::new(server_cfg);
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("tls bind");
+        let port = listener.local_addr().unwrap().port();
+        let join = thread::spawn(move || {
+            let (sock, _) = match listener.accept() {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(5)));
+            let _ = sock.set_write_timeout(Some(Duration::from_secs(5)));
+            let conn = match ServerConnection::new(Arc::clone(&cfg)) {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            let mut tls = StreamOwned::new(conn, sock);
+            // Drain the request head — read until \r\n\r\n.
+            let mut buf = [0u8; 1024];
+            let mut total = Vec::new();
+            loop {
+                let n = match tls.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                total.extend_from_slice(&buf[..n]);
+                if total.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = tls.write_all(head.as_bytes());
+            let _ = tls.write_all(body);
+            let _ = tls.flush();
+        });
+        (port, join)
+    }
+
+    #[test]
+    fn https_get_round_trips_against_local_rustls_server() {
+        let (chain, key) = gen_localhost_cert();
+        let server_cert = chain[0].clone();
+        let (port, join) = spawn_tls_server(chain, key, b"tls-hello");
+
+        // Trust only the freshly-generated cert. Pinning via a
+        // custom root store means no real CA is involved.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let mut roots = RootCertStore::empty();
+        roots.add(server_cert).expect("root add");
+        let cfg = Arc::new(
+            RustlsClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        );
+        let client = NativeClient::with_tls_config(ClientConfig::default(), cfg);
+        let resp = client
+            .get(&format!("https://localhost:{port}/"))
+            .expect("https get");
+        assert_eq!(resp.status, StatusCode(200));
+        assert_eq!(resp.body, b"tls-hello");
+        join.join().unwrap();
+    }
+
+    #[test]
+    fn https_unknown_ca_returns_tls_error() {
+        let (chain, key) = gen_localhost_cert();
+        let (port, join) = spawn_tls_server(chain, key, b"unreachable");
+
+        // Default config trusts the Mozilla webpki-roots set,
+        // which does not contain our throwaway self-signed cert.
+        let client = NativeClient::new();
+        let err = client
+            .get(&format!("https://localhost:{port}/"))
+            .expect_err("expected handshake failure");
+        // The error surfaces as Io (the handshake bubbles up
+        // through the first read/write) or Tls depending on
+        // whether rustls or the IO layer raises first. Both are
+        // legitimate signals; assert it isn't a success.
+        assert!(matches!(err, NativeError::Tls(_) | NativeError::Io(_)));
+        // Server thread may exit without serving the body — that's fine.
+        let _ = join.join();
     }
 }

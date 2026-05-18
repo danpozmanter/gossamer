@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0042]: An `if cond { } else { body }` is the same as `if !cond { body }`. — here
+--- framed ---
+error[GL0042]: An `if cond { } else { body }` is the same as `if !cond { body }`.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

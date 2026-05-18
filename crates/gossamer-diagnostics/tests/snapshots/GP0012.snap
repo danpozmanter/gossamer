@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0012]: A label identifier is required after the leading `'`. — here
+--- framed ---
+error[GP0012]: A label identifier is required after the leading `'`.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -135,6 +135,8 @@ mod expr_array;
 
 mod stdlib_json;
 
+mod stdlib_sql;
+
 mod stdlib_free;
 
 mod stdlib_binding;

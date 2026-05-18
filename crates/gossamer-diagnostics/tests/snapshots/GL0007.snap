@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0007]: A `match` with a single arm reads better as `if let PATTERN = ...`. — here
+--- framed ---
+error[GL0007]: A `match` with a single arm reads better as `if let PATTERN = ...`.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

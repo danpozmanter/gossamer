@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0003]: Two items in the same module share a name. Rename one of them — here
+--- framed ---
+error[GR0003]: Two items in the same module share a name. Rename one of them
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

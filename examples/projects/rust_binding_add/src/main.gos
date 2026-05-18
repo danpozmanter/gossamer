@@ -1,0 +1,44 @@
+/*
+ * Dirt-simple Rust-binding example.
+ *
+ * A single `fn add(a: i64, b: i64) -> i64` lives in the sibling
+ * `addlib/` crate, registered through `gossamer-binding`. The
+ * Gossamer side imports it like any stdlib item and calls it.
+ *
+ * Layout:
+ *   project.toml          -- [rust-bindings] addlib = { path = "addlib" }
+ *   addlib/Cargo.toml
+ *   addlib/src/lib.rs     -- register_module! { fn add(i64, i64) -> i64 }
+ *   src/main.gos          -- this file
+ */
+
+use addlib::add
+
+fn main() {
+    let total = add(2, 3)
+    println!("2 + 3 = {}", total)
+    println!("100 + 250 = {}", add(100, 250))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+    use super::add
+
+    #[test]
+    fn add_combines_two_positive_ints() {
+        testing::check_eq(&add(2, 3), &5, "2 + 3 == 5")
+    }
+
+    #[test]
+    fn add_handles_zero_identity() {
+        testing::check_eq(&add(0, 42), &42, "0 + 42 == 42")
+        testing::check_eq(&add(42, 0), &42, "42 + 0 == 42")
+    }
+
+    #[test]
+    fn add_handles_negative_summands() {
+        testing::check_eq(&add(-7, 7), &0, "-7 + 7 == 0")
+        testing::check_eq(&add(-10, -5), &-15, "-10 + -5 == -15")
+    }
+}

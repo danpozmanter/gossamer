@@ -843,11 +843,18 @@ pub extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
         //   returned pointer is handed to a single caller.
         // - Synchronization: the global allocator is internally
         //   thread-safe; no external lock needed.
-        // - Failure mode: `alloc_zeroed` returns null on OOM,
-        //   which we forward to `handle_alloc_error`.
+        // - Failure mode: `alloc_zeroed` returns null on OOM.
+        //   We abort rather than calling `handle_alloc_error` because
+        //   the latter panics, and panic-across-FFI from this `gos_rt_*`
+        //   entry into compiled Gossamer code is UB.
         let ptr = unsafe { alloc_zeroed(layout) };
         if ptr.is_null() {
-            std::alloc::handle_alloc_error(layout);
+            eprintln!(
+                "gossamer runtime: OOM in gos_rt_gc_alloc (size={}, align={}); aborting",
+                layout.size(),
+                layout.align()
+            );
+            std::process::abort();
         }
         if gc_track_enabled() {
             let generation = next_generation();
@@ -948,7 +955,12 @@ pub extern "C" fn gos_rt_aggr_alloc_leak(size: u64) -> *mut u8 {
         // semantics in exchange for indefinite lifetime.
         let ptr = unsafe { alloc_zeroed(layout) };
         if ptr.is_null() {
-            std::alloc::handle_alloc_error(layout);
+            eprintln!(
+                "gossamer runtime: OOM in gos_rt_aggr_alloc_leak (size={}, align={}); aborting",
+                layout.size(),
+                layout.align()
+            );
+            std::process::abort();
         }
         ptr
     })

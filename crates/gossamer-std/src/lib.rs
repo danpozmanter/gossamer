@@ -57,6 +57,8 @@ pub mod http_csrf;
 pub mod http_form;
 /// HTTP/2 server (h2 crate over goroutine future-driver).
 pub mod http_h2;
+/// HTTP/3 server + client (quinn + h3 over a private tokio runtime).
+pub mod http_h3;
 /// Operational health, readiness, and liveness handlers.
 pub mod http_health;
 /// HTTP middleware suite (logger, recoverer, request-id, CORS, basic-auth, gzip,
@@ -110,6 +112,8 @@ pub mod manifest;
 /// Mathematical constants, f64 functions, and integer bit operations.
 pub mod math;
 pub mod mathrand;
+/// Prometheus-compatible metrics primitives + registry (`std::metrics`).
+pub mod metrics;
 /// Media type parsing + extension lookup (`std::mime`).
 pub mod mime_types;
 pub mod net;
@@ -139,6 +143,9 @@ pub mod text;
 pub mod thread;
 pub mod time;
 pub mod tls;
+/// W3C trace-context tracing primitives + OTLP JSON exporter
+/// (`std::trace`).
+pub mod trace;
 pub mod unicode;
 pub mod url;
 pub mod utf16;

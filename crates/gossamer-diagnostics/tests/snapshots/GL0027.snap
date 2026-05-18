@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0027]: `match b { true => ... false => ... }` is an `if` in disguise. — here
+--- framed ---
+error[GL0027]: `match b { true => ... false => ... }` is an `if` in disguise.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

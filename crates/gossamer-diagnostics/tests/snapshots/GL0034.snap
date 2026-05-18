@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0034]: `if !cond { A } else { B }` scans better as `if cond { B } — here
+--- framed ---
+error[GL0034]: `if !cond { A } else { B }` scans better as `if cond { B }
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

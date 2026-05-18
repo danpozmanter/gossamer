@@ -25,16 +25,23 @@ use super::*;
 // All inputs are c-strings; outputs are c-strings or i64 booleans.
 // ---------------------------------------------------------------
 
-fn mime_str(p: *const c_char) -> &'static str {
+/// Reads `p` as a UTF-8 c-string and returns an owned `String`.
+///
+/// The previous implementation laundered the borrow into
+/// `&'static str` via `mem::transmute`. That was unsound under
+/// the FFI contract: a `'static` reference asserts a lifetime
+/// the caller cannot guarantee. Returning an owned `String`
+/// trades one tiny allocation per call for a safe boundary.
+fn mime_str(p: *const c_char) -> String {
     if p.is_null() {
-        return "";
+        return String::new();
     }
-    // Safety: the c-string is borrowed for the duration of this call;
-    // the &str lifetime is laundered via transmute. The lifetime
-    // 'static is acceptable here because the resulting String never
-    // outlives the call frame — alloc_cstring copies before return.
-    let s = unsafe { CStr::from_ptr(p).to_str().unwrap_or("") };
-    unsafe { std::mem::transmute::<&str, &'static str>(s) }
+    // SAFETY: the contract for every gos_rt_mime_* entry is
+    // that `p` is either null or a NUL-terminated c-string
+    // valid for the duration of the call (the compiler emits
+    // pointers into either the string pool or alloc_cstring'd
+    // heap buffers). CStr::from_ptr enforces the NUL.
+    unsafe { CStr::from_ptr(p).to_str().unwrap_or("").to_string() }
 }
 
 fn mime_parse(s: &str) -> Option<::mime::Mime> {
@@ -44,7 +51,7 @@ fn mime_parse(s: &str) -> Option<::mime::Mime> {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mime_parse(s: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let out = match mime_parse(mime_str(s)) {
+        let out = match mime_parse(&mime_str(s)) {
             Some(m) => format!("{}/{}", m.type_(), m.subtype()),
             None => String::new(),
         };
@@ -55,7 +62,7 @@ pub unsafe extern "C" fn gos_rt_mime_parse(s: *const c_char) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mime_top(s: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let out = mime_parse(mime_str(s))
+        let out = mime_parse(&mime_str(s))
             .map(|m| m.type_().to_string())
             .unwrap_or_default();
         alloc_cstring(out.as_bytes())
@@ -65,7 +72,7 @@ pub unsafe extern "C" fn gos_rt_mime_top(s: *const c_char) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mime_sub(s: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let out = mime_parse(mime_str(s))
+        let out = mime_parse(&mime_str(s))
             .map(|m| m.subtype().to_string())
             .unwrap_or_default();
         alloc_cstring(out.as_bytes())
@@ -75,7 +82,7 @@ pub unsafe extern "C" fn gos_rt_mime_sub(s: *const c_char) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mime_charset(s: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let out = mime_parse(mime_str(s))
+        let out = mime_parse(&mime_str(s))
             .and_then(|m| m.get_param("charset").map(|v| v.to_string()))
             .unwrap_or_default();
         alloc_cstring(out.as_bytes())
@@ -85,7 +92,7 @@ pub unsafe extern "C" fn gos_rt_mime_charset(s: *const c_char) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mime_boundary(s: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let out = mime_parse(mime_str(s))
+        let out = mime_parse(&mime_str(s))
             .and_then(|m| m.get_param("boundary").map(|v| v.to_string()))
             .unwrap_or_default();
         alloc_cstring(out.as_bytes())
@@ -95,8 +102,8 @@ pub unsafe extern "C" fn gos_rt_mime_boundary(s: *const c_char) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mime_param(s: *const c_char, key: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let k = mime_str(key);
-        let out = mime_parse(mime_str(s))
+        let k = mime_str(key); let k = k.as_str();
+        let out = mime_parse(&mime_str(s))
             .and_then(|m| m.get_param(k).map(|v| v.to_string()))
             .unwrap_or_default();
         alloc_cstring(out.as_bytes())
@@ -107,7 +114,7 @@ pub unsafe extern "C" fn gos_rt_mime_param(s: *const c_char, key: *const c_char)
 pub unsafe extern "C" fn gos_rt_mime_type_by_extension(ext: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         let raw = mime_str(ext);
-        let trimmed = raw.strip_prefix('.').unwrap_or(raw);
+        let trimmed = raw.strip_prefix('.').unwrap_or(&raw);
         let out = if trimmed.is_empty() {
             String::new()
         } else {
@@ -124,7 +131,7 @@ pub unsafe extern "C" fn gos_rt_mime_type_by_extension(ext: *const c_char) -> *m
 pub unsafe extern "C" fn gos_rt_mime_extension_by_type(t: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         let s = mime_str(t);
-        let out = match mime_parse(s) {
+        let out = match mime_parse(&s) {
             Some(m) => {
                 let essence = format!("{}/{}", m.type_(), m.subtype());
                 mime_guess::get_mime_extensions_str(&essence)
@@ -140,5 +147,5 @@ pub unsafe extern "C" fn gos_rt_mime_extension_by_type(t: *const c_char) -> *mut
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mime_is_valid(s: *const c_char) -> i64 {
-    ffi_entry!(0, { i64::from(mime_parse(mime_str(s)).is_some()) })
+    ffi_entry!(0, { i64::from(mime_parse(&mime_str(s)).is_some()) })
 }

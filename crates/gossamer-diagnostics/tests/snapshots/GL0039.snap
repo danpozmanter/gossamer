@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0039]: Two back-to-back assignments to the same place — the earlier — here
+--- framed ---
+error[GL0039]: Two back-to-back assignments to the same place — the earlier
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

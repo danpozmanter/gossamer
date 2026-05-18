@@ -20,3 +20,8 @@ gossamer-runtime = { workspace = true }
 
 [dev-dependencies]
 gossamer-lex = { workspace = true }
+gossamer-parse = { workspace = true }
+gossamer-hir = { workspace = true }
+gossamer-resolve = { workspace = true }
+gossamer-types = { workspace = true }
+insta = { workspace = true }

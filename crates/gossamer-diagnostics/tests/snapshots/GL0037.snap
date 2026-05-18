@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0037]: Two match arms share the same body. Either collapse them with — here
+--- framed ---
+error[GL0037]: Two match arms share the same body. Either collapse them with
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0001]: Declares a `let` binding whose name is never read. — here
+--- framed ---
+error[GL0001]: Declares a `let` binding whose name is never read.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

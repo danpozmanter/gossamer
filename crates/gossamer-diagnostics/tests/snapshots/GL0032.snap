@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0032]: `"a" + "b"` can be written directly as `"ab"`. Let the — here
+--- framed ---
+error[GL0032]: `"a" + "b"` can be written directly as `"ab"`. Let the
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

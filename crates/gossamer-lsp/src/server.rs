@@ -3473,6 +3473,137 @@ pub mod testing {
         pub fn completion(&self, params: &Value) -> Value {
             self.state.completion(params)
         }
+
+        /// Mirrors `textDocument/hover`.
+        #[must_use]
+        pub fn hover(&self, params: &Value) -> Value {
+            self.state.hover(params)
+        }
+
+        /// Mirrors `textDocument/definition`.
+        #[must_use]
+        pub fn definition(&self, params: &Value) -> Value {
+            self.state.definition(params)
+        }
+
+        /// Mirrors `textDocument/typeDefinition`.
+        #[must_use]
+        pub fn type_definition(&self, params: &Value) -> Value {
+            self.state.type_definition(params)
+        }
+
+        /// Mirrors `textDocument/documentSymbol`.
+        #[must_use]
+        pub fn document_symbols(&self, params: &Value) -> Value {
+            self.state.document_symbols(params)
+        }
+
+        /// Mirrors `workspace/symbol`.
+        #[must_use]
+        pub fn workspace_symbols(&self, params: &Value) -> Value {
+            self.state.workspace_symbols(params)
+        }
+
+        /// Mirrors `textDocument/codeAction`.
+        #[must_use]
+        pub fn code_actions(&self, params: &Value) -> Value {
+            self.state.code_actions(params)
+        }
+
+        /// Mirrors `textDocument/formatting`.
+        #[must_use]
+        pub fn formatting(&self, params: &Value) -> Value {
+            self.state.formatting(params)
+        }
+
+        /// Mirrors `textDocument/semanticTokens/full`.
+        #[must_use]
+        pub fn semantic_tokens(&self, params: &Value) -> Value {
+            self.state.semantic_tokens(params)
+        }
+
+        /// Mirrors `textDocument/inlayHint`.
+        #[must_use]
+        pub fn inlay_hints(&self, params: &Value) -> Value {
+            self.state.inlay_hints(params)
+        }
+
+        /// Mirrors `textDocument/signatureHelp`.
+        #[must_use]
+        pub fn signature_help(&self, params: &Value) -> Value {
+            self.state.signature_help(params)
+        }
+
+        /// Mirrors `textDocument/foldingRange`.
+        #[must_use]
+        pub fn folding_ranges(&self, params: &Value) -> Value {
+            self.state.folding_ranges(params)
+        }
+
+        /// Mirrors `textDocument/documentHighlight`.
+        #[must_use]
+        pub fn document_highlight(&self, params: &Value) -> Value {
+            self.state.document_highlight(params)
+        }
+
+        /// Diagnostics published for `uri` after the last `update`.
+        #[must_use]
+        pub fn publish_diagnostics(&self, uri: &str) -> Vec<Value> {
+            self.state.publish_diagnostics(uri)
+        }
+    }
+
+    /// Builds the JSON-RPC params payload for a document-only
+    /// request (no position).
+    #[must_use]
+    pub fn document_params(uri: &str) -> Value {
+        let mut text_doc = BTreeMap::new();
+        text_doc.insert("uri".to_string(), Value::String(uri.to_string()));
+        let mut params = BTreeMap::new();
+        params.insert("textDocument".to_string(), Value::Object(text_doc));
+        Value::Object(params)
+    }
+
+    /// Builds a `Range` JSON value spanning the given lines/columns.
+    #[must_use]
+    pub fn range_value(start_line: u32, start_char: u32, end_line: u32, end_char: u32) -> Value {
+        let mut start = BTreeMap::new();
+        start.insert("line".to_string(), Value::Number(f64::from(start_line)));
+        start.insert(
+            "character".to_string(),
+            Value::Number(f64::from(start_char)),
+        );
+        let mut end = BTreeMap::new();
+        end.insert("line".to_string(), Value::Number(f64::from(end_line)));
+        end.insert("character".to_string(), Value::Number(f64::from(end_char)));
+        let mut range = BTreeMap::new();
+        range.insert("start".to_string(), Value::Object(start));
+        range.insert("end".to_string(), Value::Object(end));
+        Value::Object(range)
+    }
+
+    /// Builds the JSON-RPC params payload for `textDocument/codeAction`.
+    /// `diagnostics` is the optional diagnostic context the editor
+    /// surfaces for the range — pass `vec![]` when the test has none.
+    #[must_use]
+    pub fn code_action_params(uri: &str, range: Value, diagnostics: Vec<Value>) -> Value {
+        let mut text_doc = BTreeMap::new();
+        text_doc.insert("uri".to_string(), Value::String(uri.to_string()));
+        let mut context = BTreeMap::new();
+        context.insert("diagnostics".to_string(), Value::Array(diagnostics));
+        let mut params = BTreeMap::new();
+        params.insert("textDocument".to_string(), Value::Object(text_doc));
+        params.insert("range".to_string(), range);
+        params.insert("context".to_string(), Value::Object(context));
+        Value::Object(params)
+    }
+
+    /// Builds the JSON-RPC params payload for `workspace/symbol`.
+    #[must_use]
+    pub fn workspace_symbol_params(query: &str) -> Value {
+        let mut params = BTreeMap::new();
+        params.insert("query".to_string(), Value::String(query.to_string()));
+        Value::Object(params)
     }
 
     /// Builds the JSON-RPC params payload for a position-aware

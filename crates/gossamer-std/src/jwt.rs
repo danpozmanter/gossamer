@@ -1,12 +1,13 @@
 //! JSON Web Tokens (RFC 7519) with secure defaults.
 //!
 //! Supported algorithms today: HS256 / HS384 / HS512 (HMAC),
-//! ES256 (ECDSA P-256 SHA-256), and EdDSA (Ed25519). RS256 /
-//! RS384 / RS512 are intentionally absent because `gossamer-std`
-//! does not link an RSA implementation (`rsa 0.9.x` carries
-//! RUSTSEC-2023-0071); they will return when a constant-time
-//! pure-Rust replacement lands. ES384 / ES512 are likewise absent
-//! pending p384 / p521 dependencies.
+//! RS256 / RS384 / RS512 (RSA PKCS#1 v1.5, verify only),
+//! ES256 (ECDSA P-256 SHA-256), and EdDSA (Ed25519). RSA
+//! verification routes through `ring`, whose RSA implementation
+//! is audited and constant-time; the vulnerable `rsa 0.9.x` crate
+//! (RUSTSEC-2023-0071) is intentionally not linked. ES384 / ES512
+//! are absent pending p384 / p521 dependencies. Sign for RS* is
+//! not exposed — OIDC and friends are verify-only on this side.
 //!
 //! Security invariants enforced on every verify call:
 //!
@@ -46,9 +47,12 @@ pub enum Alg {
     Es256,
     /// Edwards-curve DSA on Curve25519 (RFC 8037 §3.1).
     EdDsa,
-    // TODO: Rs256 / Rs384 / Rs512 — blocked on a constant-time
-    // pure-Rust RSA crate (rsa 0.9.x has RUSTSEC-2023-0071).
-    // TODO: Es384 / Es512 — need p384 / p521 dependencies.
+    /// RSA PKCS#1 v1.5 with SHA-256 (RFC 7518 §3.3). Verify only.
+    Rs256,
+    /// RSA PKCS#1 v1.5 with SHA-384 (RFC 7518 §3.3). Verify only.
+    Rs384,
+    /// RSA PKCS#1 v1.5 with SHA-512 (RFC 7518 §3.3). Verify only.
+    Rs512,
 }
 
 impl Alg {
@@ -59,6 +63,9 @@ impl Alg {
             Alg::Hs512 => "HS512",
             Alg::Es256 => "ES256",
             Alg::EdDsa => "EdDSA",
+            Alg::Rs256 => "RS256",
+            Alg::Rs384 => "RS384",
+            Alg::Rs512 => "RS512",
         }
     }
 
@@ -69,6 +76,9 @@ impl Alg {
             "HS512" => Ok(Alg::Hs512),
             "ES256" => Ok(Alg::Es256),
             "EdDSA" => Ok(Alg::EdDsa),
+            "RS256" => Ok(Alg::Rs256),
+            "RS384" => Ok(Alg::Rs384),
+            "RS512" => Ok(Alg::Rs512),
             "none" => Err(Error::new(
                 "jwt: alg \"none\" is refused on principle (RFC 7515 §4.1.1)",
             )),
@@ -78,6 +88,10 @@ impl Alg {
 
     fn is_hmac(self) -> bool {
         matches!(self, Alg::Hs256 | Alg::Hs384 | Alg::Hs512)
+    }
+
+    fn is_rsa(self) -> bool {
+        matches!(self, Alg::Rs256 | Alg::Rs384 | Alg::Rs512)
     }
 }
 
@@ -626,6 +640,205 @@ pub fn verify_eddsa(
 
     validate_claims(&claims, opts)?;
     Ok(claims)
+}
+
+// -- RSA PKCS#1 v1.5 (RS256 / RS384 / RS512) -------------------------------
+
+/// Verifies an `RS256` / `RS384` / `RS512` token against an
+/// SPKI-PEM-encoded RSA public key (the conventional
+/// `-----BEGIN PUBLIC KEY-----` form, also accepted as
+/// `RSA PUBLIC KEY` for raw PKCS#1).
+///
+/// `expected_alg` must be one of `Alg::Rs256` / `Alg::Rs384` /
+/// `Alg::Rs512` — anything else is a hard error so callers can't
+/// route a non-RSA token through this entry. Verification runs
+/// through `ring`'s constant-time RSA implementation; the
+/// vulnerable `rsa 0.9.x` crate is not linked.
+pub fn verify_rs(
+    token: &str,
+    expected_alg: Alg,
+    verifying_key_pem: &str,
+    opts: &VerifyOpts,
+) -> Result<Claims, Error> {
+    if !expected_alg.is_rsa() {
+        return Err(Error::new(format!(
+            "jwt: verify_rs called with non-RSA alg {}",
+            expected_alg.as_str()
+        )));
+    }
+
+    let (header, claims, signing_input, sig) = split_and_decode(token)?;
+    if header.alg.is_hmac() {
+        return Err(Error::new(format!(
+            "jwt: RSA verifier refusing HMAC token alg {}",
+            header.alg.as_str()
+        )));
+    }
+    if header.alg != expected_alg {
+        return Err(Error::new(format!(
+            "jwt: alg mismatch — token says {} but verifier expected {}",
+            header.alg.as_str(),
+            expected_alg.as_str()
+        )));
+    }
+
+    let (n, e) = parse_rsa_public_key_pem(verifying_key_pem)?;
+    let params: &'static dyn ring::signature::VerificationAlgorithm = match expected_alg {
+        Alg::Rs256 => &ring::signature::RSA_PKCS1_2048_8192_SHA256,
+        Alg::Rs384 => &ring::signature::RSA_PKCS1_2048_8192_SHA384,
+        Alg::Rs512 => &ring::signature::RSA_PKCS1_2048_8192_SHA512,
+        // Unreachable: callers gate on `expected_alg.is_rsa()`.
+        _ => return Err(Error::new("jwt: internal RSA alg dispatch error")),
+    };
+
+    // Ring expects the public key as a DER-encoded RSAPublicKey
+    // (PKCS#1: SEQUENCE { modulus INTEGER, exponent INTEGER }).
+    // x509-parser gives us the SPKI-stripped n/e raw bytes; we
+    // re-encode them as that DER SEQUENCE.
+    let der = encode_rsa_public_key_der(&n, &e);
+    let key = ring::signature::UnparsedPublicKey::new(params, der);
+    key.verify(signing_input.as_bytes(), &sig)
+        .map_err(|_| Error::new("jwt: signature invalid"))?;
+
+    validate_claims(&claims, opts)?;
+    Ok(claims)
+}
+
+/// Convenience wrapper for `verify_rs(.., Alg::Rs256, ..)`.
+pub fn verify_rs256(
+    token: &str,
+    verifying_key_pem: &str,
+    opts: &VerifyOpts,
+) -> Result<Claims, Error> {
+    verify_rs(token, Alg::Rs256, verifying_key_pem, opts)
+}
+
+/// Convenience wrapper for `verify_rs(.., Alg::Rs384, ..)`.
+pub fn verify_rs384(
+    token: &str,
+    verifying_key_pem: &str,
+    opts: &VerifyOpts,
+) -> Result<Claims, Error> {
+    verify_rs(token, Alg::Rs384, verifying_key_pem, opts)
+}
+
+/// Convenience wrapper for `verify_rs(.., Alg::Rs512, ..)`.
+pub fn verify_rs512(
+    token: &str,
+    verifying_key_pem: &str,
+    opts: &VerifyOpts,
+) -> Result<Claims, Error> {
+    verify_rs(token, Alg::Rs512, verifying_key_pem, opts)
+}
+
+/// Parses an RSA public key from PEM. Accepts both SPKI
+/// (`BEGIN PUBLIC KEY`, the JOSE / OIDC convention) and bare
+/// PKCS#1 (`BEGIN RSA PUBLIC KEY`). Returns `(modulus_be, exponent_be)`
+/// with leading zero bytes stripped — the shape ring expects.
+fn parse_rsa_public_key_pem(pem: &str) -> Result<(Vec<u8>, Vec<u8>), Error> {
+    use std::io::Cursor;
+    use x509_parser::pem::Pem;
+    use x509_parser::prelude::FromDer;
+    use x509_parser::x509::SubjectPublicKeyInfo;
+
+    let bytes = pem.as_bytes();
+    let (parsed, _read) = Pem::read(Cursor::new(bytes))
+        .map_err(|e| Error::new(format!("jwt: RSA public pem: {e}")))?;
+
+    let (n_bytes, e_bytes): (Vec<u8>, Vec<u8>) = match parsed.label.as_str() {
+        "PUBLIC KEY" => {
+            // SPKI: AlgorithmIdentifier + BIT STRING(RSAPublicKey).
+            let (_, spki) = SubjectPublicKeyInfo::from_der(&parsed.contents)
+                .map_err(|e| Error::new(format!("jwt: RSA SPKI parse: {e}")))?;
+            let pk = spki
+                .parsed()
+                .map_err(|e| Error::new(format!("jwt: RSA SPKI parsed: {e}")))?;
+            match pk {
+                x509_parser::public_key::PublicKey::RSA(rsa) => {
+                    (rsa.modulus.to_vec(), rsa.exponent.to_vec())
+                }
+                _ => {
+                    return Err(Error::new(
+                        "jwt: RSA verifier got non-RSA key inside PUBLIC KEY pem",
+                    ));
+                }
+            }
+        }
+        "RSA PUBLIC KEY" => {
+            // Bare PKCS#1: SEQUENCE { modulus, exponent }.
+            let (_, rsa) =
+                x509_parser::public_key::RSAPublicKey::from_der(&parsed.contents)
+                    .map_err(|e| Error::new(format!("jwt: RSA PKCS#1 parse: {e}")))?;
+            (rsa.modulus.to_vec(), rsa.exponent.to_vec())
+        }
+        other => {
+            return Err(Error::new(format!(
+                "jwt: RSA verifier got unsupported pem label {other:?} (expected PUBLIC KEY or RSA PUBLIC KEY)"
+            )));
+        }
+    };
+
+    Ok((strip_leading_zeros(&n_bytes), strip_leading_zeros(&e_bytes)))
+}
+
+/// Strips leading 0x00 bytes from a big-endian integer encoding —
+/// ASN.1 INTEGER prepends a zero byte to keep the high bit clear,
+/// but ring wants the unpadded magnitude.
+fn strip_leading_zeros(bytes: &[u8]) -> Vec<u8> {
+    let first_nonzero = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len());
+    bytes[first_nonzero..].to_vec()
+}
+
+/// Encodes an `RSAPublicKey` (PKCS#1) DER SEQUENCE from raw
+/// big-endian n and e bytes. The output is what ring's
+/// `RSA_PKCS1_*` verification algorithms accept as the public key.
+fn encode_rsa_public_key_der(n: &[u8], e: &[u8]) -> Vec<u8> {
+    let n_int = der_encode_integer(n);
+    let e_int = der_encode_integer(e);
+    let mut body = Vec::with_capacity(n_int.len() + e_int.len());
+    body.extend_from_slice(&n_int);
+    body.extend_from_slice(&e_int);
+    let mut out = Vec::with_capacity(body.len() + 4);
+    out.push(0x30); // SEQUENCE
+    der_encode_length(&mut out, body.len());
+    out.extend_from_slice(&body);
+    out
+}
+
+/// Encodes a single DER INTEGER from a big-endian magnitude. A
+/// leading 0x00 is prepended when the high bit is set so the
+/// integer reads as non-negative.
+fn der_encode_integer(magnitude: &[u8]) -> Vec<u8> {
+    let needs_sign_pad = magnitude.first().is_some_and(|b| b & 0x80 != 0);
+    let content_len = magnitude.len() + usize::from(needs_sign_pad);
+    let mut out = Vec::with_capacity(content_len + 4);
+    out.push(0x02); // INTEGER
+    der_encode_length(&mut out, content_len);
+    if needs_sign_pad {
+        out.push(0x00);
+    }
+    out.extend_from_slice(magnitude);
+    out
+}
+
+/// Appends an ASN.1 DER definite-length encoding. Short-form for
+/// lengths < 128, long-form otherwise.
+fn der_encode_length(out: &mut Vec<u8>, len: usize) {
+    if len < 0x80 {
+        out.push(len as u8);
+        return;
+    }
+    let mut tmp = [0u8; 8];
+    let mut n = len;
+    let mut i = tmp.len();
+    while n > 0 {
+        i -= 1;
+        tmp[i] = (n & 0xff) as u8;
+        n >>= 8;
+    }
+    let count = tmp.len() - i;
+    out.push(0x80 | count as u8);
+    out.extend_from_slice(&tmp[i..]);
 }
 
 // -- internals -------------------------------------------------------------
@@ -1277,5 +1490,203 @@ mod tests {
         );
         assert!(verify_hs("only.two", Alg::Hs256, key_hs(), &VerifyOpts::new()).is_err());
         assert!(verify_hs("", Alg::Hs256, key_hs(), &VerifyOpts::new()).is_err());
+    }
+
+    // -- RSA fixtures --------------------------------------------------
+    //
+    // A fixed 2048-bit RSA keypair used to mint test tokens. The
+    // matching public key (`RSA_PUB_PEM`) is what `verify_rs*` is
+    // exercised against. `RSA_PUB_PEM_WRONG` is a second,
+    // independent key for the "wrong key" reject test.
+
+    const RSA_PKCS8_PEM: &str = "-----BEGIN PRIVATE KEY-----\n\
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC8aE5RdsVuGLhm\n\
+2U/2RZLvmw0yixEonuHZzicg66uy+KSj11XIjK+uq0091Vi1B0wbG2WSEM/oZov2\n\
+sg9G7ipvjiVFb2TVbVlBIDYgQ9yCFoLLUWGG4VM18wHCCPo9l7+/GNs+ZTlwgBsH\n\
+0EIvPm2gX3swkIXn/SghjIA9TnXihZrSk2BYpZKhtA6wkBKWRH9urST6Q997/w4/\n\
+0I05ELZbmLxfXrBxL8a2tczoRkpXCJUVdvLZt/vYqJXaZ/sK/4uPS0lWnQnCsSfD\n\
+O8f4/fguUrVPaIhzghNfVCUKyvcu/UU69Sst5ceVpxgbdjiUWtsJwWRp8gu4WMDp\n\
+g0RwFWFhAgMBAAECggEACe5ubaLjubyTc9bYSgE7qcyAv8pO2qPnAD+USaSPbD0c\n\
+SKETarsa9thQZDlryXC1O7SQM3vi/O6MfP7AowEih+p0eOcfTi5k09o3BpctKq2C\n\
+S+XIgBik9aVCnkMxr0kUsj94LYWedBl8oBPQeVCo7LKiLSdhHgWqAnxQ6J2X+M6L\n\
+QPm47+Gaf/Rita2eJh1w3cPoVF0sPtu6GZwjOW74eSy70ZL5lc6fc9ep3626xjSw\n\
+M2lSXYaRlGyP1hrBDXVHV3Pz5HpNvSezG3G7mywkyqHRjqSSchwsU2yjhDZvY4Og\n\
+bYmSjto32uMRWTSineLgqf+tjEGlXswqZsreEggcZQKBgQDzHPdsZjdIKc4mmFbz\n\
+97dEFAUmkYJf3ot9JZqh6ih/Py+tHi8LLzD1AAgq05llr+4DzoMKADZxML6fXUSm\n\
+b/lzFZ923X0EXaVOaln2i3YCeD1fA3hYTqrjaeEpA8+2x4qju8UC8HzrcdguVEQ6\n\
+c3WskWGNB7swlTet8KcsJsuA6wKBgQDGZPxW1Mso18/kl5k+1Hh4IkPT4gq2b1iN\n\
+McITvdde9BFOVsA5w4OQmdQODgF4v0WbTa/p0wT2/yOFve9yLBSLwbVL9QcEYe5Z\n\
+2Qyw42tq5rl6fAl7CtBWY6yY7nTizLAJrM57HbWrEz6KfVgnlpDH2F+E7Ow7MA7F\n\
+PXIEggnz4wKBgHACkZDVC3VpJX0sxStEn6BzJOhfNFVdYKE5WSRukVgHUb0OYhhi\n\
+FslayWiJ82whgaUpWcCa1nqSPdGJFF8myiSW+tC2PapsRwR5BZgNK0L6CTSkkacG\n\
+H8AFgWL3SZVqHFtR4PR4vuVvn23BD2pq1fW7SdnDjSBWL8ApV6yE91AfAoGBALkx\n\
+WzvStzIRAkboHGzB+RJrKdWHk2ho18g1Qm0bMQe53M27vQQutYktjvzvpgAIy/kE\n\
+s8kY6fGGiKo3emShMSykTY/x0fMNV2kXavlT0NmhNlJXpqHsnj2GHX9EWGe9mjXt\n\
+0XCrcwGWnTK5fqi1q8BhAgkbAAjf+2myydPbb17xAoGBAIUU3BCuclFys/XgRfDd\n\
+/tQ8Wpsd4nWbakqRNp2KVdNbxW5I/Ctc1CkDkezsg5eMDmpuRIqKCgyp3RbSLKqW\n\
+QNG1ZNOynGQUknHZb0UX6JEBlzEt0oSbaquUp7TNkQ0b/bL90AeLZbccWKcCN8CG\n\
+Dr30CHN0lBM4yZeuzmNKTZ4p\n\
+-----END PRIVATE KEY-----\n";
+
+    const RSA_PUB_PEM: &str = "-----BEGIN PUBLIC KEY-----\n\
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvGhOUXbFbhi4ZtlP9kWS\n\
+75sNMosRKJ7h2c4nIOursviko9dVyIyvrqtNPdVYtQdMGxtlkhDP6GaL9rIPRu4q\n\
+b44lRW9k1W1ZQSA2IEPcghaCy1FhhuFTNfMBwgj6PZe/vxjbPmU5cIAbB9BCLz5t\n\
+oF97MJCF5/0oIYyAPU514oWa0pNgWKWSobQOsJASlkR/bq0k+kPfe/8OP9CNORC2\n\
+W5i8X16wcS/GtrXM6EZKVwiVFXby2bf72KiV2mf7Cv+Lj0tJVp0JwrEnwzvH+P34\n\
+LlK1T2iIc4ITX1QlCsr3Lv1FOvUrLeXHlacYG3Y4lFrbCcFkafILuFjA6YNEcBVh\n\
+YQIDAQAB\n\
+-----END PUBLIC KEY-----\n";
+
+    const RSA_PUB_PEM_WRONG: &str = "-----BEGIN PUBLIC KEY-----\n\
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAibfBARrrEcnul4ZW1o7f\n\
+giL6UC+63gK6+lCYAwkskU5smm/kV7hrpPMpkeH2VNVhy4cCIRNPHhRYdJhTKrtu\n\
+dGX2KkY8gyXWA4oqIsxAnqeXy+KYhTtff2vr8raxgJEJaFwQq3RM8Xm2FjUEFisb\n\
+yuxsqZ+3fdbXwCjinE7ds1Db/EEAFahfkAvWAYmSoj6FOzK/xycnOoh17mWDrobe\n\
+/52Wq0BH/nSGiIsJvic51LxesXLh8mrNS+pH26vu9lyqoA29UOw4GPWlg7WjjUKw\n\
+c8sXVMOsEK3V1GrcN6CNDucJtVeSEfkcY+QFEBvyNTEnv6TxOnBq2VtJeQb5HQNE\n\
+8QIDAQAB\n\
+-----END PUBLIC KEY-----\n";
+
+    /// Mints an RS{256,384,512} token by signing `claims` with the
+    /// fixture private key through ring. Used only inside the test
+    /// module — `verify_rs` is the surface this whole file exposes.
+    fn mint_rs_token(alg: Alg, claims: &Claims) -> String {
+        let padding: &'static dyn ring::signature::RsaEncoding = match alg {
+            Alg::Rs256 => &ring::signature::RSA_PKCS1_SHA256,
+            Alg::Rs384 => &ring::signature::RSA_PKCS1_SHA384,
+            Alg::Rs512 => &ring::signature::RSA_PKCS1_SHA512,
+            _ => panic!("mint_rs_token requires an RSA alg"),
+        };
+        // Parse the PKCS#8 PEM down to DER, then hand to ring.
+        let pem = x509_parser::pem::Pem::read(std::io::Cursor::new(RSA_PKCS8_PEM.as_bytes()))
+            .expect("parse test pkcs8 pem")
+            .0;
+        let key_pair =
+            ring::signature::RsaKeyPair::from_pkcs8(&pem.contents).expect("ring rsa keypair");
+        let header = Header::new(alg);
+        let signing_input = build_signing_input(&header, claims).expect("build signing input");
+        let mut sig = vec![0u8; key_pair.public().modulus_len()];
+        let rng = ring::rand::SystemRandom::new();
+        key_pair
+            .sign(padding, &rng, signing_input.as_bytes(), &mut sig)
+            .expect("ring rsa sign");
+        format!("{signing_input}.{}", b64url_encode(&sig))
+    }
+
+    #[test]
+    fn rs256_valid_token_accepted() {
+        let claims = Claims::new().subject("alice").issued_at(now_unix_secs());
+        let token = mint_rs_token(Alg::Rs256, &claims);
+        let back = verify_rs256(&token, RSA_PUB_PEM, &VerifyOpts::new()).unwrap();
+        assert_eq!(back.sub.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn rs256_tampered_signature_rejected() {
+        let token = mint_rs_token(Alg::Rs256, &Claims::new().subject("alice"));
+        // Flip a byte well inside the signature segment so the
+        // base64url length and final-quartet padding bits stay
+        // valid — we want a cryptographic-mismatch reject, not a
+        // structural one.
+        let last_dot = token.rfind('.').expect("token has 2 dots");
+        let mut bytes = token.into_bytes();
+        let target = last_dot + 4;
+        bytes[target] = if bytes[target] == b'A' { b'B' } else { b'A' };
+        let tampered = String::from_utf8(bytes).unwrap();
+        let err = verify_rs256(&tampered, RSA_PUB_PEM, &VerifyOpts::new()).unwrap_err();
+        assert!(
+            format!("{err}").contains("signature invalid"),
+            "expected signature-invalid, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rs256_wrong_key_rejected() {
+        let token = mint_rs_token(Alg::Rs256, &Claims::new().subject("alice"));
+        let err = verify_rs256(&token, RSA_PUB_PEM_WRONG, &VerifyOpts::new()).unwrap_err();
+        assert!(format!("{err}").contains("signature invalid"));
+    }
+
+    #[test]
+    fn rs384_valid_token_accepted() {
+        let claims = Claims::new().subject("bob").issued_at(now_unix_secs());
+        let token = mint_rs_token(Alg::Rs384, &claims);
+        let back = verify_rs384(&token, RSA_PUB_PEM, &VerifyOpts::new()).unwrap();
+        assert_eq!(back.sub.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn rs384_tampered_signature_rejected() {
+        let token = mint_rs_token(Alg::Rs384, &Claims::new().subject("bob"));
+        let mut bytes = token.into_bytes();
+        let len = bytes.len();
+        bytes[len - 1] = if bytes[len - 1] == b'A' { b'B' } else { b'A' };
+        let tampered = String::from_utf8(bytes).unwrap();
+        assert!(verify_rs384(&tampered, RSA_PUB_PEM, &VerifyOpts::new()).is_err());
+    }
+
+    #[test]
+    fn rs384_wrong_key_rejected() {
+        let token = mint_rs_token(Alg::Rs384, &Claims::new().subject("bob"));
+        assert!(verify_rs384(&token, RSA_PUB_PEM_WRONG, &VerifyOpts::new()).is_err());
+    }
+
+    #[test]
+    fn rs512_valid_token_accepted() {
+        let claims = Claims::new().subject("carol").issued_at(now_unix_secs());
+        let token = mint_rs_token(Alg::Rs512, &claims);
+        let back = verify_rs512(&token, RSA_PUB_PEM, &VerifyOpts::new()).unwrap();
+        assert_eq!(back.sub.as_deref(), Some("carol"));
+    }
+
+    #[test]
+    fn rs512_tampered_signature_rejected() {
+        let token = mint_rs_token(Alg::Rs512, &Claims::new().subject("carol"));
+        let mut bytes = token.into_bytes();
+        let len = bytes.len();
+        bytes[len - 1] = if bytes[len - 1] == b'A' { b'B' } else { b'A' };
+        let tampered = String::from_utf8(bytes).unwrap();
+        assert!(verify_rs512(&tampered, RSA_PUB_PEM, &VerifyOpts::new()).is_err());
+    }
+
+    #[test]
+    fn rs512_wrong_key_rejected() {
+        let token = mint_rs_token(Alg::Rs512, &Claims::new().subject("carol"));
+        assert!(verify_rs512(&token, RSA_PUB_PEM_WRONG, &VerifyOpts::new()).is_err());
+    }
+
+    #[test]
+    fn rs_alg_mismatch_rejected() {
+        // Token signed with RS256 but verifier expects RS384.
+        let token = mint_rs_token(Alg::Rs256, &Claims::new().subject("x"));
+        let err = verify_rs(&token, Alg::Rs384, RSA_PUB_PEM, &VerifyOpts::new()).unwrap_err();
+        assert!(format!("{err}").contains("alg mismatch"));
+    }
+
+    #[test]
+    fn rs_verifier_refuses_hmac_token() {
+        // HS-signed token aimed at an RSA verifier must reject before
+        // any cryptographic operation runs.
+        let token = sign_hs(Alg::Hs256, &Claims::new().subject("x"), key_hs()).unwrap();
+        let err = verify_rs256(&token, RSA_PUB_PEM, &VerifyOpts::new()).unwrap_err();
+        let msg = format!("{err}").to_lowercase();
+        assert!(
+            msg.contains("refusing") || msg.contains("mismatch"),
+            "expected RSA-vs-HMAC rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn hs_verifier_refuses_rsa_token() {
+        // Inverse direction: RSA-signed token must never be treated
+        // as an HMAC shared-secret candidate by `verify_hs`.
+        let token = mint_rs_token(Alg::Rs256, &Claims::new().subject("x"));
+        let err = verify_hs(&token, Alg::Hs256, key_hs(), &VerifyOpts::new()).unwrap_err();
+        let msg = format!("{err}").to_lowercase();
+        assert!(
+            msg.contains("refusing") || msg.contains("mismatch"),
+            "expected HMAC-vs-RSA rejection, got: {err}"
+        );
     }
 }

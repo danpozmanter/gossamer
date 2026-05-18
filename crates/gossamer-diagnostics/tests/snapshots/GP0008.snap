@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0008]: Assignment (`=`, `+=`, …) only appears at statement position. — here
+--- framed ---
+error[GP0008]: Assignment (`=`, `+=`, …) only appears at statement position.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GL0016]: `if true { ... }` / `while false { ... }` — the branch is — here
+--- framed ---
+error[GL0016]: `if true { ... }` / `while false { ... }` — the branch is
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

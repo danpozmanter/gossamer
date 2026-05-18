@@ -286,6 +286,15 @@ pub fn grapheme_count(s: &str) -> i64 {
     UnicodeSegmentation::graphemes(s, true).count() as i64
 }
 
+/// Returns `(byte_offset, grapheme)` pairs for each extended grapheme
+/// cluster in `s` (UAX #29), preserving input order.
+#[must_use]
+pub fn grapheme_indices(s: &str) -> Vec<(i64, String)> {
+    UnicodeSegmentation::grapheme_indices(s, true)
+        .map(|(i, g)| (i as i64, String::from(g)))
+        .collect()
+}
+
 /// Returns the Unicode word boundaries (UAX #29) in `s` — including
 /// whitespace-only and punctuation-only spans, mirroring
 /// `unicode-segmentation`'s `split_word_bounds`.
@@ -476,5 +485,52 @@ mod tests {
         assert!(is_print(' '));
         assert!(!is_graphic(' '));
         assert!(!is_print('\x00'));
+    }
+
+    #[test]
+    fn graphemes_ascii_one_per_char() {
+        let gs = graphemes("hello");
+        assert_eq!(gs, vec!["h", "e", "l", "l", "o"]);
+        assert_eq!(grapheme_count("hello"), 5);
+    }
+
+    #[test]
+    fn graphemes_combining_acute_counts_as_one() {
+        // "cafe" + combining acute (U+0301) = 4 graphemes, 5 scalars.
+        let decomposed = "cafe\u{0301}";
+        let gs = graphemes(decomposed);
+        assert_eq!(gs.len(), 4);
+        assert_eq!(gs[0], "c");
+        assert_eq!(gs[1], "a");
+        assert_eq!(gs[2], "f");
+        assert_eq!(gs[3], "e\u{0301}");
+    }
+
+    #[test]
+    fn graphemes_family_zwj_is_single_cluster() {
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        let gs = graphemes(family);
+        assert_eq!(gs.len(), 1);
+        assert_eq!(gs[0], family);
+    }
+
+    #[test]
+    fn graphemes_empty_string_yields_empty_vec() {
+        let gs = graphemes("");
+        assert!(gs.is_empty());
+        assert_eq!(grapheme_count(""), 0);
+        let idx = grapheme_indices("");
+        assert!(idx.is_empty());
+    }
+
+    #[test]
+    fn grapheme_indices_returns_byte_offsets() {
+        // "a" (1 byte) + "é" (2 bytes, U+00E9) + "z" (1 byte).
+        let s = "a\u{00E9}z";
+        let idx = grapheme_indices(s);
+        assert_eq!(idx.len(), 3);
+        assert_eq!(idx[0], (0, "a".to_string()));
+        assert_eq!(idx[1], (1, "\u{00E9}".to_string()));
+        assert_eq!(idx[2], (3, "z".to_string()));
     }
 }

@@ -222,7 +222,13 @@ impl Heap {
             };
             return GcRef(slot);
         }
-        let index = u32::try_from(self.objects.len()).expect("heap slot overflow");
+        let index = u32::try_from(self.objects.len()).unwrap_or_else(|_| {
+            eprintln!(
+                "gossamer gc: heap slot index overflowed u32 ({}); aborting",
+                self.objects.len()
+            );
+            std::process::abort();
+        });
         self.objects.push(Obj {
             kind,
             children,
@@ -355,8 +361,13 @@ impl Heap {
             } else {
                 obj.alive = false;
                 obj.children = None;
-                self.free_list
-                    .push(u32::try_from(index).expect("heap index overflow"));
+                let free_idx = u32::try_from(index).unwrap_or_else(|_| {
+                    eprintln!(
+                        "gossamer gc: heap free-list index overflowed u32 ({index}); aborting",
+                    );
+                    std::process::abort();
+                });
+                self.free_list.push(free_idx);
                 freed += 1;
             }
         }
