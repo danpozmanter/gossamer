@@ -1,170 +1,37 @@
 //! Driver-pluggable SQL database access, modelled after Go's
 //! `database/sql`.
 //!
-//! Programs work against this façade and bring in the appropriate
-//! driver crate; today the bundled driver is `SQLite` (gated on the
-//! `ffi-sqlite` feature). The driver registers itself via [`register`]
-//! at start-up; user code calls [`open`] with a name + url and gets
-//! back a [`Conn`].
+//! The trait surface (`Driver`, `ConnectionImpl`, `StatementImpl`,
+//! `TransactionImpl`, `RowsImpl`, `Value`, `Error`, `IsolationLevel`,
+//! `Kind`, `DriverError`, `register`, `open`, `drivers`) lives in
+//! `gossamer-runtime::sql` so the C-ABI shims that compiled-tier
+//! code calls into can dispatch through it without depending on
+//! `gossamer-std`. We re-export the whole surface here so the
+//! public path `gossamer_std::database::sql::*` is unchanged.
+//!
+//! The high-level user-facing wrappers (`Conn`, `Stmt`, `Rows`,
+//! `Row`, `Tx`, `Pool`, `migrate`, `query`) stay in `gossamer-std`
+//! — they're convenience layers on top of the relocated traits.
 
 #![forbid(unsafe_code)]
-
-use std::sync::Arc;
-
-use parking_lot::Mutex;
-use thiserror::Error;
 
 pub mod migrate;
 pub mod pool;
 pub mod query;
 pub mod sqlite;
 
-/// Statically typed value passed to / returned from the database.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    /// `NULL` literal.
-    Null,
-    /// Boolean (sqlite stores 0/1).
-    Bool(bool),
-    /// 64-bit signed integer.
-    Int(i64),
-    /// 64-bit floating-point.
-    Float(f64),
-    /// UTF-8 text.
-    Text(String),
-    /// Binary blob.
-    Blob(Vec<u8>),
-}
+pub use gossamer_runtime::sql::{
+    ConnectionImpl, Driver, DriverError, DriverErrorKind, Error, IsolationLevel, Kind, RowsImpl,
+    StatementImpl, TransactionImpl, Value, drivers, register,
+};
+pub use pool::{Pool, PoolConfig, PooledConn};
+pub use query::Select;
 
-/// Transaction isolation level. Drivers map to their dialect's
-/// equivalent (`READ UNCOMMITTED`, `SERIALIZABLE`, etc.).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IsolationLevel {
-    /// Default for the driver — usually `READ COMMITTED`.
-    Default,
-    /// Dirty reads allowed.
-    ReadUncommitted,
-    /// Dirty reads forbidden.
-    ReadCommitted,
-    /// Repeatable reads guaranteed within the transaction.
-    RepeatableRead,
-    /// Strict serializability.
-    Serializable,
-}
-
-/// Errors raised by drivers and the façade.
-#[derive(Debug, Clone, Error)]
-pub enum Error {
-    /// Driver name was not registered.
-    #[error("sql: no driver registered as {0:?}")]
-    UnknownDriver(String),
-    /// Driver-specific failure.
-    #[error("sql: driver {driver}: {message}")]
-    Driver {
-        /// Driver identifier (e.g. `"sqlite"`).
-        driver: String,
-        /// Lower-level message.
-        message: String,
-    },
-    /// Caller asked for the wrong column type.
-    #[error("sql: column type mismatch: {0}")]
-    Type(String),
-    /// Connection has been closed.
-    #[error("sql: connection closed")]
-    Closed,
-    /// Connection pool reached its capacity and the wait deadline
-    /// elapsed before a slot became available.
-    #[error("sql: connection pool exhausted (capacity={capacity})")]
-    PoolExhausted {
-        /// Configured pool capacity.
-        capacity: usize,
-    },
-}
-
-impl Error {
-    /// Builds a [`Error::Driver`] with the given driver name and
-    /// message. Convenience for `Error::Driver { driver:
-    /// driver.into(), message: message.into() }`.
-    pub fn driver(driver: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::Driver {
-            driver: driver.into(),
-            message: message.into(),
-        }
-    }
-}
-
-/// Driver trait — concrete drivers implement [`open`] and return a
-/// [`Conn`] backed by their own state. Drivers are registered with
-/// [`register`].
-pub trait Driver: Send + Sync {
-    /// Driver name (for [`open`]).
-    fn name(&self) -> &str;
-    /// Opens a connection to the database identified by `url`.
-    fn open(&self, url: &str) -> Result<Conn, Error>;
-}
-
-/// Connection trait. The wrapped trait object is what user code
-/// drives.
-pub trait ConnectionImpl: Send {
-    /// Prepares a statement for repeated execution.
-    fn prepare(&mut self, sql: &str) -> Result<Box<dyn StatementImpl>, Error>;
-    /// Begins a transaction.
-    fn begin(&mut self) -> Result<Box<dyn TransactionImpl>, Error>;
-    /// Closes the connection. Subsequent calls return [`Error::Closed`].
-    fn close(&mut self) -> Result<(), Error>;
-}
-
-/// Prepared statement trait.
-pub trait StatementImpl: Send {
-    /// Executes the statement with positional bindings; returns the
-    /// number of rows affected.
-    fn execute(&mut self, params: &[Value]) -> Result<u64, Error>;
-    /// Runs the statement and returns rows.
-    fn query(&mut self, params: &[Value]) -> Result<Box<dyn RowsImpl>, Error>;
-}
-
-/// Transaction trait.
-pub trait TransactionImpl: Send {
-    /// Commits the transaction.
-    fn commit(&mut self) -> Result<(), Error>;
-    /// Rolls back.
-    fn rollback(&mut self) -> Result<(), Error>;
-    /// Executes raw SQL inside the transaction (no parameters).
-    fn execute(&mut self, sql: &str) -> Result<u64, Error>;
-}
-
-/// Rows trait — iterate result sets.
-pub trait RowsImpl: Send {
-    /// Pulls the next row, or `None` on end-of-set.
-    fn next_row(&mut self) -> Result<Option<Vec<Value>>, Error>;
-    /// Column names in the result set.
-    fn columns(&self) -> &[String];
-}
-
-// --- registry -----------------------------------------------------
-
-static REGISTRY: Mutex<Vec<Arc<dyn Driver>>> = Mutex::new(Vec::new());
-
-/// Registers a driver so [`open`] can find it. Idempotent on driver
-/// name — re-registering replaces the previous handle.
-pub fn register(driver: Arc<dyn Driver>) {
-    let mut reg = REGISTRY.lock();
-    let name = driver.name().to_string();
-    reg.retain(|d| d.name() != name);
-    reg.push(driver);
-}
-
-/// Looks up a driver and opens a connection.
+/// Opens a SQL connection by driver name + URL. Wraps the runtime
+/// trait object in a [`Conn`] so callers get the convenience API.
 pub fn open(name: &str, url: &str) -> Result<Conn, Error> {
-    let reg = REGISTRY.lock();
-    for driver in reg.iter() {
-        if driver.name() == name {
-            let driver = Arc::clone(driver);
-            drop(reg);
-            return driver.open(url);
-        }
-    }
-    Err(Error::UnknownDriver(name.to_string()))
+    let inner = gossamer_runtime::sql::open(name, url)?;
+    Ok(Conn { inner })
 }
 
 // --- user-facing wrappers -----------------------------------------
@@ -172,6 +39,12 @@ pub fn open(name: &str, url: &str) -> Result<Conn, Error> {
 /// Open SQL connection.
 pub struct Conn {
     inner: Box<dyn ConnectionImpl>,
+}
+
+impl std::fmt::Debug for Conn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Conn").finish_non_exhaustive()
+    }
 }
 
 impl Conn {
@@ -196,9 +69,7 @@ impl Conn {
     }
 
     /// Convenience: prepares once, then executes the same statement
-    /// against every parameter row, summing the row counts. Used by
-    /// the [`crate::database::sql::query`] builder for batch
-    /// inserts.
+    /// against every parameter row, summing the row counts.
     pub fn execute_many(&mut self, sql: &str, rows: &[&[Value]]) -> Result<u64, Error> {
         let mut stmt = self.prepare(sql)?;
         let mut total: u64 = 0;
@@ -221,28 +92,68 @@ impl Conn {
         })
     }
 
-    /// Begins a transaction with the requested isolation level.
-    /// Drivers map `IsolationLevel::Default` to their dialect's
-    /// default isolation, then issue `SET TRANSACTION ISOLATION
-    /// LEVEL ...` for the others.
-    pub fn begin_with(&mut self, _iso: IsolationLevel) -> Result<Tx, Error> {
-        // Default fallback: drivers that don't override begin_with
-        // get a regular BEGIN. SQL drivers can intercept this method
-        // through their own Conn extension trait if they need
-        // dialect-specific syntax.
-        self.begin()
+    /// Begins a transaction at the requested isolation level.
+    pub fn begin_with(&mut self, iso: IsolationLevel) -> Result<Tx, Error> {
+        Ok(Tx {
+            inner: self.inner.begin_with(iso)?,
+        })
     }
 
-    /// Round-trips a no-op statement against the connection to
-    /// verify the link is alive. Returns `Ok(())` on success,
-    /// `Err(_)` if the underlying driver reports the connection is
-    /// closed.
+    /// Round-trips a no-op statement against the connection.
     pub fn ping(&mut self) -> Result<(), Error> {
-        // Cheapest universally supported `keep-alive` shape: send
-        // `SELECT 1`. Drivers that surface a native ping hook can
-        // shadow this method later.
-        self.execute("SELECT 1", &[])?;
-        Ok(())
+        self.inner.ping()
+    }
+
+    /// Sets the driver's busy-timeout in milliseconds.
+    pub fn set_busy_timeout(&mut self, ms: i64) -> Result<(), Error> {
+        self.inner.set_busy_timeout(ms)
+    }
+
+    /// Cancels any in-flight statement on this connection.
+    pub fn interrupt(&self) {
+        self.inner.interrupt();
+    }
+
+    /// Runs `execute` while honouring `ctx`. If `ctx` is already
+    /// cancelled, returns [`Error::Cancelled`] immediately. While the
+    /// statement runs, a watchdog goroutine listens on `ctx.done()`
+    /// and calls [`Self::interrupt`] if the context is cancelled
+    /// before the call returns.
+    pub fn execute_ctx(
+        &mut self,
+        ctx: &crate::context::Context,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, Error> {
+        if ctx.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let watchdog = InterruptWatchdog::install(ctx, &mut self.inner);
+        let result = self.execute(sql, params);
+        watchdog.disarm();
+        if ctx.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        result
+    }
+
+    /// Same as [`Self::execute_ctx`] for queries.
+    pub fn query_ctx(
+        &mut self,
+        ctx: &crate::context::Context,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<Rows, Error> {
+        if ctx.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let watchdog = InterruptWatchdog::install(ctx, &mut self.inner);
+        let result = self.query(sql, params);
+        watchdog.disarm();
+        if ctx.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        result
     }
 
     /// Closes the connection.
@@ -251,9 +162,69 @@ impl Conn {
     }
 }
 
+/// Helper that arms a context watchdog: spawns a worker thread that
+/// polls `ctx.is_cancelled()` and calls the connection's
+/// `interrupt()` if cancellation fires before [`Self::disarm`] is
+/// called.
+///
+/// `Conn::interrupt` requires only a `&ConnectionImpl` (not `&mut`),
+/// which is why we can capture an `Arc<*const dyn ConnectionImpl>`
+/// in the watchdog without conflicting with the running statement's
+/// `&mut` borrow. SQLite's `sqlite3_interrupt` is thread-safe with
+/// respect to the connection.
+struct InterruptWatchdog {
+    armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl InterruptWatchdog {
+    fn install(ctx: &crate::context::Context, conn: &mut Box<dyn ConnectionImpl>) -> Self {
+        let armed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let armed_clone = std::sync::Arc::clone(&armed);
+        let ctx = ctx.clone();
+        // Spawn the watchdog through the runtime's safe helper so we
+        // do not need an unsafe block inside gossamer-std (which
+        // carries `#![forbid(unsafe_code)]`). The runtime owns the
+        // pointer reconstruction; gossamer-std only passes the
+        // cancellation signal.
+        let interrupt_fn: Box<dyn Fn() + Send + 'static> = {
+            let conn_addr =
+                (conn.as_mut() as *mut dyn ConnectionImpl).cast::<()>() as usize;
+            Box::new(move || gossamer_runtime::sql::interrupt_connection_by_addr(conn_addr))
+        };
+        let join = std::thread::Builder::new()
+            .name("gos-sql-interrupt-watchdog".into())
+            .spawn(move || {
+                while armed_clone.load(std::sync::atomic::Ordering::Acquire) {
+                    if ctx.is_cancelled() {
+                        interrupt_fn();
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            })
+            .ok();
+        InterruptWatchdog { armed, join }
+    }
+
+    fn disarm(mut self) {
+        self.armed
+            .store(false, std::sync::atomic::Ordering::Release);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
 /// Active transaction.
 pub struct Tx {
     inner: Box<dyn TransactionImpl>,
+}
+
+impl std::fmt::Debug for Tx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tx").finish_non_exhaustive()
+    }
 }
 
 impl Tx {
@@ -268,6 +239,18 @@ impl Tx {
     /// Executes a parameterless statement inside the tx.
     pub fn execute(&mut self, sql: &str) -> Result<u64, Error> {
         self.inner.execute(sql)
+    }
+    /// Establishes a savepoint named `name` inside this transaction.
+    pub fn savepoint(&mut self, name: &str) -> Result<(), Error> {
+        self.inner.savepoint(name)
+    }
+    /// Releases the savepoint named `name` (commits it).
+    pub fn release_savepoint(&mut self, name: &str) -> Result<(), Error> {
+        self.inner.release_savepoint(name)
+    }
+    /// Rolls back to the savepoint named `name`.
+    pub fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), Error> {
+        self.inner.rollback_to_savepoint(name)
     }
 }
 
@@ -330,8 +313,7 @@ impl Row {
             .map(|i| &self.values[i])
     }
 
-    /// Number of columns in the row. (Useful for round-tripping
-    /// row width across the dyn-trait boundary.)
+    /// Number of columns in the row.
     #[must_use]
     pub fn width(&self) -> usize {
         self.values.len()

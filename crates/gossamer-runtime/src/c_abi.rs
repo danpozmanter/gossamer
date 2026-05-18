@@ -186,6 +186,7 @@ pub mod regex;
 pub mod set;
 pub mod signal;
 pub mod slog;
+pub mod sql;
 pub mod stream;
 pub mod string;
 pub mod sync_map;

@@ -1387,7 +1387,16 @@ fn pipeline_tmp_dir() -> Result<PathBuf> {
         let h = hasher.finish();
         std::env::temp_dir().join(format!("gos-llvm-repro-{h:016x}"))
     } else {
-        std::env::temp_dir().join(format!("gos-llvm-{}", std::process::id()))
+        // Per-pid + per-call counter so concurrent
+        // `render_ir_to_string` / `compile_to_object` calls inside
+        // the same process don't trample each other's `unit.ll` /
+        // `unit.o`. Two parallel tests in the same `cargo test`
+        // process used to share a single tmp dir and produce
+        // mutually-corrupted IR.
+        static TMP_SEQ: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        std::env::temp_dir().join(format!("gos-llvm-{}-{seq}", std::process::id()))
     };
     std::fs::create_dir_all(&tmp_dir).with_context(|| format!("creating {}", tmp_dir.display()))?;
     Ok(tmp_dir)

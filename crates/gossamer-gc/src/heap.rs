@@ -133,6 +133,43 @@ pub struct GcStats {
     pub total_pause_nanos: u128,
     /// Longest pause observed (Stream F.1).
     pub max_pause_nanos: u64,
+    /// Pause-time histogram bucketed at <100µs, <1ms, <10ms, <100ms,
+    /// <1s, ≥1s. Indexed by [`PauseBucket`]. Lets applications
+    /// SLO-track latency-sensitive workloads.
+    pub pause_histogram: [u64; 6],
+}
+
+/// Bucket index into [`GcStats::pause_histogram`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub enum PauseBucket {
+    /// Pause < 100µs.
+    Under100us = 0,
+    /// 100µs ≤ pause < 1ms.
+    Under1ms = 1,
+    /// 1ms ≤ pause < 10ms.
+    Under10ms = 2,
+    /// 10ms ≤ pause < 100ms.
+    Under100ms = 3,
+    /// 100ms ≤ pause < 1s.
+    Under1s = 4,
+    /// pause ≥ 1s.
+    Over1s = 5,
+}
+
+impl PauseBucket {
+    /// Maps a nanosecond pause duration to its bucket.
+    #[must_use]
+    pub fn from_nanos(nanos: u64) -> Self {
+        match nanos {
+            n if n < 100_000 => Self::Under100us,
+            n if n < 1_000_000 => Self::Under1ms,
+            n if n < 10_000_000 => Self::Under10ms,
+            n if n < 100_000_000 => Self::Under100ms,
+            n if n < 1_000_000_000 => Self::Under1s,
+            _ => Self::Over1s,
+        }
+    }
 }
 
 /// Phase of a concurrent GC cycle driven by
@@ -307,6 +344,9 @@ impl Heap {
         if elapsed > self.stats.max_pause_nanos {
             self.stats.max_pause_nanos = elapsed;
         }
+        let bucket = PauseBucket::from_nanos(elapsed) as usize;
+        self.stats.pause_histogram[bucket] =
+            self.stats.pause_histogram[bucket].saturating_add(1);
         freed
     }
 

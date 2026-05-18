@@ -21,8 +21,10 @@ pub mod race;
 pub mod safe_env;
 pub mod sched;
 pub mod safe_daemon;
+pub mod replay;
 pub mod sched_global;
 pub mod sigquit;
+pub mod sql;
 pub mod stack_guard;
 pub mod value;
 

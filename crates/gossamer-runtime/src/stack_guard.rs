@@ -153,6 +153,13 @@ mod unix {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn discover_stack_bounds() -> (usize, usize) {
+        // SAFETY: pthread_getattr_np / pthread_attr_getstack /
+        // pthread_attr_destroy are documented async-signal-safe
+        // wrappers over the current thread's stack metadata. The
+        // attr is zero-initialised before the get call; the get
+        // call populates sp/size; destroy releases attr resources.
+        // All raw pointers we dereference (&attr, &sp, &size) are
+        // stack-locals owned by this fn.
         unsafe {
             let mut attr: libc::pthread_attr_t = MaybeUninit::zeroed().assume_init();
             if libc::pthread_getattr_np(libc::pthread_self(), &raw mut attr) != 0 {
@@ -175,6 +182,9 @@ mod unix {
     fn discover_stack_bounds() -> (usize, usize) {
         // Darwin uses pthread_get_stackaddr_np / _get_stacksize_np.
         // `stackaddr` is the high end of the stack (grows down).
+        // SAFETY: both calls are documented as safe for the
+        // current thread; they read libpthread-internal state and
+        // return scalars.
         unsafe {
             let me = libc::pthread_self();
             let hi = libc::pthread_get_stackaddr_np(me) as usize;
@@ -266,10 +276,17 @@ mod unix {
     fn propagate_signal(sig: libc::c_int) {
         // Restore SIG_DFL and re-raise so the parent / debugger
         // sees the original signal.
+        // SAFETY: zero-initialising a POSIX sigaction is valid; the
+        // struct's only invariant is sa_mask being a well-formed
+        // sigset, which sigemptyset establishes immediately after.
         let mut action: libc::sigaction = unsafe { MaybeUninit::zeroed().assume_init() };
         action.sa_sigaction = libc::SIG_DFL;
+        // SAFETY: action is a stack-local sigaction we own; the
+        // pointer is well-aligned and exclusive.
         unsafe { libc::sigemptyset(&raw mut action.sa_mask) };
         action.sa_flags = 0;
+        // SAFETY: sigaction is async-signal-safe (POSIX guarantee);
+        // action is a fully-initialised sigaction we own.
         unsafe {
             let _ = libc::sigaction(sig, &raw const action, std::ptr::null_mut());
             let _ = libc::raise(sig);

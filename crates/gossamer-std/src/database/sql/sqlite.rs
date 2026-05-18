@@ -37,7 +37,7 @@ impl Driver for SqliteDriver {
         "sqlite"
     }
 
-    fn open(&self, url: &str) -> Result<super::Conn, Error> {
+    fn open(&self, url: &str) -> Result<Box<dyn ConnectionImpl>, Error> {
         let conn = if url == ":memory:" {
             Connection::open_in_memory()
         } else {
@@ -47,9 +47,9 @@ impl Driver for SqliteDriver {
             driver: "sqlite".into(),
             message: e.to_string(),
         })?;
-        Ok(super::Conn::new(Box::new(SqliteConn {
+        Ok(Box::new(SqliteConn {
             inner: Arc::new(Mutex::new(conn)),
-        })))
+        }))
     }
 }
 

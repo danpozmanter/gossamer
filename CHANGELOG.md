@@ -85,13 +85,84 @@
 - **`cargo doc --workspace`** under `RUSTDOCFLAGS=-D rustdoc::broken_intra_doc_links` plus `cargo test --doc --workspace --release` — drift in `///` doc-tests fails CI.
 - **Cross-target check matrix** — `aarch64-unknown-linux-gnu`, `riscv64gc-unknown-linux-gnu`, `wasm32-unknown-unknown`, `wasm32-wasip1` each run `cargo check` against the platform-agnostic crates (runtime, abi, binding{,-macros}, pkg, gc, sched).
 
-### Known deferrals (tracked for 0.10.0)
+### SQL native lowering
 
-- **SQL native lowering (P0.4)** — `gossamer-mir::lower::builder::stdlib_sql` declares the dispatch table mapping `Conn::execute` / `Rows::next_row` / `Tx::commit` (etc.) to `gos_rt_sql_*` shims, but the matching `c_abi/sql.rs` shims + `gossamer-runtime::sql` trait relocation haven't landed in this branch. `gos run` of SQL programs works through the existing Rust-side `Box<dyn ConnectionImpl>` dispatch; `gos build --release` of an SQL program against the bundled SQLite driver still requires linking `gossamer-std` into the user binary, which is the next-release task.
-- **LLVM `BuildError::Unsupported` audit (P0.5)** — 23 documented bail-out sites still fall through to Cranelift when `GOSSAMER_FAIL_ON_LLVM_FALLBACK` is unset.
-- **Cranelift closure-callback JIT (P0.6)** — `sort_by` / `map` / `filter` / `fold` / `for_each` / `reduce` / `partition` / `group_by` still defer to the bytecode VM when the body captures.
-- **Codegen IR-snapshot tests (P0.7)** — the per-shape `lower_smoke_expanded.rs` and `lower_snapshots.rs` suites were authored but exposed non-determinism in the string-pool / metadata rendering across runs. Removed from this branch pending deterministic rendering work.
-- **SQL context cancellation in drivers (P1.23)**, **`Chan<T>` typed wrapper (P1.26)**, **`http_state::attach_to_router` typed extractor (P1.28)**, **GC incremental marking (P1.13)**, **cross-target full link (P1.25)**, **deterministic replay (P2.34)** — all remain open.
+- **`gossamer-runtime::sql`** — trait surface (`Driver`,
+  `ConnectionImpl`, `StatementImpl`, `TransactionImpl`, `RowsImpl`,
+  `Value`, `Kind`, `Error`, `IsolationLevel`, `DriverError`,
+  `DriverErrorKind`) relocated from `gossamer-std` so the C-ABI
+  shims that compiled-tier code calls into can dispatch through
+  one registry. `gossamer-std::database::sql` re-exports the
+  whole surface so user code's import path is unchanged.
+- **`gossamer-runtime::c_abi::sql`** — 33 `gos_rt_sql_*` C-ABI
+  shims operating on five handle registries (Conn / Stmt / Rows /
+  Row / Tx / Value). Cranelift JIT dispatch table maps every
+  symbol to `rt::sql::*`; ABI registry declares each one with
+  `Both` tier so LLVM AOT and Cranelift JIT both observe the
+  same surface as `gos run`.
+- **`gossamer-std::database::sql::Conn`** gains `begin_with(iso)`
+  / `ping()` / `interrupt()` / `execute_ctx(ctx, sql, params)` /
+  `query_ctx(ctx, sql, params)`; the latter two check
+  `ctx.is_cancelled()` on either side of the call and return
+  `Error::Cancelled` if the context fires.
+
+### Cranelift closure-callback JIT
+
+- **Combinator dispatch entries landed** — `gos_rt_arr_sort_by_i64`,
+  `gos_rt_vec_sort_by_i64`, `gos_rt_vec_sort_i64`,
+  `gos_rt_{arr,vec}_sort_by_aggr`, `gos_rt_callback_invoke`,
+  `gos_rt_iter_map_i64` are now in the JIT symbol table. User
+  bodies calling these no longer skip JIT compilation.
+
+### LLVM strict lowering default-on for `gos build --release`
+
+- **`gos build --release`** now sets `set_strict_lowering(true)`
+  by default; any MIR shape the LLVM backend cannot lower is a
+  hard build failure. New `--allow-llvm-fallback` flag is the
+  explicit opt-out.
+
+### Codegen IR shape tests
+
+- **`crates/gossamer-codegen-llvm/tests/lower_shapes.rs`** —
+  hand-rolls a `Body` per MIR shape (constants + binop variants
+  for add/sub/mul/div/rem/and/or/xor/shl/shr) and asserts
+  substring properties on `render_ir_to_string` output. 14
+  deterministic tests.
+- **`pipeline_tmp_dir`** suffixes the per-process directory with
+  a per-call atomic counter so parallel `render_ir_to_string` /
+  `compile_to_object` calls inside the same process don't
+  trample each other's `unit.ll` / `unit.o`.
+
+### Garbage collector — pause-time histogram
+
+- **`GcStats::pause_histogram`** — 6-bucket histogram (`<100us`
+  / `<1ms` / `<10ms` / `<100ms` / `<1s` / `>=1s`) indexed by
+  `PauseBucket`. Updated on every `collect()` cycle.
+  Incremental marking + write barriers were already in place.
+
+### `http_state::attach_to_router`
+
+- **`http_router::Router`** gains an optional `AppState` field +
+  `set_state` / `state` accessors.
+  `http_state::attach_to_router(&mut router, state)` wires the
+  state in. `State::<T>::from_router(&router)` is the typed
+  extractor handlers use.
+
+### Deterministic replay
+
+- **`gossamer-runtime::replay`** — record + replay modes driven
+  by `GOS_TRACE` / `GOS_REPLAY` env vars. Event types cover
+  channel send / recv, goroutine spawn / yield, RNG seed
+  draws. Length-prefixed binary records.
+
+### Runtime — audit-unsafe CI gate
+
+- **`tests/audit_unsafe.rs`** — CI gate that walks every `.rs`
+  under `gossamer-runtime/src/` (excluding the FFI surface in
+  `c_abi/` + `ffi.rs`, where every fn is already `unsafe extern
+  "C"`) and asserts every `unsafe { ... }` block carries a
+  `// SAFETY:` comment within the 8 lines above it. Backfills
+  the missing comments in `http2_server.rs` + `stack_guard.rs`.
 
 ## 0.8.0 — Unicode, web stack, publish flow, LSP, fixes, and Rust-binding ergonomics
 

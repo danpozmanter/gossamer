@@ -1,0 +1,321 @@
+//! SQL trait surface and driver registry, shared by the bytecode VM,
+//! Cranelift JIT, and LLVM AOT through [`c_abi::sql`].
+//!
+//! Drivers are third-party Rust crates that implement [`Driver`] and
+//! call [`register`] at startup. The bundled SQLite driver ships in
+//! `gossamer-std` for convenience but is not special — Postgres /
+//! MySQL drivers can plug in the same way.
+//!
+//! User code goes through [`open`] to get a [`Box<dyn ConnectionImpl>`].
+//! The high-level wrappers in `gossamer-std::database::sql::{Conn,
+//! Stmt, Tx, Rows, Row}` are convenience layers on top of those
+//! trait objects; the C-ABI shims in [`crate::c_abi::sql`] operate on
+//! the trait objects directly through handle registries so compiled
+//! Gossamer code sees the same surface as `gos run`.
+
+#![forbid(unsafe_code)]
+
+use std::sync::Arc;
+
+use parking_lot::Mutex;
+use thiserror::Error;
+
+/// Typed value passed to / returned from the database.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    /// `NULL` literal.
+    Null,
+    /// Boolean.
+    Bool(bool),
+    /// 64-bit signed integer.
+    Int(i64),
+    /// 64-bit floating-point.
+    Float(f64),
+    /// UTF-8 text.
+    Text(String),
+    /// Binary blob.
+    Blob(Vec<u8>),
+}
+
+/// Coarse category of a [`Value`] — useful when a driver returns a
+/// dynamically-typed column and the caller wants the kind without
+/// matching the full enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// `NULL`.
+    Null,
+    /// Boolean.
+    Bool,
+    /// 64-bit signed integer.
+    Int,
+    /// 64-bit floating-point.
+    Float,
+    /// UTF-8 text.
+    Text,
+    /// Binary blob.
+    Blob,
+}
+
+impl Value {
+    /// Returns the coarse [`Kind`] of this value.
+    #[must_use]
+    pub fn kind(&self) -> Kind {
+        match self {
+            Value::Null => Kind::Null,
+            Value::Bool(_) => Kind::Bool,
+            Value::Int(_) => Kind::Int,
+            Value::Float(_) => Kind::Float,
+            Value::Text(_) => Kind::Text,
+            Value::Blob(_) => Kind::Blob,
+        }
+    }
+}
+
+/// Transaction isolation level. Drivers map to their dialect's
+/// equivalent. `Default` defers to the driver's native default
+/// (usually `READ COMMITTED`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsolationLevel {
+    /// Driver-default isolation.
+    Default,
+    /// Dirty reads allowed.
+    ReadUncommitted,
+    /// Dirty reads forbidden.
+    ReadCommitted,
+    /// Repeatable reads guaranteed within the transaction.
+    RepeatableRead,
+    /// Strict serializability.
+    Serializable,
+}
+
+/// Driver-specific error payload. Carries a stable [`DriverErrorKind`]
+/// for caller-side classification plus a free-form message.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DriverError {
+    /// Driver identifier (e.g. `"sqlite"`).
+    pub driver: String,
+    /// Coarse error classification.
+    pub kind: DriverErrorKind,
+    /// Lower-level message.
+    pub message: String,
+}
+
+/// Coarse classification of a driver error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriverErrorKind {
+    /// Generic driver-side failure.
+    Other,
+    /// Unique-constraint violation.
+    UniqueViolation,
+    /// Foreign-key violation.
+    ForeignKeyViolation,
+    /// Connection refused / lost / closed by peer.
+    Connection,
+    /// Statement timed out.
+    Timeout,
+    /// Statement was cancelled.
+    Cancelled,
+}
+
+/// Errors raised by drivers and the façade.
+#[derive(Debug, Clone, Error)]
+pub enum Error {
+    /// Driver name was not registered.
+    #[error("sql: no driver registered as {0:?}")]
+    UnknownDriver(String),
+    /// Driver-specific failure.
+    #[error("sql: driver {driver}: {message}")]
+    Driver {
+        /// Driver identifier (e.g. `"sqlite"`).
+        driver: String,
+        /// Lower-level message.
+        message: String,
+    },
+    /// Caller asked for the wrong column type.
+    #[error("sql: column type mismatch: {0}")]
+    Type(String),
+    /// Connection has been closed.
+    #[error("sql: connection closed")]
+    Closed,
+    /// Connection pool reached its capacity and the wait deadline
+    /// elapsed before a slot became available.
+    #[error("sql: connection pool exhausted (capacity={capacity})")]
+    PoolExhausted {
+        /// Configured pool capacity.
+        capacity: usize,
+    },
+    /// Statement was cancelled (context deadline / cancel hit).
+    #[error("sql: cancelled")]
+    Cancelled,
+}
+
+impl Error {
+    /// Builds a [`Error::Driver`] with the given driver name and
+    /// message.
+    pub fn driver(driver: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Driver {
+            driver: driver.into(),
+            message: message.into(),
+        }
+    }
+}
+
+/// Driver trait — concrete drivers implement [`open`] and return a
+/// [`Box<dyn ConnectionImpl>`] backed by their own state.
+pub trait Driver: Send + Sync {
+    /// Driver name (for [`open`]).
+    fn name(&self) -> &str;
+    /// Opens a connection to the database identified by `url`.
+    fn open(&self, url: &str) -> Result<Box<dyn ConnectionImpl>, Error>;
+}
+
+/// Connection trait. The wrapped trait object is what user code
+/// drives.
+pub trait ConnectionImpl: Send {
+    /// Prepares a statement for repeated execution.
+    fn prepare(&mut self, sql: &str) -> Result<Box<dyn StatementImpl>, Error>;
+    /// Begins a transaction.
+    fn begin(&mut self) -> Result<Box<dyn TransactionImpl>, Error>;
+    /// Begins a transaction at the supplied isolation level. Default
+    /// implementation falls through to [`Self::begin`].
+    fn begin_with(&mut self, _iso: IsolationLevel) -> Result<Box<dyn TransactionImpl>, Error> {
+        self.begin()
+    }
+    /// Round-trips a `SELECT 1`-equivalent. Default implementation
+    /// uses `prepare + execute("SELECT 1")`.
+    fn ping(&mut self) -> Result<(), Error> {
+        let mut stmt = self.prepare("SELECT 1")?;
+        stmt.execute(&[])?;
+        Ok(())
+    }
+    /// Sets the driver-specific busy timeout in milliseconds. The
+    /// default is a no-op; SQLite overrides this with
+    /// `sqlite3_busy_timeout`.
+    fn set_busy_timeout(&mut self, _ms: i64) -> Result<(), Error> {
+        Ok(())
+    }
+    /// Signals to the driver that any in-flight statement on this
+    /// connection should be cancelled. SQLite calls
+    /// `sqlite3_interrupt`; default is a no-op.
+    fn interrupt(&self) {}
+    /// Closes the connection. Subsequent calls return [`Error::Closed`].
+    fn close(&mut self) -> Result<(), Error>;
+}
+
+/// Prepared statement trait.
+pub trait StatementImpl: Send {
+    /// Executes the statement with positional bindings; returns the
+    /// number of rows affected.
+    fn execute(&mut self, params: &[Value]) -> Result<u64, Error>;
+    /// Runs the statement and returns rows.
+    fn query(&mut self, params: &[Value]) -> Result<Box<dyn RowsImpl>, Error>;
+}
+
+/// Transaction trait.
+pub trait TransactionImpl: Send {
+    /// Commits the transaction.
+    fn commit(&mut self) -> Result<(), Error>;
+    /// Rolls back.
+    fn rollback(&mut self) -> Result<(), Error>;
+    /// Executes raw SQL inside the transaction (no parameters).
+    fn execute(&mut self, sql: &str) -> Result<u64, Error>;
+    /// Creates a savepoint named `name` inside this transaction.
+    /// Default implementation runs `SAVEPOINT name` as raw SQL.
+    fn savepoint(&mut self, name: &str) -> Result<(), Error> {
+        self.execute(&format!("SAVEPOINT {name}"))?;
+        Ok(())
+    }
+    /// Releases (commits) a savepoint named `name`.
+    fn release_savepoint(&mut self, name: &str) -> Result<(), Error> {
+        self.execute(&format!("RELEASE SAVEPOINT {name}"))?;
+        Ok(())
+    }
+    /// Rolls back to a savepoint named `name`.
+    fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), Error> {
+        self.execute(&format!("ROLLBACK TO SAVEPOINT {name}"))?;
+        Ok(())
+    }
+}
+
+/// Rows trait — iterate result sets.
+pub trait RowsImpl: Send {
+    /// Pulls the next row, or `None` on end-of-set.
+    fn next_row(&mut self) -> Result<Option<Vec<Value>>, Error>;
+    /// Column names in the result set.
+    fn columns(&self) -> &[String];
+}
+
+// --- registry ------------------------------------------------------
+
+static REGISTRY: Mutex<Vec<Arc<dyn Driver>>> = Mutex::new(Vec::new());
+
+/// Registers a driver so [`open`] can find it. Idempotent on driver
+/// name — re-registering replaces the previous handle.
+pub fn register(driver: Arc<dyn Driver>) {
+    let mut reg = REGISTRY.lock();
+    let name = driver.name().to_string();
+    reg.retain(|d| d.name() != name);
+    reg.push(driver);
+}
+
+/// Looks up a driver and opens a connection. Returns
+/// [`Error::UnknownDriver`] if no driver is registered under that
+/// name.
+pub fn open(name: &str, url: &str) -> Result<Box<dyn ConnectionImpl>, Error> {
+    let reg = REGISTRY.lock();
+    for driver in reg.iter() {
+        if driver.name() == name {
+            let driver = Arc::clone(driver);
+            drop(reg);
+            return driver.open(url);
+        }
+    }
+    Err(Error::UnknownDriver(name.to_string()))
+}
+
+/// Returns the names of every registered driver in registration
+/// order.
+#[must_use]
+pub fn drivers() -> Vec<String> {
+    REGISTRY
+        .lock()
+        .iter()
+        .map(|d| d.name().to_string())
+        .collect()
+}
+
+/// Reconstructs a `&dyn ConnectionImpl` from the exposed address and
+/// calls its `interrupt()` method. The caller (typically the SQL
+/// context-cancellation watchdog in gossamer-std) is responsible for
+/// ensuring the original `&mut Box<dyn ConnectionImpl>` outlives this
+/// call. `ConnectionImpl::interrupt` is documented as thread-safe
+/// w.r.t. the connection so a concurrent statement may be in flight.
+pub fn interrupt_connection_by_addr(addr: usize) {
+    if addr == 0 {
+        return;
+    }
+    // SAFETY: the watchdog joins before the original &mut goes out
+    // of scope, so the trait object is still live. Trait-object
+    // pointers are 2 words (data + vtable); we can't reconstruct
+    // the dyn pointer from a single address. Instead, we round-trip
+    // through a small registry keyed by address.
+    let map = INTERRUPT_REGISTRY.lock();
+    if let Some(callback) = map.get(&addr) {
+        callback();
+    }
+}
+
+static INTERRUPT_REGISTRY: Mutex<std::collections::BTreeMap<usize, Box<dyn Fn() + Send + Sync>>> =
+    Mutex::new(std::collections::BTreeMap::new());
+
+/// Registers a `Fn()` callback under `addr` that
+/// [`interrupt_connection_by_addr`] will invoke when the matching
+/// context cancels.
+pub fn register_interrupt_callback(addr: usize, callback: Box<dyn Fn() + Send + Sync>) {
+    INTERRUPT_REGISTRY.lock().insert(addr, callback);
+}
+
+/// Removes the interrupt callback under `addr`.
+pub fn unregister_interrupt_callback(addr: usize) {
+    INTERRUPT_REGISTRY.lock().remove(&addr);
+}

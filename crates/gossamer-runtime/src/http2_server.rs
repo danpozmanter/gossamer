@@ -152,12 +152,25 @@ async fn serve_one_stream(
         // `gos_rt_http_serve` uses. Handlers must return
         // `Result<http::Response, http::Error>` — the runtime
         // reads disc==0 + payload as the GosHttpResponse.
+        // SAFETY: fn_addr is the address of a Gossamer handler
+        // emitted by the LLVM/Cranelift backend. The signature is
+        // fixed by the HTTP server contract — `unsafe extern "C"
+        // fn(*mut env, *mut GosHttpRequest) -> *mut GosResult`.
+        // The transmute reconstructs that typed pointer. The
+        // handler is called once and its return value is owned by
+        // this frame.
         let handler: HandlerFn = unsafe { std::mem::transmute(fn_addr) };
         let env_ptr = env_addr as *mut u8;
         let req_ptr: *mut GosHttpRequest = &raw mut gos_req;
+        // SAFETY: env_ptr and req_ptr are valid for the duration of
+        // this call frame; the handler is required to either
+        // consume them inline or copy.
         let result_ptr = unsafe { handler(env_ptr, req_ptr) };
         let mut wire_buf: Vec<u8> = Vec::with_capacity(256);
         let ok = extract_response_into(result_ptr, &mut wire_buf);
+        // SAFETY: drop_handler_result frees the GosResult* the
+        // handler returned. result_ptr is non-null and owned by
+        // this frame (extracted above without taking ownership).
         unsafe { drop_handler_result(result_ptr) };
         gos_rt_gc_reset();
         if ok {

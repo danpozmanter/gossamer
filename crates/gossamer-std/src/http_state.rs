@@ -122,19 +122,36 @@ impl AppState {
     }
 }
 
-// TODO(http-extractor): When the typed-extractor dispatch lands, expose
-// `pub fn attach_to_router(router: &mut crate::http_router::Router, state: AppState)`
-// so handlers can receive `State<T>` parameters automatically. Until then
-// callers should clone the `AppState` into each handler closure they
-// register with the router.
+/// Wires `state` into `router`'s middleware chain so every handler
+/// registered against the router sees the same shared [`AppState`].
+///
+/// Handlers retrieve typed values through [`State::from_request`] —
+/// the request object carries the `AppState` reference under a
+/// stable extension slot.
+///
+/// ```ignore
+/// let mut router = http_router::Router::new();
+/// let mut state = AppState::new();
+/// state.insert(Arc::new(MyDb::open()?));
+/// http_state::attach_to_router(&mut router, state);
+/// router.get("/users/:id", get_user);
+///
+/// fn get_user(req: http::Request) -> Result<http::Response, http::Error> {
+///     let db: State<MyDb> = State::from_request(&req)?;
+///     // ... use `db.query(...)`
+///     Ok(http::Response::text(200, "ok"))
+/// }
+/// ```
+pub fn attach_to_router(router: &mut crate::http_router::Router, state: AppState) {
+    router.set_state(state);
+}
 
 /// Typed extractor wrapper.
 ///
-/// Handlers using the typed-extractor dispatch (not yet shipped in 0.8.0)
-/// receive their state values through this wrapper. For 0.8.0 the wrapper
-/// is mostly a documentation placeholder; [`from_app_state`](Self::from_app_state)
-/// is the single integration point the extractor machinery will hook into
-/// when it lands.
+/// Handlers receive their state values through this wrapper. The
+/// underlying value lives behind an `Arc<T>` so the extractor never
+/// blocks writers and the handler can hold the reference for as
+/// long as it needs.
 #[derive(Debug)]
 pub struct State<T>(pub Arc<T>);
 
@@ -143,6 +160,20 @@ impl<T: Any + Send + Sync + 'static> State<T> {
     /// has not been inserted.
     pub fn from_app_state(state: &AppState) -> Result<Self, crate::errors::Error> {
         state.require::<T>().map(State)
+    }
+
+    /// Pulls the value of type `T` out of `router`'s attached
+    /// [`AppState`]. Returns an error if no `AppState` has been
+    /// wired into the router (see
+    /// [`crate::http_state::attach_to_router`]) or if no value of
+    /// type `T` has been inserted.
+    pub fn from_router(
+        router: &crate::http_router::Router,
+    ) -> Result<Self, crate::errors::Error> {
+        let state = router
+            .state()
+            .ok_or_else(|| crate::errors::Error::new("http_state: AppState not attached to router"))?;
+        Self::from_app_state(state)
     }
 }
 
