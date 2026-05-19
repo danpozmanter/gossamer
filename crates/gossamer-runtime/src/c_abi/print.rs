@@ -125,7 +125,7 @@ fn stdout_lock_release() {
 /// [8192 x i8]` reference resolves at link time exactly as
 /// before. `UnsafeCell` carries the documented interior-mutability
 /// contract; the manual `Sync` impl declares that all access is
-/// serialised by [`STDOUT_LOCK`] / [`STDOUT_LOCK_DEPTH`].
+/// serialised by `STDOUT_LOCK` / `STDOUT_LOCK_DEPTH`.
 #[repr(transparent)]
 pub struct GosRtStdoutBytes(pub core::cell::UnsafeCell<[u8; STDOUT_BUF_SIZE]>);
 

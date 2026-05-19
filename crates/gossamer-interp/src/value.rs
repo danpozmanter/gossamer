@@ -171,7 +171,7 @@ impl MapKey {
 #[derive(Debug, Clone)]
 pub struct FloatArrayInner {
     /// Element-struct name (e.g. `"Body"`). Interned via
-    /// [`intern_type_name`] so identical names share a single
+    /// `intern_type_name` so identical names share a single
     /// `&'static` allocation (~24 B + heap save per aggregate).
     pub name: &'static str,
     /// Number of `f64` fields per element.
@@ -185,7 +185,7 @@ pub struct FloatArrayInner {
 /// Boxed payload of [`Value::Variant`].
 #[derive(Debug, Clone)]
 pub struct VariantInner {
-    /// Variant name (interned, see [`intern_type_name`]).
+    /// Variant name (interned, see `intern_type_name`).
     pub name: &'static str,
     /// Positional fields.
     pub fields: Arc<Vec<Value>>,
@@ -194,7 +194,7 @@ pub struct VariantInner {
 /// Boxed payload of [`Value::Struct`].
 #[derive(Debug, Clone)]
 pub struct StructInner {
-    /// Struct name (interned, see [`intern_type_name`]).
+    /// Struct name (interned, see `intern_type_name`).
     pub name: &'static str,
     /// Field name/value pairs in declaration order.
     pub fields: Arc<Vec<(Ident, Value)>>,

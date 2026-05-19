@@ -11,6 +11,7 @@
 ### Tooling
 
 - **`gos bench [PATH] [--parallel N]`** — discovers every `#[bench]`-annotated function under `PATH` (defaults to `src/`) and reports `ns/op` plus `allocs/op` per benchmark. Per-bench iteration counts auto-tune to a 50ms calibration window (capped at 2^20); allocation deltas read from `gossamer_runtime::gc::stats().bytes_allocated`. `std::testing::Bencher` ships as the future-facing argument type; zero-arg `#[bench]` fns keep working.
+- check.sh extended to mirror more of the CI workflow with Github Actions.
 
 ### Runtime — production safety
 

@@ -35,7 +35,7 @@ const MAX_MONOMORPHISE_ITERATIONS: u32 = 32;
 /// loop until a pass produces no new copies — `fn map<T,U>(f:
 /// fn(T)->U, xs)` calling `fn each<T>(f, xs)` now produces both
 /// `map_i64_str` and `each_i64`. Cap at
-/// [`MAX_MONOMORPHISE_ITERATIONS`] as a runaway guard.
+/// `MAX_MONOMORPHISE_ITERATIONS` as a runaway guard.
 pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
     let mut emitted: HashSet<String> = HashSet::new();
     for iteration in 0..MAX_MONOMORPHISE_ITERATIONS {

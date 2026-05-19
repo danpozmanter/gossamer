@@ -39,21 +39,41 @@ confidence-threshold = 0.92
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
-# Allow `libc` to appear from several transitive graph depths.
+# Allow these to appear from several transitive graph depths. Each
+# entry covers a base crate whose entire dependency subtree is
+# version-fragmented by upstream churn we do not control. Skipping
+# the subtree is cleaner than enumerating every pinned version.
 skip-tree = [
     { name = "libc" },
     { name = "windows-sys" },
+    # `nix 0.28` / `nix 0.29` arrive via inotify / notify / quinn-udp.
+    # Their transitive `cfg_aliases` + `bitflags` split versions too.
+    { name = "nix" },
+    # `getrandom 0.2` / `0.3` / `0.4` arrive via rand_core 0.6 / 0.9
+    # plus tempfile / uuid. The rand ecosystem hasn't consolidated
+    # on a single major yet.
+    { name = "rand_core" },
 ]
-# Transitive duplicates pulled in by `cranelift 0.123`. We do not
-# own the upgrade path; drop these once cranelift consolidates.
+# Transitive duplicates we do not own the upgrade path for.
 skip = [
-    # `bitflags 1.3.2` reaches the workspace via `region 3.0.2 →
-    # cranelift-jit`; the directly-named version is 2.x.
-    { name = "bitflags", version = "1.3.2" },
     # `hashbrown 0.15.5` reaches the workspace via `cranelift-codegen`;
     # `hashbrown 0.17.0` arrives transitively via `indexmap 2.14 →
     # gimli 0.32 → cranelift-codegen`. Both land through cranelift.
     { name = "hashbrown", version = "0.15.5" },
+    # `cpufeatures 0.2` reaches the workspace via sha2 / aes /
+    # chacha20; `0.3` arrives via blake3. Both are RustCrypto deps.
+    { name = "cpufeatures", version = "0.2.17" },
+    # `mio 0.8` arrives via notify; `mio 1.x` is the directly-named
+    # version (via tokio + quinn). Drop the pin when notify
+    # consolidates on mio 1.
+    { name = "mio", version = "0.8.11" },
+    # `socket2 0.5` vs `0.6` — quinn 0.11 pulls 0.5, h2 / rustls pull
+    # 0.6. Drop the pin when quinn upgrades.
+    { name = "socket2", version = "0.5.10" },
+    # `thiserror 1.x` arrives via h2 / quinn 0.11; `2.x` is the
+    # directly-named version. Drop when those consolidate on 2.
+    { name = "thiserror", version = "1.0.69" },
+    { name = "thiserror-impl", version = "1.0.69" },
 ]
 
 [sources]

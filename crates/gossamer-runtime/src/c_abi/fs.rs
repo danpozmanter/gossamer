@@ -112,7 +112,7 @@ pub unsafe extern "C" fn gos_rt_os_write_file_result(
     })
 }
 
-/// `os::write_file(path, bytes: &[u8]) -> Result<(), IoError>` — Vec<u8>
+/// `os::write_file(path, bytes: &[u8]) -> Result<(), IoError>` — `Vec<u8>`
 /// payload variant. The MIR dispatcher picks this helper over the
 /// c-string-shaped one when the contents argument types as `Vec<u8>`
 /// or `&[u8]`, so binary writes (e.g. saving a downloaded image)

@@ -46,7 +46,7 @@ pub enum Op {
     /// Generic boxed-`Value` addition: `dst = lhs + rhs`. Carries
     /// an inline-cache slot index that the runtime fills on first
     /// execution with the observed `(lhs, rhs)` shape (see
-    /// [`ArithCacheSlot`] / `ARITH_*` constants); subsequent
+    /// `ArithCacheSlot` / `ARITH_*` constants); subsequent
     /// dispatches branch directly into the specialised arm and
     /// skip the per-call `(Value, Value)` discriminant match.
     /// Tier C2 of the interp wow plan.
@@ -119,7 +119,7 @@ pub enum Op {
         /// Number of arguments.
         argc: u16,
         /// Index into the chunk's `call_caches` slot. The slot
-        /// caches the resolved [`crate::vm::Global`] for the most
+        /// caches the resolved `crate::vm::Global` for the most
         /// recently seen callee identity, skipping the
         /// `Value::String → globals.get` path on subsequent calls
         /// from the same site.
@@ -173,7 +173,7 @@ pub enum Op {
         /// Number of user-supplied arguments.
         argc: u16,
         /// Index into the chunk's `call_caches` slot. The slot
-        /// caches the resolved [`crate::vm::Global`] for the most
+        /// caches the resolved `crate::vm::Global` for the most
         /// recently seen receiver type, skipping the
         /// `qualified_key`/`HashMap::get` chain on subsequent
         /// calls from the same site.
@@ -265,7 +265,7 @@ pub enum Op {
     },
     /// Builds a `Value::IntArray` from `count` consecutive typed
     /// `i64` registers starting at `first_i`. Counterpart of
-    /// [`WideOp::BuildFloatArray`] for primitive integer arrays
+    /// `WideOp::BuildFloatArray` for primitive integer arrays
     /// (`[i64; N]` literals).
     BuildIntArray {
         /// Destination value register.
@@ -1077,7 +1077,7 @@ pub struct FnChunk {
     pub deferred_env_regs: Vec<Vec<Reg>>,
     /// Number of inline-cache slots this chunk needs (`Op::Call`
     /// / `Op::MethodCall` sites). The actual `Vec<CacheSlot>` lives
-    /// per-`Vm` inside [`crate::vm::ChunkState`], not on the chunk —
+    /// per-`Vm` inside `crate::vm::ChunkState`, not on the chunk —
     /// goroutines spawned from a parent VM each get their own
     /// `ChunkState` so cache writes don't bounce cache lines across
     /// CPUs. `FnChunk` stays purely-immutable and `Sync`.

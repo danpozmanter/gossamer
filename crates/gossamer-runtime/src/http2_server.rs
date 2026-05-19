@@ -49,7 +49,7 @@ use crate::sched::{Gid, Interest, ParkReason};
 use crate::sched_global;
 
 /// Boots the h2c server. Each accepted TCP connection is wrapped
-/// in an [`AsyncTcpStream`] and driven by a goroutine that calls
+/// in an `AsyncTcpStream` and driven by a goroutine that calls
 /// `h2::server::handshake` + an accept loop. Per-stream handler
 /// dispatch happens inside child goroutines so a slow handler
 /// doesn't block other streams on the same connection.

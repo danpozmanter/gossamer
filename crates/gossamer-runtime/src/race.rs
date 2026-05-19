@@ -7,7 +7,7 @@
 //! Mutex / Channel synchronisation events:
 //!
 //! - Per-goroutine vector clock (`Vec<u64>` indexed by goroutine id).
-//! - Per-address state: the last write and up to [`MAX_ACTIVE_READS`]
+//! - Per-address state: the last write and up to `MAX_ACTIVE_READS`
 //!   concurrent reads not yet dominated by a subsequent write.
 //! - On every write, the tracker checks all active readers (WAR) and
 //!   the last writer (WW) for unsynchronised conflicts. On every read,

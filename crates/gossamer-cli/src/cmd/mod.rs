@@ -1,6 +1,6 @@
 //! Subcommand implementations for `gos`.
 //!
-//! `main.rs` parses the [`crate::cli::Cli`] enum and dispatches each
+//! `main.rs` parses the `crate::cli::Cli` enum and dispatches each
 //! variant into the matching module here. Keeping the per-command
 //! logic in dedicated files makes `main.rs` a routing table — the
 //! place to look when a flag stops landing where you expect.

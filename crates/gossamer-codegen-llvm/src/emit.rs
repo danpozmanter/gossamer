@@ -709,7 +709,7 @@ pub fn compile_with_fallback(bodies: &[Body], tcx: &TyCtxt) -> Result<CompileOut
 ///
 /// The parallel path compiles each body in its own mini `.ll` module
 /// and runs `opt` + `llc` concurrently across up to
-/// [`PARALLEL_MAX_THREADS`] threads. Objects for bodies whose MIR
+/// `PARALLEL_MAX_THREADS` threads. Objects for bodies whose MIR
 /// hash matches a previously cached result are reused directly from
 /// the incremental cache, skipping lowering and compilation entirely.
 pub fn compile_with_fallback_at_path(

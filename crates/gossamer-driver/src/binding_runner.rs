@@ -62,7 +62,7 @@ pub enum BindingRunnerError {
     /// `cargo build` failed for the runner / staticlib.
     #[error("cargo build failed for binding `{crate_name}`:\n{stderr}")]
     CargoFailed {
-        /// Crate that failed (or "<runner>"/"<staticlib>" when the
+        /// Crate that failed (or `<runner>` / `<staticlib>` when the
         /// failure can't be attributed to one binding).
         crate_name: String,
         /// Captured cargo stderr, verbatim.

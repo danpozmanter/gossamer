@@ -88,6 +88,19 @@ mod unix {
     static ACTION_ONCE: Once = Once::new();
 
     pub(super) fn install() {
+        // AddressSanitizer installs its own SIGSEGV handler + alt
+        // signal stack to diagnose stack overflow itself. Installing
+        // ours on top conflicts with ASan's runtime — when the test
+        // process exits, ASan tries to munmap memory whose layout
+        // our sigaltstack call disturbed, producing the
+        // "Failed to munmap" abort in the sanitizers job. Detect
+        // ASan via its standard option-variable contract (any ASan-
+        // instrumented program reads `ASAN_OPTIONS` at startup; CI
+        // sets it explicitly) and skip — ASan's diagnostics are
+        // strictly better than ours for this case.
+        if std::env::var_os("ASAN_OPTIONS").is_some() {
+            return;
+        }
         INSTALLED.with(|cell| {
             if cell.get() {
                 return;

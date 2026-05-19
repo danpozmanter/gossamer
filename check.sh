@@ -1,18 +1,50 @@
 #!/usr/bin/env bash
-# Pre-commit gate: fmt + clippy + tests + stdlib docs drift +
-# fuzz smoke. By default each step's chatter is suppressed and only
-# warnings, errors, and the step summary surface; pass --full to see
+# Pre-commit gate. Mirrors the CI workflows in `.github/workflows/`
+# so failures surface locally before they hit a runner:
+#
+#   ci.yml          → fmt, clippy, test, doctests, rustdoc (broken
+#                     intra-doc-links), cross-target check (wasm32),
+#                     audit, deny
+#   sanitizers.yml  → ASan + TSan on the unsafe-touching crates
+#   fuzz.yml        → 10 s smoke per target
+#
+# By default each step's chatter is suppressed; pass `--full` to see
 # every line. Any step's non-zero exit replays the captured output
 # before bailing so the failure is debuggable.
+#
+# Flags to skip slow gates on dev machines:
+#   --no-sanitizers   skip ASan / TSan (need nightly + rust-src)
+#   --no-fuzz         skip the fuzz smoke
+#   --no-cross        skip the wasm32 cross-target check
+#   --no-audit        skip cargo-audit (needs cargo-audit installed)
+#   --no-deny         skip cargo-deny  (needs cargo-deny installed)
+#   --no-doctests     skip `cargo test --doc --workspace --release`
+#   --no-rustdoc      skip `cargo doc -D rustdoc::broken_intra_doc_links`
+#
+# Missing optional tools cause a clean skip rather than a failure;
+# everything that *can* run, runs.
 set -euo pipefail
 
 full=0
+run_sanitizers=1
+run_fuzz=1
+run_cross=1
+run_audit=1
+run_deny=1
+run_doctests=1
+run_rustdoc=1
 for arg in "$@"; do
     case "$arg" in
-        --full) full=1 ;;
+        --full)          full=1 ;;
+        --no-sanitizers) run_sanitizers=0 ;;
+        --no-fuzz)       run_fuzz=0 ;;
+        --no-cross)      run_cross=0 ;;
+        --no-audit)      run_audit=0 ;;
+        --no-deny)       run_deny=0 ;;
+        --no-doctests)   run_doctests=0 ;;
+        --no-rustdoc)    run_rustdoc=0 ;;
         -h|--help)
-            echo "usage: $0 [--full]"
-            echo "  --full   show every step's full output (default: warnings + errors only)"
+            sed -n '/^# Pre-commit gate/,/^set -euo pipefail/p' "$0" | sed 's/^# \{0,1\}//' | head -n -1
             exit 0
             ;;
         *)
@@ -70,6 +102,102 @@ run_step "gos doc --emit-stdlib --check"                   ./target/debug/gos do
 # than this fast pre-commit pass.)
 run_step "gos feature-status --status experimental --check" ./target/debug/gos feature-status --status experimental --check
 
+# Rustdoc broken-intra-doc-links gate — mirrors the docs job in
+# `.github/workflows/ci.yml`. Wired here so internal-doc drift
+# (links to renamed or now-private items) fails locally instead of
+# surfacing in CI as a red post-push status.
+if [[ $run_rustdoc -eq 1 ]]; then
+    RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" \
+        run_step "cargo doc --workspace --no-deps" cargo doc --workspace --no-deps
+fi
+
+# Doctest gate — mirrors `cargo test --doc --workspace --release`
+# in ci.yml. Catches stale `///` examples that don't compile.
+if [[ $run_doctests -eq 1 ]]; then
+    run_step "cargo test --doc --workspace --release" \
+        cargo test --doc --workspace --release
+fi
+
+# cargo-deny — license + advisory + bans + sources gate
+# (`.github/workflows/ci.yml` deny job). Skip cleanly if
+# `cargo-deny` isn't installed so the local pass keeps moving.
+if [[ $run_deny -eq 1 ]]; then
+    if command -v cargo-deny >/dev/null 2>&1; then
+        run_step "cargo deny check" cargo deny check
+    else
+        echo "cargo deny skipped (run \`cargo install cargo-deny\` to enable)"
+    fi
+fi
+
+# cargo-audit — RUSTSEC advisory gate (`.github/workflows/ci.yml`
+# audit job). Skip cleanly if `cargo-audit` isn't installed.
+if [[ $run_audit -eq 1 ]]; then
+    if command -v cargo-audit >/dev/null 2>&1; then
+        run_step "cargo audit" cargo audit
+    else
+        echo "cargo audit skipped (run \`cargo install cargo-audit --locked\` to enable)"
+    fi
+fi
+
+# Cross-target check — mirrors the cross-targets job's wasm32 leg.
+# Just the wasm-portable crates: rustls / corosensei / mio aren't
+# wasm-clean, so runtime / sched / binding / pkg can't be asked to
+# compile there. The Linux cross targets (aarch64-gnu, riscv64-gnu)
+# need a target-prefixed gcc that's hard to expect on dev machines
+# — those stay CI-only.
+if [[ $run_cross -eq 1 ]]; then
+    if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
+        run_step "cargo check --target wasm32-unknown-unknown (wasm-portable crates)" \
+            cargo check -p gossamer-abi -p gossamer-binding-macros -p gossamer-gc \
+            --target wasm32-unknown-unknown
+    else
+        echo "cross-target check skipped (run \`rustup target add wasm32-unknown-unknown\` to enable)"
+    fi
+fi
+
+# ASan / TSan — mirrors `.github/workflows/sanitizers.yml`. Requires
+# the pinned nightly toolchain + `rust-src` so `-Z build-std` works.
+# Skip cleanly when the toolchain isn't installed so dev machines
+# without nightly stay usable.
+if [[ $run_sanitizers -eq 1 ]]; then
+    asan_toolchain="nightly-2026-04-14"
+    if rustup toolchain list 2>/dev/null | grep -q "^${asan_toolchain}"; then
+        if rustup component list --installed --toolchain "$asan_toolchain" 2>/dev/null | grep -q rust-src; then
+            RUSTFLAGS="-Z sanitizer=address" \
+            RUSTDOCFLAGS="-Z sanitizer=address" \
+            ASAN_OPTIONS="detect_leaks=0:abort_on_error=1:halt_on_error=1" \
+                run_step "cargo +$asan_toolchain test (ASan)" \
+                cargo "+$asan_toolchain" test \
+                    -Z build-std \
+                    --target x86_64-unknown-linux-gnu \
+                    --lib \
+                    -p gossamer-runtime \
+                    -p gossamer-interp \
+                    -p gossamer-gc \
+                    -p gossamer-coro \
+                    -p gossamer-mir \
+                    -p gossamer-binding
+
+            RUSTFLAGS="-Z sanitizer=thread" \
+            RUSTDOCFLAGS="-Z sanitizer=thread" \
+            TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1" \
+                run_step "cargo +$asan_toolchain test (TSan)" \
+                cargo "+$asan_toolchain" test \
+                    -Z build-std \
+                    --target x86_64-unknown-linux-gnu \
+                    --lib \
+                    -p gossamer-runtime \
+                    -p gossamer-sched \
+                    -p gossamer-coro \
+                    -p gossamer-gc
+        else
+            echo "sanitizers skipped (run \`rustup component add rust-src --toolchain $asan_toolchain\` to enable)"
+        fi
+    else
+        echo "sanitizers skipped (run \`rustup toolchain install $asan_toolchain --component rust-src\` to enable)"
+    fi
+fi
+
 # Fuzz smoke — mirrors `.github/workflows/fuzz.yml` so adversarial
 # inputs that CI would flag also fail locally. Each target runs
 # briefly (10 s by default; override with GOSSAMER_FUZZ_SECS) and
@@ -77,7 +205,7 @@ run_step "gos feature-status --status experimental --check" ./target/debug/gos f
 # nightly toolchain isn't installed so the rest of `check.sh`
 # stays useful on dev machines that haven't set the harness up.
 fuzz_secs="${GOSSAMER_FUZZ_SECS:-10}"
-if command -v cargo-fuzz >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
+if [[ $run_fuzz -eq 1 ]] && command -v cargo-fuzz >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
     echo "==> fuzz smoke (${fuzz_secs}s per target)"
     fuzz_log="$(mktemp -d)/fuzz.log"
     for target in lex parse manifest http_request typecheck resolve mir_lower hir_lower vm_compile vm_run; do
@@ -98,6 +226,6 @@ if command -v cargo-fuzz >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | 
         fi
     done
     rm -f "$fuzz_log"
-else
+elif [[ $run_fuzz -eq 1 ]]; then
     echo "fuzz smoke skipped (need nightly toolchain + 'cargo install cargo-fuzz')"
 fi

@@ -65,7 +65,8 @@ impl<'src> Parser<'src> {
     }
 
     /// Drains the parser's collection of `use` decls hoisted out of
-    /// inline-module bodies. See the field docs on [`Self::hoisted_uses`].
+    /// inline-module bodies. See the field docs on the parser's
+    /// `hoisted_uses` field.
     pub fn take_hoisted_uses(&mut self) -> Vec<gossamer_ast::UseDecl> {
         std::mem::take(&mut self.hoisted_uses)
     }

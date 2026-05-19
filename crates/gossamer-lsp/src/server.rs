@@ -2702,9 +2702,9 @@ fn lsp_range_to_offsets(doc: &DocumentAnalysis, range: &Value) -> (usize, usize)
 }
 
 /// Builds a single `CodeAction` of kind `quickfix` from a
-/// diagnostic-attached [`Suggestion`]. The action's
-/// `WorkspaceEdit` replaces the suggestion's location with the
-/// suggestion's `replacement` text.
+/// diagnostic-attached [`gossamer_diagnostics::Suggestion`]. The
+/// action's `WorkspaceEdit` replaces the suggestion's location
+/// with the suggestion's `replacement` text.
 fn suggestion_to_code_action(
     doc: &DocumentAnalysis,
     uri: &str,
@@ -3415,8 +3415,8 @@ pub mod testing {
 
     use super::ServerState;
 
-    /// Thin wrapper around [`ServerState`] mirroring the request
-    /// surface used by the JSON-RPC loop.
+    /// Thin wrapper around the crate-private `ServerState` mirroring
+    /// the request surface used by the JSON-RPC loop.
     pub struct ServerHandle {
         state: ServerState,
     }

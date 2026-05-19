@@ -137,7 +137,7 @@ pub unsafe extern "C" fn gos_rt_signal_try_wait(handle: i64) -> i32 {
 /// matching `slice::sort_by`'s comparator contract.
 ///
 /// Used by the MIR-side `xs.sort_by(closure)` lowering for fixed-
-/// size arrays. The Vec<T> case routes through
+/// size arrays. The `Vec<T>` case routes through
 /// `gos_rt_vec_sort_by_i64` instead. We pass the elements by
 /// value (not pointer) because the typechecker today leaves the
 /// closure params as plain `i64` rather than `&i64`, so the

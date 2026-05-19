@@ -23,7 +23,7 @@ use super::*;
 // `let q = queue::push(q, v)` re-bind idiom.
 // ---------------------------------------------------------------
 
-/// Append `value` to a clone of the input Vec<i64>. Returns a
+/// Append `value` to a clone of the input `Vec<i64>`. Returns a
 /// fresh Vec so the caller's old binding can be dropped cleanly
 /// (MIR's let-shadowing pattern is sensitive to same-pointer
 /// returns — see `containers_seq_demo.gos` for the canonical

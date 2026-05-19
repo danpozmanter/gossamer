@@ -387,7 +387,7 @@ fn with_local_roots<R>(f: impl FnOnce(&ThreadRoots) -> R) -> R {
 /// these immediately after every aggregate-typed local
 /// assignment.
 ///
-/// When the per-thread stack reaches [`shadow_stack_cap`], the
+/// When the per-thread stack reaches `shadow_stack_cap`, the
 /// helper runs a stop-the-world collect before pushing. The cap
 /// itself is not lifted (function returns do that), but the
 /// collect bounds the live heap so adversarial inputs that

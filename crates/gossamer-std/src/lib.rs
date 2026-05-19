@@ -19,13 +19,13 @@ pub mod bytes;
 pub mod collections;
 /// Compression and decompression codecs (gzip, flate, zlib, bzip2).
 pub mod compress;
-/// Min-heap (priority queue) over Vec<i64> (`std::container::heap`).
+/// Min-heap (priority queue) over `Vec<i64>` (`std::container::heap`).
 pub mod container_heap;
 /// Linked list + sorted-on-insert Vec / list variants.
 pub mod container_ordered;
-/// FIFO queue / LIFO stack / double-ended queue over Vec<i64>.
+/// FIFO queue / LIFO stack / double-ended queue over `Vec<i64>`.
 pub mod container_seq;
-/// Sorted set + map containers backed by Vec<i64>.
+/// Sorted set + map containers backed by `Vec<i64>`.
 pub mod container_set_map;
 pub mod context;
 pub mod crypto;

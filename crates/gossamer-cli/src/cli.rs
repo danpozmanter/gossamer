@@ -1,8 +1,8 @@
 //! `gos` argument parsing + dispatch table.
 //!
-//! Owning the `clap`-derived [`Cli`] / [`Command`] types here keeps
+//! Owning the `clap`-derived `Cli` / `Command` types here keeps
 //! `main.rs` to just a runtime entry point. Every variant matches in
-//! [`run`] to a single line that delegates to a `crate::cmd::*`
+//! `run` to a single line that delegates to a `crate::cmd::*`
 //! module.
 
 use std::path::{Path, PathBuf};
