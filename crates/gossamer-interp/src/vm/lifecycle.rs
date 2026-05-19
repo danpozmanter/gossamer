@@ -59,11 +59,11 @@ impl Vm {
         }
     }
 
-    /// Bumps the [`Self::globals_generation`] counter and returns
-    /// the new value. Call from any code path that mutates
-    /// [`Self::globals`] after `Vm::new` / `Vm::with_globals` have
-    /// returned. Inline caches stamped with an older value will be
-    /// treated as misses and re-resolved against the new map.
+    /// Bumps the `globals_generation` counter and returns the new
+    /// value. Call from any code path that mutates `globals` after
+    /// `Vm::new` / `Vm::with_globals` have returned. Inline caches
+    /// stamped with an older value will be treated as misses and
+    /// re-resolved against the new map.
     pub fn bump_globals_generation(&self) -> u32 {
         let next = self.globals_generation.get().wrapping_add(1);
         // Skip 0 on wrap so the empty-slot sentinel stays distinct

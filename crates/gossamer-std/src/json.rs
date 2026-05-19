@@ -2,7 +2,7 @@
 //! Implements the dynamic [`Value`] type and a hand-written
 //! recursive-descent parser + emitter pair. The derive-based
 //! `Serialize` / `Deserialize` traits from the SPEC lower to calls
-//! into [`to_value`] / [`from_value`] once the compiler grows derive
+//! into `to_value` / `from_value` once the compiler grows derive
 //! support, so the surface here is stable even though the macro layer
 //! is not yet present.
 
@@ -271,7 +271,7 @@ pub mod serde_surface {
     }
 }
 
-/// Streaming JSON decoder over an [`io::Read`] source. Mirrors Go's
+/// Streaming JSON decoder over an [`std::io::Read`] source. Mirrors Go's
 /// `json.NewDecoder(r).Decode(&v)` shape: each call to [`Decoder::decode`]
 /// returns the next document on the stream as a [`Value`]. Suitable for
 /// JSON-Lines / NDJSON workloads where the response body is too large
@@ -476,7 +476,7 @@ impl<R: std::io::Read> Decoder<R> {
 }
 
 /// Streaming JSON encoder writing one document per [`Encoder::encode`]
-/// call into an [`io::Write`] sink.
+/// call into an [`std::io::Write`] sink.
 pub struct Encoder<W: std::io::Write> {
     writer: W,
 }

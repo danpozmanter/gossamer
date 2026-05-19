@@ -9,7 +9,7 @@
 
 //! Typed query-string wrapper.
 //!
-//! [`Query`] parses a URL query string (the part after `?`, with
+//! `Query` parses a URL query string (the part after `?`, with
 //! the `?` already stripped) using the same wire format as
 //! `application/x-www-form-urlencoded`: `key=value` pairs joined
 //! by `&`, with `+` for spaces and `%XX` for arbitrary bytes

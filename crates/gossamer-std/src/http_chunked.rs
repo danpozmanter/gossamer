@@ -1,7 +1,7 @@
 //! HTTP/1.1 chunked transfer-encoding (RFC 7230 §4.1).
 //!
-//! Provides [`ChunkedReader`] for decoding inbound bodies and
-//! [`ChunkedWriter`] for encoding outbound streams. Both honour
+//! Provides `ChunkedReader` for decoding inbound bodies and
+//! `ChunkedWriter` for encoding outbound streams. Both honour
 //! the spec strictly: hex-encoded chunk sizes, optional
 //! chunk-extensions (ignored), CRLF-terminated framing, trailer
 //! parsing, and a final zero-length chunk.

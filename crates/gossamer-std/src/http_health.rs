@@ -1,7 +1,7 @@
 //! Runtime support for `std::http::health` — operational health,
 //! readiness, and liveness endpoints.
 //!
-//! A `Health` builder collects named [`Probe`]s; each probe runs a
+//! A `Health` builder collects named `Probe`s; each probe runs a
 //! check and returns `Ok` (healthy) or `Err(message)` (degraded).
 //! The `handler()` method returns a closure that any router can
 //! mount at `/health` / `/readiness` / `/liveness`.

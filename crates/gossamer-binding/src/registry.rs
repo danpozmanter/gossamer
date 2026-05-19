@@ -55,7 +55,8 @@ pub struct Module {
     pub items: &'static [ItemFn],
 }
 
-/// Every `Module` registered via [`register_module!`].
+/// Every `Module` registered via the crate's `register_module!`
+/// macro.
 ///
 /// The slice is populated at link time; a binary that doesn't
 /// link any binding crate sees an empty slice.

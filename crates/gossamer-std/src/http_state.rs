@@ -1,6 +1,6 @@
 //! Application-state container for HTTP handlers.
 //!
-//! A [`TypeMap`](AppState) keyed by [`TypeId`] that stores at most one value
+//! A `TypeMap` (see `AppState`) keyed by `TypeId` that stores at most one value
 //! per Rust type. Handlers reach shared dependencies (database pools,
 //! configuration, template caches, metrics sinks, etc.) by looking them up
 //! through this container rather than threading every dependency through
@@ -12,7 +12,7 @@
 //!   the trait object back to the concrete type and clones the `Arc`, so
 //!   callers receive `Arc<T>` and can hold a reference for as long as they
 //!   need without blocking writers.
-//! - The map itself lives behind `Arc<RwLock<...>>`. Cloning [`AppState`]
+//! - The map itself lives behind `Arc<RwLock<...>>`. Cloning `AppState`
 //!   is O(1) and every clone observes the same set of values.
 //! - All operations take a read or write lock, perform the lookup, and
 //!   release the guard before returning — the lock is never held across a
@@ -20,7 +20,7 @@
 //!
 //! # Thread safety
 //!
-//! [`AppState`] is `Send + Sync`. Goroutines (and OS threads) may share a
+//! `AppState` is `Send + Sync`. Goroutines (and OS threads) may share a
 //! single instance freely; the entries themselves must be `Send + Sync +
 //! 'static` so they can also cross those boundaries.
 
@@ -125,7 +125,7 @@ impl AppState {
 /// Wires `state` into `router`'s middleware chain so every handler
 /// registered against the router sees the same shared [`AppState`].
 ///
-/// Handlers retrieve typed values through [`State::from_request`] —
+/// Handlers retrieve typed values through `State::from_request` —
 /// the request object carries the `AppState` reference under a
 /// stable extension slot.
 ///

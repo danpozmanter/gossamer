@@ -8,7 +8,7 @@
 //!
 //! Surface mirrors Go's `net/http.Client`:
 //!
-//! - [`NativeClient::new`] / `NativeClient::builder`
+//! - `NativeClient::new` / `NativeClient::builder`
 //! - `get` / `post` / `put` / `delete` / `request`
 //! - Per-request `Context` (cancellation + deadline)
 //! - Connection pool keyed by `(host, port)`

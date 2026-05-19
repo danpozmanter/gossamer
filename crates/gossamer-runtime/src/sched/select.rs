@@ -67,7 +67,7 @@ fn shuffled_indices(n: usize) -> Vec<usize> {
     order
 }
 
-/// Operation to attempt when polling a [`select`] set.
+/// Operation to attempt when polling a `select` set.
 pub enum SelectOp<'a, T> {
     /// Attempt to receive a value from `chan`.
     Recv {
@@ -83,7 +83,7 @@ pub enum SelectOp<'a, T> {
     },
 }
 
-/// Outcome of a single poll over a [`select`] set.
+/// Outcome of a single poll over a `select` set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectOutcome<T> {
     /// Arm index `index` received `value`.

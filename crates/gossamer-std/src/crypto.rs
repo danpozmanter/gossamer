@@ -20,11 +20,11 @@ pub mod rand {
     //!
     //! Two surfaces:
     //!
-    //! - [`fill`] / [`bytes`] / [`nonce_12`] — recoverable. They
+    //! - [`fill`] / [`bytes()`] / [`nonce_12`] — recoverable. They
     //!   return `Result<_, Error>`; callers that can refuse the
     //!   operation surface the failure.
     //! - [`fill_or_abort`] — non-recoverable. Used by infallible
-    //!   helpers like [`OsRng`]'s `RngCore` impl, where the
+    //!   helpers like `OsRng`'s `RngCore` impl, where the
     //!   alternative was a `.expect(...)` panic. The function
     //!   `process::abort()`s on CSPRNG failure rather than
     //!   panicking, because a panic could be caught by an outer
@@ -47,7 +47,7 @@ pub mod rand {
     /// On any host where the kernel CSPRNG is unavailable this returns
     /// an `Err` rather than zero-filling the buffer; callers must
     /// surface the failure to refuse the operation. Fault injection
-    /// for tests is available via [`set_fault_for_tests`].
+    /// for tests is available via `set_fault_for_tests`.
     pub fn fill(buf: &mut [u8]) -> Result<(), Error> {
         if test_support::fault_injected() {
             return Err(Error::new(
@@ -62,7 +62,7 @@ pub mod rand {
     ///
     /// Use only at call sites whose API contract is infallible
     /// (`RngCore::fill_bytes`, internal key-material generation
-    /// inside [`OsRng`]). The abort is deliberate: it cannot be
+    /// inside `OsRng`). The abort is deliberate: it cannot be
     /// caught by [`std::panic::catch_unwind`], so an outer
     /// fault-isolation boundary cannot silently swallow a
     /// catastrophic entropy failure and continue with zero bytes.

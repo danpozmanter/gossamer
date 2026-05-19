@@ -348,7 +348,7 @@ fn heap() -> &'static Mutex<Heap> {
 
 /// Returns the current GC statistics snapshot — wraps
 /// [`Heap::stats`] so callers don't need to acquire the global lock
-/// themselves. Used by [`crate::runtime`]-equivalent stdlib code.
+/// themselves. Used by `crate::runtime`-equivalent stdlib code.
 #[must_use]
 pub fn stats() -> GcStats {
     with_heap(|h| h.stats())

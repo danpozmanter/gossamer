@@ -57,7 +57,7 @@ impl Error {
 
     /// Wraps `cause` with a higher-level message.
     ///
-    /// Chain traversal with [`chain`] walks `self -> cause -> ...`.
+    /// Chain traversal with `chain` walks `self -> cause -> ...`.
     #[must_use]
     pub fn wrap(cause: Error, message: impl Into<String>) -> Self {
         Self {

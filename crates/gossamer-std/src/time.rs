@@ -587,7 +587,7 @@ impl Drop for TimerHandle {
 
 /// IANA timezone-aware operations. Gated on the `tz` feature so the
 /// stdlib stays slim by default; once the feature is on, callers
-/// can construct a [`Location`] from any IANA name and convert
+/// can construct a `Location` from any IANA name and convert
 /// `SystemTime`s into local civil time and back.
 pub mod tz {
 

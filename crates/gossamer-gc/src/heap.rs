@@ -38,8 +38,8 @@ impl GcRef {
 #[derive(Debug, Clone)]
 pub struct Obj {
     /// Classification tag that the scanner uses to decide which fields
-    /// are GC references. Callers can attach any additional payload to
-    /// the adjacent [`Payload`].
+    /// are GC references. Callers can attach any additional payload
+    /// to the adjacent `payload` field.
     pub kind: ObjKind,
     /// Child references the tracing pass should follow.
     ///

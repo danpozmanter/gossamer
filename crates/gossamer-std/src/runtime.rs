@@ -138,7 +138,7 @@ pub fn num_goroutines() -> usize {
 
 // --- runtime::caller / runtime::stack (P1 stdlib) -------------------
 
-/// One frame in a [`stack`] or [`callers`] dump.
+/// One frame in a [`stack`] or `callers` dump.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackFrame {
     /// Function name (best-effort; demangled when available).

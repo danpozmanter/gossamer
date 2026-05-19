@@ -331,7 +331,7 @@ pub fn render_to(out: &mut impl Write) -> std::io::Result<usize> {
 }
 
 /// Renders just the active goroutine's call stack into a string,
-/// innermost frame first. Used by [`gos_rt_panic`] to inline the
+/// innermost frame first. Used by `gos_rt_panic` to inline the
 /// trace with the diagnostic.
 #[must_use]
 pub fn render_active_panic_trace() -> String {

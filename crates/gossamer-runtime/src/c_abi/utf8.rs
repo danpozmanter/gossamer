@@ -16,7 +16,7 @@
 #![allow(clippy::wildcard_imports)]
 
 //! C-ABI surface for `std::utf8`. Mirrors the most common helpers
-//! exposed by [`gossamer_std::utf8`] in shapes the compiled tiers
+//! exposed by `gossamer_std::utf8` in shapes the compiled tiers
 //! can call directly:
 //! - bool predicates return `i64` (0/1)
 //! - `char` arguments arrive as `u32`

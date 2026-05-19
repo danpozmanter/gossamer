@@ -1,5 +1,5 @@
 //! SQL trait surface and driver registry, shared by the bytecode VM,
-//! Cranelift JIT, and LLVM AOT through [`c_abi::sql`].
+//! Cranelift JIT, and LLVM AOT through [`crate::c_abi::sql`].
 //!
 //! Drivers are third-party Rust crates that implement [`Driver`] and
 //! call [`register`] at startup. No driver auto-registers; callers

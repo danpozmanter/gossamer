@@ -12,7 +12,7 @@
 //! `Cancel::cancel_with` is **eager**: it walks every descendant
 //! of the cancelled context, flips each one's cancelled flag,
 //! drains each one's wait-list, and unparks the registered
-//! goroutines via [`crate::sched_global::scheduler().unpark`].
+//! goroutines via `crate::sched_global::scheduler().unpark`.
 //! Cancel-aware blocking primitives (`time::sleep_ctx`,
 //! `Channel::recv_ctx`, etc.) register the current goroutine's
 //! `Gid` with the context's wait list before parking; on resume
@@ -216,7 +216,7 @@ impl Context {
     ///
     /// If the context is already cancelled at registration time,
     /// the gid is not added — the caller should check
-    /// [`is_cancelled`] before parking.
+    /// `is_cancelled` before parking.
     pub fn register_waiter(&self, gid: Gid) {
         if self.is_cancelled() {
             return;
@@ -297,7 +297,7 @@ impl Context {
     }
 
     /// Placeholder context — semantically identical to
-    /// [`background`] today, but marks call sites that should
+    /// [`Self::background`] today, but marks call sites that should
     /// eventually thread a real context through.
     #[must_use]
     pub fn todo() -> Self {

@@ -1,6 +1,6 @@
 //! Runtime support for `std::tls` — TLS termination and dialling.
 //! Backed by [`rustls`] + the Mozilla root-CA bundle from
-//! [`webpki-roots`].
+//! `webpki-roots`.
 //!
 //! Three sets of builders are exposed:
 //! - [`server_config`] / [`server_config_with_client_auth`] produce a

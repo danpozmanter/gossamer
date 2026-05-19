@@ -4,20 +4,20 @@
 //!
 //! Both `quinn` and `h3` are async-only and assume a tokio
 //! reactor is driving timers and UDP I/O. Gossamer's scheduler
-//! does not expose those primitives, so each [`serve`] call and
-//! each [`Client`] instance spins up its own current-thread
+//! does not expose those primitives, so each `serve` call and
+//! each `Client` instance spins up its own current-thread
 //! tokio runtime that stays private to the module; callers see
 //! only synchronous entry points that mirror the [`http_h2`] and
 //! [`http`] surfaces.
 //!
 //! Public surface mirrors `http_h2`:
 //!
-//! - [`serve`] — bind a UDP socket on the supplied address, run
+//! - `serve` — bind a UDP socket on the supplied address, run
 //!   a quinn endpoint, dispatch every accepted request to the
-//!   handler (the same [`crate::http::Handler`] trait the rest of
+//!   handler (the same `crate::http::Handler` trait the rest of
 //!   the HTTP stack speaks).
-//! - [`Client`] — issue HTTP/3 requests against a remote endpoint.
-//!   Same shape as [`crate::http::Client`]: `new`, `get`, `post`,
+//! - `Client` — issue HTTP/3 requests against a remote endpoint.
+//!   Same shape as `crate::http::Client`: `new`, `get`, `post`,
 //!   `put`, `delete`, `head`, `options`, `request`.
 //!
 //! [`http_h2`]: crate::http_h2

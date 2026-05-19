@@ -13,7 +13,7 @@
 
 //! HTTP middleware suite.
 //!
-//! Each middleware is a function that wraps a [`Handler`] (the
+//! Each middleware is a function that wraps a `Handler` (the
 //! router's handler type) and returns a new handler. Composition
 //! is straightforward function chaining:
 //!
@@ -30,12 +30,12 @@
 //!
 //! The shipped middlewares:
 //!
-//! - [`logger`] — request/response logging.
-//! - [`recoverer`] — catches handler panics, returns 500.
-//! - [`request_id`] — stamps every response with `X-Request-Id`.
-//! - [`cors`] — CORS preflight + per-response headers.
-//! - [`basic_auth`] — HTTP Basic auth gate.
-//! - [`compress_gzip`] — gzips response bodies when the client
+//! - `logger` — request/response logging.
+//! - `recoverer` — catches handler panics, returns 500.
+//! - `request_id` — stamps every response with `X-Request-Id`.
+//! - `cors` — CORS preflight + per-response headers.
+//! - `basic_auth` — HTTP Basic auth gate.
+//! - `compress_gzip` — gzips response bodies when the client
 //!   advertises `Accept-Encoding: gzip`.
 
 use std::sync::Arc;

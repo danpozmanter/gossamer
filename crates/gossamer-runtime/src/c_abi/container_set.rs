@@ -96,8 +96,8 @@ pub unsafe extern "C" fn gos_rt_oset_contains_i64(v: *const GosVec, value: i64) 
     unsafe { gos_rt_ovec_contains_i64(v, value) }
 }
 
-/// `om_insert(m, k, v)` — set m[k] = v, keeping the flat
-/// [k0,v0,k1,v1,...] buffer sorted by key.
+/// `om_insert(m, k, v)` — set `m[k] = v`, keeping the flat
+/// `[k0,v0,k1,v1,...]` buffer sorted by key.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_omap_insert_i64(
     v: *mut GosVec,

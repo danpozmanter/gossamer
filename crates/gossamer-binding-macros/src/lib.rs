@@ -9,7 +9,7 @@
 //! - `#[gos_opaque]` on an `impl Type { ... }` block — turns every
 //!   `pub fn` (including `&self` / `&mut self` methods) into a
 //!   binding item named `Type::method`, backed by a per-type
-//!   [`gossamer_binding::Registry<T>`] keyed by `i64` handle.
+//!   `gossamer_binding::Registry<T>` keyed by `i64` handle.
 //! - `#[gos_blocking]` on a binding fn — wraps the body in a
 //!   blocking-pool dispatch so a long sync call doesn't stall the
 //!   scheduler.

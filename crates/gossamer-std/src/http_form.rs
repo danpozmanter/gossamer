@@ -9,7 +9,7 @@
 
 //! `application/x-www-form-urlencoded` parser and serializer.
 //!
-//! Backs `std::http::form`. A [`Form`] is an ordered list of
+//! Backs `std::http::form`. A `Form` is an ordered list of
 //! `(name, value)` pairs decoded from a request body using the
 //! HTML form-encoding rules (`+` -> space, `%XX` -> byte). The
 //! same wire format is used for URL query strings, but those are

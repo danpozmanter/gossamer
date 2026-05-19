@@ -197,7 +197,7 @@ pub unsafe extern "C" fn gos_rt_set_program_name(name: *const c_char) {
     });
 }
 
-/// Returns the program name as a `*const c_char` (argv[0] for native
+/// Returns the program name as a `*const c_char` (`argv[0]` for native
 /// binaries; the script path for `gos run`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_os_program_name() -> *const c_char {

@@ -15,7 +15,7 @@ pub fn args() -> Vec<String> {
     std::env::args().collect()
 }
 
-/// Returns the path used to invoke the program (argv[0]).
+/// Returns the path used to invoke the program (argv\[0\]).
 #[must_use]
 pub fn program_name() -> String {
     std::env::args().next().unwrap_or_default()

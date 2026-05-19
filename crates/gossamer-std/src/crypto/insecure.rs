@@ -22,7 +22,7 @@ pub fn md5(data: &[u8]) -> [u8; 16] {
     <Md5 as md5::Digest>::digest(data).into()
 }
 
-/// Lowercase hex of [`md5`].
+/// Lowercase hex of [`md5()`].
 ///
 /// WARNING: MD5 is cryptographically broken.
 #[must_use]
@@ -40,7 +40,7 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
     Sha1::digest(data).into()
 }
 
-/// Lowercase hex of [`sha1`].
+/// Lowercase hex of [`sha1()`].
 ///
 /// WARNING: SHA-1 is cryptographically broken.
 #[must_use]

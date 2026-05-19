@@ -28,12 +28,12 @@
 //!
 //! Two surfaces:
 //!
-//! - [`accept`] — server-side handshake from an HTTP request.
-//!   Returns a [`WebSocket`] wrapping the upgraded TCP/TLS
+//! - `accept` — server-side handshake from an HTTP request.
+//!   Returns a `WebSocket` wrapping the upgraded TCP/TLS
 //!   connection.
-//! - [`WebSocket`] — full-duplex frame interface:
+//! - `WebSocket` — full-duplex frame interface:
 //!   `send_text` / `send_binary` / `send_ping` / `send_pong` /
-//!   `send_close` / `receive` (returns the next [`Message`]).
+//!   `send_close` / `receive` (returns the next `Message`).
 //!
 //! Frame format per RFC 6455 §5.2. Server-side does NOT mask
 //! frames; client-side masking is required and applied by the

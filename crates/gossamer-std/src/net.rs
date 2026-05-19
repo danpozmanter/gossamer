@@ -91,7 +91,7 @@ impl TcpListener {
         }
     }
 
-    /// Cancellation-aware variant of [`accept`].
+    /// Cancellation-aware variant of [`Self::accept`].
     pub fn accept_ctx(
         &mut self,
         ctx: &crate::context::Context,
@@ -182,7 +182,7 @@ impl TcpStream {
         }
     }
 
-    /// Cancellation-aware variant of [`read`].
+    /// Cancellation-aware variant of [`Self::read`].
     ///
     /// Loops through the same non-blocking-read / poll-park
     /// cycle as `read`, but checks `ctx.is_cancelled()` on
@@ -258,7 +258,7 @@ impl TcpStream {
         Ok(())
     }
 
-    /// Cancellation-aware variant of [`write_all`].
+    /// Cancellation-aware variant of [`Self::write_all`].
     pub fn write_all_ctx(
         &mut self,
         ctx: &crate::context::Context,
@@ -379,7 +379,7 @@ impl UdpSocket {
             .map_err(|e| IoError::from_std(e, addr))
     }
 
-    /// Cancellation-aware variant of [`send_to`]. The kernel UDP
+    /// Cancellation-aware variant of [`Self::send_to`]. The kernel UDP
     /// send path is essentially non-blocking, so cancellation is
     /// observed *before* the send attempt; the call itself does
     /// not park.
@@ -404,7 +404,7 @@ impl UdpSocket {
             .map_err(|e| IoError::from_std(e, "UdpSocket::recv_from"))
     }
 
-    /// Cancellation-aware variant of [`recv_from`].
+    /// Cancellation-aware variant of [`Self::recv_from`].
     ///
     /// Sets a short `SO_RCVTIMEO` so each blocking syscall returns
     /// within 50ms, then re-checks `ctx.is_cancelled()` between

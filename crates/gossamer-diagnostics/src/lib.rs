@@ -1,6 +1,6 @@
 //! Structured diagnostics for the Gossamer compiler.
 //! Every front-end crate constructs [`Diagnostic`] values; the CLI
-//! renders them through [`render`] with a rustc/elm-style frame,
+//! renders them through [`render()`] with a rustc/elm-style frame,
 //! primary and secondary labels, notes, helps, and optional
 //! structured fix-it suggestions the formatter can apply.
 //! The shape is deliberately small: severity, stable error code, one

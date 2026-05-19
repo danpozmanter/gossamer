@@ -33,8 +33,8 @@ thread_local! {
 /// returns. Called by the CLI entrypoint before invoking `main`.
 ///
 /// Wires both execution paths:
-/// - The bytecode VM's `os::args()` builtin reads from
-///   [`PROGRAM_ARGS`] (the thread-local cell below).
+/// - The bytecode VM's `os::args()` builtin reads from the
+///   `PROGRAM_ARGS` thread-local cell below.
 /// - JIT-compiled `main` calls into the runtime's
 ///   `gos_rt_os_args`, which reads from a *different* static
 ///   inside `gossamer-runtime::c_abi`. Without this second wire,
@@ -42,7 +42,7 @@ thread_local! {
 ///   when their `main` JIT-compiles, fall back to the default N
 ///   (typically 1000), and silently produce undersized output.
 ///
-/// The runtime side is wired by [`crate::set_runtime_args`] in
+/// The runtime side is wired by `crate::set_runtime_args` in
 /// `lib.rs`, which is allowed to call into the FFI; this module
 /// keeps `forbid(unsafe_code)`.
 pub fn set_program_args(args: &[String]) {

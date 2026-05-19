@@ -4,17 +4,17 @@
 //! shipped by default. Sessions serialize as JSON, are framed as a
 //! single cookie, and travel one of two wire shapes:
 //!
-//! - [`SerializationMode::SignedOnly`] — JSON payload + HMAC-SHA256
+//! - `SerializationMode::SignedOnly` — JSON payload + HMAC-SHA256
 //!   tag. The payload is visible to the client; the tag prevents
 //!   tampering.
-//! - [`SerializationMode::Encrypted`] — AES-256-GCM ciphertext with
+//! - `SerializationMode::Encrypted` — AES-256-GCM ciphertext with
 //!   integrated auth tag. The payload is opaque to the client and
 //!   tampering is rejected by the AEAD open.
 //!
 //! Both shapes support **key rotation**: configure one active key
 //! (used for sign / encrypt) and any number of legacy keys (tried
 //! in order on verify / decrypt). When a legacy key opens a
-//! cookie, the next [`SessionStore::save`] re-signs with the
+//! cookie, the next `SessionStore::save` re-signs with the
 //! active key, so rotation is transparent to callers.
 //!
 //! Invalid cookies — bad format, bad signature, bad ciphertext,

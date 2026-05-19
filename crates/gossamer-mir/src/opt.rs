@@ -755,7 +755,7 @@ fn count_terminator_reads(terminator: &Terminator, uses: &mut HashMap<Local, usi
     }
 }
 
-/// Returns the number of [`Statement`]s across all blocks.
+/// Returns the number of [`crate::ir::Statement`]s across all blocks.
 #[must_use]
 pub fn statement_count(body: &Body) -> usize {
     body.blocks.iter().map(|b| b.stmts.len()).sum()

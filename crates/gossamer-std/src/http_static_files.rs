@@ -14,7 +14,7 @@
 
 //! Static file server.
 //!
-//! [`FileServer`] serves files from a root directory. Mirrors
+//! `FileServer` serves files from a root directory. Mirrors
 //! Go's `http.FileServer` semantics:
 //!
 //! - `Last-Modified` + `ETag` headers with conditional GET

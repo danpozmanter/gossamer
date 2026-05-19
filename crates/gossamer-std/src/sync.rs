@@ -130,7 +130,7 @@ impl<T> Mutex<T> {
         Some(result)
     }
 
-    /// Cancellation-aware variant of [`with`].
+    /// Cancellation-aware variant of [`Self::with`].
     ///
     /// Polls `try_lock` and yields to the scheduler between
     /// attempts (or briefly sleeps on OS threads). On cancellation
@@ -548,7 +548,7 @@ impl WaitGroup {
         self.add(-1);
     }
 
-    /// Cancellation-aware variant of [`wait`].
+    /// Cancellation-aware variant of [`Self::wait`].
     ///
     /// Behaves identically to `wait()` when `ctx` is not
     /// cancelled. If `ctx` is cancelled while the goroutine is

@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-/// Opaque identifier for a goroutine inside a [`crate::Scheduler`].
+/// Opaque identifier for a goroutine inside a [`crate::sched::Scheduler`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Gid(pub u32);
 
@@ -24,7 +24,7 @@ pub enum Step {
     Done,
 }
 
-/// Cooperative task driven by [`crate::Scheduler::run`]. Each call to
+/// Cooperative task driven by [`crate::sched::Scheduler::run`]. Each call to
 /// `step` advances the task's internal state machine by one quantum.
 pub trait Task {
     /// Advances the task. Returning [`Step::Yield`] cedes control back

@@ -1,6 +1,6 @@
 //! Server-Sent Events (SSE) — `text/event-stream`.
 //!
-//! [`SseStream`] wraps a writer (typically the upgraded TCP
+//! `SseStream` wraps a writer (typically the upgraded TCP
 //! connection from an HTTP handler) and emits events in the
 //! SSE wire format per the W3C spec:
 //!

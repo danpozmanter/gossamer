@@ -486,7 +486,7 @@ pub mod server {
         pub server_name: Option<String>,
         /// Number of requests currently in-flight (passed to a
         /// handler but not yet responded to). Shared so
-        /// [`shutdown`] can wait for them to drain.
+        /// `shutdown` can wait for them to drain.
         pub in_flight: Arc<AtomicUsize>,
     }
 
@@ -1629,7 +1629,7 @@ impl Client {
         self.do_request(m, url, body, headers)
     }
 
-    /// Cancellation-aware variant of [`do_request`].
+    /// Cancellation-aware variant of [`Self::do_request`].
     pub fn do_request_ctx(
         &self,
         ctx: &crate::context::Context,

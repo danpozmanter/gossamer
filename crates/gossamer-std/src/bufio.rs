@@ -109,8 +109,8 @@ impl<R: Read> Scanner<R> {
     }
 
     /// Sets the maximum size of a single token. Tokens exceeding this
-    /// limit cause [`scan`] to return `false` and surface an error
-    /// via [`err`].
+    /// limit cause `scan` to return `false` and surface an error
+    /// via `err`.
     pub fn set_max_token_size(&mut self, size: usize) {
         self.max_token_size = size;
     }

@@ -260,7 +260,8 @@ impl Interpreter {
     }
 
     /// Loads function, impl, and trait items as closures. Call this after
-    /// [`load_non_fns`] when at least one bytecode chunk has deferred exprs.
+    /// [`Self::load_non_fns`] when at least one bytecode chunk has
+    /// deferred exprs.
     pub fn load_fns(&mut self, program: &HirProgram) {
         for item in &program.items {
             let module_prefix = if item.module_path.is_empty() {

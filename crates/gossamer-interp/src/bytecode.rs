@@ -265,7 +265,7 @@ pub enum Op {
     },
     /// Builds a `Value::IntArray` from `count` consecutive typed
     /// `i64` registers starting at `first_i`. Counterpart of
-    /// [`Op::BuildFloatArray`] for primitive integer arrays
+    /// [`WideOp::BuildFloatArray`] for primitive integer arrays
     /// (`[i64; N]` literals).
     BuildIntArray {
         /// Destination value register.
@@ -417,8 +417,8 @@ pub enum Op {
     /// Typed counterpart to [`Op::MapInc`] for `Value::IntMap`. Reads
     /// the key and increment from the i64 register file, mutates
     /// the map's slot in place, and writes the post-increment value
-    /// to `dst_i`. Skips the [`MapKey`] enum dispatch and the
-    /// [`Value::Int`] box that the generic `Op::MapInc` does.
+    /// to `dst_i`. Skips the `MapKey` enum dispatch and the
+    /// `Value::Int` box that the generic `Op::MapInc` does.
     IntMapInc {
         /// Destination `i64` register receiving the post-increment value.
         dst_i: Reg,

@@ -208,7 +208,7 @@ fn render_publish_body(request: &PublishRequest<'_>) -> String {
 }
 
 /// Transport extension that supports POSTing a body with an optional
-/// auth header. Implemented for both [`HttpsTransport`] and a test
+/// auth header. Implemented for both [`crate::transport::HttpsTransport`] and a test
 /// double; kept as a separate trait so the registry-side mock can
 /// inspect the body without going through the `Transport::get` API.
 pub trait UploadTransport: Send + Sync {

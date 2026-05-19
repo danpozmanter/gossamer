@@ -2,10 +2,10 @@
 //!
 //! Bindings that want to expose a Rust struct (e.g.
 //! `tuigoose::Terminal`) to Gossamer code can't pass it directly —
-//! the [`Value`] type does not have a `dyn Any` variant. Instead,
-//! the binding stores the value in a [`Registry<T>`] and gives
-//! Gossamer code an `i64` handle that round-trips through
-//! [`Value::Int`].
+//! the interpreter's `Value` type does not have a `dyn Any`
+//! variant. Instead, the binding stores the value in a
+//! [`Registry<T>`] and gives Gossamer code an `i64` handle that
+//! round-trips through the `Value::Int` variant.
 //!
 //! Each binding owns its own [`Registry`]. The registry is
 //! `Send + Sync` and uses interior mutability so a binding fn

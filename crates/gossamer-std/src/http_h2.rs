@@ -23,10 +23,10 @@
 //! - Graceful GOAWAY: `Server::shutdown(deadline)` triggers a
 //!   `goaway` frame and waits for in-flight streams to drain.
 //! - h2c (cleartext) and ALPN-selected h2-over-TLS both supported.
-//! - Bounded-body handlers via [`Handler`] — handler returns a
+//! - Bounded-body handlers via `Handler` — handler returns a
 //!   complete `Response`, body sent as one `DATA` frame.
-//! - Streaming handlers via [`StreamingHandler`] — handler is
-//!   passed a [`ResponseWriter`] and can emit `DATA` frames
+//! - Streaming handlers via `StreamingHandler` — handler is
+//!   passed a `ResponseWriter` and can emit `DATA` frames
 //!   incrementally. Suitable for server-sent events, long-poll
 //!   loops, or chunked uploads where the response body size is
 //!   not known up-front.
@@ -623,7 +623,7 @@ impl From<h2::Error> for Error {
     }
 }
 
-/// Handle returned by [`serve`] to control graceful shutdown.
+/// Handle returned by `serve` to control graceful shutdown.
 #[derive(Clone)]
 pub struct ServerHandle {
     shutdown: Arc<AtomicBool>,

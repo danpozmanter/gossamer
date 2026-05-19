@@ -37,7 +37,7 @@ pub enum JitKind {
     Bool,
     /// The unit value (no representation; the body has no return).
     Unit,
-    /// A runtime [`GossamerValue`] — the u64-packed shape the
+    /// A runtime [`gossamer_runtime::GossamerValue`] — the u64-packed shape the
     /// codegen uses for any non-scalar type (String, Tuple, Array,
     /// Struct, Variant, Closure, Channel). Aggregate values cross
     /// the JIT boundary as `gossamer_runtime::GossamerValue`

@@ -12,7 +12,7 @@
 
 //! HTTP reverse proxy.
 //!
-//! [`ReverseProxy`] forwards inbound requests to a configured
+//! `ReverseProxy` forwards inbound requests to a configured
 //! upstream and pipes the response back. Mirrors Go's
 //! `httputil.ReverseProxy` shape:
 //!

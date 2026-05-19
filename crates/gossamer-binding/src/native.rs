@@ -211,8 +211,8 @@ pub struct GosBytes {
 /// transfer points. Pointers of this type MUST NOT be handed to
 /// `gos_rt_map_free` — that helper `Box::from_raw`s the runtime
 /// layout and would drop a `parking_lot::Mutex` over garbage. Use
-/// [`gos_rt_binding_map_free`](gossamer_runtime::c_abi::gos_rt_binding_map_free)
-/// or let the GC arena reclaim the allocation.
+/// `gossamer_runtime::c_abi::gos_rt_binding_map_free` or let the
+/// GC arena reclaim the allocation.
 #[repr(C)]
 #[derive(Debug)]
 pub struct BindingGosMap {

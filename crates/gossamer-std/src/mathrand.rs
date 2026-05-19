@@ -15,7 +15,7 @@ pub struct Rng {
 
 impl Rng {
     /// Builds an RNG from `seed`. A `seed` of 0 is permitted — the
-    /// first [`next_u64`] still returns a non-zero value.
+    /// first [`Self::next_u64`] still returns a non-zero value.
     #[must_use]
     pub const fn new(seed: u64) -> Self {
         Self { state: seed }

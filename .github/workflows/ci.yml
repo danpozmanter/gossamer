@@ -253,13 +253,48 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-cross-${{ matrix.target }}
-      # gossamer-cli (and friends) intentionally aren't expected to
-      # compile against wasm/no-std targets — they pull in tokio /
-      # libc / mio. The contract this job enforces: the runtime,
-      # the binding macros, and the package surface compile clean.
-      - name: cargo check (runtime / ABI / binding / pkg / gc / sched)
+      # Some transitive C-bound deps (blake3, ring) invoke cc-rs from
+      # their build scripts and need a target-prefixed cross compiler.
+      # wasm32-* don't need a C toolchain.
+      - name: install cross C toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'riscv64gc-unknown-linux-gnu'
         run: |
-          for crate in gossamer-runtime gossamer-abi gossamer-binding gossamer-binding-macros gossamer-pkg gossamer-gc gossamer-sched; do
+          sudo apt-get update
+          case "${{ matrix.target }}" in
+            aarch64-unknown-linux-gnu)
+              sudo apt-get install -y gcc-aarch64-linux-gnu
+              echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+              echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar" >> "$GITHUB_ENV"
+              echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+              ;;
+            riscv64gc-unknown-linux-gnu)
+              sudo apt-get install -y gcc-riscv64-linux-gnu
+              echo "CC_riscv64gc_unknown_linux_gnu=riscv64-linux-gnu-gcc" >> "$GITHUB_ENV"
+              echo "AR_riscv64gc_unknown_linux_gnu=riscv64-linux-gnu-ar" >> "$GITHUB_ENV"
+              echo "CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER=riscv64-linux-gnu-gcc" >> "$GITHUB_ENV"
+              ;;
+          esac
+      # The contract this job enforces is per-target. The full Linux
+      # cross targets (aarch64-gnu, riscv64-gnu) check the runtime
+      # surface end-to-end. The wasm32 targets check only the truly
+      # platform-agnostic crates — rustls / corosensei / mio aren't
+      # wasm-portable, so runtime / sched / binding / pkg can't be
+      # asked to compile there.
+      - name: cargo check (target-appropriate crate set)
+        run: |
+          case "${{ matrix.target }}" in
+            aarch64-unknown-linux-gnu|riscv64gc-unknown-linux-gnu)
+              crates="gossamer-runtime gossamer-abi gossamer-binding gossamer-binding-macros gossamer-pkg gossamer-gc gossamer-sched"
+              ;;
+            wasm32-unknown-unknown|wasm32-wasip1)
+              crates="gossamer-abi gossamer-binding-macros gossamer-gc"
+              ;;
+            *)
+              echo "unknown target: ${{ matrix.target }}" >&2
+              exit 1
+              ;;
+          esac
+          for crate in $crates; do
             cargo check -p "$crate" --target ${{ matrix.target }} || exit 1
           done
 

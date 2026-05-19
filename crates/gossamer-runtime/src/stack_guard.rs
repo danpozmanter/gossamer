@@ -408,7 +408,7 @@ mod windows {
         });
     }
 
-    unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
+    unsafe extern "system" fn handler(info: *const EXCEPTION_POINTERS) -> i32 {
         if info.is_null() {
             return EXCEPTION_CONTINUE_SEARCH;
         }

@@ -2,16 +2,16 @@
 //!
 //! Two parser entry points cover the wire shapes:
 //!
-//! - [`parse_cookie_header`] reads the client-sent `Cookie:` header
+//! - `parse_cookie_header` reads the client-sent `Cookie:` header
 //!   (`name1=value1; name2=value2`) and is lenient — malformed pairs
 //!   are skipped silently.
-//! - [`parse_set_cookie`] reads a server-sent `Set-Cookie:` header
+//! - `parse_set_cookie` reads a server-sent `Set-Cookie:` header
 //!   (`name=value; Path=/; HttpOnly`) and is strict on the name=value
 //!   pair, lenient on unknown attributes (they are dropped).
 //!
-//! Construction goes through [`Cookie::builder`] for the attribute-
-//! rich path, or [`Cookie::new`] for the bare `name=value` shape.
-//! [`Cookie::to_header_value`] renders a value suitable for a
+//! Construction goes through `Cookie::builder` for the attribute-
+//! rich path, or `Cookie::new` for the bare `name=value` shape.
+//! `Cookie::to_header_value` renders a value suitable for a
 //! `Set-Cookie:` header.
 
 #![forbid(unsafe_code)]
