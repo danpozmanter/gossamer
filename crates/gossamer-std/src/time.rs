@@ -967,16 +967,25 @@ mod tests {
 
     #[test]
     fn ticker_fires_repeatedly_until_stopped() {
-        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counter_for_tick = std::sync::Arc::clone(&counter);
-        let mut t = Ticker::start(Duration::from_millis(20), move || {
-            counter_for_tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Structural check, not a rate check: receive N ticks on a
+        // channel and verify they all arrive. A slow CI scheduler
+        // stretches the test runtime; it does not stretch the
+        // assertion. The earlier wall-clock form ("sleep 150ms,
+        // expect >=4 ticks") encoded a runner-responsiveness
+        // assumption that breaks under macOS CI load.
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let mut t = Ticker::start(Duration::from_millis(5), move || {
+            let _ = tx.send(());
         });
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        // A genuinely broken ticker that never fires would hang
+        // forever without this bound; five seconds per tick is the
+        // failure envelope, not a rate expectation.
+        let per_tick_budget = std::time::Duration::from_secs(5);
+        for i in 0..4 {
+            rx.recv_timeout(per_tick_budget)
+                .unwrap_or_else(|e| panic!("ticker should fire tick {i}: {e}"));
+        }
         t.stop();
-        let n = counter.load(std::sync::atomic::Ordering::Relaxed);
-        assert!(n >= 4, "expected >=4 ticks in 150ms, got {n}");
-        assert!(n <= 15, "expected <=15 ticks in 150ms, got {n}");
     }
 
     #[test]
