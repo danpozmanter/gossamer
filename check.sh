@@ -155,46 +155,74 @@ if [[ $run_cross -eq 1 ]]; then
     fi
 fi
 
-# ASan / TSan — mirrors `.github/workflows/sanitizers.yml`. Requires
-# the pinned nightly toolchain + `rust-src` so `-Z build-std` works.
-# Skip cleanly when the toolchain isn't installed so dev machines
-# without nightly stay usable.
+# ASan / TSan — mirrors `.github/workflows/sanitizers.yml`. Needs a
+# nightly toolchain with the `rust-src` component (so `-Z build-std`
+# can recompile std + the sanitizer runtimes). CI pins a specific
+# nightly date for reproducibility; locally we honor that pin when
+# it's installed and otherwise fall back to plain `nightly` so dev
+# machines stay usable without an extra rustup install.
+#
+# Discovery order:
+#   1. Pinned `nightly-2026-04-14` toolchain (matches CI exactly).
+#   2. Plain `nightly` (anything `rustup toolchain list` calls
+#      "nightly-..." that isn't the date pin) — runs the same gates,
+#      just under whatever nightly is on the dev box.
+#   3. Skip with a one-line install hint.
 if [[ $run_sanitizers -eq 1 ]]; then
-    asan_toolchain="nightly-2026-04-14"
-    if rustup toolchain list 2>/dev/null | grep -q "^${asan_toolchain}"; then
-        if rustup component list --installed --toolchain "$asan_toolchain" 2>/dev/null | grep -q rust-src; then
-            RUSTFLAGS="-Z sanitizer=address" \
-            RUSTDOCFLAGS="-Z sanitizer=address" \
-            ASAN_OPTIONS="detect_leaks=0:abort_on_error=1:halt_on_error=1" \
-                run_step "cargo +$asan_toolchain test (ASan)" \
-                cargo "+$asan_toolchain" test \
-                    -Z build-std \
-                    --target x86_64-unknown-linux-gnu \
-                    --lib \
-                    -p gossamer-runtime \
-                    -p gossamer-interp \
-                    -p gossamer-gc \
-                    -p gossamer-coro \
-                    -p gossamer-mir \
-                    -p gossamer-binding
-
-            RUSTFLAGS="-Z sanitizer=thread" \
-            RUSTDOCFLAGS="-Z sanitizer=thread" \
-            TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1" \
-                run_step "cargo +$asan_toolchain test (TSan)" \
-                cargo "+$asan_toolchain" test \
-                    -Z build-std \
-                    --target x86_64-unknown-linux-gnu \
-                    --lib \
-                    -p gossamer-runtime \
-                    -p gossamer-sched \
-                    -p gossamer-coro \
-                    -p gossamer-gc
-        else
-            echo "sanitizers skipped (run \`rustup component add rust-src --toolchain $asan_toolchain\` to enable)"
-        fi
+    asan_pinned="nightly-2026-04-14"
+    asan_toolchain=""
+    if rustup toolchain list 2>/dev/null | grep -q "^${asan_pinned}"; then
+        asan_toolchain="$asan_pinned"
     else
-        echo "sanitizers skipped (run \`rustup toolchain install $asan_toolchain --component rust-src\` to enable)"
+        # Pick the first `nightly-*` line. `nightly` (no triple) and
+        # `nightly-<triple>` both qualify; rustup canonicalises to
+        # the triple form on most installs.
+        asan_toolchain="$(rustup toolchain list 2>/dev/null \
+            | awk '/^nightly/{ sub(/ .*/, ""); print; exit }')"
+        if [[ -n "$asan_toolchain" && "$asan_toolchain" != "$asan_pinned" ]]; then
+            echo "sanitizers: pinned $asan_pinned not installed; falling back to $asan_toolchain"
+            echo "            CI uses the pinned date — install with"
+            echo "              rustup toolchain install $asan_pinned --component rust-src"
+        fi
+    fi
+    if [[ -z "$asan_toolchain" ]]; then
+        echo "sanitizers skipped (no nightly toolchain — install with"
+        echo "  rustup toolchain install $asan_pinned --component rust-src)"
+    elif ! rustup component list --installed --toolchain "$asan_toolchain" 2>/dev/null \
+            | grep -q rust-src; then
+        echo "sanitizers skipped (run \`rustup component add rust-src --toolchain $asan_toolchain\` to enable)"
+    else
+        # ASan tests touch sigaltstack-dependent code in
+        # gossamer-runtime; the public `stack_guard::install()`
+        # honors ASAN_OPTIONS by skipping our handler so libasan's
+        # signal stack stays the only one in play.
+        RUSTFLAGS="-Z sanitizer=address" \
+        RUSTDOCFLAGS="-Z sanitizer=address" \
+        ASAN_OPTIONS="detect_leaks=0:abort_on_error=1:halt_on_error=1" \
+            run_step "cargo +$asan_toolchain test (ASan)" \
+            cargo "+$asan_toolchain" test \
+                -Z build-std \
+                --target x86_64-unknown-linux-gnu \
+                --lib \
+                -p gossamer-runtime \
+                -p gossamer-interp \
+                -p gossamer-gc \
+                -p gossamer-coro \
+                -p gossamer-mir \
+                -p gossamer-binding
+
+        RUSTFLAGS="-Z sanitizer=thread" \
+        RUSTDOCFLAGS="-Z sanitizer=thread" \
+        TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1" \
+            run_step "cargo +$asan_toolchain test (TSan)" \
+            cargo "+$asan_toolchain" test \
+                -Z build-std \
+                --target x86_64-unknown-linux-gnu \
+                --lib \
+                -p gossamer-runtime \
+                -p gossamer-sched \
+                -p gossamer-coro \
+                -p gossamer-gc
     fi
 fi
 

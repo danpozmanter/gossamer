@@ -888,9 +888,10 @@ fn install_flag_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("flag::define", builtin("flag::define", builtin_flag_define)));
 }
 
-/// Shape of a single spec produced by [`flag::int`] / [`flag::string`]
-/// / [`flag::bool`] and consumed by [`flag::define`]. Fields: kind
-/// (`"int"` / `"string"` / `"bool"`), long, default, help, short.
+/// Shape of a single spec produced by Gossamer's `flag::int` /
+/// `flag::string` / `flag::bool` and consumed by `flag::define`.
+/// Fields: kind (`"int"` / `"string"` / `"bool"`), long, default,
+/// help, short.
 fn flag_spec(kind: &str, long: &str, default: Value, help: &str, short: Option<char>) -> Value {
     Value::struct_(
         "FlagSpec",

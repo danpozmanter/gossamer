@@ -18,7 +18,7 @@
 //!   only registers a [`JitFn`] when `JitKind` for every slot lines
 //!   up with the MIR-derived cranelift type.
 //! - The owning `JitArtifact` is still alive: the VM holds it in
-//!   `Vm::_jit` for the entire lifetime of the [`Global::Jit`]
+//!   `Vm::_jit` for the entire lifetime of the `Global::Jit`
 //!   entries that hand `JitFn`s to this module.
 //! - The Gossamer language is single-threaded at the VM layer; the
 //!   trampoline is therefore not re-entered from a foreign thread

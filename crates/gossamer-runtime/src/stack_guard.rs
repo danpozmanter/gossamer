@@ -91,13 +91,15 @@ mod unix {
         // AddressSanitizer installs its own SIGSEGV handler + alt
         // signal stack to diagnose stack overflow itself. Installing
         // ours on top conflicts with ASan's runtime — when the test
-        // process exits, ASan tries to munmap memory whose layout
-        // our sigaltstack call disturbed, producing the
-        // "Failed to munmap" abort in the sanitizers job. Detect
-        // ASan via its standard option-variable contract (any ASan-
-        // instrumented program reads `ASAN_OPTIONS` at startup; CI
-        // sets it explicitly) and skip — ASan's diagnostics are
-        // strictly better than ours for this case.
+        // thread exits, ASan reads the current alt-stack state via
+        // `sigaltstack(NULL, &old)` and tries to `munmap` whatever
+        // it sees. Our heap-allocated `Box<[u8]>` alt stack isn't
+        // an mmap allocation, so the munmap aborts with the
+        // "Failed to munmap" CHECK in libasan. Detect ASan via its
+        // standard option-variable contract (any ASan-instrumented
+        // program reads `ASAN_OPTIONS` at startup; CI sets it
+        // explicitly) and skip — ASan's diagnostics are strictly
+        // better than ours for this case.
         if std::env::var_os("ASAN_OPTIONS").is_some() {
             return;
         }
@@ -381,6 +383,15 @@ mod unix {
 
         #[test]
         fn install_is_idempotent() {
+            // Under AddressSanitizer `install` is a no-op (see the
+            // doc on `install` for why our sigaltstack would
+            // collide with libasan's). Idempotency still holds —
+            // two no-ops are equivalent to one — but the
+            // `INSTALLED` assertion below would spuriously fail, so
+            // skip the body when ASan owns the signal stack.
+            if std::env::var_os("ASAN_OPTIONS").is_some() {
+                return;
+            }
             install();
             install();
             assert!(INSTALLED.with(Cell::get));

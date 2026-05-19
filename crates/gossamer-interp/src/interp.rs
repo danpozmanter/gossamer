@@ -40,7 +40,8 @@ pub fn join_outstanding_goroutines() {
 type GoroutineTask = Box<dyn FnOnce() + Send + 'static>;
 
 /// Fixed-size worker pool that runs goroutines spawned via
-/// [`Op::Spawn`]. Replaces the prior one-OS-thread-per-`go`
+/// the bytecode `Op::Spawn`. Replaces the prior
+/// one-OS-thread-per-`go`
 /// shape — which leaked `JoinHandle`s into a thread-local list
 /// (~15 KB each) and cold-started a fresh `Vm` per goroutine.
 ///

@@ -1130,12 +1130,12 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(dst)
     }
 
-    /// Variant of [`Self::compile_call`] that takes the call's
-    /// **result** type. Used by callers that have it on hand (for
-    /// example `HirExprKind::Call`'s `expr.ty`) so the typed
+    /// Extended call compiler that takes the call's **result** type.
+    /// Used by callers that have it on hand (for example
+    /// `HirExprKind::Call`'s `expr.ty`) so the typed
     /// `HashMap<i64, i64>` construction can route to
-    /// [`Op::BuildIntMap`] instead of the generic
-    /// `builtin_map_new` path.
+    /// `Op::BuildIntMap` instead of the generic `builtin_map_new`
+    /// path.
     pub(crate) fn compile_call_ex(
         &mut self,
         callee: &HirExpr,

@@ -81,7 +81,7 @@
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
 //! anything that needs a GC heap are not yet lowered — those
-//! constructs fall back to [`super::emit::emit_module`] for
+//! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
 // Allow patterns the Cranelift lowering deliberately uses:
