@@ -113,9 +113,6 @@ quick-xml = "0.37"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = { version = "0.10", default-features = false }
 
-# SQL driver registry + bundled SQLite driver (`std::database::sql`).
-rusqlite = { version = "0.32", default-features = false, features = ["bundled"] }
-
 # HTTP client surface (`std::http::Client`). HTTPS, redirects, pool.
 ureq = { version = "3", features = ["cookies", "json"] }
 
@@ -174,3 +171,11 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Console",
 ] }
+
+
+[features]
+# Opt-in heavy/long-running network tests (e.g. h3 QUIC handshake
+# round-trip). Off by default so the standard test suite stays
+# fast; enable in environments where the network handshake
+# latency is acceptable (`cargo test --features slow-network-tests`).
+slow-network-tests = []

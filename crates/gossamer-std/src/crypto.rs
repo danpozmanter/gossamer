@@ -630,7 +630,7 @@ pub mod insecure;
 /// Thin facade over [`kdf::argon2id_hash`] / [`kdf::argon2id_verify`]
 /// so application code stays readable:
 ///
-/// ```ignore
+/// ```text
 /// let phc = password::hash(b"correct horse battery staple")?;
 /// if password::verify(b"correct horse battery staple", &phc)? {
 ///     // login succeeded; rehash if parameters have moved

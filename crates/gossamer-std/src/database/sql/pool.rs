@@ -2,7 +2,7 @@
 //!
 //! Typical use:
 //!
-//! ```ignore
+//! ```text
 //! // a driver crate has been imported and registered.
 //! let pool = Pool::new("postgres", &url, PoolConfig::default().with_max(8))?;
 //! let mut conn = pool.get()?;
@@ -17,7 +17,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -52,8 +52,16 @@ impl Default for PoolConfig {
         Self {
             min: 0,
             max: 8,
-            idle_timeout: Some(Duration::from_secs(300)),
-            max_lifetime: Some(Duration::from_secs(1800)),
+            #[allow(
+                clippy::duration_suboptimal_units,
+                reason = "Duration::from_mins is unstable in 1.95"
+            )]
+            idle_timeout: Some(Duration::from_secs(60 * 5)),
+            #[allow(
+                clippy::duration_suboptimal_units,
+                reason = "Duration::from_mins is unstable in 1.95"
+            )]
+            max_lifetime: Some(Duration::from_secs(60 * 30)),
             acquire_timeout: Duration::from_secs(30),
             statement_cache: 64,
         }
@@ -104,8 +112,8 @@ struct PooledInner {
     conn: Conn,
     created: Instant,
     last_used: Instant,
-    /// LRU cache of prepared statements keyed on the raw SQL text.
-    cache: HashMap<String, ()>,
+    /// Set of prepared statements keyed on the raw SQL text.
+    cache: HashSet<String>,
     /// LRU eviction order (least-recently-used at front).
     lru: VecDeque<String>,
     cache_capacity: usize,
@@ -118,7 +126,7 @@ impl PooledInner {
             conn,
             created: now,
             last_used: now,
-            cache: HashMap::new(),
+            cache: HashSet::new(),
             lru: VecDeque::new(),
             cache_capacity,
         }
@@ -132,18 +140,18 @@ impl PooledInner {
         if self.cache_capacity == 0 {
             return;
         }
-        if self.cache.contains_key(sql) {
+        if self.cache.contains(sql) {
             // Move to back (most recently used).
             self.lru.retain(|s| s != sql);
             self.lru.push_back(sql.to_string());
             return;
         }
-        if self.lru.len() >= self.cache_capacity {
-            if let Some(evict) = self.lru.pop_front() {
-                self.cache.remove(&evict);
-            }
+        if self.lru.len() >= self.cache_capacity
+            && let Some(evict) = self.lru.pop_front()
+        {
+            self.cache.remove(&evict);
         }
-        self.cache.insert(sql.to_string(), ());
+        self.cache.insert(sql.to_string());
         self.lru.push_back(sql.to_string());
     }
 }
@@ -176,10 +184,7 @@ impl Pool {
         if config.min > config.max {
             return Err(Error::driver(
                 "pool",
-                format!(
-                    "min ({}) cannot exceed max ({})",
-                    config.min, config.max
-                ),
+                format!("min ({}) cannot exceed max ({})", config.min, config.max),
             ));
         }
         let pool = Self {
@@ -211,12 +216,7 @@ impl Pool {
     /// Acquires a connection, blocking up to
     /// [`PoolConfig::acquire_timeout`].
     pub fn get(&self) -> Result<PooledConn, Error> {
-        let deadline = Instant::now()
-            + self
-                .state
-                .lock()
-                .config
-                .acquire_timeout;
+        let deadline = Instant::now() + self.state.lock().config.acquire_timeout;
         let mut state = self.state.lock();
         loop {
             // Reuse an idle connection if available.
@@ -370,10 +370,7 @@ impl PooledConn {
     /// Number of cached prepared-statement SQL strings.
     #[must_use]
     pub fn cached_statements(&self) -> usize {
-        self.inner
-            .as_ref()
-            .map(|i| i.cache.len())
-            .unwrap_or(0)
+        self.inner.as_ref().map_or(0, |i| i.cache.len())
     }
 }
 
@@ -395,4 +392,3 @@ impl Drop for PooledConn {
 fn _trait_imports_kept_in_scope() {
     fn _check<T: ConnectionImpl + StatementImpl + TransactionImpl + RowsImpl>(_t: &T) {}
 }
-

@@ -900,28 +900,14 @@ fn emit_native_objects(
     release: bool,
     checked: gossamer_driver::CheckedFrontend,
 ) -> std::result::Result<(Vec<PathBuf>, Option<String>), NativeBuildError> {
-    // LLVM is the canonical native backend for both debug and
-    // release `gos build`. The Cranelift companion path is
-    // retained as a per-function fallback for MIR shapes the
-    // LLVM lowerer doesn't yet cover (closures, certain HOF
-    // dispatch, `?` propagation through nested callers,
-    // channel-rich programs, etc.). The lowerer's coverage is
-    // being grown incrementally; until it covers the full
-    // surface, the companion lets `gos build` succeed on the
-    // existing example corpus.
-    //
-    // Users who want the architecturally-pure "LLVM-only"
-    // policy can opt in by setting
-    // `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1` in their environment;
-    // that turns any `BuildError::Unsupported` into a top-level
-    // build error rather than a Cranelift fallback. The CLI
-    // does not set this by default in 0.5.0 — the LLVM lowerer's
-    // surface coverage is the gating concern.
-    //
-    // `GOS_LLVM_PROFILE` toggles the opt level. `Debug` skips
-    // the `opt -O3` pre-pass and runs `llc -O0`; `Release` runs
-    // the full pipeline. `gos build` (no `--release`) selects
-    // `Debug`.
+    // LLVM is the canonical native backend. Strict-lowering is
+    // default-on (`STRICT_LOWERING = true`) so any
+    // `BuildError::Unsupported` from a body lowering is a hard
+    // top-level error rather than a silent per-function
+    // Cranelift fallback. `gos build --release` re-asserts that
+    // default explicitly here so callers cannot accidentally see
+    // a fallback-tier release binary.
+    gossamer_codegen_llvm::set_strict_lowering(true);
     gossamer_codegen_llvm::set_opt_profile(if release {
         gossamer_codegen_llvm::OptProfile::Release
     } else {

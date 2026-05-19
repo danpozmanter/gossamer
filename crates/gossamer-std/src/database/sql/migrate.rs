@@ -13,7 +13,7 @@
 //!
 //! Usage:
 //!
-//! ```ignore
+//! ```text
 //! use std::database::sql::{open, migrate};
 //! // a driver crate has been imported and called `register`.
 //! let mut conn = open("postgres", &url)?;
@@ -44,7 +44,7 @@ pub fn discover(dir: impl AsRef<Path>) -> Result<Vec<Migration>, Error> {
     let entries = fs::read_dir(dir.as_ref()).map_err(|e| {
         Error::driver(
             "migrate",
-            format!("read_dir {:?}: {e}", dir.as_ref()),
+            format!("read_dir {}: {e}", dir.as_ref().display()),
         )
     })?;
     for entry in entries {
@@ -60,9 +60,8 @@ pub fn discover(dir: impl AsRef<Path>) -> Result<Vec<Migration>, Error> {
             Some((v, n)) => (v.to_string(), n.to_string()),
             None => (stem.to_string(), stem.to_string()),
         };
-        let sql = fs::read_to_string(&path).map_err(|e| {
-            Error::driver("migrate", format!("read {path:?}: {e}"))
-        })?;
+        let sql = fs::read_to_string(&path)
+            .map_err(|e| Error::driver("migrate", format!("read {}: {e}", path.display())))?;
         out.push(Migration { version, name, sql });
     }
     out.sort_by(|a, b| a.version.cmp(&b.version));
@@ -219,12 +218,10 @@ fn sql_escape(s: &str) -> String {
 fn unix_now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 // Use Value to ensure the binding stays compatible across drivers.
 // Keeping the symbol referenced so import survives clippy passes.
 #[allow(dead_code)]
 fn _value_is_used(_v: Value) {}
-

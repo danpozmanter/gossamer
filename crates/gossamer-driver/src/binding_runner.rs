@@ -24,8 +24,9 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 use std::time::SystemTime;
+
+use parking_lot::Mutex;
 
 use gossamer_pkg::{GitRef, Manifest, RustBindingSpec};
 use gossamer_runner_template::{
@@ -914,8 +915,8 @@ fn run_cargo_build(
     let stdout_buf = collect_stream(stdout);
     let stderr_buf = collect_stream(stderr);
     let status = child.wait()?;
-    let stdout_text = stdout_buf.lock().expect("poisoned").clone();
-    let stderr_text = stderr_buf.lock().expect("poisoned").clone();
+    let stdout_text = stdout_buf.lock().clone();
+    let stderr_text = stderr_buf.lock().clone();
     if !status.success() {
         // Forward both streams so the user sees what went wrong.
         let _ = writeln!(io::stderr(), "{stdout_text}");
@@ -935,7 +936,7 @@ fn collect_stream<R: Read + Send + 'static>(stream: Option<R>) -> std::sync::Arc
         std::thread::spawn(move || {
             let mut buf = String::new();
             let _ = s.read_to_string(&mut buf);
-            *acc2.lock().expect("poisoned") = buf;
+            *acc2.lock() = buf;
         })
         .join()
         .ok();
@@ -1000,12 +1001,11 @@ fn leaked_entries(rendered: &[RenderedBinding]) -> &'static [BindingEntry] {
     // it; no leak required since it lives on the heap inside a
     // `Box::leak` keyed by the rendered set's identity.
     use std::sync::OnceLock;
-    static TABLE: OnceLock<
-        std::sync::Mutex<std::collections::HashMap<usize, &'static [BindingEntry]>>,
-    > = OnceLock::new();
-    let table = TABLE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    static TABLE: OnceLock<Mutex<std::collections::HashMap<usize, &'static [BindingEntry]>>> =
+        OnceLock::new();
+    let table = TABLE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     let key = rendered.as_ptr() as usize;
-    let mut guard = table.lock().expect("poisoned");
+    let mut guard = table.lock();
     if let Some(v) = guard.get(&key) {
         return v;
     }

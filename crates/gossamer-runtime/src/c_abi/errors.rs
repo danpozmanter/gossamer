@@ -53,6 +53,30 @@ pub unsafe extern "C" fn gos_rt_error_new(msg: *const c_char) -> *mut GosError {
     })
 }
 
+/// Canonical `Into<errors::Error>` conversion shim emitted by
+/// the HIR `?`-propagation desugar when the inner expression's
+/// `Err` type differs from the enclosing function's. Accepts a
+/// caller-provided c-string: when the value the caller wants to
+/// propagate is already an `errors::Error` the codegen routes
+/// the underlying message pointer here; non-Error payloads
+/// (most commonly `String`) become a fresh error whose message
+/// is the c-string content. Returns a fresh boxed `GosError`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_from(value: *const c_char) -> *mut GosError {
+    ffi_entry!(std::ptr::null_mut(), {
+        let text = if value.is_null() {
+            Vec::new()
+        } else {
+            unsafe { CStr::from_ptr(value).to_bytes().to_vec() }
+        };
+        let leaked = alloc_cstring(&text);
+        Box::into_raw(Box::new(GosError {
+            message: SyncRawPtr::new(leaked),
+            cause: SyncRawPtr::NULL,
+        }))
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_error_wrap(
     cause: *mut GosError,

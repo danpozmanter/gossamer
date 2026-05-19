@@ -1,3 +1,15 @@
+//! Cranelift intrinsic lowering — IO / math / time / OS family.
+//!
+//! Holds `lower_intrinsic_call_io_math`, the first partition in
+//! the cranelift dispatch chain. Covers `gos_rt_print_*`,
+//! `gos_rt_eprint*`, `gos_rt_fmt_prec`, `__concat`, the math
+//! shims (`sqrt`/`sin`/`cos`/`exp`/`ln`/`abs`/`floor`/`ceil`/`pow`),
+//! `gos_rt_time_*`, and the `gos_rt_os_*` / `gos_rt_env_*`
+//! entries. See sibling files for the other partitions
+//! (`intrinsic_collections`, `intrinsic_handles`,
+//! `intrinsic_string`); the four files are walked in declaration
+//! order from `intrinsic::lower_intrinsic_call`.
+
 #![allow(
     unused_imports,
     dead_code,
@@ -134,7 +146,7 @@ use rayon::prelude::*;
 
 use super::*;
 
-pub(super) fn lower_intrinsic_call_g0(
+pub(super) fn lower_intrinsic_call_io_math(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
     locals: &mut HashMap<Local, Variable>,

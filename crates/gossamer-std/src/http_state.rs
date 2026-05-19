@@ -129,7 +129,7 @@ impl AppState {
 /// the request object carries the `AppState` reference under a
 /// stable extension slot.
 ///
-/// ```ignore
+/// ```text
 /// let mut router = http_router::Router::new();
 /// let mut state = AppState::new();
 /// state.insert(Arc::new(MyDb::open()?));
@@ -167,12 +167,10 @@ impl<T: Any + Send + Sync + 'static> State<T> {
     /// wired into the router (see
     /// [`crate::http_state::attach_to_router`]) or if no value of
     /// type `T` has been inserted.
-    pub fn from_router(
-        router: &crate::http_router::Router,
-    ) -> Result<Self, crate::errors::Error> {
-        let state = router
-            .state()
-            .ok_or_else(|| crate::errors::Error::new("http_state: AppState not attached to router"))?;
+    pub fn from_router(router: &crate::http_router::Router) -> Result<Self, crate::errors::Error> {
+        let state = router.state().ok_or_else(|| {
+            crate::errors::Error::new("http_state: AppState not attached to router")
+        })?;
         Self::from_app_state(state)
     }
 }

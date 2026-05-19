@@ -151,7 +151,9 @@ impl Select {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::sql::{Conn, ConnectionImpl, Error, RowsImpl, StatementImpl, TransactionImpl};
+    use crate::database::sql::{
+        Conn, ConnectionImpl, Error, RowsImpl, StatementImpl, TransactionImpl,
+    };
 
     #[test]
     fn select_empty_columns_defaults_to_star() {
@@ -254,10 +256,7 @@ mod tests {
             "SELECT id, total FROM orders WHERE customer_id = $1 AND status = $2 \
              ORDER BY id ASC LIMIT 50 OFFSET 100"
         );
-        assert_eq!(
-            params,
-            vec![Value::Int(7), Value::Text("paid".to_string())]
-        );
+        assert_eq!(params, vec![Value::Int(7), Value::Text("paid".to_string())]);
     }
 
     #[test]
@@ -279,7 +278,11 @@ mod tests {
         );
         assert_eq!(
             params,
-            vec![Value::Null, Value::Float(1.5), Value::Blob(vec![0xde, 0xad])]
+            vec![
+                Value::Null,
+                Value::Float(1.5),
+                Value::Blob(vec![0xde, 0xad])
+            ]
         );
     }
 

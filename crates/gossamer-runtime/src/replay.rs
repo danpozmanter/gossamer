@@ -33,15 +33,15 @@ use parking_lot::Mutex;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventKind {
-    /// Channel send (gid, chan_id, value_bits).
+    /// Channel send (`gid`, `chan_id`, `value_bits`).
     ChannelSend = 0,
-    /// Channel recv (gid, chan_id, value_bits, was_empty: u8).
+    /// Channel recv (`gid`, `chan_id`, `value_bits`, `was_empty: u8`).
     ChannelRecv = 1,
-    /// Goroutine spawned (parent_gid, child_gid).
+    /// Goroutine spawned (`parent_gid`, `child_gid`).
     GoSpawn = 2,
-    /// Goroutine yielded at safepoint (gid).
+    /// Goroutine yielded at safepoint (`gid`).
     Yield = 3,
-    /// RNG seed draw (seed).
+    /// RNG seed draw (`seed`).
     RngSeed = 4,
 }
 
@@ -129,15 +129,18 @@ pub fn next_replay() -> Option<Event> {
     }
     let kind = EventKind::from_u8(header[0])?;
     let argc = header[1] as usize;
-    let mut args = Vec::with_capacity(argc);
+    let mut payload = Vec::with_capacity(argc);
     for _ in 0..argc {
         let mut buf = [0u8; 8];
         if r.read_exact(&mut buf).is_err() {
             return None;
         }
-        args.push(i64::from_le_bytes(buf));
+        payload.push(i64::from_le_bytes(buf));
     }
-    Some(Event { kind, args })
+    Some(Event {
+        kind,
+        args: payload,
+    })
 }
 
 /// True iff a record session is currently armed.

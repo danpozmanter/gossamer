@@ -9,7 +9,7 @@
 //!
 //! # Build-side examples
 //!
-//! ```ignore
+//! ```text
 //! use gossamer_binding::{GosError, gos_module};
 //!
 //! gos_module!(

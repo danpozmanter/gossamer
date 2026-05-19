@@ -42,7 +42,10 @@ fn inlay_hints_let_binding_carries_type() {
     // A `let` without annotation. The walker should surface the
     // inferred type if it can resolve one.
     let uri = "file:///l.gos";
-    let server = server_with(uri, "fn main() {\n    let count = 7\n    let _ = count\n}\n");
+    let server = server_with(
+        uri,
+        "fn main() {\n    let count = 7\n    let _ = count\n}\n",
+    );
     let response = server.inlay_hints(&document_params(uri));
     let labels = hint_labels(&response);
     // The hint surface may not always trigger; accept either empty
@@ -73,7 +76,7 @@ fn inlay_hints_entries_carry_position_fields() {
     let response = server.inlay_hints(&document_params(uri));
     if let Value::Array(items) = &response {
         for item in items {
-            let position = field(&item, "position");
+            let position = field(item, "position");
             assert!(
                 matches!(position, Value::Object(_)),
                 "inlay hint must carry a position object, got {item:?}"

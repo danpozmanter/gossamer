@@ -829,3 +829,30 @@ pub const JWT: StdModule = StdModule {
         },
     ],
 };
+
+pub const HTTP_H3: StdModule = StdModule {
+    path: "std::http_h3",
+    summary: "First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points.",
+    items: &[
+        StdItem {
+            name: "Handler",
+            kind: StdItemKind::Trait,
+            doc: "Per-request handler. `fn serve(&self, request: Request) -> Response`.",
+        },
+        StdItem {
+            name: "H3Error",
+            kind: StdItemKind::Type,
+            doc: "Transport / protocol error variants surfaced from quinn + h3.",
+        },
+        StdItem {
+            name: "serve",
+            kind: StdItemKind::Function,
+            doc: "Run an HTTP/3 server bound to `addr` with TLS certificate + key paths and the supplied handler.",
+        },
+        StdItem {
+            name: "Client",
+            kind: StdItemKind::Type,
+            doc: "HTTP/3 client. `new` validates against the Mozilla root store; `insecure` skips verification (dev only). Methods: `get`, `post`, `put`, `delete`, `head`, `request`.",
+        },
+    ],
+};

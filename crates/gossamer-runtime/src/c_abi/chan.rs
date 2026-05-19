@@ -24,8 +24,8 @@ use super::*;
 // ---------------------------------------------------------------
 
 use std::collections::VecDeque;
-use std::sync::Condvar as StdCondvar;
-use std::sync::Mutex as StdMutex;
+
+use parking_lot::{Condvar as PlCondvar, Mutex as PlMutex};
 
 /// Channel payload storage. The 8-byte specialisation matches the
 /// most common shape (every i64-class scalar plus pointer-sized
@@ -45,10 +45,10 @@ enum ChanStorage {
 pub struct GosChan {
     pub elem_bytes: u32,
     pub cap: i64, // 0 = unbounded
-    pub closed: StdMutex<bool>,
-    buf: StdMutex<ChanStorage>,
-    pub not_empty: StdCondvar,
-    pub not_full: StdCondvar,
+    pub closed: PlMutex<bool>,
+    buf: PlMutex<ChanStorage>,
+    pub not_empty: PlCondvar,
+    pub not_full: PlCondvar,
     /// Gids of goroutines parked on a recv (channel was empty). The
     /// next sender pops one and unparks it. Empty when no
     /// goroutines are waiting, in which case the OS-thread
@@ -74,10 +74,10 @@ pub unsafe extern "C" fn gos_rt_chan_new(elem_bytes: u32, cap: i64) -> *mut GosC
         Box::into_raw(Box::new(GosChan {
             elem_bytes,
             cap,
-            closed: StdMutex::new(false),
-            buf: StdMutex::new(buf),
-            not_empty: StdCondvar::new(),
-            not_full: StdCondvar::new(),
+            closed: PlMutex::new(false),
+            buf: PlMutex::new(buf),
+            not_empty: PlCondvar::new(),
+            not_full: PlCondvar::new(),
             parked_recv: parking_lot::Mutex::new(std::collections::VecDeque::new()),
             parked_send: parking_lot::Mutex::new(std::collections::VecDeque::new()),
             last_sender: AtomicI64::new(-1),
@@ -94,7 +94,7 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
         loop {
-            let mut guard = chan.buf.lock().unwrap();
+            let mut guard = chan.buf.lock();
             if chan.cap <= 0 || (storage_len(&guard) as i64) < chan.cap {
                 push_back(&mut guard, val, bytes_len);
                 drop(guard);
@@ -117,10 +117,11 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
                 }
             } else {
                 // Non-goroutine fallback: condvar-block the OS thread.
-                // The lock guard is consumed by `wait` and re-acquired
-                // on wakeup; we discard it explicitly via `drop` so
-                // clippy doesn't flag a let-underscore-lock pattern.
-                drop(chan.not_full.wait(guard).unwrap());
+                // parking_lot's `wait` takes &mut guard and re-acquires
+                // on wakeup; drop the guard explicitly after so clippy
+                // doesn't flag a let-underscore-lock pattern.
+                chan.not_full.wait(&mut guard);
+                drop(guard);
             }
         }
     });
@@ -159,7 +160,7 @@ pub unsafe extern "C" fn gos_rt_chan_try_send(c: *mut GosChan, val: *const u8) -
         }
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
-        let mut guard = chan.buf.lock().unwrap();
+        let mut guard = chan.buf.lock();
         if chan.cap > 0 && storage_len(&guard) as i64 >= chan.cap {
             return 0;
         }
@@ -181,14 +182,14 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
         loop {
-            let mut guard = chan.buf.lock().unwrap();
+            let mut guard = chan.buf.lock();
             if pop_front(&mut guard, out, bytes_len) {
                 drop(guard);
                 record_chan_handoff(chan);
                 wake_one_send(chan);
                 return 1;
             }
-            if *chan.closed.lock().unwrap() {
+            if *chan.closed.lock() {
                 return 0;
             }
             // Empty channel. Goroutines park; OS threads block.
@@ -201,7 +202,8 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
                     chan.parked_recv.lock().retain(|g| *g != gid);
                 }
             } else {
-                drop(chan.not_empty.wait(guard).unwrap());
+                chan.not_empty.wait(&mut guard);
+                drop(guard);
             }
         }
     })
@@ -215,7 +217,7 @@ pub unsafe extern "C" fn gos_rt_chan_try_recv(c: *mut GosChan, out: *mut u8) -> 
         }
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
-        let mut guard = chan.buf.lock().unwrap();
+        let mut guard = chan.buf.lock();
         if pop_front(&mut guard, out, bytes_len) {
             drop(guard);
             record_chan_handoff(chan);
@@ -377,14 +379,14 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
         let mut out_val = 0i64;
         let out_ptr = std::ptr::addr_of_mut!(out_val).cast::<u8>();
         let (result_disc, result_payload) = loop {
-            let mut guard = chan.buf.lock().unwrap();
+            let mut guard = chan.buf.lock();
             if pop_front(&mut guard, out_ptr, bytes_len) {
                 drop(guard);
                 record_chan_handoff(chan);
                 wake_one_send(chan);
                 break (0i64, out_val);
             }
-            if *chan.closed.lock().unwrap() {
+            if *chan.closed.lock() {
                 break (1i64, 0i64);
             }
             if gossamer_coro::in_goroutine() {
@@ -404,11 +406,9 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
                 // never gets a sender. Without the timeout, an
                 // OS-thread caller would block forever on a
                 // cancelled context.
-                let (g, _) = chan
-                    .not_empty
-                    .wait_timeout(guard, std::time::Duration::from_millis(50))
-                    .unwrap();
-                drop(g);
+                chan.not_empty
+                    .wait_for(&mut guard, std::time::Duration::from_millis(50));
+                drop(guard);
                 if unsafe { is_cancelled(ctx_handle) } != 0 {
                     break (1i64, 0i64);
                 }
@@ -498,7 +498,7 @@ pub unsafe extern "C" fn gos_rt_chan_close(c: *mut GosChan) -> i32 {
         }
         let chan = unsafe { &*c };
         {
-            let mut guard = chan.closed.lock().unwrap();
+            let mut guard = chan.closed.lock();
             if *guard {
                 eprintln!("gossamer runtime: channel already closed (ignored)");
                 return -2;
@@ -538,9 +538,7 @@ pub unsafe extern "C" fn gos_rt_chan_drop(c: *mut GosChan) {
 
 impl Drop for GosChan {
     fn drop(&mut self) {
-        if let Ok(mut closed) = self.closed.lock() {
-            *closed = true;
-        }
+        *self.closed.lock() = true;
         self.not_empty.notify_all();
         self.not_full.notify_all();
     }

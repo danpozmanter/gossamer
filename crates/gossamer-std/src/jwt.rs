@@ -766,9 +766,8 @@ fn parse_rsa_public_key_pem(pem: &str) -> Result<(Vec<u8>, Vec<u8>), Error> {
         }
         "RSA PUBLIC KEY" => {
             // Bare PKCS#1: SEQUENCE { modulus, exponent }.
-            let (_, rsa) =
-                x509_parser::public_key::RSAPublicKey::from_der(&parsed.contents)
-                    .map_err(|e| Error::new(format!("jwt: RSA PKCS#1 parse: {e}")))?;
+            let (_, rsa) = x509_parser::public_key::RSAPublicKey::from_der(&parsed.contents)
+                .map_err(|e| Error::new(format!("jwt: RSA PKCS#1 parse: {e}")))?;
             (rsa.modulus.to_vec(), rsa.exponent.to_vec())
         }
         other => {

@@ -188,7 +188,7 @@ fn expand_gos_opaque(block: &ItemImpl) -> TokenStream2 {
                         quote! {
                             let value = <#self_ty>::#method_name(#fwd_args);
                             let handle = #registry_ident.insert(::gossamer_binding::__paste::paste! {
-                                ::std::sync::Mutex::new(value)
+                                ::gossamer_binding::parking_lot::Mutex::new(value)
                             });
                             handle
                         }
@@ -219,7 +219,7 @@ fn expand_gos_opaque(block: &ItemImpl) -> TokenStream2 {
                                 Ok(c) => c,
                                 Err(_) => return ::core::default::Default::default(),
                             };
-                            let guard = cell.lock().unwrap();
+                            let guard = cell.lock();
                             <#self_ty>::#method_name(&*guard, #fwd_args)
                         }
                     });
@@ -236,7 +236,7 @@ fn expand_gos_opaque(block: &ItemImpl) -> TokenStream2 {
                                 Ok(c) => c,
                                 Err(_) => return ::core::default::Default::default(),
                             };
-                            let mut guard = cell.lock().unwrap();
+                            let mut guard = cell.lock();
                             <#self_ty>::#method_name(&mut *guard, #fwd_args)
                         }
                     });
@@ -251,7 +251,7 @@ fn expand_gos_opaque(block: &ItemImpl) -> TokenStream2 {
         }
 
         #[allow(non_upper_case_globals)]
-        static #registry_ident: ::gossamer_binding::opaque::Registry<::std::sync::Mutex<#self_ty>>
+        static #registry_ident: ::gossamer_binding::opaque::Registry<::gossamer_binding::parking_lot::Mutex<#self_ty>>
             = ::gossamer_binding::opaque::Registry::new();
 
         ::gossamer_binding::register_module!(

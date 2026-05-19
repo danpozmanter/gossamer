@@ -51,6 +51,10 @@ fn empty_cstring() -> *mut c_char {
 // --- handle registries --------------------------------------------
 
 static CONN_HANDLES: Mutex<Option<HashMap<i64, Box<dyn ConnectionImpl>>>> = Mutex::new(None);
+#[allow(
+    dead_code,
+    reason = "reserved for the upcoming prepared-statement handle API"
+)]
 static STMT_HANDLES: Mutex<Option<HashMap<i64, Box<dyn StatementImpl>>>> = Mutex::new(None);
 static ROWS_HANDLES: Mutex<Option<HashMap<i64, Box<dyn RowsImpl>>>> = Mutex::new(None);
 static ROW_HANDLES: Mutex<Option<HashMap<i64, Row>>> = Mutex::new(None);
@@ -203,7 +207,7 @@ pub unsafe extern "C" fn gos_rt_sql_drivers() -> *mut c_char {
 pub unsafe extern "C" fn gos_rt_sql_conn_execute(handle: i64, sql: *const c_char) -> i64 {
     let s = c_str_to_string(sql);
     conn_with(handle, |c| match c.prepare(&s) {
-        Ok(mut stmt) => stmt.execute(&[]).map(|n| n as i64).unwrap_or(-1),
+        Ok(mut stmt) => stmt.execute(&[]).map_or(-1, |n| n as i64),
         Err(_) => -1,
     })
     .unwrap_or(-1)
@@ -356,7 +360,10 @@ pub unsafe extern "C" fn gos_rt_sql_row_get_bool(handle: i64, column: *const c_c
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_sql_row_get_text(handle: i64, column: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_sql_row_get_text(
+    handle: i64,
+    column: *const c_char,
+) -> *mut c_char {
     let col = c_str_to_string(column);
     let text = row_with(handle, |row| match row_value_by_column(row, &col) {
         Some(Value::Text(s)) => s,
@@ -367,7 +374,10 @@ pub unsafe extern "C" fn gos_rt_sql_row_get_text(handle: i64, column: *const c_c
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_sql_row_get_blob(handle: i64, column: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_sql_row_get_blob(
+    handle: i64,
+    column: *const c_char,
+) -> *mut c_char {
     let col = c_str_to_string(column);
     let bytes = row_with(handle, |row| match row_value_by_column(row, &col) {
         Some(Value::Blob(b)) => b,
@@ -468,8 +478,7 @@ pub unsafe extern "C" fn gos_rt_sql_row_is_null(handle: i64, column: *const c_ch
     row_with(handle, |row| {
         matches!(row_value_by_column(row, &col), Some(Value::Null) | None)
     })
-    .map(i32::from)
-    .unwrap_or(0)
+    .map_or(0, i32::from)
 }
 
 #[unsafe(no_mangle)]
@@ -530,10 +539,7 @@ pub unsafe extern "C" fn gos_rt_sql_tx_savepoint(handle: i64, name: *const c_cha
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_sql_tx_release_savepoint(
-    handle: i64,
-    name: *const c_char,
-) -> i64 {
+pub unsafe extern "C" fn gos_rt_sql_tx_release_savepoint(handle: i64, name: *const c_char) -> i64 {
     let Some(mut tx) = tx_take(handle) else {
         return -1;
     };

@@ -378,8 +378,7 @@ fn format_f64(v: f64) -> String {
 /// Serves `/metrics` over HTTP on `addr`. Any other path returns
 /// `404`. Blocks the calling thread.
 pub fn serve_metrics(addr: &str, registry: Registry) -> Result<(), Error> {
-    let listener =
-        TcpListener::bind(addr).map_err(|e| Error::new(format!("bind {addr}: {e}")))?;
+    let listener = TcpListener::bind(addr).map_err(|e| Error::new(format!("bind {addr}: {e}")))?;
     let config = server::Config::default();
     let result = server::run(listener, &config, move |req: Request| -> Response {
         if req.path() == "/metrics" {

@@ -2,9 +2,11 @@
 //! Cranelift JIT, and LLVM AOT through [`c_abi::sql`].
 //!
 //! Drivers are third-party Rust crates that implement [`Driver`] and
-//! call [`register`] at startup. The bundled SQLite driver ships in
-//! `gossamer-std` for convenience but is not special — Postgres /
-//! MySQL drivers can plug in the same way.
+//! call [`register`] at startup. No driver auto-registers; callers
+//! that want `SQLite` invoke
+//! `gossamer_std::database::sql::sqlite::register()` from their
+//! Rust startup code (the reference driver lives in `gossamer-std`).
+//! `Postgres` / `MySQL` drivers plug in the same way.
 //!
 //! User code goes through [`open`] to get a [`Box<dyn ConnectionImpl>`].
 //! The high-level wrappers in `gossamer-std::database::sql::{Conn,
@@ -189,13 +191,13 @@ pub trait ConnectionImpl: Send {
         Ok(())
     }
     /// Sets the driver-specific busy timeout in milliseconds. The
-    /// default is a no-op; SQLite overrides this with
+    /// default is a no-op; `SQLite` overrides this with
     /// `sqlite3_busy_timeout`.
     fn set_busy_timeout(&mut self, _ms: i64) -> Result<(), Error> {
         Ok(())
     }
     /// Signals to the driver that any in-flight statement on this
-    /// connection should be cancelled. SQLite calls
+    /// connection should be cancelled. `SQLite` calls
     /// `sqlite3_interrupt`; default is a no-op.
     fn interrupt(&self) {}
     /// Closes the connection. Subsequent calls return [`Error::Closed`].

@@ -16,11 +16,14 @@ the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPE
 - **What changes:** syntax (Rust-shaped), error handling
   (`Result<T, E>` + `?`), interfaces become traits (nominal),
   no implicit numeric coercion (`as` is explicit).
-- **What's missing today:** HTTP/2, gRPC, WebSockets, Postgres /
-  MySQL drivers (drivers belong with the package ecosystem,
-  same as Go pre-2009), real package registry.
-  `database/sql` ships with a bundled SQLite driver; other
-  drivers come through the package manager.
+- **What's missing today:** gRPC, real package registry,
+  first-party SQL drivers. `std::database::sql` is the
+  driver-pluggable surface (Conn / Tx / Stmt / Rows / Pool /
+  migrate / Select); every driver — including SQLite — is a
+  third-party Rust binding that registers itself at startup.
+  HTTP/1, HTTP/2, HTTP/3, WebSockets, and SSE are all
+  first-party (`std::http`, `std::http_h3`, `std::http::websocket`,
+  `std::http::sse`).
 
 ## Syntax cheat-sheet
 
@@ -443,8 +446,12 @@ for rows.Next() {
 Gossamer:
 
 ```gos
+// A SQL driver (sqlite / postgres / mysql / ...) is brought in
+// as a Rust binding; the binding crate calls
+// `gossamer_runtime::sql::register` at link time. After that,
+// `open(name, url)` resolves to the right driver:
 let mut conn = database::sql::open("sqlite", ":memory:")?
-let mut rows = conn.query("SELECT id, body FROM notes WHERE id = ?1",
+let mut rows = conn.query("SELECT id, body FROM notes WHERE id = $1",
                           &[database::sql::Value::Int(1)])?
 while let Some(row) = rows.next_row()? {
     let id   = row.get_i64("id")?

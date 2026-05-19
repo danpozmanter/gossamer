@@ -45,16 +45,14 @@ fn run_repl(input: &str) -> ReplOutput {
     // Bounded wait so a hung REPL fails fast rather than blocking CI.
     let start = std::time::Instant::now();
     loop {
-        match child.try_wait().expect("try_wait") {
-            Some(_) => break,
-            None => {
-                if start.elapsed() > Duration::from_secs(30) {
-                    let _ = child.kill();
-                    panic!("gos repl did not terminate within 30s");
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
+        if child.try_wait().expect("try_wait").is_some() {
+            break;
         }
+        if start.elapsed() > Duration::from_secs(30) {
+            let _ = child.kill();
+            panic!("gos repl did not terminate within 30s");
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
     let out = child.wait_with_output().expect("wait_with_output");
     ReplOutput {

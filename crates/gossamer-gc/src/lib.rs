@@ -9,5 +9,5 @@
 mod heap;
 mod weak;
 
-pub use heap::{ConcurrentPhase, GcConfig, GcRef, GcStats, Heap, Obj, ObjKind};
+pub use heap::{ConcurrentPhase, GcConfig, GcRef, GcStats, Heap, Obj, ObjKind, PauseBucket};
 pub use weak::{FinaliserFn, FinalizerSet, InternTable, WeakRef, WeakTable};

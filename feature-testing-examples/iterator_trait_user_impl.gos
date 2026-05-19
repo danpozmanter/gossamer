@@ -1,0 +1,35 @@
+// End-to-end coverage for the `Iterator` protocol: declare a
+// user trait shaped like `Iterator`, `impl` it for a concrete
+// type, and consume the iterator via a `for` loop. The for-loop
+// desugar calls `.next()` and matches `Some / None`, so any type
+// that provides `next() -> Option<T>` is iterable.
+
+struct Counter {
+    next_value: i64,
+    end: i64,
+}
+
+trait Iterator {
+    fn next(&mut self) -> Option<i64>
+}
+
+impl Iterator for Counter {
+    fn next(&mut self) -> Option<i64> {
+        if self.next_value < self.end {
+            let v = self.next_value
+            self.next_value = self.next_value + 1
+            Some(v)
+        } else {
+            None
+        }
+    }
+}
+
+fn main() {
+    let mut c = Counter { next_value: 0, end: 5 }
+    let mut sum = 0
+    for n in c {
+        sum = sum + n
+    }
+    println!("sum 0..5 = {}", sum)
+}

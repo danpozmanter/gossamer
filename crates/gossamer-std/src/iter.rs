@@ -22,6 +22,182 @@ pub fn count<T>(xs: &[T]) -> usize {
     xs.len()
 }
 
+/// Sums every element via the type's `Add` impl. Mirrors
+/// Python's `sum`. Empty input returns `T::default()`.
+#[must_use]
+pub fn sum<T>(xs: &[T]) -> T
+where
+    T: Clone + std::iter::Sum<T>,
+{
+    xs.iter().cloned().sum()
+}
+
+/// Product of every element. Mirrors Python's `math.prod`.
+#[must_use]
+pub fn product<T>(xs: &[T]) -> T
+where
+    T: Clone + std::iter::Product<T>,
+{
+    xs.iter().cloned().product()
+}
+
+/// Returns the smallest element by `Ord`, or `None` for empty
+/// input. Mirrors Python's `min`.
+#[must_use]
+pub fn min<T: Clone + Ord>(xs: &[T]) -> Option<T> {
+    xs.iter().min().cloned()
+}
+
+/// Returns the largest element by `Ord`. Mirrors Python's `max`.
+#[must_use]
+pub fn max<T: Clone + Ord>(xs: &[T]) -> Option<T> {
+    xs.iter().max().cloned()
+}
+
+/// Returns every `step`-th element starting from index 0. A
+/// `step` of zero is normalised to 1 to avoid the otherwise
+/// infinite loop. Mirrors Python's slice-step
+/// (`xs[::step]`) and Rust's `Iterator::step_by`.
+#[must_use]
+pub fn step_by<T: Clone>(step: usize, xs: &[T]) -> Vec<T> {
+    let s = step.max(1);
+    xs.iter().step_by(s).cloned().collect()
+}
+
+/// `[item]` — single-element vec. Useful as an `iter::flat_map`
+/// terminator when only one of many call-paths emits a value.
+#[must_use]
+pub fn once<T>(item: T) -> Vec<T> {
+    vec![item]
+}
+
+/// Zero-length vec of the type `T`. Pairs with `flat_map` to
+/// "skip" an entry without `filter_map`'s `Option` wrapping.
+#[must_use]
+pub fn empty<T>() -> Vec<T> {
+    Vec::new()
+}
+
+/// Collects every element into a concrete container. The target
+/// type is selected via turbofish at the call site, e.g.
+/// `collect::<HashSet<_>>(xs)`. Mirrors Rust's `Iterator::collect`.
+#[must_use]
+pub fn collect<T, C>(xs: Vec<T>) -> C
+where
+    C: FromIterator<T>,
+{
+    xs.into_iter().collect()
+}
+
+/// Lazy iterator adapter wrapping any [`Iterator`]. Builds a
+/// chain without materialising intermediate `Vec`s.
+///
+/// `Lazy::from(xs.iter().cloned())` is the canonical entry; the
+/// chain terminates via [`Lazy::to_vec`], [`Lazy::sum`],
+/// [`Lazy::min`], [`Lazy::max`], [`Lazy::count`], [`Lazy::first`],
+/// or any of the boolean reducers.
+pub struct Lazy<I: Iterator> {
+    inner: I,
+}
+
+impl<I: Iterator> Lazy<I> {
+    /// Wraps an existing iterator.
+    pub fn from(inner: I) -> Self {
+        Self { inner }
+    }
+
+    /// Lazy `map` adapter — yields `f(item)` per pull.
+    pub fn map<U, F: FnMut(I::Item) -> U>(self, f: F) -> Lazy<std::iter::Map<I, F>> {
+        Lazy {
+            inner: self.inner.map(f),
+        }
+    }
+
+    /// Lazy `filter` adapter.
+    pub fn filter<P: FnMut(&I::Item) -> bool>(self, p: P) -> Lazy<std::iter::Filter<I, P>> {
+        Lazy {
+            inner: self.inner.filter(p),
+        }
+    }
+
+    /// Lazy `take` adapter — yields at most `n` elements.
+    pub fn take(self, n: usize) -> Lazy<std::iter::Take<I>> {
+        Lazy {
+            inner: self.inner.take(n),
+        }
+    }
+
+    /// Lazy `skip` adapter — drops the first `n` elements.
+    pub fn skip(self, n: usize) -> Lazy<std::iter::Skip<I>> {
+        Lazy {
+            inner: self.inner.skip(n),
+        }
+    }
+
+    /// Lazy `step_by` adapter. `n` of zero is normalised to 1.
+    pub fn step_by(self, n: usize) -> Lazy<std::iter::StepBy<I>> {
+        Lazy {
+            inner: self.inner.step_by(n.max(1)),
+        }
+    }
+
+    /// Terminal — collects every yielded element into a `Vec`.
+    pub fn to_vec(self) -> Vec<I::Item> {
+        self.inner.collect()
+    }
+
+    /// Terminal — sums every element.
+    pub fn sum<S: std::iter::Sum<I::Item>>(self) -> S {
+        self.inner.sum()
+    }
+
+    /// Terminal — multiplies every element.
+    pub fn product<P: std::iter::Product<I::Item>>(self) -> P {
+        self.inner.product()
+    }
+
+    /// Terminal — smallest element by `Ord`.
+    pub fn min(self) -> Option<I::Item>
+    where
+        I::Item: Ord,
+    {
+        self.inner.min()
+    }
+
+    /// Terminal — largest element by `Ord`.
+    pub fn max(self) -> Option<I::Item>
+    where
+        I::Item: Ord,
+    {
+        self.inner.max()
+    }
+
+    /// Terminal — number of yielded elements.
+    pub fn count(self) -> usize {
+        self.inner.count()
+    }
+
+    /// Terminal — first element, if any.
+    pub fn first(mut self) -> Option<I::Item> {
+        self.inner.next()
+    }
+
+    /// Terminal — fold.
+    pub fn fold<A, F: FnMut(A, I::Item) -> A>(self, init: A, f: F) -> A {
+        self.inner.fold(init, f)
+    }
+
+    /// Terminal — `true` iff every element satisfies `p`.
+    pub fn all<P: FnMut(I::Item) -> bool>(mut self, mut p: P) -> bool {
+        self.inner.all(&mut p)
+    }
+
+    /// Terminal — `true` iff at least one element satisfies `p`.
+    pub fn any<P: FnMut(I::Item) -> bool>(mut self, mut p: P) -> bool {
+        self.inner.any(&mut p)
+    }
+}
+
 /// Returns the first `n` elements of `xs`.
 #[must_use]
 pub fn take<T: Clone>(n: usize, xs: &[T]) -> Vec<T> {

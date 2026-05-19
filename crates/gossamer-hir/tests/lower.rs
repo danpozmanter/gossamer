@@ -97,6 +97,88 @@ fn try_operator_lowers_to_match() {
 }
 
 #[test]
+fn unknown_trait_bound_emits_diagnostic() {
+    // `fn f<T: Hashabel>(...)` declares a bound on an unknown
+    // trait. The typechecker should surface a `GT0011
+    // unknown-trait-bound` diagnostic at declaration time so the
+    // typo doesn't slip past to a runtime "no method" error.
+    let mut map = SourceMap::new();
+    let source = "fn need_hash<T: Hashabel>(x: T) -> T { x }\n";
+    let file = map.add_file("bound.gos", source.to_string());
+    let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file);
+    assert!(parse_diags.is_empty());
+    let (resolutions, _) = gossamer_resolve::resolve_source_file(&sf);
+    let mut tcx = TyCtxt::new();
+    let (_table, diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
+    let found = diags.iter().any(|d| d.error.code() == "GT0011");
+    assert!(
+        found,
+        "expected GT0011 unknown-trait-bound for `Hashabel`, got: {diags:?}",
+    );
+}
+
+#[test]
+fn known_builtin_trait_bound_is_accepted() {
+    // `Iterator` is a built-in trait name; a bound on it must
+    // NOT produce an unknown-trait diagnostic.
+    let mut map = SourceMap::new();
+    let source = "fn collect<T: Iterator>(it: T) -> T { it }\n";
+    let file = map.add_file("bound.gos", source.to_string());
+    let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file);
+    assert!(parse_diags.is_empty());
+    let (resolutions, _) = gossamer_resolve::resolve_source_file(&sf);
+    let mut tcx = TyCtxt::new();
+    let (_table, diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
+    let any_unknown_bound = diags.iter().any(|d| d.error.code() == "GT0011");
+    assert!(
+        !any_unknown_bound,
+        "Iterator bound should be accepted, got: {diags:?}",
+    );
+}
+
+#[test]
+fn try_on_option_lowers_to_some_none_match() {
+    // `?` applied to an Option-returning expression desugars to
+    // `Some(v) => v, None => return None`. Pre-fix this fell
+    // through to the Ok/Err arms and produced nonsense.
+    let (program, _tcx) = lower(
+        "fn maybe() -> Option<i64> { Some(7) }\n\
+         fn caller() -> Option<i64> { let x = maybe()?\n    Some(x) }\n",
+    );
+    let caller = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            HirItemKind::Fn(f) if f.name.name == "caller" => Some(f),
+            _ => None,
+        })
+        .expect("caller lowered");
+    let body = caller.body.as_ref().unwrap();
+    let let_init = match &body.block.stmts[0].kind {
+        HirStmtKind::Let { init, .. } => init.as_ref().unwrap(),
+        other => panic!("expected let: {other:?}"),
+    };
+    match &let_init.kind {
+        HirExprKind::Match { arms, .. } => {
+            assert_eq!(arms.len(), 2);
+            match &arms[0].pattern.kind {
+                HirPatKind::Variant { name, .. } => {
+                    assert_eq!(name.name, "Some", "first arm should be Some");
+                }
+                other => panic!("unexpected first arm: {other:?}"),
+            }
+            match &arms[1].pattern.kind {
+                HirPatKind::Variant { name, .. } => {
+                    assert_eq!(name.name, "None", "second arm should be None");
+                }
+                other => panic!("unexpected second arm: {other:?}"),
+            }
+        }
+        other => panic!("`?` on Option did not lower to Some/None match: {other:?}"),
+    }
+}
+
+#[test]
 fn for_loop_lowers_to_loop_plus_match() {
     let (program, _tcx) = lower("fn main() { for x in 0..10 { let y = x } }\n");
     let main = program

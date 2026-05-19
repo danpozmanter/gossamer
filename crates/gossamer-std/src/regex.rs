@@ -135,6 +135,63 @@ pub fn split(pattern: &Pattern, text: &str) -> Vec<String> {
     pattern.engine.split(text).map(str::to_string).collect()
 }
 
+/// Returns every named capture group in `pattern`, in declaration
+/// order. Anonymous groups (no `?P<name>` prefix) are absent.
+/// Mirrors Python's `re.Pattern.groupindex` keys.
+#[must_use]
+pub fn capture_names(pattern: &Pattern) -> Vec<String> {
+    pattern
+        .engine
+        .capture_names()
+        .flatten()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Returns the first set of capture groups as a `{name → value}`
+/// map. Only named groups appear in the map; unnamed positional
+/// groups are accessible via [`captures`]. Mirrors Python's
+/// `re.Match.groupdict()`.
+#[must_use]
+pub fn captures_named(
+    pattern: &Pattern,
+    text: &str,
+) -> Option<std::collections::HashMap<String, String>> {
+    let caps = pattern.engine.captures(text)?;
+    let mut out = std::collections::HashMap::new();
+    for name in pattern.engine.capture_names().flatten() {
+        if let Some(m) = caps.name(name) {
+            out.insert(name.to_string(), m.as_str().to_string());
+        }
+    }
+    Some(out)
+}
+
+/// Returns every match of `pattern` as a `{name → value}` map.
+/// Lazy callers should pair this with `iter::take`/`iter::collect`;
+/// the implementation returns a `Vec` to stay consistent with
+/// [`captures_all`].
+#[must_use]
+pub fn captures_named_all(
+    pattern: &Pattern,
+    text: &str,
+) -> Vec<std::collections::HashMap<String, String>> {
+    let names: Vec<&str> = pattern.engine.capture_names().flatten().collect();
+    pattern
+        .engine
+        .captures_iter(text)
+        .map(|caps| {
+            let mut out = std::collections::HashMap::new();
+            for name in &names {
+                if let Some(m) = caps.name(name) {
+                    out.insert((*name).to_string(), m.as_str().to_string());
+                }
+            }
+            out
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

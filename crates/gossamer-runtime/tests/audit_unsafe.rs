@@ -3,11 +3,11 @@
 //! it, OR sit inside an `unsafe fn` whose contract documents the
 //! invariants (the FFI surface).
 //!
-//! The c_abi/ tree is the FFI boundary — every function there is
+//! The `c_abi/` tree is the FFI boundary — every function there is
 //! `pub unsafe extern "C"`, so the function's own `unsafe` keyword
 //! is the safety contract and inline `unsafe { ... }` blocks
 //! inherit it. The test only enforces SAFETY comments on unsafe
-//! blocks living in *non-c_abi* runtime files: that's the surface
+//! blocks living in *non-`c_abi`* runtime files: that's the surface
 //! where the audit's "every new unsafe needs a doc-comment" rule
 //! is interesting.
 
@@ -32,7 +32,15 @@ fn unsafe_block_lines(text: &str) -> Vec<usize> {
         .enumerate()
         .filter_map(|(i, line)| {
             let trimmed = line.trim_start();
-            if trimmed.starts_with("unsafe {") || trimmed == "unsafe" || trimmed.starts_with("unsafe ") && trimmed.contains("{") && !trimmed.contains("fn ") && !trimmed.contains("impl ") && !trimmed.contains("trait ") && !trimmed.contains("extern ") {
+            if trimmed.starts_with("unsafe {")
+                || trimmed == "unsafe"
+                || trimmed.starts_with("unsafe ")
+                    && trimmed.contains('{')
+                    && !trimmed.contains("fn ")
+                    && !trimmed.contains("impl ")
+                    && !trimmed.contains("trait ")
+                    && !trimmed.contains("extern ")
+            {
                 Some(i)
             } else {
                 None

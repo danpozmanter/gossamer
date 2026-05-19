@@ -32,10 +32,7 @@ fn push_symbol_names(item: &Value, out: &mut Vec<String>) {
 
 #[test]
 fn document_symbols_returns_top_level_fn() {
-    let server = server_with(
-        "file:///d.gos",
-        "fn one() {}\nfn two() {}\nfn three() {}\n",
-    );
+    let server = server_with("file:///d.gos", "fn one() {}\nfn two() {}\nfn three() {}\n");
     let response = server.document_symbols(&document_params("file:///d.gos"));
     let names = walk_symbol_names(&response);
     assert!(

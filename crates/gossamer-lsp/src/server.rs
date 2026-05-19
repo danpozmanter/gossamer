@@ -168,7 +168,6 @@ pub fn run_stdio() -> std::io::Result<()> {
 
 fn initialize_result() -> Value {
     let mut caps = BTreeMap::new();
-    // textDocumentSync object: { openClose: true, change: 1 (Full) }.
     let mut sync = BTreeMap::new();
     sync.insert("openClose".to_string(), Value::Bool(true));
     sync.insert("change".to_string(), Value::Number(1.0));
@@ -183,9 +182,6 @@ fn initialize_result() -> Value {
     caps.insert("workspaceSymbolProvider".to_string(), Value::Bool(true));
     caps.insert("foldingRangeProvider".to_string(), Value::Bool(true));
     caps.insert("documentFormattingProvider".to_string(), Value::Bool(true));
-    // CodeActionKinds we surface today: every action we generate
-    // is a `quickfix` derived from a diagnostic's `Suggestion`
-    // payload (resolver / parser / typechecker fix-its).
     let mut code_action = BTreeMap::new();
     code_action.insert(
         "codeActionKinds".to_string(),

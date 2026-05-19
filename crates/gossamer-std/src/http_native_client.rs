@@ -355,9 +355,10 @@ impl NativeClient {
         // service an https request and vice versa.
         {
             let mut g = self.inner.pool.lock();
-            if let Some(pos) = g.iter().position(|c| {
-                c.host == host && c.port == port && c.stream.is_tls() == want_tls
-            }) {
+            if let Some(pos) = g
+                .iter()
+                .position(|c| c.host == host && c.port == port && c.stream.is_tls() == want_tls)
+            {
                 let conn = g.remove(pos);
                 if conn.last_used.elapsed() < Duration::from_mins(1) {
                     return Ok(conn.stream);

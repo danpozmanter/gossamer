@@ -20,6 +20,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::compress::flate`](compress_flate.md) | Raw DEFLATE (RFC 1951) encoder / decoder. |
 | [`std::compress::gzip`](compress_gzip.md) | gzip encoder / decoder (RFC 1952; flate2-backed). |
 | [`std::compress::zlib`](compress_zlib.md) | zlib (RFC 1950) encoder / decoder. |
+| [`std::compress::zstd`](compress_zstd.md) | Zstandard encoder / decoder (RFC 8478; libzstd-vendored). |
 | [`std::context`](context.md) | Request-scoped cancellation, deadlines, and timeouts. |
 | [`std::crypto::aead`](crypto_aead.md) | Authenticated encryption with associated data. |
 | [`std::crypto::blake3`](crypto_blake3.md) | BLAKE3 hashing. |
@@ -35,7 +36,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::crypto::sha512`](crypto_sha512.md) | SHA-512 hashing. |
 | [`std::crypto::subtle`](crypto_subtle.md) | Constant-time comparison helpers. |
 | [`std::crypto::x509`](crypto_x509.md) | X.509 certificate parsing. |
-| [`std::database::sql`](database_sql.md) | Driver-pluggable SQL database access. |
+| [`std::database::sql`](database_sql.md) | Driver-pluggable SQL database access. No driver ships in the box; bring your own (Postgres, MySQL, SQLite, ...) by registering one at startup. |
 | [`std::encoding::ascii85`](encoding_ascii85.md) | ASCII85 / base85 encode / decode. |
 | [`std::encoding::base32`](encoding_base32.md) | RFC 4648 base32 (uppercase) encode / decode. |
 | [`std::encoding::base64`](encoding_base64.md) | RFC 4648 base64 encode/decode. |
@@ -71,6 +72,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::http::state`](http_state.md) | Handler-side dependency injection via a typed AppState. |
 | [`std::http::static_files`](http_static_files.md) | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](http_websocket.md) | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
+| [`std::http_h3`](http_h3.md) | First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points. |
 | [`std::io`](io.md) | Stream-oriented I/O abstractions. |
 | [`std::iter`](iter.md) | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](jwt.md) | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
@@ -80,6 +82,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::math::big`](math_big.md) | Arbitrary-precision integers (num-bigint). |
 | [`std::math::bits`](math_bits.md) | Integer bit-manipulation operations (Go's math/bits shape). |
 | [`std::math::rand`](math_rand.md) | Deterministic pseudo-random number generation. |
+| [`std::metrics`](metrics.md) | Prometheus-compatible primitives (Counter, Gauge, Histogram) and a Registry rendering the standard text-exposition format. |
 | [`std::mime`](mime.md) | RFC 2045 media type parsing, parameter extraction, and extension lookup. |
 | [`std::net`](net.md) | TCP/UDP networking primitives. |
 | [`std::net::netip`](net_netip.md) | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
@@ -104,6 +107,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::thread`](thread.md) | Native OS threads. For goroutines use the `go expr` syntax. |
 | [`std::time`](time.md) | Wall-clock and monotonic time facilities. |
 | [`std::tls`](tls.md) | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |
+| [`std::trace`](trace.md) | W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export. |
 | [`std::unicode`](unicode.md) | Unicode general-category predicates, casing, normalization, and segmentation. |
 | [`std::utf16`](utf16.md) | UTF-16 encoding/decoding and surrogate pair helpers. |
 | [`std::utf8`](utf8.md) | UTF-8 validation and scalar decoding. |

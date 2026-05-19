@@ -132,6 +132,7 @@ pub unsafe extern "C" fn gos_rt_router_add(
             unsafe { CStr::from_ptr(pattern).to_string_lossy().into_owned() }
         };
         let segments = parse_route_pattern(&pat);
+        super::fn_registry::register(fn_addr as usize, super::fn_registry::FnKind::HttpHandlerEnv);
         r.routes.push(GosRoute {
             method: m,
             segments,
@@ -171,6 +172,10 @@ unsafe fn router_add_bare(
         unsafe { CStr::from_ptr(pattern).to_string_lossy().into_owned() }
     };
     let segments = parse_route_pattern(&pat);
+    super::fn_registry::register(
+        fn_addr as usize,
+        super::fn_registry::FnKind::HttpHandlerBare,
+    );
     r.routes.push(GosRoute {
         method: m,
         segments,
@@ -398,10 +403,18 @@ pub unsafe extern "C" fn gos_rt_router_serve(
             }
             if route_segments_match(&route.segments, path) {
                 if route.bare {
+                    super::fn_registry::verify(
+                        route.fn_addr,
+                        super::fn_registry::FnKind::HttpHandlerBare,
+                    );
                     type BareFn = unsafe extern "C" fn(req: *mut GosHttpRequest) -> *mut GosResult;
                     let handler: BareFn = unsafe { std::mem::transmute(route.fn_addr) };
                     return unsafe { handler(req) };
                 }
+                super::fn_registry::verify(
+                    route.fn_addr,
+                    super::fn_registry::FnKind::HttpHandlerEnv,
+                );
                 type HandlerFn =
                     unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> *mut GosResult;
                 let handler: HandlerFn = unsafe { std::mem::transmute(route.fn_addr) };

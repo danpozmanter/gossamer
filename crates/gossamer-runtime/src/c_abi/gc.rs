@@ -16,7 +16,6 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
-use std::os::raw::c_char;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------
@@ -238,11 +237,25 @@ fn gc_track_enabled() -> bool {
 /// One entry in the per-aggregate registry. `mark` is the
 /// current cycle's reachability bit; `generation` is the ABA
 /// stamp the marker compares against snapshotted roots.
-#[derive(Debug, Clone, Copy)]
+///
+/// `pointer_mask` is optional precise-trace metadata: when
+/// present, only the word offsets it lists are read as
+/// candidate pointers during the mark phase. This eliminates
+/// the false-retention hazard of the conservative payload-word
+/// scan (where any `i64` payload field that numerically matches
+/// a live allocation pins that allocation). When `None`, the
+/// marker falls back to the conservative scan — preserving the
+/// existing behaviour for allocations that codegen hasn't yet
+/// produced a layout description for.
+#[derive(Debug, Clone)]
 struct AllocEntry {
     size: usize,
     mark: bool,
     generation: u64,
+    /// Word offsets in the payload that are pointer slots.
+    /// `Some(vec)` engages precise tracing; `None` falls back
+    /// to conservative.
+    pointer_mask: Option<Vec<u32>>,
 }
 
 /// Newtype around the raw allocation address. Stored as `usize`
@@ -342,44 +355,9 @@ pub(super) fn gos_map_deregister(addr: *mut u8) {
     }
 }
 
-/// Walks every live `GosMap` and pushes each stored 8-byte value
-/// onto the worklist as a candidate pointer. Filtering against
-/// `registry` is the caller's responsibility (mirrors how
-/// `scan_payload_words` is structured) so we share one
-/// allocation-free probe.
-///
-/// Performance: per-call cost is `O(total_map_entries)` with a
-/// short-lived `lock()` on each map. Each map's storage Mutex is
-/// uncontested in steady state (GC stops the world via the
-/// registry lock first; mutators block at the next safepoint),
-/// so the extra latency is dominated by the iteration itself.
-fn scan_all_gos_maps(registry: &AllocRegistry, worklist: &mut Vec<(usize, u64)>) {
-    let Some(map_reg) = GOS_MAP_REGISTRY.get() else {
-        return;
-    };
-    let map_addrs: Vec<usize> = map_reg.lock().iter().copied().collect();
-    for addr in map_addrs {
-        if addr == 0 {
-            continue;
-        }
-        // SAFETY: `addr` was registered by `gos_rt_map_new` (or the
-        // capacity variant) via `Box::into_raw(Box::new(GosMap))`.
-        // Removal goes through `gos_rt_map_free`, which holds the
-        // registry's only mutator; concurrent free races are
-        // impossible while the GC registry is locked because every
-        // mutator must reach the next safepoint to touch the GC.
-        let map = unsafe { &*(addr as *const super::map::GosMap) };
-        for value in super::map::storage_values_for_gc(map) {
-            if value == 0 {
-                continue;
-            }
-            let candidate = value as usize;
-            if let Some(entry) = registry.get(&PtrKey(candidate)) {
-                worklist.push((candidate, entry.generation));
-            }
-        }
-    }
-}
+// Lock-holding scan_all_gos_maps retired by the snapshot-based
+// `scan_all_gos_maps_snapshot` (see below); the GC now releases
+// the registry lock for the entire mark phase.
 
 thread_local! {
     static LOCAL_ROOTS: std::cell::RefCell<Option<std::sync::Arc<ThreadRoots>>> =
@@ -467,70 +445,112 @@ pub extern "C" fn gos_rt_gc_root_restore(frame: u64) {
     });
 }
 
-/// Conservative payload-word scan over a single rooted
-/// allocation. Pushes any 8-byte word in the payload whose
-/// value matches a live registry entry onto the worklist for
-/// transitive marking.
-///
-/// Safety + correctness invariants:
-///
-/// - **Lock held**: the registry mutex is held by the caller
-///   (we receive `&mut AllocRegistry`). Mutator threads cannot
-///   free `addr` mid-scan.
-/// - **Registry-authoritative size**: the loop bound comes
-///   from the entry's recorded size, not from a parameter. If
-///   a future change shrinks the entry mid-cycle (it can't —
-///   the lock is held — but defence in depth), the scan
-///   terminates within the recorded bound.
-/// - **Bounded reads**: `byte_off + WORD_BYTES <= entry.size`
-///   for every iteration. Trailing bytes that don't form a
-///   complete word are not scanned (they cannot be a 64-bit
-///   pointer in the architectures we support).
-/// - **Unaligned reads**: `core::ptr::read_unaligned` defends
-///   against future allocator changes that drop the 8-byte
-///   alignment guarantee. The current `aggregate_layout`
-///   enforces `WORD_BYTES` alignment, so all reads are in fact
-///   aligned today, but `read_unaligned` is Miri-clean
-///   regardless.
-/// - **Generation match**: a candidate word is only pushed
-///   onto the worklist if the registry entry's generation
-///   equals the value the marker captured. ABA-stable: a
-///   reallocation of the same address after a free is
-///   correctly skipped (its generation has advanced).
-fn scan_payload_words(addr: usize, registry: &AllocRegistry, worklist: &mut Vec<(usize, u64)>) {
-    let Some(entry) = registry.get(&PtrKey(addr)) else {
+// The previous `scan_payload_words(addr, &AllocRegistry, ...)`
+// helper has been retired in favour of the snapshot-based
+// `scan_payload_words_snapshot` below. The GC's mark phase
+// no longer touches the live registry; the brief sweep window
+// is the only place the lock is held.
+
+/// Conservative payload-word scan against a frozen snapshot
+/// `{addr -> (size, generation)}` rather than the live registry.
+/// The entire transitive walk can run without holding the
+/// cross-thread allocation lock. Mutators may allocate while we
+/// walk; those new allocations are absent from the snapshot and
+/// therefore never reclaimed in this cycle (correct — they are
+/// at most one safepoint old).
+/// Per-allocation snapshot row: size, generation, and optional
+/// pointer-offset mask (word indices). Carrying the mask in the
+/// snapshot keeps the mark phase entirely lock-free — neither
+/// the registry nor the pointer-mask buffers are dereferenced
+/// off-snapshot.
+#[derive(Clone, Debug)]
+struct AllocSnapshot {
+    size: usize,
+    generation: u64,
+    pointer_mask: Option<Vec<u32>>,
+}
+
+fn scan_payload_words_snapshot(
+    addr: usize,
+    snapshot: &std::collections::HashMap<usize, AllocSnapshot>,
+    worklist: &mut Vec<(usize, u64)>,
+) {
+    let Some(entry) = snapshot.get(&addr) else {
         return;
     };
     let size = entry.size;
+    // Precise tracing path: walk only the recorded pointer
+    // offsets. Eliminates the false-retention hazard of the
+    // conservative scan (where an `i64` payload field that
+    // numerically matches a live allocation address pins it).
+    if let Some(mask) = entry.pointer_mask.as_ref() {
+        for &word_idx in mask {
+            let byte_off = (word_idx as usize).saturating_mul(WORD_BYTES);
+            if byte_off
+                .checked_add(WORD_BYTES)
+                .is_none_or(|end| end > size)
+            {
+                continue;
+            }
+            let word_ptr = (addr + byte_off) as *const usize;
+            // SAFETY: `addr` was registered with `size`; the
+            // bounds check above keeps the read inside the
+            // allocation.
+            let candidate = unsafe { core::ptr::read_unaligned(word_ptr) };
+            if candidate != 0 {
+                if let Some(child) = snapshot.get(&candidate) {
+                    worklist.push((candidate, child.generation));
+                }
+            }
+        }
+        return;
+    }
+    // Conservative fallback path: walk every 8-byte word.
     let mut byte_off: usize = 0;
     while byte_off
         .checked_add(WORD_BYTES)
         .is_some_and(|end| end <= size)
     {
-        // Provenance: `addr` came from the registry, which holds the
-        // value returned by `alloc_zeroed` with a `size`-byte
-        // layout. The bounds check above guarantees the read sits
-        // inside that allocation.
-        // Aliasing: we hold the registry Mutex; no mutator can free
-        // `addr` mid-scan.
-        // Synchronization: per the Mutex above.
-        // Failure mode: if `addr` is somehow not the start of the
-        // allocation the registry claims, this would scan adjacent
-        // memory. The registry insert path is the single writer of
-        // (addr, size) pairs, so this is structurally impossible
-        // absent registry corruption — which the integrity check
-        // catches under debug_assertions.
         let word_ptr = (addr + byte_off) as *const usize;
-        // SAFETY: see invariant block above; reads through a valid
-        // pointer inside a known-live allocation under the
-        // registry lock, using `read_unaligned` for Miri cleanliness.
+        // SAFETY: as above; `addr` registered with `size`.
         let candidate = unsafe { core::ptr::read_unaligned(word_ptr) };
         if candidate != 0 {
-            if let Some(child) = registry.get(&PtrKey(candidate)) {
+            if let Some(child) = snapshot.get(&candidate) {
                 worklist.push((candidate, child.generation));
             }
         }
         byte_off += WORD_BYTES;
+    }
+}
+
+/// Snapshot variant of [`scan_all_gos_maps`]. Looks up candidate
+/// addresses in the snapshot rather than the live registry so the
+/// caller can stay outside the registry critical section.
+fn scan_all_gos_maps_snapshot(
+    snapshot: &std::collections::HashMap<usize, AllocSnapshot>,
+    worklist: &mut Vec<(usize, u64)>,
+) {
+    let Some(map_reg) = GOS_MAP_REGISTRY.get() else {
+        return;
+    };
+    let map_addrs: Vec<usize> = map_reg.lock().iter().copied().collect();
+    for addr in map_addrs {
+        if addr == 0 {
+            continue;
+        }
+        // SAFETY: same provenance contract as `scan_all_gos_maps`;
+        // a registered map cannot be freed mid-cycle because the
+        // free path itself runs at a safepoint.
+        let map = unsafe { &*(addr as *const super::map::GosMap) };
+        for value in super::map::storage_values_for_gc(map) {
+            if value == 0 {
+                continue;
+            }
+            let candidate = value as usize;
+            if let Some(child) = snapshot.get(&candidate) {
+                worklist.push((candidate, child.generation));
+            }
+        }
     }
 }
 
@@ -556,139 +576,202 @@ pub extern "C" fn gos_rt_gc_collect() -> u64 {
         if !gc_track_enabled() {
             return 0;
         }
-        let mut registry = gc_registry().lock();
+        gc_collect_with_buffers()
+    })
+}
 
-        // Snapshot every thread's raw-pointer shadow stack into a
-        // single worklist of (addr, expected_gen) pairs. Hold the
-        // cross-thread registry lock so mutator pushes are
-        // serialised behind the snapshot.
-        let mut worklist: Vec<(usize, u64)> = Vec::new();
-        {
-            let threads = gc_thread_roots_registry().lock();
-            for t in threads.iter() {
-                let stack = t.stack.lock();
-                for &addr in stack.iter() {
-                    if addr == 0 {
-                        continue;
-                    }
-                    if let Some(entry) = registry.get(&PtrKey(addr)) {
-                        worklist.push((addr, entry.generation));
-                    }
+/// Per-thread reusable buffers for the lock-free mark phase.
+/// Allocating a fresh `HashMap` / `HashSet` / `Vec` on every
+/// `gos_rt_gc_collect` cycle is a measurable allocator pressure
+/// source for HashMap-heavy workloads (k-nucleotide, …) — every
+/// collect was N×(40 B per snapshot entry) + the HashSet's
+/// bucket overhead in transient memory. The thread_local holds
+/// the buffers across cycles; each collect calls `.clear()` and
+/// repopulates without freeing the bucket arrays.
+struct CollectBuffers {
+    snapshot: std::collections::HashMap<usize, AllocSnapshot>,
+    marked: std::collections::HashSet<usize>,
+    worklist: Vec<(usize, u64)>,
+}
+
+impl CollectBuffers {
+    fn new() -> Self {
+        Self {
+            snapshot: std::collections::HashMap::new(),
+            marked: std::collections::HashSet::new(),
+            worklist: Vec::new(),
+        }
+    }
+
+    fn reset_for_cycle(&mut self) {
+        self.snapshot.clear();
+        self.marked.clear();
+        self.worklist.clear();
+    }
+}
+
+thread_local! {
+    static COLLECT_BUFFERS: std::cell::RefCell<CollectBuffers> =
+        std::cell::RefCell::new(CollectBuffers::new());
+}
+
+fn gc_collect_with_buffers() -> u64 {
+    COLLECT_BUFFERS.with(|cell| {
+        let mut buffers = cell.borrow_mut();
+        buffers.reset_for_cycle();
+        let CollectBuffers {
+            snapshot,
+            marked,
+            worklist,
+        } = &mut *buffers;
+        gc_collect_inner(snapshot, marked, worklist)
+    })
+}
+
+fn gc_collect_inner(
+    snapshot: &mut std::collections::HashMap<usize, AllocSnapshot>,
+    marked: &mut std::collections::HashSet<usize>,
+    worklist: &mut Vec<(usize, u64)>,
+) -> u64 {
+    {
+        // Phase 0: snapshot {addr -> (size, generation)} under a
+        // brief registry lock. Mutator allocations after this
+        // point are absent from the snapshot and are therefore
+        // never reclaimed in this cycle — that's correct (they
+        // are at most one safepoint old). This replaces holding
+        // the registry mutex across the entire mark+sweep, which
+        // serialised every concurrent `gos_rt_gc_alloc` behind
+        // the collector's full pause.
+        let registry = gc_registry().lock();
+        snapshot.reserve(registry.len());
+        for (k, v) in registry.iter() {
+            snapshot.insert(
+                k.0,
+                AllocSnapshot {
+                    size: v.size,
+                    generation: v.generation,
+                    pointer_mask: v.pointer_mask.clone(),
+                },
+            );
+        }
+    }
+    // Pre-size the marked set against the snapshot so the bucket
+    // arrays don't grow during the mark phase.
+    marked.reserve(snapshot.len());
+
+    // Phase 1: seed the worklist from every thread's shadow
+    // stack. Walked lock-free against the snapshot — pushes
+    // that arrive concurrently land on the live registry, not
+    // on the snapshot, and are therefore ineligible for
+    // reclaim in this cycle.
+    {
+        let threads = gc_thread_roots_registry().lock();
+        for t in threads.iter() {
+            let stack = t.stack.lock();
+            for &addr in stack.iter() {
+                if addr == 0 {
+                    continue;
+                }
+                if let Some(entry) = snapshot.get(&addr) {
+                    worklist.push((addr, entry.generation));
                 }
             }
         }
+    }
 
-        // Phase 1: clear every mark bit so this cycle starts clean.
-        for entry in registry.values_mut() {
-            entry.mark = false;
+    // Phase 2: transitive mark, lock-free against the snapshot.
+    while let Some((addr, expected_gen)) = worklist.pop() {
+        let Some(entry) = snapshot.get(&addr) else {
+            continue;
+        };
+        if entry.generation != expected_gen {
+            continue;
         }
+        if !marked.insert(addr) {
+            continue;
+        }
+        scan_payload_words_snapshot(addr, snapshot, worklist);
+    }
 
-        // Phase 2: transitive mark. Drains the worklist, marking
-        // each entry exactly once. `scan_payload_words` enforces
-        // the read-safety invariants on every payload word.
-        while let Some((addr, expected_gen)) = worklist.pop() {
-            let Some(entry) = registry.get_mut(&PtrKey(addr)) else {
+    // Phase 2b: HashMap-as-container roots. Maps store their
+    // values in Rust-owned buckets the conservative word-scan
+    // cannot see through; emit each value as a candidate and
+    // re-drain the worklist. Lock-free against the snapshot.
+    scan_all_gos_maps_snapshot(snapshot, worklist);
+    while let Some((addr, expected_gen)) = worklist.pop() {
+        let Some(entry) = snapshot.get(&addr) else {
+            continue;
+        };
+        if entry.generation != expected_gen {
+            continue;
+        }
+        if !marked.insert(addr) {
+            continue;
+        }
+        scan_payload_words_snapshot(addr, snapshot, worklist);
+    }
+
+    // Phase 3: sweep — under a fresh registry lock, dealloc
+    // every entry in the snapshot that was *not* marked. The
+    // generation check rejects addresses whose alloc has been
+    // freed-and-reused between snapshot and sweep (so we
+    // never dealloc a stranger's allocation).
+    let mut bytes_reclaimed: u64 = 0;
+    {
+        let mut registry = gc_registry().lock();
+        for (addr, snap_entry) in snapshot.iter() {
+            if marked.contains(addr) {
+                continue;
+            }
+            let Some(entry) = registry.get(&PtrKey(*addr)) else {
                 continue;
             };
-            if entry.generation != expected_gen {
-                // The address was freed and re-allocated between
-                // snapshot and trace. The new allocation is not
-                // reachable from any captured root; skip.
+            if entry.size != snap_entry.size || entry.generation != snap_entry.generation {
+                // Reused since snapshot; skip — the new owner
+                // is a live, ineligible-this-cycle allocation.
                 continue;
             }
-            if entry.mark {
-                continue;
-            }
-            entry.mark = true;
-            scan_payload_words(addr, &registry, &mut worklist);
-        }
-
-        // Phase 2b: HashMap-as-container roots. The conservative
-        // word-scan can't see through `MapStorage`'s Rust-owned
-        // buckets, so every value stored in a live `GosMap` would
-        // otherwise look unreachable. Walk each registered map,
-        // emit its values as candidates, and re-drain the worklist.
-        // Without this pass, `m.insert(k, Struct { ... })` for a
-        // GC-tracked `Struct` allocation reclaims the alloc on the
-        // first collect after the inserting frame returns, and
-        // subsequent `m.get(&k)` reads stale memory. See
-        // `feature-testing-examples/hashmap_get_some_field.gos`
-        // and the aether_ecs build benchmark.
-        scan_all_gos_maps(&registry, &mut worklist);
-        while let Some((addr, expected_gen)) = worklist.pop() {
-            let Some(entry) = registry.get_mut(&PtrKey(addr)) else {
-                continue;
-            };
-            if entry.generation != expected_gen {
-                continue;
-            }
-            if entry.mark {
-                continue;
-            }
-            entry.mark = true;
-            scan_payload_words(addr, &registry, &mut worklist);
-        }
-
-        // Phase 3: sweep — dealloc every unmarked entry. Bump
-        // each removed entry's generation so any stale
-        // shadow-stack snapshot fails the next-cycle check.
-        let mut bytes_reclaimed: u64 = 0;
-        let dead: Vec<(usize, usize)> = registry
-            .iter()
-            .filter_map(|(k, v)| if v.mark { None } else { Some((k.0, v.size)) })
-            .collect();
-        for (addr, size) in dead {
-            registry.remove(&PtrKey(addr));
-            // Layout reconstruction is total: the registry only
-            // ever stored sizes from `aggregate_layout`, which
-            // already validated them. Re-deriving here cannot fail
-            // for any registered entry. The `?`-propagation route
-            // exists for the rare case of registry corruption
-            // (caught by `gos_rt_gc_assert_consistent` in debug).
-            let Ok(layout) = aggregate_layout(size) else {
+            let reclaimed_size = snap_entry.size;
+            registry.remove(&PtrKey(*addr));
+            let Ok(layout) = aggregate_layout(reclaimed_size) else {
                 continue;
             };
             // SAFETY:
             // - Provenance: `addr as *mut u8` came from
-            //   `alloc_zeroed(layout)` in `gos_rt_gc_alloc`. The
-            //   registry holds the address verbatim; no
-            //   arithmetic was applied.
+            //   `alloc_zeroed(layout)` in `gos_rt_gc_alloc`.
             // - Aliasing: we hold the registry Mutex; no other
             //   code path is currently dereferencing this
-            //   allocation (it's unmarked, so no root pointed at
-            //   it after the mark phase).
+            //   allocation (it's unmarked, so no root pointed
+            //   at it after the mark phase) and the generation
+            //   check guarantees the alloc hasn't been reused.
             // - Synchronization: registry Mutex.
-            // - Failure mode: a corrupted (addr, size) pair would
-            //   produce dealloc UB. The integrity check rejects
-            //   such pairs at insert time under debug_assertions.
-            unsafe { dealloc(addr as *mut u8, layout) };
-            // Bump generation so any stale shadow-stack entry
-            // referring to `addr` is skipped on the next cycle.
+            // - Failure mode: a corrupted (addr, size) pair
+            //   would produce dealloc UB. The integrity check
+            //   rejects such pairs at insert time under
+            //   debug_assertions.
+            unsafe { dealloc(*addr as *mut u8, layout) };
             let _ = next_generation();
-            bytes_reclaimed = bytes_reclaimed.saturating_add(size as u64);
+            bytes_reclaimed = bytes_reclaimed.saturating_add(reclaimed_size as u64);
         }
 
-        // Reset surviving entries' mark bits so the registry is
-        // back to "clean between cycles" state. The integrity
-        // walker invariant `!entry.mark` only holds before the
-        // next mark phase, not after the sweep, unless we clear
-        // here. Linear in surviving-entry count.
+        // Clear surviving entries' `mark` bits (held over from
+        // older single-lock implementations) so the integrity
+        // walker invariant `!entry.mark` still holds. With
+        // marks now tracked in the local `marked` HashSet, the
+        // registry's `mark` field is reset state only.
         for entry in registry.values_mut() {
             entry.mark = false;
         }
 
-        GC_BYTES_SINCE_LAST_COLLECT.store(0, Ordering::Relaxed);
-
-        // Debug-only integrity check. Catches registry
-        // corruption introduced by future refactors before the
-        // marker reads through a malformed entry.
         #[cfg(debug_assertions)]
         {
             assert_registry_consistent_locked(&registry);
         }
+    }
 
-        bytes_reclaimed
-    })
+    GC_BYTES_SINCE_LAST_COLLECT.store(0, Ordering::Relaxed);
+
+    bytes_reclaimed
 }
 
 /// Returns the number of currently-tracked allocations. Test /
@@ -864,9 +947,73 @@ pub extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
                     size,
                     mark: false,
                     generation,
+                    pointer_mask: None,
                 },
             );
             GC_BYTES_SINCE_LAST_COLLECT.fetch_add(size, Ordering::Relaxed);
+        }
+        ptr
+    })
+}
+
+/// Like [`gos_rt_gc_alloc`] but records a precise pointer-offset
+/// bitmap so the tracing collector reads only the pointer slots
+/// in the payload during mark, eliminating the false-retention
+/// hazard of the conservative word scan. `mask_words` is a
+/// pointer to a contiguous `u32` array of `mask_len` word
+/// offsets (each offset multiplied by `WORD_BYTES` gives the
+/// byte offset into the payload). MIR codegen emits this from
+/// the per-type layout description.
+///
+/// Returns `null` on OOM (same contract as `gos_rt_gc_alloc`).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_gc_alloc_traced(
+    size: u64,
+    mask_words: *const u32,
+    mask_len: u64,
+) -> *mut u8 {
+    ffi_entry!(std::ptr::null_mut(), {
+        if size == 0 {
+            return std::ptr::null_mut();
+        }
+        let size_usize = size as usize;
+        let Ok(layout) = aggregate_layout(size_usize) else {
+            return std::ptr::null_mut();
+        };
+        // SAFETY: same allocator invariants as `gos_rt_gc_alloc`.
+        let ptr = unsafe { alloc_zeroed(layout) };
+        if ptr.is_null() {
+            eprintln!(
+                "gossamer runtime: OOM in gos_rt_gc_alloc_traced (size={}, align={}); aborting",
+                layout.size(),
+                layout.align()
+            );
+            std::process::abort();
+        }
+        let mask = if mask_words.is_null() || mask_len == 0 {
+            None
+        } else {
+            let len_usize = mask_len.min(u64::from(u32::MAX)) as usize;
+            // SAFETY: caller asserts `mask_words` points at a
+            // contiguous `len_usize`-element `u32` array. The
+            // values are read-only and the slice is consumed
+            // immediately (copied into the `Vec`), so caller's
+            // buffer needn't outlive this call.
+            let words: &[u32] = unsafe { core::slice::from_raw_parts(mask_words, len_usize) };
+            Some(words.to_vec())
+        };
+        if gc_track_enabled() {
+            let generation = next_generation();
+            gc_registry().lock().insert(
+                PtrKey::from_raw(ptr),
+                AllocEntry {
+                    size: size_usize,
+                    mark: false,
+                    generation,
+                    pointer_mask: mask,
+                },
+            );
+            GC_BYTES_SINCE_LAST_COLLECT.fetch_add(size_usize, Ordering::Relaxed);
         }
         ptr
     })
@@ -1122,21 +1269,9 @@ pub extern "C" fn gos_rt_arena_restore(_saved: u64) {
     ffi_entry!((), {});
 }
 
-/// In-place arena-string extension was a fast path for the
-/// `s = s + c` accumulator pattern. With the Box-leak allocator
-/// every allocation is a fresh `Box<[u8]>` and the "last
-/// allocation" concept no longer applies. Always returns null so
-/// `gos_rt_str_concat`'s caller falls through to its
-/// fresh-allocation slow path.
-///
-/// Removing the optimization is correct: `try_extend_last_cstring`
-/// also had a subtle aliasing hazard — extending the last
-/// allocation mutated bytes that other Gossamer locals might
-/// have been holding (see fix_architecture_ownership.md §3.6).
-#[allow(clippy::unnecessary_wraps)]
-pub fn try_extend_last_cstring(_a_ptr: *const c_char, _extra: &[u8]) -> *mut c_char {
-    std::ptr::null_mut()
-}
+// `try_extend_last_cstring` was retired with the Box-leak
+// allocator (see history); `gos_rt_str_concat` now allocates in
+// one round trip via `alloc_cstring_from_slices`.
 
 #[cfg(test)]
 mod tracing_gc_tests {

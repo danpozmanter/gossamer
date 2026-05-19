@@ -145,17 +145,17 @@ pub use operand::*;
 pub use ty::*;
 pub use vec_elem_kind::vec_elem_kind_codegen;
 
-mod intrinsic_g0;
-pub use intrinsic_g0::*;
+mod intrinsic_io_math;
+pub use intrinsic_io_math::*;
 
-mod intrinsic_g1;
-pub use intrinsic_g1::*;
+mod intrinsic_collections;
+pub use intrinsic_collections::*;
 
-mod intrinsic_g2;
-pub use intrinsic_g2::*;
+mod intrinsic_handles;
+pub use intrinsic_handles::*;
 
-mod intrinsic_g3;
-pub use intrinsic_g3::*;
+mod intrinsic_string;
+pub use intrinsic_string::*;
 
 mod lowering_body;
 pub use lowering_body::*;

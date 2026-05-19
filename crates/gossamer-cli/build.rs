@@ -41,6 +41,10 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // Intentionally never called from generated code: a debug-only
     // helper used by manual `gdb`/`lldb` sessions.
     "gos_rt_result_dbg",
+    // Precise-tracing variant of `gos_rt_gc_alloc`. Reachable from
+    // Rust callers and exercised by runtime tests; native codegen
+    // currently emits the conservative `gos_rt_gc_alloc` form.
+    "gos_rt_gc_alloc_traced",
     // Setup function called directly from Rust (gossamer-interp's
     // `set_runtime_program_name`), not from generated Gossamer code.
     "gos_rt_set_program_name",

@@ -9,7 +9,7 @@
 //!
 //! Typical wiring at the top of `main`:
 //!
-//! ```ignore
+//! ```text
 //! let lc = Lifecycle::install_default()?;
 //! lc.on_shutdown(move || db_pool.close());
 //! lc.on_shutdown(move || flush_logs());

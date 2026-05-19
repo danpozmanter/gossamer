@@ -27,7 +27,7 @@ the implementation by a rev.
 | Command | Purpose |
 |---------|---------|
 | `gos test PATH` | Run `#[test]` functions **and** doc-tests extracted from `` ``` ``-fenced code inside `//` doc comments. `` ```text `` and other language tags are skipped. Accepts a file or a directory. |
-| `gos bench [--iterations N] FILE` | Time `#[bench]` functions. |
+| `gos bench [--parallel N] [PATH]` | Discover and time `#[bench]` functions; reports `ns/op` plus `allocs/op` per benchmark. Per-bench iteration counts auto-tune against a 50 ms calibration window (cap 2^20). `PATH` defaults to the project's `src/`. |
 
 ## Watch
 

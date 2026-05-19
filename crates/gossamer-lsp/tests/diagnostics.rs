@@ -7,7 +7,9 @@
 
 mod common;
 
-use common::{diagnostic_code, diagnostic_message, diagnostics_from, field, field_array, server_with};
+use common::{
+    diagnostic_code, diagnostic_message, diagnostics_from, field, field_array, server_with,
+};
 use gossamer_std::json::Value;
 
 /// Asserts every published diagnostic carries the `gos` source tag
@@ -63,7 +65,10 @@ fn unresolved_name_emits_gr_diagnostic() {
     let server = server_with(uri, "fn main() { does_not_exist(); }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
-    assert!(!diags.is_empty(), "unresolved name must publish a diagnostic");
+    assert!(
+        !diags.is_empty(),
+        "unresolved name must publish a diagnostic"
+    );
     assert!(
         has_code_prefix(&diags, "GR"),
         "expected GR* resolver-error code, got {:?}",
@@ -77,10 +82,7 @@ fn type_mismatch_emits_gt_diagnostic() {
     let uri = "file:///type.gos";
     // Assigning a string literal to an i64-annotated binding is a
     // typecheck error.
-    let server = server_with(
-        uri,
-        "fn main() { let x: i64 = \"hello\"; let _ = x; }\n",
-    );
+    let server = server_with(uri, "fn main() { let x: i64 = \"hello\"; let _ = x; }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     // The typechecker may produce different codes for this exact
@@ -178,10 +180,7 @@ fn diagnostic_range_is_within_source_bounds() {
 #[test]
 fn duplicate_definition_emits_diagnostic() {
     let uri = "file:///dup.gos";
-    let server = server_with(
-        uri,
-        "fn foo() {}\nfn foo() {}\nfn main() { foo(); }\n",
-    );
+    let server = server_with(uri, "fn foo() {}\nfn foo() {}\nfn main() { foo(); }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     // Duplicate-definition shape: emits at least one diagnostic.
@@ -215,7 +214,11 @@ fn empty_source_publishes_clean() {
     let uri = "file:///empty.gos";
     let server = server_with(uri, "");
     let notifs = server.publish_diagnostics(uri);
-    assert_eq!(notifs.len(), 1, "empty file still publishes one notification");
+    assert_eq!(
+        notifs.len(),
+        1,
+        "empty file still publishes one notification"
+    );
     let diags = diagnostics_from(&notifs);
     // Empty source is valid Gossamer (no items).
     for diag in &diags {

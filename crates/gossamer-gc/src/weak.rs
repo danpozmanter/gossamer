@@ -62,9 +62,7 @@ impl WeakTable {
     /// Produces a [`WeakRef`] pointing at `handle`.
     pub fn downgrade(&mut self, handle: GcRef) -> WeakRef {
         self.next_generation = self.next_generation.checked_add(1).unwrap_or_else(|| {
-            eprintln!(
-                "gossamer gc: weak-ref generation counter overflowed u64; aborting"
-            );
+            eprintln!("gossamer gc: weak-ref generation counter overflowed u64; aborting");
             std::process::abort();
         });
         let generation = self.next_generation;

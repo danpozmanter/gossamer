@@ -32,11 +32,11 @@ fn hover_on_struct_name_shows_type() {
     let params = position_params("file:///s.gos", 1, 21);
     let response = server.hover(&params);
     // The hover may resolve to the struct definition or to the type
-    // name — either is acceptable, but it should never error.
-    assert!(
-        !matches!(response, Value::Null) || matches!(response, Value::Null),
-        "hover on type path must be a valid JSON value"
-    );
+    // name — either is acceptable. The point of this assertion is
+    // that the response is a JSON value of any shape (Null included
+    // means "no hover available"). We accept everything; we just
+    // refuse to silently drop the call.
+    let _ = &response;
     let text = hover_text(&response);
     if !text.is_empty() {
         assert!(
@@ -66,10 +66,7 @@ fn hover_on_local_binding_shows_type() {
 
 #[test]
 fn hover_on_stdlib_symbol_shows_doc() {
-    let server = server_with(
-        "file:///p.gos",
-        "fn main() { println!(\"hi\"); }\n",
-    );
+    let server = server_with("file:///p.gos", "fn main() { println!(\"hi\"); }\n");
     // Cursor on `println` (line 0, column 13).
     let params = position_params("file:///p.gos", 0, 13);
     let response = server.hover(&params);

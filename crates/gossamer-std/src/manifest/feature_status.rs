@@ -176,7 +176,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     FeatureStatus {
         path: "std::database::sql",
         status: Status::Experimental,
-        doc: "SQL driver registry + bundled SQLite. Driver registration ABI may change before 1.0.",
+        doc: "Driver-pluggable SQL access (Conn, Tx, Stmt, Rows, Pool, migrate, query::Select). Drivers register at startup via gossamer_runtime::sql::register; no driver ships in the box.",
     },
     FeatureStatus {
         path: "std::html::template",

@@ -4,13 +4,13 @@
 use std::fs::{self as stdfs, File, Metadata};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 use notify::{
     Event as NotifyEvent, EventKind as NotifyEventKind, RecommendedWatcher, RecursiveMode,
     Watcher as NotifyWatcherTrait,
 };
+use parking_lot::Mutex;
 
 /// Directory entry surfaced by [`read_dir`].
 #[derive(Debug, Clone)]
@@ -243,8 +243,16 @@ pub fn set_permissions_mode(_path: impl AsRef<Path>, _mode: u32) -> io::Result<(
 #[cfg(unix)]
 pub fn chown(path: impl AsRef<Path>, uid: i64, gid: i64) -> io::Result<()> {
     use nix::unistd::{Gid, Uid};
-    let uid_arg = if uid < 0 { None } else { Some(Uid::from_raw(uid as u32)) };
-    let gid_arg = if gid < 0 { None } else { Some(Gid::from_raw(gid as u32)) };
+    let uid_arg = if uid < 0 {
+        None
+    } else {
+        Some(Uid::from_raw(uid as u32))
+    };
+    let gid_arg = if gid < 0 {
+        None
+    } else {
+        Some(Gid::from_raw(gid as u32))
+    };
     nix::unistd::chown(path.as_ref(), uid_arg, gid_arg).map_err(io::Error::from)
 }
 
@@ -266,13 +274,17 @@ pub fn write_atomic(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
         .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "write_atomic: path has no file name"))?
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "write_atomic: path has no file name",
+            )
+        })?
         .to_string_lossy()
         .into_owned();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     let tmp = parent.join(format!("{file_name}.tmp.{}.{nanos}", std::process::id()));
 
     if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -313,7 +325,7 @@ pub struct Event {
     pub kind: EventKind,
 }
 
-fn translate_event_kind(kind: &NotifyEventKind) -> Option<EventKind> {
+fn translate_event_kind(kind: NotifyEventKind) -> Option<EventKind> {
     match kind {
         NotifyEventKind::Create(_) => Some(EventKind::Created),
         NotifyEventKind::Modify(_) => Some(EventKind::Modified),
@@ -342,7 +354,7 @@ impl Watcher {
         let event_tx = tx.clone();
         let inner = notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
             if let Ok(ev) = res {
-                if let Some(kind) = translate_event_kind(&ev.kind) {
+                if let Some(kind) = translate_event_kind(ev.kind) {
                     for path in ev.paths {
                         let _ = event_tx.send(Event {
                             path: path.to_string_lossy().into_owned(),
@@ -362,9 +374,7 @@ impl Watcher {
 
     /// Starts watching `path` recursively. The path must exist.
     pub fn add(&self, path: &str) -> io::Result<()> {
-        let mut guard = self.inner.lock().map_err(|_| {
-            io::Error::new(io::ErrorKind::Other, "watcher inner mutex poisoned")
-        })?;
+        let mut guard = self.inner.lock();
         guard
             .watch(Path::new(path), RecursiveMode::Recursive)
             .map_err(notify_to_io)
@@ -373,8 +383,7 @@ impl Watcher {
     /// Takes ownership of the event receiver. Subsequent calls return
     /// `None` because a `Receiver` cannot be cloned.
     pub fn events(&self) -> Option<Receiver<Event>> {
-        let mut guard = self.rx.lock().ok()?;
-        guard.take()
+        self.rx.lock().take()
     }
 
     /// Internal hook used by tests to inject a synthetic event.
@@ -387,7 +396,7 @@ impl Watcher {
 fn notify_to_io(err: notify::Error) -> io::Error {
     match err.kind {
         notify::ErrorKind::Io(e) => e,
-        _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
+        _ => io::Error::other(err.to_string()),
     }
 }
 
@@ -472,14 +481,96 @@ pub fn unlock(file: &File) -> io::Result<()> {
     fs2::FileExt::unlock(file)
 }
 
+/// RAII wrapper around a freshly-created temporary directory. The
+/// directory and every entry inside it are removed when the handle
+/// drops — even if the holder panicked. Mirrors Python's
+/// `tempfile.TemporaryDirectory`.
+#[derive(Debug)]
+pub struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    /// Creates a new unique directory under the system temp root.
+    /// The name uses the process id + a monotonic counter; never
+    /// reuses a name within the lifetime of a process.
+    pub fn new() -> io::Result<Self> {
+        Self::with_prefix("tmp")
+    }
+
+    /// Like [`Self::new`] but the directory name carries the
+    /// caller-supplied `prefix` for easier identification in
+    /// long-lived working directories.
+    pub fn with_prefix(prefix: &str) -> io::Result<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let mut path = std::env::temp_dir();
+        path.push(format!("gossamer-{prefix}-{pid}-{nanos:x}-{n}"));
+        stdfs::create_dir(&path)?;
+        Ok(Self { path })
+    }
+
+    /// Returns the absolute path to the temporary directory.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Consumes the wrapper without removing the directory. Used
+    /// when ownership transfers (the new owner is responsible for
+    /// cleanup).
+    #[must_use]
+    pub fn into_path(mut self) -> PathBuf {
+        let out = std::mem::take(&mut self.path);
+        // Prevent Drop from removing the directory.
+        std::mem::forget(self);
+        out
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        if !self.path.as_os_str().is_empty() {
+            let _ = stdfs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+/// Creates a freshly-named temporary file under the system temp
+/// root and returns `(File, PathBuf)`. The caller is responsible
+/// for removing the file when finished — pair with [`TempDir`] for
+/// automatic cleanup. Mirrors Python's `tempfile.mkstemp` (sans
+/// the file-descriptor return).
+pub fn temp_file(prefix: &str) -> io::Result<(File, PathBuf)> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let mut path = std::env::temp_dir();
+    path.push(format!("gossamer-{prefix}-{pid}-{nanos:x}-{n}"));
+    let file = stdfs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .read(true)
+        .open(&path)?;
+    Ok((file, path))
+}
+
 #[cfg(test)]
 fn drain_for(rx: &Receiver<Event>, deadline: std::time::Duration) -> Vec<Event> {
     let mut out = Vec::new();
     let start = std::time::Instant::now();
     while start.elapsed() < deadline {
-        match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-            Ok(ev) => out.push(ev),
-            Err(_) => continue,
+        if let Ok(ev) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            out.push(ev);
         }
     }
     out
@@ -617,13 +708,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn chown_minus_one_leaves_owner_unchanged() {
+        use std::os::unix::fs::MetadataExt;
         let dir = scratch("chown-noop");
         let path = dir.join("file.txt");
         write(&path, "x").unwrap();
         let before = metadata(&path).unwrap();
         chown(&path, -1, -1).unwrap();
         let after = metadata(&path).unwrap();
-        use std::os::unix::fs::MetadataExt;
         assert_eq!(before.uid(), after.uid());
         assert_eq!(before.gid(), after.gid());
         let _ = remove_all(&dir);
@@ -632,17 +723,17 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn chown_to_current_uid_gid_round_trips() {
+        use std::os::unix::fs::MetadataExt;
         let dir = scratch("chown-self");
         let path = dir.join("file.txt");
         write(&path, "x").unwrap();
-        use std::os::unix::fs::MetadataExt;
         let md = metadata(&path).unwrap();
-        let uid = md.uid() as i64;
-        let gid = md.gid() as i64;
+        let uid = i64::from(md.uid());
+        let gid = i64::from(md.gid());
         chown(&path, uid, gid).unwrap();
         let after = metadata(&path).unwrap();
-        assert_eq!(after.uid() as i64, uid);
-        assert_eq!(after.gid() as i64, gid);
+        assert_eq!(i64::from(after.uid()), uid);
+        assert_eq!(i64::from(after.gid()), gid);
         let _ = remove_all(&dir);
     }
 

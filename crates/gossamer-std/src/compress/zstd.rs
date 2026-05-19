@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn round_trips_non_trivial_payload() {
-        let plain: Vec<u8> = (0..2048u32).flat_map(|n| n.to_le_bytes()).collect();
+        let plain: Vec<u8> = (0..2048u32).flat_map(u32::to_le_bytes).collect();
         let cipher = encode(&plain).unwrap();
         assert_ne!(cipher, plain);
         // Zstandard frame magic: 0x28 0xB5 0x2F 0xFD (little-endian).

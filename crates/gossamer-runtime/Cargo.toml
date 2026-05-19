@@ -101,6 +101,12 @@ serde_yaml = "0.9"
 serde = { workspace = true }
 quick-xml = "0.37"
 
+# Crypto digest helpers consumed by `c_abi::crypto` so the
+# compiled tier can call `std::crypto::sha256` / `sha512` /
+# `blake3` / `hmac` natively instead of paying a VM round-trip.
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+blake3 = { version = "1", default-features = false, features = ["std"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 # POSIX user / group lookup for `std::os::user` compiled-tier helpers.

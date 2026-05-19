@@ -114,8 +114,12 @@ impl Symbol {
     #[must_use]
     pub fn call_no_args_i32(&self) -> i32 {
         type Fn0I32 = unsafe extern "C" fn() -> i32;
+        let raw = self.raw;
         // SAFETY: caller asserted the symbol matches the signature.
-        unsafe { std::mem::transmute::<usize, Fn0I32>(self.raw)() }
+        // Wrap in `catch_unwind` so a Rust panic inside a binding's
+        // entry point cannot cross the FFI boundary (UB).
+        std::panic::catch_unwind(|| unsafe { std::mem::transmute::<usize, Fn0I32>(raw)() })
+            .unwrap_or(-1)
     }
 
     /// Calls the symbol as `extern "C" fn() -> *const c_char` and
@@ -126,15 +130,22 @@ impl Symbol {
         // aarch64 Linux; use the alias rather than hard-coding so
         // both platforms agree with `CStr::from_ptr`.
         type Fn0Ptr = unsafe extern "C" fn() -> *const c_char;
-        // SAFETY: as call_no_args_i32; we additionally trust the
-        // returned pointer is NUL-terminated and statically owned by
-        // the library (the typical contract for `*_libversion`-style
-        // C accessors).
-        let ptr: *const c_char = unsafe { std::mem::transmute::<usize, Fn0Ptr>(self.raw)() };
-        if ptr.is_null() {
+        let raw = self.raw;
+        let ptr_addr: usize = std::panic::catch_unwind(|| {
+            // SAFETY: as call_no_args_i32. The `as usize` cast keeps
+            // the pointer value Send across the catch_unwind closure
+            // boundary without exposing a `*const _` typed result.
+            let p: *const c_char = unsafe { std::mem::transmute::<usize, Fn0Ptr>(raw)() };
+            p as usize
+        })
+        .unwrap_or(0);
+        if ptr_addr == 0 {
             return String::new();
         }
-        unsafe { CStr::from_ptr(ptr) }
+        // SAFETY: we additionally trust the returned pointer is
+        // NUL-terminated and statically owned by the library (the
+        // typical contract for `*_libversion`-style C accessors).
+        unsafe { CStr::from_ptr(ptr_addr as *const c_char) }
             .to_string_lossy()
             .into_owned()
     }
@@ -143,17 +154,31 @@ impl Symbol {
     #[must_use]
     pub fn call_i32_to_i32(&self, arg: i32) -> i32 {
         type Fn1I32 = unsafe extern "C" fn(i32) -> i32;
-        // SAFETY: as call_no_args_i32.
-        unsafe { std::mem::transmute::<usize, Fn1I32>(self.raw)(arg) }
+        let raw = self.raw;
+        std::panic::catch_unwind(|| unsafe {
+            // SAFETY: as call_no_args_i32.
+            std::mem::transmute::<usize, Fn1I32>(raw)(arg)
+        })
+        .unwrap_or(-1)
     }
 
     /// Calls the symbol as `extern "C" fn(*const c_char) -> c_int`.
     pub fn call_cstr_to_i32(&self, arg: &str) -> Result<i32, FfiError> {
         let arg = CString::new(arg).map_err(|e| FfiError::BadString(e.to_string()))?;
-        type Fn1Cstr = unsafe extern "C" fn(*const c_char) -> i32;
-        // SAFETY: as call_no_args_i32; the CString lives until the
-        // call returns.
-        Ok(unsafe { std::mem::transmute::<usize, Fn1Cstr>(self.raw)(arg.as_ptr()) })
+        let raw = self.raw;
+        let arg_ptr_addr = arg.as_ptr() as usize;
+        let result = std::panic::catch_unwind(|| {
+            type Fn1Cstr = unsafe extern "C" fn(*const c_char) -> i32;
+            // SAFETY: as call_no_args_i32; the CString lives across
+            // the call (kept alive by the outer `arg` binding).
+            unsafe { std::mem::transmute::<usize, Fn1Cstr>(raw)(arg_ptr_addr as *const c_char) }
+        })
+        .unwrap_or(-1);
+        // Hold `arg` here so its NUL-terminated buffer stays valid
+        // for the entire FFI call above (`catch_unwind` captures
+        // only `raw` and `arg_ptr_addr`).
+        drop(arg);
+        Ok(result)
     }
 }
 

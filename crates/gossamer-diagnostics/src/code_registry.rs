@@ -174,10 +174,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "`\"a\" + \"b\"` can be written directly as `\"ab\"`. Let the\n\
             source reflect the final value.",
     ),
-    (
-        "GL0033",
-        "`-(-x)` is `x`. The extra unary does nothing.",
-    ),
+    ("GL0033", "`-(-x)` is `x`. The extra unary does nothing."),
     (
         "GL0034",
         "`if !cond { A } else { B }` scans better as `if cond { B }\n\
@@ -336,7 +333,10 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "A tuple index must be a plain decimal integer (`p.0`, `p.1`).\n\
                      Hex, binary, or octal indices are not accepted.",
     ),
-    ("GP0012", "A label identifier is required after the leading `'`."),
+    (
+        "GP0012",
+        "A label identifier is required after the leading `'`.",
+    ),
     (
         "GP0013",
         "An attribute is malformed. Accepted forms are `#[attr]`,\n\

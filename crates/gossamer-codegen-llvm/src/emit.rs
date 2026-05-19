@@ -129,11 +129,7 @@ pub fn compile_to_object_at_path(
 /// [`compile_to_object`]: when `false`, an unsupported body returns
 /// `Err(BuildError::Unsupported)` instead of a Cranelift-stub
 /// declaration.
-pub fn render_ir_to_string(
-    bodies: &[Body],
-    tcx: &TyCtxt,
-    allow_fallback: bool,
-) -> Result<String> {
+pub fn render_ir_to_string(bodies: &[Body], tcx: &TyCtxt, allow_fallback: bool) -> Result<String> {
     let tmp_dir = pipeline_tmp_dir()?;
     let ll_path = tmp_dir.join("unit.ll");
     let _ = render_module_to_path(bodies, tcx, &ll_path, allow_fallback)?;
@@ -611,8 +607,8 @@ fn compile_bodies_parallel_incremental(
     // ---------------------------------------------------------------
     // Phase 3 — parallel opt+llc (one process pair per chunk — P2)
     // ---------------------------------------------------------------
-    let err_slot: std::sync::Mutex<Option<anyhow::Error>> = std::sync::Mutex::new(None);
-    let compiled: std::sync::Mutex<Vec<(usize, PathBuf)>> = std::sync::Mutex::new(Vec::new());
+    let err_slot: parking_lot::Mutex<Option<anyhow::Error>> = parking_lot::Mutex::new(None);
+    let compiled: parking_lot::Mutex<Vec<(usize, PathBuf)>> = parking_lot::Mutex::new(Vec::new());
 
     let err_ref = &err_slot;
     let compiled_ref = &compiled;
@@ -627,7 +623,7 @@ fn compile_bodies_parallel_incremental(
             let ll_path = ll_path.clone();
             let obj_path = obj_path.clone();
             scope.spawn(move || {
-                if err_ref.lock().unwrap().is_some() {
+                if err_ref.lock().is_some() {
                     return;
                 }
                 match invoke_llc_pipeline(&ll_path, &obj_path, triple_ref, /*announce=*/ false) {
@@ -639,20 +635,20 @@ fn compile_bodies_parallel_incremental(
                         if let Some(cd) = cache_ref {
                             let _ = std::fs::copy(&obj_path, cd.join(format!("{key}.o")));
                         }
-                        compiled_ref.lock().unwrap().push((chunk_idx, obj_path));
+                        compiled_ref.lock().push((chunk_idx, obj_path));
                     }
                     Err(e) => {
-                        *err_ref.lock().unwrap() = Some(e);
+                        *err_ref.lock() = Some(e);
                     }
                 }
             });
         }
     });
 
-    if let Some(err) = err_slot.into_inner().unwrap() {
+    if let Some(err) = err_slot.into_inner() {
         return Err(err);
     }
-    result_objects.extend(compiled.into_inner().unwrap());
+    result_objects.extend(compiled.into_inner());
     result_objects.sort_by_key(|(i, _)| *i);
     Ok((
         result_objects.into_iter().map(|(_, p)| p).collect(),
@@ -1393,8 +1389,7 @@ fn pipeline_tmp_dir() -> Result<PathBuf> {
         // `unit.o`. Two parallel tests in the same `cargo test`
         // process used to share a single tmp dir and produce
         // mutually-corrupted IR.
-        static TMP_SEQ: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(0);
+        static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         std::env::temp_dir().join(format!("gos-llvm-{}-{seq}", std::process::id()))
     };

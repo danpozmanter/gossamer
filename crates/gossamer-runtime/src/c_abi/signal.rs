@@ -158,6 +158,7 @@ pub unsafe extern "C" fn gos_rt_arr_sort_by_i64(p: *mut i64, len: i64, env: *con
         if fn_addr_raw == 0 {
             return;
         }
+        super::fn_registry::verify(fn_addr_raw, super::fn_registry::FnKind::SortCmp);
         let cmp: CmpFn = unsafe { std::mem::transmute(fn_addr_raw) };
         buf.sort_by(|a, b| {
             let r = unsafe { cmp(env, *a, *b) };
@@ -228,6 +229,7 @@ pub unsafe extern "C" fn gos_rt_arr_sort_by_aggr(
         if fn_addr_raw == 0 {
             return;
         }
+        super::fn_registry::verify(fn_addr_raw, super::fn_registry::FnKind::SortCmpAggr);
         let cmp: CmpFn = unsafe { std::mem::transmute(fn_addr_raw) };
         // Indirect sort: rank the indices, then permute the buffer.
         // Sorting indices keeps the comparator pointer-stable across

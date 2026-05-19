@@ -165,9 +165,8 @@ proptest! {
     #[test]
     fn int_literal_round_trips(lit in arb_int_literal()) {
         let src = wrap_as_fn(&lit);
-        let (a, b) = match round_trip(&src) {
-            Some(pair) => pair,
-            None => return Ok(()),
+        let Some((a, b)) = round_trip(&src) else {
+            return Ok(());
         };
         prop_assert_eq!(a, b);
     }
@@ -175,9 +174,8 @@ proptest! {
     #[test]
     fn binary_op_round_trips(expr in arb_binary_expr()) {
         let src = wrap_as_fn(&expr);
-        let (a, b) = match round_trip(&src) {
-            Some(pair) => pair,
-            None => return Ok(()),
+        let Some((a, b)) = round_trip(&src) else {
+            return Ok(());
         };
         prop_assert_eq!(a, b);
     }
@@ -185,27 +183,24 @@ proptest! {
     #[test]
     fn let_binding_round_trips(stmt in arb_let_stmt()) {
         let src = format!("fn p() -> i64 {{\n    {stmt}\n    0\n}}");
-        let (a, b) = match round_trip(&src) {
-            Some(pair) => pair,
-            None => return Ok(()),
+        let Some((a, b)) = round_trip(&src) else {
+            return Ok(());
         };
         prop_assert_eq!(a, b);
     }
 
     #[test]
     fn fn_definition_round_trips(src in arb_fn_def()) {
-        let (a, b) = match round_trip(&src) {
-            Some(pair) => pair,
-            None => return Ok(()),
+        let Some((a, b)) = round_trip(&src) else {
+            return Ok(());
         };
         prop_assert_eq!(a, b);
     }
 
     #[test]
     fn nested_block_round_trips(src in arb_nested_block_fn()) {
-        let (a, b) = match round_trip(&src) {
-            Some(pair) => pair,
-            None => return Ok(()),
+        let Some((a, b)) = round_trip(&src) else {
+            return Ok(());
         };
         prop_assert_eq!(a, b);
     }

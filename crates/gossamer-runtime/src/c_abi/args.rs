@@ -329,9 +329,10 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> *mut GosResu
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .and_then(|d| i64::try_from(d.as_millis()).ok())
                 .unwrap_or(0);
-            // 7 fields * 8 bytes = 56 bytes.
-            let layout = std::alloc::Layout::from_size_align(56, 8).unwrap();
-            let blob = unsafe { std::alloc::alloc(layout) as *mut i64 };
+            // 7 fields * 8 bytes = 56 bytes. Route through the
+            // tracing collector so the blob participates in
+            // mark/sweep instead of leaking after every list_dir.
+            let blob = super::gc::gos_rt_gc_alloc(56) as *mut i64;
             if blob.is_null() {
                 continue;
             }
@@ -394,8 +395,9 @@ pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> *mut GosResu
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .and_then(|d| i64::try_from(d.as_millis()).ok())
                     .unwrap_or(0);
-                let layout = std::alloc::Layout::from_size_align(56, 8).unwrap();
-                let blob = unsafe { std::alloc::alloc(layout) as *mut i64 };
+                // 7 fields * 8 bytes = 56 bytes. Route through the
+                // tracing collector — symmetric with list_dir.
+                let blob = super::gc::gos_rt_gc_alloc(56) as *mut i64;
                 if blob.is_null() {
                     continue;
                 }

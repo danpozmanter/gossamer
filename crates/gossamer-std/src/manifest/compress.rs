@@ -141,3 +141,25 @@ pub const COMPRESS_BZIP2: StdModule = StdModule {
         },
     ],
 };
+
+pub const COMPRESS_ZSTD: StdModule = StdModule {
+    path: "std::compress::zstd",
+    summary: "Zstandard encoder / decoder (RFC 8478; libzstd-vendored).",
+    items: &[
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "One-shot Zstandard compress at the default level (3).",
+        },
+        StdItem {
+            name: "encode_level",
+            kind: StdItemKind::Function,
+            doc: "One-shot Zstandard compress at the supplied level (1 fastest -- 22 best).",
+        },
+        StdItem {
+            name: "decode",
+            kind: StdItemKind::Function,
+            doc: "One-shot Zstandard decompress.",
+        },
+    ],
+};

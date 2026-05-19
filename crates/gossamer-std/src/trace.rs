@@ -325,9 +325,17 @@ impl EndedSpan {
         out.push(',');
         push_kv_raw(&mut out, "kind", "1");
         out.push(',');
-        push_kv_str(&mut out, "startTimeUnixNano", &self.start_unix_nanos.to_string());
+        push_kv_str(
+            &mut out,
+            "startTimeUnixNano",
+            &self.start_unix_nanos.to_string(),
+        );
         out.push(',');
-        push_kv_str(&mut out, "endTimeUnixNano", &self.end_unix_nanos.to_string());
+        push_kv_str(
+            &mut out,
+            "endTimeUnixNano",
+            &self.end_unix_nanos.to_string(),
+        );
         out.push(',');
         out.push_str("\"attributes\":[");
         for (i, (k, v)) in self.attributes.iter().enumerate() {
@@ -491,7 +499,6 @@ thread_local! {
 /// [`crate::context::Context`] through every signature: the runtime
 /// can call `enter_span` on a
 /// goroutine entry and `exit_span` on its return.
-#[must_use]
 pub fn enter_span(ctx: SpanContext) -> SpanGuard {
     CURRENT.with(|stack| stack.borrow_mut().push(ctx));
     SpanGuard { _private: () }
@@ -548,8 +555,7 @@ fn sample_u64() -> u64 {
 fn unix_nanos() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_nanos())
 }
 
 fn push_kv_str(out: &mut String, key: &str, value: &str) {
@@ -689,11 +695,17 @@ mod tests {
         let attrs = &ended[0].attributes;
         assert_eq!(attrs.len(), 2);
         assert_eq!(
-            attrs.iter().find(|(k, _)| k == "user.id").map(|(_, v)| v.as_str()),
+            attrs
+                .iter()
+                .find(|(k, _)| k == "user.id")
+                .map(|(_, v)| v.as_str()),
             Some("u-43")
         );
         assert_eq!(
-            attrs.iter().find(|(k, _)| k == "http.status").map(|(_, v)| v.as_str()),
+            attrs
+                .iter()
+                .find(|(k, _)| k == "http.status")
+                .map(|(_, v)| v.as_str()),
             Some("200")
         );
     }
@@ -823,9 +835,9 @@ mod tests {
             sampled: true,
         };
         assert_eq!(current_span_context(), None);
-        let _g = enter_span(ctx);
+        let guard = enter_span(ctx);
         assert_eq!(current_span_context(), Some(ctx));
-        drop(_g);
+        drop(guard);
         assert_eq!(current_span_context(), None);
     }
 

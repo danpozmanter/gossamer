@@ -326,7 +326,7 @@ pub(super) fn lower_intrinsic_call(
     destination: &gossamer_mir::Place,
     intrinsics: &mut IntrinsicContext,
 ) -> Result<bool> {
-    if lower_intrinsic_call_g0(
+    if lower_intrinsic_call_io_math(
         module,
         builder,
         locals,
@@ -339,7 +339,7 @@ pub(super) fn lower_intrinsic_call(
     )? {
         return Ok(true);
     }
-    if lower_intrinsic_call_g1(
+    if lower_intrinsic_call_collections(
         module,
         builder,
         locals,
@@ -352,7 +352,7 @@ pub(super) fn lower_intrinsic_call(
     )? {
         return Ok(true);
     }
-    if lower_intrinsic_call_g2(
+    if lower_intrinsic_call_handles(
         module,
         builder,
         locals,
@@ -365,7 +365,7 @@ pub(super) fn lower_intrinsic_call(
     )? {
         return Ok(true);
     }
-    if lower_intrinsic_call_g3(
+    if lower_intrinsic_call_string(
         module,
         builder,
         locals,

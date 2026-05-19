@@ -345,8 +345,7 @@ impl Heap {
             self.stats.max_pause_nanos = elapsed;
         }
         let bucket = PauseBucket::from_nanos(elapsed) as usize;
-        self.stats.pause_histogram[bucket] =
-            self.stats.pause_histogram[bucket].saturating_add(1);
+        self.stats.pause_histogram[bucket] = self.stats.pause_histogram[bucket].saturating_add(1);
         freed
     }
 

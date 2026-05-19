@@ -1,0 +1,26 @@
+// `?` on Option short-circuits to a `None` return from the
+// enclosing function. SPEC §4.5 documents this; HIR lowering
+// detects the Option-shaped scrutinee and emits the matching
+// `Some(v) => v, None => return None` desugar.
+
+fn maybe(n: i64) -> Option<i64> {
+    if n > 0 { Some(n) } else { None }
+}
+
+// Direct `?` on Option — pre-fix this fell through to the
+// `Err(__try_err)` arm and produced nonsense.
+fn double_maybe(n: i64) -> Option<i64> {
+    let v = maybe(n)?
+    Some(v * 2)
+}
+
+fn main() {
+    match double_maybe(4) {
+        Some(v) => println!("double_maybe(4) = {}", v),
+        None => println!("double_maybe(4) = none"),
+    }
+    match double_maybe(-2) {
+        Some(v) => println!("double_maybe(-2) = {}", v),
+        None => println!("double_maybe(-2) = none"),
+    }
+}

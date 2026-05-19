@@ -1,3 +1,8 @@
+//! Cranelift intrinsic lowering — String / Vec primitive helpers
+//! (length, slice, byte access, concat, etc). Fourth and final
+//! partition in the dispatch chain. Holds
+//! `lower_intrinsic_call_string`.
+
 #![allow(
     unused_imports,
     dead_code,
@@ -134,7 +139,7 @@ use rayon::prelude::*;
 
 use super::*;
 
-pub(super) fn lower_intrinsic_call_g3(
+pub(super) fn lower_intrinsic_call_string(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
     locals: &mut HashMap<Local, Variable>,

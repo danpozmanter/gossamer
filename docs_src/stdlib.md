@@ -7,51 +7,141 @@ module and item. This page is auto-generated from that
 manifest via `cargo xtask docs-stdlib`; hand edits are
 overwritten on the next regeneration.
 
-The manifest itself lives at [`crates/gossamer-std/src/manifest.rs`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/manifest.rs).
+The manifest itself lives at [`crates/gossamer-std/src/manifest.rs`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/manifest.rs).
 
 ## Modules
 
 | Module | Items | Summary |
 |--------|------:|---------|
-| [`std::bufio`](#stdbufio) | 3 | Buffered readers, writers, and line scanners. |
+| [`std::archive::tar`](#stdarchivetar) | 3 | Unix tar reader and writer (USTAR / PAX-aware decode). |
+| [`std::archive::zip`](#stdarchivezip) | 3 | ZIP archive reader and writer. |
+| [`std::bufio`](#stdbufio) | 4 | Buffered readers, writers, and line scanners. |
 | [`std::bytes`](#stdbytes) | 5 | Byte buffers, builders, and slice helpers. |
 | [`std::collections`](#stdcollections) | 6 | Built-in container types. |
+| [`std::collections::deque`](#stdcollectionsdeque) | 7 | Double-ended queue over Vec<i64>. Re-bind shape on every mutator. |
+| [`std::collections::heap`](#stdcollectionsheap) | 4 | Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`. |
+| [`std::collections::ordered_map`](#stdcollectionsorderedmap) | 5 | Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator. |
+| [`std::collections::ordered_set`](#stdcollectionsorderedset) | 4 | Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator. |
+| [`std::collections::ordered_vec`](#stdcollectionsorderedvec) | 7 | Sorted-on-insert Vec<i64> with binary-search lookups. |
+| [`std::collections::queue`](#stdcollectionsqueue) | 4 | FIFO queue over Vec<i64>. Re-bind shape: `let q = queue::push(q, v)`. |
+| [`std::collections::stack`](#stdcollectionsstack) | 4 | LIFO stack over Vec<i64>. Re-bind shape: `let s = stack::push(s, v)`. |
+| [`std::compress::bzip2`](#stdcompressbzip2) | 2 | bzip2 encoder / decoder (BZh format). |
+| [`std::compress::flate`](#stdcompressflate) | 2 | Raw DEFLATE (RFC 1951) encoder / decoder. |
 | [`std::compress::gzip`](#stdcompressgzip) | 3 | gzip encoder / decoder (RFC 1952; flate2-backed). |
+| [`std::compress::zlib`](#stdcompresszlib) | 2 | zlib (RFC 1950) encoder / decoder. |
+| [`std::compress::zstd`](#stdcompresszstd) | 3 | Zstandard encoder / decoder (RFC 8478; libzstd-vendored). |
 | [`std::context`](#stdcontext) | 5 | Request-scoped cancellation, deadlines, and timeouts. |
+| [`std::crypto::aead`](#stdcryptoaead) | 4 | Authenticated encryption with associated data. |
+| [`std::crypto::blake3`](#stdcryptoblake3) | 2 | BLAKE3 hashing. |
+| [`std::crypto::cipher`](#stdcryptocipher) | 2 | AES key handling + CBC / CTR block-cipher modes. |
+| [`std::crypto::ecdsa`](#stdcryptoecdsa) | 3 | ECDSA over the NIST P-256 curve. |
+| [`std::crypto::ed25519`](#stdcryptoed25519) | 3 | Ed25519 digital signatures. |
 | [`std::crypto::hmac`](#stdcryptohmac) | 1 | HMAC-SHA-256 keyed MACs. |
+| [`std::crypto::insecure`](#stdcryptoinsecure) | 2 | Legacy / broken hashes (MD5, SHA-1). Compat only — never use for new code. |
+| [`std::crypto::kdf`](#stdcryptokdf) | 4 | Password-based key-derivation functions. |
+| [`std::crypto::password`](#stdcryptopassword) | 5 | Argon2id password hashing facade: PHC-string hash / verify / re-hash policy. |
 | [`std::crypto::rand`](#stdcryptorand) | 2 | Secure random bytes from the host CSPRNG. |
 | [`std::crypto::sha256`](#stdcryptosha256) | 2 | SHA-256 hashing. |
+| [`std::crypto::sha512`](#stdcryptosha512) | 2 | SHA-512 hashing. |
 | [`std::crypto::subtle`](#stdcryptosubtle) | 1 | Constant-time comparison helpers. |
+| [`std::crypto::x509`](#stdcryptox509) | 3 | X.509 certificate parsing. |
+| [`std::database::sql`](#stddatabasesql) | 17 | Driver-pluggable SQL database access. No driver ships in the box; bring your own (Postgres, MySQL, SQLite, ...) by registering one at startup. |
+| [`std::encoding::ascii85`](#stdencodingascii85) | 2 | ASCII85 / base85 encode / decode. |
+| [`std::encoding::base32`](#stdencodingbase32) | 3 | RFC 4648 base32 (uppercase) encode / decode. |
 | [`std::encoding::base64`](#stdencodingbase64) | 2 | RFC 4648 base64 encode/decode. |
-| [`std::encoding::binary`](#stdencodingbinary) | 2 | Big-endian / little-endian integer packing. |
+| [`std::encoding::binary`](#stdencodingbinary) | 18 | Big/little-endian integer packing and varint codecs. |
+| [`std::encoding::csv`](#stdencodingcsv) | 3 | CSV record reader and writer. |
 | [`std::encoding::hex`](#stdencodinghex) | 2 | Lowercase hex encode/decode. |
 | [`std::encoding::json`](#stdencodingjson) | 6 | JSON parser, emitter, and derive support. |
-| [`std::errors`](#stderrors) | 6 | Error construction, wrapping, and chain traversal. |
+| [`std::encoding::pem`](#stdencodingpem) | 4 | PEM block encoder and decoder. |
+| [`std::encoding::toml`](#stdencodingtoml) | 4 | TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive). |
+| [`std::encoding::xml`](#stdencodingxml) | 3 | Streaming XML decoder + builder (quick-xml). |
+| [`std::encoding::yaml`](#stdencodingyaml) | 3 | YAML 1.2 parser/emitter (serde_yaml-backed). |
+| [`std::env`](#stdenv) | 9 | Process environment, command-line arguments, working directory. |
+| [`std::errors`](#stderrors) | 7 | Error construction, wrapping, and chain traversal. |
 | [`std::flag`](#stdflag) | 2 | Batteries-included CLI argument parsing. |
 | [`std::fmt`](#stdfmt) | 9 | Formatted printing and string interpolation. |
-| [`std::fs`](#stdfs) | 6 | Filesystem walking and mutation helpers. |
-| [`std::http`](#stdhttp) | 8 | HTTP/1.1 client and server. |
-| [`std::io`](#stdio) | 8 | Stream-oriented I/O abstractions. |
+| [`std::fs`](#stdfs) | 22 | Filesystem reading, writing, and traversal (Rust std::fs shape). |
+| [`std::hash::fnv`](#stdhashfnv) | 2 | FNV-1a non-cryptographic hash (32-bit, 64-bit). |
+| [`std::html::template`](#stdhtmltemplate) | 3 | Context-aware HTML templates with auto-escape. |
+| [`std::http`](#stdhttp) | 21 | HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. |
+| [`std::http::chunked`](#stdhttpchunked) | 4 | RFC 7230 §4.1 chunked transfer-encoding reader and writer. |
+| [`std::http::cookie`](#stdhttpcookie) | 5 | RFC 6265 cookie parser and Set-Cookie builder. |
+| [`std::http::csrf`](#stdhttpcsrf) | 8 | Double-submit-cookie CSRF protection with Origin / Referer allowlist. |
+| [`std::http::form`](#stdhttpform) | 2 | application/x-www-form-urlencoded parser and builder. |
+| [`std::http::health`](#stdhttphealth) | 5 | Liveness / readiness probes for HTTP health endpoints. |
+| [`std::http::middleware`](#stdhttpmiddleware) | 11 | Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip. |
+| [`std::http::multipart`](#stdhttpmultipart) | 7 | RFC 7578 multipart/form-data streaming parser. |
+| [`std::http::native_client`](#stdhttpnativeclient) | 6 | Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool). |
+| [`std::http::proxy`](#stdhttpproxy) | 3 | Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler. |
+| [`std::http::query`](#stdhttpquery) | 1 | Typed wrapper over URL query strings. |
+| [`std::http::router`](#stdhttprouter) | 6 | Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes. |
+| [`std::http::session`](#stdhttpsession) | 6 | Signed-cookie session store with pluggable backend trait. |
+| [`std::http::sse`](#stdhttpsse) | 6 | Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint. |
+| [`std::http::state`](#stdhttpstate) | 2 | Handler-side dependency injection via a typed AppState. |
+| [`std::http::static_files`](#stdhttpstaticfiles) | 3 | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
+| [`std::http::websocket`](#stdhttpwebsocket) | 6 | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
+| [`std::http_h3`](#stdhttph3) | 4 | First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points. |
+| [`std::io`](#stdio) | 10 | Stream-oriented I/O abstractions. |
+| [`std::iter`](#stditer) | 16 | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
+| [`std::jwt`](#stdjwt) | 10 | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
+| [`std::lifecycle`](#stdlifecycle) | 1 | Graceful-shutdown coordinator with signal handling and sd_notify support. |
+| [`std::log`](#stdlog) | 7 | Flat line-oriented logging (Go's `log` shape). |
+| [`std::math`](#stdmath) | 41 | Mathematical constants and f64 functions (Go's math package shape). |
+| [`std::math::big`](#stdmathbig) | 3 | Arbitrary-precision integers (num-bigint). |
+| [`std::math::bits`](#stdmathbits) | 13 | Integer bit-manipulation operations (Go's math/bits shape). |
 | [`std::math::rand`](#stdmathrand) | 1 | Deterministic pseudo-random number generation. |
+| [`std::metrics`](#stdmetrics) | 6 | Prometheus-compatible primitives (Counter, Gauge, Histogram) and a Registry rendering the standard text-exposition format. |
+| [`std::mime`](#stdmime) | 9 | RFC 2045 media type parsing, parameter extraction, and extension lookup. |
 | [`std::net`](#stdnet) | 4 | TCP/UDP networking primitives. |
+| [`std::net::netip`](#stdnetnetip) | 11 | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](#stdneturl) | 3 | URL parsing, rendering, and query escaping. |
-| [`std::os`](#stdos) | 15 | Operating-system primitives: filesystem, env, process. |
-| [`std::os::exec`](#stdosexec) | 5 | Spawn / wait for child processes (Go's os/exec shape). |
+| [`std::os`](#stdos) | 19 | Operating-system identity and deprecated re-exports of env/process/fs. |
+| [`std::os::exec`](#stdosexec) | 14 | Spawn / wait for child processes (Go's os/exec shape). |
 | [`std::os::signal`](#stdossignal) | 4 | POSIX-style signal subscription (Go's os/signal shape). |
+| [`std::os::user`](#stdosuser) | 6 | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
 | [`std::panic`](#stdpanic) | 2 | Panic / `catch_unwind` integration. |
 | [`std::path`](#stdpath) | 6 | POSIX-style path manipulation. |
 | [`std::path::native`](#stdpathnative) | 5 | Native-separator wrappers over `std::path` (backslash on Windows). |
+| [`std::process`](#stdprocess) | 11 | Spawn child processes, exit the current process (Rust std::process shape). |
 | [`std::regex`](#stdregex) | 10 | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::runtime`](#stdruntime) | 4 | Goroutine / GC / scheduler introspection and tuning. |
-| [`std::slog`](#stdslog) | 4 | Structured, levelled logging. |
+| [`std::slog`](#stdslog) | 8 | Structured, levelled logging. |
 | [`std::sort`](#stdsort) | 3 | Slice sorting and binary search. |
-| [`std::strconv`](#stdstrconv) | 6 | Conversions between strings and primitive numeric types. |
-| [`std::strings`](#stdstrings) | 10 | Polished `String` operations. |
+| [`std::strconv`](#stdstrconv) | 12 | Conversions between strings and primitive numeric types. |
+| [`std::strings`](#stdstrings) | 21 | Polished `String` operations. |
 | [`std::sync`](#stdsync) | 8 | Synchronisation primitives beyond channels. |
 | [`std::testing`](#stdtesting) | 3 | Assertions and sub-test harness helpers. |
-| [`std::time`](#stdtime) | 5 | Wall-clock and monotonic time facilities. |
-| [`std::tls`](#stdtls) | 5 | TLS termination and TLS client dialling (rustls-backed; not yet wired). |
+| [`std::text::template`](#stdtexttemplate) | 3 | Plain-text templates (no escaping). |
+| [`std::thread`](#stdthread) | 5 | Native OS threads. For goroutines use the `go expr` syntax. |
+| [`std::time`](#stdtime) | 7 | Wall-clock and monotonic time facilities. |
+| [`std::tls`](#stdtls) | 5 | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |
+| [`std::trace`](#stdtrace) | 11 | W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export. |
+| [`std::unicode`](#stdunicode) | 37 | Unicode general-category predicates, casing, normalization, and segmentation. |
+| [`std::utf16`](#stdutf16) | 9 | UTF-16 encoding/decoding and surrogate pair helpers. |
 | [`std::utf8`](#stdutf8) | 2 | UTF-8 validation and scalar decoding. |
+| [`std::uuid`](#stduuid) | 5 | UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize. |
+| [`std::validate`](#stdvalidate) | 3 | Trait-based field validation: implement Validate, collect FieldErrors into Errors. |
+
+## `std::archive::tar`
+
+Unix tar reader and writer (USTAR / PAX-aware decode).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `TarEntry` | type | name + data + size + mode. |
+| `read` | fn | Reads all entries from a tar archive. |
+| `write` | fn | Builds a tar archive from (name, data) pairs. |
+
+## `std::archive::zip`
+
+ZIP archive reader and writer.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `ZipEntry` | type | name + decompressed data + is_dir flag. |
+| `read` | fn | Reads all file entries from a zip stored in `data`. |
+| `write` | fn | Builds an in-memory zip from (name, data) pairs. |
 
 ## `std::bufio`
 
@@ -62,6 +152,7 @@ Buffered readers, writers, and line scanners.
 | `Reader` | type | Buffered reader. |
 | `Scanner` | type | Line / token scanner. |
 | `Writer` | type | Buffered writer. |
+| `read_lines` | fn | Reads every line from a file path; one-shot convenience over the streaming Scanner. |
 
 ## `std::bytes`
 
@@ -88,6 +179,108 @@ Built-in container types.
 | `Vec` | type | Growable contiguous sequence. |
 | `VecDeque` | type | Double-ended queue backed by a ring buffer. |
 
+## `std::collections::deque`
+
+Double-ended queue over Vec<i64>. Re-bind shape on every mutator.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `len` | fn | Element count. |
+| `peek_back` | fn | Back element, or 0 if empty. |
+| `peek_front` | fn | Front element, or 0 if empty. |
+| `pop_back` | fn | Drop the back. |
+| `pop_front` | fn | Drop the front. |
+| `push_back` | fn | Append to the back. |
+| `push_front` | fn | Prepend to the front. |
+
+## `std::collections::heap`
+
+Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `len` | fn | Element count. |
+| `peek` | fn | Smallest element of the heap, or 0 if empty. |
+| `pop` | fn | Drop the root from the heap; returns the new heap (use `peek` first to read the value). |
+| `push` | fn | Push an i64 onto the min-heap; returns the new heap. |
+
+## `std::collections::ordered_map`
+
+Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `contains_key` | fn | Key-membership test. |
+| `get` | fn | Lookup; returns 0 if absent. |
+| `insert` | fn | Set key => value. |
+| `len` | fn | Pair count. |
+| `remove` | fn | Remove a key. |
+
+## `std::collections::ordered_set`
+
+Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `contains` | fn | Membership test. |
+| `insert` | fn | Insert (sorted, no duplicates). |
+| `len` | fn | Element count. |
+| `remove` | fn | Remove a value. |
+
+## `std::collections::ordered_vec`
+
+Sorted-on-insert Vec<i64> with binary-search lookups.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `contains` | fn | Return true iff `value` is present. |
+| `index_of` | fn | Return the index of `value`, or -1. |
+| `insert` | fn | Insert at the unique sorted position. |
+| `len` | fn | Element count. |
+| `peek_max` | fn | Largest element, or 0. |
+| `peek_min` | fn | Smallest element, or 0. |
+| `remove_at` | fn | Remove the element at index `i`. |
+
+## `std::collections::queue`
+
+FIFO queue over Vec<i64>. Re-bind shape: `let q = queue::push(q, v)`.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `len` | fn | Element count. |
+| `peek` | fn | Front element, or 0 if empty. |
+| `pop` | fn | Drop the front element; returns the new queue. |
+| `push` | fn | Append an i64 to the back; returns the new queue. |
+
+## `std::collections::stack`
+
+LIFO stack over Vec<i64>. Re-bind shape: `let s = stack::push(s, v)`.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `len` | fn | Element count. |
+| `peek` | fn | Top element, or 0 if empty. |
+| `pop` | fn | Drop the top; returns the new stack. |
+| `push` | fn | Push an i64 onto the top; returns the new stack. |
+
+## `std::compress::bzip2`
+
+bzip2 encoder / decoder (BZh format).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `decode` | fn | One-shot bzip2 decompress. |
+| `encode` | fn | One-shot bzip2 compress. |
+
+## `std::compress::flate`
+
+Raw DEFLATE (RFC 1951) encoder / decoder.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `decode` | fn | One-shot DEFLATE decompress. |
+| `encode` | fn | One-shot DEFLATE compress. |
+
 ## `std::compress::gzip`
 
 gzip encoder / decoder (RFC 1952; flate2-backed).
@@ -97,6 +290,25 @@ gzip encoder / decoder (RFC 1952; flate2-backed).
 | `Level` | type | Compression level (`0` store-only … `9` best); default is gzip(1)'s `6`. |
 | `decode` | fn | Decompresses a gzip-formatted payload. |
 | `encode` | fn | Compresses bytes at the supplied Level. |
+
+## `std::compress::zlib`
+
+zlib (RFC 1950) encoder / decoder.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `decode` | fn | One-shot zlib decompress. |
+| `encode` | fn | One-shot zlib compress. |
+
+## `std::compress::zstd`
+
+Zstandard encoder / decoder (RFC 8478; libzstd-vendored).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `decode` | fn | One-shot Zstandard decompress. |
+| `encode` | fn | One-shot Zstandard compress at the default level (3). |
+| `encode_level` | fn | One-shot Zstandard compress at the supplied level (1 fastest -- 22 best). |
 
 ## `std::context`
 
@@ -110,6 +322,55 @@ Request-scoped cancellation, deadlines, and timeouts.
 | `with_deadline` | fn | Child context that cancels at the supplied instant. |
 | `with_timeout` | fn | Child context that cancels after the supplied duration. |
 
+## `std::crypto::aead`
+
+Authenticated encryption with associated data.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `aes_256_gcm_open` | fn | AES-256-GCM open: decrypts and authenticates ciphertext. |
+| `aes_256_gcm_seal` | fn | AES-256-GCM seal: encrypts plaintext with key, nonce, and AAD. |
+| `chacha20_poly1305_open` | fn | ChaCha20-Poly1305 open. |
+| `chacha20_poly1305_seal` | fn | ChaCha20-Poly1305 seal. |
+
+## `std::crypto::blake3`
+
+BLAKE3 hashing.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `digest` | fn | Returns the 32-byte BLAKE3 digest of an input. |
+| `hex` | fn | Returns the digest as lowercase hex. |
+
+## `std::crypto::cipher`
+
+AES key handling + CBC / CTR block-cipher modes.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `AesKey` | type | Validated key bytes for the chosen size. |
+| `AesKeySize` | type | Aes128 / Aes192 / Aes256. |
+
+## `std::crypto::ecdsa`
+
+ECDSA over the NIST P-256 curve.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `keypair_pem` | fn | Generates (secret_pem, public_pem) for a fresh P-256 keypair. |
+| `sign_pem` | fn | Signs a message with a PKCS#8-PEM-encoded P-256 secret key. |
+| `verify_pem` | fn | Verifies a DER-encoded signature against an SPKI-PEM public key. |
+
+## `std::crypto::ed25519`
+
+Ed25519 digital signatures.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `keypair` | fn | Generates a fresh Ed25519 keypair from the host CSPRNG. |
+| `sign` | fn | Signs a message with a 32-byte secret key. |
+| `verify` | fn | Verifies a 64-byte signature against a 32-byte public key. |
+
 ## `std::crypto::hmac`
 
 HMAC-SHA-256 keyed MACs.
@@ -117,6 +378,38 @@ HMAC-SHA-256 keyed MACs.
 | Item | Kind | Doc |
 |------|------|-----|
 | `sha256_mac` | fn | HMAC-SHA-256 over a message. |
+
+## `std::crypto::insecure`
+
+Legacy / broken hashes (MD5, SHA-1). Compat only — never use for new code.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `md5` | fn | One-shot MD5. |
+| `sha1` | fn | One-shot SHA-1. |
+
+## `std::crypto::kdf`
+
+Password-based key-derivation functions.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `argon2id_hash` | fn | Argon2id PHC-format password hash. |
+| `argon2id_verify` | fn | Verifies a password against an Argon2id PHC string. |
+| `pbkdf2_sha256` | fn | PBKDF2-HMAC-SHA256 KDF. |
+| `scrypt_interactive` | fn | scrypt with the standard interactive parameters. |
+
+## `std::crypto::password`
+
+Argon2id password hashing facade: PHC-string hash / verify / re-hash policy.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `current_algorithm` | fn | Active password-hash algorithm name (currently `argon2id`). |
+| `current_params` | fn | Active parameters: (m_cost_kib, t_cost_iters, p_cost_parallelism). |
+| `hash` | fn | Argon2id hash of plaintext; returns a PHC-format string for storage. |
+| `needs_rehash` | fn | True iff the stored PHC's parameters are below the current defaults. |
+| `verify` | fn | Constant-time verify of plaintext against a stored PHC string. |
 
 ## `std::crypto::rand`
 
@@ -136,6 +429,15 @@ SHA-256 hashing.
 | `digest` | fn | Returns the 32-byte digest of an input. |
 | `hex` | fn | Returns the digest as lowercase hex. |
 
+## `std::crypto::sha512`
+
+SHA-512 hashing.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `digest` | fn | Returns the 64-byte digest of an input. |
+| `hex` | fn | Returns the digest as lowercase hex. |
+
 ## `std::crypto::subtle`
 
 Constant-time comparison helpers.
@@ -143,6 +445,59 @@ Constant-time comparison helpers.
 | Item | Kind | Doc |
 |------|------|-----|
 | `constant_time_eq` | fn | Compares two byte slices without data-dependent branches. |
+
+## `std::crypto::x509`
+
+X.509 certificate parsing.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `CertInfo` | type | Inspected fields of an X.509 certificate. |
+| `parse_der` | fn | Parses one DER-encoded certificate. |
+| `parse_pem` | fn | Parses one PEM-encoded certificate. |
+
+## `std::database::sql`
+
+Driver-pluggable SQL database access. No driver ships in the box; bring your own (Postgres, MySQL, SQLite, ...) by registering one at startup.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Conn` | type | Open database connection. `prepare`, `execute`, `query`, `begin`, `begin_with`, `ping`, `execute_many`, `execute_ctx`, `query_ctx`, `interrupt`. |
+| `Error` | type | Driver error. `Error::driver(driver, msg)` builds one; `Error::PoolExhausted` and `Error::Cancelled` are variants. |
+| `IsolationLevel` | type | Default / ReadUncommitted / ReadCommitted / RepeatableRead / Serializable. Passed to `Conn::begin_with`. |
+| `Pool` | type | Connection pool. `new`, `fill`, `get` (blocks up to `acquire_timeout`), `len`. Cheap to clone. |
+| `PoolConfig` | type | Pool tuning: `min`, `max`, `idle_timeout`, `max_lifetime`, `acquire_timeout`, `statement_cache`. Fluent `with_*` builders. |
+| `PooledConn` | type | Connection checked out from a `Pool`; returned on drop. |
+| `Row` | type | Current row inside a `Rows` walk. Typed `get_i64`, `get_f64`, `get_bool`, `get_text`, `get_blob` plus `get_opt_*` and `is_null`. |
+| `Rows` | type | Result-set iterator. `next_row`, `columns`. |
+| `Select` | type | Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, val).order_by(col, asc).limit(n).render() -> (sql, params)`. Emits Postgres-style `$N` placeholders. |
+| `Stmt` | type | Prepared statement. |
+| `Tx` | type | Active transaction. `commit`, `rollback`, `savepoint`, `release_savepoint`, `rollback_to_savepoint`, `execute`. |
+| `Value` | type | Bound or fetched value. Null / Bool / Int / Float / Text / Blob. |
+| `Driver` | trait | Database driver — opens connections. Implementations call `register` at startup. |
+| `drivers` | fn | Lists every currently-registered driver name. |
+| `migrate` | fn | Forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` applies pending migrations, each in its own transaction; `migrate::discover`, `migrate::applied`, `migrate::plan`, `migrate::init` round out the surface. |
+| `open` | fn | Opens a database connection by driver name + URL. |
+| `register` | fn | Registers a `Driver` under its canonical name in the process-wide registry. |
+
+## `std::encoding::ascii85`
+
+ASCII85 / base85 encode / decode.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `decode` | fn | ASCII85 string -> bytes. |
+| `encode` | fn | Bytes -> ASCII85 string. |
+
+## `std::encoding::base32`
+
+RFC 4648 base32 (uppercase) encode / decode.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `decode` | fn | Base32 string -> bytes. |
+| `encode` | fn | Bytes -> base32 string. |
+| `encode_padded` | fn | With explicit = padding. |
 
 ## `std::encoding::base64`
 
@@ -155,12 +510,38 @@ RFC 4648 base64 encode/decode.
 
 ## `std::encoding::binary`
 
-Big-endian / little-endian integer packing.
+Big/little-endian integer packing and varint codecs.
 
 | Item | Kind | Doc |
 |------|------|-----|
+| `get_u16_be` | fn | Reads a big-endian u16. |
+| `get_u16_le` | fn | Reads a little-endian u16. |
+| `get_u32_be` | fn | Reads a big-endian u32. |
+| `get_u32_le` | fn | Reads a little-endian u32. |
+| `get_u64_be` | fn | Reads a big-endian u64. |
+| `get_u64_le` | fn | Reads a little-endian u64. |
+| `get_u8` | fn | Reads a single byte. |
 | `put_u16_be` | fn | Writes a big-endian u16. |
+| `put_u16_le` | fn | Writes a little-endian u16. |
 | `put_u32_be` | fn | Writes a big-endian u32. |
+| `put_u32_le` | fn | Writes a little-endian u32. |
+| `put_u64_be` | fn | Writes a big-endian u64. |
+| `put_u64_le` | fn | Writes a little-endian u64. |
+| `put_u8` | fn | Writes a single byte. |
+| `put_uvarint` | fn | Encodes an unsigned varint. |
+| `put_varint` | fn | Encodes a signed varint (zigzag). |
+| `uvarint` | fn | Decodes an unsigned varint. |
+| `varint` | fn | Decodes a signed varint (zigzag). |
+
+## `std::encoding::csv`
+
+CSV record reader and writer.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `parse_line` | fn | Parses a single CSV-formatted line. |
+| `read` | fn | Parses all CSV records from a string. |
+| `write` | fn | Serialises records as a CSV string. |
 
 ## `std::encoding::hex`
 
@@ -184,6 +565,64 @@ JSON parser, emitter, and derive support.
 | `decode` | fn | Decodes a JSON `String` into a `Deserialize` value. |
 | `encode` | fn | Encodes a `Serialize` value as a JSON `String`. |
 
+## `std::encoding::pem`
+
+PEM block encoder and decoder.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Block` | type | A decoded PEM block with type label and DER bytes. |
+| `decode` | fn | Decodes the first PEM block from a string. |
+| `decode_all` | fn | Decodes all PEM blocks from a string. |
+| `encode` | fn | Encodes a Block as a PEM string. |
+
+## `std::encoding::toml`
+
+TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `from_json` | fn | Render JSON text as TOML text; returns Result<String, errors::Error>. |
+| `is_valid` | fn | Return true iff the string parses as TOML. |
+| `pretty` | fn | Round-trip TOML through the pretty-printer. |
+| `to_json` | fn | Convert TOML text to JSON text; returns Result<String, errors::Error>. |
+
+## `std::encoding::xml`
+
+Streaming XML decoder + builder (quick-xml).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Event` | type | Start / End / Text / CData / Comment / Eof. |
+| `Reader` | type | Pull-style XML reader. |
+| `Writer` | type | Streaming XML writer. |
+
+## `std::encoding::yaml`
+
+YAML 1.2 parser/emitter (serde_yaml-backed).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Value` | type | Dynamically typed YAML value. |
+| `encode` | fn | Encodes a Value as a YAML document. |
+| `parse` | fn | Parses a YAML document into a Value. |
+
+## `std::env`
+
+Process environment, command-line arguments, working directory.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `args` | fn | Returns the program's command-line arguments. |
+| `current_dir` | fn | Returns the current working directory. |
+| `home_dir` | fn | Returns the calling user's home directory if known. |
+| `program_name` | fn | Returns the path used to invoke the program (argv[0]). |
+| `set_current_dir` | fn | Changes the current working directory. |
+| `set_var` | fn | Sets an environment variable in the current process. |
+| `temp_dir` | fn | Returns the system's temporary directory. |
+| `unset_var` | fn | Removes an environment variable from the current process. |
+| `var` | fn | Returns the value of an environment variable. |
+
 ## `std::errors`
 
 Error construction, wrapping, and chain traversal.
@@ -195,6 +634,7 @@ Error construction, wrapping, and chain traversal.
 | `is` | fn | Checks whether an error's chain contains a matching message. |
 | `join` | fn | Joins a list of errors into a single piped error. |
 | `new` | fn | Constructs a fresh error from a message. |
+| `newf` | fn | Constructs a fresh error from a format template, e.g. `newf("status {}", code)`. |
 | `wrap` | fn | Wraps a cause with a higher-level message. |
 
 ## `std::flag`
@@ -224,31 +664,283 @@ Formatted printing and string interpolation.
 
 ## `std::fs`
 
-Filesystem walking and mutation helpers.
+Filesystem reading, writing, and traversal (Rust std::fs shape).
 
 | Item | Kind | Doc |
 |------|------|-----|
+| `canonicalize` | fn | Resolves a path to an absolute, symlink-free canonical form. |
 | `copy` | fn | Copies a file, creating parent dirs as needed. |
-| `create_dir_all` | fn | Creates a path and any missing ancestors. |
+| `create_dir` | fn | Creates a single directory. Fails if any parent is missing. |
+| `create_dir_all` | fn | Creates a directory and any missing ancestors. |
+| `eval_symlinks` | fn | Resolves all symlinks along a path; mirrors Go's filepath.EvalSymlinks. |
+| `exists` | fn | Returns whether a path exists on the filesystem. |
+| `file_size` | fn | Returns the file's size in bytes; 0 on error. |
+| `glob` | fn | Returns paths matching a glob pattern (*, ?, [abc], **). |
+| `is_dir` | fn | Returns whether a path exists and is a directory. |
+| `is_file` | fn | Returns whether a path exists and is a regular file. |
+| `is_symlink` | fn | Returns whether a path exists and is a symbolic link. |
+| `metadata` | fn | Returns filesystem metadata for a path. |
+| `read` | fn | Reads an entire file into memory as bytes. |
 | `read_dir` | fn | Returns the immediate children of a directory. |
+| `read_to_string` | fn | Reads an entire file into memory as UTF-8 text. |
 | `remove_all` | fn | Deletes a file or a directory tree. |
+| `remove_dir` | fn | Removes an empty directory. |
+| `remove_dir_all` | fn | Recursively removes a directory and its contents. |
+| `remove_file` | fn | Removes a single file. |
 | `rename` | fn | Renames a file or directory. |
 | `walk_dir` | fn | Recursively visits every descendant entry. |
+| `write` | fn | Writes bytes to a file, creating or truncating it. |
+
+## `std::hash::fnv`
+
+FNV-1a non-cryptographic hash (32-bit, 64-bit).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `fnv1a_32` | fn | One-shot 32-bit FNV-1a of a byte slice. |
+| `fnv1a_64` | fn | One-shot 64-bit FNV-1a of a byte slice. |
+
+## `std::html::template`
+
+Context-aware HTML templates with auto-escape.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Template` | type | Compiled HTML template. |
+| `parse` | fn | Parses a template string. |
+| `render` | fn | Renders a template with the supplied data context. |
 
 ## `std::http`
 
-HTTP/1.1 client and server.
+HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.
 
 | Item | Kind | Doc |
 |------|------|-----|
 | `Client` | type | HTTP client capable of GET/POST/PUT/DELETE. |
 | `Headers` | type | Case-insensitive header map. |
+| `Http2Config` | type | Per-connection HTTP/2 tuning (window sizes, max concurrent streams, frame caps). |
+| `Http2Error` | type | HTTP/2 server error: Io, Protocol, Handler. |
+| `Http2ServerHandle` | type | Handle to a running HTTP/2 connection for shutdown / in-flight counts. |
 | `Method` | type | HTTP method enumeration. |
+| `PushOptions` | type | Prioritization knobs for `ResponseWriter::push_promise` (weight, depends_on, exclusive). |
+| `PushStream` | type | Server-initiated push stream returned by `ResponseWriter::push_promise`. Supports send_head / write / write_trailers / end. |
 | `Request` | type | HTTP request value passed to a handler. |
 | `Response` | type | HTTP response value returned from a handler. |
 | `Server` | type | HTTP server bound to a TCP listener. |
 | `StatusCode` | type | HTTP status code. |
+| `StreamingResponseWriter` | type | Streaming HTTP/2 response writer; set_status / header / write_chunk / finish. |
+| `Trailers` | type | HTTP/2 trailing HEADERS (alias for Headers) — used by `ResponseWriter::write_trailers` and `Request::trailers`. |
+| `Http2Handler` | trait | Bounded-body HTTP/2 handler: serve(Request) -> Response. |
+| `Http2StreamingHandler` | trait | Chunked-body HTTP/2 handler: serve(Request, StreamingResponseWriter) -> Result. |
 | `serve` | fn | Convenience: bind and serve an HTTP handler. |
+| `serve_h2_connection` | fn | Drive an HTTP/2 connection on the calling goroutine (bounded handler). |
+| `serve_h2_connection_streaming` | fn | Same shape for Http2StreamingHandler. |
+| `serve_h2c` | fn | Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext). |
+| `serve_h2c_streaming` | fn | Same shape for Http2StreamingHandler. |
+
+## `std::http::chunked`
+
+RFC 7230 §4.1 chunked transfer-encoding reader and writer.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Reader` | type | Decodes a chunked body from any Read source (Rust-side; streaming). |
+| `Writer` | type | Encodes raw bytes into chunked frames over any Write sink (Rust-side; streaming). |
+| `decode` | fn | One-shot: concatenates data chunks from a complete chunked body. Available in interp + compiled. |
+| `encode` | fn | One-shot: wraps a buffer in chunked transfer-encoding with terminator. Available in interp + compiled. |
+
+## `std::http::cookie`
+
+RFC 6265 cookie parser and Set-Cookie builder.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Cookie` | type | Parsed cookie with name, value, and Set-Cookie attributes. |
+| `CookieBuilder` | type | Fluent builder for Set-Cookie response headers. |
+| `SameSite` | type | SameSite attribute: Strict / Lax / None. |
+| `parse_cookie_header` | fn | Parse a Cookie request header into (name, value) pairs. |
+| `parse_set_cookie` | fn | Parse a Set-Cookie response header into a Cookie. |
+
+## `std::http::csrf`
+
+Double-submit-cookie CSRF protection with Origin / Referer allowlist.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Config` | type | Signing key, cookie / header names, and origin allowlist. |
+| `RouteAuth` | type | Per-route policy: Required, Optional, or Skipped. |
+| `attach_cookie` | fn | Set the CSRF cookie on a Response. |
+| `check` | fn | Combined origin + token gate; returns Err on failure. |
+| `extract_token` | fn | Pull a token from the configured header or form field. |
+| `issue_token` | fn | Mint a fresh CSRF token bound to the configured signing key. |
+| `origin_allowed` | fn | Origin / Referer allowlist check for unsafe methods. |
+| `verify_token` | fn | Constant-time verify of a presented token against the cookie value. |
+
+## `std::http::form`
+
+application/x-www-form-urlencoded parser and builder.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Form` | type | Parsed url-encoded body, queryable by field name. |
+| `FormBuilder` | type | Builder for url-encoded request bodies. |
+
+## `std::http::health`
+
+Liveness / readiness probes for HTTP health endpoints.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Health` | type | Aggregates a set of named probes into a single status. |
+| `Probe` | trait | One health check returning Ok or Err with a short message. |
+| `always_fail` | fn | Probe that always reports unhealthy with the given message. |
+| `always_ok` | fn | Probe that always reports healthy. |
+| `tcp_probe` | fn | Probe that opens a TCP connection within a deadline. |
+
+## `std::http::middleware`
+
+Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Chain` | type | Helper for composing middleware in a single value. |
+| `Handler` | trait | Anything serving (Request, Params) -> Response. |
+| `accepts_gzip` | fn | Check an Accept-Encoding header for a gzip token. Available in interp + compiled. |
+| `basic_auth` | fn | HTTP Basic auth gate; constant-time compare. |
+| `compress_gzip` | fn | Gzips bodies above a size threshold when client advertises Accept-Encoding: gzip (Rust-side wrapper). |
+| `cors` | fn | CORS preflight + per-response headers. |
+| `decode_basic_auth` | fn | Decode a Basic-auth Authorization header into (user, password). Interp tier. |
+| `logger` | fn | Logs method path status bytes elapsed_ms per request. |
+| `new_request_id` | fn | Generate a process-monotonic request id string. Available in interp + compiled. |
+| `recoverer` | fn | Catches handler panics; returns 500. |
+| `request_id` | fn | Stamps each response with X-Request-Id. |
+
+## `std::http::multipart`
+
+RFC 7578 multipart/form-data streaming parser.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Config` | type | Per-form size, part-count, and disk-spill limits. |
+| `Form` | type | Parsed multipart envelope: fields + file parts. |
+| `Part` | type | One field or file entry from a multipart body. |
+| `PartData` | type | In-memory bytes or spilled-to-disk path for a part. |
+| `parse` | fn | Stream-parse from any Read source into a Form. |
+| `parse_boundary` | fn | Extract the boundary token from a Content-Type header. |
+| `parse_bytes` | fn | Parse a full body buffer into a Form. |
+
+## `std::http::native_client`
+
+Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Client` | type | Native h1 client (Rust-side; full builder surface). |
+| `Error` | type | Connect / Tls / Http / Redirect / Timeout / Io. |
+| `delete` | fn | One-shot DELETE → Result<Response, Error>. Interp tier. |
+| `get` | fn | One-shot GET → Result<Response, Error>. Interp tier (compiled tier shares http::get). |
+| `post` | fn | One-shot POST: `(url, body, content_type)`. Interp tier. |
+| `put` | fn | One-shot PUT: `(url, body, content_type)`. Interp tier. |
+
+## `std::http::proxy`
+
+Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Director` | type | Fn(&mut Request) request mutator (Rust-side). |
+| `Proxy` | type | Reverse-proxy handler (Rust-side). |
+| `forward` | fn | One-shot upstream forward: `(url, method, body) -> Result<Response, Error>`. Interp tier. |
+
+## `std::http::query`
+
+Typed wrapper over URL query strings.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Query` | type | Parsed query string with typed get / get_all / contains. |
+
+## `std::http::router`
+
+Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Params` | type | Captured path parameters. |
+| `Router` | type | Routing table (Rust-side full surface; method-chain bridge is interp tier). |
+| `Handler` | trait | Anything callable as Fn(&Request, &Params) -> Response. |
+| `add` | fn | Register a route: `(router, method, pattern)`. Interp tier. |
+| `lookup` | fn | Find the index of the first route matching `(method, path)`. Interp tier. |
+| `new` | fn | Allocate a fresh Router handle. Interp tier. |
+
+## `std::http::session`
+
+Signed-cookie session store with pluggable backend trait.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `SerializationMode` | type | Session payload encoding: Json or Bincode. |
+| `Session` | type | Per-request session view; mutations persist on response. |
+| `SessionConfig` | type | Cookie name, domain, signing key, serialization mode. |
+| `SignedCookieStore` | type | Cookie-backed store with HMAC signature; no server state. |
+| `SessionStore` | trait | Backend interface: load / save / delete by session id. |
+| `with_session` | fn | Run a closure with the session bound; persist any mutations. |
+
+## `std::http::sse`
+
+Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Event` | type | One SSE event (id, event, data, retry). |
+| `Stream` | type | Active SSE stream — handler writes events through it (Rust-side). |
+| `encode_comment` | fn | Render a `:`-prefixed keepalive line. Available in interp + compiled. |
+| `encode_event` | fn | Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled. |
+| `encode_retry` | fn | Render a `retry:` reconnect-hint directive in milliseconds. Available in interp + compiled. |
+| `serve` | fn | Wraps a handler closure into an SSE response (Rust-side; streaming). |
+
+## `std::http::state`
+
+Handler-side dependency injection via a typed AppState.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `AppState` | type | TypeMap of Arc<T> values shared across handlers. |
+| `State` | type | Newtype wrapper Arc<T> for ergonomic handler arguments. |
+
+## `std::http::static_files`
+
+Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `FileServer` | type | Static-file handler rooted at a directory (Rust-side; streaming). |
+| `mime_for_path` | fn | Guess a MIME type from a file path's extension. Available in interp + compiled. |
+| `serve_file` | fn | Read a single file and return it as a Response struct. Interp tier. |
+
+## `std::http::websocket`
+
+RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Error` | type | Io / Protocol / BadHandshake. |
+| `Message` | type | Text / Binary / Ping / Pong / Close. |
+| `WebSocket` | type | Accepted WebSocket connection (Rust-side framing). |
+| `accept` | fn | Upgrade an incoming Request to a WebSocket (Rust-side). |
+| `accept_key` | fn | Compute RFC 6455 Sec-WebSocket-Accept from a client nonce. Available in interp + compiled. |
+| `is_websocket_upgrade` | fn | Test whether an incoming Request carries a WebSocket upgrade handshake. Interp tier. |
+
+## `std::http_h3`
+
+First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Client` | type | HTTP/3 client. `new` validates against the Mozilla root store; `insecure` skips verification (dev only). Methods: `get`, `post`, `put`, `delete`, `head`, `request`. |
+| `H3Error` | type | Transport / protocol error variants surfaced from quinn + h3. |
+| `Handler` | trait | Per-request handler. `fn serve(&self, request: Request) -> Response`. |
+| `serve` | fn | Run an HTTP/3 server bound to `addr` with TLS certificate + key paths and the supplied handler. |
 
 ## `std::io`
 
@@ -261,9 +953,151 @@ Stream-oriented I/O abstractions.
 | `Error` | type | Errors raised by I/O operations. |
 | `Reader` | trait | Pull-style byte source. |
 | `Writer` | trait | Push-style byte sink. |
+| `Copy` | fn | Copies all bytes from src to dst; returns the byte count. |
+| `ReadAll` | fn | Drains a reader to a String. Mirrors Go's io.ReadAll. |
 | `stderr` | fn | Returns a handle to the process's standard error stream. |
 | `stdin` | fn | Returns a handle to the process's standard input stream. |
 | `stdout` | fn | Returns a handle to the process's standard output stream. |
+
+## `std::iter`
+
+Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `all` | fn | True if every element satisfies f. |
+| `any` | fn | True if any element satisfies f. |
+| `chain` | fn | Concatenates two sequences. |
+| `count` | fn | Number of elements. |
+| `dedup` | fn | Removes consecutive duplicate elements. |
+| `enumerate` | fn | Pairs each element with its index. |
+| `filter` | fn | Returns elements where f is true. |
+| `flat_map` | fn | Maps f and flattens one level. |
+| `flatten` | fn | Flattens a Vec<Vec<T>> into Vec<T>. |
+| `fold` | fn | Reduces a sequence with an accumulator. |
+| `map` | fn | Applies f to each element, returning a new Vec. |
+| `reversed` | fn | Returns a reversed copy. |
+| `skip` | fn | All elements after the first n. |
+| `sum` | fn | Sum of i64 or f64 elements. |
+| `take` | fn | First n elements. |
+| `zip` | fn | Pairs elements from two sequences. |
+
+## `std::jwt`
+
+RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Alg` | type | Signing algorithm: HS256 / HS384 / HS512 / ES256 / EdDSA. |
+| `Claims` | type | Standard registered claims plus a free-form custom map. |
+| `Header` | type | JWS / JWT header (alg, kid, typ). |
+| `VerifyOpts` | type | Expected issuer / audience / clock leeway used by verify. |
+| `sign_eddsa` | fn | Sign with Ed25519 from a PEM-encoded private key. |
+| `sign_es256` | fn | Sign with ECDSA P-256 from a PEM-encoded private key. |
+| `sign_hs` | fn | Sign claims with HMAC-SHA family using a shared key. |
+| `verify_eddsa` | fn | Verify an EdDSA token against a PEM-encoded public key. |
+| `verify_es256` | fn | Verify an ES256 token against a PEM-encoded public key. |
+| `verify_hs` | fn | Verify an HS* token; checks signature plus VerifyOpts. |
+
+## `std::lifecycle`
+
+Graceful-shutdown coordinator with signal handling and sd_notify support.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Lifecycle` | type | Registers shutdown hooks, listens for SIGTERM / SIGINT, and notifies systemd. |
+
+## `std::log`
+
+Flat line-oriented logging (Go's `log` shape).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `fatal` | fn | Logs and exits the process with status 1. |
+| `flags` | fn | Returns the current decoration flag set. |
+| `printf` | fn | Logs a pre-formatted line to the configured output. |
+| `println` | fn | Logs a line to the configured output. |
+| `set_flags` | fn | Configures timestamp / file:line decoration bits. |
+| `set_output` | fn | Redirects log output to a writer. |
+| `set_prefix` | fn | Sets a prefix prepended to every log line. |
+
+## `std::math`
+
+Mathematical constants and f64 functions (Go's math package shape).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `abs` | fn | Absolute value of x. |
+| `abs_i64` | fn | Absolute value of an i64. |
+| `acos` | fn | Arccosine (radians). |
+| `asin` | fn | Arcsine (radians). |
+| `atan` | fn | Arctangent (radians). |
+| `atan2` | fn | Four-quadrant arctangent of y/x. |
+| `cbrt` | fn | Cube root. |
+| `ceil` | fn | Smallest integer ≥ x. |
+| `copysign` | fn | Magnitude of x with sign of y. |
+| `cos` | fn | Cosine (radians). |
+| `dim` | fn | max(x-y, 0) — Go's math.Dim. |
+| `exp` | fn | e^x. |
+| `exp2` | fn | 2^x. |
+| `floor` | fn | Largest integer ≤ x. |
+| `fmod` | fn | Floating-point remainder x%y. |
+| `hypot` | fn | Euclidean distance √(x²+y²). |
+| `inf` | fn | Returns ±infinity based on sign. |
+| `is_inf` | fn | Reports whether x is infinite. |
+| `is_nan` | fn | Reports whether x is NaN. |
+| `ln` | fn | Natural logarithm. |
+| `log` | fn | Logarithm with given base. |
+| `log10` | fn | Base-10 logarithm. |
+| `log2` | fn | Base-2 logarithm. |
+| `max_f64` | fn | Greater of two f64 values. |
+| `max_i64` | fn | Greater of two i64 values. |
+| `min_f64` | fn | Lesser of two f64 values. |
+| `min_i64` | fn | Lesser of two i64 values. |
+| `nan` | fn | Returns the IEEE 754 NaN value. |
+| `pow` | fn | x raised to the power y. |
+| `round` | fn | Nearest integer, half away from zero. |
+| `sin` | fn | Sine (radians). |
+| `sqrt` | fn | Square root. |
+| `tan` | fn | Tangent (radians). |
+| `trunc` | fn | Integer part of x. |
+| `E` | const | Euler's number e. |
+| `INF` | const | Positive infinity. |
+| `LN_10` | const | Natural log of 10. |
+| `LN_2` | const | Natural log of 2. |
+| `PHI` | const | Golden ratio φ. |
+| `PI` | const | Archimedes' constant π. |
+| `SQRT_2` | const | √2. |
+
+## `std::math::big`
+
+Arbitrary-precision integers (num-bigint).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Int` | type | Arbitrary-precision signed integer. |
+| `Uint` | type | Arbitrary-precision unsigned integer. |
+| `factorial` | fn | Computes n! as an Int. |
+
+## `std::math::bits`
+
+Integer bit-manipulation operations (Go's math/bits shape).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `add` | fn | x + y + carry; returns (sum, carry_out). |
+| `count_ones` | fn | Number of set bits (popcount). |
+| `count_zeros` | fn | Number of clear bits. |
+| `div` | fn | 128-bit dividend / 64-bit divisor; returns (quotient, remainder). |
+| `leading_zeros` | fn | Leading zero bit count. |
+| `len` | fn | Minimum bits required to represent x. |
+| `mul` | fn | Full 128-bit product; returns (hi, lo). |
+| `reverse_bits` | fn | Reverses bit order of x. |
+| `reverse_bytes` | fn | Reverses byte order of x. |
+| `rotate_left` | fn | Rotates x left by n bits. |
+| `rotate_right` | fn | Rotates x right by n bits. |
+| `sub` | fn | x - y - borrow; returns (diff, borrow_out). |
+| `trailing_zeros` | fn | Trailing zero bit count. |
 
 ## `std::math::rand`
 
@@ -272,6 +1106,35 @@ Deterministic pseudo-random number generation.
 | Item | Kind | Doc |
 |------|------|-----|
 | `Rng` | type | SplitMix64-based RNG. |
+
+## `std::metrics`
+
+Prometheus-compatible primitives (Counter, Gauge, Histogram) and a Registry rendering the standard text-exposition format.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Counter` | type | Monotonic-increasing u64 counter (lock-free). |
+| `Gauge` | type | Set / inc / dec gauge (lock-free). |
+| `Histogram` | type | Bucketed observation histogram with sum and count. |
+| `Metric` | type | Enum holding any of the three primitives for registry storage. |
+| `Registry` | type | Ordered collection of metrics; `render()` emits the Prometheus text-exposition format. |
+| `serve_metrics` | fn | Mounts a registry on `/metrics` over the existing http server loop. |
+
+## `std::mime`
+
+RFC 2045 media type parsing, parameter extraction, and extension lookup.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `boundary` | fn | Return the multipart `boundary` parameter, or empty. |
+| `charset` | fn | Return the `charset` parameter, or empty. |
+| `extension_by_type` | fn | Canonical extension (no leading dot) for a media type, or empty. |
+| `is_valid` | fn | Return true iff the string parses as a valid media type. |
+| `param` | fn | Return an arbitrary parameter by key, or empty. |
+| `parse` | fn | Canonical `type/subtype` form of the input, or empty on parse failure. |
+| `sub` | fn | Subtype (e.g. `html`) of a media type, or empty. |
+| `top` | fn | Top-level type (e.g. `text`) of a media type, or empty. |
+| `type_by_extension` | fn | Canonical media type for a filename extension (dot optional), or empty. |
 
 ## `std::net`
 
@@ -283,6 +1146,24 @@ TCP/UDP networking primitives.
 | `TcpStream` | type | Bidirectional TCP byte stream. |
 | `UdpSocket` | type | Bound UDP socket for datagram I/O. |
 | `resolve` | fn | Resolves a hostname to a list of IP addresses. |
+
+## `std::net::netip`
+
+Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `host_of` | fn | Host portion of an addr:port string, or empty on parse failure. |
+| `is_loopback` | fn | Return true iff the string parses as a loopback IP (127.0.0.1 / ::1). |
+| `is_multicast` | fn | Return true iff the string parses as a multicast IP. |
+| `is_private` | fn | Return true iff the IP is RFC1918 (v4) or ULA fc00::/7 (v6). |
+| `is_unspecified` | fn | Return true iff the string parses as the unspecified IP (0.0.0.0 / ::). |
+| `is_v4` | fn | Return true iff the string parses as a v4 IP. |
+| `is_v6` | fn | Return true iff the string parses as a v6 IP. |
+| `is_valid` | fn | Return true iff the string parses as a v4 or v6 IP. |
+| `join_addr_port` | fn | Compose an addr:port string from host and port, or empty on failure. |
+| `normalize` | fn | Canonical lowercase form of the IP, or empty string on parse failure. |
+| `port_of` | fn | Port portion of an addr:port string, or -1 on parse failure. |
 
 ## `std::net::url`
 
@@ -296,25 +1177,29 @@ URL parsing, rendering, and query escaping.
 
 ## `std::os`
 
-Operating-system primitives: filesystem, env, process.
+Operating-system identity and deprecated re-exports of env/process/fs.
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `File` | type | Open file handle supporting read/write/seek/close. |
-| `args` | fn | Returns the program's command-line arguments. |
-| `create` | fn | Creates or truncates a file for writing. |
-| `env` | fn | Returns the value of an environment variable. |
-| `exists` | fn | Returns whether a path exists. |
-| `exit` | fn | Exits the process with the given status code. |
-| `mkdir` | fn | Creates a single directory. |
-| `mkdir_all` | fn | Creates a directory and any required parents. |
-| `open` | fn | Opens a file for reading. |
-| `read_dir` | fn | Iterates the entries of a directory. |
-| `read_file` | fn | Reads an entire file into memory. |
-| `remove_file` | fn | Removes a file from the filesystem. |
-| `rename` | fn | Renames a file or directory. |
-| `set_env` | fn | Sets an environment variable in the current process. |
-| `write_file` | fn | Writes the given bytes to a file, creating it if needed. |
+| `File` | type | Deprecated: use fs::File. |
+| `arch` | fn | Returns the target CPU architecture (e.g. "x86_64"). |
+| `args` | fn | Deprecated: use env::args. |
+| `create` | fn | Deprecated: use fs::create. |
+| `env` | fn | Deprecated: use env::var. |
+| `exists` | fn | Deprecated: use fs::exists. |
+| `exit` | fn | Deprecated: use process::exit. |
+| `family` | fn | Returns "unix" or "windows" for the running OS family. |
+| `mkdir` | fn | Deprecated: use fs::create_dir. |
+| `mkdir_all` | fn | Deprecated: use fs::create_dir_all. |
+| `open` | fn | Deprecated: use fs::open. |
+| `program_name` | fn | Deprecated: use env::program_name. |
+| `read_dir` | fn | Deprecated: use fs::read_dir. |
+| `read_file` | fn | Deprecated: use fs::read. |
+| `read_file_to_string` | fn | Deprecated: use fs::read_to_string. |
+| `remove_file` | fn | Deprecated: use fs::remove_file. |
+| `rename` | fn | Deprecated: use fs::rename. |
+| `set_env` | fn | Deprecated: use env::set_var. |
+| `write_file` | fn | Deprecated: use fs::write. |
 
 ## `std::os::exec`
 
@@ -326,7 +1211,16 @@ Spawn / wait for child processes (Go's os/exec shape).
 | `Command` | type | Builder for spawning a child process. |
 | `ExitStatus` | type | Numeric exit code (None when killed by signal). |
 | `Output` | type | Captured stdout, stderr, and exit status from a finished child. |
+| `Pipeline` | type | Multi-stage subprocess pipeline (stdout-to-stdin chain). |
+| `Signal` | type | Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit). |
 | `Stdio` | type | Inherit / Piped / Null wiring for stdin/stdout/stderr. |
+| `kill` | fn | Best-effort SIGTERM by pid; returns true on success. |
+| `kill_group` | fn | Send SIGTERM to the entire process group (Unix); best-effort TerminateProcess on Windows. |
+| `pipeline_run` | fn | Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline; returns Result<Output, errors::Error>. |
+| `run` | fn | One-shot: runs a program with args, captures stdout/stderr, returns Result<{stdout, stderr, code}, String>. |
+| `signal` | fn | Send an arbitrary signal number to a pid; returns true on success. |
+| `spawn` | fn | Non-blocking launch; returns the child PID as Result<i64, errors::Error>. |
+| `wait_timeout` | fn | Wait up to N ms for a pid to exit; returns exit code, -1 on timeout, -2 on error. |
 
 ## `std::os::signal`
 
@@ -338,6 +1232,19 @@ POSIX-style signal subscription (Go's os/signal shape).
 | `Signal` | type | Opaque signal name; constructors live in `sigs`. |
 | `deliver` | fn | Test helper: synthesise a signal delivery without involving the OS. |
 | `on` | fn | Subscribes to a signal; returns a Notifier. |
+
+## `std::os::user`
+
+POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `current_gid` | fn | gid of the current process user, or -1 on non-unix. |
+| `current_home` | fn | Home directory of the current process user. |
+| `current_name` | fn | Login name of the current process user, or empty string. |
+| `current_uid` | fn | uid of the current process user, or -1 on non-unix. |
+| `lookup_name` | fn | uid for the user with the given login name, or -1 if not found. |
+| `lookup_uid` | fn | Login name for the given uid, or empty string if unknown. |
 
 ## `std::panic`
 
@@ -372,6 +1279,24 @@ Native-separator wrappers over `std::path` (backslash on Windows).
 | `to_native` | fn | Rewrites a posix path into native-separator form. |
 | `to_posix` | fn | Rewrites a native-separator path into posix form. |
 | `SEPARATOR` | const | Platform-preferred path separator character. |
+
+## `std::process`
+
+Spawn child processes, exit the current process (Rust std::process shape).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Child` | type | Handle to a still-running child supporting wait / kill. |
+| `Command` | type | Builder for spawning a child process. |
+| `ExitStatus` | type | Numeric exit code (None when killed by signal). |
+| `Output` | type | Captured stdout, stderr, and exit status from a finished child. |
+| `Stdio` | type | Inherit / Piped / Null wiring for stdin/stdout/stderr. |
+| `abort` | fn | Aborts the current process without unwinding. |
+| `exit` | fn | Exits the current process with the given status code. |
+| `id` | fn | Returns the current process ID. |
+| `kill` | fn | Sends SIGKILL (or equivalent) to a Child. |
+| `run` | fn | One-shot: runs a program with args, captures stdout/stderr, returns Output. |
+| `spawn` | fn | Spawns a child process and returns a Child handle. |
 
 ## `std::regex`
 
@@ -411,6 +1336,10 @@ Structured, levelled logging.
 | `JsonHandler` | type | JSON-lines handler. |
 | `Logger` | type | Logger handle. |
 | `TextHandler` | type | Line-oriented handler. |
+| `debug` | fn | Logs a JSON record at DEBUG level. |
+| `error` | fn | Logs a JSON record at ERROR level. |
+| `info` | fn | Logs a JSON record at INFO level. Trailing args are key/value pairs. |
+| `warn` | fn | Logs a JSON record at WARN level. |
 
 ## `std::sort`
 
@@ -428,11 +1357,17 @@ Conversions between strings and primitive numeric types.
 
 | Item | Kind | Doc |
 |------|------|-----|
+| `atoi` | fn | Alias for parse_i64 (Go-style spelling). |
 | `format_f64` | fn | Renders an `f64` as a decimal string. |
+| `format_float` | fn | Alias for format_f64. |
 | `format_i64` | fn | Renders an `i64` as a decimal string. |
+| `format_int` | fn | Alias for format_i64. |
+| `itoa` | fn | Alias for format_i64 (Go-style spelling). |
 | `parse_bool` | fn | Parses `"true"` / `"false"` into a bool. |
 | `parse_f64` | fn | Parses a decimal `f64`. |
+| `parse_float` | fn | Alias for parse_f64. |
 | `parse_i64` | fn | Parses a decimal `i64`. |
+| `parse_int` | fn | Alias for parse_i64. |
 | `parse_u64` | fn | Parses a decimal `u64`. |
 
 ## `std::strings`
@@ -441,16 +1376,27 @@ Polished `String` operations.
 
 | Item | Kind | Doc |
 |------|------|-----|
+| `center` | fn | Symmetric pad to `width` using the given pad character. |
 | `contains` | fn | Returns whether the string contains a substring. |
+| `count` | fn | Counts non-overlapping occurrences of `needle`. |
 | `ends_with` | fn | Returns whether the string ends with the given suffix. |
 | `find` | fn | Returns the byte position of the first match. |
+| `lstrip_chars` | fn | Trims any character in `cutset` from the left end. |
 | `replace` | fn | Replaces every occurrence of `from` with `to`. |
+| `rsplit_once` | fn | Splits on the last occurrence of `sep`; returns Option<(String, String)>. |
+| `rstrip_chars` | fn | Trims any character in `cutset` from the right end. |
+| `slice` | fn | Safe byte-range slice returning Result<String, errors::Error>. |
 | `split` | fn | Splits a string by a delimiter. |
+| `split_once` | fn | Splits on the first occurrence of `sep`; returns Option<(String, String)>. |
 | `splitn` | fn | Splits a string into at most `n` parts. |
 | `starts_with` | fn | Returns whether the string starts with the given prefix. |
-| `to_lowercase` | fn | Lowercases every character. |
-| `to_uppercase` | fn | Uppercases every character. |
+| `strip_chars` | fn | Trims any character in `cutset` from both ends. |
+| `to_lower` | fn | Lowercases every character. |
+| `to_lowercase` | fn | Alias for to_lower (Rust-style name). |
+| `to_upper` | fn | Uppercases every character. |
+| `to_uppercase` | fn | Alias for to_upper (Rust-style name). |
 | `trim` | fn | Removes leading and trailing whitespace. |
+| `zfill` | fn | Pads with `'0'` on the left until at least `width` wide. |
 
 ## `std::sync`
 
@@ -477,6 +1423,28 @@ Assertions and sub-test harness helpers.
 | `check` | fn | Asserts a condition. |
 | `check_eq` | fn | Asserts equality, rendering a diff on failure. |
 
+## `std::text::template`
+
+Plain-text templates (no escaping).
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Template` | type | Compiled text template. |
+| `parse` | fn | Parses a template string. |
+| `render` | fn | Renders a template with the supplied data context. |
+
+## `std::thread`
+
+Native OS threads. For goroutines use the `go expr` syntax.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `JoinHandle` | type | Owned handle to a spawned OS thread. |
+| `join` | fn | Waits for the thread to finish; returns its result. |
+| `num_cpus` | fn | Returns the number of logical CPUs available. |
+| `spawn` | fn | Spawns a new OS thread; returns a JoinHandle. |
+| `yield_now` | fn | Hints to the scheduler to switch to another runnable thread. |
+
 ## `std::time`
 
 Wall-clock and monotonic time facilities.
@@ -486,12 +1454,14 @@ Wall-clock and monotonic time facilities.
 | `Duration` | type | Difference between two `Instant`s. |
 | `Instant` | type | Monotonic point-in-time. |
 | `SystemTime` | type | Wall-clock point-in-time. |
+| `format_rfc3339` | fn | Formats a `SystemTime` in RFC 3339 (`YYYY-MM-DDTHH:MM:SSZ`). |
 | `now` | fn | Returns the current monotonic `Instant`. |
+| `parse_rfc3339` | fn | Parses an RFC 3339 timestamp into a `SystemTime`. |
 | `sleep` | fn | Suspends the current goroutine for `Duration`. |
 
 ## `std::tls`
 
-TLS termination and TLS client dialling (rustls-backed; not yet wired).
+TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -501,6 +1471,84 @@ TLS termination and TLS client dialling (rustls-backed; not yet wired).
 | `client_config` | fn | Builds a client config. Returns Err until rustls lands. |
 | `server_config` | fn | Builds a server config from a CertKey. Returns Err until rustls lands. |
 
+## `std::trace`
+
+W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `EndedSpan` | type | Finalised span record; `to_otlp_json()` serialises for OTLP/HTTP export. |
+| `Span` | type | Active span builder. Attributes, events, status; `end()` finalises and records. |
+| `SpanContext` | type | Request-scoped trace + span pair, propagated through `std::context`. |
+| `SpanGuard` | type | RAII guard returned by `enter_span`; restores the prior active span on drop. |
+| `SpanId` | type | 64-bit span identifier. |
+| `SpanStatus` | type | Span outcome: Unset / Ok / Error(message). |
+| `TraceId` | type | 128-bit trace identifier (W3C trace-context format). |
+| `Tracer` | type | Process-level span sink. `start_span`, `ended_spans`, `set_global`. |
+| `current_span_context` | fn | Reads the active SpanContext, if any. |
+| `enter_span` | fn | Sets `ctx` as the active span on the current goroutine; returns a SpanGuard. |
+| `with_span_context` | fn | Runs `f` with `ctx` installed as the active SpanContext. |
+
+## `std::unicode`
+
+Unicode general-category predicates, casing, normalization, and segmentation.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `combining_class` | fn | Canonical combining class (0-254) for r. |
+| `fold_case` | fn | Simple case-folded comparison form for a string. |
+| `grapheme_count` | fn | Number of UAX #29 grapheme clusters in a string. |
+| `graphemes` | fn | UAX #29 extended grapheme clusters of a string. |
+| `is_assigned` | fn | True if r is an assigned code point (not Cn). |
+| `is_control` | fn | True if r is category Cc. |
+| `is_digit` | fn | True if r is a decimal digit (category Nd). |
+| `is_graphic` | fn | True if r is graphic (printable and not whitespace). |
+| `is_letter` | fn | True if r is in general-category group L. |
+| `is_lower` | fn | True if r is category Ll. |
+| `is_mark` | fn | True if r is in general-category group M. |
+| `is_nfc` | fn | True if a string is already in NFC. |
+| `is_nfd` | fn | True if a string is already in NFD. |
+| `is_nfkc` | fn | True if a string is already in NFKC. |
+| `is_nfkd` | fn | True if a string is already in NFKD. |
+| `is_number` | fn | True if r is any numeric (Nd|Nl|No). |
+| `is_print` | fn | True if r is printable (not Cc/Cf/Cs/Co/Cn). |
+| `is_punct` | fn | True if r is in general-category group P. |
+| `is_space` | fn | True if r is whitespace (Z* plus HT/LF/VT/FF/CR/NEL). |
+| `is_symbol` | fn | True if r is in general-category group S. |
+| `is_title` | fn | True if r is category Lt. |
+| `is_upper` | fn | True if r is category Lu. |
+| `nfc` | fn | Normalize a string to NFC (canonical composition). |
+| `nfd` | fn | Normalize a string to NFD (canonical decomposition). |
+| `nfkc` | fn | Normalize a string to NFKC (compat composition). |
+| `nfkd` | fn | Normalize a string to NFKD (compat decomposition). |
+| `sentence_count` | fn | Number of UAX #29 sentences in a string. |
+| `sentences` | fn | UAX #29 Unicode sentences in a string. |
+| `simple_fold` | fn | Next rune in Unicode case-folding cycle. |
+| `to_lower` | fn | Simple lowercase mapping for one rune. |
+| `to_lower_str` | fn | Full lowercase mapping for a string. |
+| `to_title` | fn | Simple titlecase mapping for one rune. |
+| `to_upper` | fn | Simple uppercase mapping for one rune. |
+| `to_upper_str` | fn | Full uppercase mapping for a string (ss -> SS). |
+| `word_bounds` | fn | UAX #29 word boundaries (includes punct + whitespace runs). |
+| `word_count` | fn | Number of UAX #29 words in a string. |
+| `words` | fn | UAX #29 Unicode words in a string (skips punct/whitespace). |
+
+## `std::utf16`
+
+UTF-16 encoding/decoding and surrogate pair helpers.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `append_rune` | fn | Appends the UTF-16 encoding of r to a Vec<u16>. |
+| `decode` | fn | Decodes a []u16 to Vec<char>, replacing surrogates with U+FFFD. |
+| `decode_surrogate_pair` | fn | Decodes a high+low surrogate pair to a char. |
+| `decode_to_string` | fn | Decodes a []u16 to String. |
+| `encode` | fn | Encodes a []char to Vec<u16>. |
+| `encode_rune` | fn | Encodes r as 1 or 2 u16 code units. |
+| `encode_string` | fn | Encodes a String directly to Vec<u16>. |
+| `is_surrogate` | fn | True iff r falls in the surrogate range U+D800..U+DFFF. |
+| `rune_len` | fn | Number of UTF-16 code units needed to encode r (1 or 2). |
+
 ## `std::utf8`
 
 UTF-8 validation and scalar decoding.
@@ -509,4 +1557,26 @@ UTF-8 validation and scalar decoding.
 |------|------|-----|
 | `is_valid` | fn | Validates a byte slice as UTF-8. |
 | `rune_count` | fn | Counts Unicode scalar values. |
+
+## `std::uuid`
+
+UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `is_valid` | fn | Return true iff the string parses as a canonical UUID. |
+| `normalize` | fn | Lowercase canonical UUID form of the input, or empty string on parse failure. |
+| `simple` | fn | 32-character unhyphenated form of the input, or empty string on parse failure. |
+| `v4` | fn | Generate a fresh random v4 UUID as a canonical hyphenated string. |
+| `v7` | fn | Generate a fresh v7 (timestamp-ordered) UUID. |
+
+## `std::validate`
+
+Trait-based field validation: implement Validate, collect FieldErrors into Errors.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Errors` | type | Aggregated FieldError set, indexable by dotted path. |
+| `FieldError` | type | One field-scoped validation failure: dotted path, message, optional code. |
+| `Validate` | trait | Implement on a struct to declare field-level validation rules. |
 

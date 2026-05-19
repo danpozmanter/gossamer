@@ -192,6 +192,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_max_f64" => (&[types::F64, types::F64], Some(types::F64)),
         "gos_rt_clamp_f64" => (&[types::F64, types::F64, types::F64], Some(types::F64)),
         "gos_rt_error_new" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_error_from" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_error_wrap" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_error_message" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_error_cause" => (&[ptr_ty], Some(ptr_ty)),
@@ -382,6 +383,10 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_http_response_text_new" => (&[types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_http_response_json_new" => (&[types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_gzip_encode" | "gos_rt_gzip_decode" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_sha256_hex" | "gos_rt_sha512_hex" | "gos_rt_blake3_hex" => {
+            (&[ptr_ty], Some(ptr_ty))
+        }
+        "gos_rt_hmac_sha256_hex" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_chunked_encode" | "gos_rt_chunked_decode" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_sse_encode_event" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_sse_encode_comment" => (&[ptr_ty], Some(ptr_ty)),

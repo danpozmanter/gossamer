@@ -655,6 +655,18 @@ to `Option<T>`, evaluates to `T` on `Some`, or returns `None` on `None`.
 The enclosing function's return type must be `Result<_, E2>` (where
 `E: Into<E2>`) or `Option<_>` respectively.
 
+The HIR desugar tracks the enclosing function's declared return
+type so the cross-type conversion is automatic. When the inner
+expression's `Err` type differs from the enclosing function's
+`Err` type the desugar inserts a call to `errors::Error::from`
+(or any user-supplied `Into<E2>` impl when the typechecker
+recognises one) on the propagated value. Result and Option are
+disambiguated by inspecting the inner type's ADT name; ambiguity
+falls back to the Result desugar. See
+`feature-testing-examples/try_option_propagation.gos` and
+`feature-testing-examples/try_err_conversion.gos` for end-to-end
+coverage across all three tiers.
+
 ### 4.6 Pipe expression (F#-style forward pipe)
 
 ```
@@ -1419,26 +1431,46 @@ that don't compose with `|>` (`xs.push`, `xs.pop`, `xs.sort`,
 they operate by side-effect on the receiver — there is no chain
 to fit them into.
 
-The iterator protocol is one trait:
+The iterator protocol is one trait. User code declares it as
+needed (or any name; the for-loop dispatch only checks for a
+`.next() -> Option<T>` method on the receiver):
 
 ```
-pub trait Iterator {
-    type Item
-    fn next(&mut self) -> Option<Self::Item>
-    // default methods cover the consumer surface below
+trait Iterator {
+    fn next(&mut self) -> Option<i64>  // pick a concrete item type
 }
 ```
 
-Any type implementing `Iterator` ranges over with `for`:
+Associated types (`type Item`) parse but the typechecker
+currently does not project through them; declare the item
+type concretely (`Option<i64>`, `Option<String>`, …) for now.
+
+Any type providing a `next(&mut self) -> Option<T>` method
+ranges with `for`:
 
 ```
 for x in iter { body }
 ```
 
-desugars to a `loop` that calls `iter.next()` and binds on `Some`,
-stopping on `None`. An `IntoIterator` trait converts collections
-(`Vec<T>`, `HashMap<K,V>`, `HashSet<T>`, `Receiver<T>`, …) to their
-respective iterator types when the `for` loop drives them.
+The HIR desugars to
+
+```
+{
+    let mut __for_iter = iter
+    loop {
+        match (&mut __for_iter).next() {
+            Some(x) => body,
+            None => break,
+        }
+    }
+}
+```
+
+— binding the iter once outside the loop so each `.next()`
+call advances the same state. `IntoIterator` is implicit:
+`Vec<T>`, `HashMap<K,V>`, ranges, `Receiver<T>`, and any
+user struct with `fn next(&mut self) -> Option<T>` are all
+iterable directly.
 
 Built-in iterator types (lazy, single-pass unless noted):
 `RangeIter` (from `a..b` and `a..=b`), `VecIter`, `MapIter`,

@@ -126,6 +126,17 @@ pub enum TypeError {
         /// Human-readable reason the escape is invalid.
         reason: String,
     },
+    /// A trait bound `<T: Bound>` on a generic parameter names a
+    /// trait the resolver does not know about. Catches typos
+    /// (`Hashabel` for `Hashable`) at function declaration before
+    /// the call site stumbles into a runtime "no method" error.
+    #[error("unknown trait `{name}` in bound for parameter `{param}`")]
+    UnknownTraitBound {
+        /// Generic parameter the bound was attached to.
+        param: String,
+        /// Trait name as written.
+        name: String,
+    },
 }
 
 impl TypeError {
@@ -143,6 +154,7 @@ impl TypeError {
             Self::RecursionLimit { .. } => "recursion-limit",
             Self::IntLiteralOverflow { .. } => "int-literal-overflow",
             Self::InvalidEscape { .. } => "invalid-escape",
+            Self::UnknownTraitBound { .. } => "unknown-trait-bound",
         }
     }
 
@@ -160,6 +172,7 @@ impl TypeError {
             Self::RecursionLimit { .. } => "GT0008",
             Self::IntLiteralOverflow { .. } => "GT0009",
             Self::InvalidEscape { .. } => "GT0010",
+            Self::UnknownTraitBound { .. } => "GT0011",
         }
     }
 }
@@ -290,6 +303,13 @@ impl TypeDiagnostic {
             }
             TypeError::InvalidEscape { escape, reason } => {
                 out = out.with_help(format!("`{escape}` is not a valid escape: {reason}"));
+            }
+            TypeError::UnknownTraitBound { param, name } => {
+                out = out
+                    .with_help(format!(
+                        "trait `{name}` is not declared anywhere; bound on `{param}` cannot be enforced",
+                    ))
+                    .with_note("check for a typo or import the trait into scope");
             }
         }
         out

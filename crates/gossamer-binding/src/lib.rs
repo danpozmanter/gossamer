@@ -100,6 +100,8 @@ pub use gossamer_interp::value;
 #[doc(hidden)]
 pub use linkme;
 #[doc(hidden)]
+pub use parking_lot;
+#[doc(hidden)]
 pub use pastey as __paste;
 
 /// Internal: registers a binding's `gos_binding_<...>` C-ABI thunk

@@ -27,7 +27,7 @@ macro_rules! __binding_count {
 ///
 /// **New ergonomic form (single-segment path):**
 ///
-/// ```ignore
+/// ```text
 /// register_module!(
 ///     name: echo,                            // both the Gossamer-side spelling
 ///                                            // and the C-ABI symbol prefix.
@@ -42,7 +42,7 @@ macro_rules! __binding_count {
 /// nested paths like `"tuigoose::layout"` where mangling has to
 /// be supplied by hand.
 ///
-/// ```ignore
+/// ```text
 /// register_module!(
 ///     binding,                               // internal mod ident
 ///     path: "tuigoose::layout",

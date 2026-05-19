@@ -1198,6 +1198,10 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("map_err", native("map_err", native_variant_map_err)));
     globals.push(("parse", builtin("parse", builtin_str_parse_result)));
     globals.push(("errors::new", builtin("errors::new", builtin_errors_new)));
+    globals.push((
+        "errors::Error::from",
+        builtin("errors::Error::from", builtin_errors_from),
+    ));
     globals.push(("errors::wrap", builtin("errors::wrap", builtin_errors_wrap)));
     globals.push(("errors::join", builtin("errors::join", builtin_errors_join)));
     globals.push((
@@ -1284,6 +1288,34 @@ fn builtin_errors_new(args: &[Value]) -> RuntimeResult<Value> {
         None => String::new(),
     };
     Ok(errors_struct(msg, Value::variant("None", Arc::new(vec![]))))
+}
+
+/// Canonical `Into<errors::Error>` conversion. Routes through
+/// the SPEC §4.5 `?`-propagation auto-conversion: when the
+/// inner expression's `Err` type differs from the enclosing
+/// function's, the HIR desugar calls this helper to coerce the
+/// value into the enclosing fn's error type. Identity for
+/// `errors::Error`; wraps a String into a fresh `errors::Error`
+/// via `errors::new`; falls back to `format!("{:?}", v)` for
+/// anything else.
+fn builtin_errors_from(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(value) = args.first() else {
+        return Ok(errors_struct(
+            String::new(),
+            Value::variant("None", Arc::new(vec![])),
+        ));
+    };
+    match value {
+        Value::Struct(inner) if inner.name == "errors::Error" => Ok(value.clone()),
+        Value::String(s) => Ok(errors_struct(
+            s.as_str().to_string(),
+            Value::variant("None", Arc::new(vec![])),
+        )),
+        other => Ok(errors_struct(
+            format!("{other:?}"),
+            Value::variant("None", Arc::new(vec![])),
+        )),
+    }
 }
 
 fn builtin_errors_join(args: &[Value]) -> RuntimeResult<Value> {
@@ -4582,20 +4614,24 @@ fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
     if len == 0 {
         return Ok(Value::Int(0));
     }
-    let key_str = match args.get(1) {
+    // Build the SmolStr directly from the &str slice — skips the
+    // intermediate String allocation that the prior shape (`.to_string()`
+    // then `SmolStr::from(String)`) paid per k-mer. For k <= 22 the
+    // SmolStr is stored inline (no heap alloc), so every k-nucleotide
+    // input shape (k = 1, 2, 3, 4, 6, 12, 18) lands in inline storage.
+    let key = match args.get(1) {
         Some(Value::String(s)) => {
             let bytes = s.as_bytes();
             if start + len > bytes.len() {
                 return Ok(Value::Int(0));
             }
             match std::str::from_utf8(&bytes[start..start + len]) {
-                Ok(s) => s.to_string(),
+                Ok(slice) => MapKey::Str(SmolStr::from_str(slice)),
                 Err(_) => return Ok(Value::Int(0)),
             }
         }
         _ => return Ok(Value::Int(0)),
     };
-    let key = MapKey::Str(SmolStr::from(key_str));
     match args.first() {
         Some(Value::Map(map)) => {
             let mut guard = map.lock();

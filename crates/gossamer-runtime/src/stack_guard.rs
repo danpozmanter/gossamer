@@ -132,9 +132,8 @@ mod unix {
             // SAFETY: `action` is fully initialised; passing null
             // for the old action is the standard "don't care"
             // call.
-            let rc = unsafe {
-                libc::sigaction(libc::SIGSEGV, &raw const action, std::ptr::null_mut())
-            };
+            let rc =
+                unsafe { libc::sigaction(libc::SIGSEGV, &raw const action, std::ptr::null_mut()) };
             if rc == 0 {
                 ACTION_INSTALLED.store(true, Ordering::Release);
             }
@@ -167,8 +166,7 @@ mod unix {
             }
             let mut sp: *mut libc::c_void = std::ptr::null_mut();
             let mut size: libc::size_t = 0;
-            let rc =
-                libc::pthread_attr_getstack(&raw const attr, &raw mut sp, &raw mut size);
+            let rc = libc::pthread_attr_getstack(&raw const attr, &raw mut sp, &raw mut size);
             libc::pthread_attr_destroy(&raw mut attr);
             if rc != 0 || sp.is_null() {
                 return (0, 0);

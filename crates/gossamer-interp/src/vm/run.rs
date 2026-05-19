@@ -67,7 +67,6 @@ impl Vm {
                         Some(Global::Fn(_)) => Value::String(SmolStr::from(name.clone())),
                         None => return Err(RuntimeError::UnresolvedName(name.clone())),
                     };
-                    let _ = self.resolve_global(name)?;
                     registers[dst as usize] = value;
                 }
                 Op::Move { dst, src } => {

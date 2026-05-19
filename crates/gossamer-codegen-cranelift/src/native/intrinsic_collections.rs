@@ -1,3 +1,9 @@
+//! Cranelift intrinsic lowering — collections / result / flag /
+//! HTTP family. Second partition in the dispatch chain. Holds
+//! `lower_intrinsic_call_collections` plus the `gos_rt_vec_*`,
+//! `gos_rt_map_*`, `gos_rt_result_*`, `gos_rt_flag_*`, and
+//! `gos_rt_http_*` dispatch arms.
+
 #![allow(
     unused_imports,
     dead_code,
@@ -134,7 +140,7 @@ use rayon::prelude::*;
 
 use super::*;
 
-pub(super) fn lower_intrinsic_call_g1(
+pub(super) fn lower_intrinsic_call_collections(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
     locals: &mut HashMap<Local, Variable>,

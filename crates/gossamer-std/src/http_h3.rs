@@ -121,8 +121,8 @@ where
     install_ring_provider();
     let cert_pem = std::fs::read(cert_path)
         .map_err(|e| Error::from(H3Error::Io(format!("read cert: {e}"))))?;
-    let key_pem = std::fs::read(key_path)
-        .map_err(|e| Error::from(H3Error::Io(format!("read key: {e}"))))?;
+    let key_pem =
+        std::fs::read(key_path).map_err(|e| Error::from(H3Error::Io(format!("read key: {e}"))))?;
     let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(&cert_pem)
         .collect::<Result<_, _>>()
         .map_err(|e| Error::from(H3Error::Tls(format!("cert parse: {e}"))))?;
@@ -227,7 +227,7 @@ where
         .await
         .map_err(|e| Error::from(H3Error::Protocol(format!("resolve: {e}"))))?;
 
-    let (parts, _) = req.into_parts();
+    let (parts, ()) = req.into_parts();
     let method = method_from_http(&parts.method);
     let path_q = parts
         .uri
@@ -236,7 +236,7 @@ where
     let (path, query) = crate::http::split_path_query(&path_q);
 
     let mut headers = Headers::new();
-    for (name, value) in parts.headers.iter() {
+    for (name, value) in &parts.headers {
         if let Ok(v) = value.to_str() {
             headers.insert(name.as_str(), v);
         }
@@ -266,16 +266,15 @@ where
         trailers: None,
     };
 
-    let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        handler.serve(request)
-    })) {
-        Ok(resp) => resp,
-        Err(_) => Response {
-            status: StatusCode(500),
-            headers: Headers::new(),
-            body: b"internal server error".to_vec(),
-        },
-    };
+    let response =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.serve(request))) {
+            Ok(resp) => resp,
+            Err(_) => Response {
+                status: StatusCode(500),
+                headers: Headers::new(),
+                body: b"internal server error".to_vec(),
+            },
+        };
 
     let status = ::http::StatusCode::from_u16(response.status.as_u16())
         .map_err(|e| Error::from(H3Error::Protocol(format!("bad status: {e}"))))?;
@@ -368,8 +367,7 @@ impl Client {
         // tokio runtime so its background driver task can be
         // spawned; `block_on(async {...})` keeps the constructor
         // synchronous.
-        let endpoint = rt
-            .block_on(async move { build_endpoint(skip_verify) })?;
+        let endpoint = rt.block_on(async move { build_endpoint(skip_verify) })?;
         Ok(Self {
             inner: Arc::new(ClientInner { rt, endpoint }),
         })
@@ -655,7 +653,7 @@ async fn do_request_async(
         .map_err(|e| Error::from(H3Error::Protocol(format!("recv_response: {e}"))))?;
     let status = StatusCode(resp_head.status().as_u16());
     let mut out_headers = Headers::new();
-    for (name, value) in resp_head.headers().iter() {
+    for (name, value) in resp_head.headers() {
         if let Ok(v) = value.to_str() {
             out_headers.insert(name.as_str(), v);
         }
@@ -710,8 +708,8 @@ mod tests {
     /// supplied directory. The caller is responsible for cleaning
     /// the directory up.
     fn make_cert(tempdir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
-            .expect("rcgen cert");
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).expect("rcgen cert");
         let cert_path = tempdir.join("cert.pem");
         let key_path = tempdir.join("key.pem");
         std::fs::write(&cert_path, cert.cert.pem()).expect("write cert");
@@ -744,7 +742,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Slow QUIC handshake on loopback; run with --ignored to exercise"]
+    #[cfg_attr(
+        not(feature = "slow-network-tests"),
+        ignore = "QUIC handshake on loopback takes ≥60s on idle CI hardware; opt in with --features slow-network-tests"
+    )]
     fn h3_round_trip_get_self_signed() {
         let tmp = std::env::temp_dir().join(format!(
             "gossamer-h3-{}-{}",

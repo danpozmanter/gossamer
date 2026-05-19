@@ -86,6 +86,10 @@ impl<'a> Builder<'a> {
                 "gos_rt_error_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            "errors::Error::from" => (
+                "gos_rt_error_from",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             "errors::wrap" => (
                 "gos_rt_error_wrap",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -863,6 +867,18 @@ impl<'a> Builder<'a> {
             }
             "gzip::decode" | "compress::gzip::decode" => {
                 ("gos_rt_gzip_decode", self.tcx.string_ty())
+            }
+            "crypto::sha256::hex" | "sha256::hex" | "crypto::sha256_hex" => {
+                ("gos_rt_sha256_hex", self.tcx.string_ty())
+            }
+            "crypto::sha512::hex" | "sha512::hex" | "crypto::sha512_hex" => {
+                ("gos_rt_sha512_hex", self.tcx.string_ty())
+            }
+            "crypto::blake3::hex" | "blake3::hex" | "crypto::blake3_hex" => {
+                ("gos_rt_blake3_hex", self.tcx.string_ty())
+            }
+            "crypto::hmac::sha256_hex" | "hmac::sha256_hex" | "crypto::hmac_sha256_hex" => {
+                ("gos_rt_hmac_sha256_hex", self.tcx.string_ty())
             }
             "slog::info" => ("gos_rt_slog_info", self.tcx.unit()),
             "slog::warn" => ("gos_rt_slog_warn", self.tcx.unit()),

@@ -102,7 +102,8 @@ pub unsafe extern "C" fn gos_rt_mime_boundary(s: *const c_char) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mime_param(s: *const c_char, key: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let k = mime_str(key); let k = k.as_str();
+        let k = mime_str(key);
+        let k = k.as_str();
         let out = mime_parse(&mime_str(s))
             .and_then(|m| m.get_param(k).map(|v| v.to_string()))
             .unwrap_or_default();

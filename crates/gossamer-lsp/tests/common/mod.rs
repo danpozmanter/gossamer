@@ -96,7 +96,7 @@ pub fn diagnostic_message(diag: &Value) -> Option<String> {
 }
 
 /// Extracts the diagnostic array from a `publishDiagnostics`
-/// notification (the only one published by ServerState::update).
+/// notification (the only one published by `ServerState::update`).
 pub fn diagnostics_from(notifications: &[Value]) -> Vec<Value> {
     for notif in notifications {
         if field_str(notif, "method") != Some("textDocument/publishDiagnostics") {

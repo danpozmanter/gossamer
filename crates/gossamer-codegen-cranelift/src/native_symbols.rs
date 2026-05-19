@@ -22,9 +22,8 @@
 
 #![allow(unsafe_code)]
 
-use std::sync::Mutex;
-
 use linkme::distributed_slice;
+use parking_lot::Mutex;
 
 /// One registered C-ABI binding entry-point. Used by the runtime
 /// `Mutex<Vec>` registry path.
@@ -70,9 +69,7 @@ static REGISTRY: Mutex<Vec<NativeSymbol>> = Mutex::new(Vec::new());
 /// previous address (last-writer-wins). Bindings call this once
 /// per item from their `__bindings_force_link()` shim.
 pub fn register_native_symbol(name: &'static str, addr: *const u8) {
-    let mut guard = REGISTRY
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = REGISTRY.lock();
     if let Some(entry) = guard.iter_mut().find(|s| s.name == name) {
         entry.addr = addr;
     } else {
@@ -84,10 +81,7 @@ pub fn register_native_symbol(name: &'static str, addr: *const u8) {
 /// trivial to clone; the snapshot is taken under the mutex.
 #[must_use]
 pub fn native_symbols_snapshot() -> Vec<NativeSymbol> {
-    REGISTRY
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+    REGISTRY.lock().clone()
 }
 
 #[cfg(test)]

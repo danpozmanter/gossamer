@@ -49,8 +49,7 @@ fn synthesise(code: &'static str, explanation: &'static str) -> Diagnostic {
     // so the rendered carets are deterministic across runs.
     let loc = Location::new(file, Span::new(file, 16, 21));
     let _ = map; // map only constructed to mint the FileId.
-    Diagnostic::error(Code(code), first_line(explanation).to_string())
-        .with_primary(loc, "here")
+    Diagnostic::error(Code(code), first_line(explanation).to_string()).with_primary(loc, "here")
 }
 
 fn render_for_snapshot(code: &'static str, explanation: &'static str) -> String {

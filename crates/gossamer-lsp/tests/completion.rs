@@ -49,10 +49,7 @@ fn method_completion_on_string_receiver() {
 
 #[test]
 fn type_qualified_completion_vec_associated() {
-    let server = server_with(
-        "file:///v.gos",
-        "fn main() {\n    let x = Vec::n\n}\n",
-    );
+    let server = server_with("file:///v.gos", "fn main() {\n    let x = Vec::n\n}\n");
     // Cursor right after `Vec::n` on line 1 (column 17).
     let params = position_params("file:///v.gos", 1, 17);
     let response = server.completion(&params);
@@ -71,10 +68,7 @@ fn type_qualified_completion_vec_associated() {
 
 #[test]
 fn stdlib_module_completion_after_path() {
-    let server = server_with(
-        "file:///s.gos",
-        "use std::fs::\nfn main() {}\n",
-    );
+    let server = server_with("file:///s.gos", "use std::fs::\nfn main() {}\n");
     // Cursor immediately after `std::fs::` on line 0, column 13.
     let params = position_params("file:///s.gos", 0, 13);
     let response = server.completion(&params);
@@ -153,10 +147,10 @@ fn locals_surface_in_completion() {
     let params = position_params("file:///l.gos", 3, 6);
     let response = server.completion(&params);
     let labels = completion_labels(&response);
-    let has_banana = labels.iter().any(|l| l == "banana");
-    let has_bandana = labels.iter().any(|l| l == "bandana");
+    let banana_present = labels.iter().any(|l| l == "banana");
+    let dotted_match = labels.iter().any(|l| l == "bandana");
     assert!(
-        has_banana || has_bandana,
+        banana_present || dotted_match,
         "expected at least one of `banana`/`bandana` in {labels:?}"
     );
 }

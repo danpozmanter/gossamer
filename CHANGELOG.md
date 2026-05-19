@@ -2,167 +2,116 @@
 
 ## 0.9.0 — Production hardening, tooling, observability, and SQL pluggability
 
+### Language
+
+- **`?` on `Option<T>` and `Result<T, E>`** — `try_propagation_kind` selects the propagation shape; `ast_is_option_shaped` is the AST-level fallback when typechecker hasn't pinned the return type. Error paths auto-route through `gos_rt_error_from` so `let x: A = fallible_b()?` works when `A: From<B>`.
+- **User `impl Iterator for T` end-to-end** across all three tiers — HIR `lower_for` splits into `lower_for_user_iter` (Adt receivers; threads through a `__for_iter` let-binding and a `.next() -> Option<T>` call) and `lower_for_inline` (range / array / Vec fast paths). MIR for-loop fast-path bails to the generic shape for Adt receivers. Interp's `invoke_method` + `apply_closure_capture_self` write a mutated `&mut self` back to the receiver place; `&self` / `&mut self` are typed `Ref<SelfType>` in HIR.
+- **`UnknownTraitBound` (GT0011)** — `register_fn_sig` validates declared trait names against `known_builtin_trait` (the eight built-in kinds) + the user's `declared_trait_names`. Typo'd bounds (`Itarator` for `Iterator`) now surface as a type error with a span.
+
 ### Tooling
 
-- **`gos bench [PATH] [--parallel N]`** — discovers every `#[bench]`-annotated function under `PATH` (file or directory; defaults to `src/`) and reports `ns/op` plus `allocs/op` per benchmark. Per-bench iteration counts auto-tune to a 50ms calibration window (capped at 2^20); allocation deltas read from `gossamer_runtime::gc::stats().bytes_allocated`. `std::testing::Bencher` ships as the future-facing argument type for `fn name(b: &mut Bencher)`-shaped fns; zero-arg `#[bench]` fns keep working unchanged.
+- **`gos bench [PATH] [--parallel N]`** — discovers every `#[bench]`-annotated function under `PATH` (defaults to `src/`) and reports `ns/op` plus `allocs/op` per benchmark. Per-bench iteration counts auto-tune to a 50ms calibration window (capped at 2^20); allocation deltas read from `gossamer_runtime::gc::stats().bytes_allocated`. `std::testing::Bencher` ships as the future-facing argument type; zero-arg `#[bench]` fns keep working.
 
-### Runtime — production-safety
+### Runtime — production safety
 
-- **Stack-overflow guard** — `gossamer_runtime::stack_guard::install_stack_guard()` runs at scheduler start and on every worker thread. Unix path installs `sigaltstack(2)` + `SA_ONSTACK` SIGSEGV handler with async-signal-safe diagnostic writes; Windows uses `SetThreadStackGuarantee` + `SetUnhandledExceptionFilter`. Faults outside the stack guard window restore `SIG_DFL` and re-raise so debuggers still see them.
-- **`safe_daemon::daemonize`** — wraps the classic Unix `fork` + `setsid` + second-`fork` detach sequence so `gossamer-std` (which carries `#![forbid(unsafe_code)]`) can run a daemon without losing that guarantee. Returns `Unsupported` on non-Unix.
-- **OOM no longer crosses the FFI boundary** — both `alloc_zeroed`-null paths in `c_abi/gc.rs` (`gos_rt_gc_alloc` + `gos_rt_aggr_alloc_leak`) now `eprintln!` + `std::process::abort()` instead of `std::alloc::handle_alloc_error`. The latter panics; panic-across-FFI from a `gos_rt_*` entry into compiled Gossamer code is UB.
-- **FFI transmute audit** — `c_abi/mime.rs::mime_str` no longer launders the borrow into `&'static str` via `mem::transmute`. Returns an owned `String` at one tiny allocation per call — a sound boundary.
-- **`WorkerHandleGuard`** — RAII over `WorkerSlot::thread_handle`. On panic-unwind, swap-to-0 and call `preempt::release_thread_handle`. Closes the long-running Windows-service handle leak.
+- **Stack-overflow guard** — `stack_guard::install_stack_guard()` runs at scheduler start and per worker. Unix installs `sigaltstack(2)` + `SA_ONSTACK` SIGSEGV handler with async-signal-safe diagnostics; Windows uses `SetThreadStackGuarantee` + `SetUnhandledExceptionFilter`. Faults outside the guard window restore `SIG_DFL` and re-raise.
+- **`safe_daemon::daemonize`** — Unix `fork` + `setsid` + second-`fork` detach so `gossamer-std` (`#![forbid(unsafe_code)]`) can run a daemon without losing that guarantee. `Unsupported` on non-Unix.
+- **OOM no longer crosses the FFI boundary** — `gos_rt_gc_alloc` + `gos_rt_aggr_alloc_leak` `alloc_zeroed`-null paths `eprintln!` + `std::process::abort()` instead of `std::alloc::handle_alloc_error` (which panics; panic-across-FFI into compiled Gossamer is UB).
+- **FFI transmute audit** — `c_abi/mime.rs::mime_str` no longer launders the borrow into `&'static str` via `mem::transmute`; returns an owned `String`.
+- **`WorkerHandleGuard`** — RAII over `WorkerSlot::thread_handle`. On panic-unwind, swap-to-0 and call `preempt::release_thread_handle`. Closes a long-running Windows-service handle leak.
+- **Typed function-pointer registry** — `c_abi::fn_registry` with `FnKind` enum (I64ArgsToI64, EnvI64ArgsToI64, HttpHandlerBare/Env, SortCmp/SortCmpAggr, UnaryI64ToI64, BinaryI64ToI64, PredI64, JitEntry, GoSpawnEntry, CtxCancelI64, Generic). `verify` runs at every `gos_rt_fn_tramp_N` / `gos_rt_go_spawn_call_N` site; registered-with-different-kind aborts. `parking_lot::RwLock<HashMap>` keeps the read path uncontended.
+- **`GosMutex` owner tracking** — `owner: AtomicI64`; cross-goroutine unlock aborts with a diagnostic rather than corrupting lock state.
+- **`parking_lot::Mutex` everywhere** — every internal `std::sync::Mutex` migrated. No poisoning, smaller footprint, faster uncontended path. `.lock().unwrap_or_else(PoisonError::into_inner)` collapses to `.lock()`.
+- **`tests/audit_unsafe.rs`** — CI gate asserts every `unsafe { ... }` block in `gossamer-runtime/src/` (excluding the FFI surface in `c_abi/` + `ffi.rs`) carries a `// SAFETY:` comment within 8 lines above. Backfills `http2_server.rs` + `stack_guard.rs`.
+- **`gossamer-runtime::replay`** — deterministic record + replay modes via `GOS_TRACE` / `GOS_REPLAY`. Length-prefixed binary records cover channel send/recv, goroutine spawn/yield, RNG seed draws.
 
-### Garbage collector — overflow safety
+### Runtime — performance
 
-- **`Heap` `.expect()` removal** — both `u32::try_from` overflow sites in `gossamer-gc/src/heap.rs` now `eprintln!` + `std::process::abort()` with a structured invariant message instead of panicking.
-- **Weak-ref generation widened to `u64`** — `WeakRef::generation`, `WeakSlot::generation`, `WeakTable::next_generation` are now `u64`; `downgrade` uses `checked_add` and aborts on overflow rather than wrap. Closes the theoretical use-after-free where a stale weak handle could resolve to a freshly reused slot after 2^32 churns.
+- **`gos_rt_str_concat`** — single-allocation path via `alloc_cstring_from_slices` (was three allocations per concat). `try_extend_last_cstring` removed.
+- **`ChannelInner.closed`: `AtomicBool`** (was `Cell<bool>`) — `close()` uses `compare_exchange` so concurrent close-and-recv races converge deterministically.
+- **Scheduler yield-rate tracking** — per-worker `last_yield_micros: AtomicU64` + `process_start()` / `now_micros_since_start()` helpers. `should_yield()` uses `Acquire` ordering.
+- **Interp allocator-pressure shaves** — `apply_closure_capture_self` borrows the self-param name as `&str` from the closure (was a per-call `String::clone`); `builtin_map_inc_at` builds the map key via `SmolStr::from_str(&str)` directly (was `to_string()` then wrap). Every user `impl Iterator` `.next(&mut self)` benefits.
 
-### Stdlib — observability
+### Garbage collector
 
-- **`std::metrics`** — Prometheus-compatible primitives: `Counter`, `Gauge`, `Histogram`, and a `Registry` that holds them in registration order. Outputs the standard text-exposition format ready to mount under `/metrics`.
-- **`std::trace`** — W3C trace-context-compatible distributed tracing: `TraceId`, `SpanId`, `SpanContext`, `Span`, `Tracer`. OTLP JSON exporter pushes ended spans to a sidecar collector — no heavyweight `opentelemetry-otlp` dependency.
+- **Overflow safety** — `Heap`'s two `u32::try_from` sites `eprintln!` + `abort` instead of `.expect()`. Weak-ref `generation` widened to `u64` with `checked_add`; closes the 2^32-churn use-after-free.
+- **Pause-time histogram** — `GcStats::pause_histogram` (6-bucket: `<100us` / `<1ms` / `<10ms` / `<100ms` / `<1s` / `>=1s`) updated per `collect()` cycle.
+- **Precise pointer-mask tracing** — `gos_rt_gc_alloc_traced(size, mask_ptr, mask_len)` registers an aggregate with an explicit `u32` pointer-offset mask. The marker walks only the recorded offsets; `null` mask opts into the conservative word-scan. Closes the false-retention hazard from `i64` payload words colliding with live addresses.
+- **`gos_rt_gc_collect` thread-local `CollectBuffers`** — the snapshot `HashMap`, marked `HashSet`, and worklist `Vec` live in a `thread_local!` cell and are `.clear()`'d (capacity preserved) between cycles. Removes the per-cycle alloc/free churn on HashMap-heavy workloads.
+- **`gos_rt_fs_list_dir` / `gos_rt_fs_walk_dir`** — per-entry blobs now allocate through `gos_rt_gc_alloc` so the collector can reclaim them. The prior path leaked one 56-byte payload per directory entry.
 
-### Stdlib — compression
+### Codegen — LLVM
 
-- **`std::compress::zstd`** — Zstandard encoder/decoder wrapping the `zstd` crate (vendored libzstd). Same byte-in / byte-out shape as the existing `gzip`, `flate`, and `zlib` modules; level range 1–22, default 3.
+- **`render_ir_to_string(bodies, tcx, allow_fallback)`** — runs the standard LLVM pipeline and returns `.ll` IR as `String`. Used by snapshot / smoke tests in downstream crates.
+- **`gos build --release` strict-lowering on by default** — `set_strict_lowering(true)`; any MIR shape the LLVM backend can't lower is a hard build failure. `--allow-llvm-fallback` is the explicit opt-out.
+- **`pipeline_tmp_dir`** suffixes the per-process directory with a per-call atomic counter so parallel `render_ir_to_string` / `compile_to_object` calls don't trample each other's `unit.ll` / `unit.o`.
+- **`crates/gossamer-codegen-llvm/tests/lower_shapes.rs`** — 14 deterministic tests hand-roll a `Body` per MIR shape (constants + binop variants for add/sub/mul/div/rem/and/or/xor/shl/shr) and assert substring properties on the rendered IR.
+
+### Codegen — Cranelift
+
+- **Closure-callback JIT dispatch entries** — `gos_rt_arr_sort_by_i64`, `gos_rt_vec_sort_by_i64`, `gos_rt_vec_sort_i64`, `gos_rt_{arr,vec}_sort_by_aggr`, `gos_rt_callback_invoke`, `gos_rt_iter_map_i64` now in the JIT symbol table. User bodies calling these no longer skip JIT compilation.
+- **`intrinsic_g{0,1,2,3}.rs` → `intrinsic_{io_math,collections,handles,string}.rs`** — names describe contents rather than alphabet position; module-level docs added.
+
+### Diagnostics + LSP + Parse + CLI
+
+- **Centralised error-code registry** — `gossamer-diagnostics::REGISTRY` is the single source of truth for every `GL`/`GP`/`GR`/`GT`/`GM`/`GX` code; `gos explain CODE` reads from it. `tests/registry.rs` enforces alphabetical order + non-empty text; `tests/snapshots.rs` renders every code (plain + framed) via `insta`.
+- **LSP — 67 new integration tests** across `completion`, `hover`, `diagnostics`, `document_symbol`, `code_actions`, `format`, `semantic_tokens`, `inlay_hints`. `ServerHandle` (test-only) gains 13 request methods + four `params`-building helpers.
+- **`crates/gossamer-parse/tests/proptest_round_trip.rs`** — five proptest properties exercise int literals, binary ops, `let` bindings, function definitions, and nested blocks. Capped at `cases: 64` / `max_shrink_time: 2s` for CI determinism.
+- **`crates/gossamer-cli/tests/repl.rs`** — seven scripted-stdin tests for the `gos repl` binary covering the happy path and error reporting.
+- **`examples/projects/rust_binding_add/`** — minimal Rust-bindings project demonstrating `gos add --rust-binding`.
 
 ### Stdlib — `std::database::sql`
 
-- **`pool` submodule** — bounded-semaphore connection pool with idle-timeout recycling and a per-checkout retry budget. `PoolConfig` is small and dependency-free.
-- **`migrate` submodule** — forward-only schema migrations driven from a directory of `<version>_<slug>.sql` files. Each migration runs in its own transaction; concurrent runners coordinate through an advisory lock on `schema_migrations`.
-- **`query::Select` builder** — fluent SELECT renderer that emits `(sql, params)` with `Value`-bound parameters (no inline SQL). Postgres-style `$N` placeholders, also accepted by SQLite.
-- **Trait surface extensions** — `Error::driver(driver, message)` constructor + `Error::PoolExhausted { capacity }` variant. New `IsolationLevel` enum surfaces `Default` / `Read{Uncommitted,Committed}` / `RepeatableRead` / `Serializable`. `Conn::begin_with(iso)`, `Conn::ping()`, and `Conn::execute_many(sql, rows)` ship as default implementations on the facade so drivers can adopt them incrementally.
-- **MIR dispatch** — `gossamer-mir::lower::builder::stdlib_sql` routes user-visible `conn.execute(...)` / `rows.next_row()` / `tx.commit()` calls to their `gos_rt_sql_*` C-ABI shims so the bytecode VM, Cranelift JIT, and LLVM AOT all observe the same surface.
+- **`pool` submodule** — bounded-semaphore connection pool with idle-timeout recycling and a per-checkout retry budget.
+- **`migrate` submodule** — forward-only schema migrations from a `<version>_<slug>.sql` directory; each migration runs in its own transaction; concurrent runners coordinate via an advisory lock on `schema_migrations`.
+- **`query::Select` builder** — fluent SELECT renderer emitting `(sql, params)` with `Value`-bound parameters and Postgres-style `$N` placeholders (SQLite also accepts).
+- **Trait surface extensions** — `Error::driver(...)` + `Error::PoolExhausted`, `IsolationLevel` enum (`Default` / `Read{Uncommitted,Committed}` / `RepeatableRead` / `Serializable`). `Conn::begin_with(iso)` / `ping()` / `execute_many(sql, rows)` ship as default impls on the facade for incremental driver adoption.
+- **Native lowering** — `gossamer-runtime::sql` (trait surface relocated from `gossamer-std`) + `c_abi::sql` (33 `gos_rt_sql_*` shims over five handle registries: Conn / Stmt / Rows / Row / Tx / Value). Cranelift JIT + LLVM AOT dispatch through `Both`-tier ABI registry entries. `Conn::interrupt()` / `execute_ctx(ctx, ...)` / `query_ctx(ctx, ...)` check `ctx.is_cancelled()` on either side of the call.
+- **SQLite driver removed** — `rusqlite` dependency dropped, `database/sql/sqlite.rs` deleted. The facade stays; third-party drivers register through `gossamer-runtime::sql::Driver`.
 
-### Stdlib — networking
+### Stdlib — web + networking
 
-- **`std::http_h3`** — first-party HTTP/3 server + client (RFC 9114) wrapping `quinn` (QUIC) and `h3`. Each `serve` call and each `Client` instance spins up its own current-thread tokio runtime that stays private to the module; callers see only synchronous entry points mirroring `std::http_h2` and `std::http`.
+- **`std::http_h3`** — first-party HTTP/3 server + client (RFC 9114) wrapping `quinn` (QUIC) + `h3`. Each `serve` / `Client` instance owns a private current-thread tokio runtime; callers see only synchronous entry points mirroring `std::http_h2` and `std::http`.
+- **`std::http_native_client` TLS** — `NativeClient` wraps the TCP stream in `rustls::StreamOwned<ClientConnection, _>` for `https://`; per-request setup amortises through `Arc<rustls::ClientConfig>`.
+- **`http_state::attach_to_router`** — `Router` gains an optional `AppState` field + `set_state` / `state` accessors; `State::<T>::from_router(&router)` is the typed extractor handlers use.
 
-### LLVM backend
+### Stdlib — observability + compression
 
-- **`render_ir_to_string(bodies, tcx, allow_fallback)`** — public entry that runs the standard LLVM pipeline and returns the resulting `.ll` IR as a UTF-8 `String` instead of writing an object. Used by snapshot / smoke tests in downstream crates.
+- **`std::metrics`** — Prometheus-compatible `Counter`, `Gauge`, `Histogram` + a `Registry` holding them in registration order; outputs the text-exposition format.
+- **`std::trace`** — W3C trace-context distributed tracing (`TraceId`, `SpanId`, `SpanContext`, `Span`, `Tracer`). OTLP JSON exporter pushes ended spans to a sidecar collector — no `opentelemetry-otlp` dependency.
+- **`std::compress::zstd`** — Zstandard encoder/decoder wrapping vendored libzstd. Same byte-in/byte-out shape as `gzip` / `flate` / `zlib`; level 1–22, default 3.
 
-### Diagnostics
+### Stdlib — fs
 
-- **Centralised error-code registry** — `gossamer-diagnostics::REGISTRY` is the single source of truth for every `GL`/`GP`/`GR`/`GT`/`GM`/`GX` code emitted by the compiler. `gos explain CODE` reads directly from it; `codes()` and `explain(code)` are re-exported helpers. CI-grade tests in `tests/registry.rs` enforce alphabetical order + non-empty text; `tests/snapshots.rs` renders every code (plain + framed forms) via `insta`.
+- **Watch / mmap / locks / atomic writes** — `fs::watch::Watcher` (`notify`), `mmap_read` / `mmap_write` (`memmap2`), `lock_exclusive` / `lock_shared` (`fs2`), `write_atomic` (temp-file + rename). `hard_link`, `set_permissions_mode`, `chown` close the niche-fs gap.
+- **`fs::TempDir`** — RAII temp directory; `new()` / `with_prefix(prefix)` under `env::temp_dir()`; `path()` / `into_path()` / `Drop`-cleanup.
+- **`fs::temp_file(prefix)`** — `(File, PathBuf)` for a uniquely-named writable scratch file.
 
-### LSP
+### Stdlib — crypto + jwt
 
-- **67 new integration tests** across eight suites: `completion`, `hover`, `diagnostics`, `document_symbol`, `code_actions`, `format`, `semantic_tokens`, `inlay_hints`. `ServerHandle` (test-only) gains 13 new methods covering the full JSON-RPC request surface plus four `params`-building helpers (`document_params`, `range_value`, `code_action_params`, `workspace_symbol_params`).
+- **Hex digest C-ABI shims** — `gos_rt_sha256_hex` / `gos_rt_sha512_hex` / `gos_rt_blake3_hex` / `gos_rt_hmac_sha256_hex` under `c_abi::crypto`, alphabetically registered in `gossamer-abi::registry`. Tier-parity bit-identical via `feature-testing-examples/crypto_sha_hex.gos`.
+- **`std::jwt` RS256 / RS384 / RS512 verify** — RSA PKCS#1 v1.5 via `ring`'s audited constant-time RSA. The vulnerable `rsa` crate (RUSTSEC-2023-0071) stays out of the tree.
 
-### Parse — property tests
+### Stdlib — unicode + iter + regex
 
-- **`crates/gossamer-parse/tests/proptest_round_trip.rs`** — five proptest properties exercise int literals, binary ops, `let` bindings, function definitions, and nested blocks across randomised inputs. Config caps `cases: 64` and `max_shrink_time: 2s` so CI stays deterministic.
-
-### CLI
-
-- **`crates/gossamer-cli/tests/repl.rs`** — drives the `gos repl` binary with scripted stdin and asserts against captured stdout/stderr. Seven tests cover the happy path and error reporting.
-
-### Examples
-
-- **`examples/projects/rust_binding_add/`** — minimal Rust-bindings project demonstrating the `gos add --rust-binding` workflow with a Rust crate exposed as a Gossamer module.
-
-### Stdlib — std::fs
-
-- **File-system watching, mmap, advisory locks, atomic writes** — `std::fs::watch::Watcher` (wraps `notify`), `mmap_read` / `mmap_write` (wraps `memmap2`), `lock_exclusive` / `lock_shared` (wraps `fs2`), `write_atomic` (temp-file + rename). `hard_link`, `set_permissions_mode`, and `chown` close the niche-fs gap.
-
-### Stdlib — std::http_native_client
-
-- **TLS** — `NativeClient` now wraps the TCP stream in `rustls::StreamOwned<ClientConnection, _>` for `https://` URLs; per-request setup amortises through `Arc<rustls::ClientConfig>`. Same surface as before; HTTPS just works.
-
-### Stdlib — std::jwt
-
-- **RS256 / RS384 / RS512 (verify)** — RSA PKCS#1 v1.5 verification via `ring`'s audited, constant-time RSA. The vulnerable `rsa` crate (RUSTSEC-2023-0071) stays out of the dependency tree.
-
-### Stdlib — std::unicode
-
-- **Grapheme cluster iteration** — `std::unicode::graphemes(s)` and `grapheme_count(s)` walk UAX #29 extended grapheme clusters via `unicode-segmentation`. `👨‍👩‍👧` is one grapheme even when it spans multiple codepoints.
+- **Grapheme cluster iteration** — `std::unicode::graphemes(s)` / `grapheme_count(s)` walk UAX #29 extended grapheme clusters via `unicode-segmentation`. `👨‍👩‍👧` counts as one.
+- **`std::iter::Lazy<I>`** — lazy adapter over any Rust `Iterator` with `map` / `filter` / `take` / `skip` / `step_by` adapters and `sum` / `min` / `max` / `count` / `first` / `fold` / `any` / `all` / `to_vec` / `product` terminals. Allocation-free until the terminal materialises.
+- **Free iter combinators** — `iter::sum`, `iter::product`, `iter::min`, `iter::max`, `iter::step_by`, `iter::once`, `iter::empty`, `iter::collect` join the existing family.
+- **Regex named groups** — `regex::capture_names(pat)`, `regex::captures_named(pat, hay)`, `regex::captures_named_all(pat, hay)`. `(?P<year>\d{4})` lookups return `HashMap<String, String>` directly.
 
 ### CI
 
-- **`cargo doc --workspace`** under `RUSTDOCFLAGS=-D rustdoc::broken_intra_doc_links` plus `cargo test --doc --workspace --release` — drift in `///` doc-tests fails CI.
-- **Cross-target check matrix** — `aarch64-unknown-linux-gnu`, `riscv64gc-unknown-linux-gnu`, `wasm32-unknown-unknown`, `wasm32-wasip1` each run `cargo check` against the platform-agnostic crates (runtime, abi, binding{,-macros}, pkg, gc, sched).
+- **`cargo doc --workspace`** under `RUSTDOCFLAGS=-D rustdoc::broken_intra_doc_links` + `cargo test --doc --workspace --release` — doc-test drift fails CI.
+- **Cross-target check matrix** — `aarch64-unknown-linux-gnu`, `riscv64gc-unknown-linux-gnu`, `wasm32-unknown-unknown`, `wasm32-wasip1` each `cargo check` the platform-agnostic crates (runtime, abi, binding{,-macros}, pkg, gc, sched).
 
-### SQL native lowering
+### Test fixtures
 
-- **`gossamer-runtime::sql`** — trait surface (`Driver`,
-  `ConnectionImpl`, `StatementImpl`, `TransactionImpl`, `RowsImpl`,
-  `Value`, `Kind`, `Error`, `IsolationLevel`, `DriverError`,
-  `DriverErrorKind`) relocated from `gossamer-std` so the C-ABI
-  shims that compiled-tier code calls into can dispatch through
-  one registry. `gossamer-std::database::sql` re-exports the
-  whole surface so user code's import path is unchanged.
-- **`gossamer-runtime::c_abi::sql`** — 33 `gos_rt_sql_*` C-ABI
-  shims operating on five handle registries (Conn / Stmt / Rows /
-  Row / Tx / Value). Cranelift JIT dispatch table maps every
-  symbol to `rt::sql::*`; ABI registry declares each one with
-  `Both` tier so LLVM AOT and Cranelift JIT both observe the
-  same surface as `gos run`.
-- **`gossamer-std::database::sql::Conn`** gains `begin_with(iso)`
-  / `ping()` / `interrupt()` / `execute_ctx(ctx, sql, params)` /
-  `query_ctx(ctx, sql, params)`; the latter two check
-  `ctx.is_cancelled()` on either side of the call and return
-  `Error::Cancelled` if the context fires.
-
-### Cranelift closure-callback JIT
-
-- **Combinator dispatch entries landed** — `gos_rt_arr_sort_by_i64`,
-  `gos_rt_vec_sort_by_i64`, `gos_rt_vec_sort_i64`,
-  `gos_rt_{arr,vec}_sort_by_aggr`, `gos_rt_callback_invoke`,
-  `gos_rt_iter_map_i64` are now in the JIT symbol table. User
-  bodies calling these no longer skip JIT compilation.
-
-### LLVM strict lowering default-on for `gos build --release`
-
-- **`gos build --release`** now sets `set_strict_lowering(true)`
-  by default; any MIR shape the LLVM backend cannot lower is a
-  hard build failure. New `--allow-llvm-fallback` flag is the
-  explicit opt-out.
-
-### Codegen IR shape tests
-
-- **`crates/gossamer-codegen-llvm/tests/lower_shapes.rs`** —
-  hand-rolls a `Body` per MIR shape (constants + binop variants
-  for add/sub/mul/div/rem/and/or/xor/shl/shr) and asserts
-  substring properties on `render_ir_to_string` output. 14
-  deterministic tests.
-- **`pipeline_tmp_dir`** suffixes the per-process directory with
-  a per-call atomic counter so parallel `render_ir_to_string` /
-  `compile_to_object` calls inside the same process don't
-  trample each other's `unit.ll` / `unit.o`.
-
-### Garbage collector — pause-time histogram
-
-- **`GcStats::pause_histogram`** — 6-bucket histogram (`<100us`
-  / `<1ms` / `<10ms` / `<100ms` / `<1s` / `>=1s`) indexed by
-  `PauseBucket`. Updated on every `collect()` cycle.
-  Incremental marking + write barriers were already in place.
-
-### `http_state::attach_to_router`
-
-- **`http_router::Router`** gains an optional `AppState` field +
-  `set_state` / `state` accessors.
-  `http_state::attach_to_router(&mut router, state)` wires the
-  state in. `State::<T>::from_router(&router)` is the typed
-  extractor handlers use.
-
-### Deterministic replay
-
-- **`gossamer-runtime::replay`** — record + replay modes driven
-  by `GOS_TRACE` / `GOS_REPLAY` env vars. Event types cover
-  channel send / recv, goroutine spawn / yield, RNG seed
-  draws. Length-prefixed binary records.
-
-### Runtime — audit-unsafe CI gate
-
-- **`tests/audit_unsafe.rs`** — CI gate that walks every `.rs`
-  under `gossamer-runtime/src/` (excluding the FFI surface in
-  `c_abi/` + `ffi.rs`, where every fn is already `unsafe extern
-  "C"`) and asserts every `unsafe { ... }` block carries a
-  `// SAFETY:` comment within the 8 lines above it. Backfills
-  the missing comments in `http2_server.rs` + `stack_guard.rs`.
+- **`feature-testing-examples/iterator_trait_user_impl.gos`** — user `impl Iterator for Counter` driving `for x in c`; tier-parity bit-identical.
+- **`feature-testing-examples/try_option_propagation.gos`** + **`try_err_conversion.gos`** — `?` on `Option` and `?` with `From`-conversion in the error path.
+- **`feature-testing-examples/crypto_sha_hex.gos`** — every hex-digest shim exercised end-to-end.
+- **`crates/gossamer-runtime/tests/gc_collect_concurrent.rs`** — concurrent-allocator non-starvation, precise pointer-mask registration, fs blob GC reclaimability.
+- **`crates/gossamer-std/tests/{iter_lazy,python_ergonomics}.rs`** — `iter::Lazy` chain round-trips; regex named groups + `TempDir` cleanup + `temp_file` uniqueness.
+- **`crates/gossamer-hir/tests/lower.rs`** — trait-bound validation, Option-shape `?` propagation.
 
 ## 0.8.0 — Unicode, web stack, publish flow, LSP, fixes, and Rust-binding ergonomics
 

@@ -210,12 +210,10 @@ fn run_one(target: &BenchTarget) -> Result<BenchRecord> {
         total_nanos / u128::from(iterations)
     };
     let allocs_delta = allocs_after.saturating_sub(allocs_before);
-    let allocs_per_op = if iterations == 0 {
-        0
-    } else {
-        let delta_u64 = u64::try_from(allocs_delta).unwrap_or(u64::MAX);
-        delta_u64 / iterations
-    };
+    let allocs_per_op = u64::try_from(allocs_delta)
+        .unwrap_or(u64::MAX)
+        .checked_div(iterations)
+        .unwrap_or(0);
 
     let label = format!(
         "{}::{}",
@@ -238,10 +236,7 @@ fn run_one(target: &BenchTarget) -> Result<BenchRecord> {
 /// exceeds [`CALIBRATION_NANOS`] or the count hits
 /// [`MAX_ITERATIONS`]. Returns the count to use for the final
 /// timed batch.
-fn auto_tune_iterations(
-    interp: &mut gossamer_interp::Interpreter,
-    name: &str,
-) -> Result<u64> {
+fn auto_tune_iterations(interp: &mut gossamer_interp::Interpreter, name: &str) -> Result<u64> {
     let mut n: u64 = 1;
     loop {
         let started = Instant::now();
@@ -297,4 +292,3 @@ fn collect_bench_names(file: &Path) -> Result<Vec<String>> {
     collect_selected_fn_names(&sf.items, &|item| item_has_attr(item, "bench"), &mut names);
     Ok(names)
 }
-

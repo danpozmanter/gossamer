@@ -563,6 +563,24 @@ impl Interpreter {
     }
 
     fn apply_closure(&mut self, closure: &Closure, args: Vec<Value>) -> RuntimeResult<Value> {
+        let (result, _) = self.apply_closure_capture_self(closure, args, false)?;
+        Ok(result)
+    }
+
+    /// Like [`Self::apply_closure`] but, when `capture_self` is
+    /// `true`, also returns the post-call value of the closure's
+    /// first parameter (`self`). Used by `eval_method_call` so a
+    /// `&mut self`-shaped user method (`fn next(&mut self) -> ...`)
+    /// can propagate its mutations back to the caller's receiver
+    /// binding — without this, every `impl Iterator for T` would
+    /// see its `self.next_value += 1`-style writes dropped on the
+    /// floor when the method returned.
+    fn apply_closure_capture_self(
+        &mut self,
+        closure: &Closure,
+        args: Vec<Value>,
+        capture_self: bool,
+    ) -> RuntimeResult<(Value, Option<Value>)> {
         if closure.params.len() != args.len() {
             return Err(RuntimeError::Arity {
                 expected: closure.params.len(),
@@ -574,14 +592,31 @@ impl Interpreter {
         for (name, value) in &closure.captures {
             env.bind(name, value.clone());
         }
+        // Borrow the self-param name as &str from the closure rather
+        // than cloning its String once per dispatch — every user
+        // `impl Iterator` `.next(&mut self)` flows through here, so
+        // the clone showed up as steady allocator pressure under
+        // tight iteration loops.
+        let self_param_name: Option<&str> = if capture_self {
+            closure.params.first().and_then(|p| match &p.pattern.kind {
+                HirPatKind::Binding { name, .. } => Some(name.name.as_str()),
+                _ => None,
+            })
+        } else {
+            None
+        };
         for (param, arg) in closure.params.iter().zip(args) {
             bind_pattern(&mut env, &param.pattern, arg)?;
         }
-        match self.eval_expr(&closure.body, &mut env)? {
-            Flow::Value(value) | Flow::Return(value) => Ok(value),
-            Flow::Break(_) => Err(RuntimeError::Panic("break outside of loop".to_string())),
-            Flow::Continue => Err(RuntimeError::Panic("continue outside of loop".to_string())),
-        }
+        let result = match self.eval_expr(&closure.body, &mut env)? {
+            Flow::Value(value) | Flow::Return(value) => value,
+            Flow::Break(_) => return Err(RuntimeError::Panic("break outside of loop".to_string())),
+            Flow::Continue => {
+                return Err(RuntimeError::Panic("continue outside of loop".to_string()));
+            }
+        };
+        let mutated_self = self_param_name.and_then(|name| env.lookup(name).cloned());
+        Ok((result, mutated_self))
     }
 
     pub(crate) fn eval_expr(&mut self, expr: &HirExpr, env: &mut Env) -> RuntimeResult<Flow> {
@@ -884,21 +919,80 @@ impl Interpreter {
         // value doesn't form a qualified key.
         if let Some(qualified) = qualified_method_key(&receiver_value, &name.name) {
             if let Some(method) = self.globals.get(&qualified).cloned() {
-                let mut call_args = Vec::with_capacity(arg_values.len() + 1);
-                call_args.push(receiver_value);
-                call_args.extend(arg_values);
-                let result = self.apply(&method, call_args)?;
-                return self.maybe_writeback(receiver, &name.name, result, env);
+                return self.invoke_method(
+                    &method,
+                    receiver,
+                    receiver_value,
+                    arg_values,
+                    &name.name,
+                    env,
+                );
             }
         }
         if let Some(method) = self.globals.get(name.name.as_str()).cloned() {
+            return self.invoke_method(
+                &method,
+                receiver,
+                receiver_value,
+                arg_values,
+                &name.name,
+                env,
+            );
+        }
+        Ok(Flow::Value(receiver_value))
+    }
+
+    /// Dispatches `method` with `receiver_value` as the leading
+    /// argument. When `method` is a user-defined Closure (any
+    /// `impl Type::name(...)` body), the call is routed through
+    /// the capture-self path so the closure's post-call `self`
+    /// value is propagated back to the receiver place. This is
+    /// the mechanism that makes user `impl Iterator for T` work:
+    /// every `it.next()` returns the user's `Option<T>` while
+    /// silently writing the mutated `it` state back into the
+    /// caller's binding so the next iteration sees the advance.
+    fn invoke_method(
+        &mut self,
+        method: &Value,
+        receiver: &HirExpr,
+        receiver_value: Value,
+        arg_values: Vec<Value>,
+        method_name: &str,
+        env: &mut Env,
+    ) -> RuntimeResult<Flow> {
+        if let Value::Closure(closure) = method {
             let mut call_args = Vec::with_capacity(arg_values.len() + 1);
             call_args.push(receiver_value);
             call_args.extend(arg_values);
-            let result = self.apply(&method, call_args)?;
-            return self.maybe_writeback(receiver, &name.name, result, env);
+            // Peel through `(&mut x)` / `(&x)` wrappers so the
+            // writeback target is the underlying place. The
+            // for-loop desugar emits `(&mut __for_iter).next()`
+            // and without this peel the writeback fizzles —
+            // the iterator's state stays pinned at zero and the
+            // loop spins forever.
+            let writeback_target = peel_ref_wrappers(receiver);
+            let receiver_place = matches!(
+                writeback_target.kind,
+                HirExprKind::Path { .. }
+                    | HirExprKind::Field { .. }
+                    | HirExprKind::Index { .. }
+                    | HirExprKind::TupleIndex { .. }
+            );
+            let (result, mutated_self) =
+                self.apply_closure_capture_self(closure, call_args, receiver_place)?;
+            if let Some(new_self) = mutated_self {
+                let _ = self.write_back(writeback_target, new_self, env);
+            }
+            return Ok(Flow::Value(result));
         }
-        Ok(Flow::Value(receiver_value))
+        // Builtin / Native / surrogate dispatch — preserve the
+        // existing maybe_writeback shape for in-place mutators
+        // like `xs.push(v)`.
+        let mut call_args = Vec::with_capacity(arg_values.len() + 1);
+        call_args.push(receiver_value);
+        call_args.extend(arg_values);
+        let result = self.apply(method, call_args)?;
+        self.maybe_writeback(receiver, method_name, result, env)
     }
 
     /// Threads the result of a method call back through the
@@ -1383,7 +1477,17 @@ impl Interpreter {
 
     fn eval_loop(&mut self, body: &HirExpr, env: &mut Env) -> RuntimeResult<Flow> {
         if let Some(for_loop) = detect_for_loop(body) {
-            return self.eval_for_loop(&for_loop, env);
+            // Try the fast path (arrays/ranges). If the iter
+            // expression produces a value the fast path doesn't
+            // recognise (e.g. a user-defined struct implementing
+            // `Iterator` via `fn next(&mut self) -> Option<T>`),
+            // fall through to the generic HIR desugar — which
+            // repeatedly evaluates `match iter.next() { ... }`
+            // and works for any `.next()`-providing receiver.
+            match self.eval_for_loop(&for_loop, env)? {
+                Flow::Continue => {}
+                other => return Ok(other),
+            }
         }
         loop {
             match self.eval_expr(body, env)? {
@@ -1416,12 +1520,14 @@ impl Interpreter {
             Value::IntArray(data) => data.iter().map(|n| Value::Int(*n)).collect(),
             Value::FloatVec(data) => data.iter().map(|f| Value::Float(*f)).collect(),
             Value::FloatArray(inner) => inner.data.iter().map(|f| Value::Float(*f)).collect(),
-            other => {
-                return Err(RuntimeError::Type(format!(
-                    "`for` loop expected an array or range, got `{}`",
-                    classify(&other)
-                )));
-            }
+            // Unrecognised iter value (struct, channel, etc.) —
+            // signal `Flow::Continue` so the surrounding
+            // `eval_loop` falls through to the canonical HIR
+            // desugar that calls `.next()` on the receiver. This
+            // makes user-defined `impl Iterator for T` work
+            // automatically: any type providing a `.next() ->
+            // Option<U>` method is iterable.
+            _ => return Ok(Flow::Continue),
         };
         for item in items {
             env.push();
@@ -1567,6 +1673,23 @@ impl Default for Interpreter {
 /// interpreter's pure-function builtins) return the new
 /// aggregate. The method-call dispatcher writes the result
 /// back into the receiver's place for any name on this list.
+/// Strips one or more leading `&` / `&mut` wrappers from a
+/// receiver expression so writeback targets the underlying
+/// place. Compiled mode peels the same wrappers via Ref-typed
+/// place projection; the interp peels them syntactically.
+fn peel_ref_wrappers(expr: &HirExpr) -> &HirExpr {
+    let mut cur = expr;
+    loop {
+        match &cur.kind {
+            HirExprKind::Unary {
+                op: HirUnaryOp::RefShared | HirUnaryOp::RefMut,
+                operand,
+            } => cur = operand,
+            _ => return cur,
+        }
+    }
+}
+
 fn is_mutating_method(name: &str) -> bool {
     matches!(
         name,

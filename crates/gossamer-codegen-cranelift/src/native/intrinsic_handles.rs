@@ -1,3 +1,7 @@
+//! Cranelift intrinsic lowering — opaque-handle family (close,
+//! JSON, BTreeMap, arena/array iterators). Third partition in
+//! the dispatch chain. Holds `lower_intrinsic_call_handles`.
+
 #![allow(
     unused_imports,
     dead_code,
@@ -134,7 +138,7 @@ use rayon::prelude::*;
 
 use super::*;
 
-pub(super) fn lower_intrinsic_call_g2(
+pub(super) fn lower_intrinsic_call_handles(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
     locals: &mut HashMap<Local, Variable>,

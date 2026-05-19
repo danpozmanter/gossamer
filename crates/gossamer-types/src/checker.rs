@@ -110,6 +110,13 @@ struct TypeChecker<'a> {
     /// `GenericParam::Type` carries an `Ident` without a
     /// resolver-assigned `NodeId`.
     current_generic_scope: HashMap<String, (crate::ParamIdx, Box<str>)>,
+    /// Trait names declared in this source file. Populated upfront
+    /// by `collect_signatures` from every `ItemKind::Trait`. Used
+    /// by `register_fn_sig` to validate that each `<T: Bound>`
+    /// names a trait that actually exists — typos surface as a
+    /// `GT0011 unknown-trait-bound` diagnostic at declaration time
+    /// instead of as a runtime "no method" error later.
+    declared_trait_names: std::collections::HashSet<String>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -132,6 +139,7 @@ impl<'a> TypeChecker<'a> {
             const_tys: HashMap::new(),
             struct_generic_arity: HashMap::new(),
             current_generic_scope: HashMap::new(),
+            declared_trait_names: std::collections::HashSet::new(),
         }
     }
 
@@ -429,9 +437,13 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn collect_signatures(&mut self, items: &[Item]) {
+        // First pass: index every trait name declared in this
+        // tree so subsequent `register_fn_sig` calls can validate
+        // `<T: Bound>` bounds against it.
+        self.collect_trait_names(items);
         for item in items {
             match &item.kind {
-                ItemKind::Fn(decl) => self.register_fn_sig(item.id, decl),
+                ItemKind::Fn(decl) => self.register_fn_sig(item.id, decl, item.span),
                 ItemKind::Impl(decl) => self.collect_impl_signatures(decl),
                 ItemKind::Trait(decl) => self.collect_trait_signatures(decl),
                 ItemKind::Struct(decl) => {
@@ -441,6 +453,25 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
                         self.collect_signatures(inner);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Walks `items` recursively into inline modules and records
+    /// every `ItemKind::Trait` name. Idempotent — re-calling
+    /// adds to the existing set.
+    fn collect_trait_names(&mut self, items: &[Item]) {
+        for item in items {
+            match &item.kind {
+                ItemKind::Trait(decl) => {
+                    self.declared_trait_names.insert(decl.name.name.clone());
+                }
+                ItemKind::Mod(decl) => {
+                    if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                        self.collect_trait_names(inner);
                     }
                 }
                 _ => {}
@@ -573,10 +604,39 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn register_fn_sig(&mut self, node: NodeId, decl: &FnDecl) {
+    fn register_fn_sig(&mut self, node: NodeId, decl: &FnDecl, span: Span) {
         let sig = self.fn_sig_of(decl);
         if let Some(def) = self.resolutions.definition_of(node) {
             self.fn_sigs.insert(def, sig);
+        }
+        // Validate that every declared trait bound on the fn's
+        // generic parameters names a trait this source file (or a
+        // recognised built-in) actually declares. Catches typos
+        // (`Hashabel` → `Hashable`) at the declaration site
+        // instead of as a runtime "no method" error later.
+        for param in &decl.generics.params {
+            if let gossamer_ast::GenericParam::Type { name, bounds, .. } = param {
+                for bound in bounds {
+                    let Some(seg) = bound.path.segments.last() else {
+                        continue;
+                    };
+                    let bound_name = seg.name.name.as_str();
+                    if bound_name.is_empty() {
+                        continue;
+                    }
+                    let resolved = self.declared_trait_names.contains(bound_name)
+                        || known_builtin_trait(bound_name);
+                    if !resolved {
+                        self.emit(
+                            TypeError::UnknownTraitBound {
+                                param: name.name.clone(),
+                                name: bound_name.to_string(),
+                            },
+                            span,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -2337,5 +2397,66 @@ fn cast_allowed(from: &TyKind, to: &TyKind) -> bool {
     matches!(
         (from, to),
         (TyKind::Bool | TyKind::Char, TyKind::Int(_)) | (TyKind::Int(IntTy::U8), TyKind::Char),
+    )
+}
+
+/// Returns `true` when `name` is a trait the language ships
+/// built-in (used for the `<T: Bound>` validation in
+/// `register_fn_sig`). The list mirrors stdlib traits that
+/// have no source-level declaration in the current file but
+/// are part of the surface — keeps a `fn f<T: Iterator>(...)`
+/// declaration in a file that itself does not declare
+/// `trait Iterator` from raising a false unknown-trait
+/// diagnostic.
+fn known_builtin_trait(name: &str) -> bool {
+    matches!(
+        name,
+        "Iterator"
+            | "IntoIterator"
+            | "FromIterator"
+            | "Fn"
+            | "FnMut"
+            | "FnOnce"
+            | "Clone"
+            | "Copy"
+            | "Debug"
+            | "Display"
+            | "Default"
+            | "Hash"
+            | "Hashable"
+            | "PartialEq"
+            | "Eq"
+            | "PartialOrd"
+            | "Ord"
+            | "Sized"
+            | "Send"
+            | "Sync"
+            | "Drop"
+            | "From"
+            | "Into"
+            | "TryFrom"
+            | "TryInto"
+            | "Add"
+            | "Sub"
+            | "Mul"
+            | "Div"
+            | "Rem"
+            | "Neg"
+            | "Not"
+            | "BitAnd"
+            | "BitOr"
+            | "BitXor"
+            | "Shl"
+            | "Shr"
+            | "Index"
+            | "IndexMut"
+            | "AsRef"
+            | "AsMut"
+            | "Read"
+            | "Write"
+            | "Error"
+            | "Future"
+            | "Serialize"
+            | "Deserialize"
     )
 }

@@ -446,6 +446,47 @@ borrow-style split Rust draws is unnecessary in a fully GC'd
 world). `FnMut` / `FnOnce` parse but lower to the same
 `Fn(_)` shape.
 
+## 8b. Iterators
+
+User code can declare its own iterator-shaped trait and let
+`for x in ...` drive it. The for-loop desugars to
+`{ let mut __iter = expr; loop { match (&mut __iter).next() {
+Some(x) => body, None => break } } }` — any type that provides
+`fn next(&mut self) -> Option<T>` is iterable.
+
+```gossamer
+struct Counter { next_value: i64, end: i64 }
+
+trait Iterator {
+    fn next(&mut self) -> Option<i64>
+}
+
+impl Iterator for Counter {
+    fn next(&mut self) -> Option<i64> {
+        if self.next_value < self.end {
+            let v = self.next_value
+            self.next_value = self.next_value + 1
+            Some(v)
+        } else {
+            None
+        }
+    }
+}
+
+fn main() {
+    let mut c = Counter { next_value: 0, end: 5 }
+    let mut sum = 0
+    for n in c { sum = sum + n }
+    println!("sum 0..5 = {}", sum)  // sum 0..5 = 10
+}
+```
+
+`std::iter::*` also exposes a lazy `Lazy` adapter wrapping
+any Rust `Iterator`, with `map` / `filter` / `take` / `skip`
+/ `step_by` adapters and `to_vec` / `sum` / `min` / `max` /
+`count` / `any` / `all` terminals — chains stay allocation-
+free until the terminal materialises a result.
+
 ## 9. Data structures
 
 - `[T]` — growable array. Literal: `[1, 2, 3]`. Iterate with

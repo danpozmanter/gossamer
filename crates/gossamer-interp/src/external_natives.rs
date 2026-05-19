@@ -7,7 +7,7 @@
 //! the same `Value::Native` lookup the interpreter uses for
 //! built-in stdlib entries.
 
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::value::{NativeCall, Value};
 
@@ -20,10 +20,7 @@ static EXTERNAL_NATIVES: Mutex<Vec<(&'static str, Value)>> = Mutex::new(Vec::new
 /// touches lifetime concerns.
 pub fn register_external_native(name: &'static str, call: NativeCall) {
     let value = Value::native(name, call);
-    let mut guard = EXTERNAL_NATIVES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    guard.push((name, value));
+    EXTERNAL_NATIVES.lock().push((name, value));
 }
 
 /// Returns a clone of every (name, native-value) pair currently
@@ -31,17 +28,11 @@ pub fn register_external_native(name: &'static str, call: NativeCall) {
 /// cloning is a refcount bump.
 #[must_use]
 pub fn external_natives_snapshot() -> Vec<(&'static str, Value)> {
-    EXTERNAL_NATIVES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+    EXTERNAL_NATIVES.lock().clone()
 }
 
 /// Clears the registry. Used by tests that need to assert from
 /// a fresh state.
 pub fn clear_external_natives_for_test() {
-    EXTERNAL_NATIVES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clear();
+    EXTERNAL_NATIVES.lock().clear();
 }

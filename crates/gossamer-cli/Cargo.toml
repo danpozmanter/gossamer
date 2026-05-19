@@ -68,6 +68,7 @@ gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-runtime = { workspace = true }
 gossamer-types = { workspace = true }
+parking_lot = { workspace = true }
 rustyline = { version = "14", default-features = false, features = ["with-file-history"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 syn = { version = "2", features = ["full", "extra-traits"] }

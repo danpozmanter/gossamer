@@ -1,7 +1,7 @@
 //! Integration tests for `textDocument/semanticTokens/full`.
 //!
 //! The wire encoding is a flat array of `u32` quintuples:
-//!   (delta_line, delta_start, length, token_type, modifiers).
+//!   (`delta_line`, `delta_start`, `length`, `token_type`, `modifiers`).
 //! Tests decode the array and assert known token kinds appear at the
 //! expected source positions.
 

@@ -44,10 +44,15 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_0(fn_addr: usize) {
         if fn_addr == 0 {
             return;
         }
+        super::fn_registry::verify(
+            fn_addr,
+            super::fn_registry::FnKind::GoSpawnEntry { arity: 0 },
+        );
         spawn_task(Box::new(move || {
             // SAFETY: the caller promises `fn_addr` is the address of
             // an `extern "C" fn() -> i64` — the SysV-ABI convention
-            // native codegen emits for every Gossamer function.
+            // native codegen emits for every Gossamer function. The
+            // typed registry verify above rejects mismatched kinds.
             type Fn0 = unsafe extern "C" fn() -> i64;
             let f: Fn0 = unsafe { std::mem::transmute(fn_addr) };
             let _ = unsafe { f() };
@@ -65,6 +70,10 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_1(fn_addr: usize, arg0: i64) {
         if fn_addr == 0 {
             return;
         }
+        super::fn_registry::verify(
+            fn_addr,
+            super::fn_registry::FnKind::GoSpawnEntry { arity: 1 },
+        );
         spawn_task(Box::new(move || {
             type Fn1 = unsafe extern "C" fn(i64) -> i64;
             let f: Fn1 = unsafe { std::mem::transmute(fn_addr) };
@@ -80,6 +89,10 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_2(fn_addr: usize, arg0: i64, arg1:
         if fn_addr == 0 {
             return;
         }
+        super::fn_registry::verify(
+            fn_addr,
+            super::fn_registry::FnKind::GoSpawnEntry { arity: 2 },
+        );
         spawn_task(Box::new(move || {
             type Fn2 = unsafe extern "C" fn(i64, i64) -> i64;
             let f: Fn2 = unsafe { std::mem::transmute(fn_addr) };
@@ -95,6 +108,10 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_3(fn_addr: usize, arg0: i64, arg1:
         if fn_addr == 0 {
             return;
         }
+        super::fn_registry::verify(
+            fn_addr,
+            super::fn_registry::FnKind::GoSpawnEntry { arity: 3 },
+        );
         spawn_task(Box::new(move || {
             type Fn3 = unsafe extern "C" fn(i64, i64, i64) -> i64;
             let f: Fn3 = unsafe { std::mem::transmute(fn_addr) };
@@ -116,6 +133,10 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_4(
         if fn_addr == 0 {
             return;
         }
+        super::fn_registry::verify(
+            fn_addr,
+            super::fn_registry::FnKind::GoSpawnEntry { arity: 4 },
+        );
         spawn_task(Box::new(move || {
             type Fn4 = unsafe extern "C" fn(i64, i64, i64, i64) -> i64;
             let f: Fn4 = unsafe { std::mem::transmute(fn_addr) };
@@ -138,6 +159,10 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_5(
         if fn_addr == 0 {
             return;
         }
+        super::fn_registry::verify(
+            fn_addr,
+            super::fn_registry::FnKind::GoSpawnEntry { arity: 5 },
+        );
         spawn_task(Box::new(move || {
             type Fn5 = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
             let f: Fn5 = unsafe { std::mem::transmute(fn_addr) };
@@ -161,6 +186,10 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_6(
         if fn_addr == 0 {
             return;
         }
+        super::fn_registry::verify(
+            fn_addr,
+            super::fn_registry::FnKind::GoSpawnEntry { arity: 6 },
+        );
         spawn_task(Box::new(move || {
             type Fn6 = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
             let f: Fn6 = unsafe { std::mem::transmute(fn_addr) };

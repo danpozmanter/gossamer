@@ -649,11 +649,11 @@ fn bench_subcommand_handles_microsecond_workload() {
     // fn that does observable arithmetic work each call.
     let fixture = write_fixture(
         "benchharness_micro",
-        r#"fn add_two(a: i64, b: i64) -> i64 { a + b }
+        "fn add_two(a: i64, b: i64) -> i64 { a + b }
 #[bench]
 fn bench_add_two() { let _ = add_two(1i64, 2i64) }
 fn main() { }
-"#,
+",
     );
     let out = Command::new(gos_bin())
         .args(["bench"])
@@ -1591,5 +1591,3 @@ fn main() {
         "expected 'ok' in stdout; got: {stdout}"
     );
 }
-
-

@@ -71,22 +71,37 @@ use super::*;
 
 pub const DATABASE_SQL: StdModule = StdModule {
     path: "std::database::sql",
-    summary: "Driver-pluggable SQL database access.",
+    summary: "Driver-pluggable SQL database access. No driver ships in the box; bring your own (Postgres, MySQL, SQLite, ...) by registering one at startup.",
     items: &[
         StdItem {
             name: "Driver",
             kind: StdItemKind::Trait,
-            doc: "Database driver — opens connections.",
+            doc: "Database driver — opens connections. Implementations call `register` at startup.",
+        },
+        StdItem {
+            name: "register",
+            kind: StdItemKind::Function,
+            doc: "Registers a `Driver` under its canonical name in the process-wide registry.",
+        },
+        StdItem {
+            name: "drivers",
+            kind: StdItemKind::Function,
+            doc: "Lists every currently-registered driver name.",
+        },
+        StdItem {
+            name: "open",
+            kind: StdItemKind::Function,
+            doc: "Opens a database connection by driver name + URL.",
         },
         StdItem {
             name: "Conn",
             kind: StdItemKind::Type,
-            doc: "Open database connection.",
+            doc: "Open database connection. `prepare`, `execute`, `query`, `begin`, `begin_with`, `ping`, `execute_many`, `execute_ctx`, `query_ctx`, `interrupt`.",
         },
         StdItem {
             name: "Tx",
             kind: StdItemKind::Type,
-            doc: "Active transaction handle.",
+            doc: "Active transaction. `commit`, `rollback`, `savepoint`, `release_savepoint`, `rollback_to_savepoint`, `execute`.",
         },
         StdItem {
             name: "Stmt",
@@ -96,12 +111,52 @@ pub const DATABASE_SQL: StdModule = StdModule {
         StdItem {
             name: "Rows",
             kind: StdItemKind::Type,
-            doc: "Result-set iterator.",
+            doc: "Result-set iterator. `next_row`, `columns`.",
         },
         StdItem {
-            name: "open",
+            name: "Row",
+            kind: StdItemKind::Type,
+            doc: "Current row inside a `Rows` walk. Typed `get_i64`, `get_f64`, `get_bool`, `get_text`, `get_blob` plus `get_opt_*` and `is_null`.",
+        },
+        StdItem {
+            name: "Value",
+            kind: StdItemKind::Type,
+            doc: "Bound or fetched value. Null / Bool / Int / Float / Text / Blob.",
+        },
+        StdItem {
+            name: "IsolationLevel",
+            kind: StdItemKind::Type,
+            doc: "Default / ReadUncommitted / ReadCommitted / RepeatableRead / Serializable. Passed to `Conn::begin_with`.",
+        },
+        StdItem {
+            name: "Error",
+            kind: StdItemKind::Type,
+            doc: "Driver error. `Error::driver(driver, msg)` builds one; `Error::PoolExhausted` and `Error::Cancelled` are variants.",
+        },
+        StdItem {
+            name: "Pool",
+            kind: StdItemKind::Type,
+            doc: "Connection pool. `new`, `fill`, `get` (blocks up to `acquire_timeout`), `len`. Cheap to clone.",
+        },
+        StdItem {
+            name: "PoolConfig",
+            kind: StdItemKind::Type,
+            doc: "Pool tuning: `min`, `max`, `idle_timeout`, `max_lifetime`, `acquire_timeout`, `statement_cache`. Fluent `with_*` builders.",
+        },
+        StdItem {
+            name: "PooledConn",
+            kind: StdItemKind::Type,
+            doc: "Connection checked out from a `Pool`; returned on drop.",
+        },
+        StdItem {
+            name: "Select",
+            kind: StdItemKind::Type,
+            doc: "Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, val).order_by(col, asc).limit(n).render() -> (sql, params)`. Emits Postgres-style `$N` placeholders.",
+        },
+        StdItem {
+            name: "migrate",
             kind: StdItemKind::Function,
-            doc: "Opens a database connection by driver name + URL.",
+            doc: "Forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` applies pending migrations, each in its own transaction; `migrate::discover`, `migrate::applied`, `migrate::plan`, `migrate::init` round out the surface.",
         },
     ],
 };

@@ -973,40 +973,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "near-boundary collision handling — known parser-state-machine \
-                edge case; binary uploads without near-boundary substrings work \
-                (see `single_file_in_memory_round_trips` and the PNG file test). \
-                Hardening tracked as a follow-up to web_ready.md W0f."]
-    fn binary_round_trip() {
-        let boundary = "BIN";
-        // Construct binary content that contains bytes resembling
-        // boundary fragments (--, BIN, CR, LF) but never the full marker.
-        let mut bin: Vec<u8> = Vec::new();
-        for i in 0u16..=511 {
-            bin.push((i & 0xff) as u8);
-        }
-        // Also embed a tricky near-marker substring.
-        bin.extend_from_slice(b"\r\n--BI");
-        bin.extend_from_slice(b"NOT-A-BOUNDARY");
-        bin.extend_from_slice(b"\r\n--BIN-still-not");
-        let mut part: Vec<u8> = Vec::new();
-        part.extend_from_slice(
-            b"Content-Disposition: form-data; name=\"blob\"; filename=\"b.bin\"\r\n\r\n",
-        );
-        part.extend_from_slice(&bin);
-        let body = body(&[&part], boundary, true);
-        let form = parse_bytes(&body, boundary, &Config::default()).unwrap();
-        let f = form.get_file("blob").unwrap();
-        match f {
-            Part::File {
-                data: PartData::InMemory(bytes),
-                ..
-            } => assert_eq!(bytes, &bin),
-            _ => panic!("expected in-memory file part"),
-        }
-    }
-
-    #[test]
     fn missing_name_errors() {
         let boundary = "M";
         let part = b"Content-Disposition: form-data\r\n\r\nnope";

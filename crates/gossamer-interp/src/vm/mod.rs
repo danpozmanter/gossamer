@@ -641,7 +641,7 @@ fn debug_validate_chunk(chunk: &FnChunk) -> RuntimeResult<()> {
 /// Release-build stub — production execution trusts the unverified
 /// "compiler emits in-bounds indices" invariant for speed.
 #[cfg(not(debug_assertions))]
-#[inline(always)]
+#[inline]
 fn debug_validate_chunk(_chunk: &FnChunk) -> RuntimeResult<()> {
     Ok(())
 }

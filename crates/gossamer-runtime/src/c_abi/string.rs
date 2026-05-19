@@ -97,24 +97,27 @@ pub fn alloc_cstring(s: &[u8]) -> *mut c_char {
     // Pick the first NUL (if any) so we never copy past it.
     let nul = s.iter().position(|&b| b == 0).unwrap_or(s.len());
     let len = nul;
-    // Heap-allocate via `Box<[u8]>::into_raw` so the c-string lives
-    // in the global allocator's domain (single ownership domain
-    // across the runtime — see
-    // `~/dev/contexts/lang/fix_architecture_ownership.md` Stage 4).
-    // Previously `gos_rt_gc_alloc` returned a bump-arena interior
-    // pointer, which `gos_rt_arena_restore` (emitted by the LLVM
-    // codegen around aggregate-returning user fns) could
-    // invalidate while c-strings stored in `Vec<String>` slots
-    // were still live — silent dangling.
-    //
-    // Layout: one allocator-tag byte, then `len` content bytes,
-    // then NUL. The returned pointer is 1 byte INTO the
-    // allocation (the content head) so `CStr::from_ptr` and
-    // `strlen` see a normal c-string; `gos_rt_str_free` reads
-    // `ptr[-1]` to verify the allocation originated here.
-    let mut v = Vec::with_capacity(1 + len + 1);
+    alloc_cstring_from_slices(&[&s[..len]])
+}
+
+/// Allocates one c-string holding the byte-wise concatenation of
+/// `parts`, with a single allocator round trip. Used by
+/// `gos_rt_str_concat` (which previously allocated a transient
+/// `Vec<u8>` and then re-allocated through `alloc_cstring`,
+/// paying two malloc/free pairs per `+`).
+///
+/// Layout: one allocator-tag byte, then the joined content bytes,
+/// then NUL. The returned pointer is 1 byte into the allocation
+/// (the content head) so `CStr::from_ptr` and `strlen` see a
+/// normal c-string; `gos_rt_str_free` reads `ptr[-1]` to verify
+/// the allocation originated here.
+pub fn alloc_cstring_from_slices(parts: &[&[u8]]) -> *mut c_char {
+    let total: usize = parts.iter().map(|p| p.len()).sum();
+    let mut v: Vec<u8> = Vec::with_capacity(1 + total + 1);
     v.push(STR_ALLOC_TAG);
-    v.extend_from_slice(&s[..len]);
+    for p in parts {
+        v.extend_from_slice(p);
+    }
     v.push(0);
     let box_ptr = Box::into_raw(v.into_boxed_slice()).cast::<u8>();
     // SAFETY: the box has at least 2 bytes (tag + NUL), so offset
@@ -317,28 +320,14 @@ pub unsafe extern "C" fn gos_rt_str_substring(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        // Cheap empty-checks that only touch the first byte. The full
-        // `CStr::from_ptr(a).to_bytes()` form calls `strlen`, which on
-        // a growing `s = s + c` accumulator is O(strlen(s)) per
-        // iteration — turning the seq-build loop into a multi-second
-        // strlen-dominated walk even after the arena O(N²) fix. The
-        // fast path (extend-in-place) doesn't need `a`'s length at
-        // all; `try_extend_last_cstring` reads it from
-        // `arena.last_len`.
+        // Cheap empty-checks that only touch the first byte. We still
+        // need `strlen` on the non-empty side(s) to size the new
+        // allocation, but writing into the destination directly via
+        // `alloc_cstring_from_slices` saves one intermediate `Vec`
+        // and the two `extend_from_slice` copies the previous body
+        // performed.
         let a_empty = a.is_null() || unsafe { *a.cast::<u8>() } == 0;
         let b_empty = b.is_null() || unsafe { *b.cast::<u8>() } == 0;
-        // Fast path: if `a` is the most recent arena allocation,
-        // extend it in place. Only `b` needs an actual length (it's
-        // typically tiny — a literal, a single-char fragment, or a
-        // numeric digit).
-        if !a_empty && !b_empty {
-            let b_bytes = unsafe { CStr::from_ptr(b).to_bytes() };
-            let extended = try_extend_last_cstring(a, b_bytes);
-            if !extended.is_null() {
-                return extended;
-            }
-        }
-        // Slow path: pay the strlen on both strings.
         let a_bytes: &[u8] = if a_empty {
             &[]
         } else {
@@ -349,10 +338,7 @@ pub unsafe extern "C" fn gos_rt_str_concat(a: *const c_char, b: *const c_char) -
         } else {
             unsafe { CStr::from_ptr(b).to_bytes() }
         };
-        let mut out = Vec::with_capacity(a_bytes.len() + b_bytes.len());
-        out.extend_from_slice(a_bytes);
-        out.extend_from_slice(b_bytes);
-        alloc_cstring(&out)
+        alloc_cstring_from_slices(&[a_bytes, b_bytes])
     })
 }
 

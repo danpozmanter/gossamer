@@ -98,7 +98,12 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_0(env: *const u8) -> i64 {
     ffi_entry!(-1, {
         // SAFETY: `env` was constructed by the MIR coercion site as a
         // 16-byte blob whose word at offset 8 is the real fn ptr.
+        // The typed registry vetoes a mismatched kind before transmute.
         let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+        super::fn_registry::verify(
+            real_fn_addr,
+            super::fn_registry::FnKind::I64ArgsToI64 { arity: 0 },
+        );
         let real_fn: extern "C" fn() -> i64 = unsafe { core::mem::transmute(real_fn_addr) };
         real_fn()
     })
@@ -108,6 +113,10 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_0(env: *const u8) -> i64 {
 pub unsafe extern "C" fn gos_rt_fn_tramp_1(env: *const u8, a0: i64) -> i64 {
     ffi_entry!(-1, {
         let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+        super::fn_registry::verify(
+            real_fn_addr,
+            super::fn_registry::FnKind::I64ArgsToI64 { arity: 1 },
+        );
         let real_fn: extern "C" fn(i64) -> i64 = unsafe { core::mem::transmute(real_fn_addr) };
         real_fn(a0)
     })
@@ -117,6 +126,10 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_1(env: *const u8, a0: i64) -> i64 {
 pub unsafe extern "C" fn gos_rt_fn_tramp_2(env: *const u8, a0: i64, a1: i64) -> i64 {
     ffi_entry!(-1, {
         let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+        super::fn_registry::verify(
+            real_fn_addr,
+            super::fn_registry::FnKind::I64ArgsToI64 { arity: 2 },
+        );
         let real_fn: extern "C" fn(i64, i64) -> i64 = unsafe { core::mem::transmute(real_fn_addr) };
         real_fn(a0, a1)
     })
@@ -126,6 +139,10 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_2(env: *const u8, a0: i64, a1: i64) -> 
 pub unsafe extern "C" fn gos_rt_fn_tramp_3(env: *const u8, a0: i64, a1: i64, a2: i64) -> i64 {
     ffi_entry!(-1, {
         let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+        super::fn_registry::verify(
+            real_fn_addr,
+            super::fn_registry::FnKind::I64ArgsToI64 { arity: 3 },
+        );
         let real_fn: extern "C" fn(i64, i64, i64) -> i64 =
             unsafe { core::mem::transmute(real_fn_addr) };
         real_fn(a0, a1, a2)
@@ -142,6 +159,10 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_4(
 ) -> i64 {
     ffi_entry!(-1, {
         let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+        super::fn_registry::verify(
+            real_fn_addr,
+            super::fn_registry::FnKind::I64ArgsToI64 { arity: 4 },
+        );
         let real_fn: extern "C" fn(i64, i64, i64, i64) -> i64 =
             unsafe { core::mem::transmute(real_fn_addr) };
         real_fn(a0, a1, a2, a3)
@@ -159,6 +180,10 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_5(
 ) -> i64 {
     ffi_entry!(-1, {
         let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+        super::fn_registry::verify(
+            real_fn_addr,
+            super::fn_registry::FnKind::I64ArgsToI64 { arity: 5 },
+        );
         let real_fn: extern "C" fn(i64, i64, i64, i64, i64) -> i64 =
             unsafe { core::mem::transmute(real_fn_addr) };
         real_fn(a0, a1, a2, a3, a4)
@@ -177,6 +202,10 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_6(
 ) -> i64 {
     ffi_entry!(-1, {
         let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+        super::fn_registry::verify(
+            real_fn_addr,
+            super::fn_registry::FnKind::I64ArgsToI64 { arity: 6 },
+        );
         let real_fn: extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64 =
             unsafe { core::mem::transmute(real_fn_addr) };
         real_fn(a0, a1, a2, a3, a4, a5)
@@ -196,6 +225,10 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_7(
 ) -> i64 {
     ffi_entry!(-1, {
         let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+        super::fn_registry::verify(
+            real_fn_addr,
+            super::fn_registry::FnKind::I64ArgsToI64 { arity: 7 },
+        );
         let real_fn: extern "C" fn(i64, i64, i64, i64, i64, i64, i64) -> i64 =
             unsafe { core::mem::transmute(real_fn_addr) };
         real_fn(a0, a1, a2, a3, a4, a5, a6)
@@ -216,6 +249,10 @@ pub unsafe extern "C" fn gos_rt_fn_tramp_8(
 ) -> i64 {
     ffi_entry!(-1, {
         let real_fn_addr = unsafe { core::ptr::read_unaligned(env.add(8).cast::<usize>()) };
+        super::fn_registry::verify(
+            real_fn_addr,
+            super::fn_registry::FnKind::I64ArgsToI64 { arity: 8 },
+        );
         let real_fn: extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64) -> i64 =
             unsafe { core::mem::transmute(real_fn_addr) };
         real_fn(a0, a1, a2, a3, a4, a5, a6, a7)

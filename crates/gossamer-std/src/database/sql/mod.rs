@@ -18,7 +18,6 @@
 pub mod migrate;
 pub mod pool;
 pub mod query;
-pub mod sqlite;
 
 pub use gossamer_runtime::sql::{
     ConnectionImpl, Driver, DriverError, DriverErrorKind, Error, IsolationLevel, Kind, RowsImpl,
@@ -170,7 +169,7 @@ impl Conn {
 /// `Conn::interrupt` requires only a `&ConnectionImpl` (not `&mut`),
 /// which is why we can capture an `Arc<*const dyn ConnectionImpl>`
 /// in the watchdog without conflicting with the running statement's
-/// `&mut` borrow. SQLite's `sqlite3_interrupt` is thread-safe with
+/// `&mut` borrow. `SQLite`'s `sqlite3_interrupt` is thread-safe with
 /// respect to the connection.
 struct InterruptWatchdog {
     armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -189,7 +188,7 @@ impl InterruptWatchdog {
         // cancellation signal.
         let interrupt_fn: Box<dyn Fn() + Send + 'static> = {
             let conn_addr =
-                (conn.as_mut() as *mut dyn ConnectionImpl).cast::<()>() as usize;
+                std::ptr::from_mut::<dyn ConnectionImpl>(conn.as_mut()).cast::<()>() as usize;
             Box::new(move || gossamer_runtime::sql::interrupt_connection_by_addr(conn_addr))
         };
         let join = std::thread::Builder::new()

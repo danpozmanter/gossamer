@@ -38,6 +38,7 @@ pub fn lower_source_file(
         tcx,
         ids: HirIdGenerator::new(),
         recursion_depth: 0,
+        current_fn_ret_ty: None,
     };
     let mut items = Vec::new();
     let mut module_path: Vec<String> = Vec::new();
@@ -81,6 +82,15 @@ fn lower_items(
 /// that produce one) from blowing the C stack during AST→HIR lowering.
 const RECURSION_LIMIT: u32 = 256;
 
+/// Whether `?` should desugar to the `Option`-shaped propagator
+/// (`Some(v) => v, None => return None`) or the `Result`-shaped
+/// propagator (`Ok(v) => v, Err(e) => return Err(e)`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum TryKind {
+    Option,
+    Result,
+}
+
 struct Lowerer<'a> {
     resolutions: &'a Resolutions,
     table: &'a TypeTable,
@@ -90,6 +100,14 @@ struct Lowerer<'a> {
     /// `lower_pat`. Reaching the cap returns a placeholder node so
     /// the rest of lowering can continue with a self-consistent tree.
     recursion_depth: u32,
+    /// Declared return type of the function whose body is currently
+    /// being lowered. Read by `lower_try` so the `?` desugar can
+    /// detect a mismatch between the inner expression's `Err` type
+    /// and the enclosing function's `Err` type, and emit an
+    /// automatic conversion (`errors::new(__try_err)` etc.) so
+    /// `?` propagation works across different error types — the
+    /// SPEC §4.5 `E: Into<E2>` semantic.
+    current_fn_ret_ty: Option<gossamer_types::Ty>,
 }
 
 impl Lowerer<'_> {
@@ -159,10 +177,31 @@ impl Lowerer<'_> {
         let mut has_self = false;
         for param in &decl.params {
             match param {
-                AstFnParam::Receiver(_) => {
+                AstFnParam::Receiver(kind) => {
                     has_self = true;
                     let id = self.fresh();
-                    let ty = self_ty.unwrap_or_else(|| self.error_ty());
+                    let base = self_ty.unwrap_or_else(|| self.error_ty());
+                    // For `&self` / `&mut self`, type `self` as a
+                    // Ref so the codegen lowers field access
+                    // (`self.x`) and field assignment (`self.x =
+                    // y`) through the pointer — matching how
+                    // free-function `&mut Type` parameters already
+                    // work. Owned `self` keeps the value type.
+                    let ty = match kind {
+                        gossamer_ast::Receiver::Owned => base,
+                        gossamer_ast::Receiver::RefShared => {
+                            self.tcx.intern(gossamer_types::TyKind::Ref {
+                                mutability: gossamer_types::Mutbl::Not,
+                                inner: base,
+                            })
+                        }
+                        gossamer_ast::Receiver::RefMut => {
+                            self.tcx.intern(gossamer_types::TyKind::Ref {
+                                mutability: gossamer_types::Mutbl::Mut,
+                                inner: base,
+                            })
+                        }
+                    };
                     params.push(HirParam {
                         pattern: HirPat {
                             id,
@@ -170,7 +209,7 @@ impl Lowerer<'_> {
                             ty,
                             kind: HirPatKind::Binding {
                                 name: Ident::new("self"),
-                                mutable: false,
+                                mutable: matches!(kind, gossamer_ast::Receiver::RefMut),
                             },
                         },
                         ty,
@@ -187,9 +226,13 @@ impl Lowerer<'_> {
             }
         }
         let ret = decl.ret.as_ref().map(|ty| self.ty_of(ty.id));
+        let saved_ret = self
+            .current_fn_ret_ty
+            .replace(ret.unwrap_or_else(|| self.tcx.unit()));
         let body = decl.body.as_ref().map(|body| HirBody {
             block: self.lower_expr_as_block(body),
         });
+        self.current_fn_ret_ty = saved_ret;
         HirFn {
             name: decl.name.clone(),
             params,
@@ -540,6 +583,10 @@ impl Lowerer<'_> {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "for-loop desugar builds the let / loop / match / break HIR scaffold inline; splitting hides the structural shape"
+    )]
     fn lower_for(
         &mut self,
         pattern: &AstPat,
@@ -549,6 +596,103 @@ impl Lowerer<'_> {
     ) -> HirExprKind {
         let iter_expr = self.lower_expr(iter);
         let iter_ty = iter_expr.ty;
+        // For unknown / Adt iter types the canonical desugar
+        // needs to bind the iter to a fresh slot and call
+        // `.next()` on `&mut` of that slot — that's the
+        // mechanism user `impl Iterator for T` relies on for
+        // its state to persist across iterations. For built-in
+        // iter shapes (ranges, arrays, vecs), the MIR fast paths
+        // walk the receiver expression directly, so we keep the
+        // inline shape that those detectors recognise.
+        let needs_state_binding = self.iter_needs_state_binding(iter_ty);
+        if needs_state_binding {
+            return self.lower_for_user_iter(pattern, iter_expr, body, span);
+        }
+        self.lower_for_inline(pattern, iter_expr, body, span)
+    }
+
+    /// Desugars `for x in iter` to the canonical `loop { match
+    /// (&mut __for_iter).next() { Some(x) => body, None => break } }`.
+    /// Used when the iter expression is a user struct / unknown
+    /// type — those need state persistence across `next()` calls.
+    fn lower_for_user_iter(
+        &mut self,
+        pattern: &AstPat,
+        iter_expr: HirExpr,
+        body: &AstExpr,
+        span: Span,
+    ) -> HirExprKind {
+        let iter_ty = iter_expr.ty;
+        let iter_local_id = self.fresh();
+        let iter_pat = HirPat {
+            id: self.fresh(),
+            span,
+            ty: iter_ty,
+            kind: HirPatKind::Binding {
+                name: Ident::new("__for_iter"),
+                mutable: true,
+            },
+        };
+        let iter_let = HirStmt {
+            id: self.fresh(),
+            span,
+            kind: HirStmtKind::Let {
+                pattern: iter_pat,
+                ty: iter_ty,
+                init: Some(iter_expr),
+            },
+        };
+        let iter_path = HirExpr {
+            id: iter_local_id,
+            span,
+            ty: iter_ty,
+            kind: HirExprKind::Path {
+                segments: vec![Ident::new("__for_iter")],
+                def: None,
+            },
+        };
+        let iter_ref = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: iter_ty,
+            kind: HirExprKind::Unary {
+                op: crate::tree::HirUnaryOp::RefMut,
+                operand: Box::new(iter_path),
+            },
+        };
+        let next_call = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: self.error_ty(),
+            kind: HirExprKind::MethodCall {
+                receiver: Box::new(iter_ref),
+                name: Ident::new("next"),
+                args: Vec::new(),
+            },
+        };
+        let loop_expr = self.assemble_for_loop(pattern, next_call, body, span);
+        let outer_block = HirBlock {
+            id: self.fresh(),
+            span,
+            stmts: vec![iter_let],
+            tail: Some(Box::new(loop_expr)),
+            ty: self.unit(),
+        };
+        HirExprKind::Block(outer_block)
+    }
+
+    /// Inline shape — `loop { match <iter>.next() { ... } }`. The
+    /// MIR / interp for-loop fast-paths inspect `<iter>` directly,
+    /// so for built-in iterables (ranges, slices, vecs) we keep
+    /// the receiver expression in place rather than introducing a
+    /// `__for_iter` binding the detectors don't recognise.
+    fn lower_for_inline(
+        &mut self,
+        pattern: &AstPat,
+        iter_expr: HirExpr,
+        body: &AstExpr,
+        span: Span,
+    ) -> HirExprKind {
         let next_call = HirExpr {
             id: self.fresh(),
             span,
@@ -559,6 +703,18 @@ impl Lowerer<'_> {
                 args: Vec::new(),
             },
         };
+        self.assemble_for_loop(pattern, next_call, body, span).kind
+    }
+
+    /// Shared builder: wraps a `match scrutinee { Some(pat) =>
+    /// body, None => break }` in a `loop` whose body is one Block.
+    fn assemble_for_loop(
+        &mut self,
+        pattern: &AstPat,
+        next_call: HirExpr,
+        body: &AstExpr,
+        span: Span,
+    ) -> HirExpr {
         let loop_pat = self.lower_pat(pattern);
         let pat_ty = loop_pat.ty;
         let some_pat = HirPat {
@@ -607,7 +763,7 @@ impl Lowerer<'_> {
                 ],
             },
         };
-        let block = HirBlock {
+        let inner_block = HirBlock {
             id: self.fresh(),
             span,
             stmts: Vec::new(),
@@ -618,12 +774,35 @@ impl Lowerer<'_> {
             id: self.fresh(),
             span,
             ty: unit_ty,
-            kind: HirExprKind::Block(block),
+            kind: HirExprKind::Block(inner_block),
         };
-        let _ = iter_ty;
-        HirExprKind::Loop {
-            body: Box::new(body_block),
+        HirExpr {
+            id: self.fresh(),
+            span,
+            ty: unit_ty,
+            kind: HirExprKind::Loop {
+                body: Box::new(body_block),
+            },
         }
+    }
+
+    /// Returns `true` when an iter expression of type `ty` needs
+    /// the `let mut __for_iter = ...` binding so `.next()` calls
+    /// can persist state. `Adt` (user struct) and `Var(_)` shapes
+    /// take the state path; ranges / arrays / vecs / slices /
+    /// `HashMap`s stay inline so the MIR fast-paths can recognise
+    /// the receiver expression directly.
+    fn iter_needs_state_binding(&self, ty: gossamer_types::Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        for _ in 0..8 {
+            match self.tcx.kind(cur) {
+                Some(TyKind::Ref { inner, .. }) => cur = *inner,
+                Some(TyKind::Adt { .. }) => return true,
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Lowers a `select { … }` expression into a
@@ -738,55 +917,39 @@ impl Lowerer<'_> {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "`?` desugar covers both Option and Result branches with bespoke HirExpr construction; splitting per-branch helpers would hide the structural symmetry between them"
+    )]
     fn lower_try(&mut self, inner: &AstExpr, span: Span) -> HirExprKind {
         let value = self.lower_expr(inner);
         let value_ty = value.ty;
-        // Recover the Ok-payload type from `value_ty` so the
-        // `__try_value` binding (and thus any downstream `let` bound
-        // to the `?`-expression) carries a real type rather than the
-        // `Error` sentinel. Without this `let s = fs::read_to_string
-        // (...)?` leaves `s` typed as Error/Var and `s.len()` falls
-        // off the dispatch table into `gos_rt_len` instead of the
-        // String-shaped `gos_rt_str_len`. We peek through the
-        // dispatch table for `Result<T, E>` ADTs and any aliasing
-        // refs; everything else falls back to the original
-        // `error_ty` so behaviour is unchanged for unresolved
-        // shapes.
-        let ok_payload_ty = self
-            .try_ok_payload_ty(value_ty)
+        // Detect Option<T> vs Result<T, E> so `?` desugars to the
+        // matching unwrap-or-return-propagate shape. Result is the
+        // existing path; Option propagates `None` from the enclosing
+        // function via `return None`.
+        let kind = self.try_propagation_kind(value_ty, inner);
+        let payload_ty = self
+            .try_payload_ty(value_ty)
             .or_else(|| self.try_ok_payload_ty_heuristic(inner));
-        let try_value_ty = ok_payload_ty.unwrap_or_else(|| self.error_ty());
+        let try_value_ty = payload_ty.unwrap_or_else(|| self.error_ty());
         let ok_binding_id = self.fresh();
-        let err_binding_id = self.fresh();
+        let ok_variant = match kind {
+            TryKind::Option => "Some",
+            TryKind::Result => "Ok",
+        };
         let ok_pat = HirPat {
             id: self.fresh(),
             span,
             ty: value_ty,
             kind: HirPatKind::Variant {
-                name: Ident::new("Ok"),
+                name: Ident::new(ok_variant),
                 fields: vec![HirPat {
                     id: ok_binding_id,
                     span,
                     ty: try_value_ty,
                     kind: HirPatKind::Binding {
                         name: Ident::new("__try_value"),
-                        mutable: false,
-                    },
-                }],
-            },
-        };
-        let err_pat = HirPat {
-            id: self.fresh(),
-            span,
-            ty: value_ty,
-            kind: HirPatKind::Variant {
-                name: Ident::new("Err"),
-                fields: vec![HirPat {
-                    id: err_binding_id,
-                    span,
-                    ty: self.error_ty(),
-                    kind: HirPatKind::Binding {
-                        name: Ident::new("__try_err"),
                         mutable: false,
                     },
                 }],
@@ -801,37 +964,101 @@ impl Lowerer<'_> {
                 def: None,
             },
         };
-        let err_value = HirExpr {
-            id: self.fresh(),
-            span,
-            ty: self.error_ty(),
-            kind: HirExprKind::Path {
-                segments: vec![Ident::new("__try_err")],
-                def: None,
-            },
-        };
-        let err_wrap = HirExpr {
-            id: self.fresh(),
-            span,
-            ty: self.error_ty(),
-            kind: HirExprKind::Call {
-                callee: Box::new(HirExpr {
+        // Build the early-return body. For Option this is `return
+        // None`; for Result it's `return Err(__try_err)` (preserving
+        // the existing semantics — From-based error conversion would
+        // require typeck context not available in HIR lowering).
+        let (err_pat, err_body) = match kind {
+            TryKind::Option => {
+                let none_pat = HirPat {
+                    id: self.fresh(),
+                    span,
+                    ty: value_ty,
+                    kind: HirPatKind::Variant {
+                        name: Ident::new("None"),
+                        fields: Vec::new(),
+                    },
+                };
+                let none_value = HirExpr {
+                    id: self.fresh(),
+                    span,
+                    ty: value_ty,
+                    kind: HirExprKind::Path {
+                        segments: vec![Ident::new("None")],
+                        def: None,
+                    },
+                };
+                let body = HirExpr {
+                    id: self.fresh(),
+                    span,
+                    ty: self.tcx.never(),
+                    kind: HirExprKind::Return(Some(Box::new(none_value))),
+                };
+                (none_pat, body)
+            }
+            TryKind::Result => {
+                let err_binding_id = self.fresh();
+                let err_pat = HirPat {
+                    id: self.fresh(),
+                    span,
+                    ty: value_ty,
+                    kind: HirPatKind::Variant {
+                        name: Ident::new("Err"),
+                        fields: vec![HirPat {
+                            id: err_binding_id,
+                            span,
+                            ty: self.error_ty(),
+                            kind: HirPatKind::Binding {
+                                name: Ident::new("__try_err"),
+                                mutable: false,
+                            },
+                        }],
+                    },
+                };
+                let err_value = HirExpr {
                     id: self.fresh(),
                     span,
                     ty: self.error_ty(),
                     kind: HirExprKind::Path {
-                        segments: vec![Ident::new("Err")],
+                        segments: vec![Ident::new("__try_err")],
                         def: None,
                     },
-                }),
-                args: vec![err_value],
-            },
-        };
-        let err_body = HirExpr {
-            id: self.fresh(),
-            span,
-            ty: self.tcx.never(),
-            kind: HirExprKind::Return(Some(Box::new(err_wrap))),
+                };
+                // SPEC §4.5: `?` propagates with `E: Into<E2>`
+                // conversion when the inner error type differs
+                // from the enclosing function's error type. We
+                // detect the mismatch by comparing the inner
+                // value's `Result<_, Inner>` against the outer
+                // fn's `Result<_, Outer>` and route the err
+                // payload through `Into::into` (the runtime
+                // resolves the canonical errors::Error path for
+                // String / errors::Error / user types).
+                let err_value = self.maybe_convert_try_err(err_value, value_ty, span);
+                let err_wrap = HirExpr {
+                    id: self.fresh(),
+                    span,
+                    ty: self.error_ty(),
+                    kind: HirExprKind::Call {
+                        callee: Box::new(HirExpr {
+                            id: self.fresh(),
+                            span,
+                            ty: self.error_ty(),
+                            kind: HirExprKind::Path {
+                                segments: vec![Ident::new("Err")],
+                                def: None,
+                            },
+                        }),
+                        args: vec![err_value],
+                    },
+                };
+                let body = HirExpr {
+                    id: self.fresh(),
+                    span,
+                    ty: self.tcx.never(),
+                    kind: HirExprKind::Return(Some(Box::new(err_wrap))),
+                };
+                (err_pat, body)
+            }
         };
         HirExprKind::Match {
             scrutinee: Box::new(value),
@@ -847,6 +1074,149 @@ impl Lowerer<'_> {
                     body: err_body,
                 },
             ],
+        }
+    }
+
+    /// Decide whether `?` should desugar via `Option::Some/None` or
+    /// `Result::Ok/Err`. Defaults to `Result` so behaviour matches
+    /// the pre-existing implementation when the type isn't known.
+    fn try_propagation_kind(&self, ty: gossamer_types::Ty, inner: &AstExpr) -> TryKind {
+        use gossamer_types::TyKind;
+        let mut peeled = ty;
+        for _ in 0..8 {
+            match self.tcx.kind(peeled) {
+                Some(TyKind::Ref { inner, .. }) => peeled = *inner,
+                Some(TyKind::Adt { def, .. }) => {
+                    if let Some(name) = self.tcx.def_name(*def) {
+                        return match name {
+                            "Option" => TryKind::Option,
+                            "Result" => TryKind::Result,
+                            _ => TryKind::Result,
+                        };
+                    }
+                    return TryKind::Result;
+                }
+                _ => break,
+            }
+        }
+        // Syntactic fallback for the case where the typechecker
+        // hasn't resolved the inner expression yet — recognise
+        // common Option-returning HashMap/Vec lookup shapes so
+        // `m.get(&k)?` works even when the inferred type is `Var`.
+        if Self::ast_is_option_shaped(inner) {
+            TryKind::Option
+        } else {
+            TryKind::Result
+        }
+    }
+
+    /// Returns true when `inner` looks like an `Option`-returning
+    /// stdlib call by name. Conservative — only the dispatch-table
+    /// entries whose runtime return is documented `Option<T>`.
+    fn ast_is_option_shaped(inner: &AstExpr) -> bool {
+        match &inner.kind {
+            AstExprKind::MethodCall { name, .. } => matches!(
+                name.name.as_str(),
+                "get"
+                    | "first"
+                    | "last"
+                    | "pop"
+                    | "find"
+                    | "find_opt"
+                    | "rfind_opt"
+                    | "checked_add"
+                    | "checked_sub"
+                    | "checked_mul"
+                    | "split_once"
+                    | "rsplit_once"
+                    | "strip_prefix"
+                    | "strip_suffix"
+                    | "index_of"
+            ),
+            _ => false,
+        }
+    }
+
+    /// Returns the payload type for the unwrapped-success branch of
+    /// `?`. Works for both `Result<T, E>` and `Option<T>` — both
+    /// carry `T` as their first generic argument.
+    fn try_payload_ty(&self, ty: gossamer_types::Ty) -> Option<gossamer_types::Ty> {
+        self.try_ok_payload_ty(ty)
+    }
+
+    /// Returns the Err generic-argument type of a `Result<_, E>`
+    /// (or a reference to one), if `ty` resolves to a Result Adt.
+    fn try_err_payload_ty(&self, ty: gossamer_types::Ty) -> Option<gossamer_types::Ty> {
+        use gossamer_types::TyKind;
+        let mut peeled = ty;
+        loop {
+            match self.tcx.kind(peeled)? {
+                TyKind::Ref { inner, .. } => peeled = *inner,
+                TyKind::Adt { substs, .. } => {
+                    let args = substs.as_slice();
+                    if args.len() < 2 {
+                        return None;
+                    }
+                    if let Some(gossamer_types::GenericArg::Type(t)) = args.get(1) {
+                        return Some(*t);
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// If the inner expression's `Result<_, Inner>` error type
+    /// differs from the enclosing function's declared `Result<_,
+    /// Outer>` error type, route `err_value` through
+    /// `errors::Error::from(__try_err)` so SPEC §4.5's
+    /// `E: Into<E2>` propagation works. When the types align
+    /// already (or when either can't be resolved) returns
+    /// `err_value` unchanged so existing single-error-type
+    /// programs see no change.
+    fn maybe_convert_try_err(
+        &mut self,
+        err_value: HirExpr,
+        value_ty: gossamer_types::Ty,
+        span: Span,
+    ) -> HirExpr {
+        let Some(inner_err) = self.try_err_payload_ty(value_ty) else {
+            return err_value;
+        };
+        let Some(outer_ret) = self.current_fn_ret_ty else {
+            return err_value;
+        };
+        let Some(outer_err) = self.try_err_payload_ty(outer_ret) else {
+            return err_value;
+        };
+        if inner_err == outer_err {
+            return err_value;
+        }
+        // Mismatched err types — emit `errors::Error::from(__try_err)`.
+        // The std `errors::Error::from` is registered as the canonical
+        // String / errors::Error / anyhow-style adapter; programs that
+        // declare custom err types can extend it.
+        HirExpr {
+            id: self.fresh(),
+            span,
+            ty: outer_err,
+            kind: HirExprKind::Call {
+                callee: Box::new(HirExpr {
+                    id: self.fresh(),
+                    span,
+                    ty: self.error_ty(),
+                    kind: HirExprKind::Path {
+                        segments: vec![
+                            Ident::new("errors"),
+                            Ident::new("Error"),
+                            Ident::new("from"),
+                        ],
+                        def: None,
+                    },
+                }),
+                args: vec![err_value],
+            },
         }
     }
 

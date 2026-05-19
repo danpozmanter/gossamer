@@ -33,6 +33,11 @@ pub struct GosMutex {
     /// lock acquirer to record a happens-before edge into the race
     /// detector. `-1` means "never been locked".
     last_unlocker: AtomicI64,
+    /// Goroutine id of the current owner (the goroutine that took
+    /// the lock). `-1` means unlocked. Read by `unlock` to refuse
+    /// a cross-goroutine release — `force_unlock` on a mutex held
+    /// by another goroutine is `parking_lot` UB.
+    owner: AtomicI64,
 }
 
 #[unsafe(no_mangle)]
@@ -41,6 +46,7 @@ pub unsafe extern "C" fn gos_rt_mutex_new() -> *mut GosMutex {
         Box::into_raw(Box::new(GosMutex {
             inner: parking_lot::Mutex::new(()),
             last_unlocker: AtomicI64::new(-1),
+            owner: AtomicI64::new(-1),
         }))
     })
 }
@@ -55,6 +61,8 @@ pub unsafe extern "C" fn gos_rt_mutex_lock(m: *mut GosMutex) {
         // Forget the guard — the user calls unlock explicitly.
         let guard = m.inner.lock();
         std::mem::forget(guard);
+        m.owner
+            .store(i64::from(crate::race::current_gid()), Ordering::Release);
         let from = m.last_unlocker.load(Ordering::Acquire);
         if from >= 0 {
             crate::race::record_sync(u32::try_from(from).unwrap_or(0), crate::race::current_gid());
@@ -68,13 +76,22 @@ pub unsafe extern "C" fn gos_rt_mutex_unlock(m: *mut GosMutex) {
         if m.is_null() {
             return;
         }
-        // SAFETY: matched with the `forget` in lock — the lock is
-        // held and we now release it. Releasing an unlocked mutex
-        // is undefined; the user's discipline (one lock per
-        // unlock) is required.
         let m = unsafe { &*m };
-        m.last_unlocker
-            .store(i64::from(crate::race::current_gid()), Ordering::Release);
+        let me = i64::from(crate::race::current_gid());
+        let owner = m.owner.load(Ordering::Acquire);
+        if owner != me {
+            eprintln!(
+                "panic: mutex.unlock() from goroutine {me} but mutex is held by {owner}; \
+                 cross-goroutine unlock is undefined behaviour",
+            );
+            std::process::abort();
+        }
+        // SAFETY: matched with the `forget` in lock — the lock is
+        // held by this goroutine (owner check above) and we now
+        // release it. Releasing an unlocked mutex is undefined;
+        // the owner check ensures the lock is currently held.
+        m.owner.store(-1, Ordering::Release);
+        m.last_unlocker.store(me, Ordering::Release);
         unsafe { m.inner.force_unlock() };
     });
 }

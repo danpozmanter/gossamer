@@ -22,15 +22,8 @@ fn action_titles(response: &Value) -> Vec<String> {
 
 #[test]
 fn code_action_on_clean_doc_returns_empty() {
-    let server = server_with(
-        "file:///clean.gos",
-        "fn main() { let _ = 1; }\n",
-    );
-    let params = code_action_params(
-        "file:///clean.gos",
-        range_value(0, 0, 0, 5),
-        Vec::new(),
-    );
+    let server = server_with("file:///clean.gos", "fn main() { let _ = 1; }\n");
+    let params = code_action_params("file:///clean.gos", range_value(0, 0, 0, 5), Vec::new());
     let response = server.code_actions(&params);
     assert!(
         matches!(response, Value::Array(ref items) if items.is_empty()),
@@ -41,11 +34,7 @@ fn code_action_on_clean_doc_returns_empty() {
 #[test]
 fn code_action_well_formed_for_unknown_uri() {
     let server = server_with("file:///k.gos", "fn main() {}\n");
-    let params = code_action_params(
-        "file:///missing.gos",
-        range_value(0, 0, 0, 1),
-        Vec::new(),
-    );
+    let params = code_action_params("file:///missing.gos", range_value(0, 0, 0, 1), Vec::new());
     let response = server.code_actions(&params);
     assert!(
         matches!(response, Value::Array(ref items) if items.is_empty()),
@@ -66,7 +55,10 @@ fn code_action_for_typo_suggests_correction() {
     // codeAction over its range.
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
-    assert!(!diags.is_empty(), "typo must produce at least one diagnostic");
+    assert!(
+        !diags.is_empty(),
+        "typo must produce at least one diagnostic"
+    );
     // The diagnostic's range tells us where to ask for actions.
     let diag = &diags[0];
     let range = field(diag, "range");
@@ -88,10 +80,7 @@ fn code_action_for_import_suggestion() {
     // should yield a resolver suggestion if the auto-import path is
     // wired.
     let uri = "file:///import.gos";
-    let server = server_with(
-        uri,
-        "fn main() { let _: HashMap<i64, i64>; }\n",
-    );
+    let server = server_with(uri, "fn main() { let _: HashMap<i64, i64>; }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     if diags.is_empty() {
@@ -111,10 +100,7 @@ fn code_action_for_import_suggestion() {
 #[test]
 fn code_action_entries_have_workspace_edits() {
     let uri = "file:///e.gos";
-    let server = server_with(
-        uri,
-        "fn alpha() {}\nfn main() { alphat(); }\n",
-    );
+    let server = server_with(uri, "fn alpha() {}\nfn main() { alphat(); }\n");
     let notifs = server.publish_diagnostics(uri);
     let diags = diagnostics_from(&notifs);
     if diags.is_empty() {

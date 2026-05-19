@@ -1,0 +1,32 @@
+// `?` SPEC §4.5 cross-type error propagation. The inner call
+// returns `Result<i64, String>`; the enclosing function returns
+// `Result<i64, errors::Error>`. The `?` desugar detects the
+// mismatched `Err` types and routes the inner error through
+// `errors::Error::from`, producing the outer error type without
+// any explicit `.map_err(...)` from the user.
+
+use std::errors
+
+fn inner(n: i64) -> Result<i64, String> {
+    if n <= 0 {
+        Err("non-positive input".to_string())
+    } else {
+        Ok(n * 2)
+    }
+}
+
+fn outer(n: i64) -> Result<i64, errors::Error> {
+    let v = inner(n)?
+    Ok(v + 1)
+}
+
+fn main() {
+    match outer(4) {
+        Ok(v) => println!("outer(4) = {}", v),
+        Err(e) => println!("outer(4) err: {}", e.message()),
+    }
+    match outer(-2) {
+        Ok(v) => println!("outer(-2) ok = {}", v),
+        Err(e) => println!("outer(-2) err: {}", e.message()),
+    }
+}

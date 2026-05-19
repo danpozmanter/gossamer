@@ -492,8 +492,8 @@ fn run_tests_filtered(
     records
 }
 
-type FileQueue = std::sync::Arc<std::sync::Mutex<Vec<(PathBuf, Vec<String>)>>>;
-type FileResults = std::sync::Arc<std::sync::Mutex<Vec<(PathBuf, Vec<TestRecord>)>>>;
+type FileQueue = std::sync::Arc<parking_lot::Mutex<Vec<(PathBuf, Vec<String>)>>>;
+type FileResults = std::sync::Arc<parking_lot::Mutex<Vec<(PathBuf, Vec<TestRecord>)>>>;
 
 fn run_files_parallel(
     by_file: &[(PathBuf, Vec<String>)],
@@ -502,9 +502,10 @@ fn run_files_parallel(
     quiet: bool,
 ) -> Vec<(PathBuf, Vec<TestRecord>)> {
     use std::sync::Arc;
-    use std::sync::Mutex as StdMutex;
-    let queue: FileQueue = Arc::new(StdMutex::new(by_file.to_vec()));
-    let results: FileResults = Arc::new(StdMutex::new(Vec::new()));
+
+    use parking_lot::Mutex as PlMutex;
+    let queue: FileQueue = Arc::new(PlMutex::new(by_file.to_vec()));
+    let results: FileResults = Arc::new(PlMutex::new(Vec::new()));
     let n_workers = parallel.min(by_file.len()).max(1);
     let mut handles = Vec::with_capacity(n_workers);
     for _ in 0..n_workers {
@@ -514,14 +515,14 @@ fn run_files_parallel(
         handles.push(std::thread::spawn(move || {
             loop {
                 let next = {
-                    let mut q = queue.lock().expect("queue lock");
+                    let mut q = queue.lock();
                     q.pop()
                 };
                 let Some((file, names)) = next else {
                     return;
                 };
                 let recs = run_tests_filtered(&file, &names, &style_owned, quiet);
-                results.lock().expect("results lock").push((file, recs));
+                results.lock().push((file, recs));
             }
         }));
     }
@@ -530,8 +531,7 @@ fn run_files_parallel(
     }
     let mut out = Arc::try_unwrap(results)
         .expect("results arc unwrap")
-        .into_inner()
-        .expect("results lock");
+        .into_inner();
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }

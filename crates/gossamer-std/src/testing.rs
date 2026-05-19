@@ -81,6 +81,13 @@ impl Bencher {
     /// Runs `f` `iter_count` times and returns the wall-clock
     /// duration of the inner loop. The bench harness divides the
     /// returned duration by `iter_count` to compute `ns/op`.
+    /// Named `iter` (not `iter_for`) to match the conventional
+    /// benchmark-harness vocabulary (`b.iter(|| ...)`); this is the
+    /// loop driver, not an iterator producer.
+    #[allow(
+        clippy::iter_not_returning_iterator,
+        reason = "bench-harness convention"
+    )]
     pub fn iter<F: FnMut()>(&mut self, mut f: F) -> std::time::Duration {
         let started = std::time::Instant::now();
         for _ in 0..self.iter_count {

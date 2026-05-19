@@ -1,0 +1,12 @@
+// Cross-tier coverage for `std::crypto` hex digests. The
+// compiled tier routes each call through a `gos_rt_*` shim so
+// the output matches the bytecode VM bit-identically.
+
+use std::crypto
+
+fn main() {
+    println!("sha256(abc) = {}", crypto::sha256::hex("abc"))
+    println!("sha512(abc) = {}", crypto::sha512::hex("abc"))
+    println!("blake3(abc) = {}", crypto::blake3::hex("abc"))
+    println!("hmac256(key, msg) = {}", crypto::hmac::sha256_hex("key", "msg"))
+}

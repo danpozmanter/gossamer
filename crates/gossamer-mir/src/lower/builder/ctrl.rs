@@ -1513,6 +1513,40 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
+        // If the iter expression is a user-defined struct (Adt),
+        // the fast-paths below would all misfire and the default
+        // fallback would treat it as a runtime Vec (reading `len`
+        // off the wrong offset and silently running zero
+        // iterations). Bail out so the generic `loop` lowering
+        // drives the HIR `match iter.next() { Some => ..., None
+        // => break }` desugar against the user's `impl` method.
+        let mut iter_ty_probe = for_loop.iter_expr.ty;
+        for _ in 0..8 {
+            match self.tcx.kind_of(iter_ty_probe) {
+                TyKind::Ref { inner, .. } => iter_ty_probe = *inner,
+                TyKind::Adt { .. } => return None,
+                _ => break,
+            }
+        }
+        // Same probe through the local table — the HIR type for a
+        // `Path("c")` iter expression often arrives as `Var(_)`
+        // even though the local was pinned to the struct on its
+        // `let` statement; the local's MIR-side type is the
+        // authoritative source.
+        if let HirExprKind::Path { segments, .. } = &for_loop.iter_expr.kind {
+            if let Some(first) = segments.first() {
+                if let Some(local) = self.lookup_local(&first.name) {
+                    let mut local_ty = self.locals[local.0 as usize].ty;
+                    for _ in 0..8 {
+                        match self.tcx.kind_of(local_ty) {
+                            TyKind::Ref { inner, .. } => local_ty = *inner,
+                            TyKind::Adt { .. } => return None,
+                            _ => break,
+                        }
+                    }
+                }
+            }
+        }
         // `for (k, v) in m.iter()` on a HashMap. Snapshot the keys
         // into a fresh `GosVec`, iterate it, and inside each iteration
         // synthesise `v = m.get_or(k, default)` so the tuple pattern

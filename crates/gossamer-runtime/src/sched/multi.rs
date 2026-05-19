@@ -37,6 +37,23 @@ use parking_lot::{Condvar, Mutex};
 
 use super::task::{Gid, Step, Task};
 
+/// Monotonic process-start anchor. Yield timestamps are encoded as
+/// `Instant::now().duration_since(*PROCESS_START).as_micros() as u64`
+/// so a single `AtomicU64::store` per Yield replaces the prior
+/// `Mutex<Vec<Instant>>` write.
+fn process_start() -> &'static Instant {
+    static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    PROCESS_START.get_or_init(Instant::now)
+}
+
+#[inline]
+fn now_micros_since_start() -> u64 {
+    Instant::now()
+        .duration_since(*process_start())
+        .as_micros()
+        .min(u128::from(u64::MAX)) as u64
+}
+
 /// Task stored in the multi-M scheduler. Requires `Send` so workers
 /// on different threads can pull from a shared queue.
 pub trait SchedTask: Task + Send {}
@@ -143,6 +160,12 @@ struct WorkerSlot {
     /// [`crate::preempt::signal_thread_sigurg`] when this
     /// worker's task overstays its budget.
     thread_handle: AtomicU64,
+    /// Monotonic micros-since-process-start of this worker's most
+    /// recent `Yield`/`Done` boundary. The watchdog reads it lock-
+    /// free; the worker writes it lock-free at each safepoint.
+    /// Replaces the previous `Mutex<Vec<Instant>>` on `Shared`,
+    /// which serialised every Yield on a single global lock.
+    last_yield_micros: AtomicU64,
 }
 
 impl WorkerSlot {
@@ -190,9 +213,11 @@ struct Shared {
     /// Set when the scheduler should request that all goroutines
     /// reach a safepoint (used by the GC).
     request_safepoint: AtomicBool,
-    /// Per-worker timestamps of the last yield observed; used by the
-    /// watchdog to decide which workers to preempt.
-    last_yield: Mutex<Vec<Instant>>,
+    // `last_yield` was a `Mutex<Vec<Instant>>` that every worker
+    // re-acquired on every Yield/Done. The per-worker
+    // `last_yield_micros: AtomicU64` on each `WorkerSlot` is the
+    // replacement: lock-free read in the watchdog, lock-free write
+    // in the worker.
     /// Idle signal — workers notify when they reach a quiescent
     /// state (deque empty + no peer work + no parked tasks). The
     /// orchestrator's `wait_until_idle` parks on this Condvar
@@ -264,7 +289,6 @@ impl MultiScheduler {
             target_workers: AtomicUsize::new(n),
             watchdog_started: AtomicBool::new(false),
             request_safepoint: AtomicBool::new(false),
-            last_yield: Mutex::new(Vec::new()),
             idle_mu: Mutex::new(()),
             idle_cv: Condvar::new(),
         });
@@ -528,6 +552,7 @@ impl MultiScheduler {
             cv_mu: Mutex::new(()),
             retired: AtomicBool::new(false),
             thread_handle: AtomicU64::new(0),
+            last_yield_micros: AtomicU64::new(now_micros_since_start()),
         });
         {
             let mut workers = self.inner.workers.lock();
@@ -547,6 +572,7 @@ impl MultiScheduler {
                         cv_mu: Mutex::new(()),
                         retired: AtomicBool::new(true),
                         thread_handle: AtomicU64::new(0),
+                        last_yield_micros: AtomicU64::new(now_micros_since_start()),
                     });
                     workers.push(placeholder);
                 }
@@ -639,12 +665,8 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
     let _handle_guard = WorkerHandleGuard {
         slot: Arc::clone(&slot),
     };
-    {
-        let mut last = shared.last_yield.lock();
-        while last.len() <= index {
-            last.push(Instant::now());
-        }
-    }
+    slot.last_yield_micros
+        .store(now_micros_since_start(), Ordering::Release);
     loop {
         if slot.retired.load(Ordering::Acquire) {
             // Zero the handle before exiting so the watchdog cannot
@@ -678,9 +700,8 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
         match step {
             Step::Yield => {
                 shared.stats.yields.fetch_add(1, Ordering::Relaxed);
-                if let Some(slot) = shared.last_yield.lock().get_mut(index) {
-                    *slot = Instant::now();
-                }
+                slot.last_yield_micros
+                    .store(now_micros_since_start(), Ordering::Release);
                 // The goroutine may have requested a park via
                 // `sched_global::park`. The park helper writes
                 // `(gid, reason)` into a thread-local slot before
@@ -731,9 +752,8 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
             Step::Done => {
                 shared.stats.finished.fetch_add(1, Ordering::Relaxed);
                 shared.live_goroutines.fetch_sub(1, Ordering::AcqRel);
-                if let Some(slot) = shared.last_yield.lock().get_mut(index) {
-                    *slot = Instant::now();
-                }
+                slot.last_yield_micros
+                    .store(now_micros_since_start(), Ordering::Release);
             }
         }
     }
@@ -783,16 +803,28 @@ fn watchdog_loop(shared: Arc<Shared>) {
             return;
         }
         thread::sleep(Duration::from_millis(5));
-        let now = Instant::now();
-        let timestamps = shared.last_yield.lock().clone();
+        let now_micros = now_micros_since_start();
+        let preempt_micros = u64::try_from(preempt_threshold.as_micros()).unwrap_or(u64::MAX);
+        let kill_micros = u64::try_from(kill_threshold.as_micros()).unwrap_or(u64::MAX);
         let mut needs_preempt = false;
         let mut kill_indices: Vec<usize> = Vec::new();
-        for (i, ts) in timestamps.iter().enumerate() {
-            let elapsed = now.saturating_duration_since(*ts);
-            if elapsed > preempt_threshold {
+        // Lock-free read of every worker's last-yield timestamp.
+        // Acquire the workers list briefly to walk the slot vector;
+        // each slot's `last_yield_micros` is then read with an
+        // atomic load, with no mutex held across the comparison.
+        let snapshot: Vec<u64> = {
+            let workers = shared.workers.lock();
+            workers
+                .iter()
+                .map(|s| s.last_yield_micros.load(Ordering::Acquire))
+                .collect()
+        };
+        for (i, ts) in snapshot.iter().enumerate() {
+            let elapsed = now_micros.saturating_sub(*ts);
+            if elapsed > preempt_micros {
                 needs_preempt = true;
             }
-            if elapsed > kill_threshold {
+            if elapsed > kill_micros {
                 kill_indices.push(i);
             }
         }

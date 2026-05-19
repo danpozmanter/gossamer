@@ -114,12 +114,35 @@ pub(crate) fn install_crypto(globals: &mut Vec<(&'static str, Value)>) {
         let q: &'static str = Box::leak(format!("crypto::sha256::{short}").into_boxed_str());
         globals.push((q, crate::builtins::builtin_pub(q, call)));
     }
+    // crypto::sha512
+    {
+        let q = "crypto::sha512::hex";
+        globals.push((
+            q,
+            crate::builtins::builtin_pub(q, builtin_crypto_sha512_hex),
+        ));
+    }
+    // crypto::blake3
+    {
+        let q = "crypto::blake3::hex";
+        globals.push((
+            q,
+            crate::builtins::builtin_pub(q, builtin_crypto_blake3_hex),
+        ));
+    }
     // crypto::hmac
     {
         let q = "crypto::hmac::sha256_mac";
         globals.push((
             q,
             crate::builtins::builtin_pub(q, builtin_crypto_hmac_sha256_mac),
+        ));
+    }
+    {
+        let q = "crypto::hmac::sha256_hex";
+        globals.push((
+            q,
+            crate::builtins::builtin_pub(q, builtin_crypto_hmac_sha256_hex),
         ));
     }
     // crypto::subtle
@@ -175,6 +198,40 @@ pub(crate) fn builtin_crypto_hmac_sha256_mac(args: &[Value]) -> RuntimeResult<Va
     let msg = value_to_bytes(args.get(1).unwrap_or(&Value::Unit));
     let mac = gossamer_std::crypto::hmac::sha256_mac(&key, &msg);
     Ok(bytes_to_value_array(&mac))
+}
+
+pub(crate) fn builtin_crypto_hmac_sha256_hex(args: &[Value]) -> RuntimeResult<Value> {
+    let key = value_to_bytes(args.first().unwrap_or(&Value::Unit));
+    let msg = value_to_bytes(args.get(1).unwrap_or(&Value::Unit));
+    let mac = gossamer_std::crypto::hmac::sha256_mac(&key, &msg);
+    let mut hex = String::with_capacity(mac.len() * 2);
+    for b in mac {
+        let hi = b >> 4;
+        let lo = b & 0x0f;
+        for nibble in [hi, lo] {
+            let c = match nibble {
+                0..=9 => (b'0' + nibble) as char,
+                10..=15 => (b'a' + (nibble - 10)) as char,
+                _ => '?',
+            };
+            hex.push(c);
+        }
+    }
+    Ok(Value::String(hex.into()))
+}
+
+pub(crate) fn builtin_crypto_sha512_hex(args: &[Value]) -> RuntimeResult<Value> {
+    let input = value_to_bytes(args.first().unwrap_or(&Value::Unit));
+    Ok(Value::String(
+        gossamer_std::crypto::sha512::hex(&input).into(),
+    ))
+}
+
+pub(crate) fn builtin_crypto_blake3_hex(args: &[Value]) -> RuntimeResult<Value> {
+    let input = value_to_bytes(args.first().unwrap_or(&Value::Unit));
+    Ok(Value::String(
+        gossamer_std::crypto::blake3::hex(&input).into(),
+    ))
 }
 
 pub(crate) fn builtin_crypto_subtle_ct_eq(args: &[Value]) -> RuntimeResult<Value> {

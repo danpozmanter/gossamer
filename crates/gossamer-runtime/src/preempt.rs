@@ -97,13 +97,17 @@ pub fn request_yield_self() {
 }
 
 /// Returns `true` when the calling thread should yield at the next
-/// safepoint. Cheap fast path: a single relaxed load + comparison.
+/// safepoint. Reads the global phase with `Acquire` ordering so a
+/// `request_yield_all`'s `fetch_add(AcqRel)` on any architecture
+/// (including weak-memory ARM/AArch64) is observed promptly — a
+/// `Relaxed` load admits unbounded staleness on weak-memory CPUs
+/// even though x86 happens to retire the update synchronously.
 #[inline]
 pub fn should_yield() -> bool {
-    let global = GLOBAL_PHASE.load(Ordering::Relaxed);
+    let global = GLOBAL_PHASE.load(Ordering::Acquire);
     let local_phase = LOCAL_PHASE.with(|p| p.load(Ordering::Relaxed));
     if global != local_phase {
-        LOCAL_PHASE.with(|p| p.store(global, Ordering::Relaxed));
+        LOCAL_PHASE.with(|p| p.store(global, Ordering::Release));
         return true;
     }
     LOCAL_YIELD.with(|f| f.swap(false, Ordering::Acquire))

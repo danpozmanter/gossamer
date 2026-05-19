@@ -378,3 +378,102 @@ pub const VALIDATE: StdModule = StdModule {
         },
     ],
 };
+
+pub const METRICS: StdModule = StdModule {
+    path: "std::metrics",
+    summary: "Prometheus-compatible primitives (Counter, Gauge, Histogram) and a Registry rendering the standard text-exposition format.",
+    items: &[
+        StdItem {
+            name: "Counter",
+            kind: StdItemKind::Type,
+            doc: "Monotonic-increasing u64 counter (lock-free).",
+        },
+        StdItem {
+            name: "Gauge",
+            kind: StdItemKind::Type,
+            doc: "Set / inc / dec gauge (lock-free).",
+        },
+        StdItem {
+            name: "Histogram",
+            kind: StdItemKind::Type,
+            doc: "Bucketed observation histogram with sum and count.",
+        },
+        StdItem {
+            name: "Metric",
+            kind: StdItemKind::Type,
+            doc: "Enum holding any of the three primitives for registry storage.",
+        },
+        StdItem {
+            name: "Registry",
+            kind: StdItemKind::Type,
+            doc: "Ordered collection of metrics; `render()` emits the Prometheus text-exposition format.",
+        },
+        StdItem {
+            name: "serve_metrics",
+            kind: StdItemKind::Function,
+            doc: "Mounts a registry on `/metrics` over the existing http server loop.",
+        },
+    ],
+};
+
+pub const TRACE: StdModule = StdModule {
+    path: "std::trace",
+    summary: "W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export.",
+    items: &[
+        StdItem {
+            name: "TraceId",
+            kind: StdItemKind::Type,
+            doc: "128-bit trace identifier (W3C trace-context format).",
+        },
+        StdItem {
+            name: "SpanId",
+            kind: StdItemKind::Type,
+            doc: "64-bit span identifier.",
+        },
+        StdItem {
+            name: "SpanContext",
+            kind: StdItemKind::Type,
+            doc: "Request-scoped trace + span pair, propagated through `std::context`.",
+        },
+        StdItem {
+            name: "SpanStatus",
+            kind: StdItemKind::Type,
+            doc: "Span outcome: Unset / Ok / Error(message).",
+        },
+        StdItem {
+            name: "Span",
+            kind: StdItemKind::Type,
+            doc: "Active span builder. Attributes, events, status; `end()` finalises and records.",
+        },
+        StdItem {
+            name: "EndedSpan",
+            kind: StdItemKind::Type,
+            doc: "Finalised span record; `to_otlp_json()` serialises for OTLP/HTTP export.",
+        },
+        StdItem {
+            name: "Tracer",
+            kind: StdItemKind::Type,
+            doc: "Process-level span sink. `start_span`, `ended_spans`, `set_global`.",
+        },
+        StdItem {
+            name: "SpanGuard",
+            kind: StdItemKind::Type,
+            doc: "RAII guard returned by `enter_span`; restores the prior active span on drop.",
+        },
+        StdItem {
+            name: "enter_span",
+            kind: StdItemKind::Function,
+            doc: "Sets `ctx` as the active span on the current goroutine; returns a SpanGuard.",
+        },
+        StdItem {
+            name: "current_span_context",
+            kind: StdItemKind::Function,
+            doc: "Reads the active SpanContext, if any.",
+        },
+        StdItem {
+            name: "with_span_context",
+            kind: StdItemKind::Function,
+            doc: "Runs `f` with `ctx` installed as the active SpanContext.",
+        },
+    ],
+};

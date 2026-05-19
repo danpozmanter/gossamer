@@ -623,18 +623,12 @@ struct ChannelInner {
     cv: parking_lot::Condvar,
     /// `close()` flips this to `true`; receivers that find an empty
     /// buffer with `closed = true` return `None` instead of parking
-    /// forever. The flag lives behind the same Mutex (we always
-    /// inspect it under `buf.lock()`) so a receiver that sees an
-    /// empty buffer + `closed=true` cannot race against an in-flight
-    /// `send`.
-    closed: std::cell::Cell<bool>,
+    /// forever. Stored as an `AtomicBool` so peers (e.g. select's
+    /// readiness probe) can observe the closed state without
+    /// acquiring `buf` — no hand-rolled `unsafe impl Sync` needed
+    /// and no race possible on the read.
+    closed: std::sync::atomic::AtomicBool,
 }
-
-// SAFETY: `closed` is a `Cell<bool>` (single-byte, never aliased
-// outside the `buf` Mutex critical section). All access to `closed`
-// is gated by `buf.lock()`, so there's no concurrent reader or
-// writer at any moment — `Sync` is sound under that lock discipline.
-unsafe impl Sync for ChannelInner {}
 
 impl Channel {
     /// Constructs a new empty channel.
@@ -644,7 +638,7 @@ impl Channel {
             inner: Arc::new(ChannelInner {
                 buf: Mutex::new(VecDeque::new()),
                 cv: parking_lot::Condvar::new(),
-                closed: std::cell::Cell::new(false),
+                closed: std::sync::atomic::AtomicBool::new(false),
             }),
         }
     }
@@ -666,11 +660,24 @@ impl Channel {
     /// `close on closed channel` panic).
     pub fn close(&self) {
         let guard = self.inner.buf.lock();
-        if self.inner.closed.get() {
+        // Compare-exchange under the buf lock so the
+        // already-closed check and the set are a single atomic
+        // observation; the lock also pairs with parked receivers
+        // so they re-poll `closed` after their condvar wait.
+        if self
+            .inner
+            .closed
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_err()
+        {
             eprintln!("panic: channel already closed");
             std::process::abort();
         }
-        self.inner.closed.set(true);
         self.inner.cv.notify_all();
         drop(guard);
     }
@@ -695,7 +702,7 @@ impl Channel {
             if let Some(v) = guard.pop_front() {
                 return Some(v);
             }
-            if self.inner.closed.get() {
+            if self.inner.closed.load(std::sync::atomic::Ordering::Acquire) {
                 return None;
             }
             self.inner.cv.wait(&mut guard);
@@ -713,7 +720,7 @@ impl Channel {
     #[must_use]
     pub fn is_closed(&self) -> bool {
         let guard = self.inner.buf.lock();
-        self.inner.closed.get() && guard.is_empty()
+        self.inner.closed.load(std::sync::atomic::Ordering::Acquire) && guard.is_empty()
     }
 
     /// Parks the caller on the channel's Condvar until either a
