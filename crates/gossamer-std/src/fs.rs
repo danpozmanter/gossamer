@@ -467,12 +467,32 @@ pub fn lock_shared(file: &File) -> io::Result<()> {
 /// `ErrorKind::WouldBlock` immediately when a conflicting lock
 /// is held.
 pub fn try_lock_exclusive(file: &File) -> io::Result<()> {
-    fs2::FileExt::try_lock_exclusive(file)
+    fs2::FileExt::try_lock_exclusive(file).map_err(normalize_try_lock_err)
 }
 
-/// Non-blocking variant of [`lock_shared`].
+/// Non-blocking variant of [`lock_shared`]. Returns
+/// `ErrorKind::WouldBlock` immediately when a conflicting lock
+/// is held.
 pub fn try_lock_shared(file: &File) -> io::Result<()> {
-    fs2::FileExt::try_lock_shared(file)
+    fs2::FileExt::try_lock_shared(file).map_err(normalize_try_lock_err)
+}
+
+/// Normalizes platform-specific lock-contention errors so the
+/// documented `try_lock_*` contract holds on every platform.
+///
+/// POSIX `flock` returns `EAGAIN`/`EWOULDBLOCK` (Rust maps both
+/// to `ErrorKind::WouldBlock`). Windows `LockFileEx` with
+/// `LOCKFILE_FAIL_IMMEDIATELY` returns `ERROR_LOCK_VIOLATION` (33),
+/// which Rust's `decode_error_kind` table does not list — it
+/// surfaces as the private `ErrorKind::Uncategorized`, breaking
+/// callers that match on `WouldBlock`. Re-stamp the kind here so
+/// the contract is the same shape everywhere.
+fn normalize_try_lock_err(e: io::Error) -> io::Error {
+    #[cfg(windows)]
+    if e.raw_os_error() == Some(33) {
+        return io::Error::new(io::ErrorKind::WouldBlock, e);
+    }
+    e
 }
 
 /// Releases any advisory lock previously taken on `file`. Idempotent
@@ -944,10 +964,7 @@ mod tests {
         let f2 = File::open(&path).unwrap();
         lock_exclusive(&f1).unwrap();
         let err = try_lock_exclusive(&f2).unwrap_err();
-        assert!(matches!(
-            err.kind(),
-            io::ErrorKind::WouldBlock | io::ErrorKind::Other
-        ));
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
         unlock(&f1).unwrap();
         drop(f1);
         drop(f2);
@@ -979,10 +996,7 @@ mod tests {
         let f2 = File::open(&path).unwrap();
         lock_exclusive(&f1).unwrap();
         let err = try_lock_shared(&f2).unwrap_err();
-        assert!(matches!(
-            err.kind(),
-            io::ErrorKind::WouldBlock | io::ErrorKind::Other
-        ));
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
         unlock(&f1).unwrap();
         drop(f1);
         drop(f2);
