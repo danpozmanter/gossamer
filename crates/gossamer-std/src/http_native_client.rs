@@ -837,7 +837,14 @@ mod tests {
             .expect("tls server cfg");
         let cfg = Arc::new(server_cfg);
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("tls bind");
+        // Bind through getaddrinfo("localhost", ...) so the listener
+        // lands on whichever address family `localhost` resolves to
+        // on this host (v4 on Linux, often v6 on macOS). The client
+        // resolves the same string, so both ends agree on family.
+        // A 127.0.0.1-only listener leaves `accept()` blocked on an
+        // IPv6-preferring runner because the client connects to
+        // `::1` and never reaches the v4-only listener.
+        let listener = std::net::TcpListener::bind(("localhost", 0)).expect("tls bind");
         let port = listener.local_addr().unwrap().port();
         let join = thread::spawn(move || {
             let (sock, _) = match listener.accept() {
@@ -916,7 +923,6 @@ mod tests {
         // whether rustls or the IO layer raises first. Both are
         // legitimate signals; assert it isn't a success.
         assert!(matches!(err, NativeError::Tls(_) | NativeError::Io(_)));
-        // Server thread may exit without serving the body — that's fine.
-        let _ = join.join();
+        join.join().unwrap();
     }
 }

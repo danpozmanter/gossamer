@@ -190,7 +190,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Restores a generic-parameter scope saved by
-    /// [`enter_generic_scope`].
+    /// [`Self::enter_generic_scope`].
     fn leave_generic_scope(&mut self, prior: HashMap<String, (crate::ParamIdx, Box<str>)>) {
         self.current_generic_scope = prior;
     }

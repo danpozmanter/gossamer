@@ -12,10 +12,14 @@
 
 #![allow(missing_docs)]
 
+#[cfg(unix)]
 use std::env;
+#[cfg(unix)]
 use std::process::{Command, Stdio};
+#[cfg(unix)]
 use std::time::Duration;
 
+#[cfg(unix)]
 const TRIGGER_ENV: &str = "GOS_STACK_GUARD_TRIGGER_RECURSE";
 
 #[test]
@@ -70,6 +74,7 @@ fn unbounded_recursion_reports_stack_overflow() {
     let _ = Duration::from_secs(1);
 }
 
+#[cfg(unix)]
 #[inline(never)]
 #[allow(unconditional_recursion)]
 fn recurse(depth: usize) -> usize {

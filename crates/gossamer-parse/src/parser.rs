@@ -40,7 +40,7 @@ pub struct Parser<'src> {
     pub(crate) recursion_limit_reported: bool,
     /// `use` declarations encountered inside inline `mod ... { ... }`
     /// bodies. The mod-body grammar collects them into this side
-    /// channel so [`parse_source_file`] can hoist them to the
+    /// channel so [`crate::parse_source_file`] can hoist them to the
     /// `SourceFile.uses` list — the resolver only walks the
     /// file-level `uses` slot, so a `use std::encoding::json` inside
     /// `mod chat { ... }` would otherwise be silently dropped.

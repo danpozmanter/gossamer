@@ -1012,7 +1012,7 @@ static REPRODUCIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// policy — if something doesn't lower, it's a compiler bug, not
 /// a runtime tier-mismatch. Test runners that need to exercise
 /// the legacy permissive path can call
-/// [`set_strict_lowering(false)`].
+/// [`set_strict_lowering`] with `false`.
 static STRICT_LOWERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// Process-wide flag toggled by [`set_race_instrumentation`]. When on,
@@ -1131,11 +1131,11 @@ fn want_dwarf() -> bool {
 /// Produces:
 ///
 /// - `llvm.module.flags` declaring DWARF v4 and Debug Info v3.
-/// - One [`DICompileUnit`] for the program, owning a single
-///   synthetic [`DIFile`] (the source map is not yet plumbed
+/// - One `DICompileUnit` for the program, owning a single
+///   synthetic `DIFile` (the source map is not yet plumbed
 ///   through to the lowerer; per-function file resolution is a
 ///   follow-up).
-/// - One [`DISubprogram`] per body, attached to the function's
+/// - One `DISubprogram` per body, attached to the function's
 ///   `define` line via `!dbg !N`. The subprogram metadata is what
 ///   `gdb` / `lldb` use to walk a backtrace and resolve
 ///   instruction pointers to function names.

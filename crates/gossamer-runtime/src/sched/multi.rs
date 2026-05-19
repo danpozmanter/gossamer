@@ -630,7 +630,7 @@ impl MultiScheduler {
 
 /// RAII guard around the per-worker thread handle. On drop (panic
 /// unwind or normal return) it zeroes the `WorkerSlot::thread_handle`
-/// and hands the OS handle back to [`preempt::release_thread_handle`].
+/// and hands the OS handle back to [`crate::preempt::release_thread_handle`].
 ///
 /// Without this guard, a panicking goroutine on Windows leaks the
 /// `DuplicateHandle`-allocated thread handle: `preempt::current_thread_handle`

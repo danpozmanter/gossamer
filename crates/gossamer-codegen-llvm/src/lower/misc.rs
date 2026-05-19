@@ -264,7 +264,7 @@ impl<'a> Lowerer<'a> {
         self.maybe_heap_copy_aggregate_with(arg, /* leak */ false)
     }
 
-    /// Same shape as [`maybe_heap_copy_aggregate`] but routes the
+    /// Same shape as [`Self::maybe_heap_copy_aggregate`] but routes the
     /// heap allocation through `gos_rt_aggr_alloc_leak` instead of
     /// the GC-tracked `gos_rt_aggr_alloc`. Used when the surviving
     /// handle escapes the GC's reachability graph — HashMap inserts
@@ -465,7 +465,7 @@ impl<'a> Lowerer<'a> {
         v.to_string()
     }
 
-    /// Like [`widen_to_f64`] but also converts integer operands via
+    /// Like [`Self::widen_to_f64`] but also converts integer operands via
     /// `sitofp`. Used by `__fmt_prec`, which accepts a numeric value
     /// regardless of MIR type and renders it as a float.
     pub(crate) fn coerce_to_f64(&mut self, op: &Operand, v: &str) -> String {

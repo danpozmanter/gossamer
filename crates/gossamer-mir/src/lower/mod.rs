@@ -85,11 +85,10 @@ use crate::ir::{
     Statement, StatementKind, Terminator, UnOp,
 };
 
-/// Lowers every function in `program` to a MIR [`Body`].
-#[must_use]
 /// Calling-convention shape of a `r.get(pattern, handler)` handler value
-/// at the runtime ABI boundary. Returned by [`BodyBuilder::emit_router_handler_abi`]
-/// so the caller can pick between the env-carrying and bare entry points.
+/// at the runtime ABI boundary. Returned by
+/// [`builder::Builder::emit_router_handler_abi`] so the caller can pick
+/// between the env-carrying and bare entry points.
 pub(crate) enum RouterHandlerAbi {
     /// Top-level `fn(http::Request) -> Result<...>` value. Caller routes
     /// to the `_fn` runtime symbol and passes only `fn_addr`.

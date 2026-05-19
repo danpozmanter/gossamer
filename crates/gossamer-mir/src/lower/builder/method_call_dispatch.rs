@@ -50,7 +50,7 @@ use super::Builder;
 
 impl<'a> Builder<'a> {
     /// Dispatches a method call onto its `gos_rt_*` runtime helper
-    /// resolved by [`lower_method_call`]. Extracted to keep
+    /// resolved by [`Self::lower_method_call`]. Extracted to keep
     /// `lower_method_call` itself under the file-size budget.
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_lines)]

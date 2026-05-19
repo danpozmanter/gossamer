@@ -523,7 +523,7 @@ fn scan_payload_words_snapshot(
     }
 }
 
-/// Snapshot variant of [`scan_all_gos_maps`]. Looks up candidate
+/// Snapshot variant of the retired lock-holding `scan_all_gos_maps`. Looks up candidate
 /// addresses in the snapshot rather than the live registry so the
 /// caller can stay outside the registry critical section.
 fn scan_all_gos_maps_snapshot(
