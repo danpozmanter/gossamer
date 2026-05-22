@@ -146,9 +146,15 @@ impl<'a> Builder<'a> {
             // and return the pointer. Match dispatch reads disc from
             // offset 0 via `gos_rt_enum_disc`.
             if !args.is_empty()
-                && let Some((_, idx)) = self.enums.lookup(segments)
+                && let Some((enum_name, idx)) = self.enums.lookup(segments)
             {
-                return self.lower_user_enum_ctor(u32::try_from(idx).unwrap_or(0), args, ty, span);
+                return self.lower_user_enum_ctor(
+                    &enum_name,
+                    u32::try_from(idx).unwrap_or(0),
+                    args,
+                    ty,
+                    span,
+                );
             }
             // F#-style iter / option / result combinator surface
             // (SPEC §10.4 / §10.4a / §10.4b). Data-last; closures

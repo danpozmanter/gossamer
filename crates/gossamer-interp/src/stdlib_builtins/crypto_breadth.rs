@@ -171,6 +171,51 @@ pub(crate) fn install_crypto_breadth(globals: &mut Vec<(&'static str, Value)>) {
             crate::builtins::builtin_pub(q, builtin_crypto_x509_parse_pem),
         ));
     }
+    // Leaf intrinsic for the injected real-struct `CertInfo` wrapper:
+    // returns the fields as a 7-tuple the wrapper folds into a struct.
+    {
+        let q = "__gos_x509_parse_pem_raw";
+        globals.push((
+            q,
+            crate::builtins::builtin_pub(q, builtin_x509_parse_pem_raw),
+        ));
+    }
+}
+
+pub(crate) fn builtin_x509_parse_pem_raw(args: &[Value]) -> RuntimeResult<Value> {
+    let pem = value_to_bytes(args.first().unwrap_or(&Value::Unit));
+    match gossamer_std::crypto::x509::parse_pem(&pem) {
+        Ok(info) => {
+            let serial = Value::Array(Arc::new(
+                info.serial
+                    .into_iter()
+                    .map(|b| Value::Int(i64::from(b)))
+                    .collect(),
+            ));
+            let san = Value::Array(Arc::new(
+                info.san_dns
+                    .into_iter()
+                    .map(|s| Value::String(s.into()))
+                    .collect(),
+            ));
+            let sha = Value::Array(Arc::new(
+                info.sha256
+                    .iter()
+                    .map(|b| Value::Int(i64::from(*b)))
+                    .collect(),
+            ));
+            Ok(ok_variant(Value::Tuple(Arc::new(vec![
+                Value::String(info.subject.into()),
+                Value::String(info.issuer.into()),
+                serial,
+                Value::Int(info.not_before_unix),
+                Value::Int(info.not_after_unix),
+                san,
+                sha,
+            ]))))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
 }
 
 pub(crate) fn builtin_crypto_sha512_digest(args: &[Value]) -> RuntimeResult<Value> {

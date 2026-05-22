@@ -169,10 +169,39 @@ fn fnv1a_64(data: &[u8]) -> u64 {
     h
 }
 
+/// Fingerprint of the running compiler — the package version plus the
+/// executable's own size and mtime. Mixed into every cache key so a
+/// rebuilt or upgraded `gos` (whose codegen may emit different IR for
+/// the *same* MIR, e.g. after a runtime-symbol change) never reuses
+/// object files produced by an older compiler. Computed once.
+///
+/// Without this, identical MIR hashes to the same key across compiler
+/// versions, so a stale `.o` referencing a removed runtime symbol (or
+/// carrying retired per-call instrumentation) survives a codegen change
+/// — surfacing as link failures or "fixed-but-still-slow" regressions.
+fn compiler_fingerprint() -> u64 {
+    static FP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *FP.get_or_init(|| {
+        let mut s = format!("gossamer-llvm-{}", env!("CARGO_PKG_VERSION"));
+        if let Ok(exe) = std::env::current_exe()
+            && let Ok(meta) = std::fs::metadata(&exe)
+        {
+            s.push_str(&format!("|len={}", meta.len()));
+            if let Ok(mtime) = meta.modified()
+                && let Ok(dur) = mtime.duration_since(std::time::UNIX_EPOCH)
+            {
+                s.push_str(&format!("|mtime={}", dur.as_nanos()));
+            }
+        }
+        fnv1a_64(s.as_bytes())
+    })
+}
+
 /// Stable cache key for one body: mixes the body name, its complete
-/// MIR debug representation, the target triple, and the opt profile.
-/// Any change to the MIR (new statement, reordered block, type fix)
-/// rotates the key and forces a recompile.
+/// MIR debug representation, the target triple, the opt profile, and
+/// the compiler fingerprint. Any change to the MIR (new statement,
+/// reordered block, type fix) or to the compiler itself rotates the key
+/// and forces a recompile.
 fn body_cache_key(body: &Body, triple: &str, profile: OptProfile) -> String {
     let h_name = fnv1a_64(body.name.as_bytes());
     let h_mir = fnv1a_64(format!("{body:?}").as_bytes());
@@ -181,6 +210,7 @@ fn body_cache_key(body: &Body, triple: &str, profile: OptProfile) -> String {
     let combined = h_name
         ^ h_mir.wrapping_mul(0x9e37_79b9_7f4a_7c15)
         ^ h_triple.wrapping_mul(0x6c62_272e_07bb_0142)
+        ^ compiler_fingerprint().wrapping_mul(0xff51_afd7_ed55_8ccd)
         ^ profile_bit;
     format!("{combined:016x}")
 }
@@ -416,6 +446,27 @@ fn render_chunk_module(
     let pool_text = string_pool.borrow().render();
     if !pool_text.is_empty() {
         out.push_str(&pool_text);
+        writeln!(out).unwrap();
+    }
+
+    // RC type-meta blobs — one `private constant [N x i64]` per
+    // RC-managed allocation shape, referenced by `gos_rc_alloc` sites.
+    // Emitted in every chunk that might reference them; `private` makes
+    // each object file self-contained and unreferenced copies are
+    // stripped by `opt`/the linker.
+    let mut emitted_any_meta = false;
+    for (symbol, blob) in ctx.tcx.rc_metas() {
+        let elems: Vec<String> = blob.iter().map(|v| format!("i64 {v}")).collect();
+        writeln!(
+            out,
+            "@\"{symbol}\" = private constant [{} x i64] [{}]",
+            blob.len(),
+            elems.join(", ")
+        )
+        .unwrap();
+        emitted_any_meta = true;
+    }
+    if emitted_any_meta {
         writeln!(out).unwrap();
     }
 

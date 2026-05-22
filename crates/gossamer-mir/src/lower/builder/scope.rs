@@ -55,6 +55,7 @@ impl<'a> Builder<'a> {
             ty,
             debug_name,
             mutable,
+            region: self.region_depth > 0,
         });
         Local(id)
     }

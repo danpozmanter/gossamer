@@ -1,0 +1,39 @@
+// runtime::collect_cycles() — the trial-deletion cycle collector must
+// lower and run identically on every tier. Here the data is acyclic, so
+// the collector is a no-op (RC frees everything deterministically); the
+// fixture proves the call path is wired through VM, Cranelift, and LLVM
+// and that heavy RC churn around it stays correct. Cyclic reclamation
+// itself is covered by the runtime's unit tests.
+
+use std::runtime
+
+enum Tree { Node(i64, Box<Tree>, Box<Tree>), Leaf }
+
+fn build(depth: i64) -> Tree {
+    if depth <= 0 {
+        Tree::Leaf
+    } else {
+        Tree::Node(depth, Box::new(build(depth - 1)), Box::new(build(depth - 1)))
+    }
+}
+
+fn sum(t: &Tree) -> i64 {
+    match t {
+        Tree::Node(v, l, r) => v + sum(l) + sum(r),
+        Tree::Leaf => 0,
+    }
+}
+
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 50 {
+        let t = build(8)
+        total += sum(&t)
+        // Collect mid-churn as well as at the end: exercises the candidate
+        // buffer staying empty on acyclic workloads (the no-op fast path).
+        runtime::collect_cycles()
+        i += 1
+    }
+    println!("total: {}", total)
+}

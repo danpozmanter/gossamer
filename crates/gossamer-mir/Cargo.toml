@@ -17,6 +17,7 @@ gossamer-hir = { workspace = true }
 gossamer-lex = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-types = { workspace = true }
+gossamer-abi = { workspace = true }
 
 [dev-dependencies]
 gossamer-parse = { workspace = true }

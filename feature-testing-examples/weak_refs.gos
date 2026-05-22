@@ -1,0 +1,76 @@
+// Weak references (Phase 1B of the hybrid memory model). A `Weak<T>`
+// produced by `x.downgrade()` does not contribute to the strong count;
+// `w.upgrade()` yields `Some(value)` while a strong reference survives
+// and `None` once the last one is dropped. Liveness is made
+// deterministic in both the interpreter (Arc strong count) and the
+// compiled tiers (intrusive strong count) by bounding the strong
+// reference's lifetime to a function scope.
+
+enum Node {
+    Leaf(i64),
+    Pair(i64, i64),
+    Nil,
+}
+
+// The strong `Node` is dropped when this function returns, so the
+// returned weak observes a dead referent.
+fn make_dead_weak() -> Weak<Node> {
+    let strong = Node::Leaf(99)
+    strong.downgrade()
+}
+
+fn describe(w: Weak<Node>) -> i64 {
+    match w.upgrade() {
+        Some(n) => match n {
+            Node::Leaf(v) => v,
+            Node::Pair(a, b) => a + b,
+            Node::Nil => 0,
+        },
+        None => -1,
+    }
+}
+
+fn main() {
+    // Alive: the strong binding is still in scope at the upgrade.
+    let strong = Node::Pair(10, 20)
+    let w = strong.downgrade()
+    println!("alive_sum={}", describe(w))
+
+    // Copying a weak keeps observing the same referent.
+    let strong2 = Node::Leaf(5)
+    let wa = strong2.downgrade()
+    let wb = wa
+    match wb.upgrade() {
+        Some(n) => match n {
+            Node::Leaf(v) => println!("copy_alive={}", v),
+            Node::Pair(_, _) => println!("copy_pair"),
+            Node::Nil => println!("copy_nil"),
+        },
+        None => println!("copy_dead"),
+    }
+
+    // `if let` upgrade form on a live referent.
+    let strong3 = Node::Leaf(7)
+    let w3 = strong3.downgrade()
+    if let Some(n) = w3.upgrade() {
+        match n {
+            Node::Leaf(v) => println!("iflet_alive={}", v),
+            Node::Pair(_, _) => println!("iflet_pair"),
+            Node::Nil => println!("iflet_nil"),
+        }
+    } else {
+        println!("iflet_dead")
+    }
+
+    // Dead: the referent was dropped at the end of make_dead_weak.
+    let dead = make_dead_weak()
+    println!("dead_result={}", describe(dead))
+
+    // `if let` upgrade form on a dead referent.
+    let dead2 = make_dead_weak()
+    if let Some(_n) = dead2.upgrade() {
+        println!("iflet_dead_some")
+    } else {
+        println!("iflet_dead_none")
+    }
+}

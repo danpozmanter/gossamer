@@ -643,12 +643,17 @@ fn link_posix(
     }
     if opts.want_strip() {
         if opts.release {
-            // Release: remove all symbols + dead sections.
-            // macOS ld uses -dead_strip; strip runs after for -x.
+            // Release: drop DWARF debug sections + dead code, but KEEP
+            // the symbol table. Compiled-tier panic traces and SIGQUIT
+            // dumps unwind the real machine stack and symbolicate
+            // through `.symtab`; `--strip-all` would erase the function
+            // names and leave only hex addresses. macOS keeps global
+            // symbols (gos functions are global) via the post-link
+            // `strip -x`; `-dead_strip` only removes unreachable code.
             if cfg!(target_os = "macos") {
                 cmd.arg("-Wl,-dead_strip");
             } else {
-                cmd.arg("-Wl,--strip-all").arg("-Wl,--gc-sections");
+                cmd.arg("-Wl,--strip-debug").arg("-Wl,--gc-sections");
             }
         } else {
             // Debug build without -g: remove debug sections only
@@ -725,6 +730,14 @@ fn link_posix_static_musl(
 
     let mut cmd = std::process::Command::new(&linker);
     cmd.arg("--static")
+        // Emit `.eh_frame_hdr` + the `PT_GNU_EH_FRAME` program header.
+        // The unwinder (`_Unwind_Backtrace`, used by the `backtrace`
+        // crate for panic / SIGQUIT traces) locates FDEs through this
+        // index via `dl_iterate_phdr`; without it the table-driven
+        // unwind finds nothing and a backtrace yields zero frames.
+        // The `cc`-driven dynamic link path passes this implicitly;
+        // invoking `ld.lld` directly here does not, so it is explicit.
+        .arg("--eh-frame-hdr")
         .arg("-o")
         .arg(out_path)
         .arg(self_contained.join("crt1.o"))
@@ -744,7 +757,10 @@ fn link_posix_static_musl(
     }
     cmd.arg("--gc-sections");
     if opts.want_strip() {
-        cmd.arg("--strip-all");
+        // Keep `.symtab` so panic / SIGQUIT backtraces symbolicate
+        // gos function names; only drop DWARF debug sections. See the
+        // matching note in `link_posix`.
+        cmd.arg("--strip-debug");
     }
     match cmd.status() {
         Ok(s) if s.success() => {

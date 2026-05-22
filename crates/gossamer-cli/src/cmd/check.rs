@@ -75,7 +75,11 @@ pub(crate) fn run(
     timings: bool,
     message_format: crate::cli::MessageFormat,
 ) -> Result<()> {
-    let source = read_source(file)?;
+    let user_source = read_source(file)?;
+    // Augment with the synthesized serde free functions (`__gos_serde_*`)
+    // so `to_json::<T>(..)` / `from_json::<T>(..)` resolve, exactly as
+    // `gos run` / `gos build` do before reaching the source map.
+    let source = gossamer_parse::autoderive::augment_source(&user_source);
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     let cache_key = gossamer_driver::FrontendCacheKey::new(&source, env!("CARGO_PKG_VERSION"));

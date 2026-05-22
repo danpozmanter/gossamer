@@ -167,7 +167,7 @@ pub(super) fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
             // case the by-value-aggregate return path copies only
             // the disc word and zeroes the payload — corrupting
             // every `Ok(v)` returned across a function boundary.
-            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+            if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return 2;
             }
             tcx.struct_field_tys(def).map_or(1, |tys| {
@@ -193,7 +193,7 @@ pub(super) fn field_byte_offset(tcx: &TyCtxt, ty: Ty, idx: u32) -> u32 {
         TyKind::Adt { def, .. } => {
             // Sentinels for Result/Option use a flat 2-slot
             // [disc, payload] layout where each field is one slot.
-            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+            if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return idx * 8;
             }
             tcx.struct_field_tys(def).map_or(idx * 8, |tys| {
@@ -214,7 +214,7 @@ pub(super) fn field_ty_at(tcx: &TyCtxt, ty: Ty, idx: u32) -> Option<Ty> {
     match tcx.kind_of(ty).clone() {
         TyKind::Tuple(elems) => elems.get(target).copied(),
         TyKind::Adt { def, .. } => {
-            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+            if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return None;
             }
             tcx.struct_field_tys(def)

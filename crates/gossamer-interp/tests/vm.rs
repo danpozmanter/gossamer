@@ -29,7 +29,7 @@ fn build_vm(source: &str) -> Vm {
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut vm = Vm::new();
-    vm.load(&program, &mut tcx).expect("load");
+    vm.load(&program, tcx).expect("load");
     vm
 }
 
@@ -155,7 +155,7 @@ fn compute(a: i64, b: i64) -> i64 {
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
 
     let mut vm = Vm::new();
-    vm.load(&program, &mut tcx).unwrap();
+    vm.load(&program, tcx).unwrap();
     let mut tree = Interpreter::new();
     tree.load(&program);
 

@@ -120,15 +120,57 @@ pub fn register(gid: u32, function: impl Into<String>) {
 
 thread_local! {
     static ACTIVE_GID: std::cell::Cell<u32> = const { std::cell::Cell::new(u32::MAX) };
+    /// The active goroutine's call stack while it runs on THIS
+    /// thread. `stack_push` / `stack_pop` touch it lock-free on every
+    /// call; it is checked out from / into the registry at
+    /// [`set_active_gid`] (the scheduler's park / resume boundary) so
+    /// the frames migrate with the goroutine across worker threads.
+    /// The previous design pushed every frame into a process-global
+    /// `Mutex<BTreeMap>`, serialising every function call in the
+    /// program through one lock — this removes that lock from the
+    /// per-call path entirely.
+    static LOCAL_FRAMES: std::cell::RefCell<Vec<Frame>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Sets the goroutine id associated with the current OS thread.
-/// The scheduler calls this when resuming a goroutine, and the
-/// interpreter / panic helpers read it to attribute frame pushes
-/// and panic dumps to the right goroutine. `u32::MAX` is the
-/// sentinel "no goroutine — main thread".
+/// Binds goroutine `gid` to the current OS thread. The scheduler
+/// calls this at step entry (resume) and with `u32::MAX` at step
+/// exit (park). `u32::MAX` is the sentinel "no goroutine — main
+/// thread".
+///
+/// This is the migration boundary for the lock-free shadow stack:
+/// the outgoing goroutine's frames are checked back into the registry
+/// (so a SIGQUIT dump can render a parked goroutine), and the
+/// incoming goroutine's saved frames are checked out to this thread's
+/// [`LOCAL_FRAMES`]. The registry lock is taken at most twice here —
+/// per step, never per call.
 pub fn set_active_gid(gid: u32) {
+    let old = ACTIVE_GID.with(std::cell::Cell::get);
+    if old == gid {
+        return;
+    }
+    if old != u32::MAX {
+        let frames = LOCAL_FRAMES.with(|f| std::mem::take(&mut *f.borrow_mut()));
+        let mut g = registry().infos.lock();
+        if let Some(info) = g.get_mut(&old) {
+            if let Some(top) = frames.last() {
+                info.function.clone_from(&top.function);
+                info.file.clone_from(&top.file);
+                info.line = top.line;
+            }
+            info.frames = frames;
+        }
+    }
     ACTIVE_GID.with(|cell| cell.set(gid));
+    if gid == u32::MAX {
+        LOCAL_FRAMES.with(|f| f.borrow_mut().clear());
+    } else {
+        let frames = {
+            let mut g = registry().infos.lock();
+            g.get_mut(&gid).map(|info| std::mem::take(&mut info.frames))
+        };
+        LOCAL_FRAMES.with(|f| *f.borrow_mut() = frames.unwrap_or_default());
+    }
 }
 
 /// Returns the goroutine id currently bound to this thread, or
@@ -142,71 +184,35 @@ pub fn active_gid() -> Option<u32> {
 }
 
 /// Pushes a new frame onto the active goroutine's call stack.
-/// Called at function-entry safepoints by the codegen prologue
-/// and by the interpreter on every call. Cheap (one allocation
-/// per call; the hot path is the runtime's `register` table lock).
-///
-/// If no goroutine is active (main-thread bare execution), the
-/// stack is kept under a dedicated `u32::MAX` slot so panic dumps
-/// from `fn main` still get a useful trace.
+/// Called by the interpreter on every call. Lock-free: it touches
+/// only this thread's [`LOCAL_FRAMES`]. The compiled tier emits no
+/// such call — it recovers traces by unwinding the real machine
+/// stack ([`render_native_panic_trace`]).
 pub fn stack_push(function: impl Into<String>, file: impl Into<String>, line: u32) {
-    let gid = ACTIVE_GID.with(std::cell::Cell::get);
-    let function = function.into();
-    let file = file.into();
     let frame = Frame {
-        function: function.clone(),
-        file: file.clone(),
+        function: function.into(),
+        file: file.into(),
         line,
     };
-    let mut g = registry().infos.lock();
-    let info = g.entry(gid).or_insert_with(|| GoroutineInfo {
-        gid,
-        state: "running",
-        function: function.clone(),
-        file: file.clone(),
-        line,
-        frames: Vec::new(),
-    });
-    info.frames.push(frame);
-    info.function = function;
-    info.file = file;
-    info.line = line;
+    LOCAL_FRAMES.with(|f| f.borrow_mut().push(frame));
 }
 
 /// Pops the topmost frame from the active goroutine's call stack.
-/// Called at function-return safepoints by the codegen epilogue
-/// and by the interpreter on every return / `?` propagation.
-/// Tolerates over-pop (no-op when the stack is empty) so unwinding
-/// past an aborted frame doesn't crash the runtime.
+/// Lock-free. Tolerates over-pop (no-op when the stack is empty) so
+/// unwinding past an aborted frame doesn't crash the runtime.
 pub fn stack_pop() {
-    let gid = ACTIVE_GID.with(std::cell::Cell::get);
-    let mut g = registry().infos.lock();
-    if let Some(info) = g.get_mut(&gid) {
-        info.frames.pop();
-        if let Some(top) = info.frames.last() {
-            info.function.clone_from(&top.function);
-            info.file.clone_from(&top.file);
-            info.line = top.line;
-        } else {
-            info.function.clear();
-            info.file.clear();
-            info.line = 0;
-        }
-    }
+    LOCAL_FRAMES.with(|f| {
+        f.borrow_mut().pop();
+    });
 }
 
 /// Snapshots the active goroutine's call stack (outermost first).
-/// Used by the panic helper to render the failing frame chain
-/// inline with the diagnostic.
+/// Used by the panic helper to render the failing frame chain inline
+/// with the diagnostic. Reads this thread's [`LOCAL_FRAMES`], so it
+/// reflects the goroutine that is panicking on the calling thread.
 #[must_use]
 pub fn active_frames() -> Vec<Frame> {
-    let gid = ACTIVE_GID.with(std::cell::Cell::get);
-    registry()
-        .infos
-        .lock()
-        .get(&gid)
-        .map(|info| info.frames.clone())
-        .unwrap_or_default()
+    LOCAL_FRAMES.with(|f| f.borrow().clone())
 }
 
 /// Updates the wait state of an already-registered goroutine.
@@ -222,14 +228,11 @@ pub fn set_state(gid: u32, state: &'static str) {
 /// at MIR-statement granularity by codegen so panic traces carry
 /// the precise failing line, not just the function-entry line.
 pub fn set_active_line(line: u32) {
-    let gid = ACTIVE_GID.with(std::cell::Cell::get);
-    let mut g = registry().infos.lock();
-    if let Some(info) = g.get_mut(&gid) {
-        if let Some(top) = info.frames.last_mut() {
+    LOCAL_FRAMES.with(|f| {
+        if let Some(top) = f.borrow_mut().last_mut() {
             top.line = line;
         }
-        info.line = line;
-    }
+    });
 }
 
 /// Updates the latest source position of a goroutine — called by
@@ -297,16 +300,14 @@ pub fn render_to(out: &mut impl Write) -> std::io::Result<usize> {
                 out.write_all(pos.as_bytes())?;
                 written += pos.len();
             }
-            // No Gossamer frames — fall back to the host backtrace.
-            // The first ~6 lines are enough to identify "which
-            // goroutine is hot" without flooding the dump.
-            let trace = std::backtrace::Backtrace::force_capture().to_string();
-            for line in trace.lines().take(6) {
-                out.write_all(b"        ")?;
-                out.write_all(line.as_bytes())?;
-                out.write_all(b"\n")?;
-                written += line.len() + 9;
-            }
+            // No per-call shadow frames (compiled tier). The dump
+            // carries this goroutine's identity, wait state, and entry
+            // function from the cheap spawn/park registry. Deep frames
+            // for an off-CPU goroutine would require unwinding its
+            // suspended coroutine stack from the signal-relay thread,
+            // which is not attempted here — capturing the relay
+            // thread's own stack (the previous behaviour) attributed
+            // the wrong frames to every goroutine.
         } else {
             // Render the full Gossamer call stack, innermost last
             // (matches Rust / Go convention — most recent call on
@@ -351,6 +352,70 @@ pub fn render_active_panic_trace() -> String {
             out.push(')');
         }
         out.push('\n');
+    }
+    out
+}
+
+/// Returns true if `symbol` names runtime / panic / std machinery
+/// rather than a user Gossamer function. Used to trim the real-stack
+/// backtrace down to the gos call chain. Conservative: anything that
+/// is clearly host scaffolding is dropped; unknown bare names are
+/// kept (they are almost certainly gos functions).
+fn is_runtime_frame(symbol: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "gos_rt_",
+        "gossamer",
+        "std::",
+        "core::",
+        "alloc::",
+        "backtrace",
+        "__rust",
+        "rust_begin_unwind",
+        "_start",
+        "<",
+    ];
+    const CONTAINS: &[&str] = &["panic", "begin_unwind", "abort"];
+    PREFIXES.iter().any(|p| symbol.starts_with(p)) || CONTAINS.iter().any(|c| symbol.contains(c))
+}
+
+/// Renders the active thread's real machine-stack backtrace as a
+/// gos-focused panic trace. Used by `gos_rt_panic` on the compiled
+/// tier, which keeps no per-call shadow stack: frames are recovered
+/// by unwinding the live stack with the `backtrace` crate and
+/// symbolicating through the binary's retained symbol table
+/// (`gos build --release` keeps `.symtab`; only DWARF is stripped).
+/// Returns empty when capture or symbolication yields nothing (e.g. a
+/// fully `--strip-all` binary).
+#[must_use]
+pub fn render_native_panic_trace() -> String {
+    let mut symbols: Vec<String> = Vec::new();
+    backtrace::trace(|frame| {
+        backtrace::resolve_frame(frame, |sym| {
+            if let Some(name) = sym.name() {
+                symbols.push(name.to_string());
+            }
+        });
+        true
+    });
+    let mut out = String::new();
+    let mut started = false;
+    for sym in &symbols {
+        // Skip the panic / runtime machinery at the top of the stack
+        // until the first gos frame appears.
+        if !started {
+            if is_runtime_frame(sym) {
+                continue;
+            }
+            started = true;
+        }
+        out.push_str("    at ");
+        out.push_str(sym);
+        out.push('\n');
+        // The program entry frame is the natural bottom of the gos
+        // chain; everything below is libc / rt startup.
+        if sym == "gos_main" || sym == "main" {
+            break;
+        }
     }
     out
 }

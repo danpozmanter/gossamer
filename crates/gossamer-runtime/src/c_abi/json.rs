@@ -157,8 +157,8 @@ unsafe fn json_handle<'a>(p: *const GosJson) -> Option<&'a GosJson> {
 /// entry point. Returns a real `GosResult` so `match` and `?`
 /// work across function boundaries in compiled code.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         let bytes: &[u8] = if text.is_null() {
             b""
         } else {
@@ -344,6 +344,62 @@ pub unsafe extern "C" fn gos_rt_json_as_str(j: *const GosJson) -> *mut c_char {
     })
 }
 
+/// `value.as_i64() -> Option<i64>` — strict: `Some` only for a JSON
+/// integer (or integer-valued number), `None` otherwise. This is the
+/// shape the auto-derived `from_json` relies on (`match json::as_i64(x)
+/// { Some(v) => v, None => Err }`); a coercing i64 return made every
+/// non-integer field silently parse, so type validation never failed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_i64_opt(j: *const GosJson) -> i128 {
+    ffi_entry!(0i128, {
+        match unsafe { json_borrow(j) } {
+            Some(serde_json::Value::Number(n)) => {
+                if let Some(i) = n.as_i64() {
+                    unsafe { gos_rt_result_new(0, i) }
+                } else if let Some(f) = n.as_f64() {
+                    if f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+                        unsafe { gos_rt_result_new(0, f as i64) }
+                    } else {
+                        unsafe { gos_rt_result_new(1, 0) }
+                    }
+                } else {
+                    unsafe { gos_rt_result_new(1, 0) }
+                }
+            }
+            _ => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `value.as_f64() -> Option<f64>` — `Some` for any JSON number,
+/// `None` otherwise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_f64_opt(j: *const GosJson) -> i128 {
+    ffi_entry!(0i128, {
+        match unsafe { json_borrow(j) } {
+            Some(serde_json::Value::Number(n)) => unsafe {
+                gos_rt_result_new_f64(0, n.as_f64().unwrap_or(0.0))
+            },
+            _ => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `value.as_str() -> Option<String>` — `Some` only for a JSON
+/// string, `None` otherwise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_str_opt(j: *const GosJson) -> i128 {
+    ffi_entry!(0i128, {
+        match unsafe { json_borrow(j) } {
+            Some(serde_json::Value::String(s)) => {
+                let cs = alloc_cstring(s.as_bytes());
+                unsafe { gos_rt_result_new(0, cs as i64) }
+            }
+            _ => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
 /// `value.as_bool() -> bool`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_as_bool(j: *const GosJson) -> i32 {
@@ -375,11 +431,8 @@ pub unsafe extern "C" fn gos_rt_json_identity(j: *mut GosJson) -> *mut GosJson {
 /// field-access lowering of `root.a.b.c`, which threads raw
 /// `*mut GosJson` pointers through chained calls.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_json_get_opt(
-    j: *const GosJson,
-    key: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_json_get_opt(j: *const GosJson, key: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         let Some(parent) = (unsafe { json_handle(j) }) else {
             return gos_rt_result_new(1, 0);
         };
@@ -403,8 +456,8 @@ pub unsafe extern "C" fn gos_rt_json_get_opt(
 /// for objects (keys in declaration order), `None` for any other
 /// shape — pinned by `malformed_json_returns_none_not_segfault`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_json_keys_opt(j: *const GosJson) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_json_keys_opt(j: *const GosJson) -> i128 {
+    ffi_entry!(0i128, {
         let Some(v) = (unsafe { json_borrow(j) }) else {
             return unsafe { gos_rt_result_new(1, 0) };
         };
@@ -431,8 +484,8 @@ pub unsafe extern "C" fn gos_rt_json_keys_opt(j: *const GosJson) -> *mut GosResu
 /// otherwise. Each element is materialised as a fresh `GosJson*`
 /// so the receiver can be dropped independently.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_json_as_array_opt(j: *const GosJson) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_json_as_array_opt(j: *const GosJson) -> i128 {
+    ffi_entry!(0i128, {
         let Some(parent) = (unsafe { json_handle(j) }) else {
             return gos_rt_result_new(1, 0);
         };
@@ -520,6 +573,50 @@ pub unsafe extern "C" fn gos_rt_json_value_array(vec: *const GosVec) -> *mut Gos
                     } else {
                         out.push(serde_json::Value::Null);
                     }
+                }
+            }
+        }
+        GosJson::into_raw(serde_json::Value::Array(out))
+    })
+}
+
+/// Builds a `json::Value::Array` from a Gossamer `Vec` of scalar
+/// elements. `kind` selects how each 8-byte slot is read:
+/// 0 = i64, 1 = f64 (bit pattern), 2 = String (`*const c_char`),
+/// 3 = bool. Used by `json::encode([…])` on a scalar array, where
+/// the MIR has a typed scalar `*GosVec` rather than a Vec of
+/// pre-boxed `*GosJson` pointers (the shape `gos_rt_json_value_array`
+/// expects).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_array_from_scalar_vec(
+    vec: *const GosVec,
+    kind: i64,
+) -> *mut GosJson {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        if !vec.is_null() {
+            let header = unsafe { &*vec };
+            let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+            if !header.ptr.is_null() && len > 0 {
+                let words = unsafe { std::slice::from_raw_parts(header.ptr.cast::<i64>(), len) };
+                for &w in words {
+                    let v = match kind {
+                        1 => serde_json::Number::from_f64(f64::from_bits(w as u64))
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+                        2 => {
+                            let p = w as *const c_char;
+                            if p.is_null() {
+                                serde_json::Value::String(String::new())
+                            } else {
+                                serde_json::Value::String(unsafe {
+                                    CStr::from_ptr(p).to_string_lossy().into_owned()
+                                })
+                            }
+                        }
+                        3 => serde_json::Value::Bool(w != 0),
+                        _ => serde_json::Value::Number(w.into()),
+                    };
+                    out.push(v);
                 }
             }
         }

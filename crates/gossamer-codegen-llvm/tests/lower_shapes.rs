@@ -66,16 +66,19 @@ fn build_binop_main(op: BinOp, lhs: i64, rhs: i64) -> (Body, TyCtxt) {
                 ty: i64_ty,
                 debug_name: None,
                 mutable: false,
+                region: false,
             },
             LocalDecl {
                 ty: i64_ty,
                 debug_name: None,
                 mutable: false,
+                region: false,
             },
             LocalDecl {
                 ty: i64_ty,
                 debug_name: None,
                 mutable: false,
+                region: false,
             },
         ],
         blocks: vec![BasicBlock {
@@ -104,6 +107,7 @@ fn build_const_int_main(value: i64) -> (Body, TyCtxt) {
             ty: i64_ty,
             debug_name: None,
             mutable: false,
+            region: false,
         }],
         blocks: vec![BasicBlock {
             id: BlockId(0),

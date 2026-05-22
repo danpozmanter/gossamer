@@ -95,11 +95,88 @@ impl<'a> Builder<'a> {
                     use gossamer_types::TyKind;
                     let binding_wants_vec =
                         matches!(self.tcx.kind_of(*ty), TyKind::Vec(_) | TyKind::Slice(_),);
-                    if binding_wants_vec {
+                    // `let mut xs = [literal]` — the user wrote `mut`,
+                    // so they want a growable Vec, not a fixed-size
+                    // array. Without this promotion `xs.push(...)`
+                    // calls `gos_rt_vec_push(stack_array_ptr, ...)`
+                    // which interprets the stack array as a GosVec
+                    // header and corrupts memory.
+                    // Only promote a `let mut xs = [literal]` to a
+                    // heap Vec when `xs` is actually grown / reshaped
+                    // (push / pop / insert / …) somewhere in the
+                    // function. An explicitly-sized `let mut bodies:
+                    // [Body; 5]` that is only indexed, field-mutated,
+                    // or passed to a `[T; N]`-typed parameter must
+                    // keep its inline fixed-array layout — promoting
+                    // it to `Vec<Body>` desynchronises the element
+                    // stride at call boundaries (`energy(&bodies)`
+                    // expecting `&[Body; 5]`) and corrupts reads.
+                    let binding_name = match &pattern.kind {
+                        HirPatKind::Binding { name, .. } => Some(name.name.clone()),
+                        _ => None,
+                    };
+                    let mut_with_array_literal = param_mutable(pattern)
+                        && binding_name
+                            .as_ref()
+                            .is_some_and(|n| self.grows_bindings.contains(n))
+                        && init.as_ref().is_some_and(|init_expr| {
+                            matches!(
+                                init_expr.kind,
+                                HirExprKind::Array(gossamer_hir::HirArrayExpr::List(_))
+                            )
+                        });
+                    if binding_wants_vec || mut_with_array_literal {
                         if let Some(init_expr) = init.as_ref() {
                             if let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) =
                                 &init_expr.kind
                             {
+                                // Pin the local's type to Vec<elem>
+                                // before calling `lower_let_array_as_vec`
+                                // so the codegen lays out the slot as
+                                // an 8-byte heap pointer instead of a
+                                // multi-slot stack array. The element type
+                                // comes from the first element; for an empty
+                                // literal (`let mut xs = []`) there is no
+                                // element, so fall back to the binding's
+                                // resolved `Array`/`Vec`/`Slice` element —
+                                // defaulting to i64 would size the vec's
+                                // elements at 8 bytes and corrupt the heap on
+                                // `xs.push(t)` of a wider element (e.g. a
+                                // `[i64; 2]` or a tuple).
+                                if mut_with_array_literal && !binding_wants_vec {
+                                    let concrete = |b: &Self, t: gossamer_types::Ty| {
+                                        !matches!(b.tcx.kind_of(t), TyKind::Var(_) | TyKind::Error)
+                                    };
+                                    let elem_ty = elems
+                                        .first()
+                                        .map(|e| e.ty)
+                                        .filter(|t| concrete(self, *t))
+                                        .or_else(|| match self.tcx.kind_of(*ty) {
+                                            TyKind::Array { elem, .. }
+                                            | TyKind::Vec(elem)
+                                            | TyKind::Slice(elem) => Some(*elem),
+                                            _ => None,
+                                        })
+                                        .filter(|t| concrete(self, *t))
+                                        // For an empty `[]` neither the literal
+                                        // nor the binding annotation names a
+                                        // concrete element. Recover it from the
+                                        // `push(x)` / `insert(_, x)` sites so a
+                                        // multi-slot element ([i64; 2], tuple,
+                                        // struct) is sized correctly instead of
+                                        // truncated to one 8-byte slot.
+                                        .or_else(|| {
+                                            binding_name
+                                                .as_ref()
+                                                .and_then(|n| self.grows_elem_ty.get(n).copied())
+                                                .filter(|t| concrete(self, *t))
+                                        })
+                                        .unwrap_or_else(|| {
+                                            self.tcx.int_ty(gossamer_types::IntTy::I64)
+                                        });
+                                    let vec_ty = self.tcx.intern(TyKind::Vec(elem_ty));
+                                    self.locals[local.0 as usize].ty = vec_ty;
+                                }
                                 if self.lower_let_array_as_vec(local, elems, stmt.span) {
                                     if let HirPatKind::Binding { name, .. } = &pattern.kind {
                                         self.bind_local(&name.name, local);

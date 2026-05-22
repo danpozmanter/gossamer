@@ -997,6 +997,14 @@ impl Lowerer<'_> {
                 (none_pat, body)
             }
             TryKind::Result => {
+                // The actual error type `E` of the inner `Result<T,E>` — may
+                // be `String`, a user type, or `errors::Error`. Typing the
+                // bound error as the concrete `E` (not always `errors::Error`)
+                // is what lets a `String`-typed error survive `?` propagation
+                // intact rather than being mis-rendered as an error handle.
+                let err_ty = self
+                    .try_err_payload_ty(value_ty)
+                    .unwrap_or_else(|| self.error_ty());
                 let err_binding_id = self.fresh();
                 let err_pat = HirPat {
                     id: self.fresh(),
@@ -1007,7 +1015,7 @@ impl Lowerer<'_> {
                         fields: vec![HirPat {
                             id: err_binding_id,
                             span,
-                            ty: self.error_ty(),
+                            ty: err_ty,
                             kind: HirPatKind::Binding {
                                 name: Ident::new("__try_err"),
                                 mutable: false,
@@ -1018,7 +1026,7 @@ impl Lowerer<'_> {
                 let err_value = HirExpr {
                     id: self.fresh(),
                     span,
-                    ty: self.error_ty(),
+                    ty: err_ty,
                     kind: HirExprKind::Path {
                         segments: vec![Ident::new("__try_err")],
                         def: None,
@@ -1034,15 +1042,21 @@ impl Lowerer<'_> {
                 // resolves the canonical errors::Error path for
                 // String / errors::Error / user types).
                 let err_value = self.maybe_convert_try_err(err_value, value_ty, span);
+                // `return Err(e)` yields the ENCLOSING FUNCTION's return type
+                // (`Result<T,E>`, a 2-word by-value i128), not the bare error
+                // type and not the scrutinee's (possibly-unpinned `Var`) type.
+                // Pinning it to the concrete fn return type is essential: a
+                // `Var` would render as `ptr` and truncate the i128 payload.
+                let result_ty = self.current_fn_ret_ty.unwrap_or(value_ty);
                 let err_wrap = HirExpr {
                     id: self.fresh(),
                     span,
-                    ty: self.error_ty(),
+                    ty: result_ty,
                     kind: HirExprKind::Call {
                         callee: Box::new(HirExpr {
                             id: self.fresh(),
                             span,
-                            ty: self.error_ty(),
+                            ty: result_ty,
                             kind: HirExprKind::Path {
                                 segments: vec![Ident::new("Err")],
                                 def: None,

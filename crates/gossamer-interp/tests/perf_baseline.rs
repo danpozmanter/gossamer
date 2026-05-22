@@ -61,7 +61,9 @@ fn measure<F: FnMut()>(iterations: u32, mut body: F) -> Duration {
 
 fn run_main(program: &gossamer_hir::HirProgram, tcx: &mut TyCtxt) {
     let mut vm = Vm::new();
-    vm.load(program, tcx).unwrap();
+    // `load` consumes the interner; clone per call so the bench can
+    // re-load the same program across `measure` iterations.
+    vm.load(program, tcx.clone()).unwrap();
     let _ = vm.call("main", Vec::new()).unwrap();
 }
 

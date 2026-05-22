@@ -1,0 +1,86 @@
+// Exercises the compiled-tier reference-counting release pass: many
+// short-lived recursive-enum values built and discarded in a loop
+// (per-iteration release), named bindings released at scope exit, a
+// value moved into the return position, and an early return. Output is
+// deterministic so VM / Cranelift / LLVM must agree bit-for-bit. A
+// double-free or use-after-free in the release dataflow would crash one
+// tier and break parity.
+
+enum Tree {
+    Leaf(i64),
+    Node(i64, Box<Tree>, Box<Tree>),
+}
+
+struct Holder { t: Tree, tag: i64 }
+
+// Returns its by-value argument — an unretained alias unless the
+// return-copy retains it.
+fn identity(t: Tree) -> Tree { t }
+
+// Aliases one owned tree to several bindings (each must retain).
+fn aliased(depth: i64) -> i64 {
+    let a = build(depth)
+    let b = a
+    let c = a
+    checksum(&a) + checksum(&b) + checksum(&c)
+}
+
+// Stores a freshly-built tree into a struct field.
+fn via_struct(depth: i64) -> i64 {
+    let h = Holder { t: build(depth), tag: 5 }
+    checksum(&h.t) + h.tag
+}
+
+fn build(depth: i64) -> Tree {
+    if depth == 0 {
+        Tree::Leaf(1)
+    } else {
+        Tree::Node(depth, Box::new(build(depth - 1)), Box::new(build(depth - 1)))
+    }
+}
+
+fn checksum(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf(v) => *v,
+        Tree::Node(v, l, r) => *v + checksum(l) + checksum(r),
+    }
+}
+
+// Named binding released at end of scope (not moved out).
+fn transient_sum(depth: i64) -> i64 {
+    let tree = build(depth)
+    checksum(&tree)
+}
+
+// Early return before the natural end of the function.
+fn capped(depth: i64, cap: i64) -> i64 {
+    let s = transient_sum(depth)
+    if s > cap {
+        return cap
+    }
+    s
+}
+
+fn main() {
+    // Loop that builds and discards a fresh tree every iteration; the
+    // per-iteration temporary must be released so memory stays bounded.
+    let mut total = 0
+    let mut i = 0
+    while i < 200 {
+        total += checksum(&build(6))
+        total += aliased(5)
+        total += via_struct(5)
+        total += checksum(&identity(build(5)))
+        i += 1
+    }
+    println!("loop total = {}", total)
+
+    println!("transient = {}", transient_sum(8))
+    println!("capped low = {}", capped(4, 1000000))
+    println!("capped high = {}", capped(8, 100))
+
+    // A value moved into a binding, then borrowed repeatedly.
+    let shared = build(5)
+    println!("shared a = {}", checksum(&shared))
+    println!("shared b = {}", checksum(&shared))
+}

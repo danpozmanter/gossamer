@@ -615,7 +615,27 @@ impl<'a> Builder<'a> {
                     span,
                 );
                 for (idx, sub_pat) in sub_pats.iter().enumerate() {
-                    let elem_ty = elem_tys.get(idx).copied()?;
+                    // Prefer the tuple's recorded element type, but when
+                    // inference left it unresolved (`let pair = (10,
+                    // "hi")` keeps the binding's tuple type loose) fall
+                    // back to the sub-pattern's own type. Without this
+                    // the element local defaults to a pointer shape and
+                    // the `println!` arg dispatcher routes an `i64`
+                    // through `gos_rt_concat_str`, strlen'ing the
+                    // integer value and segfaulting.
+                    let from_tuple = elem_tys.get(idx).copied();
+                    let unresolved = |t: Ty| {
+                        matches!(
+                            self.tcx.kind_of(t),
+                            TyKind::Var(_) | TyKind::Error | TyKind::Never
+                        )
+                    };
+                    let elem_ty = match from_tuple {
+                        Some(t) if !unresolved(t) => t,
+                        _ if !unresolved(sub_pat.ty) => sub_pat.ty,
+                        Some(t) => t,
+                        None => return None,
+                    };
                     let elem_local = self.fresh(elem_ty);
                     let elem_place = Place {
                         local: scrutinee,
@@ -959,7 +979,25 @@ impl<'a> Builder<'a> {
                     // scrutinee is the i64 index directly.
                     let any_variant_has_payload =
                         self.enums.has_any_payload(std::slice::from_ref(name));
-                    let scrut_for_cmp = if any_variant_has_payload || !fields.is_empty() {
+                    // Inline-able enum: the scrutinee is the 2-word by-value
+                    // `i128` [disc, payload]; the discriminant is its low word.
+                    let mut peeled = scrut_ty;
+                    while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+                        peeled = *inner;
+                    }
+                    let scrut_is_inline = self.tcx.is_inline_enum_ty(peeled);
+                    let scrut_for_cmp = if scrut_is_inline {
+                        let disc_load = self.fresh(i64_ty);
+                        self.emit_assign(
+                            Place::local(disc_load),
+                            Rvalue::CallIntrinsic {
+                                name: "gos_rt_result_disc",
+                                args: vec![Operand::Copy(Place::local(scrutinee))],
+                            },
+                            span,
+                        );
+                        disc_load
+                    } else if any_variant_has_payload || !fields.is_empty() {
                         let zero_off = self.fresh(i64_ty);
                         self.emit_assign(
                             Place::local(zero_off),
@@ -1005,7 +1043,40 @@ impl<'a> Builder<'a> {
                     let mut acc = cmp;
                     for (i, field) in fields.iter().enumerate() {
                         if let HirPatKind::Binding { name: bname, .. } = &field.kind {
-                            if any_payload || !fields.is_empty() {
+                            if scrut_is_inline {
+                                // 2-word by-value enum: the single field is the
+                                // payload high word.
+                                let binding_ty = declared_tys
+                                    .as_ref()
+                                    .and_then(|tys| tys.get(i).copied())
+                                    .filter(|&ty| {
+                                        !matches!(
+                                            self.tcx.kind_of(ty),
+                                            gossamer_types::TyKind::Var(_)
+                                                | gossamer_types::TyKind::Error
+                                        )
+                                    })
+                                    .unwrap_or(i64_ty);
+                                let is_f64 = matches!(
+                                    self.tcx.kind_of(binding_ty),
+                                    gossamer_types::TyKind::Float(_)
+                                );
+                                let getter = if is_f64 {
+                                    "gos_rt_result_payload_f64"
+                                } else {
+                                    "gos_rt_result_payload"
+                                };
+                                let payload_local = self.fresh(binding_ty);
+                                self.emit_assign(
+                                    Place::local(payload_local),
+                                    Rvalue::CallIntrinsic {
+                                        name: getter,
+                                        args: vec![Operand::Copy(Place::local(scrutinee))],
+                                    },
+                                    span,
+                                );
+                                self.bind_local(&bname.name, payload_local);
+                            } else if any_payload || !fields.is_empty() {
                                 let off_local = self.fresh(i64_ty);
                                 self.emit_assign(
                                     Place::local(off_local),
@@ -1047,7 +1118,32 @@ impl<'a> Builder<'a> {
                         } else if !matches!(field.kind, HirPatKind::Wildcard) {
                             // Nested constructor pattern (e.g. Color::Red inside
                             // Shape::Circle): load the field as i64 and recurse.
-                            if any_payload || !fields.is_empty() {
+                            if scrut_is_inline {
+                                let field_local = self.fresh(i64_ty);
+                                self.emit_assign(
+                                    Place::local(field_local),
+                                    Rvalue::CallIntrinsic {
+                                        name: "gos_rt_result_payload",
+                                        args: vec![Operand::Copy(Place::local(scrutinee))],
+                                    },
+                                    span,
+                                );
+                                if let Some(sub_pred) =
+                                    self.lower_pattern_predicate(field_local, field, span)
+                                {
+                                    let combined = self.fresh(bool_ty);
+                                    self.emit_assign(
+                                        Place::local(combined),
+                                        Rvalue::BinaryOp {
+                                            op: BinOp::BitAnd,
+                                            lhs: Operand::Copy(Place::local(acc)),
+                                            rhs: Operand::Copy(Place::local(sub_pred)),
+                                        },
+                                        span,
+                                    );
+                                    acc = combined;
+                                }
+                            } else if any_payload || !fields.is_empty() {
                                 let off_local = self.fresh(i64_ty);
                                 self.emit_assign(
                                     Place::local(off_local),
@@ -1179,10 +1275,25 @@ impl<'a> Builder<'a> {
                         }
                         let payload_local = if real_disc {
                             let p = self.fresh(payload_ty);
+                            // For Ok(f64) / Some(f64) payloads the
+                            // i64 bit-pattern packing must be unpacked
+                            // via `bitcast`, not `sitofp`. Route those
+                            // through the dedicated `_f64` shim so the
+                            // LLVM tier reads the f64 value back as
+                            // its source type instead of treating the
+                            // bit pattern as an integer.
+                            let payload_extractor = if matches!(
+                                self.tcx.kind_of(payload_ty),
+                                gossamer_types::TyKind::Float(_)
+                            ) {
+                                "gos_rt_result_payload_f64"
+                            } else {
+                                "gos_rt_result_payload"
+                            };
                             self.emit_assign(
                                 Place::local(p),
                                 Rvalue::CallIntrinsic {
-                                    name: "gos_rt_result_payload",
+                                    name: payload_extractor,
                                     args: vec![Operand::Copy(Place::local(scrutinee))],
                                 },
                                 span,
@@ -1304,10 +1415,25 @@ impl<'a> Builder<'a> {
                             .unwrap_or(i64_ty);
                         let payload_local = if real_disc {
                             let p = self.fresh(payload_ty);
+                            // For Ok(f64) / Some(f64) payloads the
+                            // i64 bit-pattern packing must be unpacked
+                            // via `bitcast`, not `sitofp`. Route those
+                            // through the dedicated `_f64` shim so the
+                            // LLVM tier reads the f64 value back as
+                            // its source type instead of treating the
+                            // bit pattern as an integer.
+                            let payload_extractor = if matches!(
+                                self.tcx.kind_of(payload_ty),
+                                gossamer_types::TyKind::Float(_)
+                            ) {
+                                "gos_rt_result_payload_f64"
+                            } else {
+                                "gos_rt_result_payload"
+                            };
                             self.emit_assign(
                                 Place::local(p),
                                 Rvalue::CallIntrinsic {
-                                    name: "gos_rt_result_payload",
+                                    name: payload_extractor,
                                     args: vec![Operand::Copy(Place::local(scrutinee))],
                                 },
                                 span,
@@ -1460,6 +1586,16 @@ impl<'a> Builder<'a> {
         });
 
         self.set_current(body_block);
+        // Auto-region: if the body's allocations provably die at the
+        // iteration boundary, wrap it in an arena region so the whole
+        // iteration's heap is bulk-freed at the back-edge instead of a
+        // per-node refcount teardown. Eligibility is decided on the HIR
+        // before lowering so `region_depth` flags the body's locals.
+        let regioned = self.loop_body_region_eligible(body);
+        if regioned {
+            self.emit_region_call("gos_rt_region_push", span);
+            self.region_depth += 1;
+        }
         // `break` jumps to `exit`; `continue` jumps back to the
         // condition test (`header`).
         self.loop_stack.push(LoopContext {
@@ -1470,9 +1606,38 @@ impl<'a> Builder<'a> {
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
+        if regioned {
+            self.region_depth = self.region_depth.saturating_sub(1);
+            // Eligibility guarantees no early exit, so `current` is the
+            // body's fall-through; pop the region before the back-edge.
+            if self.current.is_some() {
+                self.emit_region_call("gos_rt_region_pop", span);
+            }
+        }
         self.terminate(Terminator::Goto { target: header });
 
         self.set_current(exit);
+    }
+
+    /// Emits a zero-argument unit-returning call to a runtime region helper
+    /// (`gos_rt_region_push` / `gos_rt_region_pop`) and continues lowering
+    /// in a fresh block.
+    pub(crate) fn emit_region_call(&mut self, sym: &str, span: Span) {
+        let unit = self.tcx.unit();
+        let dest = self.fresh(unit);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(sym.to_string())),
+            args: vec![],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+    }
+
+    /// Conservative escape check: is this loop body safe to auto-region?
+    pub(crate) fn loop_body_region_eligible(&self, body: &HirExpr) -> bool {
+        crate::lower::helpers::LoopEligibility::new(&*self.tcx, self.region_unsafe).check(body)
     }
 
     pub(crate) fn lower_loop(&mut self, body: &HirExpr, ty: Ty, span: Span) -> Option<Local> {
@@ -1513,6 +1678,21 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
+        // The local-type recovery probes below key off a bare
+        // `Path` iter expression. A `for c in &xs` loop lowers the
+        // iterand as `Unary { RefShared, Path("xs") }`, so peel a
+        // leading `&` / `&mut` wrapper first — otherwise the probe
+        // misses the binding, the element type defaults to i64, and a
+        // `[String]` iterates as raw heap pointers (atlas_db's schema
+        // corruption: `orders.<ptr>` instead of `orders.id`).
+        let probe_expr = match &for_loop.iter_expr.kind {
+            HirExprKind::Unary {
+                op: gossamer_hir::HirUnaryOp::RefShared | gossamer_hir::HirUnaryOp::RefMut,
+                operand,
+                ..
+            } => operand.as_ref(),
+            _ => for_loop.iter_expr,
+        };
         // If the iter expression is a user-defined struct (Adt),
         // the fast-paths below would all misfire and the default
         // fallback would treat it as a runtime Vec (reading `len`
@@ -1533,7 +1713,7 @@ impl<'a> Builder<'a> {
         // even though the local was pinned to the struct on its
         // `let` statement; the local's MIR-side type is the
         // authoritative source.
-        if let HirExprKind::Path { segments, .. } = &for_loop.iter_expr.kind {
+        if let HirExprKind::Path { segments, .. } = &probe_expr.kind {
             if let Some(first) = segments.first() {
                 if let Some(local) = self.lookup_local(&first.name) {
                     let mut local_ty = self.locals[local.0 as usize].ty;
@@ -1733,7 +1913,7 @@ impl<'a> Builder<'a> {
                 // the MIR side may have pinned them to a
                 // concrete `Vec<T>` via a runtime-helper return
                 // type pin.
-                if let HirExprKind::Path { segments, .. } = &for_loop.iter_expr.kind {
+                if let HirExprKind::Path { segments, .. } = &probe_expr.kind {
                     if let Some(first) = segments.first() {
                         if let Some(local) = self.lookup_local(&first.name) {
                             cur = self.locals[local.0 as usize].ty;
@@ -1822,19 +2002,23 @@ impl<'a> Builder<'a> {
                             let tup_ty = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![
                                 i64_ty, i64_ty, str_ty,
                             ]));
-                            // `captures_all` returns Vec<Vec<String>>;
-                            // iterating it gives a `Vec<String>` per
-                            // match. Without this row would be typed
-                            // as String, then `row[i]` indexing
-                            // fell through to byte-at-string and the
-                            // `match row[i] { Some(k) => ... }` arm
-                            // saw raw integers.
-                            let str_vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(str_ty));
+                            // `captures_all` returns
+                            // `Vec<Vec<Option<String>>>`; iterating it
+                            // gives a `Vec<Option<String>>` per match.
+                            // The element must be `Option<String>` (not
+                            // a bare `String`) so `row[i]` indexing types
+                            // as the tagged-union and `match row[i] {
+                            // Some(k) => …, None => … }` reads the real
+                            // discriminant rather than the happy-path
+                            // encoding.
+                            let opt_str_ty = self.option_string_ty();
+                            let opt_str_vec_ty =
+                                self.tcx.intern(gossamer_types::TyKind::Vec(opt_str_ty));
                             for_vec_elem = match joined.as_str() {
                                 "regex::find_all" | "std::regex::find_all" => Some(tup_ty),
                                 "regex::split" | "std::regex::split" => Some(str_ty),
                                 "regex::captures_all" | "std::regex::captures_all" => {
-                                    Some(str_vec_ty)
+                                    Some(opt_str_vec_ty)
                                 }
                                 _ => None,
                             };

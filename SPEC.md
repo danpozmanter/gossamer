@@ -1625,9 +1625,11 @@ transformation when the chain doesn't return from the enclosing fn.
   is_null, as_str, as_i64, as_f64, as_bool, as_array, keys}` query
   helpers.
 - Strict, typed surface: every named struct in the program
-  auto-derives
-  - `<Type>::from_json(text: &String) -> Result<Type, errors::Error>`
-  - `<Type>::to_json(self) -> Result<String, errors::Error>`.
+  auto-derives a pair of generic serializer free functions, invoked
+  with a turbofish type argument (there are no `Type::from_json`
+  methods):
+  - `from_json::<Type>(text: &String) -> Result<Type, errors::Error>`
+  - `to_json::<Type>(value: Type) -> Result<String, errors::Error>`.
   `from_json` is the canonical one-line, serde-style deserializer:
   it validates each field against the declared field type
   recursively (nested structs by source name, `[T]` / `Vec<T>` /

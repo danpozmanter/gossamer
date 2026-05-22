@@ -17,8 +17,6 @@
 
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use super::*;
-
 // ---------------------------------------------------------------
 // Channel runtime — bounded MPMC via parking_lot Mutex<VecDeque>
 // ---------------------------------------------------------------
@@ -232,26 +230,26 @@ pub unsafe extern "C" fn gos_rt_chan_try_recv(c: *mut GosChan, out: *mut u8) -> 
 /// boxes the status + value into a `*mut GosResult` (disc=0 → Some,
 /// disc=1 → None) so callers don't need to manage an out-pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_chan_recv_option(c: *mut GosChan) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_chan_recv_option(c: *mut GosChan) -> i128 {
+    ffi_entry!(0i128, {
         let mut out = 0i64;
         let status = unsafe { gos_rt_chan_recv(c, std::ptr::addr_of_mut!(out).cast::<u8>()) };
         let disc = 1 - i64::from(status);
         let payload = if status == 1 { out } else { 0 };
-        Box::into_raw(Box::new(GosResult { disc, payload }))
+        crate::c_abi::vec::pack_result(disc, payload)
     })
 }
 
 /// Single-argument wrapper for LLVM: like `gos_rt_chan_recv_option`
 /// but non-blocking (returns None immediately when the buffer is empty).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_chan_try_recv_option(c: *mut GosChan) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_chan_try_recv_option(c: *mut GosChan) -> i128 {
+    ffi_entry!(0i128, {
         let mut out = 0i64;
         let status = unsafe { gos_rt_chan_try_recv(c, std::ptr::addr_of_mut!(out).cast::<u8>()) };
         let disc = 1 - i64::from(status);
         let payload = if status == 1 { out } else { 0 };
-        Box::into_raw(Box::new(GosResult { disc, payload }))
+        crate::c_abi::vec::pack_result(disc, payload)
     })
 }
 
@@ -339,8 +337,8 @@ fn ctx_is_cancelled_hook() -> Option<CtxIsCancelledFn> {
 pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
     c: *mut GosChan,
     ctx_handle: *const u8,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         if ctx_handle.is_null() {
             return unsafe { gos_rt_chan_recv_option(c) };
         }
@@ -354,16 +352,10 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
         // Check before parking: an already-cancelled context
         // short-circuits without touching the channel.
         if unsafe { is_cancelled(ctx_handle) } != 0 {
-            return Box::into_raw(Box::new(GosResult {
-                disc: 1,
-                payload: 0,
-            }));
+            return crate::c_abi::vec::pack_result(1, 0);
         }
         if c.is_null() {
-            return Box::into_raw(Box::new(GosResult {
-                disc: 1,
-                payload: 0,
-            }));
+            return crate::c_abi::vec::pack_result(1, 0);
         }
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
@@ -417,10 +409,7 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
         if let Some(g) = gid {
             unsafe { deregister(ctx_handle, g.as_u32()) };
         }
-        Box::into_raw(Box::new(GosResult {
-            disc: result_disc,
-            payload: result_payload,
-        }))
+        crate::c_abi::vec::pack_result(result_disc, result_payload)
     })
 }
 

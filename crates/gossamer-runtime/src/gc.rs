@@ -493,13 +493,13 @@ pub extern "C" fn gos_rt_gc_phase() -> i32 {
 /// returns in a handful of instructions.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_gc_safepoint() {
-    // Concurrent handle-based GC step (no-op under stw mode).
+    // Concurrent handle-based GC step (no-op under stw mode). The
+    // raw-pointer tracing collector this also drove has been removed
+    // (recursive enums are reference counted; aggregates are freed by
+    // the MIR drop pass) — see `c_abi::gc`.
     if !gc_mode_is_stw() {
         drive_incremental();
     }
-    // Raw-pointer tracing GC threshold check (runs STW mark+sweep
-    // over the aggregate registry when the byte threshold trips).
-    crate::c_abi::gos_rt_gc_raw_safepoint();
 }
 
 #[cfg(test)]

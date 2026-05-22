@@ -133,9 +133,10 @@ pub fn compile_fn(
     wrappers: &InlinableWrappers,
     consts: &ConstValues,
 ) -> RuntimeResult<FnChunk> {
+    let name = crate::value::intern_type_name(&decl.name.name);
     let Some(body) = decl.body.as_ref() else {
         return Ok(FnChunk {
-            name: decl.name.name.clone(),
+            name,
             arity: u16::try_from(decl.params.len()).unwrap_or(u16::MAX),
             register_count: 0,
             float_count: 0,
@@ -154,7 +155,7 @@ pub fn compile_fn(
             field_cache_count: 0,
         });
     };
-    let mut builder = FnBuilder::new(decl.name.name.clone(), tcx, layouts, wrappers, consts);
+    let mut builder = FnBuilder::new(name, tcx, layouts, wrappers, consts);
     for param in &decl.params {
         let reg = builder.alloc_reg();
         builder.bind_param(&param.pattern, reg);
@@ -200,7 +201,7 @@ pub(crate) enum BlockResult {
 }
 
 pub(crate) struct FnBuilder<'tcx> {
-    pub(crate) name: String,
+    pub(crate) name: &'static str,
     pub(crate) tcx: &'tcx TyCtxt,
     pub(crate) layouts: &'tcx StructLayouts,
     pub(crate) wrappers: &'tcx InlinableWrappers,
@@ -361,6 +362,54 @@ fn literal_const(lit: &HirLiteral) -> (ConstKey, Value) {
                 Value::Array(std::sync::Arc::new(parts)),
             )
         }
+    }
+}
+
+/// `true` when `compile_match` can lower `pat` to a native
+/// test-and-branch sequence. The only shape it can't express
+/// losslessly is an or-pattern that introduces bindings (each
+/// alternative would have to extract into a shared register set);
+/// those route the whole `match` back through the walker.
+fn pattern_native_ok(pat: &HirPat) -> bool {
+    match &pat.kind {
+        HirPatKind::Wildcard
+        | HirPatKind::Rest
+        | HirPatKind::Binding { .. }
+        | HirPatKind::Literal(_)
+        | HirPatKind::Range { .. } => true,
+        HirPatKind::Tuple(ps) | HirPatKind::Variant { fields: ps, .. } => {
+            ps.iter().all(pattern_native_ok)
+        }
+        HirPatKind::Struct { fields, .. } => fields
+            .iter()
+            .all(|f| f.pattern.as_ref().is_none_or(pattern_native_ok)),
+        HirPatKind::Ref { inner, .. } => pattern_native_ok(inner),
+        HirPatKind::At { sub, .. } => pattern_native_ok(sub),
+        HirPatKind::Or(alts) => alts
+            .iter()
+            .all(|a| pattern_native_ok(a) && !pattern_has_binding(a)),
+    }
+}
+
+/// `true` when `pat` introduces any name binding (a plain binding,
+/// an `@`-binding, or a struct-field shorthand). Used to reject
+/// or-patterns whose alternatives bind — those need a shared
+/// destination register the native chain doesn't allocate.
+fn pattern_has_binding(pat: &HirPat) -> bool {
+    match &pat.kind {
+        HirPatKind::Wildcard
+        | HirPatKind::Rest
+        | HirPatKind::Literal(_)
+        | HirPatKind::Range { .. } => false,
+        HirPatKind::Binding { .. } | HirPatKind::At { .. } => true,
+        HirPatKind::Tuple(ps) | HirPatKind::Variant { fields: ps, .. } => {
+            ps.iter().any(pattern_has_binding)
+        }
+        HirPatKind::Struct { fields, .. } => fields
+            .iter()
+            .any(|f| f.pattern.as_ref().is_none_or(pattern_has_binding)),
+        HirPatKind::Ref { inner, .. } => pattern_has_binding(inner),
+        HirPatKind::Or(alts) => alts.iter().any(pattern_has_binding),
     }
 }
 

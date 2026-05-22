@@ -2338,6 +2338,7 @@ fn classify(value: &Value) -> &'static str {
         Value::Map(_) => "map",
         Value::IntMap(_) => "map",
         Value::Uint(_) => "uint",
+        Value::Weak(_) => "weak",
         Value::Void => "void",
     }
 }

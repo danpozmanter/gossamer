@@ -41,10 +41,6 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // Intentionally never called from generated code: a debug-only
     // helper used by manual `gdb`/`lldb` sessions.
     "gos_rt_result_dbg",
-    // Precise-tracing variant of `gos_rt_gc_alloc`. Reachable from
-    // Rust callers and exercised by runtime tests; native codegen
-    // currently emits the conservative `gos_rt_gc_alloc` form.
-    "gos_rt_gc_alloc_traced",
     // Setup function called directly from Rust (gossamer-interp's
     // `set_runtime_program_name`), not from generated Gossamer code.
     "gos_rt_set_program_name",
@@ -64,15 +60,6 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // Tracked in `~/dev/contexts/gos/latest.md`.
     "gos_rt_chan_recv_ctx_option",
     "gos_rt_install_ctx_hooks",
-    // Tracing-GC debug walker. Called from tests and from
-    // `gos_rt_gc_collect` under `cfg(debug_assertions)`. Production
-    // codegen does not emit calls — its only callers are Rust.
-    "gos_rt_gc_assert_consistent",
-    // Future-concurrent-collector write barrier. Exported so the
-    // codegen can switch heap-pointer stores to route through it
-    // when `GOSSAMER_WRITE_BARRIER=1` is set; production codegen
-    // does not currently emit calls.
-    "gos_rt_write_barrier_ptr",
     // Extended exec surface (kill_group / pipeline_run / signal /
     // wait_timeout). Reachable from Rust callers (`std::os::exec`
     // builder); the user-facing language dispatch has not been

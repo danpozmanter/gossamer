@@ -281,6 +281,9 @@ pub unsafe fn write_stdout(bytes: &[u8]) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_flush_stdout() {
     ffi_entry!((), {
+        if std::env::var_os("GOS_RC_DEBUG").is_some() {
+            eprintln!("RC_LIVE_AT_EXIT={}", crate::c_abi::rc::rc_live_count());
+        }
         let _guard = StdoutGuard::acquire();
         let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
         let len_ptr = GOS_RT_STDOUT_LEN.0.get();

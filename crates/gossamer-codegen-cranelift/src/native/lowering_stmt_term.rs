@@ -387,37 +387,16 @@ pub(super) fn lower_terminator(
             builder.ins().jump(block, &[]);
         }
         Terminator::Return => {
-            // Pop the call-stack frame pushed in the function prologue
-            // so panic dumps and SIGQUIT renders walk the right stack.
-            // Cheap (one FFI call); matches the matching `stack_push`
-            // emitted by `lowering_body::lower_body`.
-            {
-                let pop_id = intrinsics.extern_fn_by_name(module, "gos_rt_stack_pop")?;
-                let pop_ref = module.declare_func_in_func(pop_id, builder.func);
-                builder.ins().call(pop_ref, &[]);
-            }
-            // Legacy GcRef-handle shadow stack close (no-op when
-            // nothing was pushed, which is the production path).
-            {
-                let restore_id =
-                    intrinsics.extern_fn_by_name(module, "gos_rt_gc_shadow_restore")?;
-                let restore_ref = module.declare_func_in_func(restore_id, builder.func);
-                let frame = builder.use_var(shadow_frame_var);
-                builder.ins().call(restore_ref, &[frame]);
-            }
-            // Raw-pointer tracing-GC shadow stack close: truncate
-            // back to the depth captured at function entry so every
-            // aggregate root pushed inside this body is removed.
-            // Skipped when the prologue was elided (body can't
-            // allocate, so no roots were pushed); the call would be
-            // a no-op but its FFI overhead dominates leaf-math
-            // functions.
-            if gossamer_mir::body_might_allocate(body) {
-                let restore_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_root_restore")?;
-                let restore_ref = module.declare_func_in_func(restore_id, builder.func);
-                let frame = builder.use_var(raw_shadow_frame_var);
-                builder.ins().call(restore_ref, &[frame]);
-            }
+            // No call-stack pop: the compiled tier no longer maintains
+            // a per-call shadow stack (see the matching note in
+            // `lowering_body::lower_body`). Backtraces come from real
+            // stack unwinding on panic / SIGQUIT.
+            // The tracing-GC shadow stacks (legacy GcRef-handle and
+            // raw-pointer) are retired in favour of reference counting,
+            // so there is nothing to restore at return. The prologue no
+            // longer pushes/saves, and emitting these FFI calls on every
+            // return is dead work that dominates deep-recursion cost.
+            let _ = (shadow_frame_var, raw_shadow_frame_var);
             // Emit cleanup calls for every owning heap-typed local
             // identified by `gossamer_mir::plan_cleanup`. Each entry
             // is a `(local, free_fn)` pair where the local was

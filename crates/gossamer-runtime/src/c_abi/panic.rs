@@ -41,7 +41,14 @@ pub unsafe extern "C" fn gos_rt_panic(msg: *const c_char) {
     // round-trip. Empty when no frame info has been published
     // (e.g. a fall-back tier without stack-push hooks).
     let trace = crate::sigquit::render_active_panic_trace();
-    if !trace.is_empty() {
+    if trace.is_empty() {
+        // Compiled tier keeps no per-call shadow stack — recover the
+        // call chain by unwinding the real machine stack.
+        let native = crate::sigquit::render_native_panic_trace();
+        if !native.is_empty() {
+            eprint!("{native}");
+        }
+    } else {
         eprint!("{trace}");
     }
     // per-goroutine panic isolation. If the

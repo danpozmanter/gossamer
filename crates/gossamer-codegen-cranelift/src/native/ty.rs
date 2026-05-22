@@ -140,6 +140,7 @@ pub(super) fn abi_type_to_cranelift(ty: gossamer_abi::AbiType) -> Option<ir::Typ
         gossamer_abi::AbiType::I8 => Some(types::I8),
         gossamer_abi::AbiType::I32 => Some(types::I32),
         gossamer_abi::AbiType::I64 | gossamer_abi::AbiType::U64 => Some(types::I64),
+        gossamer_abi::AbiType::I128 => Some(types::I128),
         gossamer_abi::AbiType::F64 => Some(types::F64),
         gossamer_abi::AbiType::Ptr => Some(types::I64),
     }

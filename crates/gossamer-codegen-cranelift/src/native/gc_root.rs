@@ -137,15 +137,15 @@ use super::*;
 use super::*;
 
 pub(super) fn emit_root_push(
-    module: &mut dyn Module,
-    builder: &mut FunctionBuilder<'_>,
-    intrinsics: &mut IntrinsicContext,
-    ptr: ir::Value,
+    _module: &mut dyn Module,
+    _builder: &mut FunctionBuilder<'_>,
+    _intrinsics: &mut IntrinsicContext,
+    _ptr: ir::Value,
 ) -> Result<()> {
-    let ptr_ty = module.target_config().pointer_type();
-    let push_id = intrinsics.extern_fn(module, "gos_rt_gc_root_push", &[ptr_ty], &[])?;
-    let push_ref = module.declare_func_in_func(push_id, builder.func);
-    let coerced = coerce_arg_to(builder, ptr, ptr_ty).unwrap_or(ptr);
-    builder.ins().call(push_ref, &[coerced]);
+    // No-op: the raw-pointer tracing GC's shadow stack is retired in
+    // favour of intrusive reference counting (see `gossamer-runtime`
+    // `c_abi::rc`). Emitting a `gos_rt_gc_root_push` per aggregate on
+    // every call is dead work that blocks optimisation and dominates
+    // deep-recursion / hot-leaf cost.
     Ok(())
 }

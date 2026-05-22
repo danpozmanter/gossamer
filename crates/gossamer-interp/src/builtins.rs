@@ -194,6 +194,39 @@ pub(crate) fn cached() -> &'static [(&'static str, Value)] {
     })
 }
 
+/// Every globally-registered builtin name (bare and qualified). The
+/// resolver ships a checked-in table of the qualified stdlib paths so
+/// `gos check` / the LSP can reject `module::nonexistent` calls before
+/// runtime; a drift test compares that table against this list so it
+/// never falls behind the runtime registry. Returns `&'static str`
+/// since every key is a string literal or interned name.
+#[must_use]
+pub fn registered_names() -> Vec<&'static str> {
+    cached().iter().map(|(name, _)| *name).collect()
+}
+
+/// Process-shared prelude `HashMap` of all built-in callables. Every
+/// [`Vm`](crate::vm::Vm) `Arc::clone`s this map and consults it on
+/// lookup miss against its own per-Vm overlay; no Vm copies the
+/// prelude into its own storage. Late-registered binding natives
+/// stay out of the prelude — they can land after Vm construction
+/// and ride the per-Vm overlay instead.
+pub(crate) fn prelude_globals()
+-> std::sync::Arc<rustc_hash::FxHashMap<&'static str, crate::vm::Global>> {
+    use std::sync::OnceLock;
+    static PRELUDE: OnceLock<
+        std::sync::Arc<rustc_hash::FxHashMap<&'static str, crate::vm::Global>>,
+    > = OnceLock::new();
+    std::sync::Arc::clone(PRELUDE.get_or_init(|| {
+        let mut map = rustc_hash::FxHashMap::default();
+        for (name, value) in cached() {
+            map.insert(*name, crate::vm::Global::Value(value.clone()));
+        }
+        map.shrink_to_fit();
+        std::sync::Arc::new(map)
+    }))
+}
+
 fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("println", builtin("println", builtin_println)));
     globals.push(("print", builtin("print", builtin_print)));
@@ -515,6 +548,15 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    install_module(
+        "runtime",
+        &[
+            ("collect_cycles", builtin_runtime_collect_cycles),
+            ("region_push", builtin_runtime_region_noop),
+            ("region_pop", builtin_runtime_region_noop),
+        ],
+        globals,
+    );
     // Bare `exec::*` is a back-compat alias for `process::*` /
     // `os::exec::*`. New code should prefer `process::*`.
     install_module(
@@ -745,6 +787,22 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    // Re-register the bare `keys` / `values` entries as receiver-
+    // dispatching routers so `install_module("json", …)`'s
+    // unconditional bare-name push (above) doesn't shadow the
+    // HashMap surface. `HashMap::keys` and `json::keys` qualified
+    // entries stay pointed at their dedicated builtins; only the
+    // bare-name resolver dispatches by receiver shape.
+    globals.push(("keys", builtin("keys", builtin_keys_router)));
+    globals.push(("values", builtin("values", builtin_values_router)));
+    // Same shape collision for bare `get`: `install_module("json", …)`
+    // registers `("get", builtin_json_get)` which would otherwise
+    // shadow `HashMap`'s `("get", builtin_map_get)` in the bare-name
+    // resolver. `builtin_json_get` returns `None` for a `Value::Map`
+    // receiver, so `match m.get(&k) { Some(v) => … }` always took the
+    // `None` arm once the scrutinee was evaluated natively. Route by
+    // receiver shape so both surfaces resolve correctly.
+    globals.push(("get", builtin("get", builtin_get_router)));
     // `json::Value::*` enum constructors used by user code that
     // builds a payload before serialising.
     globals.push((
@@ -1116,6 +1174,13 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Box::new", builtin("Box::new", builtin_clone)));
     globals.push(("Arc::new", builtin("Arc::new", builtin_clone)));
     globals.push(("Rc::new", builtin("Rc::new", builtin_clone)));
+    // `x.downgrade()` / `w.upgrade()` — weak references. `downgrade`
+    // records a `std::sync::Weak` to the receiver's `Arc` (mirroring the
+    // compiled tier's `gos_rt_rc_downgrade`); `upgrade` yields
+    // `Some(value)` while a strong reference survives and `None` once the
+    // last one is dropped (mirroring `gos_rt_rc_weak_upgrade_opt`).
+    globals.push(("downgrade", builtin("downgrade", builtin_downgrade)));
+    globals.push(("upgrade", builtin("upgrade", builtin_upgrade)));
     // String surface that the MIR method-dispatch table already
     // wires for compiled mode. Keep the interpreter's coverage
     // in lockstep so `gos run` and `gos build` agree.
@@ -1147,6 +1212,14 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "String::substring",
         builtin("String::substring", builtin_str_substring),
     ));
+    // `String::byte_at(s, i) -> i64`. Qualified key dominates any
+    // user free fn named `byte_at` during method dispatch; bare key
+    // lets `byte_at(s, i)` resolve too.
+    globals.push((
+        "String::byte_at",
+        builtin("String::byte_at", builtin_str_byte_at),
+    ));
+    globals.push(("byte_at", builtin("byte_at", builtin_str_byte_at)));
     // `String::slice(s, a, b) -> Result<String, errors::Error>` —
     // the non-panicking byte-range slice. Inverted or out-of-range
     // bounds return Err, not a truncated string. Registered under
@@ -1155,6 +1228,37 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("String::slice", builtin("String::slice", builtin_str_slice)));
     globals.push(("Vec::slice", builtin("Vec::slice", builtin_vec_slice)));
     globals.push(("slice", builtin("slice", builtin_str_or_vec_slice)));
+    // 0.7.0 Vec read helpers — the compiled tier exposes these as
+    // methods on any Vec; keep the interpreter in lockstep.
+    globals.push(("first", builtin("first", builtin_first)));
+    globals.push(("last", builtin("last", builtin_last)));
+    globals.push(("reversed", builtin("reversed", builtin_reversed)));
+    globals.push(("index_of", builtin("index_of", builtin_index_of)));
+    globals.push(("count_of", builtin("count_of", builtin_count_of)));
+    // 0.7.0 Result-returning Vec free-fn forms + HashMap::pop, matching
+    // the compiled `gos_rt_vec_insert_safe` / `_remove_safe` /
+    // `gos_rt_map_pop_*` surface.
+    globals.push((
+        "Vec::insert",
+        builtin("Vec::insert", builtin_vec_insert_safe),
+    ));
+    globals.push((
+        "Vec::remove",
+        builtin("Vec::remove", builtin_vec_remove_safe),
+    ));
+    globals.push((
+        "collections::Vec::insert",
+        builtin("collections::Vec::insert", builtin_vec_insert_safe),
+    ));
+    globals.push((
+        "collections::Vec::remove",
+        builtin("collections::Vec::remove", builtin_vec_remove_safe),
+    ));
+    globals.push(("HashMap::pop", builtin("HashMap::pop", builtin_map_pop)));
+    globals.push((
+        "collections::HashMap::pop",
+        builtin("collections::HashMap::pop", builtin_map_pop),
+    ));
     // `String::to_lower` / `String::to_upper` — short Rust/Go-style
     // names for the existing to_lowercase / to_uppercase shims.
     // Registered as qualified keys so `s.to_lower()` on a `String`
@@ -2978,6 +3082,23 @@ fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
+/// `runtime::collect_cycles()`. The interpreter models heap values with
+/// `Arc`, so reclamation timing is not observable in program output; this is
+/// a no-op that keeps the call available across all tiers (the compiled
+/// tiers run the real trial-deletion collector).
+fn builtin_runtime_collect_cycles(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Unit)
+}
+
+/// `runtime::region_push()` / `runtime::region_pop()`. Arena regions are a
+/// compiled-tier allocation optimization (bump-allocate, free wholesale).
+/// The interpreter models heap values with `Arc` and reclaims them by
+/// refcount, so a region is a semantic no-op here — the block runs
+/// identically and produces the same output, preserving tier parity.
+fn builtin_runtime_region_noop(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Unit)
+}
+
 /// `time::format_rfc3339(unix_ms: i64) -> Result<String, String>`.
 /// RFC 3339 rendering for the given wall-clock instant.
 fn builtin_time_format_rfc3339(args: &[Value]) -> RuntimeResult<Value> {
@@ -4082,7 +4203,7 @@ fn json_value_to_gossamer(value: &json_std::Value) -> Value {
 
 fn gossamer_to_json_value(value: &Value) -> json_std::Value {
     match value {
-        Value::Unit | Value::Void => json_std::Value::Null,
+        Value::Unit | Value::Void | Value::Weak(_) => json_std::Value::Null,
         Value::Bool(b) => json_std::Value::Bool(*b),
         Value::Int(n) => json_std::Value::Number(*n as f64),
         Value::Float(f) => json_std::Value::Number(*f),
@@ -4239,14 +4360,159 @@ fn builtin_to_lowercase(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(s.to_lowercase())))
 }
 
-fn builtin_contains(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::String(s)) = args.first() else {
-        return Ok(Value::Bool(false));
+pub(crate) fn builtin_contains(args: &[Value]) -> RuntimeResult<Value> {
+    // String::contains(substr) when both args are strings; otherwise
+    // Vec::contains(&v) — element membership by value equality. The
+    // compiled tier exposes both shapes under the same `contains`
+    // method, so the interp must too.
+    if let (Some(Value::String(s)), Some(Value::String(needle))) = (args.first(), args.get(1)) {
+        return Ok(Value::Bool(s.contains(needle.as_str())));
+    }
+    if let (Some(recv), Some(needle)) = (args.first(), args.get(1)) {
+        if let Some(items) = array_as_values(recv) {
+            return Ok(Value::Bool(
+                items.iter().any(|e| values_equal_for_assertion(e, needle)),
+            ));
+        }
+    }
+    Ok(Value::Bool(false))
+}
+
+/// Normalises any array-shaped `Value` (boxed `Array`, flat `IntArray`
+/// / `FloatVec`, or all-f64 `FloatArray`) into a `Vec<Value>` for the
+/// read-only collection helpers below.
+fn array_as_values(recv: &Value) -> Option<Vec<Value>> {
+    match recv {
+        Value::Array(items) => Some(items.as_ref().clone()),
+        Value::IntArray(items) => Some(items.iter().map(|n| Value::Int(*n)).collect()),
+        Value::FloatVec(items) => Some(items.iter().map(|x| Value::Float(*x)).collect()),
+        rx @ Value::FloatArray(_) => match rx.float_array_to_value_array() {
+            Value::Array(items) => Some(items.as_ref().clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn builtin_first(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first().and_then(array_as_values) {
+        Some(items) if !items.is_empty() => {
+            Ok(Value::variant("Some", Arc::new(vec![items[0].clone()])))
+        }
+        _ => Ok(Value::variant("None", Arc::new(vec![]))),
+    }
+}
+
+fn builtin_last(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first().and_then(array_as_values) {
+        Some(items) if !items.is_empty() => Ok(Value::variant(
+            "Some",
+            Arc::new(vec![items[items.len() - 1].clone()]),
+        )),
+        _ => Ok(Value::variant("None", Arc::new(vec![]))),
+    }
+}
+
+fn builtin_reversed(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first().and_then(array_as_values) {
+        Some(mut items) => {
+            items.reverse();
+            Ok(Value::Array(Arc::new(items)))
+        }
+        None => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    }
+}
+
+fn builtin_index_of(args: &[Value]) -> RuntimeResult<Value> {
+    let (Some(recv), Some(needle)) = (args.first(), args.get(1)) else {
+        return Ok(Value::variant("None", Arc::new(vec![])));
     };
-    let Some(Value::String(needle)) = args.get(1) else {
-        return Ok(Value::Bool(false));
+    if let Some(items) = array_as_values(recv) {
+        if let Some(idx) = items
+            .iter()
+            .position(|e| values_equal_for_assertion(e, needle))
+        {
+            return Ok(Value::variant(
+                "Some",
+                Arc::new(vec![Value::Int(idx as i64)]),
+            ));
+        }
+    }
+    Ok(Value::variant("None", Arc::new(vec![])))
+}
+
+fn builtin_count_of(args: &[Value]) -> RuntimeResult<Value> {
+    let (Some(recv), Some(needle)) = (args.first(), args.get(1)) else {
+        return Ok(Value::Int(0));
     };
-    Ok(Value::Bool(s.contains(needle.as_str())))
+    if let Some(items) = array_as_values(recv) {
+        let n = items
+            .iter()
+            .filter(|e| values_equal_for_assertion(e, needle))
+            .count();
+        return Ok(Value::Int(n as i64));
+    }
+    Ok(Value::Int(0))
+}
+
+/// `Vec::insert(xs, idx, v) -> Result<[T], errors::Error>` — the
+/// non-mutating, bounds-checked insert. Mirrors the compiled
+/// `gos_rt_vec_insert_safe` message + policy.
+fn builtin_vec_insert_safe(args: &[Value]) -> RuntimeResult<Value> {
+    let idx = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let Some(mut items) = args.first().and_then(array_as_values) else {
+        return Ok(slice_err("insert expects a Vec receiver".to_string()));
+    };
+    let len = items.len() as i64;
+    if idx < 0 || idx > len {
+        return Ok(slice_err(format!(
+            "insert: index {idx} out of bounds for length {len}"
+        )));
+    }
+    items.insert(idx as usize, args.get(2).cloned().unwrap_or(Value::Unit));
+    Ok(ok_variant(Value::Array(Arc::new(items))))
+}
+
+/// `Vec::remove(xs, idx) -> Result<T, errors::Error>` — bounds-checked
+/// remove returning the removed element. Mirrors the compiled
+/// `gos_rt_vec_remove_safe`.
+fn builtin_vec_remove_safe(args: &[Value]) -> RuntimeResult<Value> {
+    let idx = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let Some(mut items) = args.first().and_then(array_as_values) else {
+        return Ok(slice_err("remove expects a Vec receiver".to_string()));
+    };
+    let len = items.len() as i64;
+    if idx < 0 || idx >= len {
+        return Ok(slice_err(format!(
+            "remove: index {idx} out of bounds for length {len}"
+        )));
+    }
+    Ok(ok_variant(items.remove(idx as usize)))
+}
+
+/// `HashMap::pop(m, k) -> Option<V>` — remove and return the previous
+/// value Python-style.
+fn builtin_map_pop(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(key_val) = args.get(1) else {
+        return Ok(none_variant());
+    };
+    match args.first() {
+        Some(Value::Map(m)) => {
+            let key = MapKey::from_value(key_val);
+            match m.lock().remove(&key) {
+                Some(v) => Ok(some_variant(v)),
+                None => Ok(none_variant()),
+            }
+        }
+        Some(Value::IntMap(m)) => {
+            let key = value_to_int(key_val).unwrap_or(0);
+            match m.lock().remove(&key) {
+                Some(v) => Ok(some_variant(Value::Int(v))),
+                None => Ok(none_variant()),
+            }
+        }
+        _ => Ok(none_variant()),
+    }
 }
 
 fn builtin_starts_with(args: &[Value]) -> RuntimeResult<Value> {
@@ -4278,19 +4544,22 @@ fn builtin_str_slice(args: &[Value]) -> RuntimeResult<Value> {
             "String::slice expects a String receiver".to_string(),
         ));
     };
-    let (lo, hi) = match slice_bounds(args, "String::slice") {
-        Ok(b) => b,
-        Err(e) => return Ok(e),
-    };
+    let start = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let end = args.get(2).and_then(value_to_int).unwrap_or(0);
     let bytes = s.as_str().as_bytes();
-    if hi > bytes.len() {
-        return Ok(slice_err("String::slice end exceeds length".to_string()));
+    let len = bytes.len() as i64;
+    // Match the compiled `gos_rt_str_slice` bounds policy + message
+    // verbatim so `gos run` and `gos build` agree byte-for-byte.
+    if start < 0 || end < 0 || start > end || end > len {
+        return Ok(slice_err(format!(
+            "slice: range [{start}, {end}) out of bounds for length {len}"
+        )));
     }
-    match std::str::from_utf8(&bytes[lo..hi]) {
+    match std::str::from_utf8(&bytes[start as usize..end as usize]) {
         Ok(piece) => Ok(ok_variant(Value::String(SmolStr::from(piece)))),
-        Err(_) => Ok(slice_err(
-            "String::slice range crosses a UTF-8 boundary".to_string(),
-        )),
+        Err(_) => Ok(slice_err(format!(
+            "slice: range [{start}, {end}) does not fall on UTF-8 boundaries"
+        ))),
     }
 }
 
@@ -4298,10 +4567,10 @@ fn builtin_str_slice(args: &[Value]) -> RuntimeResult<Value> {
 /// receiver type isn't yet known. Routes by receiver kind to the
 /// String or Vec slice helper. Accepts every flat-storage Vec
 /// variant the interp uses (`Array`, `IntArray`, `FloatArray`).
-fn builtin_str_or_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
+pub(crate) fn builtin_str_or_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::String(_)) => builtin_str_slice(args),
-        Some(Value::Array(_) | Value::IntArray(_) | Value::FloatArray(_)) => {
+        Some(Value::Array(_) | Value::IntArray(_) | Value::FloatArray(_) | Value::FloatVec(_)) => {
             builtin_vec_slice(args)
         }
         _ => Ok(slice_err(
@@ -4342,30 +4611,38 @@ fn slice_bounds(args: &[Value], label: &str) -> Result<(usize, usize), Value> {
 /// non-panicking element-range slice; same bounds policy as
 /// [`builtin_str_slice`]. Handles each flat-storage Vec variant.
 fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
-    let (lo, hi) = match slice_bounds(args, "Vec::slice") {
-        Ok(b) => b,
-        Err(e) => return Ok(e),
+    let start = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let end = args.get(2).and_then(value_to_int).unwrap_or(0);
+    // Length of the receiver, for the bounds message.
+    let len = match args.first() {
+        Some(Value::Array(arr)) => arr.len() as i64,
+        Some(Value::IntArray(arr)) => arr.len() as i64,
+        Some(Value::FloatVec(arr)) => arr.len() as i64,
+        Some(rx @ Value::FloatArray(_)) => match rx.float_array_to_value_array() {
+            Value::Array(v) => v.len() as i64,
+            _ => 0,
+        },
+        _ => return Ok(slice_err("Vec::slice expects a Vec receiver".to_string())),
     };
+    // Mirror the compiled `gos_rt_vec_slice` bounds policy + message.
+    if start < 0 || end < 0 || start > end || end > len {
+        return Ok(slice_err(format!(
+            "slice: range [{start}, {end}) out of bounds for length {len}"
+        )));
+    }
+    let (lo, hi) = (start as usize, end as usize);
     match args.first() {
-        Some(Value::Array(arr)) => {
-            if hi > arr.len() {
-                return Ok(slice_err("Vec::slice end exceeds length".to_string()));
-            }
-            Ok(ok_variant(Value::Array(Arc::new(arr[lo..hi].to_vec()))))
-        }
+        Some(Value::Array(arr)) => Ok(ok_variant(Value::Array(Arc::new(arr[lo..hi].to_vec())))),
         Some(Value::IntArray(arr)) => {
-            if hi > arr.len() {
-                return Ok(slice_err("Vec::slice end exceeds length".to_string()));
-            }
             Ok(ok_variant(Value::IntArray(Arc::new(arr[lo..hi].to_vec()))))
+        }
+        Some(Value::FloatVec(arr)) => {
+            Ok(ok_variant(Value::FloatVec(Arc::new(arr[lo..hi].to_vec()))))
         }
         Some(rx @ Value::FloatArray(_)) => {
             let Value::Array(view) = rx.float_array_to_value_array() else {
                 return Ok(slice_err("Vec::slice cannot view FloatArray".to_string()));
             };
-            if hi > view.len() {
-                return Ok(slice_err("Vec::slice end exceeds length".to_string()));
-            }
             Ok(ok_variant(Value::Array(Arc::new(view[lo..hi].to_vec()))))
         }
         _ => Ok(slice_err("Vec::slice expects a Vec receiver".to_string())),
@@ -4393,6 +4670,26 @@ fn builtin_str_substring(args: &[Value]) -> RuntimeResult<Value> {
         str::to_string,
     );
     Ok(Value::String(SmolStr::from(out)))
+}
+
+/// `String::byte_at(s, i) -> i64` — the UTF-8 byte at index `i`, or 0
+/// when `i` is negative or at/past the end. Mirrors the compiled-tier
+/// `gos_rt_str_byte_at` (which reads the null terminator as 0).
+fn builtin_str_byte_at(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::String(s)) = args.first() else {
+        return Ok(Value::Int(0));
+    };
+    let i = match args.get(1) {
+        Some(Value::Int(n)) => *n,
+        _ => return Ok(Value::Int(0)),
+    };
+    let bytes = s.as_str().as_bytes();
+    let byte = if i < 0 || (i as usize) >= bytes.len() {
+        0
+    } else {
+        bytes[i as usize]
+    };
+    Ok(Value::Int(i64::from(byte)))
 }
 
 fn builtin_str_replace(args: &[Value]) -> RuntimeResult<Value> {
@@ -4452,12 +4749,30 @@ fn builtin_push(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_pop(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Array(parts)) = args.first() else {
-        return Ok(Value::empty_array());
-    };
-    let mut owned = parts.as_ref().clone();
-    owned.pop();
-    Ok(Value::Array(Arc::new(owned)))
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            owned.pop();
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(data)) => {
+            // Typed-storage path: `let mut xs: [i64] = [..]` lands
+            // here as `Value::IntArray`. Without this arm, the
+            // generic-Array branch above missed the type and
+            // returned `Value::empty_array()`, which the bytecode
+            // VM's writeback then moved into `xs` — clobbering
+            // every element instead of shortening by one.
+            let mut owned = data.as_ref().clone();
+            owned.pop();
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            owned.pop();
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        _ => Ok(Value::empty_array()),
+    }
 }
 
 fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
@@ -4738,6 +5053,47 @@ fn builtin_map_keys(args: &[Value]) -> RuntimeResult<Value> {
         _ => {}
     }
     Ok(Value::Array(Arc::new(out)))
+}
+
+/// Bare-name `keys` router. The bytecode VM dispatches `m.keys()` /
+/// `obj.keys()` against the bare-name builtin (qualified keys like
+/// `json::keys` only fire when callers spell them out). Without this
+/// router, `install_module("json", …)` overrode the
+/// `install_module("HashMap", …)` registration of `"keys"` with
+/// `builtin_json_keys`, which returns `None` for `Map` / `IntMap`
+/// receivers and silently produced an empty `Vec` for every
+/// `HashMap.keys()` call. The router dispatches by receiver shape
+/// so both surfaces work without a registration-order foot-gun.
+fn builtin_keys_router(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first() {
+        Some(Value::Map(_) | Value::IntMap(_)) => builtin_map_keys(args),
+        Some(Value::Struct(_)) => builtin_json_keys(args),
+        _ => builtin_map_keys(args),
+    }
+}
+
+/// Receiver-dispatching router for bare `get()`. `HashMap` /
+/// `IntMap` receivers route to the map getter (Option-returning);
+/// struct / json receivers keep the json field getter. Prevents the
+/// `install_module("json", …)` bare-name push from shadowing the
+/// `HashMap` getter — the bug that made `match m.get(&k) { Some(v) =>
+/// … }` always take the `None` arm under native scrutinee
+/// evaluation.
+fn builtin_get_router(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first() {
+        Some(Value::Map(_) | Value::IntMap(_)) => builtin_map_get(args),
+        _ => builtin_json_get(args),
+    }
+}
+
+/// Companion router for bare `values()` — same shape collision as
+/// `keys()` above. Without this, future stdlib registrations could
+/// re-introduce the silent override.
+fn builtin_values_router(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first() {
+        Some(Value::Map(_) | Value::IntMap(_)) => builtin_map_values(args),
+        _ => builtin_map_values(args),
+    }
 }
 
 fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
@@ -5024,6 +5380,27 @@ fn builtin_swap(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_clone(args: &[Value]) -> RuntimeResult<Value> {
     Ok(args.first().cloned().unwrap_or(Value::Unit))
+}
+
+/// `x.downgrade()` — produce a non-owning [`Value::Weak`] observing the
+/// receiver's allocation.
+fn builtin_downgrade(args: &[Value]) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    Ok(Value::Weak(crate::value::WeakValue::downgrade(&receiver)))
+}
+
+/// `w.upgrade()` — `Some(value)` while the referent is alive, else `None`.
+fn builtin_upgrade(args: &[Value]) -> RuntimeResult<Value> {
+    let some = |v: Value| Value::variant("Some", Arc::new(vec![v]));
+    let none = Value::variant("None", Arc::new(vec![]));
+    match args.first() {
+        Some(Value::Weak(w)) => Ok(w.upgrade().map_or(none, some)),
+        // A non-weak receiver can reach here only through an untyped
+        // dispatch path; treat it as a live identity upgrade so the
+        // value round-trips rather than vanishing.
+        Some(other) => Ok(some(other.clone())),
+        None => Ok(none),
+    }
 }
 
 /// `it.next()` — returns `Some(first)` for non-empty

@@ -568,8 +568,25 @@ pub fn copy_propagate(body: &mut Body, tcx: &TyCtxt) {
         let mut bindings: HashMap<Local, Operand> = HashMap::new();
         for stmt in &mut block.stmts {
             if let StatementKind::Assign { place, rvalue } = &mut stmt.kind {
+                // Substitute reads first (covers `Use` and every other
+                // rvalue shape uniformly).
+                substitute_rvalue(rvalue, &bindings);
+                if !place.is_simple() {
+                    // A projected write (`*p`, `p.field`) does not
+                    // reassign the local's own value; leave bindings.
+                    continue;
+                }
+                // Any assignment to `place.local` invalidates its prior
+                // binding and any binding that referenced it — otherwise
+                // a stale value (e.g. a null-init constant) would be
+                // propagated past the reassignment into later uses.
+                bindings.remove(&place.local);
+                bindings.retain(|_, v| {
+                    !matches!(v, Operand::Copy(p) if p.local == place.local && p.projection.is_empty())
+                });
+                // Record a fresh copy/const binding only for `Use` of a
+                // simple, non-aggregate operand.
                 if let Rvalue::Use(operand) = rvalue {
-                    substitute_operand(operand, &bindings);
                     let dest_aggregate = aggregate_locals
                         .get(place.local.0 as usize)
                         .copied()
@@ -578,11 +595,9 @@ pub fn copy_propagate(body: &mut Body, tcx: &TyCtxt) {
                         Operand::Const(_) | Operand::FnRef { .. } => true,
                         Operand::Copy(p) => p.is_simple(),
                     };
-                    if place.is_simple() && !dest_aggregate && operand_is_simple {
+                    if !dest_aggregate && operand_is_simple {
                         bindings.insert(place.local, operand.clone());
                     }
-                } else {
-                    substitute_rvalue(rvalue, &bindings);
                 }
             }
         }
@@ -766,18 +781,39 @@ pub fn statement_count(body: &Body) -> usize {
 /// tests that want to inspect post-const-fold state.
 #[must_use]
 pub fn const_value_of(body: &Body, local: Local) -> Option<ConstValue> {
+    // A local is a known constant only if it is assigned EXACTLY ONCE,
+    // and that single assignment is `Use(Const)`. A local reassigned
+    // later (e.g. zeroed for null-safety then overwritten by a heap
+    // allocation) is not constant — propagating the first const value
+    // past the reassignment would miscompile every later use.
+    let mut found: Option<ConstValue> = None;
     for block in &body.blocks {
         for stmt in &block.stmts {
-            if let StatementKind::Assign {
-                place,
-                rvalue: Rvalue::Use(Operand::Const(value)),
-            } = &stmt.kind
-            {
-                if place.local == local && place.is_simple() {
-                    return Some(value.clone());
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if place.local != local || !place.is_simple() {
+                continue;
+            }
+            match rvalue {
+                Rvalue::Use(Operand::Const(value)) if found.is_none() => {
+                    found = Some(value.clone());
                 }
+                // A second assignment of any kind (including another
+                // const) disqualifies constant folding for this local.
+                _ => return None,
             }
         }
     }
-    None
+    // Terminator-position definitions (Call destinations) also reassign
+    // the local; if any exists, the local is not a fixed constant.
+    for block in &body.blocks {
+        if let Terminator::Call { destination, .. } = &block.terminator
+            && destination.local == local
+            && destination.is_simple()
+        {
+            return None;
+        }
+    }
+    found
 }

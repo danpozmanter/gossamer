@@ -927,6 +927,45 @@ pub enum Op {
         /// Source i64 register.
         src_i: Reg,
     },
+    /// `dst = (src is Value::Variant with name == consts[name_idx]
+    /// and field count == arity)`. Drives native `match` arm tests
+    /// on enum / tuple-struct patterns. The name is interned the
+    /// same way the runtime interns variant names, so the equality
+    /// check is a pointer compare in the steady state.
+    VariantIs {
+        /// Destination bool register.
+        dst: Reg,
+        /// Register holding the scrutinee value.
+        src: Reg,
+        /// `ConstIdx` of the expected variant name (a `Value::String`).
+        name_idx: ConstIdx,
+        /// Expected positional field count.
+        arity: u16,
+    },
+    /// `dst = src.fields[idx]` for a `Value::Variant`. Extracts a
+    /// positional payload field so a native `match` arm can bind
+    /// sub-patterns. Assumes the preceding `VariantIs` already
+    /// proved the shape; out-of-range / non-variant yields
+    /// `Value::Unit` rather than trapping (the test gates the
+    /// extract).
+    VariantField {
+        /// Destination value register.
+        dst: Reg,
+        /// Register holding the `Value::Variant`.
+        src: Reg,
+        /// Positional field index.
+        idx: u16,
+    },
+    /// `dst = (src is Value::Struct named consts[name_idx])`. Drives
+    /// native `match` arm tests on struct patterns.
+    StructIs {
+        /// Destination bool register.
+        dst: Reg,
+        /// Register holding the scrutinee value.
+        src: Reg,
+        /// `ConstIdx` of the expected struct name (a `Value::String`).
+        name_idx: ConstIdx,
+    },
 }
 
 /// Resolved builtin call pointer cached in [`CacheSlot::builtin_fn`].
@@ -1034,8 +1073,10 @@ pub enum WideOp {
 /// Compiled function — the unit of bytecode the VM can call.
 #[derive(Debug)]
 pub struct FnChunk {
-    /// Source-level name (useful in diagnostics).
-    pub name: String,
+    /// Source-level name (useful in diagnostics). Interned into the
+    /// process-global pool at construction so recursive call stacks
+    /// don't allocate a heap String per frame.
+    pub name: &'static str,
     /// Number of parameters the function takes.
     pub arity: u16,
     /// Total Value register file size reserved per call.

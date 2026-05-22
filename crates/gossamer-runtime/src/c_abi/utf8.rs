@@ -22,11 +22,10 @@
 //! - `char` arguments arrive as `u32`
 //! - `String` arguments arrive as `*const c_char`
 //!
-//! The tuple-returning `decode_rune` family is intentionally not
-//! re-exported here; those callers stay on the interp tier until
-//! the Adt-by-value ABI is wired through. Most production code
-//! reaches for `rune_count*` / `rune_len*` / `is_valid` /
-//! `full_rune_in_string`, all of which work.
+//! The tuple-returning `decode_rune` family returns `(char, i64)`
+//! via the by-value-aggregate ABI: a GC-allocated 2-slot heap
+//! buffer (codepoint, byte-length) the caller memcpys into its
+//! tuple alloca.
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -146,4 +145,148 @@ pub unsafe extern "C" fn gos_rt_utf8_full_rune_in_string(s: *const c_char) -> i6
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_utf8_rune_start(b: u32) -> i64 {
     ffi_entry!(0, { i64::from((b as u8) & 0xC0 != 0x80) })
+}
+
+// ---------------------------------------------------------------
+// utf8::decode_rune family + append_rune (0.10.0 cross-tier wiring)
+// ---------------------------------------------------------------
+// Mirrors gossamer_std::utf8 exactly. The decode_* helpers return a
+// `(char, i64)` tuple via the by-value-aggregate ABI (GC-allocated
+// 2-slot buffer: slot 0 = codepoint, slot 1 = byte length).
+
+const RUNE_ERROR: char = '\u{FFFD}';
+
+unsafe fn vec_bytes(v: *const super::vec::GosVec) -> Vec<u8> {
+    if v.is_null() {
+        return Vec::new();
+    }
+    let vref = unsafe { &*v };
+    if vref.ptr.is_null() || vref.len <= 0 {
+        return Vec::new();
+    }
+    let len = vref.len as usize;
+    if vref.elem_bytes == 1 {
+        return unsafe { std::slice::from_raw_parts(vref.ptr.as_ptr(), len) }.to_vec();
+    }
+    let words = unsafe { std::slice::from_raw_parts(vref.ptr.as_ptr().cast::<i64>(), len) };
+    words.iter().map(|&w| w as u8).collect()
+}
+
+fn rune_pair(ch: char, n: usize) -> *mut u8 {
+    let p = crate::c_abi::gos_rt_gc_alloc(16);
+    if !p.is_null() {
+        let slots = p.cast::<i64>();
+        unsafe {
+            *slots = i64::from(ch as u32);
+            *slots.add(1) = n as i64;
+        }
+    }
+    p
+}
+
+fn decode_rune_bytes(p: &[u8]) -> (char, usize) {
+    if p.is_empty() {
+        return (RUNE_ERROR, 0);
+    }
+    match std::str::from_utf8(p) {
+        Ok(s) => s
+            .chars()
+            .next()
+            .map_or((RUNE_ERROR, 1), |ch| (ch, ch.len_utf8())),
+        Err(e) => {
+            let valid = e.valid_up_to();
+            if valid == 0 {
+                (RUNE_ERROR, 1)
+            } else {
+                let ch = std::str::from_utf8(&p[..valid])
+                    .ok()
+                    .and_then(|s| s.chars().next())
+                    .unwrap_or(RUNE_ERROR);
+                (ch, ch.len_utf8())
+            }
+        }
+    }
+}
+
+/// `utf8::decode_rune(bytes) -> (char, i64)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_utf8_decode_rune(v: *const super::vec::GosVec) -> *mut u8 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let (ch, n) = decode_rune_bytes(&unsafe { vec_bytes(v) });
+        rune_pair(ch, n)
+    })
+}
+
+/// `utf8::decode_rune_in_string(s) -> (char, i64)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_utf8_decode_rune_in_string(s: *const c_char) -> *mut u8 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let (ch, n) = match unsafe { cstr_to_str(s) }.chars().next() {
+            Some(ch) => (ch, ch.len_utf8()),
+            None => (RUNE_ERROR, 0),
+        };
+        rune_pair(ch, n)
+    })
+}
+
+/// `utf8::decode_last_rune(bytes) -> (char, i64)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_utf8_decode_last_rune(v: *const super::vec::GosVec) -> *mut u8 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let p = unsafe { vec_bytes(v) };
+        if p.is_empty() {
+            return rune_pair(RUNE_ERROR, 0);
+        }
+        let mut i = p.len();
+        while i > 0 && i > p.len().saturating_sub(4) {
+            i -= 1;
+            if p[i] & 0xC0 != 0x80 {
+                break;
+            }
+        }
+        let (ch, size) = decode_rune_bytes(&p[i..]);
+        if i + size == p.len() {
+            rune_pair(ch, size)
+        } else {
+            rune_pair(RUNE_ERROR, 1)
+        }
+    })
+}
+
+/// `utf8::decode_last_rune_in_string(s) -> (char, i64)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_utf8_decode_last_rune_in_string(s: *const c_char) -> *mut u8 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let (ch, n) = match unsafe { cstr_to_str(s) }.chars().next_back() {
+            Some(ch) => (ch, ch.len_utf8()),
+            None => (RUNE_ERROR, 0),
+        };
+        rune_pair(ch, n)
+    })
+}
+
+/// `utf8::append_rune(buf, r) -> [u8]`. Appends the UTF-8 encoding
+/// of `r` to a copy of `buf` and returns the new byte vector.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_utf8_append_rune(
+    v: *const super::vec::GosVec,
+    r: u32,
+) -> *mut super::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut buf = unsafe { vec_bytes(v) };
+        let ch = char::from_u32(r).unwrap_or('\0');
+        let mut tmp = [0u8; 4];
+        let n = ch.encode_utf8(&mut tmp).len();
+        buf.extend_from_slice(&tmp[..n]);
+        let out = unsafe { super::vec::gos_rt_vec_with_capacity(8, buf.len() as i64) };
+        let vref = unsafe { &mut *out };
+        if !vref.ptr.is_null() {
+            let dst = vref.ptr.as_ptr().cast::<i64>();
+            for (idx, b) in buf.iter().enumerate() {
+                unsafe { *dst.add(idx) = i64::from(*b) };
+            }
+            vref.len = buf.len() as i64;
+        }
+        out
+    })
 }

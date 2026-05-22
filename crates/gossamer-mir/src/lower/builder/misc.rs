@@ -463,61 +463,109 @@ impl<'a> Builder<'a> {
 
         self.set_current(body_block);
         self.push_scope();
-        // ptr = gos_rt_vec_get_ptr(vec, counter); elem = *ptr
-        let ptr_local = self.fresh(i64_ty);
-        let after_ptr = self.new_block(span);
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string())),
-            args: vec![
-                Operand::Copy(Place::local(iter_local)),
-                Operand::Copy(Place::local(counter)),
-            ],
-            destination: Place::local(ptr_local),
-            target: Some(after_ptr),
-        });
-        self.set_current(after_ptr);
-        // For scalar element types (i64, String, bool, …), load the
-        // single 8-byte slot off the head of the element. For
-        // multi-slot aggregates (Tuple, Adt, …) the loop body
-        // walks the element through Field/TupleIndex projections,
-        // so binding the *pointer* directly is what the projection
-        // path expects (`hit.2` on a `(i64,i64,String)` tuple
-        // becomes `gos_load(ptr, 16)`).
-        let elem_kind = self.tcx.kind_of(elem_ty);
-        let elem_is_aggregate = matches!(
-            elem_kind,
-            gossamer_types::TyKind::Tuple(_) | gossamer_types::TyKind::Adt { .. }
-        );
-        let elem_local = if elem_is_aggregate {
-            // Pin the loop var's MIR type so downstream field
-            // reads see the right tuple layout.
+        // The element slot address — needed only by the tuple-destructure body
+        // below, which reads each field via `gos_load(slot, i*8)`. Set on the
+        // `gos_rt_vec_get_ptr` path; `None` for the by-value `i128` path.
+        let mut tuple_slot_ptr: Option<Local> = None;
+        // A by-value `Result`/`Option` element is a 16-byte `i128` read
+        // directly into the loop var — not via `gos_rt_vec_get_ptr` (which
+        // would bind the slot address and let `match` decode garbage) nor the
+        // 8-byte `gos_load` (which drops the payload).
+        let elem_local = if matches!(
+            self.tcx.kind_of(elem_ty),
+            gossamer_types::TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
+        ) {
             let l = self.fresh(elem_ty);
-            self.emit_assign(
-                Place::local(l),
-                Rvalue::Use(Operand::Copy(Place::local(ptr_local))),
-                span,
-            );
-            l
-        } else {
-            let l = self.fresh(elem_ty);
-            let after_load = self.new_block(span);
-            let zero_off = self.fresh(i64_ty);
-            self.emit_assign(
-                Place::local(zero_off),
-                Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-                span,
-            );
+            let after = self.new_block(span);
             self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i128".to_string())),
                 args: vec![
-                    Operand::Copy(Place::local(ptr_local)),
-                    Operand::Copy(Place::local(zero_off)),
+                    Operand::Copy(Place::local(iter_local)),
+                    Operand::Copy(Place::local(counter)),
                 ],
                 destination: Place::local(l),
-                target: Some(after_load),
+                target: Some(after),
             });
-            self.set_current(after_load);
+            self.set_current(after);
             l
+        } else {
+            let elem_is_multislot = matches!(
+                self.tcx.kind_of(elem_ty),
+                gossamer_types::TyKind::Tuple(_)
+                    | gossamer_types::TyKind::Adt { .. }
+                    | gossamer_types::TyKind::Array { .. }
+            ) && self.type_slot_bytes(elem_ty) > 8;
+            // `f64` elements must be read as a float bit-pattern; everything
+            // else single-slot (i64 / bool / char / String / heap-handle ptr)
+            // reads through one `gos_rt_vec_get_i64`.
+            let elem_is_float =
+                matches!(self.tcx.kind_of(elem_ty), gossamer_types::TyKind::Float(_));
+            if !elem_is_multislot && !elem_is_float {
+                // Single-slot scalar: ONE `gos_rt_vec_get_i64` reads the 8-byte
+                // slot directly, halving the per-element runtime calls vs
+                // `gos_rt_vec_get_ptr` + `gos_load` (the hot path for
+                // `for x in vec_of_scalars`, e.g. BFS adjacency iteration).
+                let l = self.fresh(elem_ty);
+                let after = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(iter_local)),
+                        Operand::Copy(Place::local(counter)),
+                    ],
+                    destination: Place::local(l),
+                    target: Some(after),
+                });
+                self.set_current(after);
+                l
+            } else {
+                // ptr = gos_rt_vec_get_ptr(vec, counter); elem = *ptr.
+                // Multi-slot inline aggregates bind the slot address (the body
+                // walks fields via Field / TupleIndex projections); `f64`
+                // single-slots load the float bit-pattern.
+                let ptr_local = self.fresh(i64_ty);
+                let after_ptr = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(iter_local)),
+                        Operand::Copy(Place::local(counter)),
+                    ],
+                    destination: Place::local(ptr_local),
+                    target: Some(after_ptr),
+                });
+                self.set_current(after_ptr);
+                tuple_slot_ptr = Some(ptr_local);
+                if elem_is_multislot {
+                    let l = self.fresh(elem_ty);
+                    self.emit_assign(
+                        Place::local(l),
+                        Rvalue::Use(Operand::Copy(Place::local(ptr_local))),
+                        span,
+                    );
+                    l
+                } else {
+                    let l = self.fresh(elem_ty);
+                    let after_load = self.new_block(span);
+                    let zero_off = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(zero_off),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                        span,
+                    );
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
+                        args: vec![
+                            Operand::Copy(Place::local(ptr_local)),
+                            Operand::Copy(Place::local(zero_off)),
+                        ],
+                        destination: Place::local(l),
+                        target: Some(after_load),
+                    });
+                    self.set_current(after_load);
+                    l
+                }
+            }
         };
         match &loop_pat.kind {
             HirPatKind::Binding { name, .. } => {
@@ -563,10 +611,12 @@ impl<'a> Builder<'a> {
                         span,
                     );
                     let after_load = self.new_block(span);
+                    let slot_ptr = tuple_slot_ptr
+                        .expect("tuple-destructure for-vec reads fields off the slot address");
                     self.terminate(Terminator::Call {
                         callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
                         args: vec![
-                            Operand::Copy(Place::local(ptr_local)),
+                            Operand::Copy(Place::local(slot_ptr)),
                             Operand::Copy(Place::local(off_local)),
                         ],
                         destination: Place::local(bind_local),

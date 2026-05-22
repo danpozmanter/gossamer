@@ -47,5 +47,5 @@ fuzz_target!(|data: &[u8]| {
     // `Vm::load` is the bytecode compile boundary. We swallow
     // the `RuntimeResult` — a clean error is fine; a panic is
     // the regression libFuzzer is hunting for.
-    let _ = vm.load(&hir, &mut tcx);
+    let _ = vm.load(&hir, tcx);
 });

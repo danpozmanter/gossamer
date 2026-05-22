@@ -58,6 +58,49 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
+        // `x.downgrade()` — create a `Weak<T>` from a strong RC value.
+        // `gos_rt_rc_downgrade` bumps the weak count and returns the same
+        // payload pointer, now typed `Weak<T>` so the drop pass releases
+        // it through `gos_rt_rc_weak_release`.
+        if method.name.as_str() == "downgrade" && args.is_empty() {
+            let recv_local = self.lower_expr(receiver)?;
+            let recv_ty = self.locals[recv_local.0 as usize].ty;
+            let weak_ty = self.weak_adt_ty(recv_ty);
+            let dest = self.fresh(weak_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_rc_downgrade".to_string())),
+                args: vec![Operand::Copy(Place::local(recv_local))],
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
+        }
+        // `w.upgrade()` — turn a `Weak<T>` back into `Option<T>`.
+        // `gos_rt_rc_weak_upgrade_opt` boxes `Some(payload)` when the
+        // referent is still alive (`strong > 0`) and `None` otherwise,
+        // returning a `*mut GosResult` so the standard match / if-let
+        // discriminant read works on every tier. The Some-payload is an
+        // interior borrow (the caller's live strong reference keeps it
+        // alive for the duration of the match arm), so no strong count is
+        // taken and nothing is released for it here.
+        if method.name.as_str() == "upgrade" && args.is_empty() {
+            let recv_local = self.lower_expr(receiver)?;
+            let recv_ty = self.locals[recv_local.0 as usize].ty;
+            let payload_ty = self.weak_payload_ty(recv_ty).unwrap_or(ty);
+            let opt_ty = self.option_payload_adt_ty(payload_ty);
+            let dest = self.fresh(opt_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_rc_weak_upgrade_opt".to_string())),
+                args: vec![Operand::Copy(Place::local(recv_local))],
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
+        }
         // `.clone()` on a `json::Value` receiver. The generic
         // identity-copy arm walks `match self.tcx.kind_of(ty)` and
         // falls through to `_ =>` for `JsonValue`, then the MIR
@@ -110,6 +153,22 @@ impl<'a> Builder<'a> {
                 {
                     return Some(local);
                 }
+            }
+        }
+        // `let entries = m.iter()` on a HashMap — materialise a real
+        // `Vec<(K, V)>` of entries. The `for (k, v) in m.iter()` form
+        // is lowered earlier in `try_lower_for_hashmap_iter`; this
+        // direct-binding form would otherwise fall through to the
+        // generic `gos_rt_arr_iter` dispatch, reinterpret the
+        // `*mut GosMap` as a `*mut GosVec`, and segfault on the
+        // compiled tiers. Materialising here makes both forms behave
+        // identically across the VM, Cranelift, and LLVM tiers.
+        if method.name.as_str() == "iter" && args.is_empty() {
+            let recv_ty_for_kind = self
+                .receiver_local_from_path(receiver)
+                .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
+            if matches!(self.tcx.kind_of(recv_ty_for_kind), TyKind::HashMap { .. }) {
+                return self.materialize_hashmap_entries(receiver, recv_ty_for_kind, span);
             }
         }
         // `[].to_vec()` — the empty-array literal carries no
@@ -413,6 +472,44 @@ impl<'a> Builder<'a> {
                             receiver_kind_flat = elem_kind;
                         }
                     }
+                }
+            }
+        }
+
+        // `<recv>.<field>.method()` — the field-access HIR type can
+        // be wrongly resolved to `String` (e.g. a `match Ok(q) =>
+        // q.bytes.len()` binding where the field came back as
+        // `String` instead of `[u8]`, sending `.len()` to strlen and
+        // reading the i64-per-element Vec as a c-string). The parent
+        // struct's *declared* field type is ground truth — recover it
+        // via the parent local's MIR `Adt` def and override the
+        // receiver kind. Ungated (the HIR type may be a concrete-but-
+        // wrong `String`, not just `Var`).
+        if let HirExprKind::Field {
+            receiver: parent,
+            name: field,
+        } = &receiver.kind
+            && let Some(parent_local) = self.receiver_local_from_path(parent)
+        {
+            let mut pty = self.locals[parent_local.0 as usize].ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(pty) {
+                pty = *inner;
+            }
+            if let TyKind::Adt { def, .. } = self.tcx.kind_of(pty).clone()
+                && let Some(sname) = self.struct_defs.get(&def).cloned()
+                && let Some(order) = self.structs.get(&sname).cloned()
+                && let Some(pos) = order.iter().position(|f| f == &field.name)
+                && let Some(field_ty) = self
+                    .tcx
+                    .struct_field_tys(def)
+                    .and_then(|t| t.get(pos).copied())
+            {
+                let mut k = self.tcx.kind_of(field_ty).clone();
+                while let TyKind::Ref { inner, .. } = k {
+                    k = self.tcx.kind_of(inner).clone();
+                }
+                if !matches!(k, TyKind::Var(_) | TyKind::Error | TyKind::Param { .. }) {
+                    receiver_kind_flat = k;
                 }
             }
         }
@@ -855,7 +952,19 @@ impl<'a> Builder<'a> {
             "push" => Some("gos_rt_vec_push"),
             "pop" => Some("gos_rt_vec_pop"),
             "sort" => Some("gos_rt_vec_sort_i64"),
-            "iter" => Some("gos_rt_arr_iter"),
+            "iter" => match &receiver_kind_flat {
+                // HashMap `.iter()` is handled before the helper-name
+                // dispatch: the `for (k, v) in m.iter()` shape by
+                // `try_lower_for_hashmap_iter` and the direct-binding
+                // `let xs = m.iter()` shape by
+                // `materialize_hashmap_entries` (both produce a real
+                // `Vec<(K, V)>`). Reaching this arm would mean a map
+                // receiver slipped past both; fall back to a MIR error
+                // rather than the `gos_rt_arr_iter` path, which would
+                // reinterpret the `*mut GosMap` as a `*mut GosVec`.
+                TyKind::HashMap { .. } => return None,
+                _ => Some("gos_rt_arr_iter"),
+            },
             "to_vec" => match &receiver_kind_flat {
                 // Vec/Slice/Array `.to_vec()` must produce an
                 // independent copy — bubble_sort's `out.swap(...)`
@@ -981,13 +1090,14 @@ impl<'a> Builder<'a> {
                 },
                 _ => None,
             },
-            "contains_key" => match &receiver_kind_flat {
-                TyKind::HashMap { .. } => match self.hash_map_key_kind(receiver_ty) {
+            "contains_key" | "contains"
+                if matches!(&receiver_kind_flat, TyKind::HashMap { .. }) =>
+            {
+                match self.hash_map_key_kind(receiver_ty) {
                     Some(MapKeyKind::String) => Some("gos_rt_map_contains_key_str"),
                     _ => Some("gos_rt_map_contains_key_i64"),
-                },
-                _ => None,
-            },
+                }
+            }
             "clear" => match &receiver_kind_flat {
                 TyKind::HashMap { .. } => Some("gos_rt_map_clear"),
                 _ => None,
@@ -1125,7 +1235,11 @@ impl<'a> Builder<'a> {
                 (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
                 (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
                 (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
+                (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
                 (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
+                (Some("collections::BTreeMap"), "contains" | "contains_key") => {
+                    Some("gos_rt_btmap_contains")
+                }
                 (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
                 (Some("sync::Map"), "set" | "insert") => Some("gos_rt_sync_map_set"),
                 (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
@@ -1209,11 +1323,20 @@ impl<'a> Builder<'a> {
                 | "gos_rt_bufio_scanner_scan"
                 | "gos_rt_set_insert"
                 | "gos_rt_set_contains"
-                | "gos_rt_set_remove" => self.tcx.bool_ty(),
+                | "gos_rt_set_remove"
+                | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
                 "gos_rt_http_response_status"
                 | "gos_rt_set_len"
                 | "gos_rt_btmap_len"
                 | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                "gos_rt_btmap_get" => {
+                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    let substs = gossamer_types::Substs::from_types([i]);
+                    self.tcx.intern(gossamer_types::TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                        substs,
+                    })
+                }
                 "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
                 "gos_rt_router_add"
                 | "gos_rt_router_get"
@@ -1373,7 +1496,11 @@ impl<'a> Builder<'a> {
             (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
             (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
             (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
+            (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
             (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
+            (Some("collections::BTreeMap"), "contains" | "contains_key") => {
+                Some("gos_rt_btmap_contains")
+            }
             (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
             (Some("sync::Map"), "set" | "insert") => Some("gos_rt_sync_map_set"),
             (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
@@ -1447,11 +1574,20 @@ impl<'a> Builder<'a> {
                 | "gos_rt_bufio_scanner_scan"
                 | "gos_rt_set_insert"
                 | "gos_rt_set_contains"
-                | "gos_rt_set_remove" => self.tcx.bool_ty(),
+                | "gos_rt_set_remove"
+                | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
                 "gos_rt_http_response_status"
                 | "gos_rt_set_len"
                 | "gos_rt_btmap_len"
                 | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                "gos_rt_btmap_get" => {
+                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    let substs = gossamer_types::Substs::from_types([i]);
+                    self.tcx.intern(gossamer_types::TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                        substs,
+                    })
+                }
                 "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
                 "gos_rt_router_add"
                 | "gos_rt_router_get"

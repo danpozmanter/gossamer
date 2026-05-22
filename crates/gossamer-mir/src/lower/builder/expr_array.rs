@@ -91,14 +91,28 @@ impl<'a> Builder<'a> {
             target: Some(next),
         });
         self.set_current(next);
+        // Whether an inner array element should be promoted to a heap
+        // `GosVec` (nested dynamic `Vec<Vec<T>>` / `[[T]]`) or stored
+        // inline (`Vec<[T; N]>`). A binding whose element type is a
+        // fixed-size `Array` keeps its elements inline so the literal
+        // and the later `push([..])` agree on a 16-byte inline slot;
+        // coercing them to pointers there would desync the stride and
+        // corrupt every read.
+        let binding_elem_is_fixed_array = matches!(
+            self.tcx.kind_of(binding_ty),
+            gossamer_types::TyKind::Vec(e) | gossamer_types::TyKind::Slice(e)
+                if matches!(self.tcx.kind_of(*e), gossamer_types::TyKind::Array { .. })
+        );
         for elem in elems {
             let Some(mut elem_local) = self.lower_expr(elem) else {
                 return false;
             };
             // If an element is itself a flat Array{T,N} (e.g. the inner
             // arrays in `[[i64]]`), coerce it to a heap GosVec so the
-            // outer Vec stores *mut GosVec pointers, not flat aggregates.
-            {
+            // outer Vec stores *mut GosVec pointers, not flat aggregates
+            // — unless the binding's element type is a fixed-size array,
+            // in which case the inner array stays inline.
+            if !binding_elem_is_fixed_array {
                 let lt = self.locals[elem_local.0 as usize].ty;
                 if let gossamer_types::TyKind::Array {
                     elem: inner_elem,

@@ -42,9 +42,7 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::c_abi::{
-    GosHttpRequest, GosResult, drop_handler_result, extract_response_into, gos_rt_gc_reset,
-};
+use crate::c_abi::{GosHttpRequest, drop_handler_result, extract_response_into, gos_rt_gc_reset};
 use crate::sched::{Gid, Interest, ParkReason};
 use crate::sched_global;
 
@@ -148,14 +146,14 @@ async fn serve_one_stream(
     } else {
         // SAFETY: fn_addr / env_addr come from a `gos_fn_addr`
         // intrinsic at the user's call site. The handler ABI is
-        // the same `(env, req) -> *mut GosResult` shape that
+        // the same `(env, req) -> i128` shape that
         // `gos_rt_http_serve` uses. Handlers must return
         // `Result<http::Response, http::Error>` — the runtime
         // reads disc==0 + payload as the GosHttpResponse.
         // SAFETY: fn_addr is the address of a Gossamer handler
         // emitted by the LLVM/Cranelift backend. The signature is
         // fixed by the HTTP server contract — `unsafe extern "C"
-        // fn(*mut env, *mut GosHttpRequest) -> *mut GosResult`.
+        // fn(*mut env, *mut GosHttpRequest) -> i128`.
         // The transmute reconstructs that typed pointer. The
         // handler is called once and its return value is owned by
         // this frame.
@@ -201,7 +199,7 @@ async fn serve_one_stream(
     }
 }
 
-type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> *mut GosResult;
+type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
 
 /// Parses the HTTP/1.1 wire buffer `extract_response_into`
 /// emits — `HTTP/1.1 <status> <reason>\r\n[headers]\r\n\r\n<body>` —

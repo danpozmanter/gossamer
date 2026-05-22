@@ -57,3 +57,143 @@ pub unsafe extern "C" fn gos_rt_gzip_decode(data: *const c_char) -> *mut c_char 
         alloc_cstring(&out)
     })
 }
+
+// ---------------------------------------------------------------
+// flate (raw DEFLATE) module — `std::compress::flate::{compress,
+// decompress}`. Input is a `Vec<u8>` (GosVec), output is a
+// `Result<Vec<u8>, errors::Error>` (GosResult: disc 0 Ok with a
+// GosVec payload, disc 1 Err with a gos error handle).
+// ---------------------------------------------------------------
+
+/// Reads a Gossamer `Vec<u8>` (i64-per-element) into owned bytes.
+unsafe fn gosvec_u8_to_vec(v: *const super::vec::GosVec) -> Vec<u8> {
+    unsafe { super::encoding::gosvec_u8(v) }
+}
+
+/// Wraps `bytes` in an `Ok(Vec<u8>)` `GosResult` (i64-per-element).
+fn ok_bytes_result(bytes: &[u8]) -> i128 {
+    let v = super::encoding::bytes_to_gosvec(bytes);
+    unsafe { super::vec::gos_rt_result_new(0, v as i64) }
+}
+
+fn err_bytes_result(msg: &str) -> i128 {
+    let cs = std::ffi::CString::new(msg).unwrap_or_default();
+    let err = unsafe { super::errors::gos_rt_error_new(cs.as_ptr()) };
+    unsafe { super::vec::gos_rt_result_new(1, err as i64) }
+}
+
+/// `compress::gzip::encode(data, level) -> Result<[u8], Error>`.
+/// The byte-accurate counterpart to `gos_rt_gzip_encode` (which
+/// returns a c-string and truncates binary output at the first NUL).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_compress_gzip_encode(
+    data: *const super::vec::GosVec,
+    level: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let input = unsafe { gosvec_u8_to_vec(data) };
+        let lvl = level.clamp(0, 9) as u32;
+        use std::io::Write;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(lvl));
+        if enc.write_all(&input).is_err() {
+            return err_bytes_result("gzip: compress write failed");
+        }
+        match enc.finish() {
+            Ok(out) => ok_bytes_result(&out),
+            Err(e) => err_bytes_result(&format!("gzip: {e}")),
+        }
+    })
+}
+
+/// `compress::gzip::decode(data) -> Result<[u8], Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_compress_gzip_decode(data: *const super::vec::GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        let input = unsafe { gosvec_u8_to_vec(data) };
+        use std::io::Read;
+        let mut dec = flate2::read::GzDecoder::new(&input[..]);
+        let mut out = Vec::new();
+        match dec.read_to_end(&mut out) {
+            Ok(_) => ok_bytes_result(&out),
+            Err(e) => err_bytes_result(&format!("gzip: {e}")),
+        }
+    })
+}
+
+/// `compress::flate::compress(data, level) -> Result<[u8], Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_compress_flate_compress(
+    data: *const super::vec::GosVec,
+    level: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let input = unsafe { gosvec_u8_to_vec(data) };
+        let lvl = level.clamp(0, 9) as u32;
+        use std::io::Write;
+        let mut enc = flate2::write::DeflateEncoder::new(
+            Vec::with_capacity(input.len()),
+            flate2::Compression::new(lvl),
+        );
+        if enc.write_all(&input).is_err() {
+            return err_bytes_result("flate: compress write failed");
+        }
+        match enc.finish() {
+            Ok(out) => ok_bytes_result(&out),
+            Err(e) => err_bytes_result(&format!("flate: {e}")),
+        }
+    })
+}
+
+/// `compress::flate::decompress(data) -> Result<[u8], Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_compress_flate_decompress(data: *const super::vec::GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        let input = unsafe { gosvec_u8_to_vec(data) };
+        use std::io::Read;
+        let mut dec = flate2::read::DeflateDecoder::new(&input[..]);
+        let mut out = Vec::new();
+        match dec.read_to_end(&mut out) {
+            Ok(_) => ok_bytes_result(&out),
+            Err(e) => err_bytes_result(&format!("flate: {e}")),
+        }
+    })
+}
+
+/// `compress::zlib::compress(data, level) -> Result<[u8], Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_compress_zlib_compress(
+    data: *const super::vec::GosVec,
+    level: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let input = unsafe { gosvec_u8_to_vec(data) };
+        let lvl = level.clamp(0, 9) as u32;
+        use std::io::Write;
+        let mut enc = flate2::write::ZlibEncoder::new(
+            Vec::with_capacity(input.len()),
+            flate2::Compression::new(lvl),
+        );
+        if enc.write_all(&input).is_err() {
+            return err_bytes_result("zlib: compress write failed");
+        }
+        match enc.finish() {
+            Ok(out) => ok_bytes_result(&out),
+            Err(e) => err_bytes_result(&format!("zlib: {e}")),
+        }
+    })
+}
+
+/// `compress::zlib::decompress(data) -> Result<[u8], Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_compress_zlib_decompress(data: *const super::vec::GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        let input = unsafe { gosvec_u8_to_vec(data) };
+        use std::io::Read;
+        let mut dec = flate2::read::ZlibDecoder::new(&input[..]);
+        let mut out = Vec::new();
+        match dec.read_to_end(&mut out) {
+            Ok(_) => ok_bytes_result(&out),
+            Err(e) => err_bytes_result(&format!("zlib: {e}")),
+        }
+    })
+}

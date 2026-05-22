@@ -44,7 +44,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut vm = Vm::new();
-    if vm.load(&hir, &mut tcx).is_err() {
+    if vm.load(&hir, tcx).is_err() {
         return;
     }
     // Execute `main` if it exists. A clean RuntimeError is fine;

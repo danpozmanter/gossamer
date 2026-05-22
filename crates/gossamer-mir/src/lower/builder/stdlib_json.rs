@@ -289,6 +289,15 @@ impl<'a> Builder<'a> {
                     return Some(result);
                 }
             }
+            // Scalar / array / json::Value args. `gos_rt_json_render`
+            // dereferences its argument as a `*GosJson`, so a bare i64
+            // (`encode(42)`) would be read as a wild pointer (SIGSEGV)
+            // and a typed scalar `*GosVec` (`encode([1,2,3])`) would be
+            // misread as a Value. Box the argument into a `*GosJson`
+            // first.
+            if let Some(result) = self.lower_json_render_value(args, peeled, span) {
+                return Some(result);
+            }
         }
         let (rt_name, ret_ty) = match last {
             "parse" | "decode" => ("gos_rt_json_parse", self.result_json_value_error_adt_ty()),
@@ -301,15 +310,14 @@ impl<'a> Builder<'a> {
             // access lowering for `root.a.b.c` (raw chain pointer).
             "get" => ("gos_rt_json_get_opt", self.option_json_value_adt_ty()),
             "at" => ("gos_rt_json_at", self.tcx.json_value_ty()),
-            "as_i64" => (
-                "gos_rt_json_as_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "as_f64" => (
-                "gos_rt_json_as_f64",
-                self.tcx.float_ty(gossamer_types::FloatTy::F64),
-            ),
-            "as_str" => ("gos_rt_json_as_str", self.tcx.string_ty()),
+            // `json::as_i64` / `as_f64` / `as_str` return `Option<T>`
+            // (Some only when the JSON node is the matching type),
+            // matching the VM. The auto-derived `from_json` matches on
+            // the `Some`/`None` to validate field types; a bare-value
+            // return made every non-matching field silently coerce.
+            "as_i64" => ("gos_rt_json_as_i64_opt", self.option_i64_adt_ty()),
+            "as_f64" => ("gos_rt_json_as_f64_opt", self.option_f64_adt_ty()),
+            "as_str" => ("gos_rt_json_as_str_opt", self.option_string_adt_ty()),
             "as_bool" => ("gos_rt_json_as_bool", self.tcx.bool_ty()),
             "as_array" => ("gos_rt_json_as_array_opt", self.option_json_array_adt_ty()),
             "keys" => ("gos_rt_json_keys_opt", self.option_string_vec_adt_ty()),
@@ -488,6 +496,106 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str("gos_rt_json_render".to_string())),
             args: vec![Operand::Copy(Place::local(json_obj))],
+            destination: Place::local(result),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(result)
+    }
+
+    /// Boxes a scalar / array / json::Value `render`/`encode` argument
+    /// into a `*GosJson` and renders it. Returns `None` for shapes this
+    /// helper does not handle (e.g. nested aggregates), letting the
+    /// caller fall through.
+    pub(crate) fn lower_json_render_value(
+        &mut self,
+        args: &[HirExpr],
+        value_ty: gossamer_types::Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let string_ty = self.tcx.string_ty();
+        let json_val_ty = self.tcx.json_value_ty();
+        let arg_local = self.lower_expr(&args[0])?;
+
+        // Produce a `*GosJson` local from the argument.
+        let json_local = match self.tcx.kind_of(value_ty).clone() {
+            TyKind::JsonValue => arg_local,
+            TyKind::Int(_) | TyKind::Bool | TyKind::Float(_) | TyKind::String => {
+                let helper = match self.tcx.kind_of(value_ty) {
+                    TyKind::Int(_) => "gos_rt_json_value_int",
+                    TyKind::Bool => "gos_rt_json_value_bool",
+                    TyKind::Float(_) => "gos_rt_json_value_float",
+                    _ => "gos_rt_json_value_string",
+                };
+                let dest = self.fresh(json_val_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
+                    args: vec![Operand::Copy(Place::local(arg_local))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                dest
+            }
+            TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. } => {
+                let mut flat = elem;
+                while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                    flat = *inner;
+                }
+                let kind: i64 = match self.tcx.kind_of(flat) {
+                    TyKind::Float(_) => 1,
+                    TyKind::String => 2,
+                    TyKind::Bool => 3,
+                    // Int, or an unresolved `Var` left by the typer on
+                    // an integer array literal (`encode([1, 2, 3])`):
+                    // default to the i64 slot reading. Numeric literals
+                    // default to i64 in Gossamer, so this matches.
+                    TyKind::Int(_) | TyKind::Var(_) | TyKind::Error => 0,
+                    // Other non-scalar elements (struct, nested Vec):
+                    // leave to the fallthrough rather than mis-encoding.
+                    _ => return None,
+                };
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let arg_local = {
+                    let lt = self.locals[arg_local.0 as usize].ty;
+                    if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
+                        self.coerce_array_to_vec(arg_local, elem, len, span)
+                    } else {
+                        arg_local
+                    }
+                };
+                let kind_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(kind_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(kind)))),
+                    span,
+                );
+                let dest = self.fresh(json_val_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "gos_rt_json_array_from_scalar_vec".to_string(),
+                    )),
+                    args: vec![
+                        Operand::Copy(Place::local(arg_local)),
+                        Operand::Copy(Place::local(kind_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                dest
+            }
+            _ => return None,
+        };
+
+        let result = self.fresh(string_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_json_render".to_string())),
+            args: vec![Operand::Copy(Place::local(json_local))],
             destination: Place::local(result),
             target: Some(next),
         });

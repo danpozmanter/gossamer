@@ -49,9 +49,158 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
             }
         }
     }
+    // Post-lift: pin every lifted closure param whose type is still
+    // unresolved (`Var/Error/Param`) to i64. Without this the LLVM
+    // tier emits the closure body as `(ptr) -> ptr` while the
+    // unified Fn trampoline calls it with `(i64) -> i64`, and the
+    // signature mismatch segfaults inside the body when a numeric
+    // arg is read as a pointer. Mirrors MIR's `lower_iter_closure`
+    // input pinning at the trait coercion site.
+    let i64_ty = lifter.env_ty;
+    for item in &mut lifter.lifted {
+        if let HirItemKind::Fn(decl) = &mut item.kind {
+            // Collect param names whose body uses TupleIndex / Field
+            // projections on them — those params are aggregates
+            // (tuples / structs) passed by pointer, NOT i64 values.
+            // Pinning them to i64 makes the lowered closure compute
+            // field offsets off a junk integer; the param needs to
+            // stay pointer-shaped so the runtime sort comparator can
+            // hand us `(env, *a, *b)` and the projections resolve
+            // correctly.
+            let mut aggregate_params: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            if let Some(body) = &decl.body {
+                collect_aggregate_param_uses(&body.block, &mut aggregate_params);
+            }
+            for param in &mut decl.params {
+                let needs_pin = matches!(
+                    tcx.kind_of(param.ty),
+                    gossamer_types::TyKind::Var(_)
+                        | gossamer_types::TyKind::Error
+                        | gossamer_types::TyKind::Param { .. }
+                );
+                if !needs_pin {
+                    continue;
+                }
+                let used_as_aggregate = match &param.pattern.kind {
+                    crate::HirPatKind::Binding { name, .. } => {
+                        aggregate_params.contains(name.name.as_str())
+                    }
+                    _ => false,
+                };
+                if used_as_aggregate {
+                    continue;
+                }
+                param.ty = i64_ty;
+                param.pattern.ty = i64_ty;
+            }
+            // Same coercion for the lifted fn's return type so the
+            // bool-returning `iter::filter` shape gets i64, not the
+            // default pointer fallback.
+            if let Some(ret) = decl.ret {
+                if matches!(
+                    tcx.kind_of(ret),
+                    gossamer_types::TyKind::Var(_)
+                        | gossamer_types::TyKind::Error
+                        | gossamer_types::TyKind::Param { .. }
+                ) {
+                    decl.ret = Some(i64_ty);
+                }
+            }
+        }
+    }
     let mut items = program.items;
     items.extend(lifter.lifted);
     HirProgram { items }
+}
+
+/// Walks `block` recursively and records every identifier that
+/// appears as the receiver of a `TupleIndex`, `Field`, or `Index`
+/// expression. The lift-pass's i64-default pinning skips these so
+/// closure params that hold aggregates (tuples / structs / arrays)
+/// stay pointer-shaped — the runtime sort / iter comparators hand
+/// the body raw element pointers and the projections walk off them.
+fn collect_aggregate_param_uses(block: &HirBlock, out: &mut std::collections::HashSet<String>) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            HirStmtKind::Let {
+                init: Some(value), ..
+            }
+            | HirStmtKind::Expr { expr: value, .. }
+            | HirStmtKind::Defer(value)
+            | HirStmtKind::Go(value) => {
+                collect_aggregate_in_expr(value, out);
+            }
+            HirStmtKind::Let { init: None, .. } | HirStmtKind::Item(_) => {}
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_aggregate_in_expr(tail, out);
+    }
+}
+
+fn collect_aggregate_in_expr(expr: &HirExpr, out: &mut std::collections::HashSet<String>) {
+    match &expr.kind {
+        HirExprKind::TupleIndex { receiver, .. } | HirExprKind::Field { receiver, .. } => {
+            note_path_receiver(receiver, out);
+            collect_aggregate_in_expr(receiver, out);
+        }
+        HirExprKind::Index { base, index } => {
+            note_path_receiver(base, out);
+            collect_aggregate_in_expr(base, out);
+            collect_aggregate_in_expr(index, out);
+        }
+        HirExprKind::MethodCall { receiver, args, .. } => {
+            // `param.clone()` / `param.len()` etc. — the receiver
+            // is used as an aggregate handle whose methods walk
+            // off a pointer, same as a field projection.
+            note_path_receiver(receiver, out);
+            collect_aggregate_in_expr(receiver, out);
+            for a in args {
+                collect_aggregate_in_expr(a, out);
+            }
+        }
+        HirExprKind::Call { callee, args } => {
+            collect_aggregate_in_expr(callee, out);
+            for a in args {
+                collect_aggregate_in_expr(a, out);
+            }
+        }
+        HirExprKind::Unary { operand, .. } => {
+            collect_aggregate_in_expr(operand, out);
+        }
+        HirExprKind::Binary { lhs, rhs, .. } => {
+            collect_aggregate_in_expr(lhs, out);
+            collect_aggregate_in_expr(rhs, out);
+        }
+        HirExprKind::Assign { place, value } => {
+            collect_aggregate_in_expr(place, out);
+            collect_aggregate_in_expr(value, out);
+        }
+        HirExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_aggregate_in_expr(condition, out);
+            collect_aggregate_in_expr(then_branch, out);
+            if let Some(else_b) = else_branch {
+                collect_aggregate_in_expr(else_b, out);
+            }
+        }
+        HirExprKind::Block(block) => {
+            collect_aggregate_param_uses(block, out);
+        }
+        _ => {}
+    }
+}
+
+fn note_path_receiver(expr: &HirExpr, out: &mut std::collections::HashSet<String>) {
+    if let HirExprKind::Path { segments, .. } = &expr.kind {
+        if segments.len() == 1 {
+            out.insert(segments[0].name.clone());
+        }
+    }
 }
 
 struct Lifter {

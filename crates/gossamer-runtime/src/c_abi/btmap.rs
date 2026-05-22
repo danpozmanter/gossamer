@@ -66,6 +66,36 @@ pub unsafe extern "C" fn gos_rt_btmap_get_or(
     })
 }
 
+/// `BTreeMap::get(k) -> Option<i64>` packed as `*mut GosResult`
+/// (disc=0 Some(v), disc=1 None). Mirrors `gos_rt_map_get_i64_opt`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btmap_get(m: *const GosBtMap, key: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if m.is_null() || key.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+        let m = unsafe { &*m };
+        match m.inner.get(&k) {
+            Some(v) => unsafe { gos_rt_result_new(0, *v) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `BTreeMap::contains(k) -> bool`. Mirrors `gos_rt_map_contains_key_str`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btmap_contains(m: *const GosBtMap, key: *const c_char) -> i32 {
+    ffi_entry!(0, {
+        if m.is_null() || key.is_null() {
+            return 0;
+        }
+        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+        let m = unsafe { &*m };
+        i32::from(m.inner.contains_key(&k))
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_btmap_len(m: *const GosBtMap) -> i64 {
     ffi_entry!(-1, {
@@ -354,11 +384,8 @@ pub unsafe extern "C" fn gos_rt_arr_format_string(
 /// symbol — the compiled tier silently no-op'd, and downstream
 /// `os::env(name)` returned the old value.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_os_set_env(
-    name: *const c_char,
-    value: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_os_set_env(name: *const c_char, value: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if name.is_null() {
             let cs = std::ffi::CString::new("os::set_env: name is null").unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
@@ -403,11 +430,8 @@ pub unsafe extern "C" fn gos_rt_os_unset_env(name: *const c_char) {
 /// GosError`. The Result aggregate matches the `Result<i64,
 /// errors::Error>` shape MIR pins via the sentinel-DefId Adt.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_exec_spawn(
-    prog: *const c_char,
-    args: *mut GosVec,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_exec_spawn(prog: *const c_char, args: *mut GosVec) -> i128 {
+    ffi_entry!(0i128, {
         let prog_str = if prog.is_null() {
             let cs = std::ffi::CString::new("exec::spawn: program is null").unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };

@@ -1,0 +1,16 @@
+// Cross-tier parity for time::* free functions previously VM-only.
+// Asserts only invariants (not absolute clock values) so output is
+// deterministic across tiers.
+use std::time
+
+fn main() {
+    let a = time::monotonic_ms()
+    let b = time::monotonic_nanos()
+    let n = time::now_nanos()
+    let u = time::unix_ms()
+    time::sleep(1)
+    let d = time::since_ms(a)
+    println!("mono_ok={}", a >= 0 && b >= 0)
+    println!("now_ok={}", n > 0 && u > 0)
+    println!("since_ok={}", d >= 0)
+}

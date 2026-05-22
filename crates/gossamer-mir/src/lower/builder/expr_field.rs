@@ -81,13 +81,16 @@ impl<'a> Builder<'a> {
         // disc from offset 0 of a value that didn't have one.
         let is_free_struct = self.structs.contains_key(struct_name);
         let mut variant_idx: Option<usize> = None;
+        let mut variant_enum_name: Option<String> = None;
         if !is_free_struct {
             // The variant-fields map is keyed by the bare variant
             // name; look up its declaration index in the parent
             // enum so the constructor writes the right disc.
             let variant_ident = Ident::new(struct_name.clone());
-            if let Some((_, idx)) = self.enums.lookup(std::slice::from_ref(&variant_ident)) {
+            if let Some((enum_name, idx)) = self.enums.lookup(std::slice::from_ref(&variant_ident))
+            {
                 variant_idx = Some(idx);
+                variant_enum_name = Some(enum_name);
             }
         }
         let order = self
@@ -121,7 +124,9 @@ impl<'a> Builder<'a> {
                 .iter()
                 .filter_map(|f| provided.get(f.as_str()).map(|e| (*e).clone()))
                 .collect();
+            let enum_name = variant_enum_name.as_deref().unwrap_or("");
             return self.lower_user_enum_ctor(
+                enum_name,
                 u32::try_from(idx).unwrap_or(0),
                 &arg_exprs,
                 ty,
@@ -141,10 +146,37 @@ impl<'a> Builder<'a> {
         } else {
             None
         };
+        // Declared field types (when the struct's `ty` carries a real
+        // DefId) let us coerce a flat `[T; N]` array-literal value into
+        // a heap `GosVec` when the field is declared `[T]` (Vec) /
+        // `[T]`-slice. Without this, `Q { bytes: [1, 2, 3] }` stores the
+        // 3-slot inline array straight into the 1-slot Vec field — the
+        // struct alloca overflows and a later `q.bytes.len()` reads
+        // element[0] as the Vec pointer (misaligned-deref crash).
+        let field_tys: Option<Vec<Ty>> = match self.tcx.kind_of(ty) {
+            gossamer_types::TyKind::Adt { def, .. } => {
+                self.tcx.struct_field_tys(*def).map(<[Ty]>::to_vec)
+            }
+            _ => None,
+        };
         let mut operands = Vec::with_capacity(order.len());
         for (idx, field) in order.iter().enumerate() {
             if let Some(value_expr) = provided.get(field.as_str()) {
-                let value_local = self.lower_expr(value_expr)?;
+                let mut value_local = self.lower_expr(value_expr)?;
+                // Coerce an array-literal value to a Vec when the field
+                // is declared as a growable `[T]` / slice.
+                if let Some(field_ty) = field_tys.as_ref().and_then(|t| t.get(idx)).copied() {
+                    use gossamer_types::TyKind;
+                    let val_ty = self.locals[value_local.0 as usize].ty;
+                    if let TyKind::Array { elem, len } = self.tcx.kind_of(val_ty).clone()
+                        && matches!(
+                            self.tcx.kind_of(field_ty),
+                            TyKind::Vec(_) | TyKind::Slice(_)
+                        )
+                    {
+                        value_local = self.coerce_array_to_vec(value_local, elem, len, span);
+                    }
+                }
                 operands.push(Operand::Copy(Place::local(value_local)));
             } else if let Some(base) = base_local {
                 let projection_idx = u32::try_from(idx).ok()?;
@@ -260,30 +292,60 @@ impl<'a> Builder<'a> {
                         // `String` / etc. Without this, the lower
                         // tier alloca's the temp as `ptr` and stores
                         // an `f64` through it, producing invalid IR.
-                        let pinned_ty = if matches!(
-                            self.tcx.kind_of(ty),
-                            gossamer_types::TyKind::Error | gossamer_types::TyKind::Var(_)
-                        ) {
-                            let recv_local_ty = self.locals[place.local.0 as usize].ty;
-                            let mut walk = recv_local_ty;
-                            while let gossamer_types::TyKind::Ref { inner, .. } =
-                                self.tcx.kind_of(walk)
-                            {
-                                walk = *inner;
-                            }
-                            match self.tcx.kind_of(walk) {
-                                gossamer_types::TyKind::Adt { def, .. } => self
+                        // Resolve the field's concrete type. The HIR
+                        // `ty` is unreliable for generic-struct fields:
+                        // it can be an unresolved inference variable, or
+                        // the field's bound `Param(n)` (`third: C` on
+                        // `Triple<A, B, C>`). In both cases fall through
+                        // to the struct's declared field type looked up
+                        // via the receiver's MIR `Adt` def, then
+                        // substitute any `Param` against the receiver's
+                        // concrete type arguments. Without this the field
+                        // local defaults to i64/ptr and the `println!`
+                        // arg dispatcher mis-stringifies an `f64` (prints
+                        // its bit pattern) or strlen's a non-pointer.
+                        // The struct's *declared* field type (looked up
+                        // via the receiver local's MIR `Adt` def) is
+                        // authoritative — the HIR-recorded `ty` is
+                        // unreliable here: it can be an unresolved
+                        // inference var, a bound `Param(n)`, OR a
+                        // wrongly-resolved concrete type (e.g. a
+                        // `match Ok(q) => q.bytes` binding where `q`'s
+                        // struct type didn't fully propagate and the
+                        // field came back as `String` instead of
+                        // `[u8]`, sending `.len()` to strlen). Prefer
+                        // the declared type whenever the receiver is an
+                        // Adt / Tuple with a known field at `pos`,
+                        // substituting any generic `Param` against the
+                        // receiver's concrete type arguments.
+                        let recv_local_ty = self.locals[place.local.0 as usize].ty;
+                        let mut walk = recv_local_ty;
+                        while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(walk)
+                        {
+                            walk = *inner;
+                        }
+                        let pinned_ty = match self.tcx.kind_of(walk).clone() {
+                            gossamer_types::TyKind::Adt { def, substs } => {
+                                match self
                                     .tcx
-                                    .struct_field_tys(*def)
+                                    .struct_field_tys(def)
                                     .and_then(|tys| tys.get(pos).copied())
-                                    .unwrap_or(ty),
-                                gossamer_types::TyKind::Tuple(elems) => {
-                                    elems.get(pos).copied().unwrap_or(ty)
+                                {
+                                    Some(field_ty) => match self.tcx.kind_of(field_ty) {
+                                        gossamer_types::TyKind::Param { idx, .. } => substs
+                                            .types()
+                                            .get(idx.0 as usize)
+                                            .copied()
+                                            .unwrap_or(field_ty),
+                                        _ => field_ty,
+                                    },
+                                    None => ty,
                                 }
-                                _ => ty,
                             }
-                        } else {
-                            ty
+                            gossamer_types::TyKind::Tuple(elems) => {
+                                elems.get(pos).copied().unwrap_or(ty)
+                            }
+                            _ => ty,
                         };
                         place.projection.push(crate::ir::Projection::Field(idx));
                         let dest = self.fresh(pinned_ty);

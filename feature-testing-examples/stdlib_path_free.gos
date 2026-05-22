@@ -1,0 +1,13 @@
+// Cross-tier parity for path::* free functions previously VM-only.
+use std::path
+
+fn main() {
+    println!("{}", path::clean("a/./b/../c"))
+    println!("{}", path::normalize("/x//y/../z"))
+    println!("{}", path::is_absolute("/abs"))
+    println!("{}", path::is_absolute("rel"))
+    println!("{}", path::has_prefix("/a/b/c", "/a/b"))
+    println!("{}", path::has_prefix("/a/b/c", "/x"))
+    match path::extension("file.txt") { Some(e) => println!("ext={}", e), None => println!("ext=none") }
+    match path::extension("noext") { Some(e) => println!("ext={}", e), None => println!("ext=none") }
+}

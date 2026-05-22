@@ -197,7 +197,7 @@ impl<'a> Lowerer<'a> {
             if let Rvalue::CallIntrinsic { name, args } = rvalue
                 && matches!(
                     *name,
-                    "gos_load" | "gos_store" | "gos_alloc" | "gos_fn_addr"
+                    "gos_load" | "gos_store" | "gos_alloc" | "gos_rc_alloc" | "gos_fn_addr"
                 )
             {
                 return self.lower_raw_intrinsic(name, args, place, None);
@@ -238,7 +238,7 @@ impl<'a> Lowerer<'a> {
             Rvalue::CallIntrinsic { name, args }
                 if matches!(
                     *name,
-                    "gos_load" | "gos_store" | "gos_alloc" | "gos_fn_addr"
+                    "gos_load" | "gos_store" | "gos_alloc" | "gos_rc_alloc" | "gos_fn_addr"
                 ) =>
             {
                 return self.lower_raw_intrinsic(name, args, place, None);
@@ -367,9 +367,6 @@ impl<'a> Lowerer<'a> {
     pub(crate) fn lower_terminator(&mut self, term: &Terminator) -> Result<(), BuildError> {
         match term {
             Terminator::Return => {
-                // Pop the call-stack frame pushed in the function
-                // prologue so panic dumps walk the right stack.
-                self.emit_stack_pop();
                 // Emit cleanup calls for owning heap-typed locals before
                 // the actual `ret`. Mirrors the Cranelift Return path —
                 // see `gossamer_mir::plan_cleanup` for the analysis.
@@ -389,30 +386,53 @@ impl<'a> Lowerer<'a> {
                 if is_unit(self.tcx, ret_ty) {
                     writeln!(self.out, "  ret void").unwrap();
                 } else if is_aggregate(self.tcx, ret_ty) {
-                    // Aggregate return: the callee's `%l0` is a stack
-                    // alloca whose storage dies when the frame pops.
-                    // Heap-allocate so the returned pointer outlives
-                    // the call, copy the inline data over, and return
-                    // the heap pointer. Both LLVM and Cranelift
-                    // callers can dereference the result safely.
-                    let bytes = u64::from(slot_count(self.tcx, ret_ty).unwrap_or(1).max(1)) * 8;
-                    declare_rt(&mut self.runtime_refs, "gos_rt_gc_alloc");
-                    let heap = self.fresh();
-                    writeln!(
-                        self.out,
-                        "  {heap} = call ptr @gos_rt_gc_alloc(i64 {bytes})"
-                    )
-                    .unwrap();
-                    writeln!(
-                        self.out,
-                        "  call void @llvm.memcpy.p0.p0.i64(ptr {heap}, ptr {slot}, i64 {bytes}, i1 false)",
-                        slot = local_slot(Local::RETURN)
-                    )
-                    .unwrap();
-                    // Push after the restore so the entry persists
-                    // into the caller's frame.
-                    self.emit_gc_root_push(&heap);
-                    writeln!(self.out, "  ret ptr {heap}").unwrap();
+                    if let Some(slots) = slot_count(self.tcx, ret_ty) {
+                        // Inline aggregate (struct / tuple / array): the
+                        // callee's `%l0` is a stack alloca whose storage
+                        // dies when the frame pops. Heap-allocate so the
+                        // returned pointer outlives the call, copy the
+                        // inline field data over, and return the heap
+                        // pointer.
+                        let bytes = u64::from(slots.max(1)) * 8;
+                        declare_rt(&mut self.runtime_refs, "gos_rt_gc_alloc");
+                        let heap = self.fresh();
+                        writeln!(
+                            self.out,
+                            "  {heap} = call ptr @gos_rt_gc_alloc(i64 {bytes})"
+                        )
+                        .unwrap();
+                        writeln!(
+                            self.out,
+                            "  call void @llvm.memcpy.p0.p0.i64(ptr {heap}, ptr {slot}, i64 {bytes}, i1 false)",
+                            slot = local_slot(Local::RETURN)
+                        )
+                        .unwrap();
+                        // Push after the restore so the entry persists
+                        // into the caller's frame.
+                        self.emit_gc_root_push(&heap);
+                        writeln!(self.out, "  ret ptr {heap}").unwrap();
+                    } else {
+                        // Handle-Adt (recursive enum, opaque sentinel
+                        // struct): the RETURN slot already holds an
+                        // 8-byte heap handle. Return it directly. The
+                        // inline-aggregate path above would gc_alloc a
+                        // copy of the slot and return a pointer *to* the
+                        // handle (double indirection), so the caller
+                        // decoded a wild discriminant — e.g. an enum
+                        // produced by `fn f() -> E` then pushed into a
+                        // Vec read back as garbage.
+                        let tmp = self.fresh();
+                        writeln!(
+                            self.out,
+                            "  {tmp} = load ptr, ptr {slot}",
+                            slot = local_slot(Local::RETURN)
+                        )
+                        .unwrap();
+                        // Re-root into the caller's frame (the restore
+                        // above popped this body's roots).
+                        self.emit_gc_root_push(&tmp);
+                        writeln!(self.out, "  ret ptr {tmp}").unwrap();
+                    }
                 } else {
                     let tmp = self.fresh();
                     writeln!(

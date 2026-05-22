@@ -3,7 +3,7 @@ use super::*;
 
 impl<'tcx> FnBuilder<'tcx> {
     pub(crate) fn new(
-        name: String,
+        name: &'static str,
         tcx: &'tcx TyCtxt,
         layouts: &'tcx StructLayouts,
         wrappers: &'tcx InlinableWrappers,
@@ -55,7 +55,7 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     pub(crate) fn finish(self, arity: u16) -> FnChunk {
-        FnChunk {
+        let mut chunk = FnChunk {
             name: self.name,
             arity,
             register_count: self.next_reg,
@@ -76,6 +76,12 @@ impl<'tcx> FnBuilder<'tcx> {
             call_cache_count: self.next_cache_idx,
             arith_cache_count: self.next_arith_cache_idx,
             field_cache_count: self.next_field_cache_idx,
-        }
+        };
+        // Release growth-by-doubling slack on every Vec field
+        // unconditionally — any code path that produces a chunk
+        // via `finish` benefits, with no risk of a future caller
+        // forgetting an explicit compact() call.
+        chunk.compact();
+        chunk
     }
 }

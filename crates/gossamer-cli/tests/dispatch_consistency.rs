@@ -65,6 +65,51 @@ fn runtime_source_files() -> Vec<PathBuf> {
     out
 }
 
+/// Recognises an export-generating macro invocation such as
+/// `put_fixed!(gos_rt_bin_put_u16_be, u16, to_be_bytes, 2);` and
+/// returns the generated `gos_rt_*` symbol name. Requires the first
+/// macro argument to be a standalone identifier (terminated by `,` or
+/// `)`), so a runtime *call* passed as a macro argument
+/// (`bar!(gos_rt_x(0, y))`) is not mistaken for an export.
+fn macro_generated_export(line: &str) -> Option<String> {
+    let bang = line.find("!(")?;
+    // The token before `!(` must be a macro name (identifier chars).
+    let pre = line[..bang].trim_end();
+    if pre.is_empty()
+        || !pre
+            .chars()
+            .rev()
+            .take_while(|c| !c.is_whitespace())
+            .all(is_ident_char)
+    {
+        return None;
+    }
+    let after = &line[bang + 2..];
+    let token: String = after
+        .trim_start()
+        .chars()
+        .take_while(|&c| is_ident_char(c))
+        .collect();
+    if !token.starts_with("gos_rt_") {
+        return None;
+    }
+    // The identifier must be a complete argument: next non-space char
+    // is `,` or `)`.
+    let next = after.trim_start()[token.len()..]
+        .trim_start()
+        .chars()
+        .next();
+    if matches!(next, Some(',' | ')')) {
+        Some(token)
+    } else {
+        None
+    }
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
 fn extract_runtime_exports() -> Vec<String> {
     let mut out = Vec::new();
     for path in runtime_source_files() {
@@ -75,18 +120,28 @@ fn extract_runtime_exports() -> Vec<String> {
             let trimmed = line.trim_start();
             // Match `pub extern "C" fn ...` or
             // `pub unsafe extern "C" fn ...`.
-            let after = trimmed
+            if let Some(rest) = trimmed
                 .strip_prefix("pub unsafe extern \"C\" fn ")
-                .or_else(|| trimmed.strip_prefix("pub extern \"C\" fn "));
-            let Some(rest) = after else {
+                .or_else(|| trimmed.strip_prefix("pub extern \"C\" fn "))
+            {
+                let end = rest
+                    .find(|c: char| c == '(' || c == '<' || c.is_whitespace())
+                    .unwrap_or(rest.len());
+                let name = &rest[..end];
+                if name.starts_with("gos_rt_") {
+                    out.push(name.to_string());
+                }
                 continue;
-            };
-            let end = rest
-                .find(|c: char| c == '(' || c == '<' || c.is_whitespace())
-                .unwrap_or(rest.len());
-            let name = &rest[..end];
-            if name.starts_with("gos_rt_") {
-                out.push(name.to_string());
+            }
+            // Match export-generating macro invocations of the form
+            // `some_macro!(gos_rt_name, ...)` — the runtime defines
+            // families of fixed-width `extern "C"` shims (e.g.
+            // `put_fixed!`, `get_fixed!`) whose first argument is the
+            // exported symbol name. The text scan above can't see the
+            // generated `fn`, so recognise the macro call's first
+            // standalone `gos_rt_*` identifier argument.
+            if let Some(name) = macro_generated_export(trimmed) {
+                out.push(name);
             }
         }
     }

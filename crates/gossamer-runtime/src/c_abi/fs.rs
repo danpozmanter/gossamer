@@ -91,8 +91,8 @@ pub unsafe extern "C" fn gos_rt_os_remove_file(path: *const c_char) -> i64 {
 pub unsafe extern "C" fn gos_rt_os_write_file_result(
     path: *const c_char,
     contents: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         if path.is_null() || contents.is_null() {
             let cs = std::ffi::CString::new("write_file: null arg").unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
@@ -121,8 +121,8 @@ pub unsafe extern "C" fn gos_rt_os_write_file_result(
 pub unsafe extern "C" fn gos_rt_os_write_file_bytes_result(
     path: *const c_char,
     contents: *const crate::c_abi::vec::GosVec,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         if path.is_null() || contents.is_null() {
             let cs = std::ffi::CString::new("write_file: null arg").unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
@@ -171,8 +171,8 @@ pub unsafe extern "C" fn gos_rt_os_write_file_bytes_result(
 /// who want a String should use `os::read_file_to_string` /
 /// `fs::read_to_string` instead.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if path.is_null() {
             let cs = std::ffi::CString::new("read_file: null path").unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
@@ -211,8 +211,8 @@ pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> *mu
 /// `os::mkdir_all(path) -> Result<(), IoError>` — Result shape, for
 /// `.map_err(...)` chains.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if path.is_null() {
             let cs = std::ffi::CString::new("mkdir_all: null path").unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
@@ -233,8 +233,8 @@ pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> *mut
 
 /// `fs::remove_all(path) -> Result<(), IoError>` — removes a directory tree or file.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if path.is_null() {
             let cs = std::ffi::CString::new("remove_all: null path").unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
@@ -255,8 +255,8 @@ pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) ->
 
 /// `os::remove_file(path) -> Result<(), IoError>` — Result shape.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if path.is_null() {
             let cs = std::ffi::CString::new("remove_file: null path").unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
@@ -336,8 +336,8 @@ pub unsafe extern "C" fn gos_rt_path_dir(p: *const c_char) -> *mut c_char {
 /// very start of the file name. Mirrors the interp / stdlib
 /// `path::ext` Option-returning shape.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_path_ext(p: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_path_ext(p: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         let s = if p.is_null() {
             ""
         } else {
@@ -358,6 +358,289 @@ pub unsafe extern "C" fn gos_rt_path_ext(p: *const c_char) -> *mut GosResult {
             unsafe { gos_rt_result_new(0, cstr) }
         }
     })
+}
+
+/// `path::parent(p) -> Option<String>` — drops the trailing
+/// component. Returns None when `p` has no parent (root or
+/// single-component path).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_parent(p: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let s = if p.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+        };
+        let trimmed = s.trim_end_matches('/');
+        match trimmed.rfind('/') {
+            None => unsafe { gos_rt_result_new(1, 0) },
+            Some(0) => {
+                let cstr = alloc_cstring(b"/") as i64;
+                unsafe { gos_rt_result_new(0, cstr) }
+            }
+            Some(idx) => {
+                let cstr = alloc_cstring(&trimmed.as_bytes()[..idx]) as i64;
+                unsafe { gos_rt_result_new(0, cstr) }
+            }
+        }
+    })
+}
+
+/// `path::stem(p) -> Option<String>` — basename minus the
+/// extension. Returns None when the basename is empty.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_stem(p: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let s = if p.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+        };
+        let basename = match s.rfind('/') {
+            None => s,
+            Some(idx) => &s[idx + 1..],
+        };
+        if basename.is_empty() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let stem = match basename.rfind('.') {
+            None | Some(0) => basename,
+            Some(idx) => &basename[..idx],
+        };
+        let cstr = alloc_cstring(stem.as_bytes()) as i64;
+        unsafe { gos_rt_result_new(0, cstr) }
+    })
+}
+
+/// `path::file_name(p) -> Option<String>` — last component.
+/// Returns None for empty paths or trailing-slash directories.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_file_name(p: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let s = if p.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+        };
+        let basename = match s.rfind('/') {
+            None => s,
+            Some(idx) => &s[idx + 1..],
+        };
+        if basename.is_empty() {
+            unsafe { gos_rt_result_new(1, 0) }
+        } else {
+            let cstr = alloc_cstring(basename.as_bytes()) as i64;
+            unsafe { gos_rt_result_new(0, cstr) }
+        }
+    })
+}
+
+/// `path::clean(p) / path::normalize(p) -> String`. Lexical
+/// cleanup mirroring `gossamer_std::path::clean` (no I/O); the
+/// runtime crate stays free of a dep on `gossamer-std`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_clean(p: *const c_char) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let path = if p.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+        };
+        alloc_cstring(path_clean(path).as_bytes())
+    })
+}
+
+/// `path::is_absolute(p) -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_is_absolute(p: *const c_char) -> i32 {
+    ffi_entry!(-1, {
+        let path = if p.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+        };
+        i32::from(path.starts_with('/'))
+    })
+}
+
+/// `path::has_prefix(p, prefix) -> bool` — path-aware prefix test.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_has_prefix(p: *const c_char, prefix: *const c_char) -> i32 {
+    ffi_entry!(-1, {
+        let path = if p.is_null() {
+            String::new()
+        } else {
+            path_clean(unsafe { CStr::from_ptr(p).to_str() }.unwrap_or(""))
+        };
+        let prefix = if prefix.is_null() {
+            String::new()
+        } else {
+            path_clean(unsafe { CStr::from_ptr(prefix).to_str() }.unwrap_or(""))
+        };
+        if path == prefix {
+            return 1;
+        }
+        let matched = if prefix.ends_with('/') {
+            path.starts_with(&prefix)
+        } else {
+            let mut candidate = prefix.clone();
+            candidate.push('/');
+            path.starts_with(&candidate)
+        };
+        i32::from(matched)
+    })
+}
+
+/// `os::copy(src, dst) / fs::copy(src, dst) -> Result<i64, Error>`
+/// — copies the file contents and returns the byte count.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_copy(src: *const c_char, dst: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let src = if src.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(src).to_string_lossy().into_owned() }
+        };
+        let dst = if dst.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(dst).to_string_lossy().into_owned() }
+        };
+        match std::fs::copy(&src, &dst) {
+            Ok(n) => unsafe { gos_rt_result_new(0, i64::try_from(n).unwrap_or(i64::MAX)) },
+            Err(e) => {
+                let cs = std::ffi::CString::new(format!("{e}")).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
+}
+
+/// `os::canonicalize(p) / fs::canonicalize(p) -> Result<String, Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_canonicalize(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let p = if path.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+        };
+        match std::fs::canonicalize(&p) {
+            Ok(abs) => {
+                let s = abs.to_string_lossy().into_owned();
+                let ptr = alloc_cstring(s.as_bytes()) as i64;
+                unsafe { gos_rt_result_new(0, ptr) }
+            }
+            Err(e) => {
+                let cs = std::ffi::CString::new(format!("{e}")).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
+}
+
+/// Builds a `Result::Ok(*mut GosVec)` carrying owned strings.
+fn ok_str_vec(parts: &[String]) -> i128 {
+    let vec = unsafe { gos_rt_vec_with_capacity(8, parts.len() as i64) };
+    for p in parts {
+        let pv = alloc_cstring(p.as_bytes()) as i64;
+        unsafe { gos_rt_vec_push(vec, std::ptr::addr_of!(pv).cast::<u8>()) };
+    }
+    unsafe { gos_rt_result_new(0, vec as i64) }
+}
+
+fn err_io(e: &std::io::Error) -> i128 {
+    let cs = std::ffi::CString::new(format!("{e}")).unwrap_or_default();
+    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    unsafe { gos_rt_result_new(1, err as i64) }
+}
+
+/// `bufio::read_to_string(path) -> Result<String, Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bufio_read_to_string(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let p = if path.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+        };
+        match std::fs::read_to_string(&p) {
+            Ok(text) => unsafe { gos_rt_result_new(0, alloc_cstring(text.as_bytes()) as i64) },
+            Err(e) => err_io(&e),
+        }
+    })
+}
+
+/// `bufio::read_lines_of(path) -> Result<[String], Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bufio_read_lines_of(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let p = if path.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+        };
+        match std::fs::read_to_string(&p) {
+            Ok(text) => {
+                let lines: Vec<String> = text.lines().map(str::to_string).collect();
+                ok_str_vec(&lines)
+            }
+            Err(e) => err_io(&e),
+        }
+    })
+}
+
+/// `net::resolve(host) / net::lookup(host) -> Result<[String], Error>`
+/// — resolves a host (optionally `host:port`) to IP address strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_net_resolve(host: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        use std::net::ToSocketAddrs;
+        let h = if host.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(host).to_str().unwrap_or("") }.to_string()
+        };
+        let needle = if h.contains(':') { h } else { format!("{h}:0") };
+        match needle.to_socket_addrs() {
+            Ok(addrs) => {
+                let ips: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
+                ok_str_vec(&ips)
+            }
+            Err(e) => err_io(&e),
+        }
+    })
+}
+
+/// Lexical path clean shared by `gos_rt_path_clean` /
+/// `gos_rt_path_has_prefix`. Mirrors `gossamer_std::path::clean`.
+fn path_clean(path: &str) -> String {
+    if path.is_empty() {
+        return ".".to_string();
+    }
+    let absolute = path.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if parts.last().is_some_and(|s: &&str| *s != "..") {
+                    parts.pop();
+                } else if !absolute {
+                    parts.push("..");
+                }
+            }
+            other => parts.push(other),
+        }
+    }
+    let mut out = String::new();
+    if absolute {
+        out.push('/');
+    }
+    out.push_str(&parts.join("/"));
+    if out.is_empty() { ".".to_string() } else { out }
 }
 
 // --- 0.7.0 scalar cmp helpers ---

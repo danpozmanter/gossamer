@@ -198,8 +198,8 @@ pub enum VerifyError {
 ///     def: None,
 ///     arity: 1,
 ///     locals: vec![
-///         LocalDecl { ty: i64_ty, debug_name: None, mutable: false },
-///         LocalDecl { ty: i64_ty, debug_name: None, mutable: false },
+///         LocalDecl { ty: i64_ty, debug_name: None, mutable: false, region: false },
+///         LocalDecl { ty: i64_ty, debug_name: None, mutable: false, region: false },
 ///     ],
 ///     blocks: vec![BasicBlock {
 ///         id: BlockId::ENTRY,

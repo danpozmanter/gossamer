@@ -186,7 +186,14 @@ impl<'a> Lowerer<'a> {
         // alloca itself. Stack-allocated aggregates ([Body;5]
         // declared inline) hold the data directly in their slot
         // so we leave `current` pointing at the alloca.
-        if Self::is_pointer_local_ty(self.tcx, current_ty) {
+        //
+        // Skip this auto-deref when the first projection is itself
+        // an explicit `Deref` — the projection performs the same
+        // pointer-load, and applying both produces a double-deref
+        // that lands on garbage (the case `*s = expr` where
+        // `s: &mut i64`).
+        let skip_auto_deref = matches!(place.projection.first(), Some(Projection::Deref));
+        if !skip_auto_deref && Self::is_pointer_local_ty(self.tcx, current_ty) {
             let next = self.fresh();
             writeln!(self.out, "  {next} = load ptr, ptr {current}").unwrap();
             current = next;
@@ -258,11 +265,20 @@ impl<'a> Lowerer<'a> {
                         .unwrap();
                     }
                     current = next;
-                    // After indexing, the remaining projections
-                    // walk inside one element — subsequent Field
-                    // offsets use the base stride (8 bytes per
-                    // scalar field).
-                    stride_slots = 1;
+                    // Advance current_ty to the element type so
+                    // subsequent projections (multi-dim array, nested
+                    // field, …) see the right shape. Without this,
+                    // `arr[i][j]` over `[[T; N]; M]` would use the
+                    // outer-array's stride/bounds for the inner index
+                    // and panic / corrupt data — the underlying
+                    // 3D-array bug from iron_knight's `make_zobrist`.
+                    current_ty = match self.tcx.kind(current_ty) {
+                        Some(
+                            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem),
+                        ) => *elem,
+                        _ => current_ty,
+                    };
+                    stride_slots = elem_slots(self.tcx, current_ty);
                 }
                 Projection::Deref => {
                     let next = self.fresh();

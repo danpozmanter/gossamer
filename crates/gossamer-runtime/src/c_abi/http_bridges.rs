@@ -389,8 +389,8 @@ pub unsafe extern "C" fn gos_rt_router_add_fn(
 pub unsafe extern "C" fn gos_rt_router_serve(
     router: *const GosRouter,
     req: *mut GosHttpRequest,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         if router.is_null() || req.is_null() {
             return router_404_result();
         }
@@ -407,7 +407,7 @@ pub unsafe extern "C" fn gos_rt_router_serve(
                         route.fn_addr,
                         super::fn_registry::FnKind::HttpHandlerBare,
                     );
-                    type BareFn = unsafe extern "C" fn(req: *mut GosHttpRequest) -> *mut GosResult;
+                    type BareFn = unsafe extern "C" fn(req: *mut GosHttpRequest) -> i128;
                     let handler: BareFn = unsafe { std::mem::transmute(route.fn_addr) };
                     return unsafe { handler(req) };
                 }
@@ -416,7 +416,7 @@ pub unsafe extern "C" fn gos_rt_router_serve(
                     super::fn_registry::FnKind::HttpHandlerEnv,
                 );
                 type HandlerFn =
-                    unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> *mut GosResult;
+                    unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
                 let handler: HandlerFn = unsafe { std::mem::transmute(route.fn_addr) };
                 return unsafe { handler(route.env as *mut u8, req) };
             }
@@ -425,17 +425,14 @@ pub unsafe extern "C" fn gos_rt_router_serve(
     })
 }
 
-fn router_404_result() -> *mut GosResult {
+fn router_404_result() -> i128 {
     let resp = Box::into_raw(Box::new(GosHttpResponse {
         status: 404,
         body: SyncRawPtr::new(alloc_cstring(b"not found")),
         headers: Vec::new(),
         body_bytes: None,
     }));
-    Box::into_raw(Box::new(GosResult {
-        disc: 0,
-        payload: resp as i64,
-    }))
+    crate::c_abi::vec::pack_result(0, resp as i64)
 }
 
 // FileServer: read-and-serve from a root directory with a path
@@ -476,8 +473,8 @@ pub unsafe extern "C" fn gos_rt_file_server_new(
 pub unsafe extern "C" fn gos_rt_file_server_serve(
     fs: *const GosFileServer,
     req: *const GosHttpRequest,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         if fs.is_null() || req.is_null() {
             return router_404_result();
         }
@@ -487,15 +484,15 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
         let rel = path.strip_prefix(&server.prefix).unwrap_or(path);
         let rel = rel.trim_start_matches('/');
         if rel.contains("..") {
-            return Box::into_raw(Box::new(GosResult {
-                disc: 0,
-                payload: Box::into_raw(Box::new(GosHttpResponse {
+            return crate::c_abi::vec::pack_result(
+                0,
+                Box::into_raw(Box::new(GosHttpResponse {
                     status: 403,
                     body: SyncRawPtr::new(alloc_cstring(b"forbidden")),
                     headers: Vec::new(),
                     body_bytes: None,
                 })) as i64,
-            }));
+            );
         }
         let full = std::path::PathBuf::from(&server.root).join(rel);
         match std::fs::read(&full) {
@@ -504,15 +501,15 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
                 let headers: Vec<(String, String)> =
                     vec![("content-type".to_string(), mime.to_string())];
                 let body_cstr = alloc_cstring(&bytes);
-                Box::into_raw(Box::new(GosResult {
-                    disc: 0,
-                    payload: Box::into_raw(Box::new(GosHttpResponse {
+                crate::c_abi::vec::pack_result(
+                    0,
+                    Box::into_raw(Box::new(GosHttpResponse {
                         status: 200,
                         body: SyncRawPtr::new(body_cstr),
                         headers,
                         body_bytes: Some(bytes),
                     })) as i64,
-                }))
+                )
             }
             Err(_) => router_404_result(),
         }
@@ -564,8 +561,8 @@ pub unsafe extern "C" fn gos_rt_native_client_new() -> *mut GosNativeClient {
 pub unsafe extern "C" fn gos_rt_native_client_get(
     _client: *const GosNativeClient,
     url: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         unsafe { gos_rt_http_get(url, std::ptr::null_mut()) }
     })
 }
@@ -593,8 +590,8 @@ pub unsafe extern "C" fn gos_rt_proxy_new(upstream: *const c_char) -> *mut GosPr
 pub unsafe extern "C" fn gos_rt_proxy_forward(
     proxy: *const GosProxy,
     req: *const GosHttpRequest,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         if proxy.is_null() {
             return router_404_result();
         }

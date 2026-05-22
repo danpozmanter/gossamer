@@ -42,6 +42,7 @@ fn jit_compiles_const_int_returning_main() {
             ty: i64_ty,
             debug_name: None,
             mutable: false,
+            region: false,
         }],
         blocks: vec![BasicBlock {
             id: gossamer_mir::BlockId(0),
@@ -82,16 +83,19 @@ fn jit_compiles_simple_arithmetic_function() {
                 ty: i64_ty,
                 debug_name: None,
                 mutable: false,
+                region: false,
             },
             LocalDecl {
                 ty: i64_ty,
                 debug_name: None,
                 mutable: false,
+                region: false,
             },
             LocalDecl {
                 ty: i64_ty,
                 debug_name: None,
                 mutable: false,
+                region: false,
             },
         ],
         blocks: vec![BasicBlock {
@@ -133,6 +137,7 @@ fn jit_artifact_drops_without_panic() {
             ty: i64_ty,
             debug_name: None,
             mutable: false,
+            region: false,
         }],
         blocks: vec![BasicBlock {
             id: gossamer_mir::BlockId(0),

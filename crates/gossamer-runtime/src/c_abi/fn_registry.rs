@@ -38,10 +38,10 @@ pub enum FnKind {
     /// the `gos_rt_fn_tramp_N` family — env is the closure env
     /// blob; args are i64 each.
     EnvI64ArgsToI64 { arity: u8 },
-    /// `extern "C" fn(*const u8, *mut GosHttpRequest) -> *mut GosResult`.
+    /// `extern "C" fn(*const u8, *mut GosHttpRequest) -> i128`.
     /// Bare-fn HTTP route handler.
     HttpHandlerBare,
-    /// `extern "C" fn(*mut u8, *mut GosHttpRequest) -> *mut GosResult`.
+    /// `extern "C" fn(*mut u8, *mut GosHttpRequest) -> i128`.
     /// Env-capturing HTTP route handler.
     HttpHandlerEnv,
     /// `extern "C" fn(i64, i64) -> i64`. Sort comparator (a,b -> ordering).

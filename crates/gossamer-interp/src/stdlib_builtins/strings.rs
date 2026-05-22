@@ -118,6 +118,15 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
             ("contains", builtin_strings_contains),
             ("find", builtin_strings_find),
             ("rfind", builtin_strings_rfind),
+            ("split_once", builtin_strings_split_once),
+            ("rsplit_once", builtin_strings_rsplit_once),
+            ("count", builtin_strings_count),
+            ("strip_chars", builtin_strings_strip_chars),
+            ("lstrip_chars", builtin_strings_lstrip_chars),
+            ("rstrip_chars", builtin_strings_rstrip_chars),
+            ("zfill", builtin_strings_zfill),
+            ("center", builtin_strings_center),
+            ("slice", builtin_strings_slice),
             ("replace", builtin_strings_replace),
             ("replacen", builtin_strings_replacen),
             ("to_lower", builtin_strings_to_lower),
@@ -182,9 +191,13 @@ pub(crate) fn builtin_strings_trim_end(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_strings_contains(args: &[Value]) -> RuntimeResult<Value> {
-    let text = args.first().and_then(as_str).unwrap_or("");
-    let needle = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(Value::Bool(strings_std::contains(text, needle)))
+    // Delegate to the unified, array-aware `contains` so the
+    // method-dispatch seeding (which seeds the bare `contains` key
+    // from this entry) handles both `String::contains(substr)` and
+    // `Vec::contains(&elem)`. Coercing a Vec receiver to "" here made
+    // `"".contains("") == true`, so `nums.contains(&99)` wrongly
+    // returned true.
+    crate::builtins::builtin_contains(args)
 }
 
 pub(crate) fn builtin_strings_find(args: &[Value]) -> RuntimeResult<Value> {
@@ -203,6 +216,120 @@ pub(crate) fn builtin_strings_rfind(args: &[Value]) -> RuntimeResult<Value> {
         Some(idx) => Ok(some_variant(Value::Int(idx as i64))),
         None => Ok(none_variant()),
     }
+}
+
+pub(crate) fn builtin_strings_split_once(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let sep = args.get(1).and_then(as_str).unwrap_or("");
+    match text.split_once(sep) {
+        Some((head, tail)) => Ok(some_variant(Value::Tuple(std::sync::Arc::new(vec![
+            Value::String(head.into()),
+            Value::String(tail.into()),
+        ])))),
+        None => Ok(none_variant()),
+    }
+}
+
+pub(crate) fn builtin_strings_rsplit_once(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let sep = args.get(1).and_then(as_str).unwrap_or("");
+    match text.rsplit_once(sep) {
+        Some((head, tail)) => Ok(some_variant(Value::Tuple(std::sync::Arc::new(vec![
+            Value::String(head.into()),
+            Value::String(tail.into()),
+        ])))),
+        None => Ok(none_variant()),
+    }
+}
+
+pub(crate) fn builtin_strings_count(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let needle = args.get(1).and_then(as_str).unwrap_or("");
+    if needle.is_empty() {
+        return Ok(Value::Int(0));
+    }
+    Ok(Value::Int(text.matches(needle).count() as i64))
+}
+
+pub(crate) fn builtin_strings_strip_chars(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let cutset = args.get(1).and_then(as_str).unwrap_or("");
+    if cutset.is_empty() {
+        return Ok(Value::String(text.into()));
+    }
+    let pat: Vec<char> = cutset.chars().collect();
+    Ok(Value::String(text.trim_matches(pat.as_slice()).into()))
+}
+
+pub(crate) fn builtin_strings_lstrip_chars(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let cutset = args.get(1).and_then(as_str).unwrap_or("");
+    if cutset.is_empty() {
+        return Ok(Value::String(text.into()));
+    }
+    let pat: Vec<char> = cutset.chars().collect();
+    Ok(Value::String(
+        text.trim_start_matches(pat.as_slice()).into(),
+    ))
+}
+
+pub(crate) fn builtin_strings_rstrip_chars(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let cutset = args.get(1).and_then(as_str).unwrap_or("");
+    if cutset.is_empty() {
+        return Ok(Value::String(text.into()));
+    }
+    let pat: Vec<char> = cutset.chars().collect();
+    Ok(Value::String(text.trim_end_matches(pat.as_slice()).into()))
+}
+
+pub(crate) fn builtin_strings_zfill(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let width = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let cur = text.chars().count() as i64;
+    if width <= 0 || cur >= width {
+        return Ok(Value::String(text.into()));
+    }
+    let mut out = String::new();
+    for _ in 0..(width - cur) {
+        out.push('0');
+    }
+    out.push_str(text);
+    Ok(Value::String(out.into()))
+}
+
+pub(crate) fn builtin_strings_center(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let width = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let pad = match args.get(2) {
+        Some(Value::Char(c)) if *c != '\0' => *c,
+        Some(other) => char::from_u32(value_to_int(other).unwrap_or(32) as u32).unwrap_or(' '),
+        None => ' ',
+    };
+    let cur = text.chars().count() as i64;
+    if width <= 0 || cur >= width {
+        return Ok(Value::String(text.into()));
+    }
+    let total = (width - cur) as usize;
+    let left = total / 2;
+    let right = total - left;
+    let mut out = String::new();
+    for _ in 0..left {
+        out.push(pad);
+    }
+    out.push_str(text);
+    for _ in 0..right {
+        out.push(pad);
+    }
+    Ok(Value::String(out.into()))
+}
+
+pub(crate) fn builtin_strings_slice(args: &[Value]) -> RuntimeResult<Value> {
+    // Delegate to the unified String/Vec slicer so the seeded bare
+    // `slice` key handles both `"text".slice(a, b)` and
+    // `vec.slice(a, b)`. A String-only impl here coerced a Vec
+    // receiver to "" and reported length 0.
+    crate::builtins::builtin_str_or_vec_slice(args)
 }
 
 pub(crate) fn builtin_strings_replace(args: &[Value]) -> RuntimeResult<Value> {

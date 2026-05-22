@@ -67,11 +67,8 @@ pub unsafe extern "C" fn gos_rt_sync_map_set(
 /// pin the destination to `Option<String>` without inventing a
 /// fresh result-discriminant convention.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_sync_map_get(
-    m: *mut GosSyncMap,
-    key: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_sync_map_get(m: *mut GosSyncMap, key: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if m.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }

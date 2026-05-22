@@ -103,14 +103,70 @@ pub(crate) enum RouterHandlerAbi {
     },
 }
 
+/// Registers every inline-able user enum (by `DefId.local`) in `tcx` so the
+/// codegen renders it as the 2-word by-value `i128` `[disc, payload]` shape
+/// instead of a heap node. An enum is inline-able iff every variant has at most
+/// one field and that field fits in a single 8-byte slot (scalar / String /
+/// Vec / map / ref / fn-pointer / handle). Multi-field variants (e.g. a tree
+/// node) keep the heap-node representation.
+fn register_inline_enums(program: &HirProgram, tcx: &mut TyCtxt) {
+    for item in &program.items {
+        let HirItemKind::Adt(adt) = &item.kind else {
+            continue;
+        };
+        let HirAdtKind::Enum(variants) = &adt.kind else {
+            continue;
+        };
+        let inline_able = variants.iter().all(|v| match &v.struct_field_tys {
+            None => true,
+            Some(tys) => tys.len() <= 1 && tys.iter().all(|t| field_fits_inline(tcx, *t)),
+        });
+        if !inline_able {
+            continue;
+        }
+        if let gossamer_types::TyKind::Adt { def, .. } = tcx.kind_of(adt.self_ty) {
+            let def_local = def.local;
+            tcx.register_inline_enum_def(def_local);
+        }
+    }
+}
+
+/// True when a value of `ty` occupies a single 8-byte slot and is never itself
+/// an inline (2-word) enum — the safe set for an inline enum payload word.
+/// Conservatively excludes `Adt` / `Tuple` / `Array` (which may be multi-slot
+/// or themselves inline enums, which would not fit in one payload word).
+fn field_fits_inline(tcx: &TyCtxt, ty: gossamer_types::Ty) -> bool {
+    use gossamer_types::TyKind;
+    matches!(
+        tcx.kind_of(ty),
+        TyKind::Bool
+            | TyKind::Char
+            | TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::String
+            | TyKind::Slice(_)
+            | TyKind::Vec(_)
+            | TyKind::HashMap { .. }
+            | TyKind::Sender(_)
+            | TyKind::Receiver(_)
+            | TyKind::Ref { .. }
+            | TyKind::FnPtr(_)
+            | TyKind::JsonValue
+            | TyKind::DynError
+    )
+}
+
 /// Lower an entire HIR program to MIR `Body`s, one per top-level function.
 pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     let (structs, struct_defs) = collect_struct_fields(program);
     let enums = collect_enum_variants(program);
+    register_inline_enums(program, tcx);
     let impl_methods = collect_impl_methods(program);
     let fn_returns = collect_fn_returns(program);
     let fn_inputs = collect_fn_inputs(program);
     let consts = collect_const_values(program);
+    // Conservative escape summary driving automatic arena regions.
+    let region_unsafe = collect_region_unsafe_fns(program, tcx);
     let mut bodies = Vec::new();
     for item in &program.items {
         collect_item(
@@ -123,11 +179,20 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             &fn_returns,
             &fn_inputs,
             &consts,
+            &region_unsafe,
             &mut bodies,
         );
     }
     for body in &mut bodies {
+        // Rewrite `s = s + frag` to the in-place `gos_rt_str_concat_drop_a`
+        // BEFORE inserting RC retain/release statements. The rewrite matches a
+        // copy-back pattern (the concat's result copied straight back into the
+        // accumulator); the RC pass inserts statements into that gap, so
+        // running it first would hide the pattern and leave every append on the
+        // fresh-allocation path (O(n^2) string building).
+        rewrite_str_concat_consuming(body);
         insert_drops_at_returns(body, tcx);
+        insert_rc_releases(body, tcx);
     }
     #[cfg(debug_assertions)]
     crate::verify::debug_verify_program(&bodies, tcx);

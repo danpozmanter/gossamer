@@ -323,11 +323,13 @@ mod tests {
                     ty: unit,
                     debug_name: None,
                     mutable: false,
+                    region: false,
                 },
                 crate::ir::LocalDecl {
                     ty: recorded,
                     debug_name: None,
                     mutable: false,
+                    region: false,
                 },
             ],
             blocks: Vec::new(),

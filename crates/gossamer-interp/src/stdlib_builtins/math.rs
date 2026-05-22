@@ -136,6 +136,7 @@ pub(crate) fn install_math(globals: &mut Vec<(&'static str, Value)>) {
             ("hypot", builtin_math_hypot),
             ("min", builtin_math_min),
             ("max", builtin_math_max),
+            ("clamp", builtin_math_clamp),
             ("min_f64", builtin_math_min_f64),
             ("max_f64", builtin_math_max_f64),
             ("min_i64", builtin_math_min_i64),
@@ -267,6 +268,35 @@ pub(crate) fn builtin_math_hypot(args: &[Value]) -> RuntimeResult<Value> {
         arg_f64(args, 1),
     )))
 }
+pub(crate) fn builtin_math_clamp(args: &[Value]) -> RuntimeResult<Value> {
+    // clamp(v, lo, hi) — bare prelude scalar clamp. Matches the
+    // compiled tier: below lo -> lo, above hi -> hi, else v.
+    if let Some(Value::Float(_)) = args.first() {
+        let v = arg_f64(args, 0);
+        let lo = arg_f64(args, 1);
+        let hi = arg_f64(args, 2);
+        let out = if v < lo {
+            lo
+        } else if v > hi {
+            hi
+        } else {
+            v
+        };
+        return Ok(Value::Float(out));
+    }
+    let v = args.first().and_then(value_to_int).unwrap_or(0);
+    let lo = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let hi = args.get(2).and_then(value_to_int).unwrap_or(0);
+    let out = if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    };
+    Ok(Value::Int(out))
+}
+
 pub(crate) fn builtin_math_min(args: &[Value]) -> RuntimeResult<Value> {
     if let Some(Value::Float(_)) = args.first() {
         return Ok(Value::Float(math_std::min_f64(

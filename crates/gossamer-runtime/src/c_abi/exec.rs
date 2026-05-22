@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use super::errors::gos_rt_error_new;
 use super::string::alloc_cstring;
-use super::vec::{GosResult, GosVec, gos_rt_result_new};
+use super::vec::{GosVec, gos_rt_result_new};
 
 // ---------------------------------------------------------------
 // Pipeline, streaming, signal, wait-with-timeout, kill-group.
@@ -43,8 +43,8 @@ use super::vec::{GosResult, GosVec, gos_rt_result_new};
 /// already registered by `gos_rt_exec_run` (`[i64; 3]` heap
 /// aggregate). Err payload is `*mut GosError`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_exec_pipeline_run(commands: *mut GosVec) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_exec_pipeline_run(commands: *mut GosVec) -> i128 {
+    ffi_entry!(0i128, {
         let stages = match unsafe { gather_command_lines(commands) } {
             Ok(s) => s,
             Err(msg) => {

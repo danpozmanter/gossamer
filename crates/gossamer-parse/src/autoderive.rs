@@ -1,17 +1,18 @@
-//! Compile-time codegen for serialization methods (serde / kotlinx
-//! shape). For every user struct whose fields the synthesizer can
-//! classify (primitives, growable arrays of supported types, nested
-//! user structs), we synthesize
-//! `pub fn to_json(self) -> Result<String, errors::Error>` and
-//! `pub fn from_json(text: &String) -> Result<Self, errors::Error>`
-//! as real Gossamer source, parse it, and merge into the program.
+//! Compile-time codegen for serialization (serde / kotlinx shape).
+//! For every user struct whose fields the synthesizer can classify
+//! (primitives, growable arrays of supported types, nested user
+//! structs), we synthesize per-type free functions
+//! `__gos_serde_to_json_<T>` / `__gos_serde_from_json_<T>` (plus the
+//! toml / yaml variants) as real Gossamer source, parse it, and merge
+//! it into the program. The public surface is the generic call form
+//! `to_json::<T>(value)` / `from_json::<T>(text)`, which
+//! `rewrite_serde_generic_calls` rewrites into those names. There are
+//! no `Type::to_json` methods — one spelling only.
 //!
-//! Because the synthesized methods are ordinary Gossamer code, they
+//! Because the synthesized functions are ordinary Gossamer code, they
 //! compile through every tier (VM + Cranelift + LLVM) automatically.
 //! There is no VM-only intercept; no runtime schema registry; no
-//! per-call dispatch overhead. Zero-cost abstraction in the same
-//! sense as serde's `#[derive(Serialize, Deserialize)]`: the
-//! compiler writes the code you would have written yourself.
+//! per-call dispatch overhead.
 
 #![forbid(unsafe_code)]
 
@@ -108,7 +109,7 @@ impl FieldKind {
             }
             Self::String => format!("format!(\"\\\"{{}}\\\"\", &{expr})"),
             Self::Vec(inner) => render_vec_to_json(expr, inner),
-            Self::Struct(name) => format!("{name}::to_json(&{expr})?"),
+            Self::Struct(name) => format!("{}({expr})?", to_json_fn(name)),
         }
     }
 
@@ -135,10 +136,25 @@ impl FieldKind {
             ),
             Self::Vec(inner) => extract_vec_strict(value_expr, inner, path),
             Self::Struct(name) => format!(
-                "match {name}::from_json(&json::render({value_expr})) {{ Ok(__v) => __v, Err(__e) => return Err(errors::wrap(__e, \"{path}\")) }}"
+                "match {}(&json::render({value_expr})) {{ Ok(__v) => __v, Err(__e) => return Err(errors::wrap(__e, \"{path}\")) }}",
+                from_json_fn(name)
             ),
         }
     }
+}
+
+/// Mangled name of the synthesized serializer free function for a
+/// given operation and type. The public surface is the generic call
+/// form `to_json::<T>(v)` / `from_json::<T>(s)`, which the parse-time
+/// `rewrite_serde_generic_calls` pass rewrites into these names.
+pub(crate) fn serde_fn(op: &str, ty: &str) -> String {
+    format!("__gos_serde_{op}_{ty}")
+}
+fn to_json_fn(ty: &str) -> String {
+    serde_fn("to_json", ty)
+}
+fn from_json_fn(ty: &str) -> String {
+    serde_fn("from_json", ty)
 }
 
 fn render_vec_to_json(expr: &str, inner: &FieldKind) -> String {
@@ -203,96 +219,106 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
 
 fn emit_impl(out: &mut String, decl: &StructDecl, fields: &[(String, FieldKind)]) {
     let name = &decl.name.name;
-    out.push_str(&format!("impl {name} {{\n"));
-    emit_to_json(out, fields);
+    emit_to_json(out, name, fields);
     emit_from_json(out, name, fields);
-    emit_to_toml(out);
+    emit_to_toml(out, name);
     emit_from_toml(out, name);
-    emit_to_yaml(out);
+    emit_to_yaml(out, name);
     emit_from_yaml(out, name);
+}
+
+fn emit_to_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) {
+    out.push_str(
+        "// Render a value as a JSON object. Auto-derived; reached via `to_json::<T>(value)`.\n",
+    );
+    out.push_str(&format!(
+        "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
+        to_json_fn(name)
+    ));
+    out.push_str("    let mut out = \"\"\n");
+    out.push_str("    out += \"{\"\n");
+    for (i, (fname, kind)) in fields.iter().enumerate() {
+        if i > 0 {
+            out.push_str("    out += \",\"\n");
+        }
+        out.push_str(&format!("    out += \"\\\"{fname}\\\":\"\n"));
+        let lit = kind.render_to_json(&format!("value.{fname}"));
+        out.push_str(&format!("    out += {lit}\n"));
+    }
+    out.push_str("    out += \"}\"\n");
+    out.push_str("    Ok(out)\n");
     out.push_str("}\n\n");
 }
 
-fn emit_to_json(out: &mut String, fields: &[(String, FieldKind)]) {
-    out.push_str(
-        "    /// Render `self` as a JSON object. Auto-derived by `gossamer-parse::autoderive`.\n",
-    );
-    out.push_str("    pub fn to_json(self) -> Result<String, errors::Error> {\n");
-    out.push_str("        let mut out = \"\"\n");
-    out.push_str("        out += \"{\"\n");
-    for (i, (fname, kind)) in fields.iter().enumerate() {
-        if i > 0 {
-            out.push_str("        out += \",\"\n");
-        }
-        out.push_str(&format!("        out += \"\\\"{fname}\\\":\"\n"));
-        let lit = kind.render_to_json(&format!("self.{fname}"));
-        out.push_str(&format!("        out += {lit}\n"));
-    }
-    out.push_str("        out += \"}\"\n");
-    out.push_str("        Ok(out)\n");
-    out.push_str("    }\n");
-}
-
-fn emit_to_toml(out: &mut String) {
-    out.push_str("    /// Render `self` as TOML. Auto-derived (piggybacks on `to_json`).\n");
-    out.push_str("    pub fn to_toml(self) -> Result<String, errors::Error> {\n");
-    out.push_str("        let j = self.to_json()?\n");
-    out.push_str("        toml::from_json(&j)\n");
-    out.push_str("    }\n");
+fn emit_to_toml(out: &mut String, name: &str) {
+    out.push_str("// Render a value as TOML. Auto-derived; reached via `to_toml::<T>(value)`.\n");
+    out.push_str(&format!(
+        "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
+        serde_fn("to_toml", name)
+    ));
+    out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(name)));
+    out.push_str("    toml::from_json(&j)\n");
+    out.push_str("}\n\n");
 }
 
 fn emit_from_toml(out: &mut String, name: &str) {
     out.push_str(
-        "    /// Parse TOML text into `Self`. Auto-derived (composes\n    /// `toml::to_json` with `from_json`).\n",
+        "// Parse TOML text into a value. Auto-derived; reached via `from_toml::<T>(text)`.\n",
     );
     out.push_str(&format!(
-        "    pub fn from_toml(text: &String) -> Result<{name}, errors::Error> {{\n"
+        "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
+        serde_fn("from_toml", name)
     ));
-    out.push_str("        let j = toml::to_json(text)?\n");
-    out.push_str(&format!("        {name}::from_json(&j)\n"));
-    out.push_str("    }\n");
+    out.push_str("    let j = toml::to_json(text)?\n");
+    out.push_str(&format!("    {}(&j)\n", from_json_fn(name)));
+    out.push_str("}\n\n");
 }
 
-fn emit_to_yaml(out: &mut String) {
-    out.push_str("    /// Render `self` as YAML. Auto-derived (piggybacks on `to_json`).\n");
-    out.push_str("    pub fn to_yaml(self) -> Result<String, errors::Error> {\n");
-    out.push_str("        let j = self.to_json()?\n");
-    out.push_str("        yaml::from_json(&j)\n");
-    out.push_str("    }\n");
+fn emit_to_yaml(out: &mut String, name: &str) {
+    out.push_str("// Render a value as YAML. Auto-derived; reached via `to_yaml::<T>(value)`.\n");
+    out.push_str(&format!(
+        "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
+        serde_fn("to_yaml", name)
+    ));
+    out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(name)));
+    out.push_str("    yaml::from_json(&j)\n");
+    out.push_str("}\n\n");
 }
 
 fn emit_from_yaml(out: &mut String, name: &str) {
     out.push_str(
-        "    /// Parse YAML text into `Self`. Auto-derived (composes\n    /// `yaml::to_json` with `from_json`).\n",
+        "// Parse YAML text into a value. Auto-derived; reached via `from_yaml::<T>(text)`.\n",
     );
     out.push_str(&format!(
-        "    pub fn from_yaml(text: &String) -> Result<{name}, errors::Error> {{\n"
+        "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
+        serde_fn("from_yaml", name)
     ));
-    out.push_str("        let j = yaml::to_json(text)?\n");
-    out.push_str(&format!("        {name}::from_json(&j)\n"));
-    out.push_str("    }\n");
+    out.push_str("    let j = yaml::to_json(text)?\n");
+    out.push_str(&format!("    {}(&j)\n", from_json_fn(name)));
+    out.push_str("}\n\n");
 }
 
 fn emit_from_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) {
     out.push_str(
-        "    /// Parse a JSON object into `Self`. Auto-derived by\n    /// `gossamer-parse::autoderive`. Returns `Err` when a required\n    /// field is missing or any field's value type does not match\n    /// the declaration; the error message names the offending field.\n",
+        "// Parse a JSON object into a value. Auto-derived; reached via `from_json::<T>(text)`.\n// Returns `Err` when a required field is missing or a field's value\n// type does not match the declaration; the error names the field.\n",
     );
     out.push_str(&format!(
-        "    pub fn from_json(text: &String) -> Result<{name}, errors::Error> {{\n"
+        "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
+        from_json_fn(name)
     ));
-    out.push_str("        let v = json::parse(text)?\n");
+    out.push_str("    let v = json::parse(text)?\n");
     for (fname, kind) in fields {
         let path = format!("field `{fname}`");
         let extract = kind.extract_strict("__child", &path);
         out.push_str(&format!(
-            "        let {fname} = match json::get(v, \"{fname}\") {{\n            Some(__child) => {extract},\n            None => return Err(errors::new(\"missing field `{fname}`\")),\n        }}\n"
+            "    let {fname} = match json::get(v, \"{fname}\") {{\n        Some(__child) => {extract},\n        None => return Err(errors::new(\"missing field `{fname}`\")),\n    }}\n"
         ));
     }
-    out.push_str(&format!("        Ok({name} {{ "));
+    out.push_str(&format!("    Ok({name} {{ "));
     let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
     out.push_str(&names.join(", "));
     out.push_str(" })\n");
-    out.push_str("    }\n");
+    out.push_str("}\n\n");
 }
 
 /// Preprocesses a Gossamer source string by appending synthesized
@@ -304,22 +330,103 @@ pub fn augment_source(source: &str) -> String {
     let mut probe_map = SourceMap::new();
     let probe_file = probe_map.add_file("<autoderive-probe>", source.to_string());
     let (parsed, _) = crate::parse_source_file(source, probe_file);
-    let synth = synthesize_serde_impls(&parsed);
-    if synth_is_empty(&synth) {
+    let serde = synthesize_serde_impls(&parsed);
+    // Stdlib structs (pem::Block, …) are real Gossamer structs +
+    // wrapper functions injected here; the wrappers call leaf
+    // `gos_rt_*` intrinsics that return tuples/bytes, so the same
+    // code compiles + runs on every tier. `rewrite_stdlib_struct_surface`
+    // (in parse_with_autoderive) redirects the user's
+    // `encoding::pem::*` call / literal / type sites onto these.
+    let mut stdlib_wrappers = String::new();
+    if source.contains("pem::") {
+        stdlib_wrappers.push_str(PEM_WRAPPERS);
+    }
+    if source.contains("x509::") {
+        stdlib_wrappers.push_str(X509_WRAPPERS);
+    }
+    if source.contains("tar::") {
+        stdlib_wrappers.push_str(TAR_WRAPPERS);
+    }
+    if source.contains("zip::") {
+        stdlib_wrappers.push_str(ZIP_WRAPPERS);
+    }
+    if synth_is_empty(&serde) && stdlib_wrappers.is_empty() {
         return source.to_string();
     }
     if std::env::var_os("GOS_AUTODERIVE_DEBUG").is_some() {
-        eprintln!("=== autoderive synth ===\n{synth}=== /autoderive ===");
+        eprintln!("=== autoderive synth ===\n{serde}{stdlib_wrappers}=== /autoderive ===");
     }
-    let mut combined = String::with_capacity(source.len() + synth.len() + 2);
+    let mut combined =
+        String::with_capacity(source.len() + serde.len() + stdlib_wrappers.len() + 2);
     combined.push_str(source);
     if !combined.ends_with('\n') {
         combined.push('\n');
     }
     combined.push('\n');
-    combined.push_str(&synth);
+    if !synth_is_empty(&serde) {
+        combined.push_str(&serde);
+    }
+    combined.push_str(&stdlib_wrappers);
     combined
 }
+
+/// Real-struct + wrapper source for `std::encoding::pem`. The
+/// wrappers fold the leaf intrinsics' tuple/byte returns into real
+/// `__gos_pem_Block` structs, which lower natively on every tier.
+const PEM_WRAPPERS: &str = r"
+struct __gos_pem_Block { block_type: String, bytes: [u8] }
+fn __gos_pem_decode(s: &String) -> Result<__gos_pem_Block, errors::Error> {
+    let (t, b) = __gos_pem_decode_raw(s)?
+    Ok(__gos_pem_Block { block_type: t, bytes: b })
+}
+fn __gos_pem_decode_all(s: &String) -> Result<[__gos_pem_Block], errors::Error> {
+    let raws = __gos_pem_decode_all_raw(s)?
+    let mut out: [__gos_pem_Block] = []
+    for r in raws {
+        out.push(__gos_pem_Block { block_type: r.0, bytes: r.1 })
+    }
+    Ok(out)
+}
+fn __gos_pem_encode(b: __gos_pem_Block) -> String {
+    __gos_pem_encode_raw(b.block_type, b.bytes)
+}
+";
+
+/// Real-struct + wrapper source for `std::crypto::x509`.
+const X509_WRAPPERS: &str = r"
+struct __gos_x509_CertInfo { subject: String, issuer: String, serial: [u8], not_before_unix: i64, not_after_unix: i64, san_dns: [String], sha256: [u8] }
+fn __gos_x509_parse_pem(s: &String) -> Result<__gos_x509_CertInfo, errors::Error> {
+    let (subject, issuer, serial, nb, na, san, sha) = __gos_x509_parse_pem_raw(s)?
+    Ok(__gos_x509_CertInfo { subject: subject, issuer: issuer, serial: serial, not_before_unix: nb, not_after_unix: na, san_dns: san, sha256: sha })
+}
+";
+
+/// Real-struct + wrapper source for `std::archive::tar` (read).
+/// `write` lowers directly (no struct).
+const TAR_WRAPPERS: &str = r"
+struct __gos_tar_TarEntry { name: String, data: [u8], is_dir: bool }
+fn __gos_tar_read(data: &[u8]) -> Result<[__gos_tar_TarEntry], errors::Error> {
+    let raws = __gos_tar_read_raw(data)?
+    let mut out: [__gos_tar_TarEntry] = []
+    for r in raws {
+        out.push(__gos_tar_TarEntry { name: r.0, data: r.1, is_dir: r.2 })
+    }
+    Ok(out)
+}
+";
+
+/// Real-struct + wrapper source for `std::archive::zip` (read).
+const ZIP_WRAPPERS: &str = r"
+struct __gos_zip_ZipEntry { name: String, data: [u8], is_dir: bool }
+fn __gos_zip_read(data: &[u8]) -> Result<[__gos_zip_ZipEntry], errors::Error> {
+    let raws = __gos_zip_read_raw(data)?
+    let mut out: [__gos_zip_ZipEntry] = []
+    for r in raws {
+        out.push(__gos_zip_ZipEntry { name: r.0, data: r.1, is_dir: r.2 })
+    }
+    Ok(out)
+}
+";
 
 /// Convenience wrapper that augments `source` then parses the
 /// result against `file`. Returns the merged `SourceFile` and any
@@ -329,8 +436,149 @@ pub fn augment_source(source: &str) -> String {
 #[must_use]
 pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<ParseDiagnostic>) {
     let (mut sf, diags) = crate::parse_source_file(source, file);
+    rewrite_serde_generic_calls(&mut sf);
+    rewrite_stdlib_struct_surface(&mut sf);
     inject_synthetic_uses(&mut sf, file);
     (sf, diags)
+}
+
+/// Maps a stdlib `module::item` (matched on the last two segment
+/// names) to the mangled name of the injected wrapper / struct, so
+/// both `encoding::pem::decode` and the bare `pem::decode` map.
+fn mangled_stdlib_name(parent: &str, item: &str) -> Option<&'static str> {
+    match (parent, item) {
+        ("pem", "decode") => Some("__gos_pem_decode"),
+        ("pem", "decode_all") => Some("__gos_pem_decode_all"),
+        ("pem", "encode") => Some("__gos_pem_encode"),
+        ("pem", "Block") => Some("__gos_pem_Block"),
+        ("x509", "parse_pem") => Some("__gos_x509_parse_pem"),
+        ("x509", "CertInfo") => Some("__gos_x509_CertInfo"),
+        // tar/zip `read` route through the struct wrapper; `write`
+        // lowers directly (no struct), so it is NOT rewritten.
+        ("tar", "read") => Some("__gos_tar_read"),
+        ("tar", "TarEntry") => Some("__gos_tar_TarEntry"),
+        ("zip", "read") => Some("__gos_zip_read"),
+        ("zip", "ZipEntry") => Some("__gos_zip_ZipEntry"),
+        _ => None,
+    }
+}
+
+/// Redirects the user-facing stdlib struct surface
+/// (`encoding::pem::decode(..)`, the `pem::Block { .. }` literal,
+/// `pem::Block` type annotations) onto the injected real-struct
+/// wrappers. Mirrors `rewrite_serde_generic_calls` but covers
+/// multi-segment module paths in call, struct-literal, and type
+/// positions.
+pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
+    use gossamer_ast::VisitorMut;
+    use gossamer_ast::expr::{Expr, ExprKind};
+    use gossamer_ast::ty::{Type, TypeKind};
+    use gossamer_ast::visitor::{walk_expr_mut, walk_type_mut};
+
+    fn collapse_expr(path: &mut gossamer_ast::PathExpr) {
+        let n = path.segments.len();
+        if n < 2 {
+            return;
+        }
+        if let Some(name) = mangled_stdlib_name(
+            path.segments[n - 2].name.name.as_str(),
+            path.segments[n - 1].name.name.as_str(),
+        ) {
+            let mut seg = gossamer_ast::PathSegment::new(name);
+            seg.generics = std::mem::take(&mut path.segments[n - 1].generics);
+            path.segments = vec![seg];
+        }
+    }
+
+    fn collapse_type(path: &mut gossamer_ast::ty::TypePath) {
+        let n = path.segments.len();
+        if n < 2 {
+            return;
+        }
+        if let Some(name) = mangled_stdlib_name(
+            path.segments[n - 2].name.name.as_str(),
+            path.segments[n - 1].name.name.as_str(),
+        ) {
+            let mut seg = gossamer_ast::ty::TypePathSegment::new(name);
+            seg.generics = std::mem::take(&mut path.segments[n - 1].generics);
+            path.segments = vec![seg];
+        }
+    }
+
+    struct Rewriter;
+    impl VisitorMut for Rewriter {
+        fn visit_expr(&mut self, expr: &mut Expr) {
+            walk_expr_mut(self, expr);
+            match &mut expr.kind {
+                ExprKind::Call { callee, .. } => {
+                    if let ExprKind::Path(path) = &mut callee.kind {
+                        collapse_expr(path);
+                    }
+                }
+                ExprKind::Path(path) => collapse_expr(path),
+                ExprKind::Struct { path, .. } => collapse_expr(path),
+                _ => {}
+            }
+        }
+        fn visit_type(&mut self, ty: &mut Type) {
+            walk_type_mut(self, ty);
+            if let TypeKind::Path(tp) = &mut ty.kind {
+                collapse_type(tp);
+            }
+        }
+    }
+    Rewriter.visit_source_file(sf);
+}
+
+/// Rewrites the generic serde call surface — `to_json::<T>(v)`,
+/// `from_json::<T>(s)`, and the toml/yaml variants — into calls to the
+/// per-type free functions synthesized by [`synthesize_serde_impls`]
+/// (`__gos_serde_<op>_<T>`). This is the single public spelling; there
+/// are no `Type::to_json` methods.
+pub fn rewrite_serde_generic_calls(sf: &mut SourceFile) {
+    use gossamer_ast::VisitorMut;
+    use gossamer_ast::expr::{Expr, ExprKind};
+    use gossamer_ast::visitor::walk_expr_mut;
+
+    struct Rewriter;
+    impl VisitorMut for Rewriter {
+        fn visit_expr(&mut self, expr: &mut Expr) {
+            // Rewrite inner expressions first so nested serde calls
+            // (e.g. an argument that is itself `to_json::<U>(x)`) are
+            // handled before the enclosing call.
+            walk_expr_mut(self, expr);
+            let ExprKind::Call { callee, .. } = &mut expr.kind else {
+                return;
+            };
+            let ExprKind::Path(path) = &mut callee.kind else {
+                return;
+            };
+            if path.segments.len() != 1 {
+                return;
+            }
+            let seg = &mut path.segments[0];
+            if !matches!(
+                seg.name.name.as_str(),
+                "to_json" | "from_json" | "to_toml" | "from_toml" | "to_yaml" | "from_yaml"
+            ) || seg.generics.len() != 1
+            {
+                return;
+            }
+            let GenericArg::Type(ty) = &seg.generics[0] else {
+                return;
+            };
+            let TypeKind::Path(tp) = &ty.kind else {
+                return;
+            };
+            let Some(type_seg) = tp.segments.last() else {
+                return;
+            };
+            let mangled = serde_fn(seg.name.name.as_str(), type_seg.name.name.as_str());
+            seg.name.name = mangled;
+            seg.generics.clear();
+        }
+    }
+    Rewriter.visit_source_file(sf);
 }
 
 /// Adds `use std::json` and `use std::errors` to the parsed source
@@ -338,12 +586,9 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
 /// — checks for existing imports before inserting.
 pub fn inject_synthetic_uses(sf: &mut SourceFile, file: FileId) {
     let has_synth = sf.items.iter().any(|item| {
-        matches!(&item.kind, ItemKind::Impl(decl) if decl.items.iter().any(|it| {
-            matches!(it, gossamer_ast::ImplItem::Fn(f) if {
-                let n = f.name.name.as_str();
-                n == "from_json" || n == "to_json"
-            })
-        }))
+        matches!(&item.kind, ItemKind::Fn(decl)
+            if decl.name.name.starts_with("__gos_serde_")
+                || decl.name.name.starts_with("__gos_"))
     });
     if !has_synth {
         return;
@@ -377,5 +622,5 @@ fn already_imports(uses: &[UseDecl], segs: &[&str]) -> bool {
 }
 
 fn synth_is_empty(synth: &str) -> bool {
-    !synth.contains("impl ")
+    !synth.contains("__gos_serde_")
 }

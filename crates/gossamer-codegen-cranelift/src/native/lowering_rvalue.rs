@@ -684,7 +684,48 @@ pub(super) fn lower_rvalue(
                     &intrinsics.body_cl_types,
                     place.local,
                 );
-                builder.use_var(var)
+                let val = builder.use_var(var);
+                // Scalar locals (i64 / f64 / bool / char from primitive
+                // HIR types) live in SSA Variables that have no machine
+                // address — `use_var` returns the *value*. When the
+                // caller asks for `&x`, we need an actual pointer.
+                // Materialise a fresh stack slot, store the current
+                // value, and return its address. This matches the LLVM
+                // tier (whose locals are alloca-backed, so the slot
+                // address is always available).
+                //
+                // Caveat: a subsequent `&mut x` writeback through this
+                // pointer would land in the stack slot, NOT in the
+                // original SSA Variable — the caller's view of `x`
+                // would not see the change. Fully transparent
+                // `&mut scalar` writeback requires promoting every
+                // address-taken local to a stack slot at body entry,
+                // which is a separate pre-pass not yet implemented.
+                // Today the common read-only shape (`map.get(&k)`,
+                // `regex::compile(&s)`) is what surfaces in user code;
+                // shipping the addressable view fixes the cranelift
+                // tier of those calls.
+                let ty = body.local_ty(place.local);
+                let is_scalar = matches!(
+                    tcx.kind_of(ty),
+                    gossamer_types::TyKind::Int(_)
+                        | gossamer_types::TyKind::Float(_)
+                        | gossamer_types::TyKind::Bool
+                        | gossamer_types::TyKind::Char
+                );
+                if is_scalar {
+                    let ptr_ty = module.target_config().pointer_type();
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            8,
+                            8,
+                        ));
+                    builder.ins().stack_store(val, slot, 0);
+                    builder.ins().stack_addr(ptr_ty, slot, 0)
+                } else {
+                    val
+                }
             } else {
                 lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?
             }

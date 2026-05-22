@@ -115,6 +115,84 @@ pub(crate) fn install_encoding_pem(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    // Leaf intrinsics for the injected-source `Block` wrappers
+    // (gossamer-parse autoderive). They return tuples / Vec-of-tuples
+    // / String — the wrappers fold those into real `Block` structs,
+    // so the same Gossamer code runs on every tier.
+    for (name, call) in [
+        (
+            "__gos_pem_decode_raw",
+            builtin_pem_decode_raw as BuiltinFnPub,
+        ),
+        ("__gos_pem_decode_all_raw", builtin_pem_decode_all_raw),
+        ("__gos_pem_encode_raw", builtin_pem_encode_raw),
+    ] {
+        globals.push((name, crate::builtins::builtin_pub(name, call)));
+    }
+}
+
+pub(crate) fn builtin_pem_decode_raw(args: &[Value]) -> RuntimeResult<Value> {
+    let input = args.first().and_then(as_str).unwrap_or("");
+    match gossamer_std::encoding::pem::decode(input) {
+        Ok((block, _rest)) => {
+            let bytes_val = Value::Array(Arc::new(
+                block
+                    .bytes
+                    .into_iter()
+                    .map(|b| Value::Int(i64::from(b)))
+                    .collect(),
+            ));
+            Ok(ok_variant(Value::Tuple(Arc::new(vec![
+                Value::String(block.block_type.into()),
+                bytes_val,
+            ]))))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_pem_decode_all_raw(args: &[Value]) -> RuntimeResult<Value> {
+    let input = args.first().and_then(as_str).unwrap_or("");
+    match gossamer_std::encoding::pem::decode_all(input) {
+        Ok(blocks) => {
+            let values: Vec<Value> = blocks
+                .into_iter()
+                .map(|block| {
+                    let bytes_val = Value::Array(Arc::new(
+                        block
+                            .bytes
+                            .into_iter()
+                            .map(|b| Value::Int(i64::from(b)))
+                            .collect(),
+                    ));
+                    Value::Tuple(Arc::new(vec![
+                        Value::String(block.block_type.into()),
+                        bytes_val,
+                    ]))
+                })
+                .collect();
+            Ok(ok_variant(Value::Array(Arc::new(values))))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_pem_encode_raw(args: &[Value]) -> RuntimeResult<Value> {
+    let block_type = args.first().and_then(as_str).unwrap_or("").to_string();
+    let bytes: Vec<u8> = match args.get(1) {
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|e| match e {
+                Value::Int(n) => u8::try_from(*n).ok(),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let block = gossamer_std::encoding::pem::Block { block_type, bytes };
+    Ok(Value::String(
+        gossamer_std::encoding::pem::encode(&block).into(),
+    ))
 }
 
 pub(crate) fn pem_block_to_value(block: gossamer_std::encoding::pem::Block) -> Value {
@@ -205,8 +283,14 @@ pub(crate) fn install_utf16(globals: &mut Vec<(&'static str, Value)>) {
         ("decode_to_string", builtin_utf16_decode_to_string),
     ];
     for (short, call) in entries {
-        let qualified: &'static str = Box::leak(format!("utf16::{short}").into_boxed_str());
-        globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
+        // Register both the bare `utf16::*` form and the fully
+        // qualified `encoding::utf16::*` form (matching how the
+        // compiled tier resolves `use std::encoding; encoding::utf16::…`
+        // and the sibling base32 / ascii85 modules).
+        for prefix in ["utf16", "encoding::utf16"] {
+            let qualified: &'static str = Box::leak(format!("{prefix}::{short}").into_boxed_str());
+            globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
+        }
     }
 }
 

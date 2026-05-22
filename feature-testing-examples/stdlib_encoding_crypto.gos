@@ -1,0 +1,17 @@
+// Cross-tier parity for encoding::ascii85 and crypto::subtle, which
+// were previously only available in the bytecode VM.
+use std::encoding
+use std::crypto
+
+fn main() {
+    let enc = encoding::ascii85::encode([104, 101, 108, 108, 111])
+    println!("{}", enc)
+    match encoding::ascii85::decode(&enc) {
+        Ok(b) => println!("len={} first={}", b.len(), b[0]),
+        Err(e) => println!("err={}", e),
+    }
+    match encoding::ascii85::decode("<~@~>") { Ok(_b) => println!("ok"), Err(_e) => println!("decerr") }
+    println!("{}", crypto::subtle::constant_time_eq([1, 2, 3], [1, 2, 3]))
+    println!("{}", crypto::subtle::constant_time_eq([1, 2, 3], [1, 2, 4]))
+    println!("{}", crypto::subtle::constant_time_eq([1, 2], [1, 2, 3]))
+}

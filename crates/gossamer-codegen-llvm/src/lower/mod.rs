@@ -183,15 +183,34 @@ impl StringPool {
         entry
     }
 
-    /// Renders every interned string as an LLVM global. The
+    /// Renders every interned string as an LLVM global with a
+    /// length-carrying header so `gos_rt_str_len` / `gos_rt_str_slice`
+    /// are O(1) on string literals (matching heap strings).
+    ///
+    /// Each literal becomes a packed `<{ i32 len, i8 0xA8, [N x i8]
+    /// bytes }>` constant (`STR_STATIC_TAG = 0xA8` in the runtime), with a
+    /// global *alias* pointing at the byte body (`base + 5`). Every
+    /// existing `@.gstr_N` reference therefore still resolves to the
+    /// NUL-terminated bytes, while `ptr[-1]` is the tag and `ptr[-5]` the
+    /// length — the same header shape the heap allocator writes. The
     /// emitter calls this after every body has lowered.
     pub(crate) fn render(&self) -> String {
         let mut out = String::new();
         for (text, (name, size)) in &self.entries {
             let escaped = escape_c_string(text);
+            let content_len = text.len();
+            let data = format!("{name}.data");
+            let ty = format!("<{{ i32, i8, [{size} x i8] }}>");
             let _ = writeln!(
                 out,
-                "{name} = private unnamed_addr constant [{size} x i8] c\"{escaped}\\00\""
+                "{data} = private unnamed_addr constant {ty} \
+                 <{{ i32 {content_len}, i8 -88, [{size} x i8] c\"{escaped}\\00\" }}>"
+            );
+            // `-88` is `0xA8` (STR_STATIC_TAG) as a signed i8.
+            let _ = writeln!(
+                out,
+                "{name} = private unnamed_addr alias i8, ptr getelementptr inbounds \
+                 ({ty}, ptr {data}, i32 0, i32 2, i32 0)"
             );
         }
         out
@@ -269,12 +288,12 @@ mod vec_elem_kind_llvm {
 fn llvm_vec_elem_kind_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -> i32 {
     let ty = body.local_ty(dest_local);
     let inner = match tcx.kind(ty) {
-        Some(TyKind::Vec(inner)) => *inner,
+        Some(TyKind::Vec(inner) | TyKind::Slice(inner)) => *inner,
         _ => return vec_elem_kind_llvm::PRIMITIVE,
     };
     match tcx.kind(inner) {
         Some(TyKind::String) => vec_elem_kind_llvm::STRING,
-        Some(TyKind::Vec(_)) => vec_elem_kind_llvm::VEC,
+        Some(TyKind::Vec(_) | TyKind::Slice(_)) => vec_elem_kind_llvm::VEC,
         Some(TyKind::HashMap { .. }) => vec_elem_kind_llvm::MAP,
         _ => vec_elem_kind_llvm::PRIMITIVE,
     }
@@ -434,7 +453,9 @@ fn map_prelude_symbol(name: &str) -> &str {
         "io::stdin" | "os::stdin" => "gos_rt_io_stdin",
         "time::now" => "gos_rt_time_now",
         "time::now_ms" => "gos_rt_time_now_ms",
-        "time::now_ns" => "gos_rt_now_ns",
+        "time::now_ns" | "time::now_nanos" => "gos_rt_now_ns",
+        "time::monotonic_ms" => "gos_rt_monotonic_ms",
+        "time::monotonic_nanos" => "gos_rt_monotonic_nanos",
         "time::sleep" => "gos_rt_sleep_ms",
         "math::pow" => "gos_rt_math_pow",
         "math::abs" => "gos_rt_math_abs",
@@ -484,7 +505,9 @@ fn map_prelude_symbol(name: &str) -> &str {
         | "AtomicI64::new"
         | "sync::AtomicI64::new"
         | "AtomicU64::new"
-        | "sync::AtomicU64::new" => "gos_rt_atomic_i64_new",
+        | "sync::AtomicU64::new"
+        | "AtomicBool::new"
+        | "sync::AtomicBool::new" => "gos_rt_atomic_i64_new",
         "lcg::jump" | "lcg_jump" => "gos_rt_lcg_jump",
         other => other,
     }

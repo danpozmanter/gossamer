@@ -13,6 +13,8 @@
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+use super::vec::GosVec;
+
 /// Returns SHA-256 of the input c-string as lowercase hex.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_sha256_hex(input: *const c_char) -> *mut c_char {
@@ -83,6 +85,27 @@ pub unsafe extern "C" fn gos_rt_hmac_sha256_hex(
     })
 }
 
+/// `crypto::hmac::sha256_mac(key, message) -> [u8]` — the raw 32-byte
+/// MAC as a byte vector (vs the hex string from `sha256_hex`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_hmac_sha256_mac(
+    key: *const c_char,
+    message: *const c_char,
+) -> *mut GosVec {
+    let key_bytes: &[u8] = if key.is_null() {
+        &[]
+    } else {
+        unsafe { CStr::from_ptr(key).to_bytes() }
+    };
+    let msg_bytes: &[u8] = if message.is_null() {
+        &[]
+    } else {
+        unsafe { CStr::from_ptr(message).to_bytes() }
+    };
+    let mac = hmac_sha256(key_bytes, msg_bytes);
+    super::encoding::bytes_to_gosvec(&mac)
+}
+
 /// Reference HMAC-SHA256 over arbitrary `key` / `message`. Kept
 /// in the runtime so the compiled tier doesn't need to round-
 /// trip through `gossamer-std`. RFC 2104 block size for SHA-256
@@ -126,4 +149,31 @@ fn nibble_char(n: u8) -> char {
         10..=15 => (b'a' + (n - 10)) as char,
         _ => '?',
     }
+}
+
+/// `crypto::rand::bytes(n) -> Vec<u8>` — fill a fresh Vec with
+/// `n` cryptographically-strong random bytes from the OS RNG.
+/// On RNG failure (extremely rare; usually only on early-boot
+/// systems with no entropy source) the returned Vec is zero-
+/// filled, mirroring the interp's failure mode.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_rand_bytes(n: i64) -> *mut GosVec {
+    let len = n.max(0);
+    let v = unsafe { super::vec::gos_rt_vec_with_capacity(1, len) };
+    if len == 0 {
+        return v;
+    }
+    // Fill the freshly-allocated buffer with OS randomness and pin
+    // `len` so `b.len()` reads `n`. Unsafe is justified — GosVec
+    // exposes its backing buffer as a raw pointer at the C ABI
+    // boundary, and there is no safe Rust way to fill it.
+    let vref = unsafe { &mut *v };
+    if !vref.ptr.is_null() {
+        let slice = unsafe { std::slice::from_raw_parts_mut(vref.ptr.as_ptr(), len as usize) };
+        if getrandom::getrandom(slice).is_err() {
+            slice.fill(0);
+        }
+    }
+    vref.len = len;
+    v
 }

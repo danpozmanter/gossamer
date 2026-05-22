@@ -25,6 +25,14 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
         Some(TyKind::Float(FloatTy::F32)) => "float".to_string(),
         Some(TyKind::Float(FloatTy::F64)) => "double".to_string(),
         Some(TyKind::Char) => "i32".to_string(),
+        // `Result<T,E>` (sentinel def `u32::MAX`) and `Option<T>`
+        // (`u32::MAX - 1`) are a 2-word by-value `i128` (disc + payload),
+        // not a heap box — see `gos_rt_result_new`.
+        Some(TyKind::Adt { def, .. }) if def.local == u32::MAX || def.local == u32::MAX - 1 => {
+            "i128".to_string()
+        }
+        // Inline-able user enums share the same 2-word by-value `i128` shape.
+        Some(TyKind::Adt { .. }) if tcx.is_inline_enum_ty(ty) => "i128".to_string(),
         Some(TyKind::String) => "ptr".to_string(),
         Some(TyKind::Ref { .. }) => "ptr".to_string(),
         Some(TyKind::FnPtr(_) | TyKind::FnDef { .. }) => "ptr".to_string(),
@@ -146,6 +154,15 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             Some(elem_slots * (*len as u32))
         }
         TyKind::Adt { def, .. } => {
+            // `Result<T,E>` (sentinel `u32::MAX`) and `Option<T>`
+            // (`u32::MAX - 1`) are the 2-word by-value `i128` (16-byte)
+            // representation: 2 flat slots. Inside an aggregate (array/Vec/
+            // struct element) they occupy two i64 slots, not one — sizing
+            // them at one slot makes adjacent elements overlap and clobber
+            // the payload (every-other Some loses its value).
+            if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
+                return Some(2);
+            }
             // `http::Response` is the only sentinel stdlib struct
             // backed by a `repr(Rust)` runtime struct (`GosHttpResponse`)
             // rather than an inline-flat heap blob. Its accessors
@@ -211,7 +228,7 @@ pub(crate) fn field_slot_offset(tcx: &TyCtxt, ty: Ty, idx: u32) -> u32 {
             .map(|t| slot_count(tcx, *t).unwrap_or(1).max(1))
             .sum(),
         Some(TyKind::Adt { def, .. }) => {
-            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+            if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return idx;
             }
             tcx.struct_field_tys(*def).map_or(idx, |tys| {
@@ -239,7 +256,7 @@ pub(crate) fn is_pure_primitive_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
         Some(TyKind::Adt { def, .. }) => {
             // Reject the Result/Option sentinel Adts up front —
             // they are pointer-shaped and not really aggregates.
-            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+            if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return false;
             }
             match tcx.struct_field_tys(*def) {
@@ -266,7 +283,7 @@ pub(crate) fn is_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
         // next helper — which reads stack garbage as the payload.
         // Treat them as scalar `ptr`s so the caller stores the
         // returned pointer directly into the local slot.
-        if def.local == u32::MAX || def.local == u32::MAX - 1 {
+        if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
             return false;
         }
     }

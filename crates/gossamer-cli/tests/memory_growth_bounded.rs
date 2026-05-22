@@ -94,6 +94,200 @@ fn main() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Gates the compiled-tier reference-counting release of recursive enum
+/// values. A loop builds and discards a depth-14 binary tree on every
+/// iteration; each per-iteration temporary must be released. Before RC
+/// landed these `gos_rc_alloc`'d (formerly `malloc`'d) nodes leaked
+/// unboundedly — 200 iterations would accumulate well over 100 MiB and
+/// keep growing with depth. With deterministic RC release the peak stays
+/// near a single tree's footprint. Runs under the full `-O3` release
+/// pipeline, where the old tracing GC was unsound.
+#[test]
+fn compiled_recursive_enum_loop_stays_under_rss_cap() {
+    if !std::path::Path::new("/usr/bin/time").exists() {
+        eprintln!("skipping: /usr/bin/time not available on this host");
+        return;
+    }
+    let probe = Command::new("/usr/bin/time").arg("-v").arg("true").output();
+    let is_gnu_time = probe.as_ref().is_ok_and(|o| {
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        stderr.contains("Maximum resident set size")
+    });
+    if !is_gnu_time {
+        eprintln!("skipping: /usr/bin/time does not support GNU -v on this host");
+        return;
+    }
+    let dir = env::temp_dir().join(format!("gos-rcmem-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("rcmem.gos");
+    std::fs::write(
+        &source,
+        "
+enum Tree { Leaf, Node(i64, Box<Tree>, Box<Tree>) }
+
+fn build(d: i64) -> Tree {
+    if d == 0 {
+        Tree::Leaf
+    } else {
+        Tree::Node(d, Box::new(build(d - 1)), Box::new(build(d - 1)))
+    }
+}
+
+fn checksum(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf => 1,
+        Tree::Node(v, l, r) => *v + checksum(l) + checksum(r),
+    }
+}
+
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 200 {
+        total += checksum(&build(14))
+        i += 1
+    }
+    println!(\"total = {}\", total)
+}
+",
+    )
+    .unwrap();
+
+    let mut cmd = Command::new(gos_bin());
+    cmd.arg("build").arg("--release").arg(&source);
+    let build = cmd.output().expect("spawn gos build --release");
+    assert!(
+        build.status.success(),
+        "release build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bin = dir
+        .join("target")
+        .join("release")
+        .join(format!("rcmem{}", std::env::consts::EXE_SUFFIX));
+    assert!(bin.exists(), "missing {}", bin.display());
+
+    let out = Command::new("/usr/bin/time")
+        .arg("-v")
+        .arg(&bin)
+        .output()
+        .expect("spawn /usr/bin/time");
+    assert!(
+        out.status.success(),
+        "binary failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("total = 9827200"),
+        "unexpected output: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let kb = parse_max_rss_kb(&stderr)
+        .unwrap_or_else(|| panic!("could not parse Maximum resident set size:\n{stderr}"));
+    let cap_kb = 64 * 1024;
+    assert!(
+        kb < cap_kb,
+        "RSS {kb} KiB exceeded {cap_kb} KiB cap; recursive-enum RC release regression \
+         (per-iteration trees are leaking)"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A recursive-enum tree bound to a *named local* and rebuilt each loop
+/// iteration must release the previous iteration's value before
+/// reassignment. Before the fix this leaked every iteration's tree
+/// (the release fired only at function return), so 200 depth-14 trees stayed
+/// resident (~hundreds of MB). The earlier test only exercised the
+/// *temporary* shape (`checksum(&build(14))`), which the single-use path
+/// already released — this is the gap it missed.
+#[test]
+fn compiled_named_binding_loop_stays_under_rss_cap() {
+    if !std::path::Path::new("/usr/bin/time").exists() {
+        eprintln!("skipping: /usr/bin/time not available on this host");
+        return;
+    }
+    let probe = Command::new("/usr/bin/time").arg("-v").arg("true").output();
+    let is_gnu_time = probe
+        .as_ref()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stderr).contains("Maximum resident set size"));
+    if !is_gnu_time {
+        eprintln!("skipping: /usr/bin/time does not support GNU -v on this host");
+        return;
+    }
+    let dir = env::temp_dir().join(format!("gos-rcnamed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("rcnamed.gos");
+    std::fs::write(
+        &source,
+        "
+enum Tree { Leaf, Node(i64, Box<Tree>, Box<Tree>) }
+
+fn build(d: i64) -> Tree {
+    if d == 0 { Tree::Leaf } else { Tree::Node(d, Box::new(build(d - 1)), Box::new(build(d - 1))) }
+}
+
+fn checksum(t: &Tree) -> i64 {
+    match t { Tree::Leaf => 1, Tree::Node(v, l, r) => *v + checksum(l) + checksum(r) }
+}
+
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 200 {
+        let t = build(14)
+        total += checksum(&t)
+        i += 1
+    }
+    println!(\"total = {}\", total)
+}
+",
+    )
+    .unwrap();
+
+    let mut cmd = Command::new(gos_bin());
+    cmd.arg("build").arg("--release").arg(&source);
+    let build = cmd.output().expect("spawn gos build --release");
+    assert!(
+        build.status.success(),
+        "release build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bin = dir
+        .join("target")
+        .join("release")
+        .join(format!("rcnamed{}", std::env::consts::EXE_SUFFIX));
+    assert!(bin.exists(), "missing {}", bin.display());
+
+    let out = Command::new("/usr/bin/time")
+        .arg("-v")
+        .arg(&bin)
+        .output()
+        .expect("spawn /usr/bin/time");
+    assert!(
+        out.status.success(),
+        "binary failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("total = 9827200"),
+        "unexpected output: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let kb = parse_max_rss_kb(&stderr)
+        .unwrap_or_else(|| panic!("could not parse Maximum resident set size:\n{stderr}"));
+    let cap_kb = 64 * 1024;
+    assert!(
+        kb < cap_kb,
+        "RSS {kb} KiB exceeded {cap_kb} KiB cap; named-binding loop is leaking \
+         (release fires only at function return, not before reassignment)"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn parse_max_rss_kb(stderr: &str) -> Option<u64> {
     for line in stderr.lines() {
         let trimmed = line.trim();

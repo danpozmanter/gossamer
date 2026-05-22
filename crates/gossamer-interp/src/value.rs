@@ -106,8 +106,60 @@ pub enum Value {
     /// but formats as an unsigned decimal value. Used exclusively for
     /// `x as u64` casts to preserve unsigned display semantics.
     Uint(u64),
+    /// Non-owning weak reference produced by `x.downgrade()`. Observes
+    /// the liveness of the referent's `Arc` without keeping it alive;
+    /// `w.upgrade()` yields `Some` while a strong reference survives and
+    /// `None` once the last one is dropped.
+    Weak(WeakValue),
     /// Poisoned / uninitialised sentinel.
     Void,
+}
+
+/// Type-erased weak handle backing [`Value::Weak`]. Each arm holds a
+/// `std::sync::Weak` to the corresponding heap variant's `Arc`, so
+/// upgrading reconstructs the original `Value` shape when the referent
+/// is still alive. A downgrade of a non-heap (Copy) value records
+/// [`WeakValue::Dead`] — there is no allocation to observe, so it never
+/// upgrades.
+#[derive(Debug, Clone)]
+pub enum WeakValue {
+    /// Weak reference to a [`Value::Variant`] payload.
+    Variant(std::sync::Weak<VariantInner>),
+    /// Weak reference to a [`Value::Struct`] payload.
+    Struct(std::sync::Weak<StructInner>),
+    /// Weak reference to a [`Value::Array`] payload.
+    Array(std::sync::Weak<Vec<Value>>),
+    /// Weak reference to a [`Value::Tuple`] payload.
+    Tuple(std::sync::Weak<Vec<Value>>),
+    /// Downgrade of a value with no observable allocation; never upgrades.
+    Dead,
+}
+
+impl WeakValue {
+    /// Builds a weak handle from a strong value. Heap variants record a
+    /// `std::sync::Weak` to their `Arc`; everything else is `Dead`.
+    #[must_use]
+    pub fn downgrade(value: &Value) -> Self {
+        match value {
+            Value::Variant(a) => WeakValue::Variant(Arc::downgrade(a)),
+            Value::Struct(a) => WeakValue::Struct(Arc::downgrade(a)),
+            Value::Array(a) => WeakValue::Array(Arc::downgrade(a)),
+            Value::Tuple(a) => WeakValue::Tuple(Arc::downgrade(a)),
+            _ => WeakValue::Dead,
+        }
+    }
+
+    /// Reconstructs the strong [`Value`] if the referent is still alive.
+    #[must_use]
+    pub fn upgrade(&self) -> Option<Value> {
+        match self {
+            WeakValue::Variant(w) => w.upgrade().map(Value::Variant),
+            WeakValue::Struct(w) => w.upgrade().map(Value::Struct),
+            WeakValue::Array(w) => w.upgrade().map(Value::Array),
+            WeakValue::Tuple(w) => w.upgrade().map(Value::Tuple),
+            WeakValue::Dead => None,
+        }
+    }
 }
 
 /// Ordered key type for [`Value::Map`]. Wraps a [`Value`] and
@@ -511,15 +563,15 @@ unsafe impl Sync for SmolStr {}
 /// The leak is bounded by that set, not by call count.
 #[must_use]
 pub(crate) fn intern_type_name(name: &str) -> &'static str {
-    static INTERNED: OnceLock<parking_lot::Mutex<rustc_hash::FxHashMap<String, &'static str>>> =
+    static INTERNED: OnceLock<parking_lot::Mutex<rustc_hash::FxHashSet<&'static str>>> =
         OnceLock::new();
-    let map = INTERNED.get_or_init(|| parking_lot::Mutex::new(rustc_hash::FxHashMap::default()));
-    let mut guard = map.lock();
-    if let Some(s) = guard.get(name) {
+    let set = INTERNED.get_or_init(|| parking_lot::Mutex::new(rustc_hash::FxHashSet::default()));
+    let mut guard = set.lock();
+    if let Some(&s) = guard.get(name) {
         return s;
     }
     let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
-    guard.insert(name.to_string(), leaked);
+    guard.insert(leaked);
     leaked
 }
 
@@ -917,7 +969,12 @@ impl Value {
                     from_heap_handle(id)
                 }
             }
-            Self::Map(_) | Self::IntMap(_) | Self::Builtin(_) | Self::Native(_) | Self::Void => {
+            Self::Map(_)
+            | Self::IntMap(_)
+            | Self::Builtin(_)
+            | Self::Native(_)
+            | Self::Weak(_)
+            | Self::Void => {
                 // Unencodable in the raw layout — return a sentinel
                 // that `from_raw` maps back to `Void`.
                 from_singleton(SINGLETON_UNIT)
@@ -1042,6 +1099,7 @@ impl fmt::Display for Value {
                 out.write_str("}")
             }
             Self::Uint(n) => write!(out, "{n}"),
+            Self::Weak(_) => out.write_str("<weak>"),
             Self::Void => out.write_str("<void>"),
         }
     }

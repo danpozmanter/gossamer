@@ -551,17 +551,47 @@ impl<'a> Lowerer<'a> {
             .unwrap();
             let slot = local_slot(destination.local);
             if is_aggregate(self.tcx, dest_ty_mir) {
-                // Aggregate return: the callee handed us a heap
-                // pointer to fresh storage. Copy it into our
-                // destination's inline alloca so subsequent field
-                // reads use the same flat-slot shape that locally
-                // built aggregates use.
-                let bytes = u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8;
-                writeln!(
-                    self.out,
-                    "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr {tmp}, i64 {bytes}, i1 false)"
-                )
-                .unwrap();
+                if let Some(slots) = slot_count(self.tcx, dest_ty_mir) {
+                    // Inline aggregate (struct / tuple / array with a
+                    // known field layout): the callee handed us a heap
+                    // pointer to fresh storage. Copy the known slots
+                    // into our destination's inline alloca so
+                    // subsequent field reads use the same flat-slot
+                    // shape that locally built aggregates use.
+                    let bytes = u64::from(slots.max(1)) * 8;
+                    writeln!(
+                        self.out,
+                        "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr {tmp}, i64 {bytes}, i1 false)"
+                    )
+                    .unwrap();
+                    // A user function returning an inline aggregate heap-copies
+                    // it (see the Return lowering) so the pointer outlives the
+                    // callee frame. We've now copied its slots into our own
+                    // destination, so that buffer is dead — free it (a shallow
+                    // dealloc; any RC field pointers it held now live in the
+                    // destination slot). Without this, every struct/tuple/array
+                    // returned by value leaks its buffer. Runtime accessors
+                    // (`gos_rt_vec_get_ptr`, …) instead return a BORROWED
+                    // pointer into a container, which must never be freed here.
+                    if !symbol.starts_with("gos_rt_") {
+                        declare_rt(&mut self.runtime_refs, "gos_rt_aggr_free");
+                        writeln!(
+                            self.out,
+                            "  call void @\"gos_rt_aggr_free\"(ptr {tmp}, i64 {bytes})"
+                        )
+                        .unwrap();
+                    }
+                } else {
+                    // Handle-Adt with no inline layout (recursive enum,
+                    // opaque sentinel struct): the slot holds an 8-byte
+                    // heap handle and the runtime returned that handle
+                    // value. Store it directly — memcpy'ing would copy
+                    // the cell's first word (the discriminant) into the
+                    // slot, so the next discriminant / field read would
+                    // double-indirect through it and crash. Mirrors the
+                    // store-the-handle shape used by enum construction.
+                    writeln!(self.out, "  store ptr {tmp}, ptr {slot}").unwrap();
+                }
             } else if call_ret_ty != dest_ty {
                 // Registry-typed call result differs from the
                 // destination slot's MIR-derived shape. The

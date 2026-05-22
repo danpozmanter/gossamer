@@ -196,6 +196,7 @@ const PRELUDE_TYPES: &[&str] = &[
     "Box",
     "Arc",
     "Rc",
+    "Weak",
     "Range",
     "Sender",
     "Receiver",
@@ -245,6 +246,16 @@ const PRELUDE_VALUES: &[&str] = &[
     // Used by multi-threaded fasta to seed each worker.
     "lcg_jump",
     "gos_rt_lcg_jump",
+    // Leaf intrinsics for the injected `encoding::pem` real-struct
+    // wrappers (gossamer-parse autoderive). Resolved here so the
+    // synthesized wrapper bodies type-check; user code never names
+    // them directly.
+    "__gos_pem_decode_raw",
+    "__gos_pem_decode_all_raw",
+    "__gos_pem_encode_raw",
+    "__gos_x509_parse_pem_raw",
+    "__gos_tar_read_raw",
+    "__gos_zip_read_raw",
 ];
 
 const PRIMITIVE_TYPES: &[(&str, PrimitiveTy)] = &[

@@ -3,7 +3,7 @@
  *
  * The cross-tier surface is text-shaped: TOML <-> JSON conversion
  * plus `is_valid` and `pretty`. Round-trip into a typed value via
- * the existing JSON auto-derive (`<Type>::from_json(json_text)`).
+ * the JSON auto-derive (`from_json::<Type>(json_text)`).
  */
 
 use std::encoding::toml

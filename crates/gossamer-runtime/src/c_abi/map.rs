@@ -55,36 +55,14 @@ enum MapStorage {
     Bytes(FxHashMap<Box<[u8]>, Box<[u8]>>),
 }
 
-/// Snapshot every i64-shaped value stored in `map` so the tracing
-/// GC can treat each as a candidate pointer. Called by
-/// `super::gc::scan_all_gos_maps` after the normal mark drain.
-///
-/// Only the `I64I64` shape carries values whose 8-byte payload is
-/// a candidate pointer in practice (struct heap pointers stored
-/// via `gos_rt_map_insert_i64_i64`'s fallthrough for non-primitive
-/// values). `StrI64` is the symmetric case for string-keyed maps.
-/// The byte-erased / string-valued variants own their payloads
-/// directly (Box<[u8]>) and don't store user-tracked heap
-/// pointers, so we don't yield from them — the conservative
-/// trace doesn't need to consider those values.
-pub(super) fn storage_values_for_gc(map: &GosMap) -> Vec<i64> {
-    let storage = map.storage.lock();
-    match &*storage {
-        MapStorage::I64I64(inner) => inner.values().copied().collect(),
-        MapStorage::StrI64(inner) => inner.values().copied().collect(),
-        _ => Vec::new(),
-    }
-}
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mut GosMap {
     ffi_entry!(std::ptr::null_mut(), {
-        let ptr = Box::into_raw(Box::new(GosMap {
+        crate::c_abi::ledger::map_inc();
+        Box::into_raw(Box::new(GosMap {
             len_cache: 0,
             storage: parking_lot::Mutex::new(MapStorage::Empty),
-        }));
-        super::gc::gos_map_register(ptr as *mut u8);
-        ptr
+        }))
     })
 }
 
@@ -110,12 +88,10 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
         } else {
             MapStorage::Empty
         };
-        let ptr = Box::into_raw(Box::new(GosMap {
+        Box::into_raw(Box::new(GosMap {
             len_cache: 0,
             storage: parking_lot::Mutex::new(storage),
-        }));
-        super::gc::gos_map_register(ptr as *mut u8);
-        ptr
+        }))
     })
 }
 
@@ -343,8 +319,8 @@ pub unsafe extern "C" fn gos_rt_map_get_i64(m: *const GosMap, key: i64) -> i64 {
 /// struct heap pointer) uniformly: the MIR pin recovers the proper V
 /// from the call expression's `Option<V>` Adt substs.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_get_i64_opt(m: *const GosMap, key: i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_map_get_i64_opt(m: *const GosMap, key: i64) -> i128 {
+    ffi_entry!(0i128, {
         if m.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -439,11 +415,8 @@ pub unsafe extern "C" fn gos_rt_map_get_str_i64(m: *const GosMap, key: *const c_
 /// layout as [`gos_rt_map_get_i64_opt`]: 8-byte payload, MIR pin
 /// recovers V from the call's `Option<V>` substs.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_get_str_opt(
-    m: *const GosMap,
-    key: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_map_get_str_opt(m: *const GosMap, key: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if m.is_null() || key.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -769,7 +742,7 @@ pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
         if m.is_null() {
             return;
         }
-        super::gc::gos_map_deregister(m as *mut u8);
+        crate::c_abi::ledger::map_dec();
         drop(unsafe { Box::from_raw(m) });
     });
 }
@@ -828,6 +801,21 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         if v.is_null() {
             return;
         }
+        // Region-allocated vecs (header + buffer in arena slabs) are freed
+        // wholesale at `region_pop` — never individually. Touching them here
+        // via `Box::from_raw` / `Vec::from_raw_parts` would corrupt the
+        // global allocator (the memory isn't its).
+        if crate::c_abi::vec::vec_is_region(unsafe { &*v }) {
+            return;
+        }
+        // RC: this is a release. Decrement; reclaim only when the last
+        // reference drops. An aliased Vec (`let b = v`) still has live holders.
+        let rc = crate::c_abi::vec::vec_rc(unsafe { &*v });
+        if rc > 1 {
+            crate::c_abi::vec::vec_set_rc(unsafe { &mut *v }, rc - 1);
+            return;
+        }
+        crate::c_abi::ledger::vec_dec();
         let boxed = unsafe { Box::from_raw(v) };
         if !boxed.ptr.is_null() && boxed.cap > 0 {
             // Deep-free pointer-bearing element payloads BEFORE
@@ -1078,8 +1066,8 @@ pub unsafe extern "C" fn gos_rt_map_values_vec(m: *const GosMap) -> *mut GosVec 
 /// at `k` if present and returns the previous value as Some;
 /// returns None otherwise.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_pop_i64(m: *mut GosMap, key: i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_map_pop_i64(m: *mut GosMap, key: i64) -> i128 {
+    ffi_entry!(0i128, {
         if m.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -1108,8 +1096,8 @@ pub unsafe extern "C" fn gos_rt_map_pop_i64(m: *mut GosMap, key: i64) -> *mut Go
 /// raw 8-byte previous value (i64 directly for `StrI64`,
 /// `*mut c_char` cast to i64 for `StrStr`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_map_pop_str(m: *mut GosMap, key: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_map_pop_str(m: *mut GosMap, key: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if m.is_null() || key.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }

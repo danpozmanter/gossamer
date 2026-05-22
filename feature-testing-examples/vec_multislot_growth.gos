@@ -1,0 +1,94 @@
+// Reading multi-slot inline elements ([T; N], tuples, structs) back
+// out of a growable Vec must agree across every tier. The element
+// type of an unannotated `let mut v = []` is recovered from the
+// push sites; a recovered element with unresolved field types would
+// otherwise lower its field/index loads as pointers and mis-dispatch
+// the value (e.g. concatenated as a string), so this fixture exercises
+// both the for-loop and the index read shape for each element kind.
+
+struct Point { a: i64, b: i64 }
+
+fn array_for_loop() -> i64 {
+    let mut v = []
+    let mut i = 0
+    while i < 30 {
+        v.push([i, i + 1])
+        i += 1
+    }
+    let mut sum = 0
+    for x in v {
+        sum += x[0] + x[1]
+    }
+    sum
+}
+
+fn array_index() -> i64 {
+    let mut v = []
+    v.push([10, 20])
+    v.push([30, 40])
+    v[0][0] + v[0][1] + v[1][0] + v[1][1]
+}
+
+fn tuple_for_loop() -> i64 {
+    let mut v = []
+    let mut i = 0
+    while i < 5 {
+        v.push((i, i + 1))
+        i += 1
+    }
+    let mut sum = 0
+    for x in v {
+        sum += x.0 + x.1
+    }
+    sum
+}
+
+fn tuple_destructure() -> i64 {
+    let mut v = []
+    v.push((1, 2))
+    v.push((3, 4))
+    let mut sum = 0
+    for (a, b) in v {
+        sum += a + b
+    }
+    sum
+}
+
+fn tuple_index() -> i64 {
+    let mut v = []
+    v.push((10, 20))
+    v.push((30, 40))
+    v[0].0 + v[0].1 + v[1].0 + v[1].1
+}
+
+fn struct_index() -> i64 {
+    let mut v = []
+    v.push(Point { a: 10, b: 20 })
+    v.push(Point { a: 30, b: 40 })
+    v[0].a + v[0].b + v[1].a + v[1].b
+}
+
+fn nested_literal_start() -> i64 {
+    let mut v = [[0, 0]]
+    v.pop()
+    let mut i = 0
+    while i < 30 {
+        v.push([i, i + 1])
+        i += 1
+    }
+    let mut sum = 0
+    for x in v {
+        sum += x[0] + x[1]
+    }
+    sum
+}
+
+fn main() {
+    println!("array_for_loop={}", array_for_loop())
+    println!("array_index={}", array_index())
+    println!("tuple_for_loop={}", tuple_for_loop())
+    println!("tuple_destructure={}", tuple_destructure())
+    println!("tuple_index={}", tuple_index())
+    println!("struct_index={}", struct_index())
+    println!("nested_literal_start={}", nested_literal_start())
+}

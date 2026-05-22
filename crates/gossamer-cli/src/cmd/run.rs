@@ -41,14 +41,14 @@ fn run(file: &PathBuf, _mode: RunMode, forwarded: &[String]) -> Result<()> {
     // Static checks always run first. A program with parse / resolve /
     // type errors has no business reaching the VM — execution would
     // either crash or produce unsound output.
-    let (program, mut tcx) = load_and_check(&source, file_id, &map)?;
+    let (program, tcx) = load_and_check(&source, file_id, &map)?;
     gossamer_interp::set_program_name(&file.to_string_lossy());
     gossamer_interp::set_program_args(forwarded);
     let mut vm = gossamer_interp::Vm::new();
-    vm.load(&program, &mut tcx)
+    // `load` consumes `tcx` (moves the interner into the JIT snapshot).
+    vm.load(&program, tcx)
         .map_err(|err| anyhow!("vm load failed: {err}"))?;
     drop(program);
-    drop(tcx);
     let r = vm.call("main", Vec::new()).map(|_| ());
     vm.release_jit_prelude();
     gossamer_interp::join_outstanding_goroutines();

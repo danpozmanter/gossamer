@@ -1,0 +1,55 @@
+// Arena regions: `runtime::region_push()` .. `runtime::region_pop()`
+// bump-allocate everything created in between and free it wholesale at the
+// pop, with no per-node RC teardown. Regions are a memory/throughput
+// optimization that is a semantic NO-OP: the output is identical with or
+// without them (the interpreter ignores them; the compiled tiers
+// bulk-free). This fixture asserts that observable equivalence holds
+// bit-for-bit across VM / Cranelift / LLVM.
+//
+// Safety contract exercised here: nothing allocated inside a region
+// escapes the pop — only `i64` accumulators (Copy) cross the boundary.
+
+use std::runtime
+
+enum Tree {
+    Leaf(i64),
+    Node(Box<Tree>, Box<Tree>),
+}
+
+fn build(depth: i64, seed: i64) -> Tree {
+    if depth == 0 {
+        return Tree::Leaf(seed % 100)
+    }
+    Tree::Node(Box::new(build(depth - 1, seed * 2 + 1)), Box::new(build(depth - 1, seed * 2 + 3)))
+}
+
+fn sum(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf(v) => *v,
+        Tree::Node(l, r) => sum(l) + sum(r),
+    }
+}
+
+fn count(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf(_) => 1,
+        Tree::Node(l, r) => 1 + count(l) + count(r),
+    }
+}
+
+fn main() {
+    let mut total_sum = 0
+    let mut total_count = 0
+    let mut round = 0
+    while round < 6 {
+        // Each iteration builds and discards a whole tree inside a region;
+        // only the i64 accumulations escape.
+        runtime::region_push()
+        let t = build(8, round + 1)
+        total_sum += sum(&t)
+        total_count += count(&t)
+        runtime::region_pop()
+        round += 1
+    }
+    println!("sum={} count={}", total_sum, total_count)
+}

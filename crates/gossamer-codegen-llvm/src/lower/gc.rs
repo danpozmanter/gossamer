@@ -123,63 +123,21 @@ impl<'a> Lowerer<'a> {
     /// hot-path victims (spectral-norm / n-body inner helpers
     /// are called > 10⁹ times).
     pub(crate) fn emit_gc_prologue(&mut self) {
-        if !gossamer_mir::body_might_allocate(self.body) {
-            self.gc_prologue_emitted = false;
-            return;
-        }
-        self.gc_prologue_emitted = true;
-        declare_rt(&mut self.runtime_refs, "gos_rt_gc_root_save");
-        declare_rt(&mut self.runtime_refs, "gos_rt_gc_safepoint");
-        let slot = Self::gc_frame_slot_name();
-        writeln!(self.out, "  {slot} = alloca i64").unwrap();
-        let frame = self.fresh();
-        writeln!(self.out, "  {frame} = call i64 @gos_rt_gc_root_save()").unwrap();
-        writeln!(self.out, "  store i64 {frame}, ptr {slot}").unwrap();
-        writeln!(self.out, "  call void @gos_rt_gc_safepoint()").unwrap();
+        // The raw-pointer tracing GC has been replaced by intrusive
+        // reference counting (see `gossamer-runtime` `c_abi::rc`). Its
+        // per-call shadow-stack save/push/restore + safepoint hooks are
+        // dead — no collector consumes the roots — but they cost an FFI
+        // call (and block `opt -O3` inlining/vectorisation) on every
+        // function invocation, which is catastrophic for deep recursion
+        // and hot leaf math. Emit nothing.
+        self.gc_prologue_emitted = false;
     }
 
-    /// Emits a raw-pointer shadow-stack push for `ptr_ssa`. Called
-    /// after every aggregate-allocation site so the next safepoint
-    /// treats the new allocation as a root for the rest of the
-    /// function's lifetime.
-    pub(crate) fn emit_gc_root_push(&mut self, ptr_ssa: &str) {
-        declare_rt(&mut self.runtime_refs, "gos_rt_gc_root_push");
-        writeln!(self.out, "  call void @gos_rt_gc_root_push(ptr {ptr_ssa})").unwrap();
-    }
+    /// No-op: the tracing GC's shadow stack is retired (RC owns heap
+    /// lifetime). Kept as a call site so the aggregate-assignment path
+    /// stays unchanged.
+    pub(crate) fn emit_gc_root_push(&mut self, _ptr_ssa: &str) {}
 
-    /// Emits the matching shadow-stack restore for `emit_gc_prologue`.
-    /// Used by `Terminator::Return` lowering just before the `ret`
-    /// instruction. Skipped when the prologue was elided.
-    pub(crate) fn emit_gc_root_restore(&mut self) {
-        if !self.gc_prologue_emitted {
-            return;
-        }
-        declare_rt(&mut self.runtime_refs, "gos_rt_gc_root_restore");
-        let slot = Self::gc_frame_slot_name();
-        let frame = self.fresh();
-        writeln!(self.out, "  {frame} = load i64, ptr {slot}").unwrap();
-        writeln!(self.out, "  call void @gos_rt_gc_root_restore(i64 {frame})").unwrap();
-    }
-
-    /// Emits `gos_rt_stack_push(function_name, "", 0)` at function
-    /// entry so panic traces and SIGQUIT dumps carry the active
-    /// goroutine's call chain. Cheap (one FFI call); matches the
-    /// matching `emit_stack_pop` in `Terminator::Return`.
-    pub(crate) fn emit_stack_push_prologue(&mut self) {
-        declare_rt(&mut self.runtime_refs, "gos_rt_stack_push");
-        let (name_global, _) = self.strings.borrow_mut().intern(&self.body.name);
-        let (empty_global, _) = self.strings.borrow_mut().intern("");
-        writeln!(
-            self.out,
-            "  call void @gos_rt_stack_push(ptr {name_global}, ptr {empty_global}, i32 0)"
-        )
-        .unwrap();
-    }
-
-    /// Emits `gos_rt_stack_pop()` immediately before the `ret`
-    /// in `Terminator::Return`.
-    pub(crate) fn emit_stack_pop(&mut self) {
-        declare_rt(&mut self.runtime_refs, "gos_rt_stack_pop");
-        writeln!(self.out, "  call void @gos_rt_stack_pop()").unwrap();
-    }
+    /// No-op companion to [`Self::emit_gc_prologue`].
+    pub(crate) fn emit_gc_root_restore(&mut self) {}
 }

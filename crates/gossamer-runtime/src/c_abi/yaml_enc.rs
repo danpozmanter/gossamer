@@ -21,11 +21,11 @@ use super::*;
 // can reuse the same JSON-as-lingua-franca shape.
 // ---------------------------------------------------------------
 
-fn yaml_result_ok(s: &str) -> *mut GosResult {
+fn yaml_result_ok(s: &str) -> i128 {
     unsafe { gos_rt_result_new(0, alloc_cstring(s.as_bytes()) as i64) }
 }
 
-fn yaml_result_err(msg: &str) -> *mut GosResult {
+fn yaml_result_err(msg: &str) -> i128 {
     let cs = std::ffi::CString::new(msg).unwrap_or_default();
     let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
     unsafe { gos_rt_result_new(1, err as i64) }
@@ -96,8 +96,8 @@ fn json_to_serde_yaml(v: &serde_json::Value) -> serde_yaml::Value {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_yaml_to_json(s: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_yaml_to_json(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         let text = if s.is_null() {
             ""
         } else {
@@ -116,8 +116,8 @@ pub unsafe extern "C" fn gos_rt_yaml_to_json(s: *const c_char) -> *mut GosResult
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_yaml_from_json(s: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_yaml_from_json(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         let text = if s.is_null() {
             ""
         } else {

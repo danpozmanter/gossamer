@@ -60,6 +60,10 @@ pub(crate) struct Builder<'a> {
     pub(crate) fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
     pub(crate) fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     pub(crate) consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
+    /// Free functions that may let a value escape (spawn / channel / static
+    /// write / param-stash). A loop calling any of these is never
+    /// auto-regioned. See `collect_region_unsafe_fns`.
+    pub(crate) region_unsafe: &'a std::collections::HashSet<gossamer_resolve::DefId>,
     pub(crate) local_struct: HashMap<Local, String>,
     /// For locals that hold an array/tuple whose element type is a
     /// known struct, records that struct's name. Used to resolve
@@ -100,6 +104,29 @@ pub(crate) struct Builder<'a> {
     /// of the pre-branch header. Prevents unconditional null-deref when
     /// the scrutinee is None/Err on a subsequent loop iteration.
     pub(crate) payload_defer_block: Option<BlockId>,
+    /// Binding names that are the receiver of a growth / in-place
+    /// mutation method (`push`, `pop`, `insert`, `remove`, `sort`,
+    /// `sort_by`, `extend`, `truncate`, `clear`, `retain`, `swap`)
+    /// somewhere in the function body. A `let mut xs = [literal]`
+    /// is only promoted to a heap `Vec` when its name is in this set
+    /// — an explicitly-sized `let mut bodies: [Body; 5]` that is only
+    /// indexed / field-mutated / passed to a `[T; N]`-typed parameter
+    /// must stay a fixed inline array so the layout matches at every
+    /// use site.
+    pub(crate) grows_bindings: std::collections::HashSet<String>,
+    /// Element type pushed into each growing binding, keyed by binding
+    /// name, recovered from the first argument of `push` / `insert` /
+    /// `append` call sites. An unannotated `let mut xs = []` carries no
+    /// element type on its literal, so the promotion to a heap `Vec`
+    /// would otherwise size elements at 8 bytes (i64) and silently
+    /// truncate every multi-slot element (`[i64; 2]`, tuple, struct) on
+    /// push. This map supplies the real element stride for that case.
+    pub(crate) grows_elem_ty: std::collections::HashMap<String, Ty>,
+    /// Nesting depth of `runtime::region_push` .. `region_pop` while
+    /// lowering. Locals created at depth > 0 are arena-region-owned: the
+    /// drop pass must not release them (the region frees them wholesale at
+    /// pop; a post-pop release would be a use-after-free).
+    pub(crate) region_depth: u32,
 }
 
 /// A live loop context: where to jump on `break` vs. `continue`,

@@ -5,6 +5,9 @@
 //! dispatch-consistency verifier) all derive their declarations from
 //! this registry instead of maintaining parallel string arrays.
 
+/// Reference-counting type-meta ABI (kind tags + blob layout) shared by
+/// the MIR lowerer and the runtime.
+pub mod rc;
 /// ABI registry — the typed list of all `gos_rt_*` symbols.
 pub mod registry;
 /// Core ABI types: [`AbiType`], [`AbiSig`], [`RuntimeEntry`].

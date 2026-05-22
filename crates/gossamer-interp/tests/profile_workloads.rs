@@ -37,9 +37,9 @@ fn run(label: &str, src: &str) -> String {
     // functions stay in the dispatch loop rather than
     // tier-up to native after the hot counter trips.
     gossamer_interp::set_jit_disabled();
-    let (program, mut tcx) = compile(src);
+    let (program, tcx) = compile(src);
     let mut vm = Vm::new();
-    vm.load(&program, &mut tcx).unwrap();
+    vm.load(&program, tcx).unwrap();
     let t0 = Instant::now();
     let _ = vm.call("main", Vec::new()).unwrap();
     let dur = t0.elapsed();

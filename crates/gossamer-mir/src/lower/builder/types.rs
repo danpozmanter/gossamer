@@ -60,6 +60,7 @@ impl<'a> Builder<'a> {
         fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
         fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
         consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
+        region_unsafe: &'a std::collections::HashSet<gossamer_resolve::DefId>,
     ) -> Self {
         Self {
             tcx,
@@ -75,6 +76,7 @@ impl<'a> Builder<'a> {
             fn_returns,
             fn_inputs,
             consts,
+            region_unsafe,
             local_struct: HashMap::new(),
             local_elem_struct: HashMap::new(),
             local_closure: HashMap::new(),
@@ -84,6 +86,79 @@ impl<'a> Builder<'a> {
             param_locals: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             payload_defer_block: None,
+            grows_bindings: std::collections::HashSet::new(),
+            grows_elem_ty: HashMap::new(),
+            region_depth: 0,
+        }
+    }
+
+    /// Replaces unresolved (`Var` / `Error`) fields of a tuple type
+    /// with `i64` so the codegen reads each slot as an integer
+    /// instead of defaulting to a pointer. A multi-slot tuple element
+    /// read out of a `Vec` (`v[i].0`) inherits its field types from
+    /// the element type the binding was pinned to; when that element
+    /// came from an unannotated `let mut xs = []` the int-literal
+    /// fields can still be `Var`, and a `Var` field lowers to a `ptr`
+    /// load — so `v[i].0` is reinterpreted as a string pointer. This
+    /// mirrors the i64 fallback the for-loop tuple-destructuring path
+    /// already applies. Non-tuple types and tuples with all-concrete
+    /// fields pass through unchanged.
+    /// Ensures `ty` renders as the 2-word by-value `i128` Result/Option
+    /// representation. A `gos_rt_result_new` result is ALWAYS an i128
+    /// Result/Option, but type inference sometimes leaves the binding's type
+    /// an unresolved `Var` (e.g. a combinator-chain intermediate), which would
+    /// render as `ptr` and TRUNCATE the i128 on store. Returns `ty` unchanged
+    /// when it is already a Result/Option Adt, else a canonical `Option<i64>`
+    /// (same i128 representation).
+    pub(crate) fn result_repr_ty(&mut self, ty: Ty) -> Ty {
+        use gossamer_types::TyKind;
+        if matches!(
+            self.tcx.kind_of(ty),
+            TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
+        ) {
+            return ty;
+        }
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let substs = gossamer_types::Substs::from_types([i64_ty]);
+        self.tcx.intern(TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn resolve_var_tuple_fields(&mut self, ty: Ty) -> Ty {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty).clone() {
+            TyKind::Tuple(fields) => {
+                let needs_fix = fields
+                    .iter()
+                    .any(|f| matches!(self.tcx.kind_of(*f), TyKind::Var(_) | TyKind::Error));
+                if !needs_fix {
+                    return ty;
+                }
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let resolved: Vec<Ty> = fields
+                    .iter()
+                    .map(|f| {
+                        if matches!(self.tcx.kind_of(*f), TyKind::Var(_) | TyKind::Error) {
+                            i64_ty
+                        } else {
+                            *f
+                        }
+                    })
+                    .collect();
+                self.tcx.intern(TyKind::Tuple(resolved))
+            }
+            // A `[T; N]` element whose `T` is still an inference
+            // variable lowers its `Index` reads as `ptr` loads, the
+            // same failure mode as a `Var` tuple field. Pin it to i64.
+            TyKind::Array { elem, len }
+                if matches!(self.tcx.kind_of(elem), TyKind::Var(_) | TyKind::Error) =>
+            {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                self.tcx.intern(TyKind::Array { elem: i64_ty, len })
+            }
+            _ => ty,
         }
     }
 
@@ -308,6 +383,25 @@ impl<'a> Builder<'a> {
         })
     }
 
+    pub(crate) fn option_string_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let substs = gossamer_types::Substs::from_types([s]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn option_vec_option_string_ty(&mut self) -> Ty {
+        let opt_s = self.option_string_ty();
+        let v = self.tcx.intern(gossamer_types::TyKind::Vec(opt_s));
+        let substs = gossamer_types::Substs::from_types([v]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
     pub(crate) fn option_vec_string_ty(&mut self) -> Ty {
         let s = self.tcx.string_ty();
         let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
@@ -327,10 +421,115 @@ impl<'a> Builder<'a> {
         })
     }
 
+    pub(crate) fn option_i64_adt_ty(&mut self) -> Ty {
+        let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let substs = gossamer_types::Substs::from_types([i]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn option_f64_adt_ty(&mut self) -> Ty {
+        let f = self.tcx.float_ty(gossamer_types::FloatTy::F64);
+        let substs = gossamer_types::Substs::from_types([f]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
     pub(crate) fn result_string_error_adt_ty(&mut self) -> Ty {
         let s = self.tcx.string_ty();
         let e = self.tcx.dyn_error_ty();
         let substs = gossamer_types::Substs::from_types([s, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    pub(crate) fn result_vec_u8_error_ty(&mut self) -> Ty {
+        let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+        let vec = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([vec, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    /// `Result<inner, errors::Error>` for an arbitrary Ok type.
+    pub(crate) fn result_of(&mut self, inner: Ty) -> Ty {
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([inner, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    /// The x509 `CertInfo` leaf tuple: `(String, String, [u8], i64,
+    /// i64, [String], [u8])`.
+    pub(crate) fn tuple_cert_info_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+        let vec_u8 = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+        let vec_str = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+        self.tcx.intern(gossamer_types::TyKind::Tuple(vec![
+            s, s, vec_u8, i, i, vec_str, vec_u8,
+        ]))
+    }
+
+    /// The archive entry leaf tuple `(String, [u8], bool)`.
+    pub(crate) fn tuple_entry_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+        let vec_u8 = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+        let b = self.tcx.bool_ty();
+        self.tcx
+            .intern(gossamer_types::TyKind::Tuple(vec![s, vec_u8, b]))
+    }
+
+    /// The tuple type `(String, [u8])`.
+    pub(crate) fn tuple_str_bytes_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+        let vec_u8 = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+        self.tcx
+            .intern(gossamer_types::TyKind::Tuple(vec![s, vec_u8]))
+    }
+
+    pub(crate) fn result_pair_i64_error_ty(&mut self) -> Ty {
+        let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, i]));
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([tup, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    pub(crate) fn result_vec_vec_string_error_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let inner = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+        let outer = self.tcx.intern(gossamer_types::TyKind::Vec(inner));
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([outer, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    pub(crate) fn result_vec_string_error_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let vec = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([vec, e]);
         self.tcx.intern(gossamer_types::TyKind::Adt {
             def: gossamer_resolve::DefId::local(u32::MAX),
             substs,
@@ -351,6 +550,26 @@ impl<'a> Builder<'a> {
         let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let e = self.tcx.dyn_error_ty();
         let substs = gossamer_types::Substs::from_types([i, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    pub(crate) fn result_f64_error_adt_ty(&mut self) -> Ty {
+        let f = self.tcx.float_ty(gossamer_types::FloatTy::F64);
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([f, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
+    pub(crate) fn result_bool_error_adt_ty(&mut self) -> Ty {
+        let b = self.tcx.bool_ty();
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([b, e]);
         self.tcx.intern(gossamer_types::TyKind::Adt {
             def: gossamer_resolve::DefId::local(u32::MAX),
             substs,
@@ -463,6 +682,39 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Builds the `Weak<T>` sentinel Adt (def `u32::MAX - 6`), matching
+    /// the typechecker's `weak_adt_ty`. Used to pin the result of
+    /// `x.downgrade()` so the drop pass releases it via the weak helpers.
+    pub(crate) fn weak_adt_ty(&mut self, payload: Ty) -> Ty {
+        use gossamer_types::TyKind;
+        let def = gossamer_resolve::DefId::local(u32::MAX - 6);
+        let substs = gossamer_types::Substs::from_types([payload]);
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    /// Extracts `T` from a `Weak<T>` sentinel Adt; returns `None` for any
+    /// other type.
+    pub(crate) fn weak_payload_ty(&self, ty: Ty) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Adt { def, substs } if def.local == u32::MAX - 6 => {
+                substs.types().first().copied()
+            }
+            _ => None,
+        }
+    }
+
+    /// Builds the `Option<T>` sentinel Adt (def `u32::MAX - 1`) carrying
+    /// a concrete payload subst. Used to pin the result of `w.upgrade()`
+    /// so the standard match/if-let machinery reads the discriminant and
+    /// binds the payload at the right type.
+    pub(crate) fn option_payload_adt_ty(&mut self, payload: Ty) -> Ty {
+        use gossamer_types::TyKind;
+        let def = gossamer_resolve::DefId::local(u32::MAX - 1);
+        let substs = gossamer_types::Substs::from_types([payload]);
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
     pub(crate) fn type_slot_bytes(&self, ty: Ty) -> u32 {
         use gossamer_types::TyKind;
         match self.tcx.kind_of(ty) {
@@ -478,12 +730,36 @@ impl<'a> Builder<'a> {
                 u32::try_from(*len).unwrap_or(1).saturating_mul(elem_bytes)
             }
             TyKind::Adt { def, .. } => {
-                // Sentinels for Result / Option (u32::MAX,
-                // u32::MAX - 1) and stdlib-struct sentinels (DirInfo,
-                // Output, …) carry no `struct_field_tys`; treat them
-                // as a pointer (single slot) — those types are
-                // always heap-allocated and passed by reference.
-                let _ = def;
+                // `Result<T,E>` / `Option<T>` (u32::MAX, u32::MAX - 1) are the
+                // 2-word by-value `i128` representation: 16 bytes per element
+                // (so `Vec<Option<T>>` reserves 16 bytes/elem and push/read
+                // move the full payload, not just the discriminant).
+                if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                    return 16;
+                }
+                // The other stdlib struct sentinels (DirInfo, Output,
+                // ResponseStream, Response — u32::MAX-2 .. u32::MAX-5) are
+                // heap-allocated by `gos_rt_*` helpers and passed by pointer,
+                // and `Weak<T>` (u32::MAX-6) is a weak-counted pointer — one
+                // slot each.
+                if def.local >= u32::MAX - 6 {
+                    return 8;
+                }
+                // For user-defined structs with a registered field
+                // layout, sum each field's slot width (rounded up to
+                // 8 bytes per slot). A `Projection { a: i64, b: i64 }`
+                // is two slots = 16 bytes, so a `Vec<Projection>`
+                // created with `gos_rt_vec_new(elem_bytes)` reserves
+                // 16 bytes per element and the push-site memcpy
+                // copies the full inline struct rather than truncating
+                // to the first field.
+                if let Some(field_tys) = self.tcx.struct_field_tys(*def) {
+                    let total_slots: u32 = field_tys
+                        .iter()
+                        .map(|t| (self.type_slot_bytes(*t).max(8)) / 8)
+                        .sum();
+                    return total_slots.max(1) * 8;
+                }
                 8
             }
             TyKind::Bool => 1,

@@ -287,6 +287,7 @@ fn switch_int_non_integer_discriminant_is_detected() {
         ty: str_ty,
         debug_name: None,
         mutable: false,
+        region: false,
     });
     let bad_local = Local((body.locals.len() - 1) as u32);
     let mut rewrote = false;
@@ -379,6 +380,7 @@ fn call_destination_untyped_is_detected() {
         ty: err_ty,
         debug_name: None,
         mutable: false,
+        region: false,
     });
     let bad_dest = Local((body.locals.len() - 1) as u32);
     let cont_id = BlockId(body.blocks.len() as u32);

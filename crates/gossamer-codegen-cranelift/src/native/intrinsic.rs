@@ -142,6 +142,10 @@ pub(super) struct IntrinsicContext {
     pub(super) strings: HashMap<String, DataId>,
     /// Cached `FuncId` for each C-ABI runtime function we link.
     pub(super) externs: HashMap<&'static str, FuncId>,
+    /// Cached `DataId` for each RC type-meta blob, keyed by its codegen
+    /// symbol (`gos_rc_meta_<id>`). Deduped so a variant constructed at
+    /// many sites shares one data object.
+    pub(super) rc_metas: HashMap<String, DataId>,
     /// Monotonic counter for freshly-generated rodata symbol names.
     pub(super) next_str_id: u32,
     /// Mirror of `function_ids_by_name` from [`compile_to_object`].
@@ -190,6 +194,7 @@ impl IntrinsicContext {
         Self {
             strings: HashMap::new(),
             externs: HashMap::new(),
+            rc_metas: HashMap::new(),
             next_str_id: 0,
             functions: HashMap::new(),
             functions_by_def: HashMap::new(),
@@ -220,6 +225,35 @@ impl IntrinsicContext {
             .define_data(id, &description)
             .map_err(|e| anyhow!("define {symbol}: {e}"))?;
         self.strings.insert(text.to_string(), id);
+        Ok(id)
+    }
+
+    /// Returns the `DataId` for an RC type-meta blob, defining a
+    /// read-only data object holding the little-endian `[i64]` words on
+    /// first use. Keyed by the stable codegen symbol so identical
+    /// variants share one object.
+    pub(super) fn intern_rc_meta(
+        &mut self,
+        module: &mut dyn Module,
+        symbol: &str,
+        blob: &[i64],
+    ) -> Result<DataId> {
+        if let Some(id) = self.rc_metas.get(symbol).copied() {
+            return Ok(id);
+        }
+        let id = module
+            .declare_data(symbol, Linkage::Local, false, false)
+            .map_err(|e| anyhow!("declare {symbol}: {e}"))?;
+        let mut bytes = Vec::with_capacity(blob.len() * 8);
+        for w in blob {
+            bytes.extend_from_slice(&w.to_le_bytes());
+        }
+        let mut description = DataDescription::new();
+        description.define(bytes.into_boxed_slice());
+        module
+            .define_data(id, &description)
+            .map_err(|e| anyhow!("define {symbol}: {e}"))?;
+        self.rc_metas.insert(symbol.to_string(), id);
         Ok(id)
     }
 

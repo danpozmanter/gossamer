@@ -78,11 +78,8 @@ pub unsafe extern "C" fn gos_rt_regex_find(
 /// disc=0 → Some, disc=1 → None. The payload is a heap-allocated
 /// `{start: i64, end: i64, text: *mut c_char}` triple.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_regex_find_opt(
-    re: *const GosRegex,
-    text: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_regex_find_opt(re: *const GosRegex, text: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if re.is_null() || text.is_null() {
             return gos_rt_result_new(1, 0);
         }
@@ -111,11 +108,8 @@ pub unsafe extern "C" fn gos_rt_regex_find_opt(
 /// Returns `Option<Vec<String>>` as a `*mut GosResult`.
 /// disc=0 → Some(captures), disc=1 → None. Group 0 = full match.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_regex_captures(
-    re: *const GosRegex,
-    text: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_regex_captures(re: *const GosRegex, text: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if re.is_null() || text.is_null() {
             return gos_rt_result_new(1, 0);
         }
@@ -123,13 +117,17 @@ pub unsafe extern "C" fn gos_rt_regex_captures(
         match unsafe { (*re).inner.captures(s) } {
             None => gos_rt_result_new(1, 0),
             Some(caps) => {
-                let inner = unsafe { gos_rt_vec_new(8) };
+                // `Option<String>` is the 2-word by-value `i128` (16-byte)
+                // representation, so the inner Vec stores 16-byte elements.
+                let inner = unsafe { gos_rt_vec_new(16) };
                 for i in 0..caps.len() {
-                    let ptr_val: i64 = match caps.get(i) {
-                        Some(m) => alloc_cstring(m.as_str().as_bytes()) as i64,
-                        None => 0,
+                    let opt: i128 = match caps.get(i) {
+                        Some(m) => {
+                            gos_rt_result_new(0, alloc_cstring(m.as_str().as_bytes()) as i64)
+                        }
+                        None => gos_rt_result_new(1, 0),
                     };
-                    unsafe { gos_rt_vec_push(inner, std::ptr::addr_of!(ptr_val).cast::<u8>()) };
+                    unsafe { gos_rt_vec_push(inner, std::ptr::addr_of!(opt).cast::<u8>()) };
                 }
                 gos_rt_result_new(0, inner as i64)
             }
@@ -258,14 +256,17 @@ pub unsafe extern "C" fn gos_rt_regex_captures_all(
         }
         let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
         for caps in unsafe { (*re).inner.captures_iter(s) } {
-            let inner = unsafe { gos_rt_vec_new(8) };
+            // Each group is an `Option<String>` — the 2-word by-value `i128`
+            // (16-byte) representation, so the inner Vec stores 16-byte
+            // elements (disc 0 = Some, disc 1 = None).
+            let inner = unsafe { gos_rt_vec_new(16) };
             for i in 0..caps.len() {
-                let ptr_val: i64 = match caps.get(i) {
-                    Some(m) => alloc_cstring(m.as_str().as_bytes()) as i64,
-                    None => 0,
+                let opt: i128 = match caps.get(i) {
+                    Some(m) => gos_rt_result_new(0, alloc_cstring(m.as_str().as_bytes()) as i64),
+                    None => gos_rt_result_new(1, 0),
                 };
                 unsafe {
-                    gos_rt_vec_push(inner, std::ptr::addr_of!(ptr_val).cast::<u8>());
+                    gos_rt_vec_push(inner, std::ptr::addr_of!(opt).cast::<u8>());
                 }
             }
             let inner_val = inner as i64;

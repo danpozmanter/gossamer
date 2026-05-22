@@ -293,7 +293,10 @@ pub(super) fn lower_body(
     // functions (the spectral-norm / n-body inner helpers are called
     // > 10⁹ times). Allocation-driven safepoint dispatch handles
     // any function whose body actually touches the heap.
-    let needs_gc_prologue = gossamer_mir::body_might_allocate(body);
+    // The raw-pointer tracing GC is retired (RC owns heap lifetime), so
+    // the per-call shadow-stack save + safepoint hook is dead work. Never
+    // emit it.
+    let needs_gc_prologue = false;
     // `loop_headers` retained for the future inline-safepoint pass.
     let _ = &loop_headers;
     for block in &body.blocks {
@@ -332,28 +335,11 @@ pub(super) fn lower_body(
                 // the gate at one end without the other.
                 builder.def_var(raw_shadow_frame_var, zero);
             }
-            // Call-stack push for panic-trace + SIGQUIT dump support.
-            // The function name pointer is interned per body so the
-            // address is stable across recursive calls; file + line
-            // are placeholders today (no per-body source span carried
-            // through MIR — `gos_rt_stack_set_line` updates them on
-            // statement entry once that wiring lands).
-            let name_data = intrinsics.intern_string(module, &body.name)?;
-            let name_ref = module.declare_data_in_func(name_data, builder.func);
-            let name_ptr = builder
-                .ins()
-                .global_value(module.target_config().pointer_type(), name_ref);
-            let empty_data = intrinsics.intern_string(module, "")?;
-            let empty_ref = module.declare_data_in_func(empty_data, builder.func);
-            let empty_ptr = builder
-                .ins()
-                .global_value(module.target_config().pointer_type(), empty_ref);
-            let line_zero = builder.ins().iconst(types::I32, 0);
-            let push_id = intrinsics.extern_fn_by_name(module, "gos_rt_stack_push")?;
-            let push_ref = module.declare_func_in_func(push_id, builder.func);
-            builder
-                .ins()
-                .call(push_ref, &[name_ptr, empty_ptr, line_zero]);
+            // No per-call call-stack instrumentation: panic traces and
+            // SIGQUIT dumps for the compiled tier come from unwinding
+            // the real machine stack on demand. A push/pop pair on
+            // every function entry blocks leaf-function inlining and
+            // serialises on a global lock — unacceptable in hot loops.
             emitted_prologue = true;
         }
 

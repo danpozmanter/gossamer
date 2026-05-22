@@ -1,0 +1,31 @@
+// An empty `[]` literal bound to a `let mut` and grown inside a `while`
+// loop must be promoted to a heap Vec sized by the binding's resolved
+// element type. Before the growth-detection fix, the `while`-loop body's
+// `push` was not detected, so the binding stayed an inline fixed array and
+// `push` reinterpreted it as a GosVec header — corrupting the heap on
+// churn. This fixture builds and drops many such vecs and reads them back,
+// and must stay bit-identical across the VM, Cranelift, and LLVM tiers.
+
+fn build(n: i64) -> i64 {
+    let mut xs = []
+    let mut i = 0
+    while i < n {
+        xs.push(i * 3)
+        i += 1
+    }
+    let mut sum = 0
+    for x in xs {
+        sum += x
+    }
+    sum
+}
+
+fn main() {
+    let mut total = 0
+    let mut r = 0
+    while r < 200 {
+        total += build(30)
+        r += 1
+    }
+    println!("total: {}", total)
+}

@@ -49,6 +49,7 @@ fn main_returns(expr_build: impl FnOnce(&mut Builder)) -> (Body, TyCtxt) {
                 ty: unit,
                 debug_name: None,
                 mutable: false,
+                region: false,
             }],
             blocks: vec![BasicBlock {
                 id: gossamer_mir::BlockId(0),
@@ -145,6 +146,7 @@ fn cranelift_heap_allocator_roundtrips_value_through_gos_store_and_load() {
                 ty: unit,
                 debug_name: None,
                 mutable: false,
+                region: false,
             });
         }
         // size = 8
@@ -224,11 +226,13 @@ fn cranelift_compiles_arithmetic_main_to_runnable_binary() {
             ty: TyCtxt::new().unit(),
             debug_name: None,
             mutable: false,
+            region: false,
         });
         b.body.locals.push(LocalDecl {
             ty: TyCtxt::new().unit(),
             debug_name: None,
             mutable: false,
+            region: false,
         });
         b.push(StatementKind::Assign {
             place: place(1),

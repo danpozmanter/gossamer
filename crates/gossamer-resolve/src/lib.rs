@@ -21,6 +21,7 @@ mod external;
 mod resolutions;
 mod resolver;
 mod scope;
+mod stdlib_exports;
 
 pub use cfg::{item_is_active, set_test_cfg};
 
@@ -28,6 +29,7 @@ pub use def_id::{CrateId, DefId, DefIdGenerator, DefKind, ModId};
 pub use diagnostic::{ResolveDiagnostic, ResolveError};
 pub use resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions};
 pub use resolver::resolve_source_file;
+pub use stdlib_exports::{STDLIB_MODULES, STDLIB_QUALIFIED};
 
 pub use external::{
     BindingType, BindingVariantArm, ExternalItem, ExternalModule, all_external_module_paths,

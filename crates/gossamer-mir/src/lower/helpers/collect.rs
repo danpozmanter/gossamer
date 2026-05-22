@@ -498,6 +498,7 @@ pub(crate) fn collect_item(
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
+    region_unsafe: &std::collections::HashSet<gossamer_resolve::DefId>,
     out: &mut Vec<Body>,
 ) {
     match &item.kind {
@@ -520,6 +521,7 @@ pub(crate) fn collect_item(
                 fn_returns,
                 fn_inputs,
                 consts,
+                region_unsafe,
             ) {
                 out.push(body);
             }
@@ -550,6 +552,7 @@ pub(crate) fn collect_item(
                     fn_returns,
                     fn_inputs,
                     consts,
+                    region_unsafe,
                 ) {
                     out.push(body);
                 }
@@ -570,6 +573,7 @@ pub(crate) fn collect_item(
                         fn_returns,
                         fn_inputs,
                         consts,
+                        region_unsafe,
                     ) {
                         out.push(body);
                     }
@@ -577,6 +581,138 @@ pub(crate) fn collect_item(
             }
         }
         HirItemKind::Adt(_) | HirItemKind::Const(_) | HirItemKind::Static(_) => {}
+    }
+}
+
+/// Method names that grow or destructively reshape a sequence in
+/// place. A binding that receives any of these somewhere in the
+/// function body genuinely wants a heap `Vec`; one that doesn't can
+/// stay a fixed inline `[T; N]` array.
+const GROWTH_METHODS: &[&str] = &[
+    "push",
+    "pop",
+    "insert",
+    "remove",
+    "extend",
+    "truncate",
+    "clear",
+    "retain",
+    "append",
+    "resize",
+    "drain",
+    "split_off",
+    // `sort` / `sort_by` dispatch to the `gos_rt_vec_sort_*` helpers
+    // which require the heap-`Vec` representation; keep promoting
+    // their receivers so `let mut xs = [3, 1, 2]; xs.sort()` works.
+    "sort",
+    "sort_by",
+];
+
+/// Walks `block` and records the receiver name of every growth /
+/// destructive-reshape method call (`xs.push(...)`, `xs.remove(i)`,
+/// …). Drives the `let mut [literal]` → `Vec` promotion decision so
+/// explicitly-sized arrays that are only indexed / passed to
+/// `[T; N]` parameters keep their inline layout.
+pub(crate) fn collect_growth_receivers(
+    block: &HirBlock,
+    out: &mut std::collections::HashSet<String>,
+    elem_out: &mut HashMap<String, Ty>,
+) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            HirStmtKind::Let { init: Some(e), .. }
+            | HirStmtKind::Expr { expr: e, .. }
+            | HirStmtKind::Defer(e)
+            | HirStmtKind::Go(e) => growth_in_expr(e, out, elem_out),
+            HirStmtKind::Let { init: None, .. } | HirStmtKind::Item(_) => {}
+        }
+    }
+    if let Some(tail) = &block.tail {
+        growth_in_expr(tail, out, elem_out);
+    }
+}
+
+fn growth_in_expr(
+    expr: &HirExpr,
+    out: &mut std::collections::HashSet<String>,
+    elem_out: &mut HashMap<String, Ty>,
+) {
+    match &expr.kind {
+        HirExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+        } => {
+            if GROWTH_METHODS.contains(&name.name.as_str()) {
+                if let HirExprKind::Path { segments, .. } = &receiver.kind {
+                    if segments.len() == 1 {
+                        out.insert(segments[0].name.clone());
+                        // Recover the element type from the single-element
+                        // mutators so an unannotated `let mut xs = []`
+                        // gets the right element stride: `push(x)` →
+                        // `x` is arg 0, `insert(i, x)` → `x` is arg 1.
+                        let elem_arg = match name.name.as_str() {
+                            "push" => args.first(),
+                            "insert" => args.get(1),
+                            _ => None,
+                        };
+                        if let Some(arg) = elem_arg {
+                            elem_out.entry(segments[0].name.clone()).or_insert(arg.ty);
+                        }
+                    }
+                }
+            }
+            growth_in_expr(receiver, out, elem_out);
+            for a in args {
+                growth_in_expr(a, out, elem_out);
+            }
+        }
+        HirExprKind::Call { callee, args } => {
+            growth_in_expr(callee, out, elem_out);
+            for a in args {
+                growth_in_expr(a, out, elem_out);
+            }
+        }
+        HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
+            growth_in_expr(receiver, out, elem_out);
+        }
+        HirExprKind::Index { base, index } => {
+            growth_in_expr(base, out, elem_out);
+            growth_in_expr(index, out, elem_out);
+        }
+        HirExprKind::Unary { operand, .. } => growth_in_expr(operand, out, elem_out),
+        HirExprKind::Binary { lhs, rhs, .. } => {
+            growth_in_expr(lhs, out, elem_out);
+            growth_in_expr(rhs, out, elem_out);
+        }
+        HirExprKind::Assign { place, value } => {
+            growth_in_expr(place, out, elem_out);
+            growth_in_expr(value, out, elem_out);
+        }
+        HirExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            growth_in_expr(condition, out, elem_out);
+            growth_in_expr(then_branch, out, elem_out);
+            if let Some(e) = else_branch {
+                growth_in_expr(e, out, elem_out);
+            }
+        }
+        HirExprKind::Match { scrutinee, arms } => {
+            growth_in_expr(scrutinee, out, elem_out);
+            for arm in arms {
+                growth_in_expr(&arm.body, out, elem_out);
+            }
+        }
+        HirExprKind::Block(b) => collect_growth_receivers(b, out, elem_out),
+        HirExprKind::Loop { body, .. } => growth_in_expr(body, out, elem_out),
+        HirExprKind::While { condition, body } => {
+            growth_in_expr(condition, out, elem_out);
+            growth_in_expr(body, out, elem_out);
+        }
+        _ => {}
     }
 }
 
@@ -592,6 +728,7 @@ pub(crate) fn lower_fn(
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
+    region_unsafe: &std::collections::HashSet<gossamer_resolve::DefId>,
 ) -> Option<Body> {
     let body = decl.body.as_ref()?;
     let mut builder = Builder::new(
@@ -605,6 +742,12 @@ pub(crate) fn lower_fn(
         fn_returns,
         fn_inputs,
         consts,
+        region_unsafe,
+    );
+    collect_growth_receivers(
+        &body.block,
+        &mut builder.grows_bindings,
+        &mut builder.grows_elem_ty,
     );
     let return_ty = decl.ret.unwrap_or_else(|| builder.tcx.unit());
     builder.push_local(return_ty, None, false);

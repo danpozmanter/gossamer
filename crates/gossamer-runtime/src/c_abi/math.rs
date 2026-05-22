@@ -65,6 +65,91 @@ pub unsafe extern "C" fn gos_rt_math_ceil(x: f64) -> f64 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_tan(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.tan() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_asin(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.asin() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_acos(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.acos() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_atan(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.atan() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_atan2(y: f64, x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { y.atan2(x) })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_sinh(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.sinh() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_cosh(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.cosh() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_tanh(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.tanh() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_log2(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.log2() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_log10(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.log10() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_cbrt(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.cbrt() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_round(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.round() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_exp2(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.exp2() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_fmod(x: f64, y: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x % y })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_hypot(x: f64, y: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.hypot(y) })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_copysign(x: f64, y: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.copysign(y) })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_dim(x: f64, y: f64) -> f64 {
+    ffi_entry!(f64::NAN, { (x - y).max(0.0) })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_time_now_ms() -> i64 {
     ffi_entry!(-1, {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -72,4 +157,112 @@ pub unsafe extern "C" fn gos_rt_time_now_ms() -> i64 {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as i64)
     })
+}
+
+// ---------------------------------------------------------------
+// math::bits::* — scalar bit primitives over u64 (values cross the
+// C-ABI as i64 bit patterns). Mirrors `gossamer_std::math::bits`.
+// ---------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_count_ones(x: i64) -> i64 {
+    i64::from((x as u64).count_ones())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_count_zeros(x: i64) -> i64 {
+    i64::from((x as u64).count_zeros())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_leading_zeros(x: i64) -> i64 {
+    i64::from((x as u64).leading_zeros())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_trailing_zeros(x: i64) -> i64 {
+    i64::from((x as u64).trailing_zeros())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_reverse_bits(x: i64) -> i64 {
+    (x as u64).reverse_bits() as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_reverse_bytes(x: i64) -> i64 {
+    (x as u64).swap_bytes() as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_len(x: i64) -> i64 {
+    i64::from(64 - (x as u64).leading_zeros())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_rotate_left(x: i64, n: i64) -> i64 {
+    let shift = n.rem_euclid(64) as u32;
+    (x as u64).rotate_left(shift) as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_rotate_right(x: i64, n: i64) -> i64 {
+    let shift = n.rem_euclid(64) as u32;
+    (x as u64).rotate_right(shift) as i64
+}
+
+/// Allocates a GC-tracked 2-slot tuple `(i64, i64)` on the heap and
+/// returns it as a raw pointer. The compiled-tier by-value-aggregate
+/// ABI memcpys `slots * 8` bytes out of this pointer into the
+/// caller's tuple alloca, so the two i64 slots must be contiguous.
+fn alloc_pair(a: i64, b: i64) -> *mut u8 {
+    let p = crate::c_abi::gos_rt_gc_alloc(16);
+    if !p.is_null() {
+        let slots = p.cast::<i64>();
+        unsafe {
+            *slots = a;
+            *slots.add(1) = b;
+        }
+    }
+    p
+}
+
+/// `math::bits::add(x, y, carry) -> (sum, carry_out)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_add(x: i64, y: i64, carry: i64) -> *mut u8 {
+    let (s1, c1) = (x as u64).overflowing_add(y as u64);
+    let (s2, c2) = s1.overflowing_add(carry as u64);
+    alloc_pair(s2 as i64, (u64::from(c1) + u64::from(c2)) as i64)
+}
+
+/// `math::bits::sub(x, y, borrow) -> (diff, borrow_out)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_sub(x: i64, y: i64, borrow: i64) -> *mut u8 {
+    let (d1, b1) = (x as u64).overflowing_sub(y as u64);
+    let (d2, b2) = d1.overflowing_sub(borrow as u64);
+    alloc_pair(d2 as i64, (u64::from(b1) + u64::from(b2)) as i64)
+}
+
+/// `math::bits::mul(x, y) -> (hi, lo)` (full 128-bit product).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_mul(x: i64, y: i64) -> *mut u8 {
+    let p = u128::from(x as u64) * u128::from(y as u64);
+    alloc_pair((p >> 64) as u64 as i64, p as u64 as i64)
+}
+
+/// `math::bits::div(hi, lo, y) -> (quotient, remainder)`. Mirrors
+/// `gossamer_std::math::bits::div`; a zero divisor or overflowing
+/// quotient yields `(0, 0)` instead of aborting the process.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_bits_div(hi: i64, lo: i64, y: i64) -> *mut u8 {
+    let y = y as u64;
+    if y == 0 {
+        return alloc_pair(0, 0);
+    }
+    let dividend = (u128::from(hi as u64) << 64) | u128::from(lo as u64);
+    let q = dividend / u128::from(y);
+    if q > u128::from(u64::MAX) {
+        return alloc_pair(0, 0);
+    }
+    alloc_pair(q as u64 as i64, (dividend % u128::from(y)) as u64 as i64)
 }

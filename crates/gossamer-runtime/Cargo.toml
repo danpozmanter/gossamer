@@ -42,7 +42,16 @@ collapsible_if = "allow"
 
 [dependencies]
 itoa = "1"
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"
 parking_lot = { workspace = true }
+# Real machine-stack unwinding for compiled-tier panic / SIGQUIT
+# backtraces. `std::backtrace` reports "unsupported" on the
+# static-musl release target, so the standalone crate — which builds
+# its unwinder into the binary against the linked `libunwind.a` — is
+# the only mechanism that works on the default release link path.
+backtrace = "0.3"
 thiserror = { workspace = true }
 serde_json = { workspace = true }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
@@ -56,6 +65,7 @@ crossbeam-utils = { workspace = true }
 mio = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-pkg = { workspace = true }
+gossamer-abi = { workspace = true }
 # `gos_rt_http_stream` uses ureq for the wire request so the
 # compiled tier matches the interp's `http::stream` semantics.
 # Same feature set as gossamer-std (TLS via rustls, gzip, cookies)
@@ -77,6 +87,9 @@ pin-project-lite = "0.2"
 
 # UUID generation (`std::uuid` compiled-tier helpers).
 uuid = { version = "1", features = ["v4", "v7"] }
+
+# OS RNG for `gos_rt_crypto_rand_bytes`.
+getrandom = "0.2"
 
 # Unicode tables (`std::unicode` compiled-tier helpers). Same
 # crates as gossamer-std so the property data is single-sourced
@@ -106,6 +119,11 @@ quick-xml = "0.37"
 # `blake3` / `hmac` natively instead of paying a VM round-trip.
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 blake3 = { version = "1", default-features = false, features = ["std"] }
+# Same versions as gossamer-std so the compiled-tier x509 / tar / zip
+# leaf intrinsics produce byte-identical results to the VM tier.
+x509-parser = "0.16"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

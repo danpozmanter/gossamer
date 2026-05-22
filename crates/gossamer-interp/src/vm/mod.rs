@@ -107,11 +107,17 @@ use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
 /// mutex's per-call atomic swap showed up as the #1 hot spot in
 /// tight-loop programs that go through `Op::EvalDeferred`.
 pub struct Vm {
-    /// Top-level name → callable map. Behind `Arc` so worker `Vm`s
-    /// spawned for goroutines share one immutable copy instead of
-    /// each cloning the whole `HashMap` (several MB at scale with
-    /// many goroutines).
-    pub(crate) globals: Arc<HashMap<String, Global>>,
+    /// Per-Vm overlay holding user-defined functions, consts, and
+    /// statics. Lookups consult this first; on miss they fall back
+    /// to [`Self::prelude`]. Behind `Arc` so spawned worker `Vm`s
+    /// share one immutable copy. Keys are `&'static str` interned
+    /// via [`intern_type_name`] / [`intern_qualified`].
+    pub(crate) globals: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
+    /// Process-shared prelude of built-in callables — built once
+    /// from a `OnceLock` and `Arc::clone`d into every Vm at
+    /// construction. Pre-lazy: every `Vm::new` cloned all ~330
+    /// entries into its own HashMap. Post-lazy: a refcount bump.
+    pub(crate) prelude: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
     pub(crate) walker: RefCell<Interpreter>,
     /// Frame pool: reused register-file storage handed out at
     /// `run()` entry and returned on exit. Eliminates the per-
@@ -190,7 +196,9 @@ pub struct Vm {
     /// Call-stack snapshot for runtime-error diagnostics. Push on
     /// chunk entry, pop on success — on error the frame stays so
     /// `call_stack_snapshot` reports the failing chain.
-    pub(crate) call_stack: RefCell<Vec<String>>,
+    /// Names are interned `&'static str`; recursive programs do not
+    /// allocate a heap String per frame.
+    pub(crate) call_stack: RefCell<Vec<&'static str>>,
     /// Current Gossamer call depth for this goroutine's VM. Incremented
     /// on every `apply` entry, decremented on return. When it reaches
     /// `MAX_CALL_DEPTH` the call is refused with `RuntimeError::StackOverflow`
@@ -703,30 +711,43 @@ fn detect_trivial_wrapper(decl: &gossamer_hir::HirFn) -> Option<Vec<String>> {
 /// `eval_index` shape so both code paths produce the same
 /// value for every legal `(base, i)` pair.
 fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
-    let i = match idx {
+    let raw = match idx {
         Value::Int(n) => *n,
         _ => return Err(RuntimeError::Type("index must be integer".to_string())),
     };
-    if i < 0 {
-        return Err(RuntimeError::Arithmetic(
-            "negative index into sequence".to_string(),
-        ));
+    // Lenient indexing, matching the compiled tier (the canonical
+    // behaviour): any index outside `[0, len)` — negative or past the end —
+    // yields the element zero value rather than aborting, exactly as the
+    // runtime `gos_rt_vec_get_*` helpers do. This keeps `gos run`
+    // bit-identical to `gos build` on out-of-bounds access.
+    let len = match base {
+        Value::Array(items) | Value::Tuple(items) => items.len(),
+        Value::IntArray(d) => d.len(),
+        Value::FloatVec(d) => d.len(),
+        Value::String(s) => s.len(),
+        Value::FloatArray(fa) if fa.stride > 0 => fa.data.len() / fa.stride as usize,
+        Value::FloatArray(_) => 0,
+        _ => {
+            return Err(RuntimeError::Type(format!(
+                "value of kind `{base}` is not indexable"
+            )));
+        }
+    };
+    if raw < 0 || raw as usize >= len {
+        return Ok(match base {
+            Value::FloatVec(_) | Value::FloatArray(_) => Value::Float(0.0),
+            _ => Value::Int(0),
+        });
     }
-    let i = i as usize;
+    let i = raw as usize;
     match base {
-        Value::Array(items) | Value::Tuple(items) => items
-            .get(i)
-            .cloned()
-            .ok_or_else(|| RuntimeError::Arithmetic("index out of bounds".to_string())),
-        // Rehydrate a single element into `Value::Struct` so
-        // generic indexed-access code keeps working when the
-        // array was compiled to flat f64 storage.
+        Value::Array(items) | Value::Tuple(items) => Ok(items[i].clone()),
+        // Rehydrate a single element into `Value::Struct` so generic
+        // indexed-access code keeps working when the array was compiled to
+        // flat f64 storage.
         Value::FloatArray(fa_inner) => {
             let stride = fa_inner.stride as usize;
             let base_idx = i * stride;
-            if base_idx + stride > fa_inner.data.len() {
-                return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
-            }
             let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(fa_inner.field_names.len());
             for (j, fname) in fa_inner.field_names.iter().enumerate() {
                 fields.push((
@@ -736,24 +757,10 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
             }
             Ok(Value::struct_(fa_inner.name, Arc::new(fields)))
         }
-        Value::String(s) => s
-            .as_bytes()
-            .get(i)
-            .map(|b| Value::Int(i64::from(*b)))
-            .ok_or_else(|| RuntimeError::Arithmetic("index out of bounds".to_string())),
-        Value::IntArray(data) => data
-            .get(i)
-            .copied()
-            .map(Value::Int)
-            .ok_or_else(|| RuntimeError::Arithmetic("index out of bounds".to_string())),
-        Value::FloatVec(data) => data
-            .get(i)
-            .copied()
-            .map(Value::Float)
-            .ok_or_else(|| RuntimeError::Arithmetic("index out of bounds".to_string())),
-        _ => Err(RuntimeError::Type(format!(
-            "value of kind `{base}` is not indexable"
-        ))),
+        Value::String(s) => Ok(Value::Int(i64::from(s.as_bytes()[i]))),
+        Value::IntArray(data) => Ok(Value::Int(data[i])),
+        Value::FloatVec(data) => Ok(Value::Float(data[i])),
+        _ => unreachable!("len computed above for this variant"),
     }
 }
 
@@ -857,56 +864,43 @@ pub(crate) fn call_token(v: &Value) -> u64 {
 /// Returns a `&'static str` for `name`, allocating only the first
 /// time a given byte sequence is seen on this thread. Used by
 /// [`type_token`] so receivers of "the same struct" produce the
-/// same token across `Value::clone` boundaries (where `String`
-/// otherwise reallocates per clone).
+/// same token across `Value::clone` boundaries.
 fn intern_type_name(name: &str) -> &'static str {
     use std::cell::RefCell;
     thread_local! {
-        // Linear scan rather than HashMap: programs typically have
-        // <32 distinct named receiver types in their hot path.
-        static TYPE_NAMES: RefCell<Vec<(String, &'static str)>> =
-            const { RefCell::new(Vec::new()) };
+        static TYPE_NAMES: RefCell<rustc_hash::FxHashSet<&'static str>> =
+            RefCell::new(rustc_hash::FxHashSet::default());
     }
     TYPE_NAMES.with(|cell| {
-        let mut entries = cell.borrow_mut();
-        for (k, interned) in entries.iter() {
-            if k == name {
-                return *interned;
-            }
+        if let Some(&interned) = cell.borrow().get(name) {
+            return interned;
         }
         let interned: &'static str = Box::leak(name.to_string().into_boxed_str());
-        entries.push((name.to_string(), interned));
+        cell.borrow_mut().insert(interned);
         interned
     })
 }
 
 /// Returns the canonical `"<type>::<method>"` key, allocating only
 /// the first time a given (type, method) pair is seen on this
-/// thread. Hot-loop method dispatch was burning a lot of wall
-/// clock on `format!` because every call rebuilt the same
-/// 17-byte string. The cache makes the repeat case a single
-/// linear scan over a per-thread Vec.
-///
-/// The joined string is leaked into a `&'static str` so cache hits
-/// return without a `String::clone`. Leak is bounded by the count
-/// of distinct (type, method) pairs the program ever uses — a
-/// fixed number for any given workload, typically <32.
+/// thread.
 fn intern_qualified(type_name: &str, method: &str) -> &'static str {
     use std::cell::RefCell;
     thread_local! {
-        static CACHE: RefCell<Vec<(String, String, &'static str)>> =
-            const { RefCell::new(Vec::new()) };
+        static CACHE: RefCell<rustc_hash::FxHashSet<&'static str>> =
+            RefCell::new(rustc_hash::FxHashSet::default());
     }
+    let mut buf = String::with_capacity(type_name.len() + 2 + method.len());
+    buf.push_str(type_name);
+    buf.push_str("::");
+    buf.push_str(method);
     CACHE.with(|cell| {
-        let mut entries = cell.borrow_mut();
-        for (t, m, joined) in entries.iter() {
-            if t == type_name && m == method {
-                return *joined;
-            }
+        if let Some(&interned) = cell.borrow().get(buf.as_str()) {
+            return interned;
         }
-        let joined: &'static str = Box::leak(format!("{type_name}::{method}").into_boxed_str());
-        entries.push((type_name.to_string(), method.to_string(), joined));
-        joined
+        let interned: &'static str = Box::leak(buf.into_boxed_str());
+        cell.borrow_mut().insert(interned);
+        interned
     })
 }
 
@@ -1295,7 +1289,7 @@ mod tests {
 
     fn empty_chunk(register_count: u16) -> FnChunk {
         FnChunk {
-            name: "vm_test".to_string(),
+            name: "vm_test",
             arity: 0,
             register_count,
             float_count: 0,

@@ -820,6 +820,59 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
+        "gos_rc_alloc" => {
+            // Reference-counted allocator: `gos_rc_alloc(size, meta)`
+            // -> ptr with strong count 1. `size` is the payload byte
+            // count; `meta` names the module-global child-layout blob
+            // (empty name => leaf => null meta).
+            let size_val = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let size_i64 = if ptr_ty == types::I64 {
+                size_val
+            } else {
+                builder.ins().sextend(types::I64, size_val)
+            };
+            let meta_val = match args.get(1) {
+                Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                    let Some(blob) = tcx.rc_meta(sym) else {
+                        bail!("native codegen: gos_rc_alloc references unknown meta `{sym}`");
+                    };
+                    let data_id = intrinsics.intern_rc_meta(module, sym, blob)?;
+                    let gv = module.declare_data_in_func(data_id, builder.func);
+                    builder.ins().symbol_value(ptr_ty, gv)
+                }
+                _ => builder.ins().iconst(ptr_ty, 0),
+            };
+            let rc_alloc = intrinsics.extern_fn(
+                module,
+                "gos_rt_rc_alloc",
+                &[types::I64, ptr_ty],
+                &[ptr_ty],
+            )?;
+            let rc_alloc_ref = module.declare_func_in_func(rc_alloc, builder.func);
+            let call_inst = builder.ins().call(rc_alloc_ref, &[size_i64, meta_val]);
+            let raw_ptr = builder.inst_results(call_inst)[0];
+            let as_i64 = if ptr_ty == types::I64 {
+                raw_ptr
+            } else {
+                builder.ins().uextend(types::I64, raw_ptr)
+            };
+            if !destination.projection.is_empty() {
+                bail!("native codegen: gos_rc_alloc destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                as_i64,
+            );
+            Ok(true)
+        }
         "gos_store" => {
             // Raw heap store: `gos_store(ptr, offset, value)` writes
             // `value` as an i64 at `ptr + offset`. Companion to
@@ -1236,8 +1289,27 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        "time::now_ns" => {
+        "time::now_ns" | "time::now_nanos" => {
             let rt_fn = intrinsics.extern_fn_by_name(module, "gos_rt_now_ns")?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let call = builder.ins().call(fref, &[]);
+            let v = builder.inst_results(call)[0];
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
+            Ok(true)
+        }
+        "time::monotonic_ms" | "time::monotonic_nanos" => {
+            let rt_name = if name == "time::monotonic_ms" {
+                "gos_rt_monotonic_ms"
+            } else {
+                "gos_rt_monotonic_nanos"
+            };
+            let rt_fn = intrinsics.extern_fn_by_name(module, rt_name)?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let v = builder.inst_results(call)[0];

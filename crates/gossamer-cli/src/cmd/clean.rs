@@ -1,8 +1,10 @@
-//! `gos clean [--vendor] [--dry-run]` — drop the frontend cache and
-//! optionally the vendor tree.
+//! `gos clean [--vendor] [--dry-run]` — drop build artifacts and caches:
+//! the project `target/` directory, the per-project `.gos-cache`
+//! incremental IR-object cache, the frontend cache, and optionally the
+//! vendor tree.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -10,51 +12,65 @@ use anyhow::{Context, Result};
 pub(crate) fn run(vendor: bool, dry_run: bool) -> Result<()> {
     let mut removed_bytes: u64 = 0;
     let mut removed_files: u32 = 0;
-    let cache = gossamer_driver::cache_dir();
-    if cache.is_dir() {
-        let bytes = dir_size(&cache);
-        if dry_run {
-            println!(
-                "would remove frontend cache at {} ({bytes} bytes)",
-                cache.display()
-            );
-        } else {
-            fs::remove_dir_all(&cache).with_context(|| format!("remove {}", cache.display()))?;
-            println!(
-                "removed frontend cache at {} ({bytes} bytes)",
-                cache.display()
-            );
-        }
-        removed_bytes += bytes;
-        removed_files += 1;
-    } else {
-        println!("frontend cache absent at {}", cache.display());
+
+    // Project-local build artifacts + the incremental IR-object cache,
+    // anchored at the current directory: `gos build` writes the binary
+    // under `target/{debug,release}` and caches per-body objects in
+    // `.gos-cache/ir-cache`.
+    let cwd = std::env::current_dir()?;
+    for (dir, label) in [
+        (cwd.join("target"), "build artifacts (target/)"),
+        (cwd.join(".gos-cache"), "incremental IR cache (.gos-cache/)"),
+    ] {
+        remove_dir(&dir, label, dry_run, &mut removed_bytes, &mut removed_files)?;
     }
+
+    remove_dir(
+        &gossamer_driver::cache_dir(),
+        "frontend cache",
+        dry_run,
+        &mut removed_bytes,
+        &mut removed_files,
+    )?;
+
     if vendor {
-        let vendor_dir = std::env::current_dir()?.join("vendor");
-        if vendor_dir.is_dir() {
-            let bytes = dir_size(&vendor_dir);
-            if dry_run {
-                println!(
-                    "would remove vendor tree at {} ({bytes} bytes)",
-                    vendor_dir.display()
-                );
-            } else {
-                fs::remove_dir_all(&vendor_dir)
-                    .with_context(|| format!("remove {}", vendor_dir.display()))?;
-                println!(
-                    "removed vendor tree at {} ({bytes} bytes)",
-                    vendor_dir.display()
-                );
-            }
-            removed_bytes += bytes;
-            removed_files += 1;
-        } else {
-            println!("vendor tree absent at {}", vendor_dir.display());
-        }
+        remove_dir(
+            &cwd.join("vendor"),
+            "vendor tree",
+            dry_run,
+            &mut removed_bytes,
+            &mut removed_files,
+        )?;
     }
+
     let verb = if dry_run { "would remove" } else { "removed" };
-    println!("clean: {verb} {removed_files} entr(y|ies), {removed_bytes} bytes total");
+    println!("clean: {verb} {removed_files} target(s), {removed_bytes} bytes total");
+    Ok(())
+}
+
+/// Removes `dir` (recursively) if present, accumulating the byte/entry
+/// tally. A `dry_run` only reports. Absent targets print a note and are
+/// skipped — `gos clean` is idempotent.
+fn remove_dir(
+    dir: &Path,
+    label: &str,
+    dry_run: bool,
+    removed_bytes: &mut u64,
+    removed_files: &mut u32,
+) -> Result<()> {
+    if !dir.is_dir() {
+        println!("{label} absent at {}", dir.display());
+        return Ok(());
+    }
+    let bytes = dir_size(dir);
+    if dry_run {
+        println!("would remove {label} at {} ({bytes} bytes)", dir.display());
+    } else {
+        fs::remove_dir_all(dir).with_context(|| format!("remove {}", dir.display()))?;
+        println!("removed {label} at {} ({bytes} bytes)", dir.display());
+    }
+    *removed_bytes += bytes;
+    *removed_files += 1;
     Ok(())
 }
 

@@ -598,42 +598,75 @@ pub unsafe extern "C" fn gos_rt_iter_find_i64_flag(env: *const u8, v: *const Gos
 /// handle produced by the `Option<T>` constructor lowering (disc 0 =
 /// Some, 1 = None per `lower_result_ctor`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_option_is_some(opt: *const u8) -> i64 {
-    ffi_entry!(-1, {
-        if opt.is_null() {
-            return 0;
-        }
-        // disc lives at byte 0 of the enum handle.
-        let disc = unsafe { *opt };
-        i64::from(disc == 0)
-    })
+pub extern "C" fn gos_rt_option_is_some(opt: i128) -> i64 {
+    i64::from(super::vec::gos_rt_result_disc(opt) == 0)
 }
 
 /// `option::is_none(opt)`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_option_is_none(opt: *const u8) -> i64 {
-    ffi_entry!(-1, {
-        if opt.is_null() {
-            return 1;
-        }
-        let disc = unsafe { *opt };
-        i64::from(disc != 0)
-    })
+pub extern "C" fn gos_rt_option_is_none(opt: i128) -> i64 {
+    i64::from(super::vec::gos_rt_result_disc(opt) != 0)
 }
 
 /// `option::default(v, opt) -> v if opt is None else inner`. Specialised
 /// for i64 payloads (the dominant case in arithmetic pipelines).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_option_default_i64(fallback: i64, opt: *const u8) -> i64 {
-    ffi_entry!(-1, {
-        if opt.is_null() {
-            return fallback;
+pub extern "C" fn gos_rt_option_default_i64(fallback: i64, opt: i128) -> i64 {
+    if super::vec::gos_rt_result_disc(opt) != 0 {
+        fallback
+    } else {
+        super::vec::gos_rt_result_payload(opt)
+    }
+}
+
+/// `option::map(f, opt) -> Option<i64>`. Mirrors `iter::map` shape:
+/// `env[0]` holds the closure body fn-addr (i64), and the closure
+/// is called as `f(env, x) -> i64`. Returns a fresh `*mut GosResult`
+/// (disc=0 Some, disc=1 None) so the surrounding pattern match
+/// reads the standard discriminant.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_option_map_i64(env: *const u8, opt: i128) -> i128 {
+    ffi_entry!(0i128, {
+        // None passes through unchanged.
+        if env.is_null() {
+            return gos_rt_result_new(1, 0);
         }
-        let disc = unsafe { *opt };
+        if super::vec::gos_rt_result_disc(opt) != 0 {
+            return gos_rt_result_new(1, 0);
+        }
+        let payload = super::vec::gos_rt_result_payload(opt);
+        type CallFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        let mapped = unsafe { f(env, payload) };
+        unsafe { gos_rt_result_new(0, mapped) }
+    })
+}
+
+/// `result::map(f, res) -> Result<i64, E>`. Mirror of
+/// `gos_rt_option_map_i64`: maps Ok payload, passes Err through.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_map_i64(env: *const u8, res: i128) -> i128 {
+    ffi_entry!(0i128, {
+        if env.is_null() {
+            return gos_rt_result_new(1, 0);
+        }
+        let disc = super::vec::gos_rt_result_disc(res);
+        let payload = super::vec::gos_rt_result_payload(res);
         if disc != 0 {
-            return fallback;
+            // Err — pass through.
+            return gos_rt_result_new(disc, payload);
         }
-        // Payload at offset 8 (one word past the disc).
-        unsafe { opt.add(8).cast::<i64>().read_unaligned() }
+        type CallFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        let mapped = unsafe { f(env, payload) };
+        unsafe { gos_rt_result_new(0, mapped) }
     })
 }

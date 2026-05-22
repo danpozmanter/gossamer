@@ -51,12 +51,14 @@ use super::*;
 
 mod collect;
 mod drops;
+mod escape;
 mod for_loop;
 mod index;
 mod misc;
 
 pub(crate) use collect::*;
 pub(crate) use drops::*;
+pub(crate) use escape::*;
 pub(crate) use for_loop::*;
 pub(crate) use index::*;
 pub(crate) use misc::*;

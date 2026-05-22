@@ -15,6 +15,9 @@ pub enum AbiType {
     I64,
     /// `i64` at the IR level; unsigned contract at the Rust level.
     U64,
+    /// `i128` — the 2-word by-value representation of `Result`/`Option`
+    /// (discriminant in the low 64 bits, payload in the high 64 bits).
+    I128,
     /// `double` — 64-bit IEEE 754 float.
     F64,
     /// Opaque pointer (`ptr` in LLVM opaque-pointer mode).
@@ -66,6 +69,7 @@ impl AbiType {
             AbiType::I8 => "i8",
             AbiType::I32 => "i32",
             AbiType::I64 | AbiType::U64 => "i64",
+            AbiType::I128 => "i128",
             AbiType::F64 => "double",
             AbiType::Ptr => "ptr",
         }
@@ -96,8 +100,31 @@ impl RuntimeEntry {
                 params
             )
         } else {
+            // Every `gos_rt_*` symbol is an `extern "C"` Rust function, and
+            // unwinding out of an `extern "C"` boundary aborts (Rust never
+            // propagates a panic across it) — so the call cannot unwind. The
+            // `nounwind` attribute makes that explicit to LLVM, which would
+            // otherwise treat every runtime call as a potential exception
+            // edge: that blocks reordering, hoisting (LICM), and CSE of the
+            // surrounding loads/stores in every hot loop that calls a runtime
+            // helper. (`willreturn`/`memory` are intentionally not blanket-
+            // applied: a helper may abort on a Rust panic — not a return — and
+            // most touch global allocator state.)
+            //
+            // A small audited allowlist of pure getters additionally gets
+            // `memory(argmem: read)`: they only *read* memory reachable
+            // through their pointer arguments (no writes, no global state).
+            // This is what lets `opt` hoist a loop-invariant `graph[node]` /
+            // `visited[nb]` read out of a loop and CSE repeated reads —
+            // `nounwind` alone is insufficient because, without a memory-effect
+            // bound, LLVM must assume the call clobbers all memory.
+            let attrs = if PURE_ARGMEM_READ.contains(&self.name) {
+                "nounwind memory(argmem: read)"
+            } else {
+                "nounwind"
+            };
             format!(
-                "declare {} @{}({})",
+                "declare {} @{}({}) {attrs}",
                 self.sig.ret.llvm_ir(),
                 self.name,
                 params
@@ -105,3 +132,20 @@ impl RuntimeEntry {
         }
     }
 }
+
+/// Runtime getters that only read memory reachable through their pointer
+/// arguments — no writes, no global state. Marked `memory(argmem: read)` so
+/// the optimiser can hoist/CSE them across non-aliasing loop bodies. Keep
+/// this list conservative: a wrong entry (a helper that writes or reads
+/// globals) is a miscompile.
+const PURE_ARGMEM_READ: &[&str] = &[
+    "gos_rt_vec_get_i64",
+    "gos_rt_vec_get_i128",
+    "gos_rt_vec_get_ptr",
+    "gos_rt_vec_len",
+    "gos_rt_arr_len",
+    "gos_rt_str_len",
+    "gos_rt_str_byte_at",
+    "gos_rt_str_eq",
+    "gos_rt_heap_i64_get",
+];

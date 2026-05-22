@@ -48,6 +48,7 @@ pub fn typecheck_source_file(
     // (`let x = 42`) a concrete type when no use-site forced the
     // width.
     checker.infer.default_unresolved_int_vars(checker.tcx);
+    checker.infer.default_unresolved_float_vars(checker.tcx);
     checker.resolve_table();
     (checker.table, checker.diagnostics)
 }
@@ -65,6 +66,13 @@ struct TypeChecker<'a> {
     resolutions: &'a Resolutions,
     scopes: Vec<HashMap<gossamer_lex::Symbol, Ty>>,
     binding_types: HashMap<NodeId, Ty>,
+    /// The `Self` type of the `impl` block currently being checked,
+    /// so a method's `self` receiver binds to the concrete type
+    /// instead of a free inference var. Without this, `self.field`
+    /// reads inside a method leave the field type unresolved and a
+    /// `for x in self.items` loop binds `x` at the i64 default —
+    /// printing a `[String]` field's element pointers as integers.
+    current_self_ty: Option<Ty>,
     /// Running depth of recursive entries into expression / block /
     /// pattern type checks. Reaching [`RECURSION_LIMIT`] short-circuits
     /// the offending subtree to `tcx.error_ty()` after emitting one
@@ -117,6 +125,14 @@ struct TypeChecker<'a> {
     /// `GT0011 unknown-trait-bound` diagnostic at declaration time
     /// instead of as a runtime "no method" error later.
     declared_trait_names: std::collections::HashSet<String>,
+    /// Local `let`-binding pattern nodes whose value flows into a
+    /// stdlib `archive::{tar,zip}::write` call. A pre-scan of each
+    /// function body fills this so the binding's literal initializer
+    /// is re-typed to the `[(String, [u8])]` parameter — backward
+    /// inference the single-pass checker can't otherwise reach, which
+    /// the compiled tier needs so the nested byte arrays become heap
+    /// Vecs instead of fixed inline arrays.
+    write_arg_bindings: HashMap<NodeId, Ty>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -132,6 +148,7 @@ impl<'a> TypeChecker<'a> {
             resolutions,
             scopes: vec![HashMap::new()],
             binding_types: HashMap::new(),
+            current_self_ty: None,
             recursion_depth: 0,
             recursion_limit_reported: false,
             struct_fields: checker_struct_fields,
@@ -140,6 +157,7 @@ impl<'a> TypeChecker<'a> {
             struct_generic_arity: HashMap::new(),
             current_generic_scope: HashMap::new(),
             declared_trait_names: std::collections::HashSet::new(),
+            write_arg_bindings: HashMap::new(),
         }
     }
 
@@ -351,6 +369,35 @@ impl<'a> TypeChecker<'a> {
                     }))
                 } else {
                     resolved
+                }
+            }
+            // Recurse into generic arguments / element types so a
+            // `Triple<?4, ?5, ?6>` whose inference vars unified to
+            // `<i64, String, f64>` is recorded as the concrete
+            // `Triple<i64, String, f64>`. Without this, a generic
+            // struct's field access (`r.third`) reads the field's
+            // `Param(n)` against unresolved-`Var` substs and the field
+            // local defaults to i64/ptr — printing an `f64`'s bit
+            // pattern or strlen'ing a non-pointer.
+            TyKind::Adt { def, substs } => {
+                let new_args: Vec<crate::GenericArg> = substs
+                    .as_slice()
+                    .iter()
+                    .map(|arg| match arg {
+                        crate::GenericArg::Type(t) => {
+                            crate::GenericArg::Type(self.deep_resolve(*t))
+                        }
+                        crate::GenericArg::Const(c) => crate::GenericArg::Const(*c),
+                    })
+                    .collect();
+                let new_substs = crate::Substs::from_args(new_args);
+                if new_substs == substs {
+                    resolved
+                } else {
+                    self.tcx.intern(TyKind::Adt {
+                        def,
+                        substs: new_substs,
+                    })
                 }
             }
             _ => resolved,
@@ -673,7 +720,8 @@ impl<'a> TypeChecker<'a> {
                 // this, `self.field` reads later fall through MIR
                 // lowering's struct-name lookup and abort with
                 // the unsupported placeholder.
-                let _ = self.type_from_ast(&decl.self_ty);
+                let self_ty = self.type_from_ast(&decl.self_ty);
+                let prev_self = self.current_self_ty.replace(self_ty);
                 for impl_item in &decl.items {
                     if let ImplItem::Fn(fn_decl) = impl_item {
                         self.check_fn(fn_decl);
@@ -681,6 +729,7 @@ impl<'a> TypeChecker<'a> {
                         self.check_expr(value);
                     }
                 }
+                self.current_self_ty = prev_self;
             }
             ItemKind::Trait(decl) => {
                 for trait_item in &decl.items {
@@ -745,10 +794,35 @@ impl<'a> TypeChecker<'a> {
             None => self.tcx.unit(),
         };
         if let Some(body) = &decl.body {
+            self.collect_write_arg_bindings(body);
             let body_ty = self.check_expr(body);
             self.unify(ret, body_ty, body.span);
         }
         self.pop_scope();
+    }
+
+    /// Pre-scans a function body for `archive::{tar,zip}::write(arg)`
+    /// calls whose single argument is a path to a local binding, and
+    /// records that binding's node so its literal initializer is later
+    /// re-typed to the `[(String, [u8])]` parameter.
+    fn collect_write_arg_bindings(&mut self, body: &Expr) {
+        let mut collector = WriteArgPathCollector {
+            arg_paths: Vec::new(),
+        };
+        gossamer_ast::visitor::Visitor::visit_expr(&mut collector, body);
+        if collector.arg_paths.is_empty() {
+            return;
+        }
+        let s = self.tcx.string_ty();
+        let u8_ty = self.tcx.int_ty(IntTy::U8);
+        let vec_u8 = self.tcx.intern(TyKind::Vec(u8_ty));
+        let pair = self.tcx.intern(TyKind::Tuple(vec![s, vec_u8]));
+        let vec_pair = self.tcx.intern(TyKind::Vec(pair));
+        for path_node in collector.arg_paths {
+            if let Some(Resolution::Local(binding)) = self.resolutions.get(path_node) {
+                self.write_arg_bindings.insert(binding, vec_pair);
+            }
+        }
     }
 
     fn bind_fn_param(&mut self, param: &FnParam) {
@@ -757,8 +831,26 @@ impl<'a> TypeChecker<'a> {
                 let param_ty = self.type_from_ast(ty);
                 self.bind_pattern(pattern, param_ty);
             }
-            FnParam::Receiver(_) => {
-                let ty = self.fresh();
+            FnParam::Receiver(recv) => {
+                // Bind `self` to the enclosing `impl`'s `Self` type so
+                // `self.field` accesses resolve; fall back to a fresh
+                // var only outside an impl context (defensive). `&self`
+                // / `&mut self` wrap it in a reference so the type
+                // matches the receiver form.
+                let ty = match self.current_self_ty {
+                    Some(self_ty) => match recv {
+                        gossamer_ast::Receiver::Owned => self_ty,
+                        gossamer_ast::Receiver::RefShared => self.tcx.intern(TyKind::Ref {
+                            mutability: Mutbl::Not,
+                            inner: self_ty,
+                        }),
+                        gossamer_ast::Receiver::RefMut => self.tcx.intern(TyKind::Ref {
+                            mutability: Mutbl::Mut,
+                            inner: self_ty,
+                        }),
+                    },
+                    None => self.fresh(),
+                };
                 self.bind_local("self", ty);
             }
         }
@@ -1005,6 +1097,13 @@ impl<'a> TypeChecker<'a> {
                         _ => (*param, *arg_ty),
                     };
                     self.unify(lhs, rhs, arg_expr.span);
+                    // Re-type an array/tuple literal argument to match
+                    // the parameter so a nested `[1, 2, 3]` byte array
+                    // inside a `(String, [u8])` tuple is recorded as a
+                    // Vec rather than a fixed `[i64; N]` — the compiled
+                    // tier then builds a heap Vec at every level and
+                    // the layout stays consistent end to end.
+                    self.recoerce_arg_literal(arg_expr, *param);
                 }
                 return sig.output;
             }
@@ -1021,6 +1120,18 @@ impl<'a> TypeChecker<'a> {
             let Some(last) = last.first().copied() else {
                 return self.fresh();
             };
+            // `archive::tar::write` / `archive::zip::write` take
+            // `[(String, [u8])]` and return `Result<[u8], Error>`.
+            // These are stdlib (no `fn_sig`), so re-type the literal
+            // argument against the synthesized parameter type so a
+            // `[("a", [1, 2, 3])]` literal builds heap Vecs at every
+            // level on the compiled tier.
+            if last == "write"
+                && matches!(module.last().copied(), Some("tar" | "zip"))
+                && args.len() == 1
+            {
+                return self.archive_write_call_ty(&args[0]);
+            }
             let module_ok = matches!(
                 module,
                 ["json"] | ["encoding", "json"] | ["std", "encoding", "json"]
@@ -1102,10 +1213,67 @@ impl<'a> TypeChecker<'a> {
         self.fresh()
     }
 
+    /// Re-types the single `[(String, [u8])]` argument of the stdlib
+    /// `archive::{tar,zip}::write` calls and returns their
+    /// `Result<[u8], Error>` output type.
+    fn archive_write_call_ty(&mut self, arg: &Expr) -> Ty {
+        let s = self.tcx.string_ty();
+        let u8_ty = self.tcx.int_ty(IntTy::U8);
+        let vec_u8 = self.tcx.intern(TyKind::Vec(u8_ty));
+        let pair = self.tcx.intern(TyKind::Tuple(vec![s, vec_u8]));
+        let vec_pair = self.tcx.intern(TyKind::Vec(pair));
+        self.recoerce_arg_literal(arg, vec_pair);
+        let e = self.tcx.dyn_error_ty();
+        self.result_adt_ty(vec_u8, e)
+    }
+
+    /// Re-records an array/tuple literal argument's node type to match
+    /// the callee parameter type. Array literals are otherwise typed
+    /// as a fixed `[T; N]`; when the parameter wants a growable `[T]`
+    /// (Vec) — including nested inside a tuple inside a Vec, as in
+    /// `archive::tar::write([(String, [u8])])` — the literal must be
+    /// recorded as the Vec so the compiled tier heap-allocates it at
+    /// every level instead of laying an inline array into the tuple.
+    fn recoerce_arg_literal(&mut self, expr: &Expr, expected: Ty) {
+        let expected = self.infer.resolve(self.tcx, expected);
+        let expected = match self.tcx.kind(expected) {
+            Some(TyKind::Ref { inner, .. }) => *inner,
+            _ => expected,
+        };
+        match &expr.kind {
+            ExprKind::Array(ArrayExpr::List(elems)) => {
+                if let Some(TyKind::Vec(e) | TyKind::Slice(e)) = self.tcx.kind(expected).cloned() {
+                    self.record(expr.id, expected);
+                    for el in elems {
+                        self.recoerce_arg_literal(el, e);
+                    }
+                }
+            }
+            ExprKind::Tuple(elems) => {
+                if let Some(TyKind::Tuple(tys)) = self.tcx.kind(expected).cloned() {
+                    if tys.len() == elems.len() {
+                        self.record(expr.id, expected);
+                        for (el, t) in elems.iter().zip(tys) {
+                            self.recoerce_arg_literal(el, t);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn option_adt_ty(&mut self, payload: Ty) -> Ty {
         let substs = crate::Substs::from_types([payload]);
         let def = gossamer_resolve::DefId::local(u32::MAX - 1);
         self.tcx.register_def_name(def, "Option");
+        self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    fn weak_adt_ty(&mut self, payload: Ty) -> Ty {
+        let substs = crate::Substs::from_types([payload]);
+        let def = gossamer_resolve::DefId::local(u32::MAX - 6);
+        self.tcx.register_def_name(def, "Weak");
         self.tcx.intern(TyKind::Adt { def, substs })
     }
 
@@ -1416,13 +1584,20 @@ impl<'a> TypeChecker<'a> {
     fn check_stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
             StmtKind::Let { pattern, ty, init } => {
+                let forced = self.write_arg_bindings.get(&pattern.id).copied();
                 let binding_ty = match ty {
                     Some(ty) => self.type_from_ast(ty),
-                    None => self.fresh(),
+                    None => forced.unwrap_or_else(|| self.fresh()),
                 };
                 if let Some(init) = init {
                     let init_ty = self.check_expr(init);
                     self.unify(binding_ty, init_ty, init.span);
+                    // Re-type a literal initializer to the parameter
+                    // type it later flows into (see
+                    // `collect_write_arg_bindings`).
+                    if let Some(forced) = forced {
+                        self.recoerce_arg_literal(init, forced);
+                    }
                 }
                 self.bind_pattern(pattern, binding_ty);
             }
@@ -1625,7 +1800,10 @@ impl<'a> TypeChecker<'a> {
                 return self.tcx.float_ty(*float_ty);
             }
         }
-        self.fresh()
+        // Unsuffixed float literal: a float-defaulting inference var.
+        // Takes its use-site float width when constrained, falls back
+        // to `f64` otherwise (see `default_unresolved_float_vars`).
+        self.infer.fresh_float_var(self.tcx)
     }
 
     fn type_from_primitive(&mut self, prim: PrimitiveTy) -> Ty {
@@ -1813,6 +1991,19 @@ impl<'a> TypeChecker<'a> {
                     return inner;
                 }
                 return self.fresh();
+            }
+            // `Weak<T>` — a non-owning reference into an RC allocation.
+            // Unlike `Box`/`Arc`/`Rc` it is NOT transparent: it carries
+            // its own sentinel ADT so the drop pass releases it via the
+            // weak helpers and `upgrade()` can produce an `Option<T>`.
+            "Weak" => {
+                let substs = self.substs_from_ast(path);
+                let payload = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.fresh());
+                return self.weak_adt_ty(payload);
             }
             _ => {}
         }
@@ -2459,4 +2650,30 @@ fn known_builtin_trait(name: &str) -> bool {
             | "Serialize"
             | "Deserialize"
     )
+}
+
+/// Collects the argument-path node of every `archive::{tar,zip}::write`
+/// call in a function body so the checker can re-type a `let`-bound
+/// literal that flows into one. Read-only walk; records node ids only.
+struct WriteArgPathCollector {
+    arg_paths: Vec<NodeId>,
+}
+
+impl gossamer_ast::visitor::Visitor for WriteArgPathCollector {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let ExprKind::Call { callee, args } = &expr.kind {
+            if args.len() == 1 {
+                if let ExprKind::Path(p) = &callee.kind {
+                    let n = p.segments.len();
+                    if n >= 2
+                        && p.segments[n - 1].name.name.as_str() == "write"
+                        && matches!(p.segments[n - 2].name.name.as_str(), "tar" | "zip")
+                    {
+                        self.arg_paths.push(args[0].id);
+                    }
+                }
+            }
+        }
+        gossamer_ast::visitor::walk_expr(self, expr);
+    }
 }

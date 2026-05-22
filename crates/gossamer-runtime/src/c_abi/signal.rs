@@ -423,8 +423,8 @@ pub unsafe extern "C" fn gos_rt_arr_iter(vec: *mut GosVec) -> *mut GosArrIter {
 /// (None) when exhausted. Reads 8-byte-wide element slots only;
 /// callers with other element widths must use a lower-level helper.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_arr_iter_next(iter: *mut GosArrIter) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_arr_iter_next(iter: *mut GosArrIter) -> i128 {
+    ffi_entry!(0i128, {
         if iter.is_null() {
             return gos_rt_result_new(1, 0);
         }
@@ -545,8 +545,8 @@ pub unsafe extern "C" fn gos_rt_vec_slice(v: *const GosVec, lo: i64, hi: i64) ->
 /// `Vec<i64>` / `Vec<*c_char>` / `Vec<f64>` (any 8-byte element)
 /// the payload is the raw 8 bytes of element 0 cast to i64.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_first(v: *const GosVec) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_vec_first(v: *const GosVec) -> i128 {
+    ffi_entry!(0i128, {
         if v.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -563,8 +563,8 @@ pub unsafe extern "C" fn gos_rt_vec_first(v: *const GosVec) -> *mut GosResult {
 /// `xs.last() -> Option<T>` — sibling of `first`. Out-of-range on
 /// an empty Vec returns None.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_last(v: *const GosVec) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_vec_last(v: *const GosVec) -> i128 {
+    ffi_entry!(0i128, {
         if v.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -605,8 +605,8 @@ pub unsafe extern "C" fn gos_rt_vec_reversed(v: *const GosVec) -> *mut GosVec {
 
 /// `xs.index_of(&needle) -> Option<i64>` for an i64-shaped Vec.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_index_of_i64(v: *const GosVec, needle: i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_vec_index_of_i64(v: *const GosVec, needle: i64) -> i128 {
+    ffi_entry!(0i128, {
         if v.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -624,11 +624,8 @@ pub unsafe extern "C" fn gos_rt_vec_index_of_i64(v: *const GosVec, needle: i64) 
 
 /// `xs.index_of(&needle) -> Option<i64>` for a Vec of c-string pointers.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_index_of_str(
-    v: *const GosVec,
-    needle: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_vec_index_of_str(v: *const GosVec, needle: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if v.is_null() || needle.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -725,12 +722,8 @@ pub unsafe extern "C" fn gos_rt_vec_contains_str(v: *const GosVec, needle: *cons
 /// `Err(errors::Error)`; valid bounds return `Ok(Vec<T>)` with the
 /// elements byte-copied into a fresh Vec.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_slice_result(
-    v: *const GosVec,
-    start: i64,
-    end: i64,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_vec_slice_result(v: *const GosVec, start: i64, end: i64) -> i128 {
+    ffi_entry!(0i128, {
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
@@ -758,8 +751,8 @@ pub unsafe extern "C" fn gos_rt_intarr_slice_result(
     len: i64,
     start: i64,
     end: i64,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
             let cs = std::ffi::CString::new(msg).unwrap_or_default();
@@ -791,8 +784,8 @@ pub unsafe extern "C" fn gos_rt_floatarr_slice_result(
     len: i64,
     start: i64,
     end: i64,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
             let cs = std::ffi::CString::new(msg).unwrap_or_default();
@@ -820,12 +813,8 @@ pub unsafe extern "C" fn gos_rt_floatarr_slice_result(
 /// inserted (i64 for `Vec<i64>`, `*const c_char` cast to i64 for
 /// `Vec<String>` — matches the rest of the i64-erased Vec ABI).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_insert_safe(
-    v: *const GosVec,
-    idx: i64,
-    value: i64,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, value: i64) -> i128 {
+    ffi_entry!(0i128, {
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if idx < 0 || idx > len {
             let msg = format!("insert: index {idx} out of bounds for length {len}");
@@ -863,8 +852,8 @@ pub unsafe extern "C" fn gos_rt_vec_insert_safe(
 /// `Vec::remove(xs, i) -> Result<T, errors::Error>` — returns the
 /// removed element as Ok or Err on out-of-range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *const GosVec, idx: i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *const GosVec, idx: i64) -> i128 {
+    ffi_entry!(0i128, {
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || idx < 0 || idx >= len {
             let msg = format!("remove: index {idx} out of bounds for length {len}");

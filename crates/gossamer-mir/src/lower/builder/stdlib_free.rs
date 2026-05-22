@@ -106,19 +106,23 @@ impl<'a> Builder<'a> {
             // Returns Option<(start, end, text)> — disc=0 Some, disc=1 None.
             "regex::find" => ("gos_rt_regex_find_opt", self.option_tuple3_i64_i64_str_ty()),
             // Returns Option<Vec<String>> — disc=0 Some(caps), disc=1 None.
-            "regex::captures" => ("gos_rt_regex_captures", self.option_vec_string_ty()),
+            "regex::captures" => ("gos_rt_regex_captures", self.option_vec_option_string_ty()),
             "regex::find_all" => {
                 let s = self.tcx.string_ty();
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
                 ("gos_rt_regex_find_all", v)
             }
             "regex::captures_all" => {
-                // Returns `Vec<Vec<String>>` — outer per-match,
-                // inner per-group. Missing optional groups are
-                // null pointers (rendered as empty strings on
-                // print, decoded as `Option::None` by `match`).
-                let s = self.tcx.string_ty();
-                let inner = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                // Returns `Vec<Vec<Option<String>>>` — outer per-match,
+                // inner per-group. Each group is a canonical
+                // `Option<String>` tagged union (`gos_rt_result_new`):
+                // Some(matched text) or None for an absent optional
+                // group. Pinning the element to `Option<String>` (not a
+                // bare `String`) is what makes `match row[i] { Some(k)
+                // => …, None => … }` read the real discriminant instead
+                // of treating the value as a raw payload.
+                let opt_s = self.option_string_ty();
+                let inner = self.tcx.intern(gossamer_types::TyKind::Vec(opt_s));
                 let outer = self.tcx.intern(gossamer_types::TyKind::Vec(inner));
                 ("gos_rt_regex_captures_all", outer)
             }
@@ -129,6 +133,7 @@ impl<'a> Builder<'a> {
                 ("gos_rt_regex_split", v)
             }
             "fs::read_to_string" => ("gos_rt_fs_read_to_string", self.tcx.string_ty()),
+            "fs::metadata" => ("gos_rt_fs_metadata", self.result_i64_error_adt_ty()),
             // `os::read_file_to_string(path) -> Result<String, IoError>`
             // is a re-spelling of `fs::read_to_string` in the
             // stdlib. Compiled mode never wired a binding for the
@@ -225,6 +230,179 @@ impl<'a> Builder<'a> {
                 self.result_unit_error_adt_ty(),
             ),
             "path::join" => ("gos_rt_path_join", self.tcx.string_ty()),
+            "path::clean" | "path::normalize" => ("gos_rt_path_clean", self.tcx.string_ty()),
+            "path::is_absolute" => ("gos_rt_path_is_absolute", self.tcx.bool_ty()),
+            "path::has_prefix" => ("gos_rt_path_has_prefix", self.tcx.bool_ty()),
+            "path::extension" => ("gos_rt_path_ext", self.option_string_adt_ty()),
+            // 0.10.0 — os/fs copy + canonicalize, crypto::subtle.
+            "os::copy" | "fs::copy" => ("gos_rt_fs_copy", self.result_i64_error_adt_ty()),
+            "os::canonicalize" | "fs::canonicalize" => {
+                ("gos_rt_fs_canonicalize", self.result_string_error_adt_ty())
+            }
+            "crypto::subtle::constant_time_eq" => {
+                ("gos_rt_crypto_subtle_ct_eq", self.tcx.bool_ty())
+            }
+            "bufio::read_to_string" => (
+                "gos_rt_bufio_read_to_string",
+                self.result_string_error_adt_ty(),
+            ),
+            "bufio::read_lines_of" => (
+                "gos_rt_bufio_read_lines_of",
+                self.result_vec_string_error_ty(),
+            ),
+            "bufio::split_whitespace" => {
+                let s = self.tcx.string_ty();
+                (
+                    "gos_rt_str_split_whitespace",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(s)),
+                )
+            }
+            "net::resolve" | "net::lookup" => {
+                ("gos_rt_net_resolve", self.result_vec_string_error_ty())
+            }
+            // 0.10.0 — hash::* checksums previously VM-only.
+            "hash::crc32::checksum" => (
+                "gos_rt_hash_crc32_checksum",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "hash::crc32::checksum_string" => (
+                "gos_rt_hash_crc32_checksum_string",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "hash::crc32::update" => (
+                "gos_rt_hash_crc32_update",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "hash::adler32::checksum" => (
+                "gos_rt_hash_adler32_checksum",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "hash::adler32::checksum_string" => (
+                "gos_rt_hash_adler32_checksum_string",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "hash::adler32::update" => (
+                "gos_rt_hash_adler32_update",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "hash::fnv::hash32" => (
+                "gos_rt_hash_fnv32",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "hash::fnv::hash64" => (
+                "gos_rt_hash_fnv64",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "hash::fnv::hash_string" => (
+                "gos_rt_hash_fnv_string",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            // 0.10.0 — math::bits::* scalar primitives previously
+            // VM-only. The carrying add/sub/mul/div (tuple returns)
+            // stay on the VM until aggregate-return ABI lands.
+            "math::bits::count_ones" => (
+                "gos_rt_bits_count_ones",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "math::bits::count_zeros" => (
+                "gos_rt_bits_count_zeros",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "math::bits::leading_zeros" => (
+                "gos_rt_bits_leading_zeros",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "math::bits::trailing_zeros" => (
+                "gos_rt_bits_trailing_zeros",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "math::bits::reverse_bits" => (
+                "gos_rt_bits_reverse_bits",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "math::bits::reverse_bytes" => (
+                "gos_rt_bits_reverse_bytes",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "math::bits::len" => (
+                "gos_rt_bits_len",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "math::bits::rotate_left" => (
+                "gos_rt_bits_rotate_left",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "math::bits::rotate_right" => (
+                "gos_rt_bits_rotate_right",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            // 0.10.0 — carrying primitives return (i64, i64) via the
+            // by-value-aggregate ABI (heap pointer + caller memcpy).
+            "math::bits::add" | "math::bits::sub" | "math::bits::div" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, i]));
+                let sym = match joined.as_str() {
+                    "math::bits::add" => "gos_rt_bits_add",
+                    "math::bits::sub" => "gos_rt_bits_sub",
+                    _ => "gos_rt_bits_div",
+                };
+                (sym, tup)
+            }
+            "math::bits::mul" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, i]));
+                ("gos_rt_bits_mul", tup)
+            }
+            // utf8::decode_rune family — (char, i64) by-value tuple.
+            "utf8::decode_rune"
+            | "utf8::decode_rune_in_string"
+            | "utf8::decode_last_rune"
+            | "utf8::decode_last_rune_in_string" => {
+                let c = self.tcx.char_ty();
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![c, i]));
+                let sym = match joined.as_str() {
+                    "utf8::decode_rune" => "gos_rt_utf8_decode_rune",
+                    "utf8::decode_rune_in_string" => "gos_rt_utf8_decode_rune_in_string",
+                    "utf8::decode_last_rune" => "gos_rt_utf8_decode_last_rune",
+                    _ => "gos_rt_utf8_decode_last_rune_in_string",
+                };
+                (sym, tup)
+            }
+            "utf8::append_rune" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_utf8_append_rune",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                )
+            }
+            // encoding::utf16::* (previously VM-only).
+            "encoding::utf16::is_surrogate" | "utf16::is_surrogate" => {
+                ("gos_rt_utf16_is_surrogate", self.tcx.bool_ty())
+            }
+            "encoding::utf16::rune_len" | "utf16::rune_len" => (
+                "gos_rt_utf16_rune_len",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "encoding::utf16::decode_surrogate_pair" | "utf16::decode_surrogate_pair" => {
+                let c = self.tcx.char_ty();
+                let substs = gossamer_types::Substs::from_types([c]);
+                let opt = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                    substs,
+                });
+                ("gos_rt_utf16_decode_surrogate_pair", opt)
+            }
+            "encoding::utf16::encode_string" | "utf16::encode_string" => {
+                let u16_ty = self.tcx.int_ty(gossamer_types::IntTy::U16);
+                (
+                    "gos_rt_utf16_encode_string",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u16_ty)),
+                )
+            }
+            "encoding::utf16::decode_to_string" | "utf16::decode_to_string" => {
+                ("gos_rt_utf16_decode_to_string", self.tcx.string_ty())
+            }
             // 0.7.0 stdlib wiring — string-surface free fns that
             // the VM already exposes but that lacked a compiled-tier
             // runtime entry point. Each maps a fully-qualified
@@ -249,12 +427,251 @@ impl<'a> Builder<'a> {
                 "gos_rt_str_count",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            // 0.10.0 — string-surface free fns. Each routes to the
+            // matching `gos_rt_str_*` runtime helper (same shim that
+            // already backs the method-call form). Without these,
+            // MIR emits `@strings::trim` etc. as a literal symbol and
+            // LLVM `opt` fails with `use of undefined value`.
+            "strings::trim" => ("gos_rt_str_trim", self.tcx.string_ty()),
+            "strings::trim_start" => ("gos_rt_str_trim_start", self.tcx.string_ty()),
+            "strings::trim_end" => ("gos_rt_str_trim_end", self.tcx.string_ty()),
+            "strings::to_upper" => ("gos_rt_str_to_upper", self.tcx.string_ty()),
+            "strings::to_lower" => ("gos_rt_str_to_lower", self.tcx.string_ty()),
+            "strings::contains" => ("gos_rt_str_contains", self.tcx.bool_ty()),
+            "strings::replace" => ("gos_rt_str_replace", self.tcx.string_ty()),
+            "strings::starts_with" => ("gos_rt_str_starts_with", self.tcx.bool_ty()),
+            "strings::ends_with" => ("gos_rt_str_ends_with", self.tcx.bool_ty()),
+            "strings::repeat" => ("gos_rt_str_repeat", self.tcx.string_ty()),
+            "strings::lines" => {
+                let s = self.tcx.string_ty();
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                ("gos_rt_str_lines", v)
+            }
+            "strings::split" => {
+                let s = self.tcx.string_ty();
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                ("gos_rt_str_split", v)
+            }
+            "strings::find" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let substs = gossamer_types::Substs::from_types([i]);
+                let opt_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                    substs,
+                });
+                ("gos_rt_str_find_opt", opt_ty)
+            }
+            // 0.10.0 — strconv free fns. parse_* return
+            // Result<T, errors::Error> packed as a *mut GosResult;
+            // format_* / itoa return String.
+            "strconv::parse_i64" | "strconv::parse_int" => {
+                ("gos_rt_strconv_parse_i64", self.result_i64_error_adt_ty())
+            }
+            "strconv::parse_u64" => ("gos_rt_strconv_parse_i64", self.result_i64_error_adt_ty()),
+            "strconv::atoi" => ("gos_rt_strconv_atoi", self.result_i64_error_adt_ty()),
+            "strconv::parse_f64" | "strconv::parse_float" => {
+                ("gos_rt_strconv_parse_f64", self.result_f64_error_adt_ty())
+            }
+            "strconv::parse_bool" => ("gos_rt_strconv_parse_bool", self.result_bool_error_adt_ty()),
+            "strconv::format_i64" | "strconv::format_int" => {
+                ("gos_rt_strconv_format_i64", self.tcx.string_ty())
+            }
+            "strconv::format_u64" => ("gos_rt_strconv_format_i64", self.tcx.string_ty()),
+            "strconv::itoa" => ("gos_rt_strconv_itoa", self.tcx.string_ty()),
+            "strconv::format_f64" | "strconv::format_float" => {
+                ("gos_rt_strconv_format_f64", self.tcx.string_ty())
+            }
+            "strconv::format_bool" => ("gos_rt_strconv_format_bool", self.tcx.string_ty()),
             "strings::strip_chars" => ("gos_rt_str_strip_chars", self.tcx.string_ty()),
             "strings::lstrip_chars" => ("gos_rt_str_lstrip_chars", self.tcx.string_ty()),
             "strings::rstrip_chars" => ("gos_rt_str_rstrip_chars", self.tcx.string_ty()),
             "strings::zfill" => ("gos_rt_str_zfill", self.tcx.string_ty()),
             "strings::center" => ("gos_rt_str_center", self.tcx.string_ty()),
             "strings::slice" => ("gos_rt_str_slice", self.result_string_error_adt_ty()),
+            // 0.10.0 — remaining strings::* free fns previously
+            // VM-only. Each routes to the matching gos_rt_str_*
+            // runtime helper backed by gossamer_std::strings.
+            "strings::splitn" => {
+                let s = self.tcx.string_ty();
+                (
+                    "gos_rt_str_splitn",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(s)),
+                )
+            }
+            "strings::split_whitespace" => {
+                let s = self.tcx.string_ty();
+                (
+                    "gos_rt_str_split_whitespace",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(s)),
+                )
+            }
+            "strings::fields" => {
+                let s = self.tcx.string_ty();
+                (
+                    "gos_rt_str_fields",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(s)),
+                )
+            }
+            "strings::replacen" => ("gos_rt_str_replacen", self.tcx.string_ty()),
+            "strings::to_title" => ("gos_rt_str_to_title", self.tcx.string_ty()),
+            "strings::trim_matches" => ("gos_rt_str_trim_matches", self.tcx.string_ty()),
+            "strings::pad_left" => ("gos_rt_str_pad_left", self.tcx.string_ty()),
+            "strings::pad_right" => ("gos_rt_str_pad_right", self.tcx.string_ty()),
+            "strings::contains_rune" => ("gos_rt_str_contains_rune", self.tcx.bool_ty()),
+            "strings::contains_any" => ("gos_rt_str_contains_any", self.tcx.bool_ty()),
+            "strings::equal_fold" => ("gos_rt_str_equal_fold", self.tcx.bool_ty()),
+            "strings::index_rune" => ("gos_rt_str_index_rune", self.option_i64_adt_ty()),
+            "strings::index_any" => ("gos_rt_str_index_any", self.option_i64_adt_ty()),
+            "strings::last_index_any" => ("gos_rt_str_last_index_any", self.option_i64_adt_ty()),
+            "strings::strip_prefix" => ("gos_rt_str_strip_prefix", self.option_string_adt_ty()),
+            "strings::strip_suffix" => ("gos_rt_str_strip_suffix", self.option_string_adt_ty()),
+            "compress::gzip::encode" | "gzip::encode" => {
+                ("gos_rt_compress_gzip_encode", self.result_vec_u8_error_ty())
+            }
+            "compress::gzip::decode" | "gzip::decode" => {
+                ("gos_rt_compress_gzip_decode", self.result_vec_u8_error_ty())
+            }
+            "compress::flate::compress" | "flate::compress" => (
+                "gos_rt_compress_flate_compress",
+                self.result_vec_u8_error_ty(),
+            ),
+            "compress::flate::decompress" | "flate::decompress" => (
+                "gos_rt_compress_flate_decompress",
+                self.result_vec_u8_error_ty(),
+            ),
+            "compress::zlib::compress" | "zlib::compress" => (
+                "gos_rt_compress_zlib_compress",
+                self.result_vec_u8_error_ty(),
+            ),
+            "compress::zlib::decompress" | "zlib::decompress" => (
+                "gos_rt_compress_zlib_decompress",
+                self.result_vec_u8_error_ty(),
+            ),
+            "encoding::hex::encode" | "hex::encode" => {
+                ("gos_rt_encoding_hex_encode", self.tcx.string_ty())
+            }
+            "encoding::hex::decode" | "hex::decode" => {
+                ("gos_rt_encoding_hex_decode", self.result_vec_u8_error_ty())
+            }
+            "encoding::base64::encode" | "base64::encode" => {
+                ("gos_rt_encoding_base64_encode", self.tcx.string_ty())
+            }
+            "encoding::base64::decode" | "base64::decode" => (
+                "gos_rt_encoding_base64_decode",
+                self.result_vec_u8_error_ty(),
+            ),
+            "encoding::base32::encode" | "base32::encode" => {
+                ("gos_rt_encoding_base32_encode", self.tcx.string_ty())
+            }
+            // encoding::binary — put_* return [u8]; get_* return
+            // Result<i64>; uvarint/varint return Result<(i64,i64)>.
+            "encoding::binary::put_u16_be"
+            | "encoding::binary::put_u16_le"
+            | "encoding::binary::put_u32_be"
+            | "encoding::binary::put_u32_le"
+            | "encoding::binary::put_u64_be"
+            | "encoding::binary::put_u64_le" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                let sym = match joined.as_str() {
+                    "encoding::binary::put_u16_be" => "gos_rt_bin_put_u16_be",
+                    "encoding::binary::put_u16_le" => "gos_rt_bin_put_u16_le",
+                    "encoding::binary::put_u32_be" => "gos_rt_bin_put_u32_be",
+                    "encoding::binary::put_u32_le" => "gos_rt_bin_put_u32_le",
+                    "encoding::binary::put_u64_be" => "gos_rt_bin_put_u64_be",
+                    _ => "gos_rt_bin_put_u64_le",
+                };
+                (sym, self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)))
+            }
+            "encoding::binary::get_u16_be"
+            | "encoding::binary::get_u16_le"
+            | "encoding::binary::get_u32_be"
+            | "encoding::binary::get_u32_le"
+            | "encoding::binary::get_u64_be"
+            | "encoding::binary::get_u64_le" => {
+                let sym = match joined.as_str() {
+                    "encoding::binary::get_u16_be" => "gos_rt_bin_get_u16_be",
+                    "encoding::binary::get_u16_le" => "gos_rt_bin_get_u16_le",
+                    "encoding::binary::get_u32_be" => "gos_rt_bin_get_u32_be",
+                    "encoding::binary::get_u32_le" => "gos_rt_bin_get_u32_le",
+                    "encoding::binary::get_u64_be" => "gos_rt_bin_get_u64_be",
+                    _ => "gos_rt_bin_get_u64_le",
+                };
+                (sym, self.result_i64_error_adt_ty())
+            }
+            "encoding::binary::uvarint" => ("gos_rt_bin_uvarint", self.result_pair_i64_error_ty()),
+            "encoding::binary::varint" => ("gos_rt_bin_varint", self.result_pair_i64_error_ty()),
+            // pem leaf intrinsics (called from injected Gossamer
+            // wrappers; return tuples/bytes the wrappers fold into
+            // real `Block` structs).
+            "__gos_pem_decode_raw" => {
+                let tup = self.tuple_str_bytes_ty();
+                ("gos_rt_pem_decode_raw", self.result_of(tup))
+            }
+            "__gos_pem_decode_all_raw" => {
+                let tup = self.tuple_str_bytes_ty();
+                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(tup));
+                ("gos_rt_pem_decode_all_raw", self.result_of(vec))
+            }
+            "__gos_pem_encode_raw" => ("gos_rt_pem_encode_raw", self.tcx.string_ty()),
+            "__gos_x509_parse_pem_raw" => {
+                let tup = self.tuple_cert_info_ty();
+                ("gos_rt_x509_parse_pem_raw", self.result_of(tup))
+            }
+            "__gos_tar_read_raw" | "__gos_zip_read_raw" => {
+                let tup = self.tuple_entry_ty();
+                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(tup));
+                let sym = if joined == "__gos_tar_read_raw" {
+                    "gos_rt_tar_read_raw"
+                } else {
+                    "gos_rt_zip_read_raw"
+                };
+                (sym, self.result_of(vec))
+            }
+            // tar/zip write take `[(String,[u8])]` tuples and return
+            // Result<[u8]> — no struct, so they lower directly.
+            "archive::tar::write" | "tar::write" => {
+                ("gos_rt_tar_write", self.result_vec_u8_error_ty())
+            }
+            "archive::zip::write" | "zip::write" => {
+                ("gos_rt_zip_write", self.result_vec_u8_error_ty())
+            }
+            "encoding::csv::parse_line" | "csv::parse_line" => {
+                let s = self.tcx.string_ty();
+                (
+                    "gos_rt_csv_parse_line",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(s)),
+                )
+            }
+            "encoding::csv::read" | "csv::read" => {
+                ("gos_rt_csv_read", self.result_vec_vec_string_error_ty())
+            }
+            "encoding::csv::write" | "csv::write" => ("gos_rt_csv_write", self.tcx.string_ty()),
+            "encoding::ascii85::encode" | "ascii85::encode" => {
+                ("gos_rt_encoding_ascii85_encode", self.tcx.string_ty())
+            }
+            "encoding::ascii85::decode" | "ascii85::decode" => (
+                "gos_rt_encoding_ascii85_decode",
+                self.result_vec_u8_error_ty(),
+            ),
+            "html::escape" => ("gos_rt_html_escape", self.tcx.string_ty()),
+            "html::unescape" => ("gos_rt_html_unescape", self.tcx.string_ty()),
+            "crypto::hmac::sha256_mac" | "hmac::sha256_mac" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_crypto_hmac_sha256_mac",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                )
+            }
+            "encoding::xml::escape" | "xml::escape" => {
+                ("gos_rt_encoding_xml_escape", self.tcx.string_ty())
+            }
+            "encoding::base32::encode_string" | "base32::encode_string" => {
+                ("gos_rt_encoding_base32_encode_string", self.tcx.string_ty())
+            }
+            "encoding::base32::decode_string" | "base32::decode_string" => (
+                "gos_rt_encoding_base32_decode_string",
+                self.result_string_error_adt_ty(),
+            ),
             // String-as-receiver `rfind` returns Option<i64>; same
             // discriminant-packed shape as `find_opt`.
             "strings::rfind" => {
@@ -269,6 +686,172 @@ impl<'a> Builder<'a> {
             "path::base" => ("gos_rt_path_base", self.tcx.string_ty()),
             "path::dir" => ("gos_rt_path_dir", self.tcx.string_ty()),
             "path::ext" => ("gos_rt_path_ext", self.option_string_adt_ty()),
+            // 0.10.0 — path Option-returning free fns. Each wraps
+            // the matching `gos_rt_path_*_opt` helper which packs a
+            // `*mut GosResult` (disc=0 Some(String), disc=1 None).
+            "path::parent" => ("gos_rt_path_parent", self.option_string_adt_ty()),
+            "path::stem" => ("gos_rt_path_stem", self.option_string_adt_ty()),
+            "path::file_name" => ("gos_rt_path_file_name", self.option_string_adt_ty()),
+            // 0.10.0 — math extended trig / log / round entries.
+            "math::tan" => (
+                "gos_rt_math_tan",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::asin" => (
+                "gos_rt_math_asin",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::acos" => (
+                "gos_rt_math_acos",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::atan" => (
+                "gos_rt_math_atan",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::atan2" => (
+                "gos_rt_math_atan2",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::sinh" => (
+                "gos_rt_math_sinh",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::cosh" => (
+                "gos_rt_math_cosh",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::tanh" => (
+                "gos_rt_math_tanh",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::log2" => (
+                "gos_rt_math_log2",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::log10" => (
+                "gos_rt_math_log10",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::cbrt" => (
+                "gos_rt_math_cbrt",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::round" => (
+                "gos_rt_math_round",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::exp2" => (
+                "gos_rt_math_exp2",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::fmod" => (
+                "gos_rt_math_fmod",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::hypot" => (
+                "gos_rt_math_hypot",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::copysign" => (
+                "gos_rt_math_copysign",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "math::dim" => (
+                "gos_rt_math_dim",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            // 0.10.0 — arbitrary-precision big integers. Every value
+            // is carried as a decimal `String` (matching the interp),
+            // so all the arithmetic entries take/return `String`.
+            "math::big::factorial" => ("gos_rt_math_big_factorial", self.tcx.string_ty()),
+            "math::big::int_from_i64" => ("gos_rt_math_big_int_from_i64", self.tcx.string_ty()),
+            "math::big::int_from_str" => (
+                "gos_rt_math_big_int_from_str",
+                self.result_string_error_adt_ty(),
+            ),
+            "math::big::int_to_str" => ("gos_rt_math_big_int_to_str", self.tcx.string_ty()),
+            "math::big::int_to_hex" => ("gos_rt_math_big_int_to_hex", self.tcx.string_ty()),
+            "math::big::int_to_i64" => ("gos_rt_math_big_int_to_i64", self.option_i64_adt_ty()),
+            "math::big::int_is_zero" => ("gos_rt_math_big_int_is_zero", self.tcx.bool_ty()),
+            "math::big::int_is_positive" => ("gos_rt_math_big_int_is_positive", self.tcx.bool_ty()),
+            "math::big::int_is_negative" => ("gos_rt_math_big_int_is_negative", self.tcx.bool_ty()),
+            "math::big::int_add" => ("gos_rt_math_big_int_add", self.tcx.string_ty()),
+            "math::big::int_sub" => ("gos_rt_math_big_int_sub", self.tcx.string_ty()),
+            "math::big::int_mul" => ("gos_rt_math_big_int_mul", self.tcx.string_ty()),
+            "math::big::int_div" => ("gos_rt_math_big_int_div", self.result_string_error_adt_ty()),
+            "math::big::int_rem" => ("gos_rt_math_big_int_rem", self.result_string_error_adt_ty()),
+            "math::big::int_pow" => ("gos_rt_math_big_int_pow", self.tcx.string_ty()),
+            "math::big::int_abs" => ("gos_rt_math_big_int_abs", self.tcx.string_ty()),
+            "math::big::int_neg" => ("gos_rt_math_big_int_neg", self.tcx.string_ty()),
+            "math::big::int_gcd" => ("gos_rt_math_big_int_gcd", self.tcx.string_ty()),
+            "math::big::int_lcm" => ("gos_rt_math_big_int_lcm", self.tcx.string_ty()),
+            "math::big::int_cmp" => (
+                "gos_rt_math_big_int_cmp",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "math::big::uint_from_u64" => ("gos_rt_math_big_uint_from_u64", self.tcx.string_ty()),
+            "math::big::uint_from_str" => (
+                "gos_rt_math_big_uint_from_str",
+                self.result_string_error_adt_ty(),
+            ),
+            "math::big::uint_to_str" => ("gos_rt_math_big_uint_to_str", self.tcx.string_ty()),
+            "math::big::uint_to_hex" => ("gos_rt_math_big_uint_to_hex", self.tcx.string_ty()),
+            "math::big::uint_to_u64" => ("gos_rt_math_big_uint_to_u64", self.option_i64_adt_ty()),
+            "math::big::uint_is_zero" => ("gos_rt_math_big_uint_is_zero", self.tcx.bool_ty()),
+            "math::big::uint_add" => ("gos_rt_math_big_uint_add", self.tcx.string_ty()),
+            "math::big::uint_mul" => ("gos_rt_math_big_uint_mul", self.tcx.string_ty()),
+            "math::big::uint_pow" => ("gos_rt_math_big_uint_pow", self.tcx.string_ty()),
+            "math::big::uint_pow_mod" => ("gos_rt_math_big_uint_pow_mod", self.tcx.string_ty()),
+            "math::big::uint_bit_len" => (
+                "gos_rt_math_big_uint_bit_len",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            // 0.10.0 — env aliases (the os:: spelling is already wired
+            // above; the env:: spelling matches `use std::env`).
+            "env::set_var" => {
+                let unit_ty = self.tcx.unit();
+                let err_ty = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([unit_ty, err_ty]);
+                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_os_set_env", result_ty)
+            }
+            "env::unset_var" => ("gos_rt_os_unset_env", self.tcx.unit()),
+            // 0.10.0 — crypto::rand::bytes(n) -> Vec<u8>.
+            "crypto::rand::bytes" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+                ("gos_rt_crypto_rand_bytes", v)
+            }
+            // 0.10.0 — time::Duration helpers. Duration is represented
+            // as i64 nanoseconds end-to-end through the compiled tier.
+            "time::Duration::from_secs" => (
+                "gos_rt_duration_from_secs",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::Duration::from_millis" => (
+                "gos_rt_duration_from_millis",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::Duration::from_micros" => (
+                "gos_rt_duration_from_micros",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::Duration::as_millis" => (
+                "gos_rt_duration_as_millis",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::Duration::as_secs" => (
+                "gos_rt_duration_as_secs",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::Duration::as_micros" => (
+                "gos_rt_duration_as_micros",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             "uuid::v4" => ("gos_rt_uuid_v4", self.tcx.string_ty()),
             "uuid::v7" => ("gos_rt_uuid_v7", self.tcx.string_ty()),
             "uuid::is_valid" => ("gos_rt_uuid_is_valid", self.tcx.bool_ty()),
@@ -536,14 +1119,6 @@ impl<'a> Builder<'a> {
             "url::path_escape" => ("gos_rt_url_path_escape", self.tcx.string_ty()),
             "url::query_unescape" => ("gos_rt_url_query_unescape", self.tcx.string_ty()),
             "url::path_unescape" => ("gos_rt_url_path_unescape", self.tcx.string_ty()),
-            "time::Duration::from_secs" => (
-                "gos_rt_duration_from_secs",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "time::Duration::from_millis" => (
-                "gos_rt_duration_from_millis",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
             "time::format_rfc3339" => {
                 let s = self.tcx.string_ty();
                 let substs = gossamer_types::Substs::from_types([s, s]);
@@ -563,6 +1138,41 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_time_parse_rfc3339", result_ty)
             }
+            // 0.10.0 — time::* free fns previously VM-only. The
+            // monotonic/now shims already existed in the runtime;
+            // these arms route the language-level calls to them.
+            "time::sleep" => ("gos_rt_sleep_ms", self.tcx.unit()),
+            "runtime::collect_cycles" => ("gos_rt_collect_cycles", self.tcx.unit()),
+            "runtime::region_push" => {
+                // Locals created after this point (until the matching pop)
+                // are region-owned; the drop pass skips their release.
+                self.region_depth += 1;
+                ("gos_rt_region_push", self.tcx.unit())
+            }
+            "runtime::region_pop" => {
+                self.region_depth = self.region_depth.saturating_sub(1);
+                ("gos_rt_region_pop", self.tcx.unit())
+            }
+            "time::now" | "time::unix_ms" => (
+                "gos_rt_time_now_ms",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::now_nanos" => (
+                "gos_rt_time_now_nanos",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::monotonic_ms" => (
+                "gos_rt_monotonic_ms",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::monotonic_nanos" => (
+                "gos_rt_monotonic_nanos",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::since_ms" => (
+                "gos_rt_time_since_ms",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             "os::program_name" | "env::program_name" => {
                 ("gos_rt_os_program_name", self.tcx.string_ty())
             }
@@ -862,12 +1472,6 @@ impl<'a> Builder<'a> {
                 "gos_rt_proxy_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "gzip::encode" | "compress::gzip::encode" => {
-                ("gos_rt_gzip_encode", self.tcx.string_ty())
-            }
-            "gzip::decode" | "compress::gzip::decode" => {
-                ("gos_rt_gzip_decode", self.tcx.string_ty())
-            }
             "crypto::sha256::hex" | "sha256::hex" | "crypto::sha256_hex" => {
                 ("gos_rt_sha256_hex", self.tcx.string_ty())
             }
@@ -1025,6 +1629,22 @@ impl<'a> Builder<'a> {
             );
             return Some(dest);
         }
+        // The byte-vector `encode` shims take a `*mut GosVec` of bytes,
+        // but Gossamer's API (mirroring the interp's `bytes_from_value`)
+        // also accepts a `String` — `base64::encode("text")`. A String
+        // is a c-string pointer, not a GosVec, so it must be converted
+        // to a byte Vec via `gos_rt_str_as_bytes` before the call;
+        // passing it raw makes the shim read the c-string bytes as a
+        // GosVec header and abort.
+        let coerce_str_arg = matches!(
+            rt_name,
+            "gos_rt_encoding_base64_encode"
+                | "gos_rt_encoding_hex_encode"
+                | "gos_rt_encoding_base32_encode"
+                | "gos_rt_compress_flate_compress"
+                | "gos_rt_compress_zlib_compress"
+                | "gos_rt_compress_gzip_encode"
+        );
         let mut arg_locals = Vec::with_capacity(args.len());
         for arg in args {
             let local = self.lower_expr(arg)?;
@@ -1037,12 +1657,37 @@ impl<'a> Builder<'a> {
                 let lt = self.locals[local.0 as usize].ty;
                 if let gossamer_types::TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
                     self.coerce_array_to_vec(local, elem, len, span)
+                } else if coerce_str_arg
+                    && matches!(self.tcx.kind_of(lt), gossamer_types::TyKind::String)
+                {
+                    let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    let bytes_ty = self.tcx.intern(gossamer_types::TyKind::Vec(i64_ty));
+                    let dest = self.fresh(bytes_ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_str_as_bytes".to_string())),
+                        args: vec![Operand::Copy(Place::local(local))],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    dest
                 } else {
                     local
                 }
             };
             arg_locals.push(local);
         }
+        // Runtime fns returning the 2-word by-value `i128` Result/Option must
+        // bind into an i128-rendering local; inference may have left `ret_ty`
+        // a `Var` (renders `ptr`), which would truncate the i128.
+        let ret_ty = if gossamer_abi::lookup(rt_name).map(|e| e.sig.ret)
+            == Some(gossamer_abi::AbiType::I128)
+        {
+            self.result_repr_ty(ret_ty)
+        } else {
+            ret_ty
+        };
         let dest = self.fresh(ret_ty);
         // Tag the destination's runtime shape so subsequent
         // method dispatches on the same local can pick the right

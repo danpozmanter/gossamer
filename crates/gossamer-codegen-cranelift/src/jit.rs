@@ -360,6 +360,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_str_substring"       => rt::gos_rt_str_substring,
         "gos_rt_os_read_dir"         => rt::gos_rt_os_read_dir,
         "gos_rt_str_concat"          => rt::gos_rt_str_concat,
+        "gos_rt_str_concat_drop_a"     => rt::gos_rt_str_concat_drop_a,
         "gos_rt_str_trim"            => rt::gos_rt_str_trim,
         "gos_rt_str_to_upper"        => rt::gos_rt_str_to_upper,
         "gos_rt_str_to_lower"        => rt::gos_rt_str_to_lower,
@@ -791,6 +792,17 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_gc_alloc"            => rt::gos_rt_gc_alloc,
         "gos_rt_aggr_alloc"          => rt::gos_rt_aggr_alloc,
         "gos_rt_aggr_free"           => rt::gos_rt_aggr_free,
+        "gos_rt_rc_alloc"            => rt::gos_rt_rc_alloc,
+        "gos_rt_rc_retain"           => rt::gos_rt_rc_retain,
+        "gos_rt_rc_release"          => rt::gos_rt_rc_release,
+        "gos_rt_rc_downgrade"        => rt::gos_rt_rc_downgrade,
+        "gos_rt_rc_weak_retain"      => rt::gos_rt_rc_weak_retain,
+        "gos_rt_rc_weak_release"     => rt::gos_rt_rc_weak_release,
+        "gos_rt_rc_weak_upgrade"     => rt::gos_rt_rc_weak_upgrade,
+        "gos_rt_rc_weak_upgrade_opt" => rt::gos_rt_rc_weak_upgrade_opt,
+        "gos_rt_region_push"         => rt::gos_rt_region_push,
+        "gos_rt_region_pop"          => rt::gos_rt_region_pop,
+        "gos_rt_collect_cycles"      => rt::gos_rt_collect_cycles,
         "gos_rt_gc_alloc_rooted"     => gc::gos_rt_gc_alloc_rooted,
         "gos_rt_gc_safepoint"        => gc::gos_rt_gc_safepoint,
         "gos_rt_goroutine_panicked"  => rt::gos_rt_goroutine_panicked,
@@ -806,17 +818,11 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_gc_shadow_push"      => gc::gos_rt_gc_shadow_push,
         "gos_rt_gc_shadow_save"      => gc::gos_rt_gc_shadow_save,
         "gos_rt_gc_shadow_restore"   => gc::gos_rt_gc_shadow_restore,
-        "gos_rt_gc_root_push"        => rt::gos_rt_gc_root_push,
-        "gos_rt_gc_root_save"        => rt::gos_rt_gc_root_save,
-        "gos_rt_gc_root_restore"     => rt::gos_rt_gc_root_restore,
-        "gos_rt_gc_collect"          => rt::gos_rt_gc_collect,
-        "gos_rt_gc_alloc_count"      => rt::gos_rt_gc_alloc_count,
-        "gos_rt_gc_assert_consistent" => rt::gos_rt_gc_assert_consistent,
-        "gos_rt_gc_raw_safepoint"    => rt::gos_rt_gc_raw_safepoint,
-        "gos_rt_write_barrier_ptr"   => rt::gos_rt_write_barrier_ptr,
         "gos_rt_gc_collect_with_stack_roots"
                                      => gc::gos_rt_gc_collect_with_stack_roots,
         "gos_rt_gc_deregister"       => rt::gos_rt_gc_deregister,
+        "gos_rt_gc_collect"          => rt::gos_rt_gc_collect,
+        "gos_rt_gc_alloc_count"      => rt::gos_rt_gc_alloc_count,
         "gos_rt_gc_reset"            => rt::gos_rt_gc_reset,
         "gos_rt_arena_save"          => rt::gos_rt_arena_save,
         "gos_rt_arena_restore"       => rt::gos_rt_arena_restore,
@@ -977,6 +983,18 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_go_spawn_call_4"     => rt::gos_rt_go_spawn_call_4,
         "gos_rt_go_spawn_call_5"     => rt::gos_rt_go_spawn_call_5,
         "gos_rt_go_spawn_call_6"     => rt::gos_rt_go_spawn_call_6,
+    }
+    // Register every remaining `gos_rt_*` symbol from the ABI registry's
+    // address table. The explicit `reg!` block above covers the common
+    // symbols with their bespoke spellings; this pass closes the gap so
+    // that a body calling any registered runtime helper (math, strconv,
+    // unicode, encoding, …) resolves at JIT-finalize time instead of
+    // failing the whole module and collapsing the program to the
+    // interpreter. A runtime test asserts the table is registry-complete.
+    for (name, addr) in rt::runtime_symbol_addrs() {
+        if names.insert(name) {
+            builder.symbol(name, addr);
+        }
     }
     names
 }

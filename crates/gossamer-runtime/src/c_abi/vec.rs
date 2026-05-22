@@ -14,6 +14,9 @@
 #![allow(static_mut_refs)]
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
+// `_reserved` is the GosVec padding field repurposed as a region flag;
+// reading it is intentional.
+#![allow(clippy::used_underscore_binding)]
 
 use std::os::raw::c_char;
 
@@ -73,17 +76,62 @@ pub struct GosVec {
     pub ptr: SyncRawPtr<u8>,
 }
 
+/// `_reserved[0]` value marking a GosVec (and its backing buffer) as
+/// arena-region-allocated: both live in region slabs, so `gos_rt_vec_free`
+/// must skip them (they are freed wholesale at `region_pop`).
+const VEC_REGION_FLAG: u8 = 1;
+
+/// Allocate a GosVec header from the active region if one is open (so it is
+/// freed wholesale at pop and `gos_rt_vec_free` skips it), else from the
+/// global allocator via `Box`. Sets the region flag accordingly.
+unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
+    let p = crate::c_abi::rc::region_alloc_bytes(std::mem::size_of::<GosVec>());
+    if p.is_null() {
+        crate::c_abi::ledger::vec_inc();
+        vec_set_rc(&mut v, 1);
+        Box::into_raw(Box::new(v))
+    } else {
+        v._reserved[0] = VEC_REGION_FLAG;
+        let hp = p.cast::<GosVec>();
+        unsafe { std::ptr::write(hp, v) };
+        hp
+    }
+}
+
+/// True when this GosVec was allocated inside an arena region.
+#[inline]
+pub fn vec_is_region(v: &GosVec) -> bool {
+    v._reserved[0] == VEC_REGION_FLAG
+}
+
+/// Strong refcount of a non-region Vec, stored as a little-endian `u16` in the
+/// otherwise-unused `_reserved[1..3]` bytes (so the struct layout is unchanged).
+/// A Vec aliased > 65535 times is unreachable; the count saturates rather than
+/// wrapping. Region Vecs ignore this (they are freed wholesale at region pop).
+#[inline]
+pub fn vec_rc(v: &GosVec) -> u16 {
+    u16::from_le_bytes([v._reserved[1], v._reserved[2]])
+}
+#[inline]
+pub fn vec_set_rc(v: &mut GosVec, rc: u16) {
+    let b = rc.to_le_bytes();
+    v._reserved[1] = b[0];
+    v._reserved[2] = b[1];
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_new(elem_bytes: u32) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        Box::into_raw(Box::new(GosVec {
-            len: 0,
-            cap: 0,
-            elem_bytes,
-            elem_kind: vec_elem_kind::PRIMITIVE,
-            _reserved: [0; 3],
-            ptr: SyncRawPtr::NULL,
-        }))
+        unsafe {
+            alloc_vec_header(GosVec {
+                len: 0,
+                cap: 0,
+                elem_bytes,
+                elem_kind: vec_elem_kind::PRIMITIVE,
+                _reserved: [0; 3],
+                ptr: SyncRawPtr::NULL,
+            })
+        }
     })
 }
 
@@ -103,14 +151,16 @@ pub unsafe extern "C" fn gos_rt_vec_new_typed(elem_bytes: u32, elem_kind: u8) ->
         } else {
             elem_kind
         };
-        Box::into_raw(Box::new(GosVec {
-            len: 0,
-            cap: 0,
-            elem_bytes,
-            elem_kind: kind,
-            _reserved: [0; 3],
-            ptr: SyncRawPtr::NULL,
-        }))
+        unsafe {
+            alloc_vec_header(GosVec {
+                len: 0,
+                cap: 0,
+                elem_bytes,
+                elem_kind: kind,
+                _reserved: [0; 3],
+                ptr: SyncRawPtr::NULL,
+            })
+        }
     })
 }
 
@@ -270,6 +320,34 @@ pub unsafe extern "C" fn gos_rt_vec_push_i64(v: *mut GosVec, value: i64) {
     });
 }
 
+/// Pushes a 16-byte `i128` element (the by-value `Result`/`Option`
+/// representation) by forwarding its address to the byte-erased push. The
+/// vec's `elem_bytes` must be 16.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_push_i128(v: *mut GosVec, value: i128) {
+    ffi_entry!((), {
+        let bytes = value.to_ne_bytes();
+        unsafe { gos_rt_vec_push(v, bytes.as_ptr()) };
+    });
+}
+
+/// Reads a 16-byte `i128` element (by-value `Result`/`Option`) at `idx`.
+/// Null vec / out-of-range → 0 (matching `gos_rt_vec_get_i64`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_get_i128(v: *const GosVec, idx: i64) -> i128 {
+    ffi_entry!(0, {
+        if v.is_null() {
+            return 0;
+        }
+        let vec = unsafe { &*v };
+        if idx < 0 || idx >= vec.len {
+            return 0;
+        }
+        let p = unsafe { vec.ptr.add((idx as usize) * (vec.elem_bytes as usize)) };
+        unsafe { (p as *const i128).read_unaligned() }
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
     ffi_entry!((), {
@@ -282,21 +360,58 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
             let new_cap = if vec.cap == 0 { 4 } else { vec.cap * 2 };
             let old_bytes = (vec.cap as usize) * (vec.elem_bytes as usize);
             let new_bytes = (new_cap as usize) * (vec.elem_bytes as usize);
-            // Zero-initialised — see `gos_rt_vec_with_capacity`.
-            let mut buf: Vec<u8> = vec![0u8; new_bytes];
-            if !vec.ptr.is_null() && old_bytes > 0 {
-                unsafe {
-                    std::ptr::copy_nonoverlapping(vec.ptr.as_ptr(), buf.as_mut_ptr(), old_bytes);
-                    // drop old allocation — sound only if `vec.ptr` was
-                    // allocated through `Vec<u8>::Global`. Every helper
-                    // that writes `vec.ptr` does so through that domain
-                    // (see fix_architecture_ownership.md Stage 1.a).
-                    Vec::from_raw_parts(vec.ptr.as_ptr(), old_bytes, old_bytes);
+            if vec_is_region(vec) {
+                // Region-allocated: grow into a fresh region buffer (zeroed)
+                // and abandon the old one in the region — it is reclaimed
+                // wholesale at `region_pop`, never individually freed.
+                let region_buf = crate::c_abi::rc::region_alloc_bytes(new_bytes);
+                if region_buf.is_null() {
+                    // No active region (grown after its pop — unusual): fall
+                    // back to a global buffer; the region flag stays set so
+                    // free still skips it (small bounded leak in this edge).
+                    let mut buf: Vec<u8> = vec![0u8; new_bytes];
+                    if !vec.ptr.is_null() && old_bytes > 0 {
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                vec.ptr.as_ptr(),
+                                buf.as_mut_ptr(),
+                                old_bytes,
+                            );
+                        }
+                    }
+                    vec.ptr = SyncRawPtr::new(buf.as_mut_ptr());
+                    vec.cap = new_cap;
+                    std::mem::forget(buf);
+                } else {
+                    if !vec.ptr.is_null() && old_bytes > 0 {
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(vec.ptr.as_ptr(), region_buf, old_bytes);
+                        }
+                    }
+                    vec.ptr = SyncRawPtr::new(region_buf);
+                    vec.cap = new_cap;
                 }
+            } else {
+                // Zero-initialised — see `gos_rt_vec_with_capacity`.
+                let mut buf: Vec<u8> = vec![0u8; new_bytes];
+                if !vec.ptr.is_null() && old_bytes > 0 {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            vec.ptr.as_ptr(),
+                            buf.as_mut_ptr(),
+                            old_bytes,
+                        );
+                        // drop old allocation — sound only if `vec.ptr` was
+                        // allocated through `Vec<u8>::Global`. Every helper
+                        // that writes `vec.ptr` does so through that domain
+                        // (see fix_architecture_ownership.md Stage 1.a).
+                        Vec::from_raw_parts(vec.ptr.as_ptr(), old_bytes, old_bytes);
+                    }
+                }
+                vec.ptr = SyncRawPtr::new(buf.as_mut_ptr());
+                vec.cap = new_cap;
+                std::mem::forget(buf);
             }
-            vec.ptr = SyncRawPtr::new(buf.as_mut_ptr());
-            vec.cap = new_cap;
-            std::mem::forget(buf);
         }
         // 0.6.0: for STRING-typed vecs, copy the inbound string into a
         // tagged allocation so the deep-free path at vec_free time can
@@ -353,156 +468,132 @@ pub struct GosResult {
     pub payload: i64,
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_result_new(disc: i64, payload: i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
-        // `Box::into_raw` — single ownership domain across every
-        // runtime helper. Previously the bump arena (`gos_rt_gc_alloc`)
-        // backed this; the LLVM codegen's
-        // `arena_save`/`arena_restore` could rewind the watermark
-        // while a `*mut GosResult` was still live in caller code,
-        // producing a dangling pointer that crashed at random sites
-        // when the next allocator request reused the freed bytes.
-        // See `~/dev/contexts/lang/fix_architecture_ownership.md`
-        // Stage 4. Per-request leaks are reclaimed by the global GC
-        // on a future cycle, not by arena reset.
-        Box::into_raw(Box::new(GosResult { disc, payload }))
-    })
+// Result/Option are a 2-word BY-VALUE representation: an `i128` with the
+// discriminant in the low 64 bits and the payload in the high 64 bits. This
+// replaced a heap `Box<GosResult>` per `Ok`/`Err`/`Some`/`None` that was
+// never freed (an unbounded leak on every `?`). Construction is now a
+// register pack with zero allocation; the payload flows as a normal value
+// (a scalar, or a pointer to a heap-copied aggregate) managed by RC like any
+// other binding.
+
+/// Pack `(disc, payload)` into the 2-word Result/Option value.
+#[inline]
+#[must_use]
+pub fn pack_result(disc: i64, payload: i64) -> i128 {
+    (((payload as u64 as u128) << 64) | (disc as u64 as u128)) as i128
+}
+
+#[inline]
+fn result_disc_of(r: i128) -> i64 {
+    (r as u128 as u64) as i64
+}
+
+#[inline]
+fn result_payload_of(r: i128) -> i64 {
+    ((r as u128 >> 64) as u64) as i64
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_disc(p: *const GosResult) -> i64 {
-    ffi_entry!(-1, {
-        if p.is_null() {
-            return 1;
-        }
-        unsafe { (*p).disc }
-    })
+pub extern "C" fn gos_rt_result_new(disc: i64, payload: i64) -> i128 {
+    pack_result(disc, payload)
+}
+
+/// `gos_rt_result_new` variant for f64 payloads — stores the value's
+/// `to_bits()` so the symmetric `gos_rt_result_payload_f64` reads back the
+/// original f64.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_new_f64(disc: i64, payload: f64) -> i128 {
+    pack_result(disc, payload.to_bits() as i64)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_dbg(p: i64) -> i64 {
-    ffi_entry!(-1, {
-        eprintln!("[rt] dbg called with raw i64 = {p:#x}");
-        p
-    })
+pub extern "C" fn gos_rt_result_disc(r: i128) -> i64 {
+    result_disc_of(r)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_payload(p: *const GosResult) -> i64 {
-    ffi_entry!(-1, {
-        if p.is_null() {
-            return 0;
-        }
-        unsafe { (*p).payload }
-    })
+pub extern "C" fn gos_rt_result_dbg(p: i64) -> i64 {
+    eprintln!("[rt] dbg called with raw i64 = {p:#x}");
+    p
 }
 
-/// `result.unwrap()` / `option.unwrap()`. Returns the wrapped
-/// payload on the happy path; panics on Err / None.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_unwrap(p: *const GosResult) -> i64 {
+pub extern "C" fn gos_rt_result_payload(r: i128) -> i64 {
+    result_payload_of(r)
+}
+
+/// `Result<f64, _>` / `Option<f64>` Ok-payload extractor that reinterprets
+/// the stored bits as f64.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_payload_f64(r: i128) -> f64 {
+    f64::from_bits(result_payload_of(r) as u64)
+}
+
+/// `result.unwrap()` / `option.unwrap()`. Returns the payload on the happy
+/// path; panics on Err / None.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_unwrap(r: i128) -> i64 {
     ffi_entry!(-1, {
-        if p.is_null() {
+        if result_disc_of(r) != 0 {
             let cs = std::ffi::CString::new("called `Result::unwrap()` on an `Err` value").unwrap();
             unsafe { gos_rt_panic(cs.as_ptr()) };
             return 0;
         }
-        let r = unsafe { &*p };
-        if r.disc != 0 {
-            let cs = std::ffi::CString::new("called `Result::unwrap()` on an `Err` value").unwrap();
-            unsafe { gos_rt_panic(cs.as_ptr()) };
-            return 0;
-        }
-        r.payload
+        result_payload_of(r)
     })
 }
 
 /// `result.unwrap_or(default)` / `option.unwrap_or(default)`.
-/// Returns the payload on the happy path, else the supplied
-/// default. Both inputs flow through as raw 64-bit slots so the
-/// helper works for any inner type that fits in a single word.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_unwrap_or(p: *const GosResult, default: i64) -> i64 {
-    ffi_entry!(-1, {
-        if p.is_null() {
-            return default;
-        }
-        let r = unsafe { &*p };
-        if r.disc == 0 { r.payload } else { default }
-    })
+pub extern "C" fn gos_rt_result_unwrap_or(r: i128, default: i64) -> i64 {
+    if result_disc_of(r) == 0 {
+        result_payload_of(r)
+    } else {
+        default
+    }
 }
 
-/// `result.ok()` / `option.ok()`. Returns the payload on Ok/Some,
-/// else 0. Mirrors the conventional "missing returns the zero
-/// value of the wrapped type" semantics used elsewhere in the
-/// compiled tier.
+/// `result.ok()` / `option.ok()`. Returns the payload on Ok/Some, else 0.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_ok(p: *const GosResult) -> i64 {
-    ffi_entry!(-1, {
-        if p.is_null() {
-            return 0;
-        }
-        let r = unsafe { &*p };
-        if r.disc == 0 { r.payload } else { 0 }
-    })
+pub extern "C" fn gos_rt_result_ok(r: i128) -> i64 {
+    if result_disc_of(r) == 0 {
+        result_payload_of(r)
+    } else {
+        0
+    }
 }
 
 /// `result.err()`. Returns the error payload on Err, else 0.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_err(p: *const GosResult) -> i64 {
-    ffi_entry!(-1, {
-        if p.is_null() {
-            return 0;
-        }
-        let r = unsafe { &*p };
-        if r.disc == 1 { r.payload } else { 0 }
-    })
+pub extern "C" fn gos_rt_result_err(r: i128) -> i64 {
+    if result_disc_of(r) == 1 {
+        result_payload_of(r)
+    } else {
+        0
+    }
 }
 
-/// `result.ok_or(new_err)`. On Ok, returns the receiver unchanged;
-/// on Err, returns a new Result with `new_err` as the payload.
-/// Lets `parse().ok_or("not a number".to_string())?` replace the
-/// raw ParseError with a domain-meaningful message.
+/// `result.ok_or(new_err)`. On Ok, returns the receiver unchanged; on Err,
+/// returns a new `Err(new_err)`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_ok_or(p: *mut GosResult, new_err: i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
-        if p.is_null() {
-            return unsafe { gos_rt_result_new(1, new_err) };
-        }
-        let r = unsafe { &*p };
-        if r.disc == 0 {
-            p
-        } else {
-            unsafe { gos_rt_result_new(1, new_err) }
-        }
-    })
+pub extern "C" fn gos_rt_result_ok_or(r: i128, new_err: i64) -> i128 {
+    if result_disc_of(r) == 0 {
+        r
+    } else {
+        pack_result(1, new_err)
+    }
 }
 
-/// `result.is_ok()` / `option.is_some()`. Returns 1 on Ok/Some,
-/// 0 on Err/None or null.
+/// `result.is_ok()` / `option.is_some()`. 1 on Ok/Some, 0 on Err/None.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_is_ok(p: *const GosResult) -> i64 {
-    ffi_entry!(-1, {
-        if p.is_null() {
-            return 0;
-        }
-        let r = unsafe { &*p };
-        i64::from(r.disc == 0)
-    })
+pub extern "C" fn gos_rt_result_is_ok(r: i128) -> i64 {
+    i64::from(result_disc_of(r) == 0)
 }
 
-/// `result.is_err()` / `option.is_none()`. Returns 1 on Err/None
-/// or null, 0 on Ok/Some.
+/// `result.is_err()` / `option.is_none()`. 1 on Err/None, 0 on Ok/Some.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_is_err(p: *const GosResult) -> i64 {
-    ffi_entry!(-1, {
-        if p.is_null() {
-            return 1;
-        }
-        let r = unsafe { &*p };
-        i64::from(r.disc != 0)
-    })
+pub extern "C" fn gos_rt_result_is_err(r: i128) -> i64 {
+    i64::from(result_disc_of(r) != 0)
 }
 
 /// Maps a `gos_main` return value to a process exit code.

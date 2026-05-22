@@ -113,6 +113,40 @@ pub(crate) fn install_archive_tar(globals: &mut Vec<(&'static str, Value)>) {
         let q: &'static str = Box::leak(format!("archive::{short}").into_boxed_str());
         globals.push((q, crate::builtins::builtin_pub(q, call)));
     }
+    // Leaf for the injected real-struct `TarEntry` wrapper: each
+    // entry as a `(name, data, is_dir)` tuple.
+    globals.push((
+        "__gos_tar_read_raw",
+        crate::builtins::builtin_pub("__gos_tar_read_raw", builtin_tar_read_raw),
+    ));
+}
+
+pub(crate) fn builtin_tar_read_raw(args: &[Value]) -> RuntimeResult<Value> {
+    let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
+    match gossamer_std::archive::tar::read(&input) {
+        Ok(entries) => {
+            let arr = Value::Array(Arc::new(
+                entries
+                    .into_iter()
+                    .map(|e| {
+                        let data = Value::Array(Arc::new(
+                            e.data
+                                .into_iter()
+                                .map(|b| Value::Int(i64::from(b)))
+                                .collect(),
+                        ));
+                        Value::Tuple(Arc::new(vec![
+                            Value::String(e.name.into()),
+                            data,
+                            Value::Bool(e.is_dir),
+                        ]))
+                    })
+                    .collect(),
+            ));
+            Ok(ok_variant(arr))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
 }
 
 pub(crate) fn tar_entry_to_value(entry: gossamer_std::archive::tar::TarEntry) -> Value {

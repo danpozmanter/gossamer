@@ -78,19 +78,11 @@ impl<'a> Lowerer<'a> {
     /// Emits a `gos_rt_write_barrier` call for `value`, which must have
     /// LLVM type `i64` (a GcRef index stored in the flat ABI). Callers
     /// must ensure `ptr`-typed values are filtered out before reaching here.
-    pub(crate) fn emit_write_barrier(&mut self, value: &str) {
-        declare_rt(&mut self.runtime_refs, "gos_rt_write_barrier");
-        let truncated = self.fresh();
-        // GcRef indices are u32-indexed in gossamer-gc; the flat ABI widens
-        // them to i64. Truncating is safe: no program creates more than 2^32
-        // heap slots.
-        writeln!(self.out, "  {truncated} = trunc i64 {value} to i32").unwrap();
-        writeln!(
-            self.out,
-            "  call void @gos_rt_write_barrier(i32 {truncated})"
-        )
-        .unwrap();
-    }
+    /// No-op: the concurrent tracing collector this barrier fed is
+    /// retired in favour of reference counting, so pointer stores no
+    /// longer need a barrier. Kept as a call site to leave the
+    /// aggregate-store path structurally unchanged.
+    pub(crate) fn emit_write_barrier(&mut self, _value: &str) {}
 
     /// Populates an aggregate stack slot (the destination
     /// `place`'s flat layout) with each operand in order.

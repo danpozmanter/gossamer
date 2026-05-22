@@ -1,0 +1,50 @@
+// Auto-regions: the compiler wraps eligible loop bodies in arena regions.
+// This fixture locks in correctness for BOTH the regioned and the
+// not-regioned shapes so the escape analysis can't silently regress in
+// either direction (over-region an escaping value -> UAF/wrong output;
+// under-region -> still correct, just slower).
+
+enum Tree { Leaf, Node(Box<Tree>, Box<Tree>) }
+
+fn make(d: i64) -> Tree {
+    if d == 0 {
+        Tree::Leaf
+    } else {
+        Tree::Node(Box::new(make(d - 1)), Box::new(make(d - 1)))
+    }
+}
+
+fn count(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf => 1,
+        Tree::Node(l, r) => 1 + count(l) + count(r),
+    }
+}
+
+fn main() {
+    // ELIGIBLE: each iteration builds a tree, consumes it, discards it.
+    // Only the i64 accumulator escapes. The body is auto-regioned.
+    let mut churn: i64 = 0
+    let mut i: i64 = 0
+    while i < 1000 {
+        churn += count(&make(6))
+        i += 1
+    }
+
+    // NOT ELIGIBLE: `kept` is an outer binding that accumulates trees
+    // across iterations (escapes the loop body), so the loop must NOT be
+    // regioned — the trees have to survive. A wrong escape decision here
+    // would free `kept`'s nodes mid-build.
+    let mut kept: Vec<Tree> = []
+    let mut j: i64 = 0
+    while j < 50 {
+        kept.push(make(3))
+        j += 1
+    }
+    let mut total: i64 = 0
+    for t in kept.iter() {
+        total += count(t)
+    }
+
+    println!("{} {}", churn, total)
+}

@@ -50,7 +50,7 @@ fn run_vm(source: &str) -> String {
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut vm = Vm::new();
-    vm.load(&program, &mut tcx).expect("vm load");
+    vm.load(&program, tcx).expect("vm load");
     CAPTURED.with(|cell| cell.borrow_mut().clear());
     let prev = set_stdout_writer(capture_writer);
     let _ = vm.call("main", Vec::new()).expect("vm main failed");

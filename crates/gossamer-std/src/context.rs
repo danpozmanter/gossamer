@@ -153,14 +153,9 @@ pub fn chan_recv_ctx_i64(chan: *mut u8, ctx: &Context) -> Option<i64> {
     let raw = unsafe { gossamer_runtime::c_abi::gos_rt_chan_recv_ctx_option(chan.cast(), handle) };
     // Keep `inner_arc` alive past the call to be sure.
     drop(inner_arc);
-    if raw.is_null() {
-        return None;
-    }
-    // SAFETY: `raw` is `Box::into_raw(GosResult)` from the
-    // runtime helper. Reclaim ownership and inspect disc.
-    let boxed = unsafe { Box::from_raw(raw) };
-    if boxed.disc == 0 {
-        Some(boxed.payload)
+    // `raw` is the 2-word by-value `Option`/`Result` (disc + payload); no box.
+    if gossamer_runtime::c_abi::gos_rt_result_disc(raw) == 0 {
+        Some(gossamer_runtime::c_abi::gos_rt_result_payload(raw))
     } else {
         None
     }

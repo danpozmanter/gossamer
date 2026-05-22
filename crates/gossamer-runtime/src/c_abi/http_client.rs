@@ -480,6 +480,18 @@ pub unsafe extern "C" fn gos_rt_http_request_method(req: *const GosHttpRequest) 
 /// `gos_rt_gc_reset`, which runs *after* the response is written
 /// to the socket). Skipping the copy removes another two
 /// allocations per request.
+/// Copies a borrowed body string into an owned (gos-allocated) string the
+/// response frees in `drop_handler_result`. Null passes through. Lets the
+/// caller's transient body (e.g. a `format!` result) be freed independently of
+/// the stored response (I4: a runtime struct that stores a string owns it).
+fn gos_response_own_body(body: *const c_char) -> *mut c_char {
+    if body.is_null() {
+        std::ptr::null_mut()
+    } else {
+        alloc_cstring(unsafe { CStr::from_ptr(body).to_bytes() })
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_response_text_new(
     status: i64,
@@ -497,7 +509,7 @@ pub unsafe extern "C" fn gos_rt_http_response_text_new(
         // is the unique reclaim site.
         Box::into_raw(Box::new(GosHttpResponse {
             status,
-            body: SyncRawPtr::new(body.cast_mut()),
+            body: SyncRawPtr::new(gos_response_own_body(body)),
             headers: Vec::new(),
             body_bytes: None,
         }))
@@ -688,7 +700,7 @@ fn alloc_response_stream_blob(handle: i64, status: i64, content_type: &str) -> *
     Box::into_raw(Box::new([handle, status, ct_cs])).cast::<i64>()
 }
 
-fn err_result_with_msg(msg: &str) -> *mut GosResult {
+fn err_result_with_msg(msg: &str) -> i128 {
     let cs = std::ffi::CString::new(msg).unwrap_or_default();
     let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
     gos_rt_result_new(1, err as i64)
@@ -699,8 +711,8 @@ fn err_result_with_msg(msg: &str) -> *mut GosResult {
 /// access (`r.status`, `r.body`) routes through the existing
 /// `gos_rt_http_response_*` dispatch.
 #[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_http_get(url: *const c_char, headers: *mut GosVec) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub extern "C" fn gos_rt_http_get(url: *const c_char, headers: *mut GosVec) -> i128 {
+    ffi_entry!(0i128, {
         let url_str = if url.is_null() {
             return unsafe { err_result_with_msg("http::get: url is null") };
         } else {
@@ -785,8 +797,8 @@ pub unsafe extern "C" fn gos_rt_http_stream(
     url: *const c_char,
     body: *const c_char,
     headers: *mut GosVec,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+) -> i128 {
+    ffi_entry!(0i128, {
         let method_str = if method.is_null() {
             "GET".to_string()
         } else {
@@ -890,8 +902,8 @@ pub unsafe extern "C" fn gos_rt_http_stream(
 /// I/O failure drops the stream from the registry and returns
 /// None.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_http_stream_next_line(rs: *const i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_http_stream_next_line(rs: *const i64) -> i128 {
+    ffi_entry!(0i128, {
         if rs.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }

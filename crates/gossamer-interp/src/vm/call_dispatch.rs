@@ -5,12 +5,11 @@ impl Vm {
     /// Invokes a top-level function by name.
     pub fn call(&self, name: &str, args: Vec<Value>) -> RuntimeResult<Value> {
         let callee = self
-            .globals
-            .get(name)
-            .cloned()
+            .lookup_global(name)
             .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
+        let interned = crate::value::intern_type_name(name);
         self.call_stack.borrow_mut().clear();
-        self.call_stack.borrow_mut().push(name.to_string());
+        self.call_stack.borrow_mut().push(interned);
         let result = self.apply(callee, args);
         if result.is_ok() {
             self.call_stack.borrow_mut().pop();
@@ -19,10 +18,15 @@ impl Vm {
     }
 
     /// Snapshot of the in-flight (or last failing) call stack.
-    /// Outermost frame first.
+    /// Outermost frame first. Returns owned `String`s for API
+    /// stability; underlying storage is `&'static str`.
     #[must_use]
     pub fn call_stack_snapshot(&self) -> Vec<String> {
-        self.call_stack.borrow().clone()
+        self.call_stack
+            .borrow()
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
     }
 
     pub(crate) fn apply(&self, global: Global, args: Vec<Value>) -> RuntimeResult<Value> {
@@ -47,11 +51,9 @@ impl Vm {
                     .call_stack
                     .borrow()
                     .last()
-                    .is_none_or(|top| top != chunk.name.as_str());
+                    .is_none_or(|top| *top != chunk.name);
                 if pushed_frame {
-                    self.call_stack
-                        .borrow_mut()
-                        .push(chunk.name.as_str().to_string());
+                    self.call_stack.borrow_mut().push(chunk.name);
                 }
                 let state = self.chunk_state_for(&chunk);
                 // Tier D2 — decrement the per-`Vm` hot counter and
@@ -64,7 +66,7 @@ impl Vm {
                 // scripts that never call any function 16+ times skip the
                 // Cranelift compile pass entirely — a ~3 MB RSS saving for
                 // programs that don't benefit from JIT.
-                if chunk.name.as_str() != "main" {
+                if chunk.name != "main" {
                     let hot = state.hot_counter.get();
                     if hot > 0 && hot != crate::bytecode::HOT_DISABLED {
                         let next = hot - 1;
@@ -89,7 +91,7 @@ impl Vm {
                 let jit_opt = if self.jit_override_count.load(Ordering::Acquire) == 0 {
                     None
                 } else {
-                    self.jit.read().overrides.get(chunk.name.as_str()).cloned()
+                    self.jit.read().overrides.get(chunk.name).cloned()
                 };
                 if let Some(jit) = jit_opt {
                     match jit_call::invoke(&jit, &args) {

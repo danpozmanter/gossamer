@@ -105,6 +105,27 @@ impl<'a> Builder<'a> {
                         if dest_callable && (src_is_fn_def || src_names_fn) {
                             local = self.coerce_to_fn_trait_if_needed(local, ret_ty, expr.span);
                         }
+                        // Array-literal → Vec coercion. `fn cols()
+                        // -> [String] { return ["a", "b"] }` lowers
+                        // the literal as a flat `Array<String; 2>`
+                        // because `lower_array_list` only takes the
+                        // Vec path when `expr.ty` is already
+                        // `Vec(_)`/`Slice(_)`. Without an explicit
+                        // coercion at the return site, the caller
+                        // reads the stack-Array bytes as a GosVec
+                        // header and sees len=0 / segfaults. Detect
+                        // the (Array, Vec) shape mismatch and route
+                        // the value through `coerce_array_to_vec`
+                        // (which calls `gos_rt_vec_from_arr`).
+                        if let TyKind::Array { elem, len } = self.tcx.kind_of(value_ty).clone() {
+                            let target_elem = match self.tcx.kind_of(ret_ty) {
+                                TyKind::Vec(e) | TyKind::Slice(e) => Some(*e),
+                                _ => None,
+                            };
+                            if target_elem == Some(elem) {
+                                local = self.coerce_array_to_vec(local, elem, len, expr.span);
+                            }
+                        }
                         self.emit_assign(
                             Place::local(Local::RETURN),
                             Rvalue::Use(Operand::Copy(Place::local(local))),
@@ -417,9 +438,15 @@ impl<'a> Builder<'a> {
         // sibling, allocate a one-word `[disc]` heap aggregate so
         // match dispatch can uniformly load disc from offset 0.
         // Otherwise emit the variant index directly as i64.
-        if let Some((_enum_name, idx)) = self.enums.lookup(segments) {
+        if let Some((enum_name, idx)) = self.enums.lookup(segments) {
             if self.enums.has_any_payload(segments) {
-                return self.lower_user_enum_ctor(u32::try_from(idx).unwrap_or(0), &[], ty, span);
+                return self.lower_user_enum_ctor(
+                    &enum_name,
+                    u32::try_from(idx).unwrap_or(0),
+                    &[],
+                    ty,
+                    span,
+                );
             }
             let int_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
             let local = self.push_local(int_ty, None, false);
@@ -553,7 +580,62 @@ impl<'a> Builder<'a> {
             HirUnaryOp::Neg => UnOp::Neg,
             HirUnaryOp::Not => UnOp::Not,
             HirUnaryOp::RefShared | HirUnaryOp::RefMut => {
-                return Some(inner);
+                // For aggregate-typed operands (Vec, String, HashMap,
+                // struct, …) and opaque-handle Adts (Regex, SqlDb,
+                // Channel — all stored as i64 locals carrying a
+                // ptr-shaped value) the existing `inner` local already
+                // holds the canonical pointer the callee expects, so
+                // `&x` is a no-op.
+                //
+                // For `&mut`-on-named-place-of-scalar (i.e.
+                // `&mut state` where `state: i64`), the callee
+                // genuinely wants a pointer that lets it write back
+                // — without this, deref-assign through the borrowed
+                // ref lands on the value-as-ptr and segfaults. Emit
+                // `Rvalue::Ref` so the backend pulls a real slot
+                // address.
+                //
+                // We restrict the Rvalue::Ref path to `&mut` on
+                // genuine place expressions (path / field / index /
+                // nested deref) for SCALAR operands. Shared `&` on a
+                // literal or temporary keeps the historical
+                // value-passthrough so existing dispatch sites (e.g.
+                // `map.get(&k)` lowering to `gos_rt_map_get_i64(m,
+                // k_value)`) continue to work.
+                let scalar = matches!(
+                    self.tcx.kind_of(operand.ty),
+                    gossamer_types::TyKind::Int(_)
+                        | gossamer_types::TyKind::Float(_)
+                        | gossamer_types::TyKind::Bool
+                        | gossamer_types::TyKind::Char
+                );
+                let is_place_expr = matches!(
+                    operand.kind,
+                    HirExprKind::Path { .. }
+                        | HirExprKind::Field { .. }
+                        | HirExprKind::TupleIndex { .. }
+                        | HirExprKind::Index { .. }
+                        | HirExprKind::Unary {
+                            op: HirUnaryOp::Deref,
+                            ..
+                        }
+                );
+                if !(scalar && matches!(op, HirUnaryOp::RefMut) && is_place_expr) {
+                    return Some(inner);
+                }
+                let place = self
+                    .lower_place_expr(operand)
+                    .unwrap_or(Place::local(inner));
+                let dest = self.fresh(ty);
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::Ref {
+                        mutable: true,
+                        place,
+                    },
+                    span,
+                );
+                return Some(dest);
             }
             HirUnaryOp::Deref => {
                 let cell_kind = self.local_runtime_kind.get(&inner).copied();
@@ -681,6 +763,54 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
+        // Short-circuit `&&` / `||`. The pre-0.10.0 lowering called
+        // `lower_expr` on BOTH sides up front, so any side-effecting
+        // or out-of-bounds RHS fired even when the LHS already
+        // determined the result. `while j > 0 && arr[j - 1] < si`
+        // panicked with "index is -1" once j reached 0 because
+        // `arr[j - 1]` evaluated unconditionally. Build a small
+        // branch lattice (eval LHS, branch on it, eval RHS only on
+        // the path that needs it, merge into a single result).
+        if matches!(op, HirBinaryOp::And | HirBinaryOp::Or) {
+            let bool_ty = self.tcx.bool_ty();
+            let result = self.fresh(bool_ty);
+            let lhs_local = self.lower_expr(lhs)?;
+            let rhs_block = self.new_block(span);
+            let short_block = self.new_block(span);
+            let join_block = self.new_block(span);
+            // For `&&`: LHS true → eval RHS; LHS false → short-circuit false.
+            // For `||`: LHS true → short-circuit true; LHS false → eval RHS.
+            let (true_target, false_target) = match op {
+                HirBinaryOp::And => (rhs_block, short_block),
+                HirBinaryOp::Or => (short_block, rhs_block),
+                _ => unreachable!(),
+            };
+            self.terminate(Terminator::SwitchInt {
+                discriminant: Operand::Copy(Place::local(lhs_local)),
+                arms: vec![(0, false_target)],
+                default: true_target,
+            });
+            // Short-circuit arm: write the LHS-determined constant.
+            self.set_current(short_block);
+            let short_value = i64::from(!matches!(op, HirBinaryOp::And));
+            self.emit_assign(
+                Place::local(result),
+                Rvalue::Use(Operand::Const(ConstValue::Int(short_value as i128))),
+                span,
+            );
+            self.terminate(Terminator::Goto { target: join_block });
+            // RHS arm: evaluate the right operand and copy into result.
+            self.set_current(rhs_block);
+            let rhs_local = self.lower_expr(rhs)?;
+            self.emit_assign(
+                Place::local(result),
+                Rvalue::Use(Operand::Copy(Place::local(rhs_local))),
+                span,
+            );
+            self.terminate(Terminator::Goto { target: join_block });
+            self.set_current(join_block);
+            return Some(result);
+        }
         let lhs_local = self.lower_expr(lhs)?;
         let rhs_local = self.lower_expr(rhs)?;
         // 0.7.0 flag::Cell auto-deref at the binary-op boundary —
@@ -928,6 +1058,90 @@ impl<'a> Builder<'a> {
                 Some(base)
             }
             HirExprKind::Index { base, index } => {
+                // For a Vec / Slice base whose elements are multi-slot
+                // aggregates (`bodies[i].x` over a `Vec<Body>`), a flat
+                // `Projection::Index` would treat the local's value as
+                // an inline element buffer — but the local holds a
+                // `*mut GosVec` *header*, so the index strides off the
+                // header fields instead of the data buffer (every
+                // access past element 0 reads garbage). Route through
+                // `lower_index_access`, which emits
+                // `gos_rt_vec_get_ptr` to materialise the real element
+                // address; the returned local carries the element's
+                // struct tag so the appended `Field` projection
+                // resolves correctly.
+                // Prefer the base local's MIR-resolved type over the
+                // HIR expression type: a `let mut bodies: [Body; N]`
+                // binding is promoted to `Vec<Body>` on the MIR side
+                // (its local type is rewritten), but the HIR `base.ty`
+                // still reads `[Body; N]`. Using only the HIR type
+                // would miss the promotion and fall through to the
+                // flat-projection path that strides off the GosVec
+                // header.
+                let base_ty_effective = match &base.kind {
+                    HirExprKind::Path { segments, .. } => segments
+                        .first()
+                        .and_then(|seg| self.lookup_local(&seg.name))
+                        .map_or(base.ty, |l| self.locals[l.0 as usize].ty),
+                    _ => base.ty,
+                };
+                let base_kind = {
+                    use gossamer_types::TyKind;
+                    let raw = self.tcx.kind_of(base_ty_effective).clone();
+                    match raw {
+                        TyKind::Ref { inner, .. } => self.tcx.kind_of(inner).clone(),
+                        other => other,
+                    }
+                };
+                if let gossamer_types::TyKind::Vec(elem) | gossamer_types::TyKind::Slice(elem) =
+                    base_kind
+                {
+                    let elem_multislot = matches!(
+                        self.tcx.kind_of(elem),
+                        gossamer_types::TyKind::Tuple(_) | gossamer_types::TyKind::Adt { .. }
+                    ) && self.type_slot_bytes(elem) > 8;
+                    if elem_multislot {
+                        // Materialise the element address with
+                        // `gos_rt_vec_get_ptr` and bind it to a
+                        // `&elem`-typed local. A reference-typed local
+                        // makes the backend auto-deref it (load the
+                        // stored pointer) before walking the appended
+                        // `Field` projection, so both reads *and*
+                        // writes land on the element inside the Vec's
+                        // data buffer rather than a stack copy. The
+                        // element's struct tag is propagated so the
+                        // `Field` arm can resolve field indices.
+                        use gossamer_types::{Mutbl, TyKind};
+                        let base_place = self.lower_place_expr(base)?;
+                        let index_local = self.lower_expr(index)?;
+                        let ref_ty = self.tcx.intern(TyKind::Ref {
+                            mutability: Mutbl::Mut,
+                            inner: elem,
+                        });
+                        let ptr_local = self.fresh(ref_ty);
+                        let next = self.new_block(expr.span);
+                        self.terminate(Terminator::Call {
+                            callee: Operand::Const(ConstValue::Str(
+                                "gos_rt_vec_get_ptr".to_string(),
+                            )),
+                            args: vec![
+                                Operand::Copy(Place::local(base_place.local)),
+                                Operand::Copy(Place::local(index_local)),
+                            ],
+                            destination: Place::local(ptr_local),
+                            target: Some(next),
+                        });
+                        self.set_current(next);
+                        if let Some(elem_struct) =
+                            self.local_elem_struct.get(&base_place.local).cloned()
+                        {
+                            self.local_struct.insert(ptr_local, elem_struct);
+                        } else if let Some(name) = self.struct_name_of(elem) {
+                            self.local_struct.insert(ptr_local, name);
+                        }
+                        return Some(Place::local(ptr_local));
+                    }
+                }
                 let mut base_place = self.lower_place_expr(base)?;
                 let index_local = self.lower_expr(index)?;
                 base_place
@@ -935,14 +1149,49 @@ impl<'a> Builder<'a> {
                     .push(crate::ir::Projection::Index(index_local));
                 Some(base_place)
             }
+            // `*operand = ...` — deref-assign through a `&mut T` /
+            // `*mut T`. The Place is the base local with a `Deref`
+            // projection appended; the lowerer's `Place::Deref`
+            // arm in cranelift/LLVM stores through the pointer.
+            HirExprKind::Unary {
+                op: gossamer_hir::HirUnaryOp::Deref,
+                operand,
+            } => {
+                let mut base = self.lower_place_expr(operand)?;
+                base.projection.push(crate::ir::Projection::Deref);
+                Some(base)
+            }
             _ => None,
         }
     }
 
     pub(crate) fn lower_tuple(&mut self, elems: &[HirExpr], ty: Ty, span: Span) -> Option<Local> {
+        use gossamer_types::TyKind;
+        // Declared element types (when `ty` resolved to a concrete
+        // Tuple) let us coerce a flat `[T; N]` array-literal element
+        // into a heap `GosVec` when the tuple slot is declared `[T]`
+        // (e.g. the `(String, [u8])` pairs passed to
+        // `archive::tar::write`). Without this the inline array
+        // widens the tuple and the consumer reads element[0] as the
+        // Vec pointer.
+        let elem_tys: Option<Vec<Ty>> = match self.tcx.kind_of(ty) {
+            TyKind::Tuple(tys) => Some(tys.clone()),
+            _ => None,
+        };
         let mut operands = Vec::with_capacity(elems.len());
-        for elem in elems {
-            let local = self.lower_expr(elem)?;
+        for (i, elem) in elems.iter().enumerate() {
+            let mut local = self.lower_expr(elem)?;
+            if let Some(field_ty) = elem_tys.as_ref().and_then(|t| t.get(i)).copied() {
+                let val_ty = self.locals[local.0 as usize].ty;
+                if let TyKind::Array { elem: e, len } = self.tcx.kind_of(val_ty).clone()
+                    && matches!(
+                        self.tcx.kind_of(field_ty),
+                        TyKind::Vec(_) | TyKind::Slice(_)
+                    )
+                {
+                    local = self.coerce_array_to_vec(local, e, len, span);
+                }
+            }
             operands.push(Operand::Copy(Place::local(local)));
         }
         let dest = self.fresh(ty);
@@ -965,7 +1214,34 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         let receiver_local = self.lower_expr(receiver)?;
-        let dest = self.fresh(ty);
+        // A tuple element read out of a Vec (`v[i].0`) inherits its
+        // field types from the element type the binding was pinned
+        // to; when that came from an unannotated `let mut xs = []`
+        // the int-literal fields can remain `Var`, which lowers to a
+        // `ptr` load (and the value is then mis-dispatched as a
+        // string). Pin the receiver's tuple field types to i64 so the
+        // field load reads an integer slot.
+        let recv_ty = self.locals[receiver_local.0 as usize].ty;
+        let resolved_recv_ty = self.resolve_var_tuple_fields(recv_ty);
+        if resolved_recv_ty != recv_ty {
+            self.locals[receiver_local.0 as usize].ty = resolved_recv_ty;
+        }
+        // Pin the destination to the resolved field type when the
+        // expression's own type is still unresolved.
+        let dest_ty = if matches!(
+            self.tcx.kind_of(ty),
+            gossamer_types::TyKind::Var(_) | gossamer_types::TyKind::Error
+        ) {
+            match self.tcx.kind_of(resolved_recv_ty) {
+                gossamer_types::TyKind::Tuple(fields) => {
+                    fields.get(index as usize).copied().unwrap_or(ty)
+                }
+                _ => ty,
+            }
+        } else {
+            ty
+        };
+        let dest = self.fresh(dest_ty);
         let place = Place {
             local: receiver_local,
             projection: vec![crate::ir::Projection::Field(index)],
@@ -1127,26 +1403,29 @@ impl<'a> Builder<'a> {
             // dispatch then routes the i64 ptr through the integer
             // helper instead of the string helper.
             //
-            // For `Vec<Option<T>>` / `Vec<Result<T, _>>` the
-            // happy-path encoding makes each element value the
-            // unwrapped `T`. Peel one wrapper so `match v[i] {
-            // Some(k) => println!("{k}") }` sees `k: T` and
-            // dispatches to the right print helper.
-            let elem_unwrapped = match self.tcx.kind_of(elem) {
-                TyKind::Adt { .. } if self.is_result_or_option_adt(elem) => {
-                    self.first_generic_of(elem).unwrap_or(elem)
-                }
-                _ => elem,
-            };
+            // `Vec<Option<T>>` / `Vec<Result<T, _>>` store each
+            // element as the wrapped tagged-union handle (a
+            // `*mut [disc, payload]` cell), exactly like any other
+            // enum — `xs.push(None)` and `xs.push(Some(v))` must be
+            // distinguishable at read time. Read the element back as
+            // the wrapper so `match v[i] { Some(k) => …, None => … }`
+            // sees the real discriminant; the `Some(k)` arm still
+            // binds `k: T`. (An earlier "peel to the unwrapped T"
+            // shortcut assumed a happy-path encoding the compiled
+            // push side never used, so `xs[i]` handed back the raw
+            // handle pointer as if it were the payload.)
+            let elem_unwrapped = elem;
             let elem_kind_now = self.tcx.kind_of(elem_unwrapped);
             let dest_ty = match elem_kind_now {
                 TyKind::String | TyKind::Bool | TyKind::Char | TyKind::Float(_) => elem_unwrapped,
                 TyKind::Int(_) => elem_unwrapped,
-                // Aggregate elements (struct, tuple) — keep the
-                // pinned element type so subsequent
-                // `Field(idx)` projections find the right field
-                // layout via `local_struct`.
-                TyKind::Adt { .. } | TyKind::Tuple(_) => elem_unwrapped,
+                // Aggregate elements (struct, tuple, fixed array) —
+                // keep the pinned element type so subsequent
+                // `Field(idx)` / `Index(k)` projections find the
+                // right slot layout. A `Vec<[i64; 2]>` element is a
+                // multi-slot inline array; preserving the `Array`
+                // type lets the chained `v[i][j]` read each slot.
+                TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. } => elem_unwrapped,
                 // `Vec<json::Value>` indexing must produce a
                 // `JsonValue`-typed local so subsequent
                 // `json::get(&v[i], ...)` / `v[i].clone()` dispatch
@@ -1175,14 +1454,23 @@ impl<'a> Builder<'a> {
             // would hand back just the first String and the
             // subsequent `.0` / `.1` projection would dereference
             // that c-string ptr as if it were a tuple aggregate.
+            // A by-value `Result`/`Option` element is a 16-byte `i128` read
+            // through the dedicated helper (not the 8-byte `get_i64`, which
+            // would drop the payload, nor the aggregate-address `get_ptr`).
+            let elem_is_result_option = matches!(
+                self.tcx.kind_of(elem_unwrapped),
+                TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
+            );
             let elem_is_multislot = matches!(
                 self.tcx.kind_of(elem_unwrapped),
-                TyKind::Tuple(_) | TyKind::Adt { .. }
+                TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
             ) && self.type_slot_bytes(elem_unwrapped) > 8;
-            let helper = if elem_is_multislot {
-                "gos_rt_vec_get_ptr"
+            let (helper, dest_ty) = if elem_is_result_option {
+                ("gos_rt_vec_get_i128", elem_unwrapped)
+            } else if elem_is_multislot {
+                ("gos_rt_vec_get_ptr", dest_ty)
             } else {
-                "gos_rt_vec_get_i64"
+                ("gos_rt_vec_get_i64", dest_ty)
             };
             let dest = self.fresh(dest_ty);
             let next = self.new_block(span);
@@ -1208,7 +1496,26 @@ impl<'a> Builder<'a> {
             }
             return Some(dest);
         }
-        let dest = self.fresh(ty);
+        // Fixed-array index (`a[j]` where `a: [T; N]`). When the
+        // array came out of a multi-slot Vec element (`v[i][j]`) its
+        // element type can still be an inference variable, which the
+        // codegen would load as a `ptr` and then mis-dispatch (e.g.
+        // concat as a string). Resolve a `Var` element to i64 on the
+        // base local and pin the destination to match.
+        let base_ty = self.locals[base_local.0 as usize].ty;
+        let resolved_base_ty = self.resolve_var_tuple_fields(base_ty);
+        if resolved_base_ty != base_ty {
+            self.locals[base_local.0 as usize].ty = resolved_base_ty;
+        }
+        let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Var(_) | TyKind::Error) {
+            match self.tcx.kind_of(resolved_base_ty) {
+                TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => *elem,
+                _ => ty,
+            }
+        } else {
+            ty
+        };
+        let dest = self.fresh(dest_ty);
         let place = Place {
             local: base_local,
             projection: vec![crate::ir::Projection::Index(index_local)],

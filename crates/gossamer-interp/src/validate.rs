@@ -934,6 +934,22 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, dst_v)?;
                 check_i(op_idx, src_i)?;
             }
+            Op::VariantIs {
+                dst, src, name_idx, ..
+            } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, src)?;
+                check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
+            }
+            Op::VariantField { dst, src, .. } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, src)?;
+            }
+            Op::StructIs { dst, src, name_idx } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, src)?;
+                check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
+            }
         }
     }
 
@@ -1018,7 +1034,7 @@ mod tests {
 
     fn minimal_chunk() -> FnChunk {
         FnChunk {
-            name: "test".to_string(),
+            name: "test",
             arity: 0,
             register_count: 2,
             float_count: 1,

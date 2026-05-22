@@ -149,12 +149,12 @@ impl<'a> Lowerer<'a> {
         // record the current shadow-stack depth, then run the
         // unified safepoint hook.
         self.emit_gc_prologue();
-        // Call-stack push for panic-trace + SIGQUIT dump support.
-        // Matches the matching `gos_rt_stack_pop` in the return
-        // path. Function name is interned as a module global;
-        // file + line are empty placeholders until per-body
-        // source-span data flows through MIR.
-        self.emit_stack_push_prologue();
+        // No per-call call-stack instrumentation: panic traces and
+        // SIGQUIT dumps for the compiled tier come from unwinding the
+        // real machine stack on demand (see `gos_rt_panic` /
+        // `sigquit::render_to`). A push/pop pair on every function
+        // entry blocks leaf-function inlining and serialises on a
+        // global lock, which is unacceptable in hot numeric loops.
         // Unconditional jump into the MIR entry block.
         writeln!(self.out, "  br label %bb0").unwrap();
         for block in &self.body.blocks {

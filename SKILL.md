@@ -532,6 +532,7 @@ Bare `gos` drops into the REPL.
 | `gos lint [--deny-warnings] PATH` | Run the lint suite. |
 | `gos explain CODE` | Long-form rationale for a diagnostic code. |
 | `gos watch --command CMD PATH` | Re-run on file change. |
+| `gos clean [--vendor] [--dry-run]` | Remove build artifacts (`target/`), the per-project `.gos-cache` IR-object cache, and the frontend cache; `--vendor` also drops `vendor/`. |
 | `gos new ID --path DIR` | Scaffold a project. |
 | `gos add SPEC` / `remove ID` / `tidy` / `fetch` / `vendor` | Package manager. |
 | `gos publish` / `yank` / `login` / `logout` / `owner` | Registry workflow (0.8.0). Credentials in `~/.config/gossamer/credentials.toml`, Ed25519-signed tarballs, `tarball_sha256` pinned in the lockfile. |
@@ -599,7 +600,9 @@ executed by `gos test`. Mark non-runnable fences as
   `rstrip_chars`, `zfill(width)`, `center(width, pad_char)`, and
   `slice(start, end) -> Result<String, errors::Error>` — the
   non-panicking byte-range slice. Use `String::slice(s, a, b)?` to
-  propagate.
+  propagate. `s.byte_at(i) -> i64` returns the UTF-8 byte at index `i`
+  (0 if out of range), the constant-time primitive for byte-level
+  scanners/parsers.
 - `std::strconv` — `parse_int`, `parse_i64`, `parse_u64`,
   `parse_float`, `parse_f64`, `parse_bool`, `format_int`,
   `format_i64`, `format_float`, `format_f64`, `itoa`, `atoi`.
@@ -695,28 +698,31 @@ executed by `gos test`. Mark non-runnable fences as
     `ResponseWriter::push_promise`, `ResponseWriter::write_trailers`,
     `Request::trailers`.
 - `std::encoding::{json, base64, hex, binary}`. Every user struct
-  auto-derives `<Type>::from_json(text) -> Result<Type, errors::Error>`
-  and `<Type>::to_json(self) -> Result<String, errors::Error>` for
-  one-line, strict serde-style (de)serialization — the decoder
-  checks each field against its declared type and rejects type
-  mismatches and missing required fields with path-qualified
+  gets a pair of generic serializer free functions, called with a
+  turbofish type argument:
+  `from_json::<Type>(text) -> Result<Type, errors::Error>` and
+  `to_json::<Type>(value) -> Result<String, errors::Error>`. This is
+  the single spelling — there are no `Type::from_json` methods. The
+  decoder checks each field against its declared type and rejects
+  type mismatches and missing required fields with path-qualified
   errors. Nested structs, `[T]` / `Vec<T>` / `[T; N]` / tuples /
   `Option<T>` / `HashMap<String, V>` walk recursively; a
   `json::Value` field passes through untouched.
-  `let user: User = User::from_json(&text)?` is the canonical
+  `let user: User = from_json::<User>(&text)?` is the canonical
   shape. The dynamic `json::parse` / `json::decode` /
-  `json::render` surface from the prior release stays available
-  for documents whose shape isn't known at compile time. The
-  same synth also emits `from_yaml` / `to_yaml` (piggybacks on
-  `to_json` + `yaml::from_json`) so `Config::from_yaml(&text)?`
-  works against the same struct definition. Narrow integer
-  fields (`i8`/`i16`/`i32`/`u8`/`u16`/`u32`) are accepted and
-  round-trip through the `as <width>` cast at the JSON boundary.
+  `json::render` surface stays available for documents whose shape
+  isn't known at compile time (`json::as_i64` / `as_f64` / `as_str`
+  return `Option<T>`). The same synth also emits
+  `from_yaml::<T>` / `to_yaml::<T>` (piggybacks on `to_json` +
+  `yaml::from_json`) so `from_yaml::<Config>(&text)?` works against
+  the same struct definition. Narrow integer fields
+  (`i8`/`i16`/`i32`/`u8`/`u16`/`u32`) are accepted and round-trip
+  through the `as <width>` cast at the JSON boundary.
 - `std::encoding::yaml` — YAML 1.2 parse/encode plus
   `yaml::to_json(text)` / `yaml::from_json(text)` text-shape
   converters that mirror `toml::to_json` / `from_json`. The
-  auto-derived `from_yaml` / `to_yaml` methods on every user
-  struct compose these with the JSON pair.
+  auto-derived `from_yaml::<T>` / `to_yaml::<T>` functions on every
+  user struct compose these with the JSON pair.
 - `std::sync` — `Mutex`, `RwLock`, atomics, `channel`, `Once`,
   `WaitGroup` (`new`, `add`, `done`, `wait`), and `Map` (a
   concurrent string-keyed string-value map; `set`/`get`/`delete`/

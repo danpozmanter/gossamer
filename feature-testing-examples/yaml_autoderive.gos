@@ -1,11 +1,11 @@
 // YAML auto-derive parity — every user struct that the synthesizer
-// can classify gets `from_yaml` / `to_yaml` methods alongside the
-// existing JSON pair, plus `from_toml` / `to_toml`. The methods
-// piggy-back on `to_json` / `from_json` so the validation logic
+// can classify gets `from_yaml::<T>` / `to_yaml::<T>` functions
+// alongside the JSON pair, plus `from_toml::<T>` / `to_toml::<T>`.
+// They piggy-back on `to_json` / `from_json` so the validation logic
 // (strict field type checks, missing-field errors) is shared.
 //
 // Used by tier_parity to guarantee VM + cranelift + LLVM agree on
-// the synthesized methods' behaviour.
+// the synthesized functions' behaviour.
 
 use std::errors
 
@@ -17,15 +17,15 @@ struct ServerConfig {
 
 fn main() -> Result<(), errors::Error> {
     let yaml_text = "name: gossamer\nport: 8080\ndebug: true\n".to_string()
-    let cfg = ServerConfig::from_yaml(&yaml_text)?
+    let cfg = from_yaml::<ServerConfig>(&yaml_text)?
     println!("parsed name={} port={} debug={}", cfg.name, cfg.port, cfg.debug)
 
-    let round_trip = cfg.to_yaml()?
-    let again = ServerConfig::from_yaml(&round_trip)?
+    let round_trip = to_yaml::<ServerConfig>(cfg)?
+    let again = from_yaml::<ServerConfig>(&round_trip)?
     println!("round trip name={} port={} debug={}", again.name, again.port, again.debug)
 
-    let as_json = cfg.to_json()?
-    let from_json_text = ServerConfig::from_json(&as_json)?
+    let as_json = to_json::<ServerConfig>(cfg)?
+    let from_json_text = from_json::<ServerConfig>(&as_json)?
     println!("via json name={}", from_json_text.name)
 
     Ok(())

@@ -133,8 +133,8 @@ pub unsafe extern "C" fn gos_rt_concat_finish() -> *mut c_char {
 /// for null). Lets the match on `error.cause()` see a real
 /// discriminant and terminate the cause-chain walk.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_error_cause(err: *const GosError) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_error_cause(err: *const GosError) -> i128 {
+    ffi_entry!(0i128, {
         let cause = if err.is_null() {
             std::ptr::null_mut::<GosError>()
         } else {
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn gos_rt_error_cause(err: *const GosError) -> *mut GosRes
         } else {
             (0, cause as i64)
         };
-        Box::into_raw(Box::new(GosResult { disc, payload }))
+        crate::c_abi::vec::pack_result(disc, payload)
     })
 }
 
@@ -180,14 +180,9 @@ pub unsafe extern "C" fn gos_rt_error_is(err: *const GosError, needle: *const c_
 /// `ptr` points directly to the array of `GosError*` elements (stack-allocated
 /// fixed-size array from the compiled tier); `len` is the compile-time count.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_errors_join(ptr: *const *mut GosError, len: i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
-        let none = || {
-            Box::into_raw(Box::new(GosResult {
-                disc: 1,
-                payload: 0,
-            }))
-        };
+pub unsafe extern "C" fn gos_rt_errors_join(ptr: *const *mut GosError, len: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let none = || crate::c_abi::vec::pack_result(1, 0);
         if ptr.is_null() || len <= 0 {
             return none();
         }
@@ -215,10 +210,7 @@ pub unsafe extern "C" fn gos_rt_errors_join(ptr: *const *mut GosError, len: i64)
             message: SyncRawPtr::new(leaked),
             cause: SyncRawPtr::NULL,
         }));
-        Box::into_raw(Box::new(GosResult {
-            disc: 0,
-            payload: err as i64,
-        }))
+        crate::c_abi::vec::pack_result(0, err as i64)
     })
 }
 
@@ -226,14 +218,9 @@ pub unsafe extern "C" fn gos_rt_errors_join(ptr: *const *mut GosError, len: i64)
 /// with "; " and returns `Some(joined_error)` as a `*mut GosResult`.
 /// Returns a None-shaped result when `vec` is null or empty.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_errors_join_vec(vec: *mut GosVec) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
-        let none = || {
-            Box::into_raw(Box::new(GosResult {
-                disc: 1,
-                payload: 0,
-            }))
-        };
+pub unsafe extern "C" fn gos_rt_errors_join_vec(vec: *mut GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        let none = || crate::c_abi::vec::pack_result(1, 0);
         if vec.is_null() {
             return none();
         }
@@ -265,9 +252,6 @@ pub unsafe extern "C" fn gos_rt_errors_join_vec(vec: *mut GosVec) -> *mut GosRes
             message: SyncRawPtr::new(leaked),
             cause: SyncRawPtr::NULL,
         }));
-        Box::into_raw(Box::new(GosResult {
-            disc: 0,
-            payload: err as i64,
-        }))
+        crate::c_abi::vec::pack_result(0, err as i64)
     })
 }

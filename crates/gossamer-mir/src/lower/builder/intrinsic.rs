@@ -816,7 +816,8 @@ impl<'a> Builder<'a> {
                     },
                     span,
                 );
-                let dest = self.fresh(ty);
+                let rty = self.result_repr_ty(ty);
+                let dest = self.fresh(rty);
                 self.emit_assign(
                     Place::local(dest),
                     Rvalue::CallIntrinsic {
@@ -838,7 +839,7 @@ impl<'a> Builder<'a> {
         &mut self,
         joined: &str,
         args: &[HirExpr],
-        _ty: Ty,
+        ty: Ty,
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::IntTy;
@@ -862,6 +863,92 @@ impl<'a> Builder<'a> {
                     args: vec![
                         Operand::Copy(Place::local(fallback)),
                         Operand::Copy(Place::local(opt)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            // `option::map(f, opt) -> Option<U>`. Closure-arg first
+            // (Gossamer's data-last `|>` syntactic-sugar passes the
+            // pipe value as the *trailing* arg), opt second. Builds
+            // a fresh Option packed in `*mut GosResult` with disc=0
+            // for Some(mapped) and disc=1 for None passthrough.
+            ("option::map", 2) => {
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let opt_local = self.lower_expr(&args[1])?;
+                let opt_ty = {
+                    let substs = gossamer_types::Substs::from_types([i64_ty]);
+                    self.tcx.intern(gossamer_types::TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                        substs,
+                    })
+                };
+                let dest = self.fresh(opt_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_option_map_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(opt_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            // `result::default_with(f, res) -> T`. Data-last pipe: the
+            // closure is arg 0, the Result arg 1. Returns the `Ok`
+            // value, or the closure applied to the `Err` payload.
+            ("result::default_with", 2) => {
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let res_local = self.lower_expr(&args[1])?;
+                let dest_ty = if matches!(
+                    self.tcx.kind_of(ty),
+                    gossamer_types::TyKind::Var(_)
+                        | gossamer_types::TyKind::Error
+                        | gossamer_types::TyKind::Never
+                ) {
+                    i64_ty
+                } else {
+                    ty
+                };
+                let dest = self.fresh(dest_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(
+                        "gos_rt_result_default_with".to_string(),
+                    )),
+                    args: vec![
+                        Operand::Copy(Place::local(res_local)),
+                        Operand::Copy(Place::local(closure_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            // `result::map(f, res) -> Result<U, E>`. Same shape as
+            // `option::map`; Err passes through unchanged.
+            ("result::map", 2) => {
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let res_local = self.lower_expr(&args[1])?;
+                let err_ty = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([i64_ty, err_ty]);
+                let res_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                let dest = self.fresh(res_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_result_map_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(closure_local)),
+                        Operand::Copy(Place::local(res_local)),
                     ],
                     destination: Place::local(dest),
                     target: Some(next),
@@ -1176,5 +1263,241 @@ impl<'a> Builder<'a> {
             span,
         );
         Some(unit)
+    }
+
+    /// Materialise a HashMap `m.iter()` bound directly to a
+    /// `Vec<(K, V)>` into a real heap vector of `(K, V)` tuples.
+    /// Mirrors the `for (k, v) in m.iter()` lowering: snapshot the
+    /// keys via `gos_rt_map_keys_*`, then `get_or` each value and
+    /// push the `(k, v)` tuple. The for-loop form is handled earlier
+    /// by `try_lower_for_hashmap_iter`; this covers the direct-bind
+    /// form (`let entries = m.iter()`) that otherwise dispatched the
+    /// map receiver through `gos_rt_arr_iter` and segfaulted on the
+    /// compiled tiers.
+    pub(crate) fn materialize_hashmap_entries(
+        &mut self,
+        receiver: &HirExpr,
+        recv_ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let str_ty = self.tcx.string_ty();
+        let key_kind = self.hash_map_key_kind(recv_ty);
+        let value_kind = self.hash_map_value_kind(recv_ty);
+        let key_ty = match key_kind {
+            Some(MapKeyKind::String) => str_ty,
+            _ => i64_ty,
+        };
+        let val_ty = match value_kind {
+            Some(MapValueKind::String) => str_ty,
+            _ => i64_ty,
+        };
+        let keys_helper = match key_kind {
+            Some(MapKeyKind::String) => "gos_rt_map_keys_str",
+            _ => "gos_rt_map_keys_i64",
+        };
+        let get_or_helper = match (key_kind, value_kind) {
+            (Some(MapKeyKind::String), Some(MapValueKind::String)) => "gos_rt_map_get_or_str_str",
+            (Some(MapKeyKind::String), _) => "gos_rt_map_get_or_str_i64",
+            (_, Some(MapValueKind::String)) => "gos_rt_map_get_or_i64_str",
+            _ => "gos_rt_map_get_or_i64",
+        };
+
+        let unit_ty = self.tcx.unit();
+        let tuple_ty = self.tcx.intern(TyKind::Tuple(vec![key_ty, val_ty]));
+        let result_vec_ty = self.tcx.intern(TyKind::Vec(tuple_ty));
+
+        let recv_local = self.lower_expr(receiver)?;
+
+        // keys = m.keys() — a fresh real Vec<K> snapshot.
+        let keys_vec_ty = self.tcx.intern(TyKind::Vec(key_ty));
+        let keys_vec = self.fresh(keys_vec_ty);
+        let after_keys = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(keys_helper.to_string())),
+            args: vec![Operand::Copy(Place::local(recv_local))],
+            destination: Place::local(keys_vec),
+            target: Some(after_keys),
+        });
+        self.set_current(after_keys);
+
+        // len = keys.len()
+        let len_local = self.fresh(i64_ty);
+        let after_len = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+            args: vec![Operand::Copy(Place::local(keys_vec))],
+            destination: Place::local(len_local),
+            target: Some(after_len),
+        });
+        self.set_current(after_len);
+
+        // result = Vec::new(elem_bytes_of((K, V)))
+        let elem_bytes_val = i128::from(self.elem_bytes_of(tuple_ty).max(8));
+        let elem_bytes = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(elem_bytes),
+            Rvalue::Use(Operand::Const(ConstValue::Int(elem_bytes_val))),
+            span,
+        );
+        let result_vec = self.fresh(result_vec_ty);
+        let after_new = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("Vec::new".to_string())),
+            args: vec![Operand::Copy(Place::local(elem_bytes))],
+            destination: Place::local(result_vec),
+            target: Some(after_new),
+        });
+        self.set_current(after_new);
+
+        let counter = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let header = self.new_block(span);
+        let body_block = self.new_block(span);
+        let step_block = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let bool_ty = self.tcx.bool_ty();
+        let cmp = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(cmp),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(len_local)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(cmp)),
+            arms: vec![(0, exit)],
+            default: body_block,
+        });
+
+        self.set_current(body_block);
+        // key = keys[counter]
+        let ptr_local = self.fresh(i64_ty);
+        let after_ptr = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(keys_vec)),
+                Operand::Copy(Place::local(counter)),
+            ],
+            destination: Place::local(ptr_local),
+            target: Some(after_ptr),
+        });
+        self.set_current(after_ptr);
+        let key_local = self.fresh(key_ty);
+        let zero_off = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(zero_off),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let after_load = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(ptr_local)),
+                Operand::Copy(Place::local(zero_off)),
+            ],
+            destination: Place::local(key_local),
+            target: Some(after_load),
+        });
+        self.set_current(after_load);
+
+        // val = m.get_or(key, default)
+        let default_local = if val_ty == str_ty {
+            let l = self.fresh(str_ty);
+            self.emit_assign(
+                Place::local(l),
+                Rvalue::Use(Operand::Const(ConstValue::Str(String::new()))),
+                span,
+            );
+            l
+        } else {
+            let l = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(l),
+                Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                span,
+            );
+            l
+        };
+        let val_local = self.fresh(val_ty);
+        let after_val = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(get_or_helper.to_string())),
+            args: vec![
+                Operand::Copy(Place::local(recv_local)),
+                Operand::Copy(Place::local(key_local)),
+                Operand::Copy(Place::local(default_local)),
+            ],
+            destination: Place::local(val_local),
+            target: Some(after_val),
+        });
+        self.set_current(after_val);
+
+        // tuple = (key, val); result.push(tuple)
+        let tuple_local = self.fresh(tuple_ty);
+        self.emit_assign(
+            Place::local(tuple_local),
+            Rvalue::Aggregate {
+                kind: crate::ir::AggregateKind::Tuple,
+                operands: vec![
+                    Operand::Copy(Place::local(key_local)),
+                    Operand::Copy(Place::local(val_local)),
+                ],
+            },
+            span,
+        );
+        let push_dest = self.fresh(unit_ty);
+        let after_push = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(result_vec)),
+                Operand::Copy(Place::local(tuple_local)),
+            ],
+            destination: Place::local(push_dest),
+            target: Some(after_push),
+        });
+        self.set_current(after_push);
+        self.terminate(Terminator::Goto { target: step_block });
+
+        self.set_current(step_block);
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        let bumped = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(bumped),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Copy(Place::local(bumped))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        Some(result_vec)
     }
 }

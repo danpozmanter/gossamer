@@ -109,7 +109,7 @@ pub struct GcConfig {
 impl Default for GcConfig {
     fn default() -> Self {
         Self {
-            threshold_bytes: 4 * 1024 * 1024,
+            threshold_bytes: 256 * 1024 * 1024,
         }
     }
 }

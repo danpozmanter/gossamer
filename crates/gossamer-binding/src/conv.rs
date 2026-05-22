@@ -47,6 +47,7 @@ fn describe(v: &Value) -> &'static str {
         Value::Closure(_) | Value::Builtin(_) | Value::Native(_) => "callable",
         Value::Channel(_) => "channel",
         Value::Map(_) | Value::IntMap(_) => "map",
+        Value::Weak(_) => "weak",
         Value::Void => "void",
         Value::Uint(_) => "u64",
     }
@@ -696,7 +697,7 @@ impl ToGos for DynValue {
 
 fn value_to_dyn(value: &Value) -> DynValue {
     match value {
-        Value::Unit | Value::Void => DynValue::Nil,
+        Value::Unit | Value::Void | Value::Weak(_) => DynValue::Nil,
         Value::Bool(b) => DynValue::Bool(*b),
         Value::Int(i) => DynValue::Int(*i),
         Value::Uint(u) => DynValue::Int(i64::try_from(*u).unwrap_or(i64::MAX)),

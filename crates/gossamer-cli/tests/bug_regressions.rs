@@ -136,6 +136,155 @@ fn write_source(dir: &Path, tag: &str, source: &str) -> PathBuf {
 }
 
 #[test]
+fn generic_struct_f64_field_prints_as_float() {
+    // Bug fixed in 0.10.0: a generic struct field whose concrete type
+    // is `f64` (`Triple<A, B, C> { third: C }` with `C = f64`) printed
+    // the value's IEEE-754 bit pattern as an integer under
+    // `gos build --release`. Two root causes: (1) unsuffixed float
+    // literals (`3.0`) were never defaulted to `f64` so the field's
+    // inference var leaked, and (2) `deep_resolve` didn't recurse into
+    // `Adt` substs so the receiver's type args stayed unresolved. Both
+    // are fixed; the field now prints as the float `3`.
+    let src = r#"
+struct Triple<A, B, C> { first: A, second: B, third: C }
+fn main() {
+    let r = Triple { first: 1, second: "two", third: 3.0 }
+    println!("{} {} {}", r.first, r.second, r.third)
+}
+"#;
+    let dir = fresh_dir("generic_struct_f64");
+    let path = write_source(&dir, "generic_struct_f64", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(out.0.contains("1 two 3"), "got: {:?}", out.0);
+}
+
+#[test]
+fn impl_method_self_field_iteration_binds_element_type() {
+    // Bug fixed in 0.10.0: inside an `impl` method the `self` receiver
+    // was bound to a fresh inference var instead of the impl's `Self`
+    // type, so `for x in self.items` over a `[String]` field bound `x`
+    // at the i64 default — printing element pointers as integers (the
+    // auto-derived `to_json` serialised a `[String]` field as numbers).
+    // `self` now binds to the concrete `Self` type.
+    let src = r#"
+struct U { tags: [String] }
+impl U {
+    fn dump(self) {
+        for item in self.tags { println!("item={}", item) }
+    }
+}
+fn main() {
+    let mut t: [String] = []
+    t.push("a")
+    t.push("b")
+    let u = U { tags: t }
+    U::dump(u)
+}
+"#;
+    let dir = fresh_dir("impl_self_field_iter");
+    let path = write_source(&dir, "impl_self_field_iter", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("item=a") && out.0.contains("item=b"),
+        "got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn native_bytecode_match_covers_pattern_shapes() {
+    // The bytecode VM now lowers `match` directly (literals, ranges,
+    // or-patterns, guards, enum-variant payloads, tuple/struct
+    // destructure, `@`-bindings) instead of routing every arm
+    // evaluation through the bundled tree-walker via
+    // `Op::EvalDeferred`. This pins the VM output for a match that
+    // exercises every natively-compiled pattern shape; a regression
+    // in the test-and-branch lowering or the `VariantIs` /
+    // `VariantField` / `StructIs` opcodes turns it red.
+    let src = r#"
+enum Shape { Circle(i64), Rect(i64, i64), Unit }
+struct Point { x: i64, y: i64 }
+fn classify(n: i64) -> String {
+    match n {
+        0 => "zero".to_string(),
+        1 | 2 | 3 => "small".to_string(),
+        4..=9 => "mid".to_string(),
+        x if x < 0 => "neg".to_string(),
+        big @ 100..=999 => format!("big:{}", big),
+        _ => "huge".to_string(),
+    }
+}
+fn area(s: &Shape) -> i64 {
+    match s {
+        Shape::Circle(r) => 3 * r * r,
+        Shape::Rect(w, h) => w * h,
+        Shape::Unit => 0,
+    }
+}
+fn main() {
+    for n in [0, 2, 7, -4, 500, 100000] {
+        println!("{}={}", n, classify(n))
+    }
+    println!("{}", area(&Shape::Circle(2)))
+    println!("{}", area(&Shape::Rect(3, 4)))
+    println!("{}", area(&Shape::Unit))
+    let p = Point { x: 5, y: 9 }
+    match p { Point { x, y } => println!("pt {} {}", x, y) }
+    let pair = (11, 22)
+    match pair { (a, b) => println!("pair {} {}", a, b) }
+}
+"#;
+    let dir = fresh_dir("native_match");
+    let path = write_source(&dir, "native_match", src);
+    let out = run_vm(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    let expect = "0=zero\n2=small\n7=mid\n-4=neg\n500=big:500\n100000=huge\n\
+12\n12\n0\npt 5 9\npair 11 22\n";
+    assert!(
+        out.0.contains(expect),
+        "native match output mismatch:\n{}",
+        out.0
+    );
+}
+
+#[test]
+fn compiled_match_on_inferred_tuple_binds_element_types() {
+    // Bug fixed in 0.10.0: a `match` on a tuple whose element types
+    // were left unresolved by inference (`let pair = (10, "hi")`)
+    // bound each element through a pointer-shaped local, so the
+    // `println!` arg dispatcher routed the `i64` element through
+    // `gos_rt_concat_str` and strlen'd the integer value → segfault.
+    // The match tuple-binding now recovers each element type from
+    // the sub-pattern when the tuple's recorded type is loose.
+    let src = r#"
+fn main() {
+    let pair = (10, "hi")
+    match pair { (n, s) => println!("{} {}", n, s) }
+}
+"#;
+    let dir = fresh_dir("compiled_match_tuple");
+    let path = write_source(&dir, "compiled_match_tuple", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(out.0.contains("10 hi"), "got: {:?}", out.0);
+}
+
+#[test]
 fn eprintln_runs_without_aborting_via_jit() {
     // Cranelift JIT must have `gos_rt_eprint_str` /
     // `gos_rt_eprintln` in its symbol table; without them
@@ -323,9 +472,9 @@ fn main() {
 
 #[test]
 fn type_from_json_round_trips_struct_with_nested_address_and_tags() {
-    // Every named struct in the program auto-derives
-    // `<Type>::from_json(text)` / `<Type>::to_json(self)` at
-    // `Vm::load` time. The decoder must (a) accept a clean payload
+    // Every named struct in the program auto-derives the generic
+    // `from_json::<Type>(text)` / `to_json::<Type>(value)` free
+    // functions. The decoder must (a) accept a clean payload
     // and produce a typed struct readable via dot-access, (b) reject
     // type mismatches with a path-qualified error, and (c) reject
     // missing required fields. Tests all three.
@@ -355,21 +504,21 @@ fn main() -> Result<(), errors::Error> {
         tags: tags,
         address: Address { city: "denver", zip: "80205" },
     }
-    let text = User::to_json(&original)?
-    let back: User = User::from_json(&text)?
+    let text = to_json::<User>(&original)?
+    let back: User = from_json::<User>(&text)?
     println!("name={}", back.name)
     println!("age={}", back.age)
     println!("city={}", back.address.city)
     println!("tag0={}", back.tags[0])
 
     let bad = "{\"name\":\"bob\",\"age\":\"oops\",\"active\":false,\"tags\":[],\"address\":{\"city\":\"x\",\"zip\":\"0\"}}"
-    match User::from_json(&bad) {
+    match from_json::<User>(&bad) {
         Ok(_)  => println!("bad-passed"),
         Err(e) => println!("bad-rejected: {}", e),
     }
 
     let missing = "{\"name\":\"carol\",\"age\":40,\"active\":true,\"tags\":[]}"
-    match User::from_json(&missing) {
+    match from_json::<User>(&missing) {
         Ok(_)  => println!("missing-passed"),
         Err(e) => println!("missing-rejected: {}", e),
     }
@@ -1564,7 +1713,7 @@ fn autoderive_synthesizes_for_narrow_integer_fields() {
     // still get `from_json` / `to_json` synthesized. Before the
     // fix, the FieldKind table only covered `i64`, so any narrow
     // integer caused the entire struct to be skipped and the
-    // user's `Type::from_json(text)?` call surfaced as
+    // user's `from_json::<Type>(text)?` call surfaced as
     // `field access on non-struct ()` at runtime.
     let src = r#"
 use std::errors
@@ -1577,7 +1726,7 @@ struct Counts {
 
 fn main() -> Result<(), errors::Error> {
     let text = "{\"small\":255,\"medium\":-1,\"big\":9000000000}".to_string()
-    let c = Counts::from_json(&text)?
+    let c = from_json::<Counts>(&text)?
     println!("small={} medium={} big={}", c.small, c.medium, c.big)
     Ok(())
 }
@@ -1678,11 +1827,11 @@ struct AppCfg {
 
 fn main() -> Result<(), errors::Error> {
     let yaml = "name: gossamer\nport: 8080\ndebug: true\n".to_string()
-    let cfg = AppCfg::from_yaml(&yaml)?
+    let cfg = from_yaml::<AppCfg>(&yaml)?
     println!("{} {} {}", cfg.name, cfg.port, cfg.debug)
 
-    let back = cfg.to_yaml()?
-    let again = AppCfg::from_yaml(&back)?
+    let back = to_yaml::<AppCfg>(cfg)?
+    let again = from_yaml::<AppCfg>(&back)?
     println!("{} {}", again.name, again.port)
     Ok(())
 }
@@ -1764,6 +1913,610 @@ fn main() {
         out.0.trim_end(),
         expected,
         "sync::Map mismatch (llvm release); stdout: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn deref_assign_through_mut_i64_runs_under_llvm() {
+    // Bug fixed in 0.10.0: `*s = expr` through `&mut i64`
+    // segfaulted in the LLVM AOT tier because `&mut state` was
+    // lowered as the i64 value instead of the slot address.
+    // Three coordinated MIR + LLVM + cranelift changes close the
+    // class. The reproducer is the LCG step the bench-game LCRNG
+    // benches use.
+    let src = r#"
+fn lcg(s: &mut i64) -> i64 {
+    *s = *s * 6364136223846793005 + 1442695040888963407
+    (*s >> 33) & 0x7fffffff
+}
+fn main() {
+    let mut state: i64 = 42
+    let n = lcg(&mut state)
+    println!("{}", n)
+}
+"#;
+    let dir = fresh_dir("deref_assign_mut_i64");
+    let path = write_source(&dir, "deref_assign_mut_i64", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    // First LCG step on state=42: returns 1220265334.
+    assert!(
+        out.0.contains("1220265334"),
+        "expected LCG output 1220265334, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn mut_self_field_compound_assign_writes_back() {
+    // Bug fixed in 0.10.0: `self.field += 1` in an `&mut self`
+    // method silently dropped the mutation in the LLVM AOT tier.
+    let src = r#"
+struct Counter { n: i64 }
+impl Counter {
+    fn bump(&mut self) { self.n += 1 }
+}
+fn main() {
+    let mut c = Counter { n: 0 }
+    c.bump()
+    c.bump()
+    c.bump()
+    println!("{}", c.n)
+}
+"#;
+    let dir = fresh_dir("mut_self_compound_assign");
+    let path = write_source(&dir, "mut_self_compound_assign", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert_eq!(out.0.trim_end(), "3", "got {:?}", out.0);
+}
+
+#[test]
+fn multi_dim_fixed_array_index_walks_inner_strides() {
+    // Bug fixed in 0.10.0: `lower_place_address` did not advance
+    // `current_ty` after a `Projection::Index`, so `arr[i][j]` over
+    // `[[T; A]; B]` used the OUTER array's bounds for the inner
+    // index. Iron Knight's 3D zobrist write hit this.
+    let src = r#"
+struct Z { pieces: [[[i64; 64]; 6]; 2] }
+fn main() {
+    let mut z = Z { pieces: [[[0; 64]; 6], [[0; 64]; 6]] }
+    let mut s: i64 = 0
+    while s < 2 {
+        let mut p: i64 = 0
+        while p < 6 {
+            let mut sq: i64 = 0
+            while sq < 64 {
+                z.pieces[s][p][sq] = s * 1000 + p * 100 + sq
+                sq += 1
+            }
+            p += 1
+        }
+        s += 1
+    }
+    println!("z[1][5][63]={}", z.pieces[1][5][63])
+}
+"#;
+    let dir = fresh_dir("multi_dim_array");
+    let path = write_source(&dir, "multi_dim_array", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("z[1][5][63]=1563"),
+        "expected z[1][5][63]=1563 (1*1000+5*100+63), got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn env_args_empty_iter_does_not_segfault() {
+    // Bug fixed in 0.10.0: `gos_rt_set_args` stored a null GosVec
+    // pointer when `argc <= 1`, so iterating `env::args()` with
+    // no user args segfaulted on the iterator's null-header walk.
+    let src = r#"
+use std::env
+fn main() {
+    let args = env::args()
+    println!("len={}", args.len())
+    for a in args {
+        println!("{}", a)
+    }
+}
+"#;
+    let dir = fresh_dir("env_args_empty");
+    let path = write_source(&dir, "env_args_empty", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        out.2,
+        Some(0),
+        "no-arg run must exit cleanly; stderr: {}",
+        out.1
+    );
+    assert!(
+        out.0.contains("len=0"),
+        "expected empty args to report len=0, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn vec_pop_on_typed_storage_shrinks_by_one() {
+    // Bug fixed in 0.10.0: VM `builtin_pop` fell into the
+    // `_ => empty_array` catch-all for `Value::IntArray` /
+    // `Value::FloatVec` receivers, and the writeback then moved
+    // the empty result into the receiver — clobbering every
+    // element instead of removing only the last one.
+    let src = r#"
+fn main() {
+    let mut xs: [i64] = [10, 20, 30, 40]
+    let _ = xs.pop()
+    println!("len={}", xs.len())
+    println!("xs[0]={}", xs[0])
+    println!("xs[2]={}", xs[2])
+}
+"#;
+    let dir = fresh_dir("vec_pop_typed");
+    let path = write_source(&dir, "vec_pop_typed", src);
+    let run = run_vm(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert!(
+        run.0.contains("len=3") && run.0.contains("xs[0]=10") && run.0.contains("xs[2]=30"),
+        "expected len=3 + xs[0]=10 + xs[2]=30 after a single pop, got: {:?}",
+        run.0
+    );
+}
+
+#[test]
+fn hashmap_keys_router_does_not_get_shadowed_by_json() {
+    // Bug fixed in 0.10.0: `install_module("json", …)` unconditionally
+    // pushed `("keys", builtin_json_keys)` AFTER the HashMap surface
+    // registered `("keys", builtin_map_keys)`. The later json push
+    // overrode the bare-name registry, so every `m.keys()` on a
+    // HashMap silently dispatched to the JSON helper which returns
+    // `None` for non-Struct receivers — surfacing as `ks.len() == 0`
+    // even with multiple inserts. Receiver-routing wrapper now
+    // dispatches by Value shape.
+    let src = r#"
+use std::collections::HashMap
+fn main() {
+    let mut m: HashMap<i64, i64> = HashMap::new()
+    m.insert(1, 10)
+    m.insert(2, 20)
+    m.insert(3, 30)
+    let ks = m.keys()
+    println!("len={}", ks.len())
+}
+"#;
+    let dir = fresh_dir("hashmap_keys_router");
+    let path = write_source(&dir, "hashmap_keys_router", src);
+    let run = run_vm(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert!(run.0.contains("len=3"), "expected 3 keys, got: {:?}", run.0);
+}
+
+#[test]
+fn return_array_literal_coerces_to_slice() {
+    // Bug fixed in 0.10.0: `fn f() -> [String] { return ["a", "b"] }`
+    // lowered the array literal as a flat `Array<String; 2>` and
+    // returned the stack-aggregate bytes through the slot that the
+    // caller dereferenced as a `*mut GosVec` — len read as garbage
+    // bits, then `for s in xs` ran zero iterations. The Return
+    // path now coerces `Array<T; N>` → `Vec<T>` via
+    // `gos_rt_vec_from_arr` whenever the declared return type is
+    // `Vec(elem)` or `Slice(elem)` with matching `elem`.
+    let src = r#"
+fn cols() -> [String] {
+    return ["id", "name", "value"]
+}
+fn main() {
+    let xs = cols()
+    println!("len={}", xs.len())
+    for s in xs { println!("{}", s) }
+}
+"#;
+    let dir = fresh_dir("return_array_to_slice");
+    let path = write_source(&dir, "return_array_to_slice", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("len=3") && out.0.contains("id") && out.0.contains("value"),
+        "expected len=3 + all 3 strings, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn typed_int_array_get_falls_back_to_generic_array() {
+    // Bug fixed in 0.10.0: when `fn slide(arr: [i64; 4]) -> i64`
+    // was called from a loop body, the bytecode compiler tracked
+    // `arr` as a `flat_int_local` (Value::IntArray) — but the
+    // call-args ABI didn't always preserve that shape across the
+    // boundary, so the second iteration saw a Value::Array of
+    // boxed Value::Int instead and panicked with "IntArrayGetI64:
+    // receiver lost flat invariant". The runtime fast path now
+    // tolerates the generic Array shape (one discriminant match
+    // per index) instead of aborting.
+    let src = r#"
+fn slide(arr: [i64; 4]) -> i64 {
+    let mut sum: i64 = 0
+    for i in 0..4 { sum += arr[i] }
+    sum
+}
+fn main() {
+    for k in 0..3 {
+        let r = slide([1, 2, 3, 4])
+        println!("k={} r={}", k, r)
+    }
+}
+"#;
+    let dir = fresh_dir("typed_int_array_get_fallback");
+    let path = write_source(&dir, "typed_int_array_get_fallback", src);
+    let run = run_vm(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(
+        run.0.matches("r=10").count(),
+        3,
+        "expected r=10 three times, got: {:?}",
+        run.0
+    );
+}
+
+#[test]
+fn logical_and_or_short_circuit_in_compiled_tier() {
+    // Bug fixed in 0.10.0: `lower_binary` evaluated both sides of
+    // `&&` / `||` unconditionally in the MIR lowering, so a guarded
+    // bounds check like `while j > 0 && arr[j - 1] < x` panicked
+    // with `the index is -1` once j reached 0 — the RHS fired
+    // even though the LHS was already false. The lowering now
+    // branches on the LHS and evaluates the RHS only on the path
+    // that needs it.
+    let src = r#"
+fn check_idx(arr: [i64; 4], j: i64) -> bool {
+    arr[j - 1] < 100
+}
+fn main() {
+    let arr: [i64; 4] = [1, 2, 3, 4]
+    let mut j: i64 = 2
+    while j > 0 && check_idx(arr, j) {
+        j -= 1
+    }
+    println!("done j={}", j)
+    let mut k: i64 = 0
+    while k < 5 || k > 100 {
+        k += 1
+        if k > 3 { break }
+    }
+    println!("k={}", k)
+}
+"#;
+    let dir = fresh_dir("logical_short_circuit");
+    let path = write_source(&dir, "logical_short_circuit", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("done j=0") && out.0.contains("k=4"),
+        "expected short-circuit semantics, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn vec_of_struct_index_field_reads_and_writes_through_data_buffer() {
+    // Bug fixed in 0.10.0: indexing a `Vec<Body>` (multi-slot struct
+    // elements) in a place expression — `bodies[i].x` for a read or
+    // `bodies[i].vx = v` for a write — built a flat `Projection::Index`
+    // that strode off the `*mut GosVec` *header* instead of the data
+    // buffer, so every element past index 0 read/wrote garbage. The
+    // place lowerer now routes Vec-with-multi-slot-element indexing
+    // through `gos_rt_vec_get_ptr` and binds the element address to a
+    // `&elem` local so the appended `Field` projection auto-derefs and
+    // lands inside the Vec's storage for both reads and writes.
+    let src = r#"
+struct Body { x: f64, y: f64, mass: f64 }
+fn main() {
+    let mut bs: [Body] = []
+    bs.push(Body { x: 1.0, y: 2.0, mass: 10.0 })
+    bs.push(Body { x: 4.0, y: 5.0, mass: 20.0 })
+    bs[1].x = 9.0
+    println!("{} {} {}", bs[0].x, bs[1].x, bs[1].mass)
+}
+"#;
+    let dir = fresh_dir("vec_struct_index_field");
+    let path = write_source(&dir, "vec_struct_index_field", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("1 9 20"),
+        "expected element-1 field write + correct strides, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn mut_fixed_struct_array_not_promoted_keeps_layout_across_calls() {
+    // Bug fixed in 0.10.0: `let mut bodies: [Body; N]` was
+    // unconditionally promoted to a heap `Vec<Body>` because the
+    // binding was `mut` with an array literal. Passing `&bodies` to a
+    // function declared `fn energy(b: &[Body; N])` then desynchronised
+    // the element stride (the callee strode the GosVec header as inline
+    // data) and produced NaN. The promotion now fires only when the
+    // binding actually receives a growth method (push / pop / sort /
+    // …); a fixed array that is merely indexed, field-mutated, or
+    // passed to a `[T; N]` parameter keeps its inline layout.
+    let src = r#"
+struct Body { x: f64, vx: f64, mass: f64 }
+fn total_momentum(b: &[Body; 2]) -> f64 {
+    let mut p = 0.0
+    for i in 0..2 { p += b[i].vx * b[i].mass }
+    p
+}
+fn main() {
+    let mut bodies: [Body; 2] = [
+        Body { x: 1.0, vx: 0.1, mass: 10.0 },
+        Body { x: 2.0, vx: 0.4, mass: 20.0 },
+    ]
+    bodies[0].vx = 0.5
+    println!("{:.4}", total_momentum(&bodies))
+}
+"#;
+    let dir = fresh_dir("mut_fixed_struct_array");
+    let path = write_source(&dir, "mut_fixed_struct_array", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    // 0.5*10 + 0.4*20 = 5 + 8 = 13.0
+    assert!(
+        out.0.contains("13.0000"),
+        "expected fixed-array field mutation + correct stride, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn mut_scalar_array_with_push_still_promotes_to_vec() {
+    // Companion to the fixed-array regression: a `let mut xs =
+    // [literal]` that *does* call a growth method must still promote to
+    // a heap Vec so `push` / `sort` work.
+    let src = r#"
+fn main() {
+    let mut xs = [3, 1, 2]
+    xs.push(4)
+    xs.sort()
+    for x in &xs { print!("{} ", x) }
+    println!("")
+}
+"#;
+    let dir = fresh_dir("mut_scalar_array_push");
+    let path = write_source(&dir, "mut_scalar_array_push", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("1 2 3 4"),
+        "expected push + sort to work on promoted Vec, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn sort_by_on_tuple_vec_orders_by_comparator() {
+    // Bug fixed in 0.10.0: `xs.sort_by(|a, b| ...)` on a
+    // `Vec<(String, i64)>` was a no-op / wrong-order because the
+    // closure params `a` / `b` were left `Var` by inference and the
+    // lift pass blanket-pinned every unresolved closure param to
+    // i64. The lifted comparator body then computed `a.1`'s field
+    // offset off a junk integer instead of the element pointer the
+    // runtime sort hands it. The lift pass now skips the i64 pin for
+    // params used through `TupleIndex` / `Field` / method-call
+    // receivers — those are aggregates passed by pointer.
+    let src = r#"
+fn main() {
+    let mut xs: [(String, i64)] = []
+    xs.push(("c".to_string(), 3))
+    xs.push(("a".to_string(), 1))
+    xs.push(("b".to_string(), 2))
+    xs.sort_by(|a, b| {
+        if a.1 < b.1 { -1 }
+        else if a.1 > b.1 { 1 }
+        else { 0 }
+    })
+    for x in &xs {
+        println!("{}={}", x.0.clone(), x.1)
+    }
+}
+"#;
+    let dir = fresh_dir("sort_by_tuple_vec");
+    let path = write_source(&dir, "sort_by_tuple_vec", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    let want = "a=1\nb=2\nc=3\n";
+    assert!(
+        out.0.contains(want),
+        "expected ascending order by .1, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn vec_of_enum_for_loop_dereferences_slot_pointer() {
+    // Bug fixed in 0.10.0: `lower_for_vec` flagged any
+    // `TyKind::Adt` element as "inline aggregate" and bound the loop
+    // variable to the slot address directly. That's correct for
+    // multi-slot user structs (whose inline storage starts at the
+    // slot address), but enums and sentinel-handle structs occupy
+    // exactly one 8-byte slot that *holds* a heap pointer. The loop
+    // body needs the pointer value (one `gos_load` away), not the
+    // slot address. Without the load, every `match e { … }` saw the
+    // first 8 bytes of the heap allocation interpreted as the
+    // pattern scrutinee — and fell through every variant arm.
+    let src = r#"
+enum Sv {
+    SvInt(i64),
+    SvText(String),
+    SvNull,
+}
+enum Expr {
+    EColumn(String, String),
+    ELit(Sv),
+}
+fn show(e: &Expr) {
+    match e {
+        Expr::EColumn(t, c) => println!("Col({}, {})", t.clone(), c.clone()),
+        Expr::ELit(v) => match v {
+            Sv::SvInt(n) => println!("Lit(Int({}))", *n),
+            Sv::SvText(s) => println!("Lit(Text({}))", s.clone()),
+            Sv::SvNull => println!("Lit(Null)"),
+        },
+    }
+}
+fn main() {
+    let mut xs: [Expr] = []
+    xs.push(Expr::EColumn("t".to_string(), "id".to_string()))
+    xs.push(Expr::ELit(Sv::SvInt(42)))
+    xs.push(Expr::ELit(Sv::SvText("hello".to_string())))
+    for e in &xs { show(e) }
+}
+"#;
+    let dir = fresh_dir("vec_enum_for_loop");
+    let path = write_source(&dir, "vec_enum_for_loop", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("Col(t, id)")
+            && out.0.contains("Lit(Int(42))")
+            && out.0.contains("Lit(Text(hello))"),
+        "expected all three variants printed, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn vec_of_multi_slot_struct_round_trips_all_fields() {
+    // Bug fixed in 0.10.0: `type_slot_bytes` in MIR returned a flat
+    // 8 bytes for every user-defined `Adt`, including multi-field
+    // structs. `let xs: [Projection] = []` then created a Vec with
+    // `elem_bytes = 8`, so a `push(Projection { a, b })` writing 16
+    // bytes of inline storage truncated to the first field. The
+    // first iteration of `for p in &xs` re-read garbage for `p.b`
+    // and downstream `p.alias.len()` strlen'd a bogus pointer →
+    // segfault (atlas_db's exec_project crash).
+    let src = r#"
+struct Projection {
+    a: i64,
+    b: i64,
+}
+fn main() {
+    let mut xs: [Projection] = []
+    xs.push(Projection { a: 1, b: 2 })
+    xs.push(Projection { a: 3, b: 4 })
+    for p in &xs {
+        println!("a={} b={}", p.a, p.b)
+    }
+}
+"#;
+    let dir = fresh_dir("vec_multi_slot_struct");
+    let path = write_source(&dir, "vec_multi_slot_struct", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("a=1 b=2") && out.0.contains("a=3 b=4"),
+        "expected both fields per element, got: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn regex_captures_all_option_string_match_reads_real_discriminant() {
+    // Bug fixed in 0.10.0: `gos_rt_regex_captures_all` / `captures`
+    // pushed a bare c-string pointer (or 0) per capture group, but the
+    // source type of each group is `Option<String>`. When the element
+    // typed as a concrete `Option<String>` (e.g. through a function
+    // whose declared return is `[[Option<String>]]`), the compiled-tier
+    // `match group { Some(k) => ..., None => ... }` reads the tagged-
+    // union discriminant via `gos_rt_result_disc` off the pointer — a
+    // raw c-string's first bytes are not a valid discriminant, so the
+    // match fell through and printed nothing. Fix: the runtime now
+    // pushes canonical `gos_rt_result_new(disc, payload)` Options and
+    // the MIR pins the result element to `Option<String>`.
+    let src = r#"
+use std::regex
+fn parse_pairs(line: String) -> [[Option<String>]] {
+    let re = match regex::compile("(\\w+)=(\\w+)") { Ok(r) => r, Err(_) => { return [] } }
+    regex::captures_all(&re, &line)
+}
+fn main() {
+    for row in parse_pairs("addr=localhost port=8080") {
+        match row[1] {
+            Some(k) => match row[2] {
+                Some(v) => println!("{} = {}", k, v),
+                None => {}
+            },
+            None => {}
+        }
+    }
+}
+"#;
+    let dir = fresh_dir("regex_captures_option");
+    let path = write_source(&dir, "regex_captures_option", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native_release(&path, &scratch).expect("release build");
+    let out = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("addr = localhost") && out.0.contains("port = 8080"),
+        "expected both decoded pairs, got: {:?}",
         out.0
     );
 }

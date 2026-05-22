@@ -12,7 +12,7 @@ use thiserror::Error;
 use crate::context::TyCtxt;
 use crate::subst::{GenericArg, Substs};
 use crate::traits::TraitRef;
-use crate::ty::{FnSig, IntTy, Ty, TyKind, TyVid};
+use crate::ty::{FloatTy, FnSig, IntTy, Ty, TyKind, TyVid};
 
 /// One slot in the union-find table maintained by [`InferCtxt`].
 #[derive(Debug, Clone, Copy)]
@@ -47,6 +47,15 @@ pub struct InferCtxt {
     /// before reading), and unions propagate the constraint through
     /// the union-find merge in [`Self::bind_var`].
     integer_constrained: Vec<bool>,
+    /// Per-variable flag mirroring [`Self::integer_constrained`] for
+    /// unsuffixed float literals (`3.0`, `1.5`). A float-literal var
+    /// takes the float type its use site requires (`f32` / `f64`) and
+    /// falls back to `f64` via [`Self::default_unresolved_float_vars`]
+    /// when nothing constrains it — without this an unsuffixed float
+    /// fed into a generic position (`Triple { third: 3.0 }`) leaks an
+    /// unresolved `Var` into lowering, which then prints the value's
+    /// bit pattern as an integer.
+    float_literal: Vec<bool>,
     /// Direct lookup from `TyVid` index to the interned `Ty` handle
     /// that wraps it. The previous implementation walked the entire
     /// interner on every `walk_var` lookup (an O(N) scan that turned
@@ -63,6 +72,7 @@ impl InferCtxt {
         Self {
             slots: Vec::new(),
             integer_constrained: Vec::new(),
+            float_literal: Vec::new(),
             var_to_ty: Vec::new(),
         }
     }
@@ -70,19 +80,32 @@ impl InferCtxt {
     /// Allocates a fresh unresolved inference variable that unifies
     /// with any type.
     pub fn fresh_var(&mut self, tcx: &mut TyCtxt) -> Ty {
-        self.alloc_var(tcx, false)
+        self.alloc_var(tcx, false, false)
     }
 
     /// Allocates a fresh inference variable constrained to integer
     /// types. See the [`InferCtxt`] doc comment for the model.
     pub fn fresh_int_var(&mut self, tcx: &mut TyCtxt) -> Ty {
-        self.alloc_var(tcx, true)
+        self.alloc_var(tcx, true, false)
     }
 
-    fn alloc_var(&mut self, tcx: &mut TyCtxt, integer_constrained: bool) -> Ty {
+    /// Allocates a fresh inference variable for an unsuffixed float
+    /// literal. Defaults to `f64` when unconstrained — see the
+    /// `float_literal` field doc.
+    pub fn fresh_float_var(&mut self, tcx: &mut TyCtxt) -> Ty {
+        self.alloc_var(tcx, false, true)
+    }
+
+    fn alloc_var(
+        &mut self,
+        tcx: &mut TyCtxt,
+        integer_constrained: bool,
+        float_literal: bool,
+    ) -> Ty {
         let idx = u32::try_from(self.slots.len()).expect("too many inference vars");
         self.slots.push(VarSlot::Parent(idx));
         self.integer_constrained.push(integer_constrained);
+        self.float_literal.push(float_literal);
         let ty = tcx.intern(TyKind::Var(TyVid(idx)));
         // Side-table: O(1) lookup for `walk_var` to avoid a full
         // interner scan on every resolve / unify / occurs.
@@ -111,6 +134,30 @@ impl InferCtxt {
                     .unwrap_or(false)
             {
                 self.slots[root as usize] = VarSlot::Resolved(i64_ty);
+            }
+        }
+    }
+
+    /// Defaults every unsuffixed-float-literal variable that is still
+    /// unresolved to `f64`. Mirror of
+    /// [`Self::default_unresolved_int_vars`] for the float side.
+    /// Called once at the end of typechecking.
+    pub fn default_unresolved_float_vars(&mut self, tcx: &mut TyCtxt) {
+        let f64_ty = tcx.float_ty(FloatTy::F64);
+        let count = self.slots.len();
+        for idx in 0..count {
+            if !self.float_literal.get(idx).copied().unwrap_or(false) {
+                continue;
+            }
+            let root = self.root_of(TyVid(idx as u32));
+            if matches!(self.slots[root as usize], VarSlot::Parent(_))
+                && self
+                    .float_literal
+                    .get(root as usize)
+                    .copied()
+                    .unwrap_or(false)
+            {
+                self.slots[root as usize] = VarSlot::Resolved(f64_ty);
             }
         }
     }
@@ -236,6 +283,26 @@ impl InferCtxt {
                     self.integer_constrained[other_root as usize] = true;
                 }
                 _ => return Err(UnifyError::IntegerConstraint),
+            }
+        }
+        // Mirror the integer propagation for unsuffixed float
+        // literals: when a float-literal var merges with another
+        // var, carry the float-default flag onto the target's root
+        // so the merged class still defaults to `f64`. Float vars
+        // unify leniently with concrete types (no rejection), so a
+        // concrete float / non-float target needs no special-casing.
+        let needs_float = self
+            .float_literal
+            .get(root as usize)
+            .copied()
+            .unwrap_or(false);
+        if needs_float {
+            if let Some(TyKind::Var(other_vid)) = tcx.kind(self.resolve(tcx, ty)).cloned() {
+                let other_root = self.root_of(other_vid);
+                if other_root as usize >= self.float_literal.len() {
+                    self.float_literal.resize((other_root as usize) + 1, false);
+                }
+                self.float_literal[other_root as usize] = true;
             }
         }
         self.bind(vid, ty);

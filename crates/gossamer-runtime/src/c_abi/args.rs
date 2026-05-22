@@ -54,14 +54,29 @@ static PROGRAM_NAME_PTR: AtomicUsize = AtomicUsize::new(0);
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char) {
     ffi_entry!((), {
+        // Capture argv[0] as the program name whenever argv has any
+        // entries — previously this only happened when argc > 1, so
+        // a binary run with no user args had `env::program_name()`
+        // return null and stringify to an empty string.
+        if argc >= 1 && !argv.is_null() {
+            // SAFETY: libc guarantees argv[0..argc] is valid when
+            // argc >= 1. The pointer at `*argv` is the program name.
+            let name_ptr = unsafe { *argv };
+            if !name_ptr.is_null() {
+                // Copy argv[0] into a gos-allocated (tagged, refcounted) string.
+                // argv is libc-owned and untagged; passing it raw to the RC
+                // retain/release dispatch would mis-read its byte-before-pointer
+                // as an RC header. The stored copy holds the base reference for
+                // the process lifetime (I4: string boundaries own their values).
+                let bytes = unsafe { CStr::from_ptr(name_ptr).to_bytes() };
+                let owned = alloc_cstring(bytes);
+                PROGRAM_NAME_PTR.store(owned as usize, Ordering::SeqCst);
+            }
+        }
         if argc > 1 && !argv.is_null() {
             // SAFETY: libc guarantees argv[0..argc] is valid when
             // argc > 0. `argv + 1` therefore addresses `argc - 1`
             // strings.
-
-            // Capture argv[0] as the program name before shifting.
-            let name_ptr = unsafe { *argv };
-            PROGRAM_NAME_PTR.store(name_ptr as usize, Ordering::SeqCst);
 
             let user_argv = unsafe { argv.add(1) };
             let len = i64::from(argc - 1);
@@ -90,7 +105,20 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
         } else {
             ARGS_PTR.store(0, Ordering::SeqCst);
             ARGS_LEN.store(0, Ordering::SeqCst);
-            ARGS_VEC.store(0, Ordering::SeqCst);
+            // Even when there are no user args, expose a valid
+            // empty `GosVec` so callers iterating `for a in
+            // env::args()` see len=0 instead of dereferencing a
+            // null header. The previous null sentinel segfaulted on
+            // the iterator's `header.ptr + 0 * elem_bytes` walk.
+            let vec = Box::into_raw(Box::new(GosVec {
+                len: 0,
+                cap: 0,
+                elem_bytes: 8,
+                elem_kind: vec_elem_kind::PRIMITIVE,
+                _reserved: [0; 3],
+                ptr: SyncRawPtr::new(std::ptr::null_mut()),
+            }));
+            ARGS_VEC.store(vec as usize, Ordering::SeqCst);
         }
         // Initialise the Rust runtime's per-process state. The
         // Cranelift-emitted `main` shim is a plain
@@ -224,8 +252,8 @@ pub unsafe extern "C" fn gos_rt_env_temp_dir() -> *const c_char {
 /// payload's disc-0/disc-1 convention mirrors `gos_rt_os_env` so
 /// `if let Some(h) = env::home_dir()` works the same way.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_env_home_dir() -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_env_home_dir() -> i128 {
+    ffi_entry!(0i128, {
         #[allow(deprecated)]
         match std::env::home_dir() {
             Some(path) => {
@@ -241,8 +269,8 @@ pub unsafe extern "C" fn gos_rt_env_home_dir() -> *mut GosResult {
 /// `os::env(name) -> Option<String>`. Compiled tier returns a
 /// `*mut GosResult` shaped as Option (disc 0 = Some, 1 = None).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_os_env(name: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_os_env(name: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if name.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -260,8 +288,8 @@ pub unsafe extern "C" fn gos_rt_os_env(name: *const c_char) -> *mut GosResult {
 /// `os::cwd() -> Result<String, errors::Error>`. Compiled tier
 /// returns a `*mut GosResult` (disc 0 = Ok, 1 = Err).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_os_cwd() -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_os_cwd() -> i128 {
+    ffi_entry!(0i128, {
         match std::env::current_dir() {
             Ok(path) => {
                 let cs = alloc_cstring(path.to_string_lossy().as_bytes());
@@ -285,8 +313,8 @@ pub unsafe extern "C" fn gos_rt_os_cwd() -> *mut GosResult {
 /// indices match the MIR projections emitted for
 /// `entry.<field>` access.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         let p = if path.is_null() {
             ".".to_string()
         } else {
@@ -357,8 +385,8 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> *mut GosResu
 /// `fs::walk_dir(root) -> Result<[DirInfo], errors::Error>`.
 /// Recursive descendant walk. Same DirInfo shape as `fs::list_dir`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         let root = if path.is_null() {
             ".".to_string()
         } else {
@@ -487,6 +515,40 @@ pub unsafe extern "C" fn gos_rt_os_file_size(path: *const c_char) -> i64 {
     })
 }
 
+/// `fs::metadata(path) -> Result<i64, errors::Error>`. The Ok
+/// payload is the file size in bytes; richer struct accessors
+/// (`is_file`, `is_dir`, `modified_unix_ms`, …) are exposed
+/// through the existing `gos_rt_os_*` predicates on the same
+/// path. This compiled-tier surface is a strict subset of the
+/// VM's `fs::Metadata { … }` aggregate — the dominant call shape
+/// (`if let Ok(_) = fs::metadata(p) { … }` to test stat-ability)
+/// works end-to-end; the field-rich form will land alongside the
+/// shared aggregate-binding pass that http::Request / sql::Row
+/// also need.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_metadata(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            let cs = std::ffi::CString::new("fs::metadata: null path").unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        match std::fs::metadata(&p) {
+            Ok(m) => {
+                let size = i64::try_from(m.len()).unwrap_or(i64::MAX);
+                unsafe { gos_rt_result_new(0, size) }
+            }
+            Err(e) => {
+                let msg = format!("fs::metadata({p}): {e}");
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
+}
+
 /// `exec::run(prog, args) -> Result<Output, errors::Error>`.
 ///
 /// Spawns `prog` with `args` (a `Vec<String>` whose backing storage
@@ -508,8 +570,8 @@ pub unsafe extern "C" fn gos_rt_os_file_size(path: *const c_char) -> i64 {
 /// failed` when the runtime treats the random pointer as a
 /// length-prefixed buffer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec) -> i128 {
+    ffi_entry!(0i128, {
         let prog_str = if prog.is_null() {
             let cs = std::ffi::CString::new("exec::run: program is null").unwrap_or_default();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };

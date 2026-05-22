@@ -470,7 +470,7 @@ impl<'a> Lowerer<'a> {
         // route the body to cranelift just for these calls.
         if matches!(
             name.as_str(),
-            "gos_load" | "gos_store" | "gos_alloc" | "gos_fn_addr"
+            "gos_load" | "gos_store" | "gos_alloc" | "gos_rc_alloc" | "gos_fn_addr"
         ) {
             self.lower_raw_intrinsic(&name, args, destination, target)?;
             return Ok(());
@@ -489,6 +489,33 @@ impl<'a> Lowerer<'a> {
             self.lower_vec_push_inline(args, destination, target)?;
             return Ok(());
         }
+        // Inline primitive Vec index get/set/get_ptr (lenient bounds: null /
+        // out-of-range → 0 / no-op / null, matching the runtime). Removes a
+        // per-element FFI call from hot index loops (BFS, scans) and lets
+        // LLVM hoist the loop-invariant len/ptr loads.
+        // Only inline when the element is a primitive int/bool — exactly the
+        // hot index-loop case (queue/visited/scans). A heap-pointer Adt
+        // element (e.g. `Vec<DirInfo>`, where `&entries[i]` has
+        // reference-through-handle semantics the generic call-result path
+        // handles) keeps the runtime call.
+        if name == "gos_rt_vec_get_i64"
+            && args.len() == 2
+            && is_primitive_int_llvm(&render_ty(self.tcx, self.body.local_ty(destination.local)))
+        {
+            self.lower_vec_get_i64_inline(args, destination, target)?;
+            return Ok(());
+        }
+        if name == "gos_rt_vec_set_i64"
+            && args.len() == 3
+            && is_primitive_int_llvm(&self.operand_llvm_ty(&args[2]))
+        {
+            self.lower_vec_set_i64_inline(args, destination, target)?;
+            return Ok(());
+        }
+        // NOTE: gos_rt_vec_get_ptr is intentionally NOT inlined — its result
+        // handling is dest-type-dependent (a multi-slot aggregate dest
+        // memcpys from the returned address rather than storing it), which
+        // the generic call-result path handles correctly.
         // Variant constructor stubs: `Ok(v)`, `Some(v)`, `Err(e)`
         // pass the wrapped value through unchanged (the compiled
         // tier flattens Option/Result, so `unwrap` is identity).
@@ -939,6 +966,43 @@ impl<'a> Lowerer<'a> {
                 let slot = local_slot(destination.local);
                 writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
             }
+            "gos_rc_alloc" => {
+                // gos_rc_alloc(size_i64, meta_symbol) -> ptr to a
+                // reference-counted heap object (strong count 1). The
+                // second arg is a const-string naming the module-global
+                // child-layout meta blob; an empty name means a leaf
+                // (null meta). The blob globals are emitted alongside
+                // the string pool (see emit.rs).
+                let size_v = if args.is_empty() {
+                    "0".to_string()
+                } else {
+                    let v = self.lower_operand(&args[0])?;
+                    let t = self.operand_llvm_ty(&args[0]);
+                    if t == "i64" {
+                        v
+                    } else {
+                        let tmp = self.fresh();
+                        writeln!(self.out, "  {tmp} = sext {t} {v} to i64").unwrap();
+                        tmp
+                    }
+                };
+                let meta_ptr = match args.get(1) {
+                    Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                        format!("@\"{sym}\"")
+                    }
+                    _ => "null".to_string(),
+                };
+                declare_rt(&mut self.runtime_refs, "gos_rt_rc_alloc");
+                let tmp = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {tmp} = call ptr @gos_rt_rc_alloc(i64 {size_v}, ptr {meta_ptr})"
+                )
+                .unwrap();
+                let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
             "gos_fn_addr" => {
                 // gos_fn_addr("name") -> ptr to that function.
                 let Some(Operand::Const(ConstValue::Str(fname))) = args.first() else {
@@ -974,4 +1038,10 @@ impl<'a> Lowerer<'a> {
         }
         Ok(())
     }
+}
+
+/// True for LLVM integer/bool scalar types — the safe element kinds for the
+/// inline Vec get/set fast path (the loaded i64 maps cleanly to these).
+fn is_primitive_int_llvm(ty: &str) -> bool {
+    matches!(ty, "i64" | "i32" | "i16" | "i8" | "i1")
 }

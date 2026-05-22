@@ -61,11 +61,11 @@ impl Vm {
                     registers[dst as usize] = chunk.consts[idx as usize].clone();
                 }
                 Op::LoadGlobal { dst, idx } => {
-                    let name = &chunk.globals[idx as usize];
-                    let value = match self.globals.get(name) {
+                    let name: &str = &chunk.globals[idx as usize];
+                    let value = match self.lookup_global_ref(name) {
                         Some(Global::Value(v)) => v.clone(),
-                        Some(Global::Fn(_)) => Value::String(SmolStr::from(name.clone())),
-                        None => return Err(RuntimeError::UnresolvedName(name.clone())),
+                        Some(Global::Fn(_)) => Value::String(SmolStr::from(name)),
+                        None => return Err(RuntimeError::UnresolvedName(name.to_string())),
                     };
                     registers[dst as usize] = value;
                 }
@@ -289,7 +289,7 @@ impl Vm {
                     } else if token != 0 {
                         // Miss: do the full dispatch and write back.
                         let resolved_global = match callee_val {
-                            Value::String(name) => self.globals.get(name.as_str()).cloned(),
+                            Value::String(name) => self.lookup_global(name.as_str()),
                             _ => None,
                         };
                         if let Some(ref g) = resolved_global {
@@ -389,8 +389,8 @@ impl Vm {
                         } else {
                             // Miss: full resolution + cache fill.
                             let r = qualified_key(&buf[0], name)
-                                .and_then(|qual: &str| self.globals.get(qual).cloned())
-                                .or_else(|| self.globals.get(name.as_str()).cloned());
+                                .and_then(|qual: &str| self.lookup_global(qual))
+                                .or_else(|| self.lookup_global(name.as_str()));
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
@@ -427,8 +427,8 @@ impl Vm {
                             self.apply(g, call_args)?
                         } else {
                             let r = qualified_key(&call_args[0], name)
-                                .and_then(|qual: &str| self.globals.get(qual).cloned())
-                                .or_else(|| self.globals.get(name.as_str()).cloned());
+                                .and_then(|qual: &str| self.lookup_global(qual))
+                                .or_else(|| self.lookup_global(name.as_str()));
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
@@ -504,11 +504,11 @@ impl Vm {
                         let resolved = match &recv_clone {
                             Value::Struct(_) | Value::Channel(_) => {
                                 qualified_key(&recv_clone, "write_byte")
-                                    .and_then(|q| self.globals.get(q).cloned())
+                                    .and_then(|q| self.lookup_global(q))
                             }
                             _ => None,
                         }
-                        .or_else(|| self.globals.get("write_byte").cloned());
+                        .or_else(|| self.lookup_global("write_byte"));
                         let args = vec![recv_clone, byte_clone];
                         let result = match resolved {
                             Some(Global::Value(Value::Builtin(builtin_inner))) => {
@@ -580,10 +580,10 @@ impl Vm {
                     let byte_clone = byte_val.clone();
                     let resolved = match &recv_clone {
                         Value::Struct(_) => qualified_key(&recv_clone, "set_byte")
-                            .and_then(|q| self.globals.get(q).cloned()),
+                            .and_then(|q| self.lookup_global(q)),
                         _ => None,
                     }
-                    .or_else(|| self.globals.get("set_byte").cloned());
+                    .or_else(|| self.lookup_global("set_byte"));
                     let args = vec![recv_clone, idx_clone, byte_clone];
                     let result = match resolved {
                         Some(Global::Value(Value::Builtin(builtin_inner))) => {
@@ -643,10 +643,10 @@ impl Vm {
                     let idx_clone = idx_val.clone();
                     let resolved = match &recv_clone {
                         Value::Struct(_) => qualified_key(&recv_clone, "get_byte")
-                            .and_then(|q| self.globals.get(q).cloned()),
+                            .and_then(|q| self.lookup_global(q)),
                         _ => None,
                     }
-                    .or_else(|| self.globals.get("get_byte").cloned());
+                    .or_else(|| self.lookup_global("get_byte"));
                     let args = vec![recv_clone, idx_clone];
                     let result = match resolved {
                         Some(Global::Value(Value::Builtin(builtin_inner))) => {
@@ -2010,6 +2010,45 @@ impl Vm {
                     }
                     registers[dst as usize] = Value::Tuple(Arc::new(items));
                 }
+                Op::VariantIs {
+                    dst,
+                    src,
+                    name_idx,
+                    arity,
+                } => {
+                    let expected = match &chunk.consts[name_idx as usize] {
+                        Value::String(s) => s.as_str(),
+                        _ => "",
+                    };
+                    let matches = match &registers[src as usize] {
+                        Value::Variant(inner) => {
+                            inner.name == expected && inner.fields.len() == arity as usize
+                        }
+                        _ => false,
+                    };
+                    registers[dst as usize] = Value::Bool(matches);
+                }
+                Op::VariantField { dst, src, idx } => {
+                    registers[dst as usize] = match &registers[src as usize] {
+                        Value::Variant(inner) => inner
+                            .fields
+                            .get(idx as usize)
+                            .cloned()
+                            .unwrap_or(Value::Unit),
+                        _ => Value::Unit,
+                    };
+                }
+                Op::StructIs { dst, src, name_idx } => {
+                    let expected = match &chunk.consts[name_idx as usize] {
+                        Value::String(s) => s.as_str(),
+                        _ => "",
+                    };
+                    let matches = matches!(
+                        &registers[src as usize],
+                        Value::Struct(inner) if inner.name == expected
+                    );
+                    registers[dst as usize] = Value::Bool(matches);
+                }
                 Op::IntArrayGetI64 {
                     dst_i,
                     base,
@@ -2023,15 +2062,49 @@ impl Vm {
                     }
                     let i = idx as usize;
                     let b = registers.get_unchecked(base as usize);
-                    let Value::IntArray(data) = b else {
-                        return Err(RuntimeError::Type(
-                            "IntArrayGetI64: receiver lost flat invariant".to_string(),
-                        ));
+                    // `IntArrayGetI64` is the typed fast path that the
+                    // bytecode compiler emits when `flat_int_locals`
+                    // tracks the base register as an `IntArray`. On a
+                    // call shape like `fn slide(arr: [i64; 4])`,
+                    // `arr` is a parameter register whose tracking
+                    // can outlive its actual `Value::IntArray`
+                    // payload — e.g. when the caller passes a
+                    // generic `Value::Array` (an ABI shape the
+                    // call-args path doesn't typed-promote). Rather
+                    // than panic, fall back to a generic array read
+                    // when the receiver isn't the expected typed
+                    // shape; the surrounding hot loop pays one
+                    // discriminant match per index instead of
+                    // aborting.
+                    let value = match b {
+                        Value::IntArray(data) => {
+                            if i >= data.len() {
+                                return Err(RuntimeError::Arithmetic(
+                                    "index out of bounds".to_string(),
+                                ));
+                            }
+                            *data.get_unchecked(i)
+                        }
+                        Value::Array(items) => {
+                            let Some(Value::Int(n)) = items.get(i) else {
+                                return Err(RuntimeError::Arithmetic(
+                                    "index out of bounds".to_string(),
+                                ));
+                            };
+                            *n
+                        }
+                        Value::FloatVec(_) | Value::FloatArray(_) => {
+                            return Err(RuntimeError::Type(
+                                "IntArrayGetI64: receiver is a float array".to_string(),
+                            ));
+                        }
+                        _ => {
+                            return Err(RuntimeError::Type(
+                                "IntArrayGetI64: receiver lost flat invariant".to_string(),
+                            ));
+                        }
                     };
-                    if i >= data.len() {
-                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
-                    }
-                    *ints.get_unchecked_mut(dst_i as usize) = *data.get_unchecked(i);
+                    *ints.get_unchecked_mut(dst_i as usize) = value;
                 },
                 Op::IntArraySetI64 {
                     base,
@@ -2133,15 +2206,35 @@ impl Vm {
                     }
                     let i = idx as usize;
                     let b = registers.get_unchecked(base as usize);
-                    let Value::FloatVec(data) = b else {
-                        return Err(RuntimeError::Type(
-                            "FloatVecGetF64: receiver lost flat invariant".to_string(),
-                        ));
+                    // Tolerate generic `Value::Array(Vec<Value::Float>)`
+                    // alongside `Value::FloatVec(Vec<f64>)` — same
+                    // tracking-vs-actual-shape skew the IntArray fast
+                    // path has to handle when a typed receiver passes
+                    // through a non-promoting ABI boundary.
+                    let value = match b {
+                        Value::FloatVec(data) => {
+                            if i >= data.len() {
+                                return Err(RuntimeError::Arithmetic(
+                                    "index out of bounds".to_string(),
+                                ));
+                            }
+                            *data.get_unchecked(i)
+                        }
+                        Value::Array(items) => {
+                            let Some(Value::Float(f)) = items.get(i) else {
+                                return Err(RuntimeError::Arithmetic(
+                                    "index out of bounds".to_string(),
+                                ));
+                            };
+                            *f
+                        }
+                        _ => {
+                            return Err(RuntimeError::Type(
+                                "FloatVecGetF64: receiver lost flat invariant".to_string(),
+                            ));
+                        }
                     };
-                    if i >= data.len() {
-                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
-                    }
-                    *floats.get_unchecked_mut(dst_f as usize) = *data.get_unchecked(i);
+                    *floats.get_unchecked_mut(dst_f as usize) = value;
                 },
                 Op::FloatVecSetF64 {
                     base,
@@ -2278,8 +2371,8 @@ impl Vm {
                     // applies; the receiver is prepended to the arg
                     // vector so the callee sees `[receiver, a0, a1, …]`.
                     let resolved = qualified_key(&recv, name)
-                        .and_then(|qual| self.globals.get(qual).cloned())
-                        .or_else(|| self.globals.get(name).cloned());
+                        .and_then(|qual| self.lookup_global(qual))
+                        .or_else(|| self.lookup_global(name));
                     let mut arg_values: Vec<Value> = Vec::with_capacity(argc as usize + 1);
                     arg_values.push(recv);
                     for i in 0..argc as usize {

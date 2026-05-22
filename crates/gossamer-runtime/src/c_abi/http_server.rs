@@ -271,7 +271,7 @@ pub unsafe extern "C" fn gos_rt_http_serve(
     std::process::abort();
 }
 
-type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> *mut GosResult;
+type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
 
 /// HTTP/2 cleartext server. Mirror of [`gos_rt_http_serve`] for
 /// HTTP/2 — the MIR lowerer emits this call when the compiled
@@ -490,30 +490,28 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 ///    Box-allocate (e.g. `gos_rt_http_request_send` from the
 ///    client side, never reachable from a server handler today).
 /// 3. `result` is null or carries `Err` — nothing to drop.
-pub(crate) unsafe fn drop_handler_result(result: *mut GosResult) {
-    if result.is_null() {
-        return;
-    }
-    let r = unsafe { &*result };
-    if r.disc != 0 {
-        return;
-    }
-    let response_ptr = r.payload as *mut GosHttpResponse;
-    if response_ptr.is_null() {
-        return;
-    }
-    if is_thread_local_response(response_ptr) {
-        // Per-thread buffer: don't free, just reset for the next
-        // request. The arena reset at the end of `handle_http_conn`
-        // reclaims any cstrings the response pointed at.
-        unsafe {
-            (*response_ptr).status = 0;
-            (*response_ptr).body = SyncRawPtr::NULL;
-            (*response_ptr).headers.clear();
+pub(crate) unsafe fn drop_handler_result(result: i128) {
+    if super::vec::gos_rt_result_disc(result) == 0 {
+        let response_ptr = super::vec::gos_rt_result_payload(result) as *mut GosHttpResponse;
+        if !response_ptr.is_null() {
+            if is_thread_local_response(response_ptr) {
+                // Per-thread buffer: don't free, just reset for the next
+                // request.
+                unsafe {
+                    crate::c_abi::string::gos_rt_str_free((*response_ptr).body.as_ptr());
+                    (*response_ptr).status = 0;
+                    (*response_ptr).body = SyncRawPtr::NULL;
+                    (*response_ptr).headers.clear();
+                }
+            } else {
+                unsafe { crate::c_abi::string::gos_rt_str_free((*response_ptr).body.as_ptr()) };
+                drop(unsafe { Box::from_raw(response_ptr) });
+            }
         }
-        return;
     }
-    drop(unsafe { Box::from_raw(response_ptr) });
+    // Result is now a 2-word by-value `i128` (no heap box), so there is
+    // nothing to free here — this is exactly the per-request box leak that
+    // the by-value representation eliminated everywhere.
 }
 
 thread_local! {
@@ -579,15 +577,11 @@ fn parse_request_into(raw: &[u8], request: &mut GosHttpRequest) -> bool {
 /// Writes `result`'s response payload (status + headers +
 /// body) into `out` as raw HTTP/1.1 bytes. Returns false if
 /// `result` doesn't carry a valid OK response.
-pub(crate) fn extract_response_into(result: *mut GosResult, out: &mut Vec<u8>) -> bool {
-    if result.is_null() {
+pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
+    if super::vec::gos_rt_result_disc(result) != 0 {
         return false;
     }
-    let r = unsafe { &*result };
-    if r.disc != 0 {
-        return false;
-    }
-    let response_ptr = r.payload as *const GosHttpResponse;
+    let response_ptr = super::vec::gos_rt_result_payload(result) as *const GosHttpResponse;
     if response_ptr.is_null() {
         return false;
     }

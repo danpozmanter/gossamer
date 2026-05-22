@@ -48,6 +48,86 @@ unsafe fn c_str_len(s: *const c_char) -> usize {
 /// collide with the new shape.
 const STR_ALLOC_TAG: u8 = 0xA9;
 
+/// Tag for growable strings allocated by `alloc_growable`.
+/// Layout: `[cap:u32 LE][len:u32 LE][tag=0xAB][content(cap bytes)][NUL]`
+/// `ptr` is 9 bytes past the start of the allocation (at `content[0]`).
+/// `ptr[-1]` = tag, `ptr[-5..-1]` = len (u32 LE), `ptr[-9..-5]` = cap (u32 LE).
+/// Total allocation: cap + 10 bytes.
+const STR_BUILDER_TAG: u8 = 0xAB;
+
+/// Tag for static string literals emitted into rodata by codegen with a
+/// length-carrying header `[len:u32 LE][tag=0xA8][content][NUL]` (body at
+/// base+5). Like the builder layout, the length is at `ptr[-5..-1]`, giving
+/// O(1) `gos_rt_str_len`; the distinct tag tells `gos_rt_str_free` to leak
+/// (never `free` rodata).
+const STR_STATIC_TAG: u8 = 0xA8;
+
+/// Tag for growable strings whose backing bytes live in an arena region.
+/// Same `[cap][len][tag][content][NUL]` layout as `STR_BUILDER_TAG` (so
+/// length reads and in-place append work identically), but the bytes are
+/// freed wholesale at `region_pop`, so `gos_rt_str_free` skips them.
+const STR_REGION_TAG: u8 = 0xAA;
+
+/// O(1) byte length for strings carrying a length header (builder + static
+/// layouts both store `len:u32` at `ptr[-5]`). Returns `None` for foreign /
+/// untagged pointers, where the caller must fall back to `strlen`. Reading
+/// `ptr[-5..-1]` and `ptr[-1]` on a foreign pointer is the same probabilistic
+/// prefix probe `gos_rt_str_free` already relies on.
+#[inline]
+unsafe fn str_header_len(s: *const c_char) -> Option<usize> {
+    if s.is_null() {
+        return Some(0);
+    }
+    let tag = unsafe { *s.cast::<u8>().sub(1) };
+    if tag == STR_BUILDER_TAG || tag == STR_STATIC_TAG || tag == STR_REGION_TAG {
+        let p = unsafe { s.cast::<u8>().sub(5) };
+        let len = u32::from_le_bytes(unsafe { [*p, *p.add(1), *p.add(2), *p.add(3)] });
+        Some(len as usize)
+    } else {
+        None
+    }
+}
+
+/// Allocates a growable string with `cap` bytes of content capacity.
+/// `parts` are concatenated into the initial content (total must be <= cap).
+/// Returns a pointer to `content[0]`; the 9-byte header lives just before it.
+fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
+    let content_len: usize = parts.iter().map(|p| p.len()).sum();
+    debug_assert!(cap >= content_len, "alloc_growable: cap < content length");
+    // rc(4) + cap(4) + len(4) + tag(1) + content(cap) + NUL(1) = cap + 14.
+    // Refcount at the FRONT keeps cap(-9)/len(-5)/tag(-1) offsets unchanged.
+    let total = 4 + 4 + 4 + 1 + cap + 1;
+    // Inside an arena region, allocate the bytes from the region (freed
+    // wholesale at pop; `gos_rt_str_free` skips the region tag). Else a
+    // boxed slice on the global allocator.
+    let region_base = crate::c_abi::rc::region_alloc_bytes(total);
+    let (base, tag) = if region_base.is_null() {
+        let v: Vec<u8> = vec![0u8; total];
+        (
+            Box::into_raw(v.into_boxed_slice()).cast::<u8>(),
+            STR_BUILDER_TAG,
+        )
+    } else {
+        // region bytes are already zeroed.
+        (region_base, STR_REGION_TAG)
+    };
+    // SAFETY: `base` points to `total` writable, zeroed bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), base, 4);
+        std::ptr::copy_nonoverlapping((cap as u32).to_le_bytes().as_ptr(), base.add(4), 4);
+        std::ptr::copy_nonoverlapping((content_len as u32).to_le_bytes().as_ptr(), base.add(8), 4);
+        *base.add(12) = tag;
+        let mut off = 13;
+        for p in parts {
+            std::ptr::copy_nonoverlapping(p.as_ptr(), base.add(off), p.len());
+            off += p.len();
+        }
+        // NUL already zero.
+        crate::c_abi::ledger::str_inc();
+        base.add(13).cast::<c_char>()
+    }
+}
+
 /// Reclaims a c-string previously returned by [`alloc_cstring`].
 /// Reads the allocator-provenance tag at `s[-1]` and reconstructs
 /// the original `Box<[u8]>` covering `tag(1) + content(strlen) +
@@ -76,23 +156,72 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
         // global allocator's free list — leak instead.
         let tag_ptr = unsafe { s.cast::<u8>().sub(1) };
         let tag = unsafe { *tag_ptr };
-        if tag != STR_ALLOC_TAG {
+        if tag == STR_REGION_TAG {
+            // Region-allocated: freed wholesale at region_pop, never here.
+            return;
+        }
+        if tag == STR_ALLOC_TAG {
+            // Fixed layout: [tag(1)][content][NUL(1)]
+            let content_len = unsafe { c_str_len(s) };
+            let total = 1 + content_len + 1;
+            let slice = std::ptr::slice_from_raw_parts_mut(tag_ptr, total);
+            drop(unsafe { Box::from_raw(slice) });
+        } else if tag == STR_BUILDER_TAG {
+            // Refcounted: [rc:u32][cap:u32][len:u32][tag(1)][content][NUL].
+            // Decrement; reclaim only at zero.
+            let hdr = unsafe { s.cast::<u8>().sub(13) };
+            let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
+            if rc > 1 {
+                unsafe {
+                    std::ptr::copy_nonoverlapping((rc - 1).to_le_bytes().as_ptr(), hdr, 4);
+                }
+                return;
+            }
+            let cap =
+                u32::from_le_bytes(unsafe { [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)] })
+                    as usize;
+            let total = 4 + 4 + 4 + 1 + cap + 1;
+            let slice = std::ptr::slice_from_raw_parts_mut(hdr, total);
+            drop(unsafe { Box::from_raw(slice) });
+            crate::c_abi::ledger::str_dec();
+        } else if tag == STR_STATIC_TAG {
+            // Static rodata literal — never freed.
+        } else {
             eprintln!(
                 "gos_rt_str_free: allocator tag mismatch (got 0x{tag:02x}, \
              expected 0x{STR_ALLOC_TAG:02x}) — refusing to free"
             );
-            return;
         }
-        // Walk to NUL to recover the content length; the original box
-        // spans `tag(1) + content(len) + NUL(1)` bytes starting at
-        // `tag_ptr`.
-        let content_len = unsafe { c_str_len(s) };
-        let total = 1 + content_len + 1;
-        let slice = std::ptr::slice_from_raw_parts_mut(tag_ptr, total);
-        drop(unsafe { Box::from_raw(slice) });
     });
 }
 
+/// True when `s` is a Gossamer-allocated string (tag byte at offset -1 in
+/// `0xA8..=0xAB`). An RC object's byte at -1 is its (canonical) `meta` high
+/// byte = `0x00`, so the ranges never collide — the RC retain/release dispatch
+/// uses this to route strings to the string allocator.
+#[inline]
+pub unsafe fn is_gos_string(s: *const c_char) -> bool {
+    !s.is_null() && matches!(unsafe { *s.cast::<u8>().sub(1) }, 0xA8..=0xAB)
+}
+
+/// Increment a heap (`STR_BUILDER_TAG`) string's refcount; no-op otherwise.
+pub(crate) unsafe fn gos_rt_str_retain(s: *const c_char) {
+    if s.is_null() || unsafe { *s.cast::<u8>().sub(1) } != STR_BUILDER_TAG {
+        return;
+    }
+    let hdr = unsafe { s.cast::<u8>().sub(13) };
+    let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            rc.saturating_add(1).to_le_bytes().as_ptr(),
+            hdr.cast_mut(),
+            4,
+        );
+    }
+}
+
+/// Allocate an owned, NUL-terminated heap string holding `s`'s bytes (the
+/// `STR_ALLOC_TAG` allocator shape).
 pub fn alloc_cstring(s: &[u8]) -> *mut c_char {
     // Pick the first NUL (if any) so we never copy past it.
     let nul = s.iter().position(|&b| b == 0).unwrap_or(s.len());
@@ -112,22 +241,24 @@ pub fn alloc_cstring(s: &[u8]) -> *mut c_char {
 /// normal c-string; `gos_rt_str_free` reads `ptr[-1]` to verify
 /// the allocation originated here.
 pub fn alloc_cstring_from_slices(parts: &[&[u8]]) -> *mut c_char {
+    // Use the length-carrying builder layout (cap = content length) so the
+    // result has its byte length stored at `ptr[-5]` for O(1)
+    // `gos_rt_str_len` / `gos_rt_str_slice`. A later in-place `+=` finds no
+    // spare capacity and reallocates with doubling — correctness and the
+    // amortised growth analysis are unchanged. `gos_rt_str_free` and the
+    // concat fast path already handle `STR_BUILDER_TAG`.
     let total: usize = parts.iter().map(|p| p.len()).sum();
-    let mut v: Vec<u8> = Vec::with_capacity(1 + total + 1);
-    v.push(STR_ALLOC_TAG);
-    for p in parts {
-        v.extend_from_slice(p);
-    }
-    v.push(0);
-    let box_ptr = Box::into_raw(v.into_boxed_slice()).cast::<u8>();
-    // SAFETY: the box has at least 2 bytes (tag + NUL), so offset
-    // 1 is within the allocation.
-    unsafe { box_ptr.add(1).cast::<c_char>() }
+    alloc_growable(parts, total)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_len(s: *const c_char) -> i64 {
-    ffi_entry!(-1, { unsafe { c_str_len(s) as i64 } })
+    ffi_entry!(-1, {
+        match unsafe { str_header_len(s) } {
+            Some(len) => len as i64,
+            None => unsafe { c_str_len(s) as i64 },
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -342,6 +473,105 @@ pub unsafe extern "C" fn gos_rt_str_concat(a: *const c_char, b: *const c_char) -
     })
 }
 
+/// Concatenates `a + b`, frees `a`, and returns the result.
+///
+/// Implements amortized O(1) string accumulation: when `a` is already a
+/// growable string (`STR_BUILDER_TAG`) with enough spare capacity, `b` is
+/// appended in-place without any allocation. When capacity is exhausted the
+/// buffer is reallocated with 2x the required size, giving O(n) total copy
+/// work across n append operations (standard doubling analysis).
+///
+/// Safe when `a` is null or a rodata literal: those paths allocate a fresh
+/// growable buffer rather than attempting to free an unowned pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
+    a: *const c_char,
+    b: *const c_char,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let a_empty = a.is_null() || unsafe { *a.cast::<u8>() } == 0;
+        let b_empty = b.is_null() || unsafe { *b.cast::<u8>() } == 0;
+
+        if b_empty {
+            // Nothing new to append; return a as-is when it is already owned.
+            if !a.is_null() {
+                let tag = unsafe { *a.cast::<u8>().sub(1) };
+                if tag == STR_BUILDER_TAG || tag == STR_ALLOC_TAG || tag == STR_REGION_TAG {
+                    return a.cast_mut();
+                }
+            }
+            let a_bytes: &[u8] = if a_empty {
+                &[]
+            } else {
+                unsafe { CStr::from_ptr(a).to_bytes() }
+            };
+            return alloc_growable(&[a_bytes], 64.max(a_bytes.len()));
+        }
+
+        let b_bytes: &[u8] = unsafe { CStr::from_ptr(b).to_bytes() };
+        let len_b = b_bytes.len();
+
+        // Fast path: a is a growable string (heap or region) — try in-place
+        // append. Region builders share the layout; their backing bytes are
+        // writable until pop, and the realloc branch routes a fresh buffer
+        // through the region too (and `gos_rt_str_free(a)` no-ops on it).
+        if !a.is_null() {
+            let tag = unsafe { *a.cast::<u8>().sub(1) };
+            if tag == STR_BUILDER_TAG || tag == STR_REGION_TAG {
+                let hdr = unsafe { a.cast::<u8>().sub(13) };
+                let rc =
+                    u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
+                let cap = u32::from_le_bytes(unsafe {
+                    [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)]
+                }) as usize;
+                let len_a = u32::from_le_bytes(unsafe {
+                    [*hdr.add(8), *hdr.add(9), *hdr.add(10), *hdr.add(11)]
+                }) as usize;
+                let new_len = len_a + len_b;
+                // In-place only when sole owner (rc == 1): mutating a shared
+                // buffer would corrupt other holders.
+                if new_len <= cap && (rc == 1 || tag == STR_REGION_TAG) {
+                    unsafe {
+                        let dst = (a as *mut u8).add(len_a);
+                        std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), dst, len_b);
+                        *dst.add(len_b) = 0;
+                        let hdr_mut = hdr.cast_mut();
+                        std::ptr::copy_nonoverlapping(
+                            (new_len as u32).to_le_bytes().as_ptr(),
+                            hdr_mut.add(8),
+                            4,
+                        );
+                    }
+                    return a.cast_mut();
+                }
+                // Shared or capacity exhausted: copy, allocate fresh, drop one ref.
+                let a_content = unsafe { std::slice::from_raw_parts(a.cast::<u8>(), len_a) };
+                let new_cap = (new_len * 2).max(64);
+                let result = alloc_growable(&[a_content, b_bytes], new_cap);
+                unsafe { gos_rt_str_free(a.cast_mut()) };
+                return result;
+            }
+        }
+
+        // a is null, a literal, or a fixed heap string — allocate fresh growable.
+        let a_bytes: &[u8] = if a_empty {
+            &[]
+        } else {
+            unsafe { CStr::from_ptr(a).to_bytes() }
+        };
+        let new_len = a_bytes.len() + len_b;
+        let new_cap = (new_len * 2).max(64);
+        let result = alloc_growable(&[a_bytes, b_bytes], new_cap);
+        if !a.is_null() {
+            let tag = unsafe { *a.cast::<u8>().sub(1) };
+            if tag == STR_ALLOC_TAG {
+                unsafe { gos_rt_str_free(a.cast_mut()) };
+            }
+        }
+        result
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_trim(s: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -352,6 +582,36 @@ pub unsafe extern "C" fn gos_rt_str_trim(s: *const c_char) -> *mut c_char {
         };
         let st = std::str::from_utf8(bytes).unwrap_or("");
         alloc_cstring(st.trim().as_bytes())
+    })
+}
+
+/// `s.trim_start() / strings::trim_start(s)` — strips leading
+/// Unicode whitespace, mirroring Rust's `str::trim_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_trim_start(s: *const c_char) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let bytes = if s.is_null() {
+            b"" as &[u8]
+        } else {
+            unsafe { CStr::from_ptr(s).to_bytes() }
+        };
+        let st = std::str::from_utf8(bytes).unwrap_or("");
+        alloc_cstring(st.trim_start().as_bytes())
+    })
+}
+
+/// `s.trim_end() / strings::trim_end(s)` — strips trailing
+/// Unicode whitespace, mirroring Rust's `str::trim_end`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_trim_end(s: *const c_char) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let bytes = if s.is_null() {
+            b"" as &[u8]
+        } else {
+            unsafe { CStr::from_ptr(s).to_bytes() }
+        };
+        let st = std::str::from_utf8(bytes).unwrap_or("");
+        alloc_cstring(st.trim_end().as_bytes())
     })
 }
 
@@ -459,11 +719,8 @@ pub unsafe extern "C" fn gos_rt_str_find(s: *const c_char, needle: *const c_char
 /// because -1 doesn't correspond to either Some-disc (0) or
 /// None-disc (1).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_find_opt(
-    s: *const c_char,
-    needle: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_str_find_opt(s: *const c_char, needle: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         let idx = unsafe { gos_rt_str_find(s, needle) };
         if idx < 0 {
             unsafe { gos_rt_result_new(1, 0) }
@@ -478,11 +735,8 @@ pub unsafe extern "C" fn gos_rt_str_find_opt(
 /// the right; empty needle returns `Some(s.len())` to mirror Rust's
 /// `str::rfind` semantics.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_rfind_opt(
-    s: *const c_char,
-    needle: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_str_rfind_opt(s: *const c_char, needle: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if s.is_null() || needle.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -580,11 +834,8 @@ pub unsafe extern "C" fn gos_rt_str_replace(
 /// (separator not found, or null/empty input). Mirrors the
 /// `find_opt` packing convention.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_split_once(
-    s: *const c_char,
-    sep: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_str_split_once(s: *const c_char, sep: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if s.is_null() || sep.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -614,11 +865,8 @@ pub unsafe extern "C" fn gos_rt_str_split_once(
 /// `s.rsplit_once(sep) -> Option<(String, String)>`. Same shape as
 /// `split_once` but anchored at the last occurrence of `sep`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_rsplit_once(
-    s: *const c_char,
-    sep: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_str_rsplit_once(s: *const c_char, sep: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if s.is_null() || sep.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -808,18 +1056,19 @@ pub unsafe extern "C" fn gos_rt_str_center(
 /// payload pointers: `disc=0` → owned `*mut c_char`, `disc=1` →
 /// `*mut GosError`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_str_slice(
-    s: *const c_char,
-    start: i64,
-    end: i64,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
-        let bytes: &[u8] = if s.is_null() {
-            &[]
+pub unsafe extern "C" fn gos_rt_str_slice(s: *const c_char, start: i64, end: i64) -> i128 {
+    ffi_entry!(0i128, {
+        // O(1) length when the string carries a header; `strlen` fallback for
+        // foreign pointers. This is what makes a parser that slices a large
+        // input at growing offsets O(n) instead of O(n^2).
+        let len = if s.is_null() {
+            0i64
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes() }
+            match unsafe { str_header_len(s) } {
+                Some(l) => l as i64,
+                None => unsafe { c_str_len(s) as i64 },
+            }
         };
-        let len = bytes.len() as i64;
         if start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
             let cs = std::ffi::CString::new(msg).unwrap_or_default();
@@ -828,6 +1077,13 @@ pub unsafe extern "C" fn gos_rt_str_slice(
         }
         let lo = start as usize;
         let hi = end as usize;
+        // SAFETY: `0 <= lo <= hi <= len`, and the string body holds `len`
+        // valid bytes; the range is within the allocation.
+        let bytes: &[u8] = if s.is_null() {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len as usize) }
+        };
         let slice = &bytes[lo..hi];
         if std::str::from_utf8(slice).is_ok() {
             unsafe { gos_rt_result_new(0, alloc_cstring(slice) as i64) }
@@ -981,8 +1237,8 @@ pub unsafe extern "C" fn gos_rt_parse_i64(s: *const c_char, ok_out: *mut i32) ->
 /// Err payload is a `*mut GosError` so user code can call
 /// `e.message()` directly without `map_err`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_parse_i64_result(s: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_parse_i64_result(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if s.is_null() {
             let cs = std::ffi::CString::new("parse: null input").unwrap();
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
@@ -1005,16 +1261,9 @@ pub unsafe extern "C" fn gos_rt_parse_i64_result(s: *const c_char) -> *mut GosRe
 
 /// `result.map_err(closure)`. If Err, calls closure and rebuilds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_map_err(
-    result: *mut GosResult,
-    closure: *const u8,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
-        if result.is_null() {
-            return result;
-        }
-        let res = unsafe { &*result };
-        if res.disc != 1 || closure.is_null() {
+pub unsafe extern "C" fn gos_rt_result_map_err(result: i128, closure: *const u8) -> i128 {
+    ffi_entry!(0i128, {
+        if gos_rt_result_disc(result) != 1 || closure.is_null() {
             return result;
         }
         // SAFETY: `closure` is a heap blob whose first word is the
@@ -1024,7 +1273,7 @@ pub unsafe extern "C" fn gos_rt_result_map_err(
             return result;
         }
         let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
-        let new_payload = f(closure as i64, res.payload);
+        let new_payload = f(closure as i64, gos_rt_result_payload(result));
         unsafe { gos_rt_result_new(1, new_payload) }
     })
 }
@@ -1037,16 +1286,9 @@ pub unsafe extern "C" fn gos_rt_result_map_err(
 /// transform the env pointer instead of the payload (the askq
 /// round-2 corruption pre-fix).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_result_map(
-    result: *mut GosResult,
-    closure: *const u8,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
-        if result.is_null() {
-            return result;
-        }
-        let res = unsafe { &*result };
-        if res.disc != 0 || closure.is_null() {
+pub unsafe extern "C" fn gos_rt_result_map(result: i128, closure: *const u8) -> i128 {
+    ffi_entry!(0i128, {
+        if gos_rt_result_disc(result) != 0 || closure.is_null() {
             return result;
         }
         let fn_addr = unsafe { *closure.cast::<i64>() };
@@ -1054,8 +1296,31 @@ pub unsafe extern "C" fn gos_rt_result_map(
             return result;
         }
         let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
-        let new_payload = f(closure as i64, res.payload);
+        let new_payload = f(closure as i64, gos_rt_result_payload(result));
         unsafe { gos_rt_result_new(0, new_payload) }
+    })
+}
+
+/// `result::default_with(closure, result)` — returns the `Ok` value
+/// unchanged, or calls `closure` on the `Err` payload and returns its
+/// result. The returned `i64` is the unwrapped `T` (a scalar value or
+/// a pointer, depending on `T`). Mirrors `gos_rt_result_map`'s closure
+/// invocation convention.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_default_with(result: i128, closure: *const u8) -> i64 {
+    ffi_entry!(0, {
+        if gos_rt_result_disc(result) == 0 {
+            return gos_rt_result_payload(result);
+        }
+        if closure.is_null() {
+            return 0;
+        }
+        let fn_addr = unsafe { *closure.cast::<i64>() };
+        if fn_addr == 0 {
+            return 0;
+        }
+        let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
+        f(closure as i64, gos_rt_result_payload(result))
     })
 }
 
@@ -1067,37 +1332,26 @@ pub unsafe extern "C" fn gos_rt_result_map(
 /// a direct path to a lifted function rather than a heap-allocated
 /// env+code blob).
 #[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_result_map_bare(result: *mut GosResult, fn_addr: i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
-        if result.is_null() {
-            return result;
-        }
-        let res = unsafe { &*result };
-        if res.disc != 0 || fn_addr == 0 {
+pub extern "C" fn gos_rt_result_map_bare(result: i128, fn_addr: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if gos_rt_result_disc(result) != 0 || fn_addr == 0 {
             return result;
         }
         let f: extern "C" fn(i64) -> i64 = unsafe { std::mem::transmute(fn_addr as *const ()) };
-        let new_payload = f(res.payload);
+        let new_payload = f(gos_rt_result_payload(result));
         gos_rt_result_new(0, new_payload)
     })
 }
 
 /// `result.map_err(closure)` for **non-capturing** closures.
 #[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_result_map_err_bare(
-    result: *mut GosResult,
-    fn_addr: i64,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
-        if result.is_null() {
-            return result;
-        }
-        let res = unsafe { &*result };
-        if res.disc == 0 || fn_addr == 0 {
+pub extern "C" fn gos_rt_result_map_err_bare(result: i128, fn_addr: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if gos_rt_result_disc(result) == 0 || fn_addr == 0 {
             return result;
         }
         let f: extern "C" fn(i64) -> i64 = unsafe { std::mem::transmute(fn_addr as *const ()) };
-        let new_payload = f(res.payload);
+        let new_payload = f(gos_rt_result_payload(result));
         gos_rt_result_new(1, new_payload)
     })
 }
@@ -1326,11 +1580,8 @@ fn apply_decl_value(entry: &mut GosFlagMapEntry, raw: &str) {
 /// compiled tier) carrying either the i64 slot for numeric /
 /// bool flags or the c-string pointer for string flags.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_flag_map_get(
-    map: *const GosFlagMap,
-    key: *const c_char,
-) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_flag_map_get(map: *const GosFlagMap, key: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         if map.is_null() || key.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -1357,8 +1608,8 @@ pub unsafe extern "C" fn gos_rt_flag_map_get(
 /// Renders a UTC RFC 3339 timestamp from a unix-milliseconds
 /// instant. Mirrors the interpreter builtin.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_time_format_rfc3339(unix_ms: i64) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_time_format_rfc3339(unix_ms: i64) -> i128 {
+    ffi_entry!(0i128, {
         let secs = unix_ms.div_euclid(1_000);
         let nanos = (unix_ms.rem_euclid(1_000) * 1_000_000) as u32;
         let _ = nanos;
@@ -1411,8 +1662,8 @@ pub unsafe extern "C" fn gos_rt_time_format_rfc3339(unix_ms: i64) -> *mut GosRes
 /// Parses a UTC RFC 3339 timestamp and returns unix milliseconds.
 /// Accepts the `YYYY-MM-DDTHH:MM:SSZ` form produced by format_rfc3339.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_time_parse_rfc3339(s: *const c_char) -> *mut GosResult {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_time_parse_rfc3339(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
         let text = if s.is_null() {
             return unsafe {
                 let msg = alloc_cstring(b"parse_rfc3339: null input");
@@ -1422,7 +1673,7 @@ pub unsafe extern "C" fn gos_rt_time_parse_rfc3339(s: *const c_char) -> *mut Gos
             unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }.trim()
         };
         // Minimal RFC 3339 / ISO 8601 parser: YYYY-MM-DDTHH:MM:SS[.frac]Z
-        let err = |msg: &str| -> *mut GosResult {
+        let err = |msg: &str| -> i128 {
             let cs = alloc_cstring(msg.as_bytes());
             unsafe { gos_rt_result_new(1, cs as i64) }
         };
@@ -1591,5 +1842,297 @@ pub unsafe extern "C" fn gos_rt_char_to_str(c: i32) -> *mut c_char {
         let mut buf = [0u8; 4];
         let s = scalar.encode_utf8(&mut buf);
         alloc_cstring(s.as_bytes())
+    })
+}
+
+// ---------------------------------------------------------------
+// strings::* free-function surface (0.10.0 cross-tier wiring)
+// ---------------------------------------------------------------
+// These back the `strings::*` free functions that previously only
+// existed in the bytecode VM. Each mirrors the corresponding
+// `gossamer_std::strings` helper so `gos run` and `gos build`
+// produce identical output.
+
+unsafe fn cstr<'a>(p: *const c_char) -> &'a str {
+    if p.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(p).to_str().unwrap_or("") }
+    }
+}
+
+/// Builds a `*mut GosVec` of c-string pointers from owned strings.
+fn alloc_str_vec(parts: &[String]) -> *mut GosVec {
+    let vec = unsafe { gos_rt_vec_with_capacity(8, parts.len() as i64) };
+    for p in parts {
+        let pv = alloc_cstring(p.as_bytes()) as i64;
+        unsafe { gos_rt_vec_push(vec, std::ptr::addr_of!(pv).cast::<u8>()) };
+    }
+    vec
+}
+
+/// `strings::splitn(s, n, sep) -> [String]`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_splitn(
+    s: *const c_char,
+    n: i64,
+    sep: *const c_char,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        let parts: Vec<String> = unsafe { cstr(s) }
+            .splitn(n, unsafe { cstr(sep) })
+            .map(str::to_string)
+            .collect();
+        alloc_str_vec(&parts)
+    })
+}
+
+/// `strings::split_whitespace(s) -> [String]`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_split_whitespace(s: *const c_char) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let parts: Vec<String> = unsafe { cstr(s) }
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        alloc_str_vec(&parts)
+    })
+}
+
+/// `strings::fields(s) -> [String]`. Same semantics as
+/// `split_whitespace` (Go's `strings.Fields`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_fields(s: *const c_char) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let parts: Vec<String> = unsafe { cstr(s) }
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        alloc_str_vec(&parts)
+    })
+}
+
+/// `strings::replacen(s, from, to, n) -> String`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_replacen(
+    s: *const c_char,
+    from: *const c_char,
+    to: *const c_char,
+    n: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let n = usize::try_from(n.max(0)).unwrap_or(0);
+        let out = unsafe { cstr(s) }.replacen(unsafe { cstr(from) }, unsafe { cstr(to) }, n);
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// `strings::to_title(s) -> String` — capitalises the first
+/// character of each whitespace-separated word.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_to_title(s: *const c_char) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let text = unsafe { cstr(s) };
+        let mut result = String::with_capacity(text.len());
+        let mut capitalize_next = true;
+        for c in text.chars() {
+            if c.is_whitespace() {
+                capitalize_next = true;
+                result.push(c);
+            } else if capitalize_next {
+                result.extend(c.to_uppercase());
+                capitalize_next = false;
+            } else {
+                result.push(c);
+            }
+        }
+        alloc_cstring(result.as_bytes())
+    })
+}
+
+/// `strings::trim_matches(s, cutset) -> String`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_trim_matches(
+    s: *const c_char,
+    cutset: *const c_char,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let cutset = unsafe { cstr(cutset) };
+        let out = unsafe { cstr(s) }.trim_matches(|c| cutset.contains(c));
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// `strings::pad_left(s, width, pad_char) -> String`. `pad_char` is
+/// the Unicode scalar value; invalid scalars fall back to a space.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_pad_left(
+    s: *const c_char,
+    width: i64,
+    pad_char: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let text = unsafe { cstr(s) };
+        let width = usize::try_from(width.max(0)).unwrap_or(0);
+        let pc = u32::try_from(pad_char)
+            .ok()
+            .and_then(char::from_u32)
+            .unwrap_or(' ');
+        let count = text.chars().count();
+        let out = if count >= width {
+            text.to_string()
+        } else {
+            let mut out = String::new();
+            for _ in 0..(width - count) {
+                out.push(pc);
+            }
+            out.push_str(text);
+            out
+        };
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// `strings::pad_right(s, width, pad_char) -> String`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_pad_right(
+    s: *const c_char,
+    width: i64,
+    pad_char: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let text = unsafe { cstr(s) };
+        let width = usize::try_from(width.max(0)).unwrap_or(0);
+        let pc = u32::try_from(pad_char)
+            .ok()
+            .and_then(char::from_u32)
+            .unwrap_or(' ');
+        let count = text.chars().count();
+        let out = if count >= width {
+            text.to_string()
+        } else {
+            let mut out = String::with_capacity(text.len() + width - count);
+            out.push_str(text);
+            for _ in 0..(width - count) {
+                out.push(pc);
+            }
+            out
+        };
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// `strings::contains_rune(s, r) -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_contains_rune(s: *const c_char, r: i64) -> i32 {
+    ffi_entry!(-1, {
+        let Some(rc) = u32::try_from(r).ok().and_then(char::from_u32) else {
+            return 0;
+        };
+        i32::from(unsafe { cstr(s) }.contains(rc))
+    })
+}
+
+/// `strings::contains_any(s, chars) -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_contains_any(s: *const c_char, chars: *const c_char) -> i32 {
+    ffi_entry!(-1, {
+        let chars = unsafe { cstr(chars) };
+        i32::from(unsafe { cstr(s) }.chars().any(|c| chars.contains(c)))
+    })
+}
+
+/// `strings::equal_fold(a, b) -> bool` — case-insensitive compare.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_equal_fold(a: *const c_char, b: *const c_char) -> i32 {
+    ffi_entry!(-1, {
+        let a = unsafe { cstr(a) };
+        let b = unsafe { cstr(b) };
+        if a.len() != b.len() && a.chars().count() != b.chars().count() {
+            return 0;
+        }
+        let eq = a
+            .chars()
+            .zip(b.chars())
+            .all(|(ac, bc)| ac.to_lowercase().eq(bc.to_lowercase()));
+        i32::from(eq)
+    })
+}
+
+/// `strings::index_rune(s, r) -> Option<i64>` byte index, packed as
+/// a `*mut GosResult` (`disc 0 = Some(idx)`, `disc 1 = None`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_index_rune(s: *const c_char, r: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let rc = u32::try_from(r).ok().and_then(char::from_u32);
+        match rc.and_then(|rc| unsafe { cstr(s) }.find(rc)) {
+            Some(i) => unsafe { gos_rt_result_new(0, i as i64) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `strings::index_any(s, chars) -> Option<i64>` byte index of the
+/// first character that appears in `chars`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_index_any(s: *const c_char, chars: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let chars = unsafe { cstr(chars) };
+        match unsafe { cstr(s) }
+            .char_indices()
+            .find(|(_, c)| chars.contains(*c))
+            .map(|(i, _)| i)
+        {
+            Some(i) => unsafe { gos_rt_result_new(0, i as i64) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `strings::last_index_any(s, chars) -> Option<i64>` byte index of
+/// the last character that appears in `chars`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_last_index_any(s: *const c_char, chars: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let chars = unsafe { cstr(chars) };
+        match unsafe { cstr(s) }
+            .char_indices()
+            .rev()
+            .find(|(_, c)| chars.contains(*c))
+            .map(|(i, _)| i)
+        {
+            Some(i) => unsafe { gos_rt_result_new(0, i as i64) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `strings::strip_prefix(s, prefix) -> Option<String>` packed as a
+/// `*mut GosResult` (`disc 0 = Some(string-ptr)`, `disc 1 = None`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_strip_prefix(s: *const c_char, prefix: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        match unsafe { cstr(s) }.strip_prefix(unsafe { cstr(prefix) }) {
+            Some(stripped) => {
+                let p = alloc_cstring(stripped.as_bytes()) as i64;
+                unsafe { gos_rt_result_new(0, p) }
+            }
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `strings::strip_suffix(s, suffix) -> Option<String>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_strip_suffix(s: *const c_char, suffix: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        match unsafe { cstr(s) }.strip_suffix(unsafe { cstr(suffix) }) {
+            Some(stripped) => {
+                let p = alloc_cstring(stripped.as_bytes()) as i64;
+                unsafe { gos_rt_result_new(0, p) }
+            }
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
     })
 }

@@ -511,6 +511,7 @@ impl<'a> Builder<'a> {
 
     pub(crate) fn lower_user_enum_ctor(
         &mut self,
+        enum_name: &str,
         variant_idx: u32,
         args: &[HirExpr],
         ty: Ty,
@@ -519,6 +520,111 @@ impl<'a> Builder<'a> {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let n_args = args.len();
         let bytes = ((n_args + 1) * 8) as i128;
+
+        // Inline-able enums (every variant <=1 field that fits in 8 bytes) use
+        // the 2-word by-value `i128` [disc, payload] representation — pack the
+        // discriminant and the single field inline, no heap node. Mirrors the
+        // Result/Option lowering and eliminates the per-node allocation storm
+        // for JSON-DOM-shaped enums.
+        if self.tcx.is_inline_enum_ty(ty) {
+            let disc_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(disc_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(variant_idx)))),
+                span,
+            );
+            let (payload_local, is_f64) = if let Some(arg) = args.first() {
+                let p = self.lower_expr(arg)?;
+                let pty = self.locals[p.0 as usize].ty;
+                let is_f64 = matches!(self.tcx.kind_of(pty), gossamer_types::TyKind::Float(_));
+                (p, is_f64)
+            } else {
+                let p = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(p),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    span,
+                );
+                (p, false)
+            };
+            let ctor = if is_f64 {
+                "gos_rt_result_new_f64"
+            } else {
+                "gos_rt_result_new"
+            };
+            let dest = self.fresh(ty);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::CallIntrinsic {
+                    name: ctor,
+                    args: vec![
+                        Operand::Copy(Place::local(disc_local)),
+                        Operand::Copy(Place::local(payload_local)),
+                    ],
+                },
+                span,
+            );
+            return Some(dest);
+        }
+
+        // Every heap-allocated user enum is reference counted. Record
+        // this construction's type so the drop pass recognises locals of
+        // it as RC-managed (the enum's HIR `self_ty` is a placeholder, so
+        // this is the only reliable source of the real `Adt` handle).
+        self.tcx.register_rc_managed_ty(ty);
+
+        // Payload-less variants (e.g. `Tree::Leaf`) carry only a discriminant
+        // and are never mutated, so every construction shares one pinned
+        // per-tag singleton instead of allocating a fresh 8-byte node — a
+        // large RAM win for recursive enums (a full binary tree is ~half
+        // leaves). The runtime returns a borrow; the enclosing aggregate's
+        // store retains it and teardown releases it (balanced).
+        if n_args == 0 {
+            let tag_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(tag_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(variant_idx)))),
+                span,
+            );
+            let dest = self.fresh(ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_enum_unit".to_string())),
+                args: vec![Operand::Copy(Place::local(tag_local))],
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
+        }
+
+        // Lower the payload args first so we know each field's type, and
+        // record which payload words hold RC-managed child pointers
+        // (heap-allocated user enums). Word 0 is the discriminant; field
+        // `i` lands at word `i + 1`. A field is an RC child when it is the
+        // same enum (direct recursion) or an already-registered RC enum
+        // (mutual recursion / forward reference).
+        let mut payload_locals = Vec::with_capacity(n_args);
+        let mut child_offsets: Vec<i64> = Vec::new();
+        for (i, arg) in args.iter().enumerate() {
+            let payload_local = self.lower_expr(arg)?;
+            let payload_ty = self.locals[payload_local.0 as usize].ty;
+            if payload_ty == ty || self.tcx.is_rc_managed(payload_ty) {
+                child_offsets.push((i + 1) as i64);
+            }
+            payload_locals.push(payload_local);
+        }
+
+        // Register this variant's child-layout meta and obtain the
+        // codegen symbol to reference. A variant with no RC-pointer
+        // children needs no descriptor — the empty symbol lowers to a
+        // null meta pointer, which the runtime treats as a leaf.
+        let meta_symbol = if child_offsets.is_empty() {
+            String::new()
+        } else {
+            self.register_rc_variant_meta(enum_name, variant_idx, &child_offsets)
+        };
+
         let size_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(size_local),
@@ -529,8 +635,11 @@ impl<'a> Builder<'a> {
         self.emit_assign(
             Place::local(dest),
             Rvalue::CallIntrinsic {
-                name: "gos_alloc",
-                args: vec![Operand::Copy(Place::local(size_local))],
+                name: "gos_rc_alloc",
+                args: vec![
+                    Operand::Copy(Place::local(size_local)),
+                    Operand::Const(ConstValue::Str(meta_symbol)),
+                ],
             },
             span,
         );
@@ -561,9 +670,8 @@ impl<'a> Builder<'a> {
             },
             span,
         );
-        // Write each payload at offset (i+1)*8
-        for (i, arg) in args.iter().enumerate() {
-            let payload_local = self.lower_expr(arg)?;
+        // Write each payload at offset (i+1)*8 (already lowered above).
+        for (i, payload_local) in payload_locals.into_iter().enumerate() {
             let off_local = self.fresh(i64_ty);
             self.emit_assign(
                 Place::local(off_local),
@@ -587,6 +695,36 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// Builds the single-record RC type-meta blob for one enum variant
+    /// and registers it on the `TyCtxt` under a stable codegen symbol,
+    /// returning that symbol. Because each allocation stores its own
+    /// meta pointer, the descriptor only needs to describe *this*
+    /// variant's children — so it uses the struct-kind shape (one
+    /// record, discriminant ignored at release time). See the blob
+    /// format in `gossamer-runtime` `c_abi::rc`.
+    fn register_rc_variant_meta(
+        &mut self,
+        enum_name: &str,
+        variant_idx: u32,
+        child_offsets: &[i64],
+    ) -> String {
+        use gossamer_abi::rc::RC_KIND_STRUCT;
+        let sanitised: String = enum_name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        let symbol = format!("gos_rc_meta_{sanitised}_v{variant_idx}");
+        let mut blob = vec![
+            RC_KIND_STRUCT,
+            1,
+            i64::from(variant_idx),
+            child_offsets.len() as i64,
+        ];
+        blob.extend_from_slice(child_offsets);
+        self.tcx.register_rc_meta(symbol.clone(), blob);
+        symbol
+    }
+
     pub(crate) fn lower_result_ctor(
         &mut self,
         disc: i64,
@@ -605,11 +743,30 @@ impl<'a> Builder<'a> {
             span,
         );
         let payload_local = self.lower_expr(payload_expr)?;
-        let dest = self.fresh(ty);
+        // Route f64 payloads through `gos_rt_result_new_f64` so the
+        // bit pattern is preserved via `to_bits` (matching the
+        // symmetric `gos_rt_result_payload_f64` extractor). Without
+        // this, the LLVM tier coerces f64 → i64 via `fptosi`,
+        // truncating values like `3.5` to `3`.
+        let payload_ty = self.locals[payload_local.0 as usize].ty;
+        let payload_is_f64 = matches!(
+            self.tcx.kind_of(payload_ty),
+            gossamer_types::TyKind::Float(_)
+        );
+        // Pin the dest to the i128 Result/Option representation even when
+        // inference left `ty` an unresolved `Var` (else the i128 truncates
+        // through a `ptr` slot).
+        let rty = self.result_repr_ty(ty);
+        let dest = self.fresh(rty);
+        let intrinsic_name = if payload_is_f64 {
+            "gos_rt_result_new_f64"
+        } else {
+            "gos_rt_result_new"
+        };
         self.emit_assign(
             Place::local(dest),
             Rvalue::CallIntrinsic {
-                name: "gos_rt_result_new",
+                name: intrinsic_name,
                 args: vec![
                     Operand::Copy(Place::local(disc_local)),
                     Operand::Copy(Place::local(payload_local)),

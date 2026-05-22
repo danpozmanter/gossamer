@@ -161,7 +161,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  {len} = load i64, ptr @GOS_RT_STDOUT_LEN").unwrap();
         let full = self.fresh();
         writeln!(self.out, "  {full} = icmp uge i64 {len}, 8192").unwrap();
-        // On overflow we still hold the lock — release before
+        // On overflow we still hold the lock â release before
         // routing to the slow call path so the slow path can
         // re-acquire through the safe Rust guard.
         let full_release = format!("wb_full_rel_{suffix}");
@@ -216,7 +216,7 @@ impl<'a> Lowerer<'a> {
     /// val)`. The `GosI64Vec` is laid out as
     /// `{ i64 len; ptr data }` (8-byte aligned); we load
     /// `data` from offset 8, index it by `idx`, store `val`.
-    /// Skips bounds checks — user code is expected to keep
+    /// Skips bounds checks â user code is expected to keep
     /// `idx` in range.
     pub(crate) fn lower_heap_i64_set_inline(
         &mut self,
@@ -281,6 +281,210 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// Coerce a GosVec operand to an LLVM `ptr` value.
+    fn vec_operand_ptr(&mut self, op: &Operand) -> Result<String, BuildError> {
+        let v = self.lower_operand(op)?;
+        let ty = self.operand_llvm_ty(op);
+        if ty == "ptr" {
+            Ok(v)
+        } else {
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = inttoptr {ty} {v} to ptr").unwrap();
+            Ok(tmp)
+        }
+    }
+
+    /// Inline fast path for `gos_rt_vec_get_i64(vec, idx) -> i64`. Replicates
+    /// the runtime helper exactly (null vec / out-of-range idx → 0; else load
+    /// the i64 at `ptr + idx*elem_bytes`). Inlining removes a per-element FFI
+    /// call from hot index loops (BFS, scans) and lets LLVM hoist the
+    /// loop-invariant `len`/`ptr` loads and keep them in registers. GosVec
+    /// layout: `len@0, elem_bytes@16, ptr@24` (mirrors `lower_vec_len_inline`).
+    pub(crate) fn lower_vec_get_i64_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let vec_ptr = self.vec_operand_ptr(&args[0])?;
+        let idx = self.lower_operand(&args[1])?;
+        let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+        let dest_slot = local_slot(destination.local);
+        let s = self.next_ssa;
+        self.next_ssa += 1;
+        let (check, load, dflt, cont) = (
+            format!("vg_check_{s}"),
+            format!("vg_load_{s}"),
+            format!("vg_dflt_{s}"),
+            format!("vg_cont_{s}"),
+        );
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{dflt}, label %{check}").unwrap();
+        writeln!(self.out, "{check}:").unwrap();
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}").unwrap();
+        let lo = self.fresh();
+        writeln!(self.out, "  {lo} = icmp slt i64 {idx}, 0").unwrap();
+        let hi = self.fresh();
+        writeln!(self.out, "  {hi} = icmp sge i64 {idx}, {len}").unwrap();
+        let bad = self.fresh();
+        writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
+        writeln!(self.out, "  br i1 {bad}, label %{dflt}, label %{load}").unwrap();
+        writeln!(self.out, "{load}:").unwrap();
+        let eb_addr = self.fresh();
+        writeln!(
+            self.out,
+            "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
+        )
+        .unwrap();
+        let eb32 = self.fresh();
+        writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+        let eb = self.fresh();
+        writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
+        let dptr_addr = self.fresh();
+        writeln!(
+            self.out,
+            "  {dptr_addr} = getelementptr i8, ptr {vec_ptr}, i64 24"
+        )
+        .unwrap();
+        let dptr = self.fresh();
+        writeln!(self.out, "  {dptr} = load ptr, ptr {dptr_addr}").unwrap();
+        let off = self.fresh();
+        writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
+        let ea = self.fresh();
+        writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
+        let loaded = self.fresh();
+        writeln!(self.out, "  {loaded} = load i64, ptr {ea}").unwrap();
+        self.store_i64_as(&loaded, &dest_ty, &dest_slot);
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{dflt}:").unwrap();
+        let zero = match dest_ty.as_str() {
+            "ptr" => "null",
+            "double" | "float" => "0.0",
+            _ => "0",
+        };
+        writeln!(self.out, "  store {dest_ty} {zero}, ptr {dest_slot}").unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{cont}:").unwrap();
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Inline fast path for `gos_rt_vec_set_i64(vec, idx, val)`. Null vec /
+    /// out-of-range idx → no-op (matching the runtime), else store.
+    pub(crate) fn lower_vec_set_i64_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let vec_ptr = self.vec_operand_ptr(&args[0])?;
+        let idx = self.lower_operand(&args[1])?;
+        let val_v = self.lower_operand(&args[2])?;
+        let val_ty = self.operand_llvm_ty(&args[2]);
+        let val = self.value_to_i64(&val_v, &val_ty);
+        let s = self.next_ssa;
+        self.next_ssa += 1;
+        let (check, store_b, cont) = (
+            format!("vs_check_{s}"),
+            format!("vs_store_{s}"),
+            format!("vs_cont_{s}"),
+        );
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{cont}, label %{check}").unwrap();
+        writeln!(self.out, "{check}:").unwrap();
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}").unwrap();
+        let lo = self.fresh();
+        writeln!(self.out, "  {lo} = icmp slt i64 {idx}, 0").unwrap();
+        let hi = self.fresh();
+        writeln!(self.out, "  {hi} = icmp sge i64 {idx}, {len}").unwrap();
+        let bad = self.fresh();
+        writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
+        writeln!(self.out, "  br i1 {bad}, label %{cont}, label %{store_b}").unwrap();
+        writeln!(self.out, "{store_b}:").unwrap();
+        let eb_addr = self.fresh();
+        writeln!(
+            self.out,
+            "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
+        )
+        .unwrap();
+        let eb32 = self.fresh();
+        writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+        let eb = self.fresh();
+        writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
+        let dptr_addr = self.fresh();
+        writeln!(
+            self.out,
+            "  {dptr_addr} = getelementptr i8, ptr {vec_ptr}, i64 24"
+        )
+        .unwrap();
+        let dptr = self.fresh();
+        writeln!(self.out, "  {dptr} = load ptr, ptr {dptr_addr}").unwrap();
+        let off = self.fresh();
+        writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
+        let ea = self.fresh();
+        writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
+        writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{cont}:").unwrap();
+        let _ = destination;
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Store an i64 SSA value into `dest_slot` coerced to `dest_ty`.
+    fn store_i64_as(&mut self, val_i64: &str, dest_ty: &str, dest_slot: &str) {
+        match dest_ty {
+            "i64" => {
+                writeln!(self.out, "  store i64 {val_i64}, ptr {dest_slot}").unwrap();
+            }
+            "i32" | "i16" | "i8" | "i1" => {
+                let t = self.fresh();
+                writeln!(self.out, "  {t} = trunc i64 {val_i64} to {dest_ty}").unwrap();
+                writeln!(self.out, "  store {dest_ty} {t}, ptr {dest_slot}").unwrap();
+            }
+            "ptr" => {
+                let t = self.fresh();
+                writeln!(self.out, "  {t} = inttoptr i64 {val_i64} to ptr").unwrap();
+                writeln!(self.out, "  store ptr {t}, ptr {dest_slot}").unwrap();
+            }
+            "double" => {
+                let t = self.fresh();
+                writeln!(self.out, "  {t} = bitcast i64 {val_i64} to double").unwrap();
+                writeln!(self.out, "  store double {t}, ptr {dest_slot}").unwrap();
+            }
+            _ => {
+                writeln!(self.out, "  store i64 {val_i64}, ptr {dest_slot}").unwrap();
+            }
+        }
+    }
+
+    /// Coerce an SSA value of `val_ty` to i64 (for storing into a vec slot).
+    fn value_to_i64(&mut self, val: &str, val_ty: &str) -> String {
+        match val_ty {
+            "i64" => val.to_string(),
+            "i32" | "i16" | "i8" | "i1" => {
+                let t = self.fresh();
+                writeln!(self.out, "  {t} = sext {val_ty} {val} to i64").unwrap();
+                t
+            }
+            "ptr" => {
+                let t = self.fresh();
+                writeln!(self.out, "  {t} = ptrtoint ptr {val} to i64").unwrap();
+                t
+            }
+            "double" => {
+                let t = self.fresh();
+                writeln!(self.out, "  {t} = bitcast double {val} to i64").unwrap();
+                t
+            }
+            _ => val.to_string(),
+        }
+    }
+
     /// Inline fast path for `gos_rt_vec_len(v) -> i64`. The
     /// `GosVec` heap struct stores `len: i64` at offset 0, so the
     /// runtime helper degenerates to one load. Inlining skips the
@@ -304,7 +508,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Inline fast path for `gos_rt_str_len(s) -> i64`. Strings
-    /// are null-terminated, so the length is `strlen(s)` —
+    /// are null-terminated, so the length is `strlen(s)` â
     /// LLVM has a builtin `@strlen` that constant-folds against
     /// rodata literals. Folding is critical because user code
     /// like `let alu_len = alu.len()` becomes a compile-time
@@ -341,7 +545,7 @@ impl<'a> Lowerer<'a> {
     /// hoisted (via `!invariant.load !0`); when we know the fd
     /// is 1 we drop into a tight pack loop that LLVM unrolls
     /// when `len` is compile-time-known. For the fasta_block /
-    /// fasta_mt programs `len` is `line_len + 1` ≤ 61 and the
+    /// fasta_mt programs `len` is `line_len + 1` â¤ 61 and the
     /// buffer is rarely full, so the slow path almost never
     /// fires.
     ///
@@ -453,7 +657,7 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
 
-        // Pack body — read arr[i], pack into buf[cur_len + i].
+        // Pack body â read arr[i], pack into buf[cur_len + i].
         writeln!(self.out, "{pack_body}:").unwrap();
         let src = self.fresh();
         writeln!(
@@ -474,7 +678,7 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         writeln!(self.out, "  store i8 {byte}, ptr {dst}").unwrap();
-        // increment counter — must use the exact name we
+        // increment counter â must use the exact name we
         // forward-referenced in the PHI above.
         writeln!(self.out, "  %t_inext_{suffix} = add i64 {i_phi}, 1").unwrap();
         writeln!(self.out, "  br label %{pack_header}").unwrap();
@@ -495,7 +699,7 @@ impl<'a> Lowerer<'a> {
         .unwrap();
         writeln!(self.out, "  br label %{end}").unwrap();
 
-        // End — destination is `()`; nothing to store.
+        // End â destination is `()`; nothing to store.
         writeln!(self.out, "{end}:").unwrap();
         let _ = destination;
         match target {
@@ -535,8 +739,19 @@ impl<'a> Lowerer<'a> {
         // copy `elem_bytes` from a too-small slot, clobbering
         // the vec's storage. Pass the operand's slot address
         // directly so the memcpy reads the full aggregate.
+        // Only *inline* aggregates (structs / tuples / arrays with a
+        // known multi-slot field layout) are pushed by address — the
+        // runtime memcpys their `elem_bytes` of flat field data. A
+        // handle-Adt (recursive enum, opaque sentinel; `slot_count ==
+        // None`) holds an 8-byte heap pointer in its slot, like a
+        // scalar, so it must go through the value path
+        // (`gos_rt_vec_push_i64`) below. Taking its slot address and
+        // memcpy'ing instead stored a stale pointer for a
+        // function-returned enum (`xs.push(make_enum())`), decoding
+        // the vec element as a garbage handle.
         if let Operand::Copy(p) = &args[1]
             && is_aggregate(self.tcx, self.place_leaf_ty(p))
+            && slot_count(self.tcx, self.place_leaf_ty(p)).is_some()
         {
             let val_addr = if p.projection.is_empty() {
                 local_slot(p.local)
@@ -564,10 +779,33 @@ impl<'a> Lowerer<'a> {
         }
         let val_v = self.lower_operand(&args[1])?;
         let val_ty = self.operand_llvm_ty(&args[1]);
-        // 8-byte slot — every scalar / GC pointer fits in one
-        // word, matching the runtime's `elem_bytes=8` default.
-        let slot = self.fresh();
-        writeln!(self.out, "  {slot} = alloca i64").unwrap();
+        // A 16-byte by-value `Result`/`Option` element pushes through the
+        // dedicated `i128` helper (the vec's `elem_bytes` is 16) — coercing it
+        // to i64 like the scalar path below would truncate the payload.
+        if val_ty == "i128" {
+            declare_rt(&mut self.runtime_refs, "gos_rt_vec_push_i128");
+            writeln!(
+                self.out,
+                "  call void @gos_rt_vec_push_i128(ptr {vec_ptr}, i128 {val_v})"
+            )
+            .unwrap();
+            if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+                let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+                let dslot = local_slot(destination.local);
+                let zero = match dest_ty.as_str() {
+                    "ptr" => "null",
+                    "double" | "float" => "0.0",
+                    _ => "0",
+                };
+                writeln!(self.out, "  store {dest_ty} {zero}, ptr {dslot}").unwrap();
+            }
+            emit_terminator_branch(&mut self.out, target);
+            return Ok(());
+        }
+        // Coerce the element to i64 and call gos_rt_vec_push_i64 directly.
+        // This avoids emitting `alloca i64` inside the caller's basic block
+        // (which would be a loop body for xs.push patterns), preventing stack
+        // growth proportional to the loop iteration count.
         let val_i64 = match val_ty.as_str() {
             "i64" => val_v,
             "i32" | "i16" | "i8" | "i1" => {
@@ -594,11 +832,10 @@ impl<'a> Lowerer<'a> {
             }
             _ => val_v,
         };
-        writeln!(self.out, "  store i64 {val_i64}, ptr {slot}").unwrap();
-        declare_rt(&mut self.runtime_refs, "gos_rt_vec_push");
+        declare_rt(&mut self.runtime_refs, "gos_rt_vec_push_i64");
         writeln!(
             self.out,
-            "  call void @gos_rt_vec_push(ptr {vec_ptr}, ptr {slot})"
+            "  call void @gos_rt_vec_push_i64(ptr {vec_ptr}, i64 {val_i64})"
         )
         .unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {

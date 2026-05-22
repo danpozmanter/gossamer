@@ -437,9 +437,13 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.emit(Op::BuildTuple { dst, first, count });
                 Ok(dst)
             }
+            // Native `match` — test-and-branch chain per arm.
+            // Or-patterns that bind fall back to the walker inside
+            // `compile_match`.
+            HirExprKind::Match { scrutinee, arms } => self.compile_match(scrutinee, arms, expr),
             // Anything the VM's native lowering doesn't handle
-            // yet — match, closures, `go expr`, `continue`,
-            // and the rest — falls through to `Op::EvalDeferred`.
+            // yet — closures, `go expr`, `select`, and the rest —
+            // falls through to `Op::EvalDeferred`.
             // The VM hands the expression + captured local
             // environment to a bundled tree-walker which
             // returns a Value. Result: the VM never fails at
@@ -536,6 +540,278 @@ impl<'tcx> FnBuilder<'tcx> {
             }
         }
         Ok(dst)
+    }
+
+    /// Native `match` compilation. Emits the scrutinee once, then a
+    /// test-and-branch chain per arm: each arm's pattern lowers to a
+    /// sequence of shape tests (`VariantIs` / `StructIs` / literal
+    /// `Eq` / range compares) that branch to the next arm on failure
+    /// and extract sub-values into freshly-bound registers on
+    /// success. Replaces the per-evaluation `EvalDeferred` walker
+    /// re-entry that dominated every `match`-heavy program.
+    ///
+    /// Patterns the chain can't express losslessly (an or-pattern
+    /// that introduces bindings) route the whole `match` back through
+    /// `compile_deferred` so semantics stay correct.
+    pub(crate) fn compile_match(
+        &mut self,
+        scrutinee: &HirExpr,
+        arms: &[gossamer_hir::HirMatchArm],
+        whole: &HirExpr,
+    ) -> RuntimeResult<Reg> {
+        if !arms.iter().all(|a| pattern_native_ok(&a.pattern)) {
+            return self.compile_deferred(whole);
+        }
+        let scrut = self.compile_expr(scrutinee)?;
+        let result = self.alloc_reg();
+        let mut end_jumps: Vec<InstrIdx> = Vec::new();
+        for arm in arms {
+            self.push_scope();
+            let mut fails: Vec<InstrIdx> = Vec::new();
+            self.emit_pattern_test(scrut, &arm.pattern, &mut fails)?;
+            if let Some(guard) = &arm.guard {
+                let g = self.compile_expr(guard)?;
+                fails.push(self.emit(Op::BranchIfNot { cond: g, target: 0 }));
+            }
+            let body_reg = self.compile_expr(&arm.body)?;
+            self.emit(Op::Move {
+                dst: result,
+                src: body_reg,
+            });
+            end_jumps.push(self.emit(Op::Jump { target: 0 }));
+            self.pop_scope();
+            let next = self.cur_idx();
+            for f in fails {
+                self.patch_jump(f, next);
+            }
+        }
+        // No arm matched — exhaustiveness guarantees this is dead for
+        // well-typed programs, but the register file must stay valid.
+        let unit = self.load_unit();
+        self.emit(Op::Move {
+            dst: result,
+            src: unit,
+        });
+        let end = self.cur_idx();
+        for j in end_jumps {
+            self.patch_jump(j, end);
+        }
+        Ok(result)
+    }
+
+    /// Emits the shape-test + binding-extraction sequence for one
+    /// pattern against the value in `scrut`. Pushes a branch index
+    /// onto `fails` for every test that must jump to the next arm on
+    /// mismatch; on the fall-through (match) path the pattern's
+    /// bindings are live in the current scope.
+    fn emit_pattern_test(
+        &mut self,
+        scrut: Reg,
+        pat: &HirPat,
+        fails: &mut Vec<InstrIdx>,
+    ) -> RuntimeResult<()> {
+        match &pat.kind {
+            HirPatKind::Wildcard | HirPatKind::Rest => {}
+            HirPatKind::Binding { name, .. } => {
+                // Copy into a fresh reg so a `let mut`-style rebind in
+                // the arm body can't clobber the scrutinee register.
+                let r = self.alloc_reg();
+                self.emit(Op::Move { dst: r, src: scrut });
+                self.bind_local(
+                    &name.name,
+                    TypedReg {
+                        reg: r,
+                        kind: RegKind::Value,
+                    },
+                );
+            }
+            HirPatKind::Literal(lit) => {
+                let lit_reg = self.compile_literal(lit)?;
+                let eq = self.alloc_reg();
+                self.emit(Op::Eq {
+                    dst: eq,
+                    lhs: scrut,
+                    rhs: lit_reg,
+                });
+                fails.push(self.emit(Op::BranchIfNot {
+                    cond: eq,
+                    target: 0,
+                }));
+            }
+            HirPatKind::Variant { name, fields } => {
+                let name_idx = self.const_idx(
+                    ConstKey::String(name.name.clone()),
+                    Value::String(SmolStr::from(name.name.as_str())),
+                );
+                let arity = u16::try_from(fields.len())
+                    .map_err(|_| RuntimeError::Unsupported("variant arity exceeds 65535"))?;
+                let test = self.alloc_reg();
+                self.emit(Op::VariantIs {
+                    dst: test,
+                    src: scrut,
+                    name_idx,
+                    arity,
+                });
+                fails.push(self.emit(Op::BranchIfNot {
+                    cond: test,
+                    target: 0,
+                }));
+                for (i, fp) in fields.iter().enumerate() {
+                    let fr = self.alloc_reg();
+                    self.emit(Op::VariantField {
+                        dst: fr,
+                        src: scrut,
+                        idx: u16::try_from(i).expect("field index overflow"),
+                    });
+                    self.emit_pattern_test(fr, fp, fails)?;
+                }
+            }
+            HirPatKind::Struct { name, fields, .. } => {
+                let name_idx = self.const_idx(
+                    ConstKey::String(name.name.clone()),
+                    Value::String(SmolStr::from(name.name.as_str())),
+                );
+                let test = self.alloc_reg();
+                self.emit(Op::StructIs {
+                    dst: test,
+                    src: scrut,
+                    name_idx,
+                });
+                fails.push(self.emit(Op::BranchIfNot {
+                    cond: test,
+                    target: 0,
+                }));
+                for fp in fields {
+                    let fname_idx = self.const_idx(
+                        ConstKey::String(fp.name.name.clone()),
+                        Value::String(SmolStr::from(fp.name.name.as_str())),
+                    );
+                    let fr = self.alloc_reg();
+                    let cache_idx = self.alloc_field_cache_idx();
+                    self.emit(Op::FieldGet {
+                        dst: fr,
+                        receiver: scrut,
+                        name_idx: fname_idx,
+                        cache_idx,
+                    });
+                    if let Some(sub) = &fp.pattern {
+                        self.emit_pattern_test(fr, sub, fails)?;
+                    } else {
+                        // `Struct { field }` shorthand binds `field`.
+                        self.bind_local(
+                            &fp.name.name,
+                            TypedReg {
+                                reg: fr,
+                                kind: RegKind::Value,
+                            },
+                        );
+                    }
+                }
+            }
+            HirPatKind::Ref { inner, .. } => self.emit_pattern_test(scrut, inner, fails)?,
+            HirPatKind::At { name, sub, .. } => {
+                self.emit_pattern_test(scrut, sub, fails)?;
+                let r = self.alloc_reg();
+                self.emit(Op::Move { dst: r, src: scrut });
+                self.bind_local(
+                    &name.name,
+                    TypedReg {
+                        reg: r,
+                        kind: RegKind::Value,
+                    },
+                );
+            }
+            HirPatKind::Range { lo, hi, inclusive } => {
+                let lo_reg = self.compile_literal(lo)?;
+                let ge = self.alloc_reg();
+                self.emit(Op::Ge {
+                    dst: ge,
+                    lhs: scrut,
+                    rhs: lo_reg,
+                });
+                fails.push(self.emit(Op::BranchIfNot {
+                    cond: ge,
+                    target: 0,
+                }));
+                let hi_reg = self.compile_literal(hi)?;
+                let cmp = self.alloc_reg();
+                if *inclusive {
+                    self.emit(Op::Le {
+                        dst: cmp,
+                        lhs: scrut,
+                        rhs: hi_reg,
+                    });
+                } else {
+                    self.emit(Op::Lt {
+                        dst: cmp,
+                        lhs: scrut,
+                        rhs: hi_reg,
+                    });
+                }
+                fails.push(self.emit(Op::BranchIfNot {
+                    cond: cmp,
+                    target: 0,
+                }));
+            }
+            HirPatKind::Tuple(parts) => {
+                let rest_pos = parts
+                    .iter()
+                    .position(|p| matches!(p.kind, HirPatKind::Rest));
+                for (i, part) in parts.iter().enumerate() {
+                    if matches!(part.kind, HirPatKind::Rest) {
+                        continue;
+                    }
+                    let elem = self.alloc_reg();
+                    match rest_pos {
+                        Some(rp) if i > rp => {
+                            // Element after `..` — index from the end.
+                            let from_end = parts.len() - 1 - i;
+                            self.emit(Op::TupleTailIndex {
+                                dst: elem,
+                                receiver: scrut,
+                                offset_from_end: u32::try_from(from_end)
+                                    .expect("tuple tail index overflow"),
+                            });
+                        }
+                        _ => {
+                            self.emit(Op::TupleIndex {
+                                dst: elem,
+                                receiver: scrut,
+                                index: u32::try_from(i).expect("tuple index overflow"),
+                            });
+                        }
+                    }
+                    self.emit_pattern_test(elem, part, fails)?;
+                }
+            }
+            HirPatKind::Or(alts) => {
+                // `pattern_native_ok` guarantees no alternative binds,
+                // so each alt is a pure test. Emit them as a
+                // short-circuit OR: the first alt that matches jumps
+                // past the rest to the shared continuation; if every
+                // alt fails, fall through to the arm-fail branch.
+                let mut matched: Vec<InstrIdx> = Vec::new();
+                for alt in alts {
+                    let mut alt_fails: Vec<InstrIdx> = Vec::new();
+                    self.emit_pattern_test(scrut, alt, &mut alt_fails)?;
+                    // This alt matched — jump to the continuation.
+                    matched.push(self.emit(Op::Jump { target: 0 }));
+                    // This alt failed — next alt starts here.
+                    let next_alt = self.cur_idx();
+                    for f in alt_fails {
+                        self.patch_jump(f, next_alt);
+                    }
+                }
+                // All alternatives failed: jump to the arm-fail target.
+                fails.push(self.emit(Op::Jump { target: 0 }));
+                // Matched continuation.
+                let cont = self.cur_idx();
+                for m in matched {
+                    self.patch_jump(m, cont);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn compile_literal(&mut self, lit: &HirLiteral) -> RuntimeResult<Reg> {

@@ -63,6 +63,7 @@ fn trivial_main_returning_zero() -> (Body, TyCtxt) {
             ty: i64_ty,
             debug_name: None,
             mutable: false,
+            region: false,
         }],
         blocks: vec![BasicBlock {
             id: BlockId(0),

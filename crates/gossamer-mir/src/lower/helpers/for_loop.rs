@@ -86,15 +86,18 @@ pub(crate) fn aggr_size_bytes(tcx: &gossamer_types::TyCtxt, ty: Ty) -> i64 {
             i64::try_from(*len).unwrap_or(1).saturating_mul(elem_bytes)
         }
         TyKind::Adt { def, .. } => {
-            if let Some(field_tys) = tcx.struct_field_tys(*def) {
+            // `Result<T,E>` / `Option<T>` are the 2-word by-value `i128`
+            // (16-byte) representation — two slots as an aggregate element.
+            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                16
+            } else if let Some(field_tys) = tcx.struct_field_tys(*def) {
                 let total: i64 = field_tys
                     .iter()
                     .map(|t| aggr_size_bytes(tcx, *t).max(8) / 8)
                     .sum();
                 total.max(1) * 8
             } else {
-                // Sentinel Adts (Result/Option, DirInfo, …): single
-                // heap-pointer slot.
+                // Other sentinel Adts (DirInfo, …): single heap-pointer slot.
                 8
             }
         }

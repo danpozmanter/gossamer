@@ -47,7 +47,7 @@ fn build_vm(source: &str) -> (Vm, TyCtxt) {
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut vm = Vm::new();
-    vm.load(&program, &mut tcx).expect("load");
+    vm.load(&program, tcx.clone()).expect("load");
     (vm, tcx)
 }
 

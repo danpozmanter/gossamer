@@ -785,6 +785,33 @@ impl Resolver {
                 }
                 return;
             }
+            // Root-cause stdlib-member validation. The resolver is
+            // opaque-by-head for stdlib paths — it has no per-module
+            // export model, so `module::nonexistent` slipped through
+            // `check` and only failed at runtime (GX0002). The
+            // generated table in `stdlib_exports` lists every
+            // `module::member` the runtime actually binds, so a
+            // two-segment value path whose head is a known stdlib
+            // module but whose full name is absent is definitively an
+            // unresolved name. User-defined module members never reach
+            // here: they resolve via the joined lookup above (a real
+            // binding) and return. Restricted to two segments so
+            // `module::Type::method` paths stay opaque-by-head.
+            if effective.len() == 2
+                && crate::stdlib_exports::STDLIB_MODULES
+                    .binary_search(&effective[0])
+                    .is_ok()
+                && crate::stdlib_exports::STDLIB_QUALIFIED
+                    .binary_search(&joined.as_str())
+                    .is_err()
+            {
+                self.emit(ResolveError::UnresolvedName { name: joined }, span);
+                self.resolutions.insert(anchor, Resolution::Err);
+                for segment in &path.segments {
+                    self.resolve_generic_args(&segment.generics);
+                }
+                return;
+            }
         }
         let head_name = head.name.name.clone();
         let lookup_name = effective.first().copied().unwrap_or(head_name.as_str());

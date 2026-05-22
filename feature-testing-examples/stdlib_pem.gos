@@ -1,0 +1,17 @@
+// Cross-tier parity for encoding::pem (Block struct, decode/decode_all/encode),
+// implemented via injected real-struct wrappers + tuple/bytes leaf intrinsics.
+use std::encoding
+
+fn main() {
+    match encoding::pem::decode("-----BEGIN TEST-----\naGVsbG8gd29ybGQ=\n-----END TEST-----\n") {
+        Ok(block) => println!("decode {} {}", block.block_type, block.bytes.len()),
+        Err(_e) => println!("decerr"),
+    }
+    match encoding::pem::decode_all("-----BEGIN A-----\naGk=\n-----END A-----\n-----BEGIN B-----\nYnll\n-----END B-----\n") {
+        Ok(blocks) => println!("all {} {} {}", blocks.len(), blocks[0].block_type, blocks[1].block_type),
+        Err(_e) => println!("allerr"),
+    }
+    let b = encoding::pem::Block { block_type: "MSG", bytes: [104, 105] }
+    let out = encoding::pem::encode(b)
+    println!("encode {} {}", out.contains("BEGIN MSG"), out.contains("END MSG"))
+}
