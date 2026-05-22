@@ -338,6 +338,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 Operand::Const(ConstValue::Str(name)) => {
                     (!name.starts_with("gos_rt_") && name != "gos_load" && name != "gos_store")
                         || name == "gos_rt_rc_downgrade"
+                        || mints_owned_string(name)
                 }
                 _ => true,
             };
@@ -449,8 +450,53 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // Releasable owners: RC locals (not parameter / return slot) that are
     // owned here and not moved out. Each surviving new reference was
     // retained above, so releasing every owner keeps the count balanced.
+    // A local whose value flows into the return slot must NOT be released here
+    // — the caller receives and owns it (else an owned producer result that is
+    // returned would be freed at scope AND by the caller). Backward closure
+    // from `Local::RETURN` over bare `Copy` and aggregate-operand edges.
+    let mut flows_to_return = vec![false; n_locals];
+    flows_to_return[Local::RETURN.0 as usize] = true;
+    let mut rf_changed = true;
+    while rf_changed {
+        rf_changed = false;
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                    continue;
+                };
+                if !place.projection.is_empty() || (place.local.0 as usize) >= n_locals {
+                    continue;
+                }
+                if !flows_to_return[place.local.0 as usize] {
+                    continue;
+                }
+                let mut mark = |l: Local, ch: &mut bool| {
+                    let f = l.0 as usize;
+                    if f < n_locals && !flows_to_return[f] {
+                        flows_to_return[f] = true;
+                        *ch = true;
+                    }
+                };
+                match rvalue {
+                    Rvalue::Use(Operand::Copy(pp)) if pp.projection.is_empty() => {
+                        mark(pp.local, &mut rf_changed);
+                    }
+                    Rvalue::Aggregate { operands, .. } => {
+                        for op in operands {
+                            if let Operand::Copy(pp) = op
+                                && pp.projection.is_empty()
+                            {
+                                mark(pp.local, &mut rf_changed);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
     let releasable: Vec<Local> = (0..n_locals)
-        .filter(|&i| is_rc(i) && owned[i] && !moved[i])
+        .filter(|&i| is_rc(i) && owned[i] && !moved[i] && !flows_to_return[i])
         .map(|i| Local(u32::try_from(i).unwrap_or(0)))
         .collect();
 
@@ -752,6 +798,31 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
 /// outlives the call), so the argument is a move, not a borrow. Missing
 /// one would free a value the container/channel still references; an
 /// extra one only leaks. Keep this list complete for RC-managed payloads.
+/// Runtime calls that return a freshly ALLOCATED, owned `String` (no aliasing
+/// of any argument). The caller owns the result and must release it at scope
+/// unless it is moved out. Deliberately EXCLUDES `__concat` /
+/// `gos_rt_str_concat*` (handled by the binding `Copy` and prone to in-place
+/// aliasing in `s += …`) and `gos_rt_result_payload` (the payload may already be
+/// owned by its binding). A missing entry only leaks; a wrong one double-frees.
+fn mints_owned_string(name: &str) -> bool {
+    matches!(
+        name,
+        "gos_rt_str_repeat"
+            | "gos_rt_str_to_upper"
+            | "gos_rt_str_to_lower"
+            | "gos_rt_str_to_title"
+            | "gos_rt_str_slice"
+            | "gos_rt_str_substring"
+            | "gos_rt_str_trim"
+            | "gos_rt_str_trim_start"
+            | "gos_rt_str_trim_end"
+            | "gos_rt_str_replace"
+            | "gos_rt_str_replacen"
+            | "gos_rt_str_pad_left"
+            | "gos_rt_str_pad_right"
+    )
+}
+
 fn is_consuming_call(name: &str) -> bool {
     name.starts_with("gos_rt_vec_push")
         || name.starts_with("gos_rt_vec_insert")
@@ -1263,6 +1334,11 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // bare `Copy`) are left to the conservative return-only path — freeing one
     // before its reassignment could dangle the alias. Locals captured by a
     // call were already disqualified from `owner_ctor` in pass 1.
+    // Conservative aliasing: a local that is the source of a bare `Copy`, or a
+    // value element (arg1..) of a consuming container/channel/closure call, may
+    // outlive this frame, so the per-iteration reuse free must not reclaim it.
+    // (A more permissive escape analysis lets a still-referenced container into
+    // reuse and frees it early — a soundness bug — so stay conservative here.)
     let mut aliased = vec![false; body.locals.len()];
     for block in &body.blocks {
         for stmt in &block.stmts {
@@ -1276,10 +1352,6 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 aliased[p.local.0 as usize] = true;
             }
         }
-        // A container moved as an ELEMENT into another container/channel/closure
-        // (arg1.. of a consuming call) escapes this frame — the receiver now owns
-        // it and frees it via its own deep-free. The drop-before/at-return reuse
-        // path must NOT also free it, or the receiver's element dangles (UAF).
         if let Terminator::Call {
             callee: Operand::Const(ConstValue::Str(name)),
             args,

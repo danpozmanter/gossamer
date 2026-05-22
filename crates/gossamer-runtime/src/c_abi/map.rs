@@ -392,6 +392,10 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
         if inner.insert(key_bytes.into_boxed_slice(), val).is_none() {
             map.len_cache += 1;
         }
+        drop(storage);
+        // Consuming insert copied the key bytes; release the moved-in gos-string
+        // (rc-aware + tag-checked — safe for temps, shared, and literals).
+        unsafe { gos_rt_str_free(key.cast_mut()) };
     });
 }
 
@@ -462,6 +466,18 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
             .is_none()
         {
             map.len_cache += 1;
+        }
+        drop(storage);
+        // The map copied the key/val bytes into its own storage, so it does not
+        // retain the inbound gos-strings. `map_insert` is a consuming call (the
+        // drop pass moves its arguments in), so release the originals here —
+        // `gos_rt_str_free` is rc-aware and tag-checked: a moved temp is freed,
+        // a still-shared string only has its count decremented, and a `.rodata`
+        // literal / region string is skipped. Without this the inbound
+        // `format!(...)` temporaries leaked once per insert.
+        unsafe {
+            gos_rt_str_free(key.cast_mut());
+            gos_rt_str_free(val.cast_mut());
         }
     });
 }
@@ -688,6 +704,9 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val
         if inner.insert(key, val_bytes.into_boxed_slice()).is_none() {
             map.len_cache += 1;
         }
+        drop(storage);
+        // Consuming insert copied the value bytes; release the moved-in gos-string.
+        unsafe { gos_rt_str_free(val.cast_mut()) };
     });
 }
 
