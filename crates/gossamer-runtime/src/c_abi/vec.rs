@@ -18,8 +18,6 @@
 // reading it is intentional.
 #![allow(clippy::used_underscore_binding)]
 
-use std::os::raw::c_char;
-
 use super::*;
 
 // ---------------------------------------------------------------
@@ -413,35 +411,16 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
                 std::mem::forget(buf);
             }
         }
-        // 0.6.0: for STRING-typed vecs, copy the inbound string into a
-        // tagged allocation so the deep-free path at vec_free time can
-        // safely reclaim each element. Untagged strings (string
-        // literals from .rodata, runtime-built CStrings) would
-        // otherwise trip the STR_ALLOC_TAG check and leak silently.
-        // For pointer-bearing kinds whose payload is already
-        // heap-owned (VEC, MAP), transfer ownership unchanged.
-        if vec.elem_kind == vec_elem_kind::STRING && vec.elem_bytes as usize == 8 {
-            // SAFETY: elem points to an 8-byte slot holding a
-            // *const c_char. STRING-typed vecs always carry 8-byte
-            // pointer elements (enforced at vec_new_typed time).
-            let src_cstr = unsafe { std::ptr::read_unaligned(elem.cast::<*const c_char>()) };
-            let tagged = if src_cstr.is_null() {
-                std::ptr::null_mut::<c_char>()
-            } else {
-                // SAFETY: src_cstr is null-terminated by ABI; copy the
-                // bytes (without the NUL) into a fresh tagged
-                // allocation. `from_ptr` walks until the NUL so this
-                // works for both .rodata literals and heap strings.
-                let bytes = unsafe { std::ffi::CStr::from_ptr(src_cstr).to_bytes() };
-                alloc_cstring(bytes)
-            };
-            let dst = unsafe { vec.ptr.add((vec.len as usize) * (vec.elem_bytes as usize)) };
-            unsafe {
-                std::ptr::write_unaligned(dst.cast::<*mut c_char>(), tagged);
-            }
-            vec.len += 1;
-            return;
-        }
+        // STRING / VEC / MAP elements are pointer-sized and transferred by
+        // REFERENCE: the drop pass retains the inbound value at the push site
+        // (so the container holds a reference-counted element) and
+        // `gos_rt_vec_free` releases each one through its `elem_kind` deep-free.
+        // Storing the pointer directly — no per-push clone — lets the
+        // compile-time RC own the element exactly once. The previous clone left
+        // the caller's original retained-but-never-released (a per-push leak,
+        // since the container held the copy, not the original). `gos_rt_str_free`
+        // tag-checks each pointer at deep-free, so a stored `.rodata` literal or
+        // region string is skipped rather than mis-freed.
         let dst = unsafe { vec.ptr.add((vec.len as usize) * (vec.elem_bytes as usize)) };
         unsafe {
             std::ptr::copy_nonoverlapping(elem, dst, vec.elem_bytes as usize);

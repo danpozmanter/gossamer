@@ -56,6 +56,13 @@ Three coordinated fixes cut compiled-tier RAM on heap-heavy workloads. A named l
 - **16-byte object header.** `RcHeader` shrank from 24 to 16 bytes (`strong` and `size` are now `u32` — 4 billion live refs / 4 GiB objects are unreachable ceilings), so a `Node(i64, Box, Box)` is 40 bytes instead of 48.
 - **Byte-budgeted recycling pool.** The thread-local free-list is now capped by a 4 MiB-per-class byte budget instead of a flat 65k-block count, so a large size class can no longer pin tens of MiB of cached blocks.
 
+### Container element ownership + per-iteration `Vec` reclaim
+
+A string or nested container stored in a `Vec` no longer leaks, and a `Vec` rebuilt each loop iteration is reclaimed instead of accumulating.
+
+- **No per-push element clone.** `gos_rt_vec_push` copied each STRING element into a vec-owned buffer (a value-semantics relic), while the drop pass separately retained the caller's original — so that original leaked once per push. Elements are now held by reference: the compile-time RC (retain at insert, `elem_kind` deep-free at container drop) owns each exactly once, the same model as struct fields. `string_in_vec` / `nested_vec_string` drop from O(n) live strings to O(1).
+- **Loop-local `Vec` freed per iteration.** A `Vec` constructed in a loop body was freed only at function return, leaking every prior iteration's container and its elements. The drop pass now frees the previous value before each constructor reassignment (null-safe via an entry zero-init) and at each return, conservatively skipping any container that escapes into another container or the return value. A deterministic per-family allocation ledger (`c_abi/ledger.rs`, `GOS_LEAK_LEDGER`, unix) backs the leak-shape gate.
+
 ### Length-carrying strings — O(1) `len`/`slice`
 
 Compiled-tier strings now store their byte length in the allocation header, so length and slicing are O(1) instead of `strlen`-per-call. A recursive-descent parser that slices a large input at growing offsets was O(n^2); **json-serde drops from 167s to 0.54s at N=50000** (now linear, output bit-identical to the Rust reference).

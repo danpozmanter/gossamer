@@ -1246,7 +1246,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // candidates to runtime container shapes; we trust the MIR's
     // type assignment and skip a redundant TyKind check here.
     let _ = TyKind::Bool; // silence unused-import lint outside the closure
-    let drop_targets: Vec<(Local, &'static str)> = (0..owner_ctor.len())
+    let drop_targets_all: Vec<(Local, &'static str)> = (0..owner_ctor.len())
         .filter_map(|i| {
             let free = owner_ctor[i]?;
             if moved_into_return[i] {
@@ -1256,7 +1256,61 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         })
         .collect();
 
-    if drop_targets.is_empty() {
+    // Non-aliased Vec/Map ctor locals get full per-site management below
+    // (zero-init + drop-before-overwrite + at-return, all null-safe) so a
+    // container rebuilt each loop iteration frees every prior allocation
+    // instead of leaking all but the last. Aliased locals (the source of a
+    // bare `Copy`) are left to the conservative return-only path — freeing one
+    // before its reassignment could dangle the alias. Locals captured by a
+    // call were already disqualified from `owner_ctor` in pass 1.
+    let mut aliased = vec![false; body.locals.len()];
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign {
+                rvalue: Rvalue::Use(Operand::Copy(p)),
+                ..
+            } = &stmt.kind
+                && p.projection.is_empty()
+                && (p.local.0 as usize) < aliased.len()
+            {
+                aliased[p.local.0 as usize] = true;
+            }
+        }
+        // A container moved as an ELEMENT into another container/channel/closure
+        // (arg1.. of a consuming call) escapes this frame — the receiver now owns
+        // it and frees it via its own deep-free. The drop-before/at-return reuse
+        // path must NOT also free it, or the receiver's element dangles (UAF).
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            ..
+        } = &block.terminator
+            && is_consuming_call(name)
+        {
+            for arg in args.iter().skip(1) {
+                if let Operand::Copy(p) = arg
+                    && p.projection.is_empty()
+                    && (p.local.0 as usize) < aliased.len()
+                {
+                    aliased[p.local.0 as usize] = true;
+                }
+            }
+        }
+    }
+    let reuse: Vec<(Local, &'static str)> = drop_targets_all
+        .iter()
+        .filter(|(l, free)| {
+            !aliased[l.0 as usize] && matches!(*free, "gos_rt_vec_free" | "gos_rt_map_free")
+        })
+        .copied()
+        .collect();
+    let reuse_set: std::collections::BTreeSet<u32> = reuse.iter().map(|(l, _)| l.0).collect();
+    let drop_targets: Vec<(Local, &'static str)> = drop_targets_all
+        .into_iter()
+        .filter(|(l, _)| !reuse_set.contains(&l.0))
+        .collect();
+
+    if drop_targets.is_empty() && reuse.is_empty() {
         return;
     }
 
@@ -1419,6 +1473,70 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             span,
         };
         body.blocks[block_idx].stmts.insert(stmt_idx, drop_stmt);
+    }
+
+    // Dedicated lifetime for non-aliased Vec/Map ctor locals: zero-init at
+    // entry (null), free the previous value before each ctor-Call that
+    // reassigns the local (loop reuse), and free the final value at every
+    // Return. Every free is null-safe (`gos_rt_vec_free` / `gos_rt_map_free`
+    // no-op on null), so this needs no path-sensitive must-init proof and never
+    // double-frees: the drop-before frees prior allocations, the at-Return
+    // frees the last one, and a never-constructed local stays null.
+    if !reuse.is_empty() {
+        let span0 = body.blocks[0].span;
+        for (local, _) in reuse.iter().rev() {
+            body.blocks[0].stmts.insert(
+                0,
+                Statement {
+                    kind: StatementKind::Assign {
+                        place: Place::local(*local),
+                        rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    },
+                    span: span0,
+                },
+            );
+        }
+        let free_of: std::collections::BTreeMap<u32, &'static str> =
+            reuse.iter().map(|(l, f)| (l.0, *f)).collect();
+        // (block_idx, free_name, local) — each appended to the block's stmts,
+        // i.e. just before its terminator.
+        let mut sites: Vec<(usize, &'static str, Local)> = Vec::new();
+        for (block_idx, block) in body.blocks.iter().enumerate() {
+            match &block.terminator {
+                Terminator::Call { destination, .. } if destination.projection.is_empty() => {
+                    if let Some(&free_name) = free_of.get(&destination.local.0) {
+                        sites.push((block_idx, free_name, destination.local));
+                    }
+                }
+                Terminator::Return => {
+                    for (local, free_name) in &reuse {
+                        sites.push((block_idx, *free_name, *local));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let unit_ty = body.locals[0].ty;
+        for (block_idx, free_name, local) in sites {
+            let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+            body.locals.push(LocalDecl {
+                ty: unit_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            });
+            let span = body.blocks[block_idx].span;
+            body.blocks[block_idx].stmts.push(Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(dest),
+                    rvalue: Rvalue::CallIntrinsic {
+                        name: free_name,
+                        args: vec![Operand::Copy(Place::local(local))],
+                    },
+                },
+                span,
+            });
+        }
     }
 }
 

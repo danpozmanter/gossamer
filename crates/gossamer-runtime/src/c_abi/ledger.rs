@@ -6,7 +6,6 @@
 //!
 //! The counters are `Relaxed` atomics (cheap); the at-exit hook is armed once.
 
-use std::sync::Once;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 pub static AGGR_LIVE: AtomicI64 = AtomicI64::new(0);
@@ -15,8 +14,10 @@ pub static STR_LIVE: AtomicI64 = AtomicI64::new(0);
 pub static VEC_LIVE: AtomicI64 = AtomicI64::new(0);
 pub static MAP_LIVE: AtomicI64 = AtomicI64::new(0);
 
-static ARMED: Once = Once::new();
+#[cfg(unix)]
+static ARMED: std::sync::Once = std::sync::Once::new();
 
+#[cfg(unix)]
 extern "C" fn report() {
     if std::env::var("GOS_LEAK_LEDGER").is_ok() {
         eprintln!(
@@ -30,8 +31,13 @@ extern "C" fn report() {
     }
 }
 
+// At-exit auto-print of the ledger is unix-only (`libc::atexit`); on other
+// targets the counters still tally but the report is read via a debugger /
+// explicit query rather than printed at exit. This keeps the Windows build —
+// where `libc` is not a dependency — compiling.
 #[inline]
 fn arm() {
+    #[cfg(unix)]
     ARMED.call_once(|| unsafe {
         libc::atexit(report);
     });
