@@ -122,8 +122,14 @@ fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
             std::ptr::copy_nonoverlapping(p.as_ptr(), base.add(off), p.len());
             off += p.len();
         }
-        // NUL already zero.
-        crate::c_abi::ledger::str_inc();
+        // NUL already zero. Region-allocated strings are bulk-freed at
+        // `region_pop` and intentionally skipped by `gos_rt_str_free`, so they
+        // never `str_dec`. Counting them in the per-string leak ledger would
+        // report a false positive (the memory is reclaimed wholesale at pop);
+        // only individually-managed (`STR_BUILDER`) strings are tracked.
+        if tag != STR_REGION_TAG {
+            crate::c_abi::ledger::str_inc();
+        }
         base.add(13).cast::<c_char>()
     }
 }

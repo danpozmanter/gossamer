@@ -78,6 +78,50 @@ use super::*;
 /// `(is_retain, aggregate_local, field_index, is_weak)`.
 type FieldGap = (bool, Local, u32, bool);
 
+/// Forward-propagates a concrete local type through `B = Copy(A)` chains: when
+/// `A` has a resolved type but `B` was left an inference variable, `B` takes
+/// `A`'s type. A fixpoint, so chains (`A -> B -> C`) settle fully. Run before
+/// the RC passes so a `?` / `unwrap` extraction (typed from the scrutinee's
+/// substs) copied into an otherwise-`Var` binding is recognised as RC-managed
+/// and released — without it the extracted `String` leaks.
+pub(crate) fn propagate_copy_types(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    use gossamer_types::TyKind;
+    let n = body.locals.len();
+    let unresolved = |ty| matches!(tcx.kind_of(ty), TyKind::Var(_) | TyKind::Error);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let updates: Vec<(usize, gossamer_types::Ty)> = body
+            .blocks
+            .iter()
+            .flat_map(|b| &b.stmts)
+            .filter_map(|stmt| {
+                if let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Copy(p)),
+                } = &stmt.kind
+                    && place.projection.is_empty()
+                    && p.projection.is_empty()
+                    && (place.local.0 as usize) < n
+                    && (p.local.0 as usize) < n
+                    && unresolved(body.locals[place.local.0 as usize].ty)
+                    && !unresolved(body.locals[p.local.0 as usize].ty)
+                {
+                    Some((place.local.0 as usize, body.locals[p.local.0 as usize].ty))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (d, ty) in updates {
+            if unresolved(body.locals[d].ty) {
+                body.locals[d].ty = ty;
+                changed = true;
+            }
+        }
+    }
+}
+
 pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     let n_locals = body.locals.len();
     if n_locals == 0 {
@@ -192,17 +236,150 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // Retains to emit at the end of a block (just before a consuming
     // terminator call), `(block, local)`.
     let mut terminator_retains: Vec<(usize, Local)> = Vec::new();
+    // Locals holding a `String` payload freshly extracted from a consumed
+    // by-value `Result`/`Option` (`f()?`, `r.unwrap()`). The extraction yields
+    // the single owning reference the enum held, so copying it into the binding
+    // (`let s = f()?`) must MOVE rather than retain — a retain there leaves the
+    // extracted reference dangling once the binding is released (a leak).
+    // Restricted to `String` payloads: an aggregate (`Adt`) payload carries
+    // nested-RC fields whose release is balanced by the copy retain, so moving
+    // it would double-free (the `from_json -> Config` path).
+    let mut extraction_results = vec![false; n_locals];
+    // Locals stored into a heap aggregate (`gos_store` value argument). The
+    // store gives the aggregate a reference; the copy that fed the store is
+    // therefore load-bearing (extract -> retain -> store keeps one, the binding
+    // release drops back to one). Such a binding must NOT have its retain
+    // skipped, or the aggregate's later release double-frees (the synthesized
+    // `from_json` parses a field String and stores it into the struct).
+    let mut stored_into_aggregate = vec![false; n_locals];
+    {
+        use gossamer_types::TyKind;
+        // A `String` payload (or one left unresolved as `Var` — the nested
+        // `?` in a function whose own return type doesn't pin the Ok type, so
+        // inference never settles the extraction local). Aggregate (`Adt`)
+        // payloads are excluded; even if one slips through as `Var`, the
+        // transitive `stored_into_aggregate` gate keeps its retain.
+        let is_str = |l: Local| {
+            (l.0 as usize) < n_locals
+                && matches!(
+                    tcx.kind_of(body.locals[l.0 as usize].ty),
+                    TyKind::String | TyKind::Var(_)
+                )
+        };
+        let mark_stored = |op: &Operand, set: &mut [bool]| {
+            if let Operand::Copy(p) = op
+                && p.projection.is_empty()
+                && (p.local.0 as usize) < n_locals
+            {
+                set[p.local.0 as usize] = true;
+            }
+        };
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                    continue;
+                };
+                match rvalue {
+                    Rvalue::CallIntrinsic { name, args } => {
+                        if *name == "gos_rt_result_payload"
+                            && place.projection.is_empty()
+                            && is_str(place.local)
+                        {
+                            extraction_results[place.local.0 as usize] = true;
+                        }
+                        // `gos_store` (object field write) and `gos_rt_result_new`
+                        // (`Ok`/`Some` payload) both take ownership of the value
+                        // argument; the copy feeding them keeps its retain.
+                        let stored_args: &[Operand] = if *name == "gos_store" {
+                            args.get(2).map(std::slice::from_ref).unwrap_or(&[])
+                        } else if *name == "gos_rt_result_new" {
+                            args
+                        } else {
+                            &[]
+                        };
+                        for op in stored_args {
+                            mark_stored(op, &mut stored_into_aggregate);
+                        }
+                    }
+                    // Struct / tuple / enum construction owns each operand.
+                    Rvalue::Aggregate { operands, .. } => {
+                        for op in operands {
+                            mark_stored(op, &mut stored_into_aggregate);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                destination,
+                ..
+            } = &block.terminator
+                && *name == "gos_rt_result_unwrap"
+                && destination.projection.is_empty()
+                && is_str(destination.local)
+            {
+                extraction_results[destination.local.0 as usize] = true;
+            }
+        }
+        // Propagate "stored" backward through `dest = Copy(src)` edges: a value
+        // copied into a binding that is itself stored is also (transitively)
+        // stored, so its own copy retain is load-bearing. This catches the
+        // multi-hop flow the synthesized `from_json` uses (parse a field String,
+        // copy it through temporaries, then place it in the result struct).
+        let copy_edges: Vec<(usize, usize)> = body
+            .blocks
+            .iter()
+            .flat_map(|b| &b.stmts)
+            .filter_map(|stmt| {
+                if let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Copy(p)),
+                } = &stmt.kind
+                    && place.projection.is_empty()
+                    && p.projection.is_empty()
+                    && (place.local.0 as usize) < n_locals
+                    && (p.local.0 as usize) < n_locals
+                {
+                    Some((place.local.0 as usize, p.local.0 as usize))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &(dest, src) in &copy_edges {
+                if stored_into_aggregate[dest] && !stored_into_aggregate[src] {
+                    stored_into_aggregate[src] = true;
+                    changed = true;
+                }
+            }
+        }
+    }
     for (block_idx, block) in body.blocks.iter().enumerate() {
         for (stmt_idx, stmt) in block.stmts.iter().enumerate() {
-            let StatementKind::Assign { rvalue, .. } = &stmt.kind else {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
                 continue;
             };
             match rvalue {
                 // New binding/alias to an RC value (covers `RETURN =
                 // Copy(x)`, which mints the caller's reference).
                 Rvalue::Use(op) => {
+                    // Skip the retain only for a by-value enum-payload extraction
+                    // moved into a binding that is NOT itself stored into an
+                    // aggregate. A stored binding keeps the retain (the store
+                    // consumes one reference, the binding release drops the
+                    // other) — see `stored_into_aggregate`.
+                    let skip_extraction_move = rc_operand(op).is_some_and(|l| {
+                        extraction_results[l.0 as usize]
+                            && !(place.projection.is_empty()
+                                && stored_into_aggregate[place.local.0 as usize])
+                    });
                     if let Some(l) = rc_operand(op)
                         && !copyback_sites.contains(&(block_idx, stmt_idx))
+                        && !skip_extraction_move
                     {
                         retain_sites.push((block_idx, stmt_idx, l, 1));
                     }
@@ -269,6 +446,33 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // field/index reads) or returned by a runtime accessor are interior
     // borrows — the containing object still owns them, so releasing them
     // here would double-free. They are excluded.
+    // Locals that are the source of a bare `x = Copy(y)` statement: the copy
+    // *target* becomes the owner. Used below to decide whether a by-value enum
+    // payload extraction is owned by this frame (used inline) or by a binding
+    // it was copied into (`let x = to_json()?`).
+    let mut copy_sourced = vec![false; n_locals];
+    // Locals that are the destination of a bare `L = Copy(..)`. With
+    // `copy_sourced` this flags an enum value that is aliased (copied to/from
+    // another binding); its by-value payload pointer is then shared, so no
+    // extraction may own/release it — matching both aliases would otherwise
+    // double-free the one payload.
+    let mut copy_target = vec![false; n_locals];
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(p)),
+            } = &stmt.kind
+                && p.projection.is_empty()
+                && (p.local.0 as usize) < n_locals
+            {
+                copy_sourced[p.local.0 as usize] = true;
+                if place.projection.is_empty() && (place.local.0 as usize) < n_locals {
+                    copy_target[place.local.0 as usize] = true;
+                }
+            }
+        }
+    }
     let mut owned = vec![false; n_locals];
     for block in &body.blocks {
         for stmt in &block.stmts {
@@ -287,6 +491,31 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     Rvalue::CallIntrinsic { name, .. } if *name == "gos_rc_alloc" => {
                         owned[i] = true;
                     }
+                    // A `String` payload moved out of a consumed by-value
+                    // `Result`/`Option`/inline enum (`match o { Some(s) => … }`)
+                    // and used INLINE (not copied into an owning binding). The
+                    // frame owns it and must release it; the enum value itself
+                    // frees nothing. When the extraction is copied into a
+                    // binding (`let x = to_json()?`), that binding owns it (the
+                    // `Use(Copy)` arm below) — so this arm excludes
+                    // `copy_sourced` to avoid double-freeing the autoderive path.
+                    Rvalue::CallIntrinsic { name, args }
+                        if *name == "gos_rt_result_payload"
+                            && !copy_sourced[i]
+                            && matches!(
+                                tcx.kind_of(body.locals[i].ty),
+                                gossamer_types::TyKind::String
+                            )
+                            && match args.first() {
+                                Some(Operand::Copy(p)) if p.projection.is_empty() => {
+                                    let e = p.local.0 as usize;
+                                    e >= n_locals || (!copy_sourced[e] && !copy_target[e])
+                                }
+                                _ => true,
+                            } =>
+                    {
+                        owned[i] = true;
+                    }
                     Rvalue::Use(Operand::Copy(p))
                         if p.projection.is_empty()
                             && (p.local.0 as usize) < n_locals
@@ -294,6 +523,11 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     {
                         owned[i] = true;
                     }
+                    // `s = Copy(payload)` where the `?` / match extraction left
+                    // the source local typed `Var` but the binding settled on a
+                    // concrete RC type (`let s = f()?` for `f -> Result<String,
+                    // _>`): the consumed enum transferred the payload's
+                    // ownership to this binding, so the frame must release it.
                     // Field-extract `X = Copy(Y.field)` of an RC field: X owns a
                     // new reference to that value (retained at the extract site
                     // in the field pass), released at scope like any RC local.
@@ -1337,8 +1571,6 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // Conservative aliasing: a local that is the source of a bare `Copy`, or a
     // value element (arg1..) of a consuming container/channel/closure call, may
     // outlive this frame, so the per-iteration reuse free must not reclaim it.
-    // (A more permissive escape analysis lets a still-referenced container into
-    // reuse and frees it early — a soundness bug — so stay conservative here.)
     let mut aliased = vec![false; body.locals.len()];
     for block in &body.blocks {
         for stmt in &block.stmts {

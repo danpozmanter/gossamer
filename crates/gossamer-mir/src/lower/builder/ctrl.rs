@@ -1046,15 +1046,22 @@ impl<'a> Builder<'a> {
                             if scrut_is_inline {
                                 // 2-word by-value enum: the single field is the
                                 // payload high word.
-                                let binding_ty = declared_tys
-                                    .as_ref()
-                                    .and_then(|tys| tys.get(i).copied())
-                                    .filter(|&ty| {
-                                        !matches!(
-                                            self.tcx.kind_of(ty),
-                                            gossamer_types::TyKind::Var(_)
-                                                | gossamer_types::TyKind::Error
-                                        )
+                                let binding_ty = self
+                                    .variant_payload_ty(
+                                        self.locals[scrutinee.0 as usize].ty,
+                                        name.name.as_str(),
+                                    )
+                                    .or_else(|| {
+                                        declared_tys
+                                            .as_ref()
+                                            .and_then(|tys| tys.get(i).copied())
+                                            .filter(|&ty| {
+                                                !matches!(
+                                                    self.tcx.kind_of(ty),
+                                                    gossamer_types::TyKind::Var(_)
+                                                        | gossamer_types::TyKind::Error
+                                                )
+                                            })
                                     })
                                     .unwrap_or(i64_ty);
                                 let is_f64 = matches!(
@@ -1088,15 +1095,22 @@ impl<'a> Builder<'a> {
                                 // Use the declared variant field type (e.g. f64) so
                                 // that define_var_to_with can bitcast the I64 result
                                 // of gos_load to the correct type.
-                                let binding_ty = declared_tys
-                                    .as_ref()
-                                    .and_then(|tys| tys.get(i).copied())
-                                    .filter(|&ty| {
-                                        !matches!(
-                                            self.tcx.kind_of(ty),
-                                            gossamer_types::TyKind::Var(_)
-                                                | gossamer_types::TyKind::Error
-                                        )
+                                let binding_ty = self
+                                    .variant_payload_ty(
+                                        self.locals[scrutinee.0 as usize].ty,
+                                        name.name.as_str(),
+                                    )
+                                    .or_else(|| {
+                                        declared_tys
+                                            .as_ref()
+                                            .and_then(|tys| tys.get(i).copied())
+                                            .filter(|&ty| {
+                                                !matches!(
+                                                    self.tcx.kind_of(ty),
+                                                    gossamer_types::TyKind::Var(_)
+                                                        | gossamer_types::TyKind::Error
+                                                )
+                                            })
                                     })
                                     .unwrap_or(i64_ty);
                                 let payload_local = self.fresh(binding_ty);
@@ -1617,6 +1631,34 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Goto { target: header });
 
         self.set_current(exit);
+    }
+
+    /// Recovers a variant payload's type from the scrutinee enum's
+    /// substitutions when the declared variant field type is unresolved
+    /// (`Var`). For `Result<T, E>` the `Ok`/`Some` payload is the first type
+    /// argument and `Err` the second. This pins `let s = f()?` for
+    /// `f -> Result<String, _>` inside a function whose own return type left
+    /// the extraction local `Var`, so the drop pass sees it is RC-managed and
+    /// releases it (otherwise the extracted string leaks).
+    fn variant_payload_ty(&self, scrut_ty: Ty, variant: &str) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        // Only the built-in `Result`/`Option` variants: their declared field
+        // types are the generic parameter (often defaulted to `i64`), so the
+        // concrete substitution on the scrutinee is the authority. User enum
+        // variants keep their declared field types.
+        let idx = match variant {
+            "Ok" | "Some" => 0,
+            "Err" => 1,
+            _ => return None,
+        };
+        let TyKind::Adt { substs, .. } = self.tcx.kind_of(scrut_ty) else {
+            return None;
+        };
+        substs
+            .types()
+            .get(idx)
+            .copied()
+            .filter(|&ty| !matches!(self.tcx.kind_of(ty), TyKind::Var(_) | TyKind::Error))
     }
 
     /// Emits a zero-argument unit-returning call to a runtime region helper

@@ -190,6 +190,13 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         // accumulator); the RC pass inserts statements into that gap, so
         // running it first would hide the pattern and leave every append on the
         // fresh-allocation path (O(n^2) string building).
+        // Forward-propagate concrete types through `B = Copy(A)` chains before
+        // the RC passes. A `?`/`unwrap` extraction is typed from the scrutinee's
+        // substs, but the let-binding it is copied into can be left `Var` by the
+        // checker (e.g. `let s = f()?` in a function whose own return type is
+        // unrelated). Without the binding's concrete (RC-managed) type the drop
+        // pass cannot tell it owns a `String` and never releases it (a leak).
+        propagate_copy_types(body, tcx);
         rewrite_str_concat_consuming(body);
         insert_drops_at_returns(body, tcx);
         insert_rc_releases(body, tcx);

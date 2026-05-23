@@ -79,6 +79,57 @@ impl<'a> Builder<'a> {
         if self.current.is_none() { None } else { result }
     }
 
+    /// If `value` is the freshly-produced result of a recognised constructor
+    /// (a container `Call` like `HashMap::new`, or a `gos_rt_result_new`
+    /// `CallIntrinsic` for `Some`/`Ok`/`Err`), rewrite that constructor to
+    /// write `binding` directly and return true — the caller then skips the
+    /// redundant `binding = Copy(value)`. This keeps the constructor result
+    /// un-aliased so the drop pass treats the binding as the single owner: a
+    /// loop-local map is reclaimed like a directly-bound `Vec`, and a by-value
+    /// enum's payload is released exactly once (the copy would otherwise mark
+    /// the binding an alias and defeat the single-use ownership check).
+    fn try_rebind_ctor_call(&mut self, value: Local, binding: Local) -> bool {
+        let Some(cur) = self.current else {
+            return false;
+        };
+        // Container constructors lower to a terminator `Call` in a prior block
+        // whose continuation is the current block.
+        for blk in &mut self.blocks {
+            if let Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                destination,
+                target: Some(t),
+                ..
+            } = &mut blk.terminator
+                && *t == cur
+                && destination.local == value
+                && destination.projection.is_empty()
+                && is_container_ctor(name)
+            {
+                *destination = Place::local(binding);
+                return true;
+            }
+        }
+        // `Some(..)` / `Ok(..)` / `Err(..)` lower to a `gos_rt_result_new`
+        // `CallIntrinsic` assignment — the last statement of the current block
+        // (the binding copy has not been emitted yet).
+        let cur_idx = cur.0 as usize;
+        if cur_idx < self.blocks.len()
+            && let Some(last) = self.blocks[cur_idx].stmts.last_mut()
+            && let StatementKind::Assign {
+                place,
+                rvalue: Rvalue::CallIntrinsic { name, .. },
+            } = &mut last.kind
+            && *name == "gos_rt_result_new"
+            && place.local == value
+            && place.projection.is_empty()
+        {
+            place.local = binding;
+            return true;
+        }
+        false
+    }
+
     pub(crate) fn lower_stmt(&mut self, stmt: &HirStmt) {
         match &stmt.kind {
             HirStmtKind::Let { pattern, ty, init } => {
@@ -355,11 +406,22 @@ impl<'a> Builder<'a> {
                         if let Some(layout) = self.local_define_layout.get(&value).cloned() {
                             self.local_define_layout.insert(local, layout);
                         }
-                        self.emit_assign(
-                            Place::local(local),
-                            Rvalue::Use(Operand::Copy(Place::local(value))),
-                            stmt.span,
-                        );
+                        // `let m = HashMap::new()` lowers `value = map_new();`
+                        // then a copy into the binding. Array literals bind
+                        // direct (see `lower_let_array_as_vec`); maps/sets do
+                        // not, and the copy pins the constructor result as
+                        // aliased so the drop pass cannot reclaim a loop-local
+                        // one. Rewrite the constructor call to write the binding
+                        // directly and drop the redundant copy — `value` is the
+                        // freshly-lowered init, used only by this copy, so this
+                        // is sound and leaves the result un-aliased.
+                        if !self.try_rebind_ctor_call(value, local) {
+                            self.emit_assign(
+                                Place::local(local),
+                                Rvalue::Use(Operand::Copy(Place::local(value))),
+                                stmt.span,
+                            );
+                        }
                         if let HirPatKind::Tuple(sub_patterns) = &pattern.kind {
                             self.bind_tuple_pattern(local, sub_patterns, stmt.span);
                         }
@@ -454,4 +516,23 @@ impl<'a> Builder<'a> {
             }
         }
     }
+}
+
+/// Recognised container constructors whose `let`-binding result the lowerer
+/// rewrites to bind directly (see `try_rebind_ctor_call`).
+fn is_container_ctor(name: &str) -> bool {
+    matches!(
+        name,
+        "HashMap::new"
+            | "HashMap::with_capacity"
+            | "collections::HashMap::new"
+            | "HashSet::new"
+            | "collections::HashSet::new"
+            | "BTreeMap::new"
+            | "collections::BTreeMap::new"
+            | "gos_rt_map_new"
+            | "gos_rt_map_new_with_capacity"
+            | "gos_rt_set_new"
+            | "gos_rt_btmap_new"
+    )
 }

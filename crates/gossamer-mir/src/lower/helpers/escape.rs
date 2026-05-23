@@ -320,6 +320,11 @@ pub(crate) struct LoopEligibility<'a> {
     /// at the iteration boundary and are safe to pass around.
     in_body: HashSet<String>,
     ok: bool,
+    /// True once the body is seen to allocate a heap value (a call returning a
+    /// heap type, etc.). A region only pays off if there is something to arena;
+    /// a purely-scalar body (a counter scan, byte stores) must NOT be wrapped,
+    /// or every iteration pays two `region_push`/`region_pop` calls for nothing.
+    allocates: bool,
 }
 
 impl<'a> LoopEligibility<'a> {
@@ -329,13 +334,30 @@ impl<'a> LoopEligibility<'a> {
             unsafe_fns,
             in_body: HashSet::new(),
             ok: true,
+            allocates: false,
         }
+    }
+
+    /// A call/expression result type that lives on the heap (so wrapping the
+    /// body in an arena region can bulk-free it). Scalars / unit / refs do not.
+    fn is_alloc_ty(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        matches!(
+            self.tcx.kind_of(ty),
+            TyKind::Adt { .. }
+                | TyKind::Vec(_)
+                | TyKind::Slice(_)
+                | TyKind::HashMap { .. }
+                | TyKind::String
+                | TyKind::DynError
+                | TyKind::JsonValue
+        )
     }
 
     /// Returns true if `body` (a loop body expression) is region-eligible.
     pub fn check(mut self, body: &HirExpr) -> bool {
         self.expr(body, true);
-        self.ok
+        self.ok && self.allocates
     }
 
     fn block(&mut self, b: &HirBlock, top: bool) {
@@ -419,6 +441,9 @@ impl<'a> LoopEligibility<'a> {
                 self.ok = false;
             }
             HirExprKind::Call { callee, args } => {
+                if self.is_alloc_ty(e.ty) {
+                    self.allocates = true;
+                }
                 match &callee.kind {
                     HirExprKind::Path { def: Some(d), .. } => {
                         if self.unsafe_fns.contains(d) {

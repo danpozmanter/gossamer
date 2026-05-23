@@ -371,6 +371,69 @@ impl<'a> Lowerer<'a> {
             "f64.ceil" | "ceil" => ("llvm.ceil.f64", 1),
             "f64.exp" | "exp" => ("llvm.exp.f64", 1),
             "f64.ln" | "ln" | "f64.log" | "log" => ("llvm.log.f64", 1),
+            // Inline `buf.set_byte(i, x)` as a branchless bounds-guarded store
+            // instead of a runtime call. `GosU8Vec` is `{ i64 len, ptr data }`;
+            // an out-of-range / null access redirects to a scratch byte, which
+            // reproduces `gos_rt_heap_u8_set`'s no-op-on-OOB semantics without
+            // the per-byte call overhead (fasta's hot inner loop).
+            "gos_rt_heap_u8_set" if args.len() == 3 => {
+                let v = self.lower_operand(&args[0])?;
+                let idx = self.lower_operand(&args[1])?;
+                let val = self.lower_operand(&args[2])?;
+                self.runtime_refs.insert(
+                    "@gos_u8_set_scratch = internal global [16 x i8] zeroinitializer".to_string(),
+                );
+                self.runtime_refs.insert(
+                    "@gos_u8_set_hdr = internal global { i64, ptr } { i64 0, ptr @gos_u8_set_scratch }"
+                        .to_string(),
+                );
+                let vnn = self.fresh();
+                let vbase = self.fresh();
+                let len = self.fresh();
+                let dptr = self.fresh();
+                let data = self.fresh();
+                let ge0 = self.fresh();
+                let lt = self.fresh();
+                let inb = self.fresh();
+                let elem = self.fresh();
+                let target = self.fresh();
+                let valb = self.fresh();
+                writeln!(self.out, "  {vnn} = icmp ne ptr {v}, null").unwrap();
+                writeln!(
+                    self.out,
+                    "  {vbase} = select i1 {vnn}, ptr {v}, ptr @gos_u8_set_hdr"
+                )
+                .unwrap();
+                writeln!(self.out, "  {len} = load i64, ptr {vbase}").unwrap();
+                writeln!(
+                    self.out,
+                    "  {dptr} = getelementptr inbounds i8, ptr {vbase}, i64 8"
+                )
+                .unwrap();
+                writeln!(self.out, "  {data} = load ptr, ptr {dptr}").unwrap();
+                writeln!(self.out, "  {ge0} = icmp sge i64 {idx}, 0").unwrap();
+                writeln!(self.out, "  {lt} = icmp slt i64 {idx}, {len}").unwrap();
+                writeln!(self.out, "  {inb} = and i1 {ge0}, {lt}").unwrap();
+                writeln!(
+                    self.out,
+                    "  {elem} = getelementptr inbounds i8, ptr {data}, i64 {idx}"
+                )
+                .unwrap();
+                writeln!(
+                    self.out,
+                    "  {target} = select i1 {inb}, ptr {elem}, ptr @gos_u8_set_scratch"
+                )
+                .unwrap();
+                writeln!(self.out, "  {valb} = trunc i64 {val} to i8").unwrap();
+                writeln!(self.out, "  store i8 {valb}, ptr {target}").unwrap();
+                let dest_ty = render_ty(self.tcx, self.body.local_ty(dest_local));
+                return Ok(match dest_ty.as_str() {
+                    "ptr" => "null",
+                    "double" | "float" => "0.0",
+                    _ => "0",
+                }
+                .to_string());
+            }
             other if other.starts_with("gos_rt_") => {
                 // Generic runtime-call intrinsic: emit a regular
                 // call against the named runtime symbol. Mirrors

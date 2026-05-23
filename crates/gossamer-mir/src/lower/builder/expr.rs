@@ -1213,6 +1213,32 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        // Fast path: a tuple index of a PLACE expression (`table[j].1`,
+        // `p.pair.0`) reads the field through one combined projection instead
+        // of copying the whole tuple out and then extracting a field — the hot
+        // `table[j].0`/`.1` shape (fasta). Restricted to a concrete field type
+        // so the backend picks the right load kind; the unannotated (`Var`)
+        // case keeps the materialising slow path, which first pins the
+        // receiver's tuple field types.
+        {
+            use gossamer_types::TyKind;
+            let field_concrete = !matches!(self.tcx.kind_of(ty), TyKind::Var(_) | TyKind::Error);
+            if field_concrete
+                && matches!(
+                    receiver.kind,
+                    HirExprKind::Path { .. }
+                        | HirExprKind::Index { .. }
+                        | HirExprKind::Field { .. }
+                        | HirExprKind::TupleIndex { .. }
+                )
+                && let Some(mut place) = self.lower_place_expr(receiver)
+            {
+                place.projection.push(crate::ir::Projection::Field(index));
+                let dest = self.fresh(ty);
+                self.emit_assign(Place::local(dest), Rvalue::Use(Operand::Copy(place)), span);
+                return Some(dest);
+            }
+        }
         let receiver_local = self.lower_expr(receiver)?;
         // A tuple element read out of a Vec (`v[i].0`) inherits its
         // field types from the element type the binding was pinned

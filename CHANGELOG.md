@@ -65,6 +65,16 @@ A string or nested container stored in a `Vec` no longer leaks, and a `Vec` rebu
 - **`HashMap` insert releases its inbound strings.** `gos_rt_map_insert_str_*` / `_i64_str` copy the key/value bytes into the map's own storage, so the consuming-call contract leaves the caller's `format!(...)` key/value as a leaked temporary. The runtime now releases each inbound gos-string after copying (rc-aware + tag-checked, so a moved temp is freed, a shared string is only decremented, and a literal is skipped).
 - **Fresh string producers are owned.** `str_repeat` / `slice` / `substring` / `trim*` / `replace*` / `pad_*` / `to_upper`/`to_lower`/`to_title` return a freshly allocated owned `String`, so a standalone transient (`let big = strings::repeat(…); use(&big)`) is released at scope instead of leaking. A returned producer result is exempted (it flows to the caller). The substring-retention leak benchmark goes from ~290 MB to flat ~0.6 MB. Deliberately excludes `concat` (in-place-aliasing in `s += …`) and `Result`/`Option` payload extraction.
 
+- **Loop-local `HashMap` / `HashSet` reclaimed.** `let m = HashMap::new()` lowered to `tmp = map_new(); m = Copy(tmp)`; the copy pinned the constructor result as aliased, so the reuse pass never reclaimed a loop-local map. Container constructors (and `Some` / `Ok` / `Err`) now write the binding directly — no copy, no alias — so a loop-local map / set is freed per iteration like a `Vec`. A map passed to a user function stays safe via the existing escape disqualification.
+- **By-value enum payload extraction is a move.** A `String` moved out of a consumed `Result` / `Option` (`let s = f()?`, `r.unwrap()`, `match o { Some(s) => … }`) transfers the enum's single owning reference to the binding instead of retaining a second, so the binding releases it exactly once. When the extracted value is instead stored into an aggregate — the synthesized `from_json` parses a field `String` and places it in the result struct through copy temporaries — the retain is load-bearing and kept, detected by propagating "stored into an aggregate" transitively backward through copy edges. An aliased enum (`let o2 = o; match o2; match o`) is conservatively not owned (leak-not-double-free), and autoderive `from_json` / `to_json` round-trips clean under `MALLOC_CHECK_=3`.
+- **`?` / match payload typing.** The extracted payload type is recovered from the scrutinee enum's substitution (the declared variant field type is the generic default, often `i64`), and concrete types are propagated forward through `Copy` chains, so a `?` extraction copied into an otherwise-`Var` binding is recognised as RC-managed and released.
+- **Leak ledger no longer counts region-managed strings.** A string allocated inside an arena region is reclaimed wholesale at `region_pop` (and skipped by `gos_rt_str_free`), so an unmatched `str_inc` made the `GOS_LEAK_LEDGER` gauge report a false positive on region-heavy loops; region strings are no longer counted in the per-string gauge (the memory is bounded by the region).
+
+### Arena regions wrap only allocating loops
+
+- A loop body is wrapped in an arena region (`region_push` / `region_pop`) only when it actually allocates a heap value. A purely-scalar inner loop (a counter scan, byte stores) previously paid two region calls every iteration for nothing; eligibility now also requires a heap-allocating call or constructor in the body. Allocating loops stay regioned and bounded.
+- A tuple field read out of a fixed array (`table[j].1`) lowers to a single combined index+field projection instead of materialising the whole tuple to extract one field, and `buf.set_byte(i, x)` lowers to an inlined branchless bounds-guarded store in the LLVM tier instead of a per-byte runtime call.
+
 ### Length-carrying strings — O(1) `len`/`slice`
 
 Compiled-tier strings now store their byte length in the allocation header, so length and slicing are O(1) instead of `strlen`-per-call. A recursive-descent parser that slices a large input at growing offsets was O(n^2); **json-serde drops from 167s to 0.54s at N=50000** (now linear, output bit-identical to the Rust reference).
@@ -774,9 +784,7 @@ The compiled tier now has an active tracing collector.
   the byte-pressure counter and the next allocating function's
   prologue safepoint runs the collect when the threshold trips,
   which is sufficient for any body that grows the heap. Measured
-  recovery in `gos build --release`: spectral-norm 47.8s → 0.92s,
-  fannkuch 1.12s → 0.13s, fasta 9.22s → 2.00s, n-body 16.5s →
-  1.49s, k-nucleotide 1.09s → 0.51s.
+  recovery in `gos build --release`.
 - **HTTP server thread-per-connection restored.** 0.6.0 had
   swapped `gos_rt_http_serve` from "spawn a dedicated OS thread
   per accepted socket"  to "fixed worker pool + bounded
