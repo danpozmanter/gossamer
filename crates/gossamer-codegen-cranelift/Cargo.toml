@@ -29,7 +29,7 @@ parking_lot = { workspace = true }
 rayon = { workspace = true }
 
 [dev-dependencies]
-object = "0.37"
+object = { version = "0.37", default-features = false, features = ["read"] }
 target-lexicon = "0.13"
 gossamer-ast = { workspace = true }
 gossamer-hir = { workspace = true }

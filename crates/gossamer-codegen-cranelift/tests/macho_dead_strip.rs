@@ -27,7 +27,12 @@ use object::read::{File, Object, ObjectSymbol};
 use target_lexicon::Triple;
 
 fn macho_isa() -> std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa> {
-    let triple: Triple = "x86_64-apple-darwin".parse().unwrap();
+    // Target the *host* architecture's Apple/Mach-O triple so the
+    // backend is always compiled in (an aarch64 macOS runner has no
+    // x86 backend, and vice versa). Only the OS changes, which is all
+    // the Mach-O object format + N_NO_DEAD_STRIP path depends on.
+    let arch = std::env::consts::ARCH;
+    let triple: Triple = format!("{arch}-apple-darwin").parse().unwrap();
     let mut fb = settings::builder();
     fb.set("is_pic", "true").unwrap();
     fb.set("opt_level", "speed").unwrap();

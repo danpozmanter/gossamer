@@ -182,6 +182,17 @@ pub struct NativeObject {
 pub(crate) fn build_native_isa(
     pic: bool,
 ) -> Result<std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>> {
+    // COFF (Windows) has no GOT. Under `is_pic` cranelift emits
+    // `movq sym@GOTPCREL(%rip)` (a load *through* a GOT slot) for
+    // every symbol address, but the object backend rewrites the
+    // resulting `GotRelative` to a plain `Relative` reloc pointing
+    // straight at the symbol — so the load reads the symbol's first
+    // bytes as if they were its address, corrupting every string and
+    // data reference. Mach-O and ELF resolve the GOT load correctly
+    // (ELF via GOTPCRELX relaxation), so PIC stays on there; on COFF
+    // we emit position-dependent code (direct `lea` / `Abs8`) which
+    // the PE base-relocation table fixes up at load time.
+    let pic = pic && cfg!(not(target_os = "windows"));
     let mut flag_builder = settings::builder();
     flag_builder
         .set("opt_level", "speed")
