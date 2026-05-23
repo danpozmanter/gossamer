@@ -221,6 +221,14 @@ impl IntrinsicContext {
         bytes.push(0);
         let mut description = DataDescription::new();
         description.define(bytes.into_boxed_slice());
+        // These local read-only atoms are reached only through
+        // section-relative relocations, which do not establish atom
+        // liveness for the Mach-O linker's atom-based `-dead_strip`.
+        // Without the retain marker (`N_NO_DEAD_STRIP` on Mach-O,
+        // `SHF_GNU_RETAIN` on ELF) the string atom is stripped or
+        // reordered out from under the relocation and the reference
+        // resolves into a neighbouring atom.
+        description.set_used(true);
         module
             .define_data(id, &description)
             .map_err(|e| anyhow!("define {symbol}: {e}"))?;
@@ -250,6 +258,10 @@ impl IntrinsicContext {
         }
         let mut description = DataDescription::new();
         description.define(bytes.into_boxed_slice());
+        // Same Mach-O `-dead_strip` retain requirement as the string
+        // pool: the RC type-meta blob is referenced via section-
+        // relative relocations only.
+        description.set_used(true);
         module
             .define_data(id, &description)
             .map_err(|e| anyhow!("define {symbol}: {e}"))?;

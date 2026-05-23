@@ -813,14 +813,18 @@ fn main() -> i64 {
     assert_eq!(bodies.len(), before, "no extra bodies expected");
 }
 
-/// C18 — drop pass skips conditionally-initialised locals.
+/// A `HashMap` allocated only inside an `if` arm is reclaimed
+/// without ever freeing uninitialised memory.
 ///
-/// A `HashMap` allocated only inside an `if` arm must not have its
-/// free scheduled at the function's `Return`, because the `else`
-/// path reaches the return with the slot uninit. Pre-fix, this
-/// shape lowered to a `gos_rt_map_free(uninit_slot)` call.
+/// The owning slot is zero-initialised at function entry, so every
+/// `gos_rt_map_free` the drop pass schedules (the pre-overwrite
+/// guard and the at-`Return` reclaim) is a null-safe no-op on the
+/// `else` path that never allocated. The map must still be freed on
+/// the `if` path (no leak), and every free must be dominated by the
+/// entry zero-init so the conditional shape can never free a live
+/// uninit slot.
 #[test]
-fn drop_pass_skips_conditionally_initialised_local() {
+fn drop_pass_guards_conditionally_initialised_local() {
     let source = r"
 fn maybe_build(flag: bool) -> i64 {
     if flag {
@@ -837,31 +841,48 @@ fn maybe_build(flag: bool) -> i64 {
         .iter()
         .find(|b| b.name == "maybe_build")
         .expect("body");
-    // No drop pass should have emitted a `gos_rt_map_free` in this
-    // shape — every Return is reachable from the `else` arm which
-    // never allocated the map.
-    let frees: Vec<_> = body
+    // Every local freed by `gos_rt_map_free`, by the slot the call
+    // releases.
+    let freed_locals: Vec<Local> = body
         .blocks
         .iter()
         .flat_map(|b| b.stmts.iter())
         .filter_map(|stmt| match &stmt.kind {
             StatementKind::Assign {
-                rvalue: Rvalue::CallIntrinsic { name, .. },
+                rvalue: Rvalue::CallIntrinsic { name, args },
                 ..
-            } => {
-                if *name == "gos_rt_map_free" {
-                    Some(*name)
-                } else {
-                    None
-                }
-            }
+            } if *name == "gos_rt_map_free" => match args.first() {
+                Some(Operand::Copy(p)) if p.projection.is_empty() => Some(p.local),
+                _ => None,
+            },
             _ => None,
         })
         .collect();
+
+    // The conditionally-allocated map is reclaimed (no leak).
     assert!(
-        frees.is_empty(),
-        "drop pass must not free a conditionally-initialised local; got {frees:?}"
+        !freed_locals.is_empty(),
+        "conditionally-initialised map must still be freed (no leak)"
     );
+
+    // Every freed slot is zero-initialised in the entry block, so the
+    // free is a null-safe no-op on the path that never allocated.
+    let entry = &body.blocks[0];
+    for local in &freed_locals {
+        let zero_init = entry.stmts.iter().any(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                } if place.projection.is_empty() && place.local == *local
+            )
+        });
+        assert!(
+            zero_init,
+            "freed local {local:?} must be zero-initialised at entry so its free is null-safe"
+        );
+    }
 }
 
 /// C18 — drop pass keeps unconditional drops intact.

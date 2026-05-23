@@ -649,7 +649,10 @@ fn link_posix(
             // through `.symtab`; `--strip-all` would erase the function
             // names and leave only hex addresses. macOS keeps global
             // symbols (gos functions are global) via the post-link
-            // `strip -x`; `-dead_strip` only removes unreachable code.
+            // `strip -x`. `-dead_strip` is atom-based: it removes
+            // unreachable code AND data atoms, so every local rodata
+            // atom the codegen relies on must carry `N_NO_DEAD_STRIP`
+            // (see `IntrinsicContext::intern_string`).
             if cfg!(target_os = "macos") {
                 cmd.arg("-Wl,-dead_strip");
             } else {
