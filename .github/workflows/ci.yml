@@ -197,24 +197,35 @@ jobs:
       # `crates/gossamer-cli/build.rs` ensures the runtime
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
-      # Diagnostics on every platform so cross-platform failures are
-      # debuggable straight from the CI log, without a local repro on the
-      # failing OS:
-      #   - `RUST_BACKTRACE=1` symbolicates panics (e.g. an assert in a
-      #     codegen-parity test reports the exact source line).
-      #   - `-- --nocapture` streams each test's stdout/stderr live. When a
-      #     test binary is killed by a signal (SIGSEGV / SIGBUS — the shape
-      #     a miscompiled native binary takes on a given target) the harness
-      #     can't print captured output post-mortem, so without this the log
-      #     shows only "test failed". Live output reveals how far it got and
-      #     surfaces the child `gos build` / `gos run` stderr the
-      #     build-and-run tests embed in their failure messages.
+      # Pass/fail gate: parallel, captured output. Captured (NOT
+      # `--nocapture`) on purpose — a `--nocapture` run of the whole
+      # workspace streams every test's output and grows large enough that
+      # GitHub truncates the log, hiding the very failures we need. With
+      # capture, an assert's message prints in a compact `failures:` block
+      # at the end. `RUST_BACKTRACE=1` symbolicates panics.
       - name: Test
         shell: bash
         env:
           RUST_BACKTRACE: "1"
         run: |
-          "$CARGO_BIN" test --workspace --no-fail-fast -- --nocapture
+          "$CARGO_BIN" test --workspace --no-fail-fast
+      # Only on failure: re-run the crates that drive native `gos build` /
+      # `gos run` serially with live output. `--test-threads=1` +
+      # `--nocapture` makes a test binary killed by a signal (SIGSEGV /
+      # SIGBUS — the shape a miscompiled native binary takes on a target)
+      # print the exact test it died on as the last line. A parallel,
+      # captured run can only report "N targets failed" with no per-test
+      # detail (the process dies before libtest can print), which is why
+      # the macOS native-build failures show nothing. This is where a
+      # platform-only crash, or a `gos build` link error, surfaces.
+      - name: Diagnose native build/run test failures
+        if: failure()
+        shell: bash
+        env:
+          RUST_BACKTRACE: "full"
+        run: |
+          "$CARGO_BIN" test -p gossamer-cli -p gossamer-codegen-cranelift \
+            --no-fail-fast -- --test-threads=1 --nocapture
       - name: Build release
         shell: bash
         run: |

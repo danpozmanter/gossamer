@@ -37,6 +37,69 @@ fn debug_bin(dir: &std::path::Path, stem: &str) -> PathBuf {
     p
 }
 
+/// Locates the runtime staticlib that `gossamer-cli`'s build script
+/// emits into the workspace target dir. Returns `None` when it hasn't
+/// been built (e.g. running this crate's tests in isolation) so the
+/// caller skips rather than fails.
+fn runtime_staticlib() -> Option<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["gossamer_runtime.lib", "libgossamer_runtime.a"]
+    } else {
+        &["libgossamer_runtime.a", "gossamer_runtime.lib"]
+    };
+    let root = workspace_root();
+    for profile in ["debug", "release"] {
+        for name in names {
+            let candidate = root.join("target").join(profile).join(name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// Links a Cranelift-emitted object against the runtime staticlib with
+/// the host `cc`. A Cranelift `main` object references the runtime's
+/// main-shim symbols (`gos_rt_set_args` / `gos_rt_flush_stdout` /
+/// `gos_rt_main_exit_code`), so linking the bare object alone always
+/// fails with undefined references — the staticlib must be on the line.
+///
+/// Returns `false` and prints a skip reason — never fails — when the
+/// runtime isn't built or the host `cc` can't link it (e.g. a MinGW
+/// `cc` against an MSVC `.lib` on the Windows runner; that toolchain
+/// combination is covered by the `gos build` tests below instead). This
+/// is the minimal link `gos build` performs minus the `-dead_strip` /
+/// strip pass, so a pass here isolates codegen + symbol resolution from
+/// the strip flags.
+fn link_with_runtime(object_path: &std::path::Path, exe_path: &std::path::Path) -> bool {
+    let Some(runtime) = runtime_staticlib() else {
+        eprintln!("skipping — runtime staticlib not built (build gossamer-cli first)");
+        return false;
+    };
+    let mut cmd = Command::new("cc");
+    cmd.arg(object_path).arg(&runtime).arg("-o").arg(exe_path);
+    cmd.arg("-lpthread").arg("-lm");
+    // macOS folds libdl into libSystem; `-ldl` errors there.
+    if !cfg!(target_os = "macos") {
+        cmd.arg("-ldl");
+    }
+    match cmd.output() {
+        Ok(out) if out.status.success() => true,
+        Ok(out) => {
+            eprintln!(
+                "skipping — cc could not link the runtime staticlib: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            false
+        }
+        Err(e) => {
+            eprintln!("skipping — cc unavailable: {e}");
+            false
+        }
+    }
+}
+
 fn main_returns(expr_build: impl FnOnce(&mut Builder)) -> (Body, TyCtxt) {
     let mut tcx = TyCtxt::new();
     let unit = tcx.unit();
@@ -101,18 +164,7 @@ fn cranelift_compiles_integer_constant_main_to_runnable_binary() {
     std::fs::write(&object_path, &object.bytes).unwrap();
     let exe_path = dir.join("main");
 
-    let link = Command::new("cc")
-        .arg(&object_path)
-        .arg("-o")
-        .arg(&exe_path)
-        .output()
-        .expect("invoke cc");
-    if !link.status.success() {
-        // On systems without a C toolchain we skip rather than fail.
-        eprintln!(
-            "skipping — cc unavailable: {}",
-            String::from_utf8_lossy(&link.stderr)
-        );
+    if !link_with_runtime(&object_path, &exe_path) {
         let _ = std::fs::remove_dir_all(&dir);
         return;
     }
@@ -201,14 +253,7 @@ fn cranelift_heap_allocator_roundtrips_value_through_gos_store_and_load() {
     std::fs::write(&object_path, &object.bytes).unwrap();
     let exe_path = dir.join("main");
 
-    let link = Command::new("cc")
-        .arg(&object_path)
-        .arg("-o")
-        .arg(&exe_path)
-        .output()
-        .expect("invoke cc");
-    if !link.status.success() {
-        eprintln!("skipping — cc unavailable");
+    if !link_with_runtime(&object_path, &exe_path) {
         let _ = std::fs::remove_dir_all(&dir);
         return;
     }
@@ -259,14 +304,7 @@ fn cranelift_compiles_arithmetic_main_to_runnable_binary() {
     std::fs::write(&object_path, &object.bytes).unwrap();
     let exe_path = dir.join("main");
 
-    let link = Command::new("cc")
-        .arg(&object_path)
-        .arg("-o")
-        .arg(&exe_path)
-        .output()
-        .expect("invoke cc");
-    if !link.status.success() {
-        eprintln!("skipping — cc unavailable");
+    if !link_with_runtime(&object_path, &exe_path) {
         let _ = std::fs::remove_dir_all(&dir);
         return;
     }
