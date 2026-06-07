@@ -60,15 +60,6 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // Tracked in `~/dev/contexts/gos/latest.md`.
     "gos_rt_chan_recv_ctx_option",
     "gos_rt_install_ctx_hooks",
-    // Extended exec surface (kill_group / pipeline_run / signal /
-    // wait_timeout). Reachable from Rust callers (`std::os::exec`
-    // builder); the user-facing language dispatch has not been
-    // wired through MIR yet, so the codegen tables don't reference
-    // these symbols even though they exist in the runtime.
-    "gos_rt_exec_kill_group",
-    "gos_rt_exec_pipeline_run",
-    "gos_rt_exec_signal",
-    "gos_rt_exec_wait_timeout",
     // Branch-coverage hooks. Codegen for `gos test --coverage` is
     // staged but not yet emitting bump/record calls — the runtime
     // surface ships ahead so the harness can install the global
