@@ -197,10 +197,24 @@ jobs:
       # `crates/gossamer-cli/build.rs` ensures the runtime
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
+      # Diagnostics on every platform so cross-platform failures are
+      # debuggable straight from the CI log, without a local repro on the
+      # failing OS:
+      #   - `RUST_BACKTRACE=1` symbolicates panics (e.g. an assert in a
+      #     codegen-parity test reports the exact source line).
+      #   - `-- --nocapture` streams each test's stdout/stderr live. When a
+      #     test binary is killed by a signal (SIGSEGV / SIGBUS — the shape
+      #     a miscompiled native binary takes on a given target) the harness
+      #     can't print captured output post-mortem, so without this the log
+      #     shows only "test failed". Live output reveals how far it got and
+      #     surfaces the child `gos build` / `gos run` stderr the
+      #     build-and-run tests embed in their failure messages.
       - name: Test
         shell: bash
+        env:
+          RUST_BACKTRACE: "1"
         run: |
-          "$CARGO_BIN" test --workspace --no-fail-fast
+          "$CARGO_BIN" test --workspace --no-fail-fast -- --nocapture
       - name: Build release
         shell: bash
         run: |

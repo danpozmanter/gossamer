@@ -106,3 +106,36 @@ fn generic_arg_list_on_user_type_still_parses() {
     );
     assert_eq!(sf.items.len(), 1);
 }
+
+/// A leading UTF-8 BOM (the Windows-editor default) is stripped at the
+/// parse entry, so a BOM-prefixed file parses identically to a plain
+/// one rather than choking on the marker.
+#[test]
+fn leading_bom_parses_like_plain_source() {
+    let with = "\u{feff}fn main() {\n    let x = 1\n}\n";
+    let without = "fn main() {\n    let x = 1\n}\n";
+    let mut map = SourceMap::new();
+    let fa = map.add_file("with_bom.gos", with.to_string());
+    let fb = map.add_file("plain.gos", without.to_string());
+    let (sf_a, diags_a) = parse_source_file(with, fa);
+    let (sf_b, diags_b) = parse_source_file(without, fb);
+    assert!(
+        diags_a.is_empty(),
+        "BOM-prefixed source must parse cleanly; got {} diag(s)",
+        diags_a.len()
+    );
+    assert_eq!(sf_a.items.len(), sf_b.items.len());
+    assert_eq!(diags_a.len(), diags_b.len());
+}
+
+/// Regression: a leading BOM shifted token spans off the parser's
+/// source basis, so `Parser::slice` split the BOM mid-char and
+/// panicked on this fuzz input (`fuzz/artifacts/typecheck/crash-fbf8…`).
+/// Parsing arbitrary bytes must never panic.
+#[test]
+fn bom_prefixed_malformed_input_does_not_panic() {
+    let src = "\u{feff}fn\"\u{4}n\"\u{4}";
+    let mut map = SourceMap::new();
+    let file = map.add_file("crash.gos", src.to_string());
+    let _ = parse_source_file(src, file);
+}

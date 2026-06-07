@@ -51,6 +51,12 @@ impl<'src> Parser<'src> {
     /// Builds a parser for `source` tagged with `file`.
     #[must_use]
     pub fn new(source: &'src str, file: FileId) -> Self {
+        // Strip a leading UTF-8 BOM (U+FEFF) once, here, so the stored
+        // `source` and the `TokenStream` below are built from the same
+        // text — token spans and `slice` then share one basis. Windows
+        // editors emit a BOM by default; `SourceMap`'s `SourceFile::new`
+        // strips the same prefix so diagnostic line/columns stay aligned.
+        let source = source.strip_prefix('\u{feff}').unwrap_or(source);
         Self {
             source,
             tokens: TokenStream::new(source, file),
@@ -244,15 +250,15 @@ impl<'src> Parser<'src> {
         self.pattern_pipe_depth > 0
     }
 
-    /// Returns the raw source slice covered by `span`.
+    /// Returns the raw source slice covered by `span`, or `""` if the
+    /// span is out of range or not on UTF-8 char boundaries. `str::get`
+    /// rejects both, so an adversarial or malformed span can never
+    /// panic the parser on arbitrary input.
     #[must_use]
     pub(crate) fn slice(&self, span: Span) -> &'src str {
-        let start = span.start as usize;
-        let end = span.end as usize;
-        if end > self.source.len() || start > end {
-            return "";
-        }
-        &self.source[start..end]
+        self.source
+            .get(span.start as usize..span.end as usize)
+            .unwrap_or("")
     }
 
     /// Bumps the recursion counter and records a diagnostic when the

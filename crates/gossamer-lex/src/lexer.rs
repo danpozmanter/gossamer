@@ -24,15 +24,16 @@ pub struct Lexer<'src> {
 }
 
 impl<'src> Lexer<'src> {
-    /// Constructs a lexer for `source` tagged with `file`. A leading
-    /// UTF-8 BOM (U+FEFF) is stripped so it is never lexed as an
-    /// invalid first token; this mirrors the strip in
-    /// `SourceMap::add_file`, keeping token offsets aligned with the
-    /// diagnostic line/column view. Editors on Windows emit a BOM by
-    /// default; matches rustc/go behaviour.
+    /// Constructs a lexer for `source` tagged with `file`.
+    ///
+    /// Token spans are byte offsets into `source` exactly as given —
+    /// the lexer does not strip a leading BOM, because callers (the
+    /// parser, the REPL highlighter) slice their own copy of `source`
+    /// by those spans and must share one basis. BOM stripping is a
+    /// source-preprocessing step done once in `Parser::new` and
+    /// `SourceMap`'s `SourceFile::new`.
     #[must_use]
-    pub fn new(source: &'src str, file: FileId) -> Self {
-        let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+    pub const fn new(source: &'src str, file: FileId) -> Self {
         Self {
             cursor: Cursor::new(source),
             file,

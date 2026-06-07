@@ -14,9 +14,10 @@ impl SourceFile {
     /// Builds a new source file record, indexing line start offsets.
     fn new(name: String, mut source: String) -> Self {
         // Strip a leading UTF-8 BOM (U+FEFF, 3 bytes) so byte offsets
-        // match the BOM-less view the lexer tokenizes (see Lexer::new).
-        // Without this, every span on a BOM-prefixed file is shifted 3
-        // bytes and diagnostics point one position off.
+        // match the BOM-less basis the parser uses (see Parser::new,
+        // which strips the same prefix before lexing). Without this,
+        // every span on a BOM-prefixed file is shifted 3 bytes and
+        // diagnostics point one position off.
         if source.starts_with('\u{feff}') {
             source.drain(..'\u{feff}'.len_utf8());
         }

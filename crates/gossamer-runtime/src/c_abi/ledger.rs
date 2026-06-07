@@ -14,10 +14,10 @@ pub static STR_LIVE: AtomicI64 = AtomicI64::new(0);
 pub static VEC_LIVE: AtomicI64 = AtomicI64::new(0);
 pub static MAP_LIVE: AtomicI64 = AtomicI64::new(0);
 
-#[cfg(unix)]
+#[cfg(all(unix, not(miri)))]
 static ARMED: std::sync::Once = std::sync::Once::new();
 
-#[cfg(unix)]
+#[cfg(all(unix, not(miri)))]
 extern "C" fn report() {
     if std::env::var("GOS_LEAK_LEDGER").is_ok() {
         eprintln!(
@@ -31,13 +31,15 @@ extern "C" fn report() {
     }
 }
 
-// At-exit auto-print of the ledger is unix-only (`libc::atexit`); on other
+// At-exit auto-print of the ledger is unix-only (`libc::atexit`) and is
+// additionally skipped under Miri, which cannot execute `atexit` (and runs
+// with `-Zmiri-ignore-leaks`, so the report is moot there anyway). On other
 // targets the counters still tally but the report is read via a debugger /
 // explicit query rather than printed at exit. This keeps the Windows build —
-// where `libc` is not a dependency — compiling.
+// where `libc` is not a dependency — and the Miri job compiling and running.
 #[inline]
 fn arm() {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(miri)))]
     ARMED.call_once(|| unsafe {
         libc::atexit(report);
     });

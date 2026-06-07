@@ -289,28 +289,15 @@ fn hello_world_tokenises_cleanly() {
     );
 }
 
-/// A leading UTF-8 BOM (U+FEFF, the default for Windows editors) is
-/// stripped, so a BOM-prefixed file lexes identically to a plain one
-/// instead of emitting `Invalid` as the first token.
+/// The lexer keeps token spans relative to its literal input — it does
+/// NOT strip a leading BOM (that is `Parser::new`'s job), because
+/// `tokenize` callers slice their own copy of `source` by these spans.
+/// A raw `tokenize` of BOM-prefixed input therefore flags the U+FEFF.
 #[test]
-fn leading_bom_is_ignored() {
-    let with_bom = "\u{feff}let x = 1";
-    let (_, diagnostics) = tokenize(with_bom, test_file());
-    assert!(
-        diagnostics.is_empty(),
-        "BOM should not produce diagnostics: {diagnostics:?}"
-    );
-    assert_eq!(kinds_of(with_bom), kinds_of("let x = 1"));
-}
-
-/// A BOM only counts as an encoding marker at the very start of the
-/// file; a U+FEFF appearing later is still the (invalid) zero-width
-/// no-break space and is reported, not silently swallowed.
-#[test]
-fn interior_bom_is_not_stripped() {
-    let (_, diagnostics) = tokenize("let x\u{feff}= 1", test_file());
+fn lexer_does_not_strip_leading_bom() {
+    let (_, diagnostics) = tokenize("\u{feff}let x = 1", test_file());
     assert!(
         !diagnostics.is_empty(),
-        "an interior U+FEFF should still be flagged"
+        "the lexer must surface a BOM, not silently strip it"
     );
 }

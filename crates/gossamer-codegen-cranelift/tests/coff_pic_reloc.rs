@@ -14,6 +14,14 @@
 //! signal is the instruction opcode at the relocation site: `lea`
 //! (0x8d) computes the address, `movq` (0x8b) loads through the slot.
 
+// This suite cross-builds an `x86_64-pc-windows-msvc` COFF object in
+// memory, which needs Cranelift's x86 backend. With the default
+// `host-arch` feature set that backend is only compiled on x86_64
+// hosts, so `isa::lookup("x86_64-…")` returns `Err` on the aarch64
+// macOS runner and the test panics. The COFF/x86 PIC behaviour it
+// checks is covered by the Linux and Windows x86_64 CI jobs.
+#![cfg(target_arch = "x86_64")]
+
 use cranelift_codegen::Context;
 use cranelift_codegen::ir as cir;
 use cranelift_codegen::ir::immediates::Imm64;
