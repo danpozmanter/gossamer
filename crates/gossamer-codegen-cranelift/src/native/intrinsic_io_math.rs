@@ -352,8 +352,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                     }
                     PrintKind::Unsupported(_) => {
                         let placeholder = intrinsics.intern_string(module, "<value>")?;
-                        let data_ref = module.declare_data_in_func(placeholder, builder.func);
-                        let p = builder.ins().global_value(ptr_ty, data_ref);
+                        let p = intrinsics.static_string_body_ptr(module, builder, placeholder);
                         let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[p]);

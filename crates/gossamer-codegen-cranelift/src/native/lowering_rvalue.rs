@@ -816,9 +816,7 @@ pub(super) fn lower_const(
             // bytes; the value we return is the address of those
             // bytes, sized as the target's pointer type.
             let data_id = intrinsics.intern_string(module, text)?;
-            let global = module.declare_data_in_func(data_id, builder.func);
-            let ptr_ty = module.target_config().pointer_type();
-            builder.ins().global_value(ptr_ty, global)
+            intrinsics.static_string_body_ptr(module, builder, data_id)
         }
         ConstValue::Float(bits) => {
             let ty = hint.filter(|t| t.is_float()).unwrap_or(types::F64);

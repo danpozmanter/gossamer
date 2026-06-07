@@ -848,15 +848,29 @@ mod tests {
         let watcher = Watcher::new().unwrap();
         let rx = watcher.events().unwrap();
         watcher.add(&dir.to_string_lossy()).unwrap();
-        // Give the platform backend a moment to register.
+        // Give the platform backend a moment to register the watch.
+        // There is no synchronous "watch active" ack from FSEvents /
+        // ReadDirectoryChangesW / inotify, so a brief settle before the
+        // triggering write is the documented platform constraint.
         std::thread::sleep(std::time::Duration::from_millis(150));
         let file = dir.join("created.txt");
         stdfs::write(&file, b"hello").unwrap();
-        let events = drain_for(&rx, std::time::Duration::from_secs(3));
-        let saw = events
-            .iter()
-            .any(|e| e.path.ends_with("created.txt") && e.kind == EventKind::Created);
-        assert!(saw, "expected Created event in {events:?}");
+        // Wait until the matching event arrives, returning as soon as it
+        // does. A generous deadline absorbs FSEvents coalescing latency
+        // on a loaded CI runner without slowing the common (fast) case.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut saw = false;
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(e) if e.path.ends_with("created.txt") && e.kind == EventKind::Created => {
+                    saw = true;
+                    break;
+                }
+                Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        assert!(saw, "expected Created event for created.txt within 10s");
         drop(watcher);
         let _ = remove_all(&dir);
     }

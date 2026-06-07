@@ -206,8 +206,13 @@ impl IntrinsicContext {
         }
     }
 
-    /// Returns the `DataId` for `text`, defining a new null-
-    /// terminated rodata slot on first use.
+    /// Returns the `DataId` for `text`, defining a static-string
+    /// rodata slot on first use.
+    ///
+    /// Runtime strings expect the body pointer to have a 5-byte
+    /// prefix: `[len:u32 LE][tag=0xA8][content][NUL]`, with the
+    /// pointer handed to helpers at `content`. The paired
+    /// `static_string_body_ptr` helper below applies that offset.
     pub(super) fn intern_string(&mut self, module: &mut dyn Module, text: &str) -> Result<DataId> {
         if let Some(id) = self.strings.get(text).copied() {
             return Ok(id);
@@ -217,7 +222,10 @@ impl IntrinsicContext {
         let id = module
             .declare_data(&symbol, Linkage::Local, false, false)
             .map_err(|e| anyhow!("declare {symbol}: {e}"))?;
-        let mut bytes = text.as_bytes().to_vec();
+        let mut bytes = Vec::with_capacity(5 + text.len() + 1);
+        bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        bytes.push(0xA8);
+        bytes.extend_from_slice(text.as_bytes());
         bytes.push(0);
         let mut description = DataDescription::new();
         description.define(bytes.into_boxed_slice());
@@ -234,6 +242,21 @@ impl IntrinsicContext {
             .map_err(|e| anyhow!("define {symbol}: {e}"))?;
         self.strings.insert(text.to_string(), id);
         Ok(id)
+    }
+
+    /// Materializes a pointer to an interned string's content body,
+    /// skipping the 5-byte `[len:u32][tag=0xA8]` header so `ptr[-1]`
+    /// is the tag and `ptr[-5]` the length the runtime expects.
+    pub(super) fn static_string_body_ptr(
+        &self,
+        module: &dyn Module,
+        builder: &mut FunctionBuilder<'_>,
+        data_id: DataId,
+    ) -> ir::Value {
+        let ptr_ty = module.target_config().pointer_type();
+        let global = module.declare_data_in_func(data_id, builder.func);
+        let base = builder.ins().global_value(ptr_ty, global);
+        builder.ins().iadd_imm(base, 5)
     }
 
     /// Returns the `DataId` for an RC type-meta blob, defining a

@@ -1607,7 +1607,17 @@ fn invoke_llc_pipeline(
         .arg(llc_level)
         .arg("-filetype=obj")
         .arg(format!("-mtriple={triple}"))
-        .arg("-relocation-model=pic")
+        // COFF (Windows) has no GOT: `-relocation-model=pic` makes llc
+        // emit GOT-relative relocations for external data symbols that
+        // rust-lld's link flavour cannot resolve, so every `gos build`
+        // fails at link time. ELF (PIE default) and Mach-O (PIC-only)
+        // both require pic. Mirrors the Cranelift `is_pic` guard in
+        // native/compile.rs.
+        .args(if triple.contains("windows") {
+            &[][..]
+        } else {
+            &["-relocation-model=pic"][..]
+        })
         .arg(format!("-mcpu={mcpu}", mcpu = mcpu_target()))
         // See the matching note on the `opt` invocation: cap
         // the late-stage vectoriser at 256-bit too so any

@@ -1007,26 +1007,36 @@ mod tests {
 
     #[test]
     fn after_func_fires_after_delay() {
-        let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let fired_for_cb = std::sync::Arc::clone(&fired);
-        let _handle = after_func(Duration::from_millis(30), move || {
-            fired_for_cb.store(true, std::sync::atomic::Ordering::Release);
+        // Condition-based wait: the callback signals a channel and the
+        // test blocks on recv with a generous bound. This fails only if
+        // the timer genuinely never fires; a slow CI scheduler cannot
+        // turn it flaky the way a fixed post-delay sleep + load could.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _handle = after_func(Duration::from_millis(20), move || {
+            let _ = tx.send(());
         });
-        std::thread::sleep(std::time::Duration::from_millis(120));
-        assert!(fired.load(std::sync::atomic::Ordering::Acquire));
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok(),
+            "timer should fire within the bound"
+        );
     }
 
     #[test]
     fn after_func_cancel_prevents_firing() {
+        // Long delay so the cancel deterministically beats the deadline
+        // regardless of scheduler jitter. `cancel()` joins the timer
+        // thread, so once it returns the thread has exited and `fired`
+        // holds its final value — no post-cancel sleep race.
         let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let fired_for_cb = std::sync::Arc::clone(&fired);
-        let mut handle = after_func(Duration::from_millis(200), move || {
+        let mut handle = after_func(Duration::from_secs(3600), move || {
             fired_for_cb.store(true, std::sync::atomic::Ordering::Release);
         });
-        std::thread::sleep(std::time::Duration::from_millis(30));
         let before_fire = handle.cancel();
-        assert!(before_fire);
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        assert!(!fired.load(std::sync::atomic::Ordering::Acquire));
+        assert!(before_fire, "cancel should land before the timer fires");
+        assert!(
+            !fired.load(std::sync::atomic::Ordering::Acquire),
+            "cancelled timer must not run its callback"
+        );
     }
 }

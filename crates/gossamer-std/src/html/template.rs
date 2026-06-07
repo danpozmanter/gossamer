@@ -295,9 +295,14 @@ fn render_html(source: &str, data: &Value) -> Result<String, Error> {
                 }
             }
         } else {
-            output.push(bytes[cursor] as char);
-            prefix.push(bytes[cursor] as char);
-            cursor += 1;
+            // Copy one whole UTF-8 character. Casting a single byte to
+            // `char` corrupts every multi-byte sequence (é, …, emoji)
+            // into garbage code points in both the output and the
+            // context-detection prefix.
+            let ch = source[cursor..].chars().next().unwrap_or('\u{fffd}');
+            output.push(ch);
+            prefix.push(ch);
+            cursor += ch.len_utf8();
         }
     }
     Ok(output)
@@ -397,5 +402,15 @@ mod tests {
         let data = map(&[("body", Value::String("<b>bold</b>".into()))]);
         let out = render("<div>{{ safe .body }}</div>", &data).unwrap();
         assert_eq!(out, "<div><b>bold</b></div>");
+    }
+
+    #[test]
+    fn literal_multibyte_text_is_preserved() {
+        // Literal template text outside `{{ }}` must round-trip
+        // verbatim; copying it byte-by-byte as `char` corrupted any
+        // multi-byte sequence.
+        let data = map(&[("n", Value::String("x".into()))]);
+        let out = render("café — 日本語 🦀 {{ .n }}", &data).unwrap();
+        assert_eq!(out, "café — 日本語 🦀 x");
     }
 }

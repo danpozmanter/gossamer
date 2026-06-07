@@ -180,9 +180,7 @@ pub(super) fn emit_array_bounds_check(
     let panic_fn = intrinsics.extern_fn_by_name(module, "gos_rt_panic_oob")?;
     let panic_ref = module.declare_func_in_func(panic_fn, builder.func);
     let what_data = intrinsics.intern_string(module, "array index")?;
-    let what_global = module.declare_data_in_func(what_data, builder.func);
-    let ptr_ty = module.target_config().pointer_type();
-    let what_ptr = builder.ins().global_value(ptr_ty, what_global);
+    let what_ptr = intrinsics.static_string_body_ptr(module, builder, what_data);
     let _ = builder.ins().call(panic_ref, &[what_ptr, idx64, len_val]);
     builder.ins().trap(ir::TrapCode::user(5).unwrap());
     builder.switch_to_block(ok);

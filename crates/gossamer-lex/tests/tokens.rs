@@ -288,3 +288,29 @@ fn hello_world_tokenises_cleanly() {
         "unexpected diagnostics: {diagnostics:?}"
     );
 }
+
+/// A leading UTF-8 BOM (U+FEFF, the default for Windows editors) is
+/// stripped, so a BOM-prefixed file lexes identically to a plain one
+/// instead of emitting `Invalid` as the first token.
+#[test]
+fn leading_bom_is_ignored() {
+    let with_bom = "\u{feff}let x = 1";
+    let (_, diagnostics) = tokenize(with_bom, test_file());
+    assert!(
+        diagnostics.is_empty(),
+        "BOM should not produce diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(kinds_of(with_bom), kinds_of("let x = 1"));
+}
+
+/// A BOM only counts as an encoding marker at the very start of the
+/// file; a U+FEFF appearing later is still the (invalid) zero-width
+/// no-break space and is reported, not silently swallowed.
+#[test]
+fn interior_bom_is_not_stripped() {
+    let (_, diagnostics) = tokenize("let x\u{feff}= 1", test_file());
+    assert!(
+        !diagnostics.is_empty(),
+        "an interior U+FEFF should still be flagged"
+    );
+}

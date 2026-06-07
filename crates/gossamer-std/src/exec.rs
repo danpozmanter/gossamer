@@ -144,9 +144,33 @@ pub enum Signal {
 }
 
 impl Signal {
-    /// POSIX signal number for this variant. The values match the
-    /// portable numbering used by `kill(1)`'s `-N` flag on Linux /
-    /// macOS / BSD.
+    /// POSIX signal number for this variant. On Unix the numbers come
+    /// from `libc`, so the variants that differ across kernels carry
+    /// the correct per-OS value (e.g. SIGUSR1 is 10 on Linux but 30 on
+    /// macOS / BSD, and SIGSTOP is 19 on Linux but 17 on macOS). A
+    /// single hardcoded Linux table silently mis-sent signals on macOS
+    /// — `Stop` resolved to macOS's SIGCONT and resumed the target.
+    #[cfg(unix)]
+    #[must_use]
+    pub const fn signum(self) -> i32 {
+        match self {
+            Self::Hup => libc::SIGHUP,
+            Self::Int => libc::SIGINT,
+            Self::Quit => libc::SIGQUIT,
+            Self::Kill => libc::SIGKILL,
+            Self::Usr1 => libc::SIGUSR1,
+            Self::Usr2 => libc::SIGUSR2,
+            Self::Pipe => libc::SIGPIPE,
+            Self::Term => libc::SIGTERM,
+            Self::Stop => libc::SIGSTOP,
+            Self::Cont => libc::SIGCONT,
+        }
+    }
+
+    /// Signals are a POSIX concept; on non-Unix targets the kill path
+    /// uses `TerminateProcess` and never consults these numbers. The
+    /// conventional Linux values keep the function total and callable.
+    #[cfg(not(unix))]
     #[must_use]
     pub const fn signum(self) -> i32 {
         match self {

@@ -203,12 +203,20 @@ pub fn fields(text: &str) -> Vec<String> {
 /// Returns `true` if `a` and `b` are equal under Unicode simple case folding.
 #[must_use]
 pub fn equal_fold(a: &str, b: &str) -> bool {
-    if a.len() != b.len() && a.chars().count() != b.chars().count() {
-        return false;
+    // Compare char-by-char and require both iterators to end together.
+    // A `zip().all(..)` truncates to the shorter side, so it would
+    // report a string equal to its own prefix; byte-length differs
+    // legitimately under folding (e.g. `K` U+212A vs `k`), so it is
+    // not a reliable early-reject either.
+    let mut ac = a.chars();
+    let mut bc = b.chars();
+    loop {
+        match (ac.next(), bc.next()) {
+            (Some(x), Some(y)) if x.to_lowercase().eq(y.to_lowercase()) => {}
+            (None, None) => return true,
+            _ => return false,
+        }
     }
-    a.chars()
-        .zip(b.chars())
-        .all(|(ac, bc)| ac.to_lowercase().eq(bc.to_lowercase()))
 }
 
 /// Applies `f` to each Unicode scalar in `text`, replacing it with the
@@ -272,6 +280,19 @@ mod tests {
         assert_eq!(join(&parts, ""), "abc");
         let empty: Vec<String> = Vec::new();
         assert_eq!(join(&empty, ","), "");
+    }
+
+    #[test]
+    fn equal_fold_matches_case_insensitively_and_respects_length() {
+        assert!(equal_fold("Hello", "hello"));
+        assert!(equal_fold("GoSSAMER", "gossamer"));
+        assert!(equal_fold("", ""));
+        // Different lengths must not compare equal even when one is a
+        // prefix of the other — the old `zip().all()` truncated and
+        // wrongly returned true here.
+        assert!(!equal_fold("hello", "hell"));
+        assert!(!equal_fold("hell", "hello"));
+        assert!(!equal_fold("abc", "abcd"));
     }
 
     #[test]

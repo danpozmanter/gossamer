@@ -160,8 +160,7 @@ pub(super) fn emit_per_arg_print(
     for (idx, arg) in args.iter().enumerate() {
         if idx > 0 {
             if let Some(data) = sep_data {
-                let data_ref = module.declare_data_in_func(data, builder.func);
-                let ptr = builder.ins().global_value(ptr_ty, data_ref);
+                let ptr = intrinsics.static_string_body_ptr(module, builder, data);
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[ptr]);
             }
@@ -397,8 +396,7 @@ pub(super) fn emit_args_to_concat_string(
     let ptr_ty = module.target_config().pointer_type();
     let empty_data = intrinsics.intern_string(module, "")?;
     if args.is_empty() {
-        let data_ref = module.declare_data_in_func(empty_data, builder.func);
-        return Ok(builder.ins().global_value(ptr_ty, data_ref));
+        return Ok(intrinsics.static_string_body_ptr(module, builder, empty_data));
     }
 
     // Use the runtime's thread-local concat buffer (the same path
@@ -420,8 +418,7 @@ pub(super) fn emit_args_to_concat_string(
     for (idx, arg) in args.iter().enumerate() {
         if idx > 0 {
             if let Some(data) = sep_data {
-                let data_ref = module.declare_data_in_func(data, builder.func);
-                let sep_ptr = builder.ins().global_value(ptr_ty, data_ref);
+                let sep_ptr = intrinsics.static_string_body_ptr(module, builder, data);
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[sep_ptr]);

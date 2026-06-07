@@ -80,10 +80,19 @@ impl FileServer {
     /// 416 response per HTTP semantics.
     #[must_use]
     pub fn serve_path(&self, rel_path: &str, request: &Request) -> Response {
-        // Path-traversal guard: resolve to absolute, then verify
-        // it is still under the root.
+        // Path-traversal guard: canonicalize the requested path and
+        // verify it is still under the canonical root. Canonicalize
+        // must succeed — a path that does not resolve cannot be served
+        // anyway, and falling back to the raw `candidate` would leave
+        // `..` segments that the component-wise `starts_with` accepts.
+        // Canonicalizing both sides also normalises platform prefixes
+        // consistently (macOS `/private`, Windows `\\?\`), so the
+        // containment check holds cross-platform.
         let candidate = self.root.join(rel_path);
-        let canonical = fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
+        let canonical = match fs::canonicalize(&candidate) {
+            Ok(c) => c,
+            Err(_) => return not_found(),
+        };
         let root_canonical = fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
         if !canonical.starts_with(&root_canonical) {
             return not_found();
@@ -314,9 +323,15 @@ mod tests {
     struct TmpDir(std::path::PathBuf);
     impl TmpDir {
         fn new(tag: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            // Process-global so two tests creating a tmpdir within the
+            // same clock tick get distinct names. A per-call local
+            // counter is always 0; on coarse-clock platforms
+            // (Windows/macOS) parallel tests then collide and one
+            // test's Drop deletes another's directory mid-run.
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
             let pid = std::process::id();
-            let counter = std::sync::atomic::AtomicU64::new(0);
-            let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())

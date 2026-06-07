@@ -335,7 +335,14 @@ pub(crate) fn resolve_output_path(file: &Path, unit_name: &str, release: bool) -
         let manifest = gossamer_pkg::Manifest::parse(&manifest_text)
             .with_context(|| format!("parsing {}", manifest_path.display()))?;
         if let Some(output) = manifest.project.output {
-            let raw = PathBuf::from(&output);
+            let mut raw = PathBuf::from(&output);
+            // A manifest `output` with no extension still needs the
+            // platform executable suffix on Windows, or the linker
+            // writes a non-runnable extensionless file. An explicit
+            // extension (`tool.exe`, `tool.bin`) is left untouched.
+            if cfg!(windows) && raw.extension().is_none() {
+                raw.set_extension("exe");
+            }
             let resolved = if raw.is_absolute() {
                 raw
             } else {
