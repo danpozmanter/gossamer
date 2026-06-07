@@ -194,6 +194,17 @@ impl StringPool {
     /// NUL-terminated bytes, while `ptr[-1]` is the tag and `ptr[-5]` the
     /// length — the same header shape the heap allocator writes. The
     /// emitter calls this after every body has lowered.
+    ///
+    /// The backing constant is deliberately *not* `unnamed_addr`: the
+    /// body alias is an interior pointer (`base + 5`), so the constant's
+    /// address and layout are significant. Marking it `unnamed_addr`
+    /// lets the Mach-O backend file 4/8/16-byte constants into the
+    /// mergeable `__literal{4,8,16}` pools, where ld64 coalesces and
+    /// reorders individual literals and does not honour the interior
+    /// `.alt_entry` body symbol — the alias then resolves into the wrong
+    /// literal and the runtime reads a corrupt length/tag header
+    /// (SIGSEGV/SIGBUS on macOS). Plain `constant` keeps it in `__const`,
+    /// which preserves interior symbols on every target.
     pub(crate) fn render(&self) -> String {
         let mut out = String::new();
         for (text, (name, size)) in &self.entries {
@@ -203,7 +214,7 @@ impl StringPool {
             let ty = format!("<{{ i32, i8, [{size} x i8] }}>");
             let _ = writeln!(
                 out,
-                "{data} = private unnamed_addr constant {ty} \
+                "{data} = private constant {ty} \
                  <{{ i32 {content_len}, i8 -88, [{size} x i8] c\"{escaped}\\00\" }}>"
             );
             // `-88` is `0xA8` (STR_STATIC_TAG) as a signed i8.
@@ -546,3 +557,36 @@ mod lower_call;
 mod lower_diagnostic;
 mod lower_expr_ops;
 mod lower_inline;
+
+#[cfg(test)]
+mod tests {
+    use super::StringPool;
+
+    #[test]
+    fn header_string_constant_is_not_unnamed_addr() {
+        // A 2-char literal is an 8-byte header'd constant. With
+        // `unnamed_addr` the Mach-O backend files it into the mergeable
+        // `__literal8` pool, where ld64 coalesces/reorders literals and
+        // ignores the interior `.alt_entry` body symbol — corrupting the
+        // `base + 5` body pointer (SIGSEGV/SIGBUS on macOS). The backing
+        // constant must therefore stay a plain (address-significant)
+        // `constant` so it lands in `__const`.
+        let mut pool = StringPool::default();
+        pool.intern("w=");
+        let ir = pool.render();
+        let data_line = ir
+            .lines()
+            .find(|l| l.contains(".data = "))
+            .expect("a .data constant line");
+        assert!(
+            !data_line.contains("unnamed_addr"),
+            "header string constant must not be unnamed_addr (mergeable-literal hazard):\n{data_line}"
+        );
+        // The body alias must still be an interior pointer at field 2
+        // (`base + 5`): the i32 length + i8 tag header.
+        assert!(
+            ir.contains("i32 0, i32 2, i32 0"),
+            "body alias must point past the 5-byte header:\n{ir}"
+        );
+    }
+}
