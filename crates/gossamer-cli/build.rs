@@ -257,7 +257,18 @@ fn build_runtime_into(
     if let Some(parent) = outer_artifact.parent() {
         std::fs::create_dir_all(parent).expect("create outer profile dir");
     }
-    std::fs::copy(&inner_artifact, &outer_artifact).expect("copy staticlib into outer target dir");
+    // Publish the (large, ~300 MB) staticlib atomically: copy to a
+    // unique temp path in the same directory, then rename into place.
+    // A plain `fs::copy` truncates the destination and streams the bytes,
+    // so anything that reads `libgossamer_runtime.a` while this build
+    // script re-runs (it re-runs whenever a `GOS_*` env var changes — the
+    // diagnose CI step sets several) sees a partially written file and the
+    // linker fails with "file truncated". `rename` is atomic on the same
+    // filesystem, so a reader always sees either the old or the new
+    // complete archive, never a half-written one.
+    let tmp = outer_artifact.with_extension(format!("a.tmp-{}", std::process::id()));
+    std::fs::copy(&inner_artifact, &tmp).expect("copy staticlib into outer target dir");
+    std::fs::rename(&tmp, &outer_artifact).expect("atomically publish staticlib");
     outer_artifact
 }
 

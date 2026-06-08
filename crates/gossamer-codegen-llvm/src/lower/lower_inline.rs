@@ -485,6 +485,24 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Renders a Fat (`i128`, the 2-word Result/Option) argument for a
+    /// `gos_rt_*` call. On Win64 an `i128` crosses the `extern "C"` boundary
+    /// by pointer (rustc's `__int128` ABI, matched by the `ptr` param that
+    /// `RuntimeEntry::llvm_declare` renders there), so spill the value into a
+    /// 16-byte slot and pass `ptr <slot>`; on SysV pass the bare `i128 <val>`.
+    /// Every site that hands an `i128` to a runtime helper MUST route through
+    /// this so the call instruction matches the declaration on Windows.
+    pub(crate) fn fat_i128_call_arg(&mut self, val: &str) -> String {
+        if cfg!(windows) {
+            let slot = self.fresh();
+            writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
+            writeln!(self.out, "  store i128 {val}, ptr {slot}, align 16").unwrap();
+            format!("ptr {slot}")
+        } else {
+            format!("i128 {val}")
+        }
+    }
+
     /// Inline fast path for `gos_rt_vec_len(v) -> i64`. The
     /// `GosVec` heap struct stores `len: i64` at offset 0, so the
     /// runtime helper degenerates to one load. Inlining skips the
@@ -784,9 +802,10 @@ impl<'a> Lowerer<'a> {
         // to i64 like the scalar path below would truncate the payload.
         if val_ty == "i128" {
             declare_rt(&mut self.runtime_refs, "gos_rt_vec_push_i128");
+            let fat = self.fat_i128_call_arg(&val_v);
             writeln!(
                 self.out,
-                "  call void @gos_rt_vec_push_i128(ptr {vec_ptr}, i128 {val_v})"
+                "  call void @gos_rt_vec_push_i128(ptr {vec_ptr}, {fat})"
             )
             .unwrap();
             if !is_unit(self.tcx, self.body.local_ty(destination.local)) {

@@ -27,8 +27,8 @@ mod tests {
         // `<16 x i8>` return). The Windows declaration must therefore render a
         // Fat `i128` argument as `ptr` and a Fat `i128` return as `<16 x i8>`,
         // matching the call-site marshalling. SysV keeps bare `i128`.
-        let entry = lookup("gos_rt_result_default_with")
-            .expect("gos_rt_result_default_with is registered");
+        let entry =
+            lookup("gos_rt_result_default_with").expect("gos_rt_result_default_with is registered");
         assert_eq!(entry.sig.ret, types::AbiType::I64);
         assert_eq!(entry.sig.params[0], types::AbiType::I128);
 

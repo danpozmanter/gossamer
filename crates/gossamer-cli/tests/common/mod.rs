@@ -113,10 +113,7 @@ mod tests {
 
     #[test]
     fn ntstatus_names_access_violation() {
-        assert_eq!(
-            ntstatus_name(0xC000_0005),
-            Some("STATUS_ACCESS_VIOLATION")
-        );
+        assert_eq!(ntstatus_name(0xC000_0005), Some("STATUS_ACCESS_VIOLATION"));
     }
 
     #[test]

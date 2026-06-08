@@ -462,10 +462,8 @@ impl<'a> Lowerer<'a> {
                     } else {
                         self.coerce_llvm_value(&a_v, &a_ty, "i128")
                     };
-                    let slot = self.fresh();
-                    writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
-                    writeln!(self.out, "  store i128 {v}, ptr {slot}, align 16").unwrap();
-                    let _ = write!(arg_text, "ptr {slot}");
+                    let fat = self.fat_i128_call_arg(&v);
+                    let _ = write!(arg_text, "{fat}");
                     continue;
                 }
                 if a_ty == "void" || a_ty.is_empty() {
@@ -568,7 +566,11 @@ impl<'a> Lowerer<'a> {
             // `call_ret_ty` (the logical type) is unchanged for the downstream
             // store/coerce. No-op on SysV.
             let win_fat_ret = cfg!(windows) && call_ret_ty == "i128";
-            let wire_ret_ty = if win_fat_ret { "<16 x i8>" } else { &call_ret_ty };
+            let wire_ret_ty = if win_fat_ret {
+                "<16 x i8>"
+            } else {
+                &call_ret_ty
+            };
             writeln!(
                 self.out,
                 "  {tmp} = call {wire_ret_ty} @\"{symbol}\"({arg_text})"
