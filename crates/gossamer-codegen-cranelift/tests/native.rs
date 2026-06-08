@@ -77,17 +77,34 @@ fn link_with_runtime(object_path: &std::path::Path, exe_path: &std::path::Path) 
         eprintln!("skipping — runtime staticlib not built (build gossamer-cli first)");
         return false;
     };
-    // A MinGW `cc` cannot consume an MSVC `.lib`; that toolchain combo
-    // is exercised by the `gos build` tests instead, so skip only this
-    // specific incompatibility. Every *other* link failure below is a
-    // real codegen / symbol-resolution regression and must fail the
-    // test — silently skipping is how the `-ldl` break hid for a whole
-    // release cycle.
+    // This helper always links with `cc` (GNU/Clang). A `.lib` is an
+    // MSVC-format archive whose objects reference MSVC CRT intrinsics
+    // (`__chkstk`, `__security_cookie`, `__security_check_cookie`,
+    // `__GSHandlerCheck`, the `type_info` vtable) and carry MSVC linker
+    // `.drectve` directives that GNU `ld` cannot consume — so a `cc`-driven
+    // link of an MSVC `.lib` ALWAYS fails with undefined references. That is a
+    // permanent toolchain incompatibility (MSVC objects cannot be linked by
+    // GNU `ld`), not a Gossamer regression, so skip it — loudly. The
+    // Windows-MSVC native link IS exercised by the `gos build` tests below,
+    // which dispatch to the MSVC linker (`link_windows_msvc`).
+    //
+    // The skip is keyed on the *archive format* (`.lib`), NOT the test's own
+    // `target_env`: the Windows CI builds Gossamer for `windows-msvc` (so the
+    // archive is `gossamer_runtime.lib`) yet links this helper with mingw `cc`,
+    // so gating on `target_env = "msvc"` wrongly suppressed the skip. A real
+    // link regression on a *compatible* toolchain (Linux/macOS, or Windows-GNU
+    // against a mingw `.a`) has `is_msvc_lib == false` and still fails loudly,
+    // which is how the `-ldl` break gets caught.
     let is_msvc_lib = runtime
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("lib"));
-    if is_msvc_lib && !cfg!(target_env = "msvc") {
-        eprintln!("skipping — MinGW cc cannot link an MSVC .lib (covered by gos build tests)");
+    if is_msvc_lib {
+        eprintln!(
+            "skipping — `cc` (GNU/Clang) cannot link the MSVC-format runtime archive \
+             {} (unresolved MSVC CRT intrinsics: __chkstk / __security_cookie / …); the \
+             Windows-MSVC native link is covered by the `gos build` tests via the MSVC linker",
+            runtime.display()
+        );
         return false;
     }
     let mut cmd = Command::new("cc");

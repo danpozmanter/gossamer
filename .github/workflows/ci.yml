@@ -222,22 +222,28 @@ jobs:
         if: failure()
         shell: bash
         env:
-          RUST_BACKTRACE: "full"
           # Preserve every native-build artifact and dump the LLVM IR so
           # a crash on a platform we can't reproduce locally can be
           # inspected offline (run the dumped `unit.ll` through
           # `llc -mtriple=<target>`). GOS_LINK_VERBOSE echoes the exact
-          # linker line + libraries. TMPDIR/TEMP/TMP point the harness
-          # scratch dirs (and gos's own build temp) at a known path so
-          # the upload step below can collect them.
+          # linker line + libraries.
+          RUST_BACKTRACE: "full"
           GOS_LLVM_DUMP: "1"
           GOS_LINK_VERBOSE: "1"
           GOS_KEEP_BUILD_ARTIFACTS: "1"
-          TMPDIR: ${{ github.workspace }}/native-build-artifacts
-          TEMP: ${{ github.workspace }}/native-build-artifacts
-          TMP: ${{ github.workspace }}/native-build-artifacts
         run: |
+          # Create the artifact dir, THEN redirect the harness scratch dirs
+          # (and gos's own build temp) at it. TMPDIR/TEMP/TMP are exported
+          # here, not in `env:`, on purpose: a step-level `env:` is applied
+          # before the shell starts, so git-bash on Windows would see a
+          # not-yet-created temp dir and warn "could not find /tmp, please
+          # create!". Exporting after `mkdir` leaves bash's own startup temp
+          # valid while still pointing the `cargo test` child (and gos) at the
+          # collectable path.
           mkdir -p "${{ github.workspace }}/native-build-artifacts"
+          export TMPDIR="${{ github.workspace }}/native-build-artifacts"
+          export TEMP="${{ github.workspace }}/native-build-artifacts"
+          export TMP="${{ github.workspace }}/native-build-artifacts"
           "$CARGO_BIN" test -p gossamer-cli -p gossamer-codegen-cranelift \
             --no-fail-fast -- --test-threads=1 --nocapture
       - name: Upload native build artifacts

@@ -8,31 +8,30 @@ A language that balances developer experience, execution efficiency, and safety.
 
 **Extensible in Rust.**
 
-### From Rust
-* Surface syntax
-* Strong static type system
-* Error handling: Result & Option, and ? operator
-* Exhaustive match
-* Local borrow checking
-* No null
-* Immutable by default
-* Safe by default
-* Optimized "release" mode.
+## Features inspired by multiple languages:
 
-### From Go
-* Garbage collected
-* Goroutines
-* Batteries included standard library
-* Fast compilation
-* Small portable release binaries
-
-### From F#
-* Forward pipe operator
-* Functional style chaining, not method style (nums |> List.map, not nums.map())
-
-### From Python
-* Interpreted mode
-* REPL with syntax highlighting
+| Feature | Rust | Go | F# | Python | Elixir |
+|---|---|---|---|---|---|
+| Strong static type system | ✓ | ✓ | ✓ |  |  |
+| Type inference | ✓ | ✓ | ✓ |  |  |
+| Error handling via `?` with `Result` & `Option` | ✓ |  | ✓ |  |  |
+| Exhaustive pattern matching | ✓ |  | ✓ |  | ✓ |
+| Algebraic data types / discriminated unions | ✓ |  | ✓ |  | ✓ |
+| (Local) Borrow checking | ✓ |  |  |  |  |
+| No `null` by default | ✓ |  | ✓ |  | ✓ |
+| Immutable by default | ✓ |  | ✓ |  | ✓ |
+| Safe by default | ✓ |  | ✓ |  | ✓ |
+| Optimized native release builds | ✓ | ✓ | ✓ |  |  |
+| Garbage collected |  | ✓ | ✓ | ✓ | ✓ |
+| Lightweight concurrency primitives |  | ✓ | ✓ |  | ✓ |
+| Async-first ecosystem | ✓ | ✓ |  | ✓ | ✓ |
+| Batteries-included standard library | ✓ | ✓ |  | ✓ | ✓ |
+| Fast compilation |  | ✓ |  |  |  |
+| Small portable binaries | ✓ | ✓ |  |  | ✓ |
+| Pipe operator ("|>") |  |  | ✓ |  | ✓ |
+| Functional-first programming style |  |  | ✓ |  | ✓ |
+| Interpreted / scripting mode |  |  | ✓ | ✓ | ✓ |
+| Interactive REPL |  |  | ✓ | ✓ | ✓ |
 
 ## Details
 
