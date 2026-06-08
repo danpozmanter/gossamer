@@ -74,7 +74,9 @@ fn build_release(src: &Path, scratch: &Path) -> Result<PathBuf, String> {
     Err("no binary produced".to_string())
 }
 
-fn run_bin(bin: &Path) -> (String, Option<i32>) {
+mod common;
+
+fn run_bin(bin: &Path) -> (String, common::RunExit) {
     let mut child = Command::new(bin)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -89,17 +91,17 @@ fn run_bin(bin: &Path) -> (String, Option<i32>) {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return (String::new(), None);
+                    return (String::new(), common::aborted("timed out"));
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
-            Err(_) => return (String::new(), None),
+            Err(_) => return (String::new(), common::aborted("wait failed")),
         }
     }
     let out = child.wait_with_output().expect("wait");
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
-        out.status.code(),
+        common::describe_exit(out.status),
     )
 }
 
@@ -116,17 +118,25 @@ fn assert_lowers(tag: &str, src: &str, expect: &str) {
     let bin = match result {
         Ok(b) => b,
         Err(e) => {
-            let _ = fs::remove_dir_all(&dir);
-            panic!("`{tag}` failed to build through the LLVM tier:\n{e}");
+            panic!(
+                "`{tag}` failed to build through the LLVM tier:\n{e}\nartifacts: {}",
+                dir.display()
+            );
         }
     };
-    let (stdout, code) = run_bin(&bin);
-    let _ = fs::remove_dir_all(&dir);
-    assert_eq!(code, Some(0), "`{tag}` exited {code:?}; stdout: {stdout:?}");
+    let (stdout, exit) = run_bin(&bin);
+    assert!(
+        exit.success,
+        "`{tag}` did not exit cleanly: {exit}; stdout: {stdout:?}\nartifacts: {dir}",
+        exit = exit.text,
+        dir = dir.display(),
+    );
     assert!(
         stdout.contains(expect),
-        "`{tag}` stdout {stdout:?} did not contain {expect:?}",
+        "`{tag}` stdout {stdout:?} did not contain {expect:?}\nartifacts: {dir}",
+        dir = dir.display(),
     );
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

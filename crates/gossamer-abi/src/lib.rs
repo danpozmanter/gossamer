@@ -21,6 +21,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn win64_marshals_fat_i128_across_the_ffi_boundary() {
+        // A scalar `i128` by value has no stable `extern "C"` ABI on Win64
+        // (llc uses a GP register pair; rustc uses a by-pointer arg + a
+        // `<16 x i8>` return). The Windows declaration must therefore render a
+        // Fat `i128` argument as `ptr` and a Fat `i128` return as `<16 x i8>`,
+        // matching the call-site marshalling. SysV keeps bare `i128`.
+        let entry = lookup("gos_rt_result_default_with")
+            .expect("gos_rt_result_default_with is registered");
+        assert_eq!(entry.sig.ret, types::AbiType::I64);
+        assert_eq!(entry.sig.params[0], types::AbiType::I128);
+
+        let win = entry.llvm_declare_for(true);
+        assert!(
+            win.contains("@gos_rt_result_default_with(ptr,"),
+            "Win64 must pass a Fat i128 argument by pointer: {win}"
+        );
+        assert!(
+            !win.contains("i128"),
+            "Win64 declaration must not contain a bare i128: {win}"
+        );
+
+        let sysv = lookup("gos_rt_result_new")
+            .expect("gos_rt_result_new is registered")
+            .llvm_declare_for(false);
+        assert!(
+            sysv.starts_with("declare i128 @gos_rt_result_new("),
+            "SysV must keep the bare i128 return: {sysv}"
+        );
+        let win_ret = lookup("gos_rt_result_new").unwrap().llvm_declare_for(true);
+        assert!(
+            win_ret.starts_with("declare <16 x i8> @gos_rt_result_new("),
+            "Win64 must return a Fat i128 in a 16-byte vector register: {win_ret}"
+        );
+    }
+
+    #[test]
     fn registry_is_sorted() {
         let names: Vec<&str> = REGISTRY.iter().map(|e| e.name).collect();
         let mut sorted = names.clone();

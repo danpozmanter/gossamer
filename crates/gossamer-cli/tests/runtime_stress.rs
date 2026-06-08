@@ -41,7 +41,9 @@ fn fresh_dir(tag: &str) -> PathBuf {
     dir
 }
 
-fn run_with_timeout(mut child: std::process::Child) -> (String, String, Option<i32>) {
+mod common;
+
+fn run_with_timeout(mut child: std::process::Child) -> (String, String, common::RunExit) {
     let deadline = Instant::now() + PER_RUN_TIMEOUT;
     loop {
         match child.try_wait() {
@@ -61,11 +63,11 @@ fn run_with_timeout(mut child: std::process::Child) -> (String, String, Option<i
     (
         String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
         String::from_utf8_lossy(&out.stderr).replace("\r\n", "\n"),
-        out.status.code(),
+        common::describe_exit(out.status),
     )
 }
 
-fn run_vm(src: &Path) -> (String, String, Option<i32>) {
+fn run_vm(src: &Path) -> (String, String, common::RunExit) {
     let child = Command::new(gos_bin())
         .arg("run")
         .arg(src)
@@ -120,7 +122,7 @@ fn build_native(src: &Path, release: bool, scratch: &Path) -> Result<PathBuf, St
         .ok_or_else(|| format!("no binary in {}", scratch.display()))
 }
 
-fn run_native(bin: &Path) -> (String, String, Option<i32>) {
+fn run_native(bin: &Path) -> (String, String, common::RunExit) {
     let child = Command::new(bin)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -147,8 +149,9 @@ fn assert_three_tier_parity(tag: &str, source: &str, expected: &str) {
     let ll_bin = build_native(&src, true, &ll_dir).expect("llvm build");
     let ll = run_native(&ll_bin);
 
-    let _ = fs::remove_dir_all(&dir);
-
+    // Cleanup runs only on success: a panicking assert below unwinds
+    // past it, preserving sources/objects/binaries for inspection and
+    // CI artifact upload when a tier disagrees or a binary crashes.
     for (name, run) in [("vm", &vm), ("cranelift", &cl), ("llvm", &ll)] {
         assert_eq!(
             run.0.trim_end(),
@@ -157,12 +160,16 @@ fn assert_three_tier_parity(tag: &str, source: &str, expected: &str) {
              expected:\n{expected}\n\
              got stdout:\n{stdout}\n\
              stderr:\n{stderr}\n\
-             exit: {code:?}",
+             {exit}\n\
+             artifacts: {dir}",
             stdout = run.0,
             stderr = run.1,
-            code = run.2,
+            exit = run.2.text,
+            dir = dir.display(),
         );
     }
+
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

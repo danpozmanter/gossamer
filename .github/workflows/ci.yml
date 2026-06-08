@@ -223,9 +223,31 @@ jobs:
         shell: bash
         env:
           RUST_BACKTRACE: "full"
+          # Preserve every native-build artifact and dump the LLVM IR so
+          # a crash on a platform we can't reproduce locally can be
+          # inspected offline (run the dumped `unit.ll` through
+          # `llc -mtriple=<target>`). GOS_LINK_VERBOSE echoes the exact
+          # linker line + libraries. TMPDIR/TEMP/TMP point the harness
+          # scratch dirs (and gos's own build temp) at a known path so
+          # the upload step below can collect them.
+          GOS_LLVM_DUMP: "1"
+          GOS_LINK_VERBOSE: "1"
+          GOS_KEEP_BUILD_ARTIFACTS: "1"
+          TMPDIR: ${{ github.workspace }}/native-build-artifacts
+          TEMP: ${{ github.workspace }}/native-build-artifacts
+          TMP: ${{ github.workspace }}/native-build-artifacts
         run: |
+          mkdir -p "${{ github.workspace }}/native-build-artifacts"
           "$CARGO_BIN" test -p gossamer-cli -p gossamer-codegen-cranelift \
             --no-fail-fast -- --test-threads=1 --nocapture
+      - name: Upload native build artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-build-artifacts-${{ matrix.os }}
+          path: ${{ github.workspace }}/native-build-artifacts
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Build release
         shell: bash
         run: |

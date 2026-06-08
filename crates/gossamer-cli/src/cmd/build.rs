@@ -392,12 +392,22 @@ fn try_native_build(
             extra_archives.push(proflib);
         }
     }
+    if std::env::var_os("GOS_LINK_VERBOSE").is_some() {
+        eprintln!("gos build: runtime lib: {}", runtime_lib.display());
+        eprintln!("gos build: objects: {object_paths:?}");
+        eprintln!("gos build: extra archives: {extra_archives:?}");
+    }
     let link_result = if cfg!(all(windows, target_env = "msvc")) {
         link_windows_msvc(&object_paths, &runtime_lib, &extra_archives, out_path)
     } else {
         link_posix(&object_paths, &runtime_lib, &extra_archives, out_path, opts)
     };
-    if std::env::var("GOS_LLVM_DUMP").is_err() {
+    // Keep the per-build temp dir (objects + IR) when dumping IR or when
+    // explicitly preserving artifacts for post-mortem inspection on a
+    // platform the developer can't reproduce locally.
+    let keep_artifacts = std::env::var_os("GOS_LLVM_DUMP").is_some()
+        || std::env::var_os("GOS_KEEP_BUILD_ARTIFACTS").is_some();
+    if !keep_artifacts {
         let _ = fs::remove_dir_all(&tmp_dir);
     }
     let _ = input_path;
@@ -577,6 +587,28 @@ fn build_static_bindings_lib(
     Ok(Some(archive))
 }
 
+/// Renders a `Command` as a single readable line (program + args) for
+/// `GOS_LINK_VERBOSE` diagnostics. Not shell-escaped — meant for a
+/// human reading why a link succeeded or failed, not re-execution.
+fn render_command(cmd: &std::process::Command) -> String {
+    let mut s = cmd.get_program().to_string_lossy().into_owned();
+    for arg in cmd.get_args() {
+        s.push(' ');
+        s.push_str(&arg.to_string_lossy());
+    }
+    s
+}
+
+/// Prints the resolved link command to stderr when `GOS_LINK_VERBOSE`
+/// is set. The exact `cc`/linker line + libraries is the single most
+/// useful artifact when a native link fails on a platform the
+/// developer can't reproduce locally (e.g. the `-ldl`/mingw break).
+fn trace_link_command(cmd: &std::process::Command) {
+    if std::env::var_os("GOS_LINK_VERBOSE").is_some() {
+        eprintln!("gos build: link: {}", render_command(cmd));
+    }
+}
+
 /// POSIX/macOS link path. On Linux release builds with the rustup
 /// musl target installed and `--dynamic` not set, this routes through
 /// `link_posix_static_musl` to produce a fully static binary.
@@ -685,6 +717,7 @@ fn link_posix(
             }
         }
     }
+    trace_link_command(&cmd);
     match cmd.status() {
         Ok(s) if s.success() => {
             if opts.want_strip() && cfg!(target_os = "macos") {
@@ -781,6 +814,7 @@ fn link_posix_static_musl(
         // matching note in `link_posix`.
         cmd.arg("--strip-debug");
     }
+    trace_link_command(&cmd);
     match cmd.status() {
         Ok(s) if s.success() => {
             set_executable(out_path).map_err(NativeBuildError::Io)?;
@@ -868,6 +902,7 @@ fn link_windows_msvc(
     ] {
         cmd.arg(lib);
     }
+    trace_link_command(&cmd);
     match cmd.status() {
         Ok(s) if s.success() => Ok(()),
         Ok(s) => Err(NativeBuildError::LinkerFailed(format!(
@@ -998,4 +1033,14 @@ fn set_executable(path: &Path) -> Result<()> {
         let _ = path;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn render_command_joins_program_and_args() {
+        let mut cmd = std::process::Command::new("cc");
+        cmd.arg("a.o").arg("-o").arg("out").arg("-lpthread");
+        assert_eq!(super::render_command(&cmd), "cc a.o -o out -lpthread");
+    }
 }

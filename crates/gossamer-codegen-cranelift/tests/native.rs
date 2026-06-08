@@ -77,22 +77,44 @@ fn link_with_runtime(object_path: &std::path::Path, exe_path: &std::path::Path) 
         eprintln!("skipping — runtime staticlib not built (build gossamer-cli first)");
         return false;
     };
+    // A MinGW `cc` cannot consume an MSVC `.lib`; that toolchain combo
+    // is exercised by the `gos build` tests instead, so skip only this
+    // specific incompatibility. Every *other* link failure below is a
+    // real codegen / symbol-resolution regression and must fail the
+    // test — silently skipping is how the `-ldl` break hid for a whole
+    // release cycle.
+    let is_msvc_lib = runtime
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("lib"));
+    if is_msvc_lib && !cfg!(target_env = "msvc") {
+        eprintln!("skipping — MinGW cc cannot link an MSVC .lib (covered by gos build tests)");
+        return false;
+    }
     let mut cmd = Command::new("cc");
     cmd.arg(object_path).arg(&runtime).arg("-o").arg(exe_path);
     cmd.arg("-lpthread").arg("-lm");
-    // macOS folds libdl into libSystem; `-ldl` errors there.
-    if !cfg!(target_os = "macos") {
+    // Mirror `gos build`'s link line: `-ldl` only exists on Linux
+    // (libdl); macOS folds dl* into libSystem and mingw has no libdl.
+    if cfg!(target_os = "linux") {
         cmd.arg("-ldl");
+    }
+    // On Windows-GNU name the Win32 import libs the runtime references
+    // but mingw's default specs don't auto-link (mirrors `link_posix`).
+    if cfg!(windows) {
+        for lib in ["ws2_32", "bcrypt", "advapi32", "userenv", "ntdll"] {
+            cmd.arg(format!("-l{lib}"));
+        }
     }
     match cmd.output() {
         Ok(out) if out.status.success() => true,
-        Ok(out) => {
-            eprintln!(
-                "skipping — cc could not link the runtime staticlib: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            false
-        }
+        Ok(out) => panic!(
+            "linking the runtime staticlib failed — a real codegen/link regression, \
+             not a skip.\n  cc {obj} {rt} -o {exe} -lpthread -lm ...\nstderr:\n{err}",
+            obj = object_path.display(),
+            rt = runtime.display(),
+            exe = exe_path.display(),
+            err = String::from_utf8_lossy(&out.stderr),
+        ),
         Err(e) => {
             eprintln!("skipping — cc unavailable: {e}");
             false

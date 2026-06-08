@@ -85,19 +85,47 @@ impl RuntimeEntry {
     /// loops with a guarded bounds check as effectively single-exit.
     #[must_use]
     pub fn llvm_declare(&self) -> String {
+        self.llvm_declare_for(cfg!(windows))
+    }
+
+    /// `llvm_declare` parameterised on whether the target is Win64, so the
+    /// platform-specific `i128` marshalling is unit-testable on any host.
+    ///
+    /// `Win64` marshals the 2-word `i128` (Fat) representation across the
+    /// `extern "C"` boundary differently from a GP register pair: an `i128`
+    /// *argument* is passed by pointer, and an `i128` *return* comes back in
+    /// a 16-byte vector register (`<16 x i8>`). This matches how rustc
+    /// lowers `i128` in an `extern "C"` signature on `x86_64-pc-windows`;
+    /// emitting a bare `i128` makes llc pick the GP-pair ABI, which the
+    /// Rust runtime does not use, corrupting every Result/Option crossing
+    /// the boundary. The matching call-site marshalling lives in
+    /// `lower_runtime_call_intrinsic` / `emit_named_call`. On `SysV`
+    /// (Linux/macOS) bare `i128` already agrees between llc and rustc.
+    #[must_use]
+    pub fn llvm_declare_for(&self, win: bool) -> String {
+        let param_ir = |t: &AbiType| -> &'static str {
+            if win && *t == AbiType::I128 {
+                "ptr"
+            } else {
+                t.llvm_ir()
+            }
+        };
+        let ret_ir = if win && self.sig.ret == AbiType::I128 {
+            "<16 x i8>"
+        } else {
+            self.sig.ret.llvm_ir()
+        };
         let params = self
             .sig
             .params
             .iter()
-            .map(|t| t.llvm_ir())
+            .map(param_ir)
             .collect::<Vec<_>>()
             .join(", ");
         if self.noreturn {
             format!(
                 "declare {} @{}({}) noreturn cold nounwind",
-                self.sig.ret.llvm_ir(),
-                self.name,
-                params
+                ret_ir, self.name, params
             )
         } else {
             // Every `gos_rt_*` symbol is an `extern "C"` Rust function, and
@@ -123,12 +151,7 @@ impl RuntimeEntry {
             } else {
                 "nounwind"
             };
-            format!(
-                "declare {} @{}({}) {attrs}",
-                self.sig.ret.llvm_ir(),
-                self.name,
-                params
-            )
+            format!("declare {} @{}({}) {attrs}", ret_ir, self.name, params)
         }
     }
 }

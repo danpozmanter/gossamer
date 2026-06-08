@@ -254,6 +254,25 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             if let Some(want_ty) = registry_param_llvm.get(i) {
+                // Win64: a 2-word `i128` (by-value Result/Option) crosses
+                // the `extern "C"` boundary by pointer, not in a register
+                // pair — that is how rustc lowers an `i128` parameter on
+                // `x86_64-pc-windows`. Spill the value into a 16-byte-aligned
+                // slot and pass its address, matching the runtime's ABI. On
+                // SysV (Linux/macOS) `i128` is register-passed identically by
+                // llc and rustc, so this branch is skipped there.
+                if cfg!(windows) && want_ty == "i128" {
+                    let v = if a_ty == "i128" {
+                        a_v.clone()
+                    } else {
+                        self.coerce_llvm_value(&a_v, &a_ty, "i128")
+                    };
+                    let slot = self.fresh();
+                    writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
+                    writeln!(self.out, "  store i128 {v}, ptr {slot}, align 16").unwrap();
+                    let _ = write!(arg_text, "ptr {slot}");
+                    continue;
+                }
                 if a_ty == "void" || a_ty.is_empty() {
                     let zero = match want_ty.as_str() {
                         "ptr" => "null".to_string(),
@@ -279,7 +298,19 @@ impl<'a> Lowerer<'a> {
         // different call sites for the same symbol always agree.
         let mut decl_args = String::new();
         if !registry_param_llvm.is_empty() {
-            decl_args = registry_param_llvm.join(", ");
+            // Win64: declare i128 (Fat) params as `ptr` so the declaration
+            // matches the by-pointer call emitted above (and rustc's ABI).
+            decl_args = registry_param_llvm
+                .iter()
+                .map(|t| {
+                    if cfg!(windows) && t == "i128" {
+                        "ptr".to_string()
+                    } else {
+                        t.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
         } else {
             for (i, arg) in args.iter().enumerate() {
                 if i > 0 {
@@ -296,12 +327,27 @@ impl<'a> Lowerer<'a> {
         }
         let registry_ret_llvm: Option<String> =
             gossamer_abi::lookup(name).map(|e| e.sig.ret.llvm_ir().to_string());
-        let decl_ret = if let Some(r) = &registry_ret_llvm {
+        // Win64: an `i128` (Fat) return crosses the boundary in a 16-byte
+        // vector register, which rustc models as `<16 x i8>`; llc returns a
+        // bare `i128` in a GP register pair instead, so the two disagree. We
+        // declare + call the runtime symbol as `<16 x i8>` to match rustc,
+        // then `bitcast` the result back to the `i128` the rest of the body
+        // expects. Skipped on SysV, where bare `i128` already agrees.
+        let win_fat_ret = cfg!(windows) && registry_ret_llvm.as_deref() == Some("i128");
+        // The logical return type the surrounding code consumes (always the
+        // registry/MIR type); `decl_ret` below is the *wire* type used for the
+        // declaration and call instruction.
+        let logical_ret = if let Some(r) = &registry_ret_llvm {
             r.clone()
         } else if dest_ty == "void" || is_unit(self.tcx, self.body.local_ty(dest_local)) {
             "void".to_string()
         } else {
             dest_ty.clone()
+        };
+        let decl_ret = if win_fat_ret {
+            "<16 x i8>".to_string()
+        } else {
+            logical_ret.clone()
         };
         // Always declare using call-site types so the declaration matches
         // the call instruction LLVM sees. Registry types (via declare_rt)
@@ -340,15 +386,25 @@ impl<'a> Lowerer<'a> {
         } else {
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = call {decl_ret} @{name}({arg_text})").unwrap();
+            // Win64 Fat return: unwrap the `<16 x i8>` wire value back to the
+            // `i128` the rest of the body manipulates.
+            let tmp = if win_fat_ret {
+                let unwrapped = self.fresh();
+                writeln!(self.out, "  {unwrapped} = bitcast <16 x i8> {tmp} to i128").unwrap();
+                unwrapped
+            } else {
+                tmp
+            };
             // The declaration is canonical, but the destination
             // slot may expect a different but ABI-compatible
             // shape (e.g. `gos_rt_result_payload` returns `i64`
             // per registry, but the call site stores it into a
             // ptr-typed slot when the payload was a heap pointer
             // reinterpreted as an integer). Coerce so the
-            // surrounding store / use is well-typed.
-            if decl_ret != dest_ty && dest_ty != "void" && !dest_ty.is_empty() {
-                let coerced = self.coerce_llvm_value(&tmp, &decl_ret, &dest_ty);
+            // surrounding store / use is well-typed. Compare against the
+            // logical return type, not the `<16 x i8>` wire type.
+            if logical_ret != dest_ty && dest_ty != "void" && !dest_ty.is_empty() {
+                let coerced = self.coerce_llvm_value(&tmp, &logical_ret, &dest_ty);
                 Ok(coerced)
             } else {
                 Ok(tmp)

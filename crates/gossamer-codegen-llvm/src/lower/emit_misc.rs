@@ -450,6 +450,24 @@ impl<'a> Lowerer<'a> {
             // declares, coerce so the call instruction's argument
             // types match the dedup'd canonical declaration.
             if let Some(want_ty) = registry_param_llvm.get(i) {
+                // Win64: a 2-word `i128` (Fat) argument crosses the
+                // `extern "C"` boundary by pointer (rustc's `__int128` ABI),
+                // not in a GP register pair. Spill into a 16-byte-aligned slot
+                // and pass its address; the registry declaration renders the
+                // param as `ptr` to match. No-op on SysV. (Mirrors
+                // `lower_runtime_call_intrinsic`.)
+                if cfg!(windows) && want_ty == "i128" {
+                    let v = if a_ty == "i128" {
+                        a_v.clone()
+                    } else {
+                        self.coerce_llvm_value(&a_v, &a_ty, "i128")
+                    };
+                    let slot = self.fresh();
+                    writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
+                    writeln!(self.out, "  store i128 {v}, ptr {slot}, align 16").unwrap();
+                    let _ = write!(arg_text, "ptr {slot}");
+                    continue;
+                }
                 if a_ty == "void" || a_ty.is_empty() {
                     let zero = match want_ty.as_str() {
                         "ptr" => "null".to_string(),
@@ -544,11 +562,25 @@ impl<'a> Lowerer<'a> {
             } else {
                 registry_ret.clone().unwrap_or_else(|| dest_ty.clone())
             };
+            // Win64: a 2-word `i128` (Fat) return comes back in a 16-byte
+            // vector register (`<16 x i8>`), matching rustc; call as that wire
+            // type then `bitcast` back to the `i128` the rest of the body uses.
+            // `call_ret_ty` (the logical type) is unchanged for the downstream
+            // store/coerce. No-op on SysV.
+            let win_fat_ret = cfg!(windows) && call_ret_ty == "i128";
+            let wire_ret_ty = if win_fat_ret { "<16 x i8>" } else { &call_ret_ty };
             writeln!(
                 self.out,
-                "  {tmp} = call {call_ret_ty} @\"{symbol}\"({arg_text})"
+                "  {tmp} = call {wire_ret_ty} @\"{symbol}\"({arg_text})"
             )
             .unwrap();
+            let tmp = if win_fat_ret {
+                let unwrapped = self.fresh();
+                writeln!(self.out, "  {unwrapped} = bitcast <16 x i8> {tmp} to i128").unwrap();
+                unwrapped
+            } else {
+                tmp
+            };
             let slot = local_slot(destination.local);
             if is_aggregate(self.tcx, dest_ty_mir) {
                 if let Some(slots) = slot_count(self.tcx, dest_ty_mir) {
