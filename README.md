@@ -28,7 +28,7 @@ A language that balances developer experience, execution efficiency, and safety.
 | Batteries-included standard library | ✓ | ✓ |  | ✓ | ✓ |
 | Fast compilation |  | ✓ |  |  |  |
 | Small portable binaries | ✓ | ✓ |  |  | ✓ |
-| Pipe operator ("|>") |  |  | ✓ |  | ✓ |
+| Pipe operator (`\|>`) |  |  | ✓ |  | ✓ |
 | Functional-first programming style |  |  | ✓ |  | ✓ |
 | Interpreted / scripting mode |  |  | ✓ | ✓ | ✓ |
 | Interactive REPL |  |  | ✓ | ✓ | ✓ |
