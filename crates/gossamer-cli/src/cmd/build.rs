@@ -618,14 +618,30 @@ fn link_posix(
         cmd.arg(archive);
     }
     cmd.arg("-o").arg(out_path);
-    // macOS has no `libdl` — `dl*` is part of `libSystem`. `-ldl`
-    // there fails with "library 'dl' not found". `libpthread` /
-    // `libm` are stub-forwarders that resolve, so we keep those.
+    // `-ldl` only exists on Linux (libdl). macOS folds `dl*` into
+    // `libSystem` and Windows/mingw has no `libdl` at all — passing
+    // it on either fails the link ("cannot find -ldl"). `libpthread`
+    // / `libm` resolve as real libs (winpthreads on mingw) or stub-
+    // forwarders on every target, so we keep those.
     cmd.arg("-lpthread");
-    if !cfg!(target_os = "macos") {
+    if cfg!(target_os = "linux") {
         cmd.arg("-ldl");
     }
     cmd.arg("-lm");
+    if cfg!(windows) {
+        // On Windows-GNU `gos` drives mingw's `cc` directly, so unlike
+        // a rustc-driven link it must name the Win32 import libraries
+        // that the Rust runtime staticlib references but mingw's default
+        // specs don't auto-link: ws2_32 (mio sockets), bcrypt/advapi32
+        // (getrandom / std RNG), userenv (env home dir), ntdll (std
+        // internals). All are core mingw-w64 import libs. Listed after
+        // the archives so the single-pass GNU linker resolves their
+        // symbols. The Windows-MSVC path links via `link.exe`
+        // (`link_windows_msvc`) and never reaches here.
+        for lib in ["ws2_32", "bcrypt", "advapi32", "userenv", "ntdll"] {
+            cmd.arg(format!("-l{lib}"));
+        }
+    }
     if !extra_archives.is_empty() {
         // The rust-bindings staticlib pulls in `gossamer-runtime`
         // as a transitive Cargo dep, which produces a second copy
