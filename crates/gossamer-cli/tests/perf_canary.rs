@@ -31,9 +31,7 @@ fn is_executable(p: &Path) -> bool {
     {
         // On Windows the built binary is `<stem>.exe`; match that and
         // exclude the `.gos` source / `.pdb` debug file that share the dir.
-        p.is_file()
-            && p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+        p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))
     }
 }
 
