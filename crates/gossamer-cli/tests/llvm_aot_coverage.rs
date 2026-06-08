@@ -552,8 +552,12 @@ fn main() {
     );
     let (code, stdout, stderr) = run(&prog);
     assert_eq!(code, 0, "exit={code} stderr={stderr}");
+    // The binary is `env_program_name` on unix and `env_program_name.exe`
+    // on Windows; `program_name()` reports the real argv[0], so accept both.
+    let name = stdout.trim_end();
+    let name = name.strip_suffix(".exe").unwrap_or(name);
     assert!(
-        stdout.trim_end().ends_with("env_program_name"),
+        name.ends_with("env_program_name"),
         "program_name stdout={stdout:?}"
     );
 }
@@ -565,7 +569,7 @@ fn aot_fs_metadata() {
         r#"
 use std::fs
 fn main() {
-    if let Ok(_m) = fs::metadata("/tmp") {
+    if let Ok(_m) = fs::metadata(".") {
         println!("ok")
     }
 }

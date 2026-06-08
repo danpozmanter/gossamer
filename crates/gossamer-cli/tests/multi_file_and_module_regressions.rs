@@ -288,7 +288,11 @@ fn main() {{
     println!("exists = {{}}", os::exists(&p))
 }}
 "#,
-        p = payload_path.display(),
+        // Embed with forward slashes: a Windows path has backslashes, and
+        // `\a` / `\g` / `\t` … are escape sequences inside a `.gos` string
+        // literal, so a raw backslash path corrupts to a nonexistent file.
+        // Windows filesystem APIs accept `/` separators.
+        p = payload_path.display().to_string().replace('\\', "/"),
     );
     let path = write_source(&dir, "os_read", &src);
     let cl_dir = dir.join("cl");

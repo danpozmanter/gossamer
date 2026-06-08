@@ -355,7 +355,15 @@ fn build_honours_project_output_field_in_manifest() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let expected = dir.join("custom_name");
+    // The manifest `output` has no extension; on Windows the linker needs
+    // the `.exe` suffix, which `resolve_output_path` adds. Expect the
+    // platform executable name, not the bare stem.
+    let expected_name = if cfg!(windows) {
+        "custom_name.exe"
+    } else {
+        "custom_name"
+    };
+    let expected = dir.join(expected_name);
     assert!(
         expected.exists(),
         "expected build output at {}",

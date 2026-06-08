@@ -32,7 +32,11 @@ fn is_executable(p: &Path) -> bool {
     }
     #[cfg(not(unix))]
     {
+        // On Windows the built binary is `<stem>.exe`; match that and
+        // exclude the `.gos` source / `.pdb` debug file that share the dir.
         p.is_file()
+            && p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
     }
 }
 
@@ -75,7 +79,7 @@ fn assert_vm_matches_native(tag: &str, src: &str) {
         .unwrap()
         .flatten()
         .map(|e| e.path())
-        .find(|p| is_executable(p) && p.extension().is_none())
+        .find(|p| is_executable(p))
         .expect("no built binary");
 
     // Run native twice: with the recycling RC pool (default — exercises
