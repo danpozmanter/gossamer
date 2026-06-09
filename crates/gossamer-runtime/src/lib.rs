@@ -16,6 +16,16 @@
 // across Linux, macOS, and Windows. Defined here so the single definition
 // covers both the `gos` binary (which links this crate as an rlib) and every
 // program `gos build` links against libgossamer_runtime.a.
+// ThreadSanitizer is incompatible with a custom global allocator:
+// mimalloc's lazy global lock init (`mi_lock_init`) memcpys a shared
+// lock with no synchronisation on a thread's first allocation, which
+// TSan correctly flags as a data race, and an uninstrumented allocator
+// blinds TSan to real heap races regardless. Under `-Zsanitizer=thread`
+// fall back to the default system allocator, which TSan instruments —
+// the standard practice for custom allocators under sanitizers
+// (jemalloc / mimalloc document the same). Every non-TSan build —
+// release, debug, ASan, every compiled program — keeps mimalloc.
+#[cfg(not(tsan))]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

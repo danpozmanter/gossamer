@@ -5,7 +5,11 @@
 //! disk persistence), pins the result to `project.lock`, and drives
 //! the `gos publish` / `gos yank` flow for the registry.
 
-#![forbid(unsafe_code)]
+// `deny`, not `forbid`: the crate is unsafe-free except for one audited
+// Win32 ACL FFI block (`credentials::restrict_to_owner`, the Windows
+// `chmod 0600` analogue) that carries a local `#[allow(unsafe_code)]`.
+// `forbid` cannot be locally overridden; `deny` denies everywhere else.
+#![deny(unsafe_code)]
 
 pub mod cache;
 pub mod credentials;
