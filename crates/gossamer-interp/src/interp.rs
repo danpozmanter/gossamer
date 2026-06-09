@@ -1192,6 +1192,24 @@ impl Interpreter {
         }
         let a = self.eval_expr_to_value(lhs, env)?;
         let b = self.eval_expr_to_value(rhs, env)?;
+        // Struct / enum equality routes to a `Type::eq` method when one
+        // exists (synthesized by `#[derive(PartialEq)]` or hand-written),
+        // matching the compiled tier. `values_equal` only compares scalars,
+        // so without this `==` on an aggregate is always `false`.
+        if matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne) {
+            if let Some(qualified) = qualified_method_key(&a, "eq") {
+                if let Some(method) = self.globals.get(&qualified).cloned() {
+                    let result = self.apply(&method, vec![a, b])?;
+                    let eq = matches!(result, Value::Bool(true));
+                    let out = if matches!(op, HirBinaryOp::Ne) {
+                        !eq
+                    } else {
+                        eq
+                    };
+                    return Ok(Flow::Value(Value::Bool(out)));
+                }
+            }
+        }
         // Strict typing: any operator applied to operands of
         // incompatible kinds is a runtime error, never a silent
         // coercion. Equality (`==`, `!=`) is handled inside
@@ -1577,15 +1595,41 @@ impl Interpreter {
     }
 
     fn eval_block_inner(&mut self, block: &HirBlock, env: &mut Env) -> RuntimeResult<Flow> {
-        for stmt in &block.stmts {
-            if let Some(flow) = self.eval_stmt(stmt, env)? {
-                return Ok(flow);
+        // Block-scoped `defer` (Swift/Zig semantics): deferred expressions are
+        // collected as they are reached and run in LIFO order when control
+        // leaves this block for any reason — normal fall-through, `return`,
+        // `break`, `continue`, or a propagating error. Each enclosing block
+        // runs its own defers as the outcome unwinds through it.
+        let mut deferred: Vec<&HirExpr> = Vec::new();
+        let mut outcome: RuntimeResult<Flow> = Ok(Flow::Value(Value::Unit));
+        'body: {
+            for stmt in &block.stmts {
+                if let HirStmtKind::Defer(e) = &stmt.kind {
+                    deferred.push(e);
+                    continue;
+                }
+                match self.eval_stmt(stmt, env) {
+                    Ok(Some(flow)) => {
+                        outcome = Ok(flow);
+                        break 'body;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        outcome = Err(e);
+                        break 'body;
+                    }
+                }
+            }
+            if let Some(tail) = &block.tail {
+                outcome = self.eval_expr(tail, env);
             }
         }
-        if let Some(tail) = &block.tail {
-            return self.eval_expr(tail, env);
+        // Run defers LIFO. A defer body's own value/flow is discarded (control
+        // flow does not escape a defer); a runtime error inside one propagates.
+        for e in deferred.iter().rev() {
+            self.eval_expr(e, env)?;
         }
-        Ok(Flow::Value(Value::Unit))
+        outcome
     }
 
     fn eval_stmt(&mut self, stmt: &HirStmt, env: &mut Env) -> RuntimeResult<Option<Flow>> {
@@ -2072,6 +2116,17 @@ fn values_equal(a: &Value, b: &Value) -> bool {
         }
         (Value::Array(x), Value::Array(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| values_equal(a, b))
+        }
+        // Enum variants (incl. Option / Result) compare structurally: same
+        // variant, same payload — matching the compiled tiers and a derived
+        // enum's field-wise `eq`.
+        (Value::Variant(x), Value::Variant(y)) => {
+            x.name == y.name
+                && x.fields.len() == y.fields.len()
+                && x.fields
+                    .iter()
+                    .zip(y.fields.iter())
+                    .all(|(a, b)| values_equal(a, b))
         }
         _ => false,
     }

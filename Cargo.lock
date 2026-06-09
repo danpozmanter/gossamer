@@ -1393,11 +1393,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-abi"
-version = "0.10.0"
+version = "0.11.0"
 
 [[package]]
 name = "gossamer-ast"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1405,7 +1405,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-binding-macros",
@@ -1420,7 +1420,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding-macros"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1429,7 +1429,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-cli"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1468,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1495,7 +1495,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-llvm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "gossamer-abi",
@@ -1512,14 +1512,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1531,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-driver"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1546,21 +1546,23 @@ dependencies = [
  "gossamer-resolve",
  "gossamer-runner-template",
  "gossamer-types",
+ "libc",
  "parking_lot",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "toml",
  "which",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "gossamer-gc"
-version = "0.10.0"
+version = "0.11.0"
 
 [[package]]
 name = "gossamer-hir"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1571,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
@@ -1591,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "insta",
  "parking_lot",
@@ -1602,7 +1604,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lint"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1612,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lsp"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1626,7 +1628,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mir"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-abi",
  "gossamer-ast",
@@ -1639,7 +1641,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1650,7 +1652,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "ed25519-dalek",
  "parking_lot",
@@ -1660,11 +1662,12 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "webpki-roots",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "gossamer-resolve"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1676,7 +1679,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runner-template"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "syn",
  "toml",
@@ -1684,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "backtrace",
  "blake3",
@@ -1705,6 +1708,7 @@ dependencies = [
  "itoa",
  "libc",
  "libloading",
+ "mimalloc",
  "mime",
  "mime_guess",
  "mio 1.2.0",
@@ -1738,14 +1742,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-sched"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1827,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-types"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -2217,6 +2221,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "linkme"
 version = "0.3.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2307,6 +2320,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "mimalloc"
+version = "0.1.52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862"
+dependencies = [
+ "libmimalloc-sys",
 ]
 
 [[package]]
@@ -4399,7 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "gossamer-lint",

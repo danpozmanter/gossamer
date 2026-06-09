@@ -125,13 +125,19 @@ impl<'a> Builder<'a> {
                 .filter_map(|f| provided.get(f.as_str()).map(|e| (*e).clone()))
                 .collect();
             let enum_name = variant_enum_name.as_deref().unwrap_or("");
-            return self.lower_user_enum_ctor(
+            let result = self.lower_user_enum_ctor(
                 enum_name,
                 u32::try_from(idx).unwrap_or(0),
                 &arg_exprs,
                 ty,
                 span,
             );
+            // Tag the struct-variant literal with its ENUM name (not the bare
+            // variant) so `==` / `{:?}` route to `Enum::eq` / `Enum::fmt`.
+            if let Some(local) = result {
+                self.local_struct.insert(local, enum_name.to_string());
+            }
+            return result;
         }
         // Resolve the base expression once (when present) so missing
         // fields can be filled by projecting `base.field`. Lowering

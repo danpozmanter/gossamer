@@ -18,9 +18,15 @@ fn main() {
     scores.insert("bob", 87)
     scores.insert("carol", 92)
 
+    // Destructure `(name, score)` from each map entry. Hash-map iteration
+    // order is unspecified (and the VM and compiled tiers use independent hash
+    // tables), so reduce to an order-independent total instead of printing
+    // each entry, keeping the output byte-identical across tiers.
+    let mut total = 0
     for (name, score) in scores.iter() {
-        println!("{} = {}", name, score)
+        total += score + name.len()
     }
+    println!("scores total+namelen = {}", total)
 
     // Nested tuples
     let triples = [(1, 2, 3), (4, 5, 6)]

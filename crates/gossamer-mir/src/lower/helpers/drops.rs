@@ -88,6 +88,22 @@ pub(crate) fn propagate_copy_types(body: &mut Body, tcx: &gossamer_types::TyCtxt
     use gossamer_types::TyKind;
     let n = body.locals.len();
     let unresolved = |ty| matches!(tcx.kind_of(ty), TyKind::Var(_) | TyKind::Error);
+    // Type of `base.Field(idx)`, seeing through one `&`. Used to flow a
+    // resolved aggregate's field type onto an otherwise-`Var` destination —
+    // e.g. `inner = Copy(a.Field(0))` once `a` is known to be a struct.
+    let field_ty = |base_ty: gossamer_types::Ty, idx: u32| -> Option<gossamer_types::Ty> {
+        let mut t = base_ty;
+        if let TyKind::Ref { inner, .. } = tcx.kind_of(t) {
+            t = *inner;
+        }
+        match tcx.kind_of(t) {
+            TyKind::Adt { def, .. } => tcx
+                .struct_field_tys(*def)
+                .and_then(|tys| tys.get(idx as usize).copied()),
+            TyKind::Tuple(elems) => elems.get(idx as usize).copied(),
+            _ => None,
+        }
+    };
     let mut changed = true;
     while changed {
         changed = false;
@@ -96,21 +112,38 @@ pub(crate) fn propagate_copy_types(body: &mut Body, tcx: &gossamer_types::TyCtxt
             .iter()
             .flat_map(|b| &b.stmts)
             .filter_map(|stmt| {
-                if let StatementKind::Assign {
+                let StatementKind::Assign {
                     place,
                     rvalue: Rvalue::Use(Operand::Copy(p)),
                 } = &stmt.kind
-                    && place.projection.is_empty()
-                    && p.projection.is_empty()
-                    && (place.local.0 as usize) < n
-                    && (p.local.0 as usize) < n
-                    && unresolved(body.locals[place.local.0 as usize].ty)
-                    && !unresolved(body.locals[p.local.0 as usize].ty)
+                else {
+                    return None;
+                };
+                if !place.projection.is_empty()
+                    || (place.local.0 as usize) >= n
+                    || (p.local.0 as usize) >= n
+                    || !unresolved(body.locals[place.local.0 as usize].ty)
                 {
-                    Some((place.local.0 as usize, body.locals[p.local.0 as usize].ty))
-                } else {
-                    None
+                    return None;
                 }
+                let src_ty = body.locals[p.local.0 as usize].ty;
+                if unresolved(src_ty) {
+                    return None;
+                }
+                // Bare copy: destination inherits the source type directly.
+                if p.projection.is_empty() {
+                    return Some((place.local.0 as usize, src_ty));
+                }
+                // Single field projection: destination inherits the field type,
+                // so a chain `a.inner.tag` resolves one level per fixpoint pass.
+                if let [crate::ir::Projection::Field(idx)] = p.projection.as_slice() {
+                    if let Some(ft) = field_ty(src_ty, *idx) {
+                        if !unresolved(ft) {
+                            return Some((place.local.0 as usize, ft));
+                        }
+                    }
+                }
+                None
             })
             .collect();
         for (d, ty) in updates {
@@ -929,7 +962,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // Pre-allocate one unit-typed local per emitted retain/release call.
     let total_calls: usize = gaps.iter().flatten().map(Vec::len).sum::<usize>()
         + field_gaps.iter().flatten().map(Vec::len).sum::<usize>();
-    let unit_ty = body.locals[0].ty;
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
     let mut next_unit = body.locals.len();
     for _ in 0..total_calls {
         body.locals.push(LocalDecl {
@@ -1650,7 +1683,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 continue;
             }
             let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
-            let unit_ty = body.locals[0].ty;
+            let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
             body.locals.push(LocalDecl {
                 ty: unit_ty,
                 debug_name: None,
@@ -1756,7 +1789,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             .get(stmt_idx)
             .map_or(body.blocks[block_idx].span, |s| s.span);
         let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
-        let unit_ty = body.locals[0].ty;
+        let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
         body.locals.push(LocalDecl {
             ty: unit_ty,
             debug_name: None,
@@ -1820,7 +1853,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 _ => {}
             }
         }
-        let unit_ty = body.locals[0].ty;
+        let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
         for (block_idx, free_name, local) in sites {
             let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
             body.locals.push(LocalDecl {

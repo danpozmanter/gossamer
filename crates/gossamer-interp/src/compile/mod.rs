@@ -180,6 +180,26 @@ pub fn compile_fn(
             }
         }
     }
+    // Block-scoped `defer` is implemented by the tree-walker (the bytecode VM
+    // runs deferred expressions eagerly, which is the wrong order). Route a
+    // function whose body contains a `defer` through the walker wholesale, so
+    // its LIFO at-block-exit semantics hold. `defer` is rare and never on a hot
+    // path, so the walker cost is irrelevant here.
+    if block_contains_defer(&body.block) || block_contains_struct_eq(&body.block, tcx) {
+        use gossamer_hir::{HirExpr, HirExprKind};
+        let block = body.block.clone();
+        let (id, span, ty) = (block.id, block.span, block.ty);
+        let block_expr = HirExpr {
+            id,
+            span,
+            ty,
+            kind: HirExprKind::Block(block),
+        };
+        let reg = builder.compile_deferred(&block_expr)?;
+        builder.emit(Op::Return { value: reg });
+        let arity = u16::try_from(decl.params.len()).unwrap_or(u16::MAX);
+        return Ok(builder.finish(arity));
+    }
     let result = builder.compile_block(&body.block)?;
     if matches!(result, BlockResult::ValueIn(_)) {
         let BlockResult::ValueIn(reg) = result else {
@@ -632,6 +652,142 @@ fn stmt_contains_unsupported(stmt: &gossamer_hir::HirStmt) -> bool {
         S::Defer(_) | S::Go(_) => true,
         S::Item(_) => false,
     }
+}
+
+/// `true` if a `defer` statement appears anywhere in `expr`'s own body
+/// (not counting nested closures, which compile as separate functions).
+/// The bytecode VM runs deferred expressions eagerly; a function containing
+/// a `defer` is routed wholesale to the tree-walker, which implements the
+/// block-scoped LIFO semantics. Recurses into every sub-expression so a
+/// `defer` buried in a control-flow or argument position is still found.
+fn expr_contains_defer(expr: &HirExpr) -> bool {
+    use gossamer_hir::{HirArrayExpr, HirExprKind as H};
+    match &expr.kind {
+        // Closures are their own compilation units; their defers are handled
+        // when the closure body is compiled/walked, not by the enclosing fn.
+        H::Closure { .. } | H::LiftedClosure { .. } => false,
+        H::Literal(_) | H::Path { .. } | H::Continue | H::Placeholder | H::Range { .. } => false,
+        H::Block(block) => block_contains_defer(block),
+        H::Go(inner) => expr_contains_defer(inner),
+        H::Tuple(elems) => elems.iter().any(expr_contains_defer),
+        H::Cast { value, .. } => expr_contains_defer(value),
+        H::Unary { operand, .. } => expr_contains_defer(operand),
+        H::Field { receiver, .. } | H::TupleIndex { receiver, .. } => expr_contains_defer(receiver),
+        H::MethodCall { receiver, args, .. } => {
+            expr_contains_defer(receiver) || args.iter().any(expr_contains_defer)
+        }
+        H::Index { base, index } => expr_contains_defer(base) || expr_contains_defer(index),
+        H::Binary { lhs, rhs, .. } => expr_contains_defer(lhs) || expr_contains_defer(rhs),
+        H::Assign { place, value } => expr_contains_defer(place) || expr_contains_defer(value),
+        H::Call { callee, args } => {
+            expr_contains_defer(callee) || args.iter().any(expr_contains_defer)
+        }
+        H::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_contains_defer(condition)
+                || expr_contains_defer(then_branch)
+                || else_branch.as_deref().is_some_and(expr_contains_defer)
+        }
+        H::While { condition, body } => expr_contains_defer(condition) || expr_contains_defer(body),
+        H::Loop { body } => expr_contains_defer(body),
+        H::Match { scrutinee, arms } => {
+            expr_contains_defer(scrutinee) || arms.iter().any(|a| expr_contains_defer(&a.body))
+        }
+        H::Return(v) | H::Break(v) => v.as_deref().is_some_and(expr_contains_defer),
+        H::Select { arms } => arms.iter().any(|a| expr_contains_defer(&a.body)),
+        H::Array(arr) => match arr {
+            HirArrayExpr::List(elems) => elems.iter().any(expr_contains_defer),
+            HirArrayExpr::Repeat { value, count } => {
+                expr_contains_defer(value) || expr_contains_defer(count)
+            }
+        },
+    }
+}
+
+/// `true` when `ty` (seeing through one `&`) is a struct / enum value.
+fn is_adt_ty(tcx: &TyCtxt, ty: gossamer_types::Ty) -> bool {
+    use gossamer_types::TyKind;
+    match tcx.kind(ty) {
+        Some(TyKind::Adt { .. }) => true,
+        Some(TyKind::Ref { inner, .. }) => is_adt_ty(tcx, *inner),
+        _ => false,
+    }
+}
+
+/// `true` if the block does an `==` / `!=` on a struct/enum operand. Such a
+/// comparison must route to a `Type::eq` method (the bytecode `Op::Eq` only
+/// compares scalars), which the tree-walker's `eval_binary` does — so a
+/// function containing one is run wholesale on the walker, exactly like
+/// `defer`. The walker still falls back to `false` when no `eq` exists, so
+/// non-deriving structs match the compiled tier.
+fn block_contains_struct_eq(block: &gossamer_hir::HirBlock, tcx: &TyCtxt) -> bool {
+    use gossamer_hir::HirStmtKind as S;
+    block.stmts.iter().any(|stmt| match &stmt.kind {
+        S::Defer(e) => expr_contains_struct_eq(e, tcx),
+        S::Let { init, .. } => init
+            .as_ref()
+            .is_some_and(|e| expr_contains_struct_eq(e, tcx)),
+        S::Expr { expr, .. } => expr_contains_struct_eq(expr, tcx),
+        S::Go(inner) => expr_contains_struct_eq(inner, tcx),
+        S::Item(_) => false,
+    }) || block
+        .tail
+        .as_deref()
+        .is_some_and(|e| expr_contains_struct_eq(e, tcx))
+}
+
+fn expr_contains_struct_eq(expr: &HirExpr, tcx: &TyCtxt) -> bool {
+    use gossamer_hir::{HirArrayExpr, HirBinaryOp, HirExprKind as H};
+    let rec = |e: &HirExpr| expr_contains_struct_eq(e, tcx);
+    match &expr.kind {
+        H::Closure { .. } | H::LiftedClosure { .. } => false,
+        H::Literal(_) | H::Path { .. } | H::Continue | H::Placeholder | H::Range { .. } => false,
+        H::Block(block) => block_contains_struct_eq(block, tcx),
+        H::Go(inner) => rec(inner),
+        H::Tuple(elems) => elems.iter().any(rec),
+        H::Cast { value, .. } => rec(value),
+        H::Unary { operand, .. } => rec(operand),
+        H::Field { receiver, .. } | H::TupleIndex { receiver, .. } => rec(receiver),
+        H::MethodCall { receiver, args, .. } => rec(receiver) || args.iter().any(rec),
+        H::Index { base, index } => rec(base) || rec(index),
+        H::Binary { op, lhs, rhs } => {
+            (matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne)
+                && (is_adt_ty(tcx, lhs.ty) || is_adt_ty(tcx, rhs.ty)))
+                || rec(lhs)
+                || rec(rhs)
+        }
+        H::Assign { place, value } => rec(place) || rec(value),
+        H::Call { callee, args } => rec(callee) || args.iter().any(rec),
+        H::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => rec(condition) || rec(then_branch) || else_branch.as_deref().is_some_and(rec),
+        H::While { condition, body } => rec(condition) || rec(body),
+        H::Loop { body } => rec(body),
+        H::Match { scrutinee, arms } => rec(scrutinee) || arms.iter().any(|a| rec(&a.body)),
+        H::Return(v) | H::Break(v) => v.as_deref().is_some_and(rec),
+        H::Select { arms } => arms.iter().any(|a| rec(&a.body)),
+        H::Array(arr) => match arr {
+            HirArrayExpr::List(elems) => elems.iter().any(rec),
+            HirArrayExpr::Repeat { value, count } => rec(value) || rec(count),
+        },
+    }
+}
+
+/// `true` if any statement (or the tail) of `block` carries a `defer`.
+fn block_contains_defer(block: &gossamer_hir::HirBlock) -> bool {
+    use gossamer_hir::HirStmtKind as S;
+    block.stmts.iter().any(|stmt| match &stmt.kind {
+        S::Defer(_) => true,
+        S::Let { init, .. } => init.as_ref().is_some_and(expr_contains_defer),
+        S::Expr { expr, .. } => expr_contains_defer(expr),
+        S::Go(inner) => expr_contains_defer(inner),
+        S::Item(_) => false,
+    }) || block.tail.as_deref().is_some_and(expr_contains_defer)
 }
 
 fn parse_int(text: &str) -> Option<i64> {

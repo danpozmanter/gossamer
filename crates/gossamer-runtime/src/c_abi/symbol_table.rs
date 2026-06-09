@@ -1378,6 +1378,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_insert_i64_i64 as *const u8,
         ),
         (
+            "gos_rt_map_insert_skey",
+            crate::c_abi::gos_rt_map_insert_skey as *const u8,
+        ),
+        (
+            "gos_rt_map_get_skey_opt",
+            crate::c_abi::gos_rt_map_get_skey_opt as *const u8,
+        ),
+        (
+            "gos_rt_map_contains_skey",
+            crate::c_abi::gos_rt_map_contains_skey as *const u8,
+        ),
+        (
             "gos_rt_map_insert_i64_str",
             crate::c_abi::gos_rt_map_insert_i64_str as *const u8,
         ),
@@ -2304,6 +2316,34 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_router_serve",
             crate::c_abi::gos_rt_router_serve as *const u8,
+        ),
+        (
+            "gos_rt_select_arm_default",
+            crate::c_abi::gos_rt_select_arm_default as *const u8,
+        ),
+        (
+            "gos_rt_select_arm_recv",
+            crate::c_abi::gos_rt_select_arm_recv as *const u8,
+        ),
+        (
+            "gos_rt_select_arm_send",
+            crate::c_abi::gos_rt_select_arm_send as *const u8,
+        ),
+        (
+            "gos_rt_select_free",
+            crate::c_abi::gos_rt_select_free as *const u8,
+        ),
+        (
+            "gos_rt_select_new",
+            crate::c_abi::gos_rt_select_new as *const u8,
+        ),
+        (
+            "gos_rt_select_value",
+            crate::c_abi::gos_rt_select_value as *const u8,
+        ),
+        (
+            "gos_rt_select_wait",
+            crate::c_abi::gos_rt_select_wait as *const u8,
         ),
         (
             "gos_rt_set_args",

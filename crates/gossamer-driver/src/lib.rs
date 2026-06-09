@@ -5,7 +5,11 @@
 //! [`link::link`]. Later phases (package manager, cross-compilation)
 //! hang new options off the shared [`link::LinkerOptions`].
 
-#![forbid(unsafe_code)]
+// `deny` rather than `forbid` so the single FFI liveness probe in
+// `binding_runner::pid_alive` (`libc::kill` / Win32 `OpenProcess`) can opt in
+// via a scoped, documented `#[allow(unsafe_code)]`. Every other site stays
+// unsafe-free.
+#![deny(unsafe_code)]
 
 pub mod binding_runner;
 pub mod build;

@@ -1,0 +1,76 @@
+// Real `select {}` multiplexing across all tiers.
+//
+// Every selection point here has at most one ready arm (or falls to the
+// default), so the chosen arm is deterministic and the output is bit-identical
+// on the VM walker, the Cranelift JIT, and the LLVM AOT backend — no goroutine
+// scheduling race is involved.
+
+use std::sync::channel
+
+fn main() {
+    let (tx1, rx1) = channel()
+    let (tx2, rx2) = channel()
+
+    // 1. Nothing buffered yet: the default arm fires.
+    let a = select {
+        v = rx1.recv() => v,
+        w = rx2.recv() => w,
+        default => -1,
+    }
+    println!("a = {}", a)
+
+    // 2. Only rx1 has a value: source-order poll picks arm 0.
+    tx1.send(10)
+    let b = select {
+        v = rx1.recv() => v,
+        w = rx2.recv() => w,
+        default => -1,
+    }
+    println!("b = {}", b)
+
+    // 3. rx1 is drained, rx2 has a value: arm 1 is the first ready.
+    tx2.send(20)
+    let c = select {
+        v = rx1.recv() => v,
+        w = rx2.recv() => w,
+        default => -1,
+    }
+    println!("c = {}", c)
+
+    // 4. A send arm on an unbounded channel is always ready.
+    let (tx3, rx3) = channel()
+    select {
+        tx3.send(99) => println!("sent"),
+        default => println!("not sent"),
+    }
+    if let Some(got) = rx3.recv() {
+        println!("got = {}", got)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::channel
+    use std::testing
+
+    #[test]
+    fn default_arm_fires_when_nothing_ready() {
+        let (_tx, rx) = channel()
+        let chosen = select {
+            v = rx.recv() => v,
+            default => -1,
+        }
+        testing::check(chosen == -1, "default arm fires when no value is ready")
+    }
+
+    #[test]
+    fn ready_recv_arm_beats_default() {
+        let (tx, rx) = channel()
+        tx.send(7)
+        let chosen = select {
+            v = rx.recv() => v,
+            default => -1,
+        }
+        testing::check(chosen == 7, "ready recv arm is chosen over default")
+    }
+}

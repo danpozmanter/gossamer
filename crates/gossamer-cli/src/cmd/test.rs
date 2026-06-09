@@ -400,9 +400,13 @@ fn render_lcov(records: &[TestRecord], files: &[PathBuf]) -> String {
 
 fn collect_test_names(file: &Path) -> Result<Vec<String>> {
     let source = read_source(&file.to_path_buf())?;
+    // Augment with synthesized impls (serde + `#[derive(...)]`) before the
+    // source map, exactly as `gos run` / `gos build` do, so tests exercise
+    // the same code those tiers compile.
+    let augmented = gossamer_parse::autoderive::augment_source(&source);
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
-    let (_program, sf, _tcx) = load_and_check_with_sf(&source, file_id, &map)?;
+    let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
+    let (_program, sf, _tcx) = load_and_check_with_sf(&augmented, file_id, &map)?;
     let mut names = Vec::new();
     collect_selected_fn_names(&sf.items, &|item| item_has_attr(item, "test"), &mut names);
     Ok(names)
@@ -417,9 +421,10 @@ fn run_tests_filtered(
     let Ok(source) = read_source(&file.to_path_buf()) else {
         return Vec::new();
     };
+    let augmented = gossamer_parse::autoderive::augment_source(&source);
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
-    let Ok((program, _sf, _tcx)) = load_and_check_with_sf(&source, file_id, &map) else {
+    let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
+    let Ok((program, _sf, _tcx)) = load_and_check_with_sf(&augmented, file_id, &map) else {
         return Vec::new();
     };
     let mut interp = gossamer_interp::Interpreter::new();

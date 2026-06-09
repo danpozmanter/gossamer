@@ -564,8 +564,12 @@ impl<'a> Lowerer<'a> {
             // vector register (`<16 x i8>`), matching rustc; call as that wire
             // type then `bitcast` back to the `i128` the rest of the body uses.
             // `call_ret_ty` (the logical type) is unchanged for the downstream
-            // store/coerce. No-op on SysV.
-            let win_fat_ret = cfg!(windows) && call_ret_ty == "i128";
+            // store/coerce. Gated on the ABI-registry return so it fires ONLY
+            // for `gos_rt_*` shims, never a user function's bare-`i128` return
+            // (which is `define i128`/`ret i128` in this same module). No-op on
+            // SysV.
+            let win_fat_ret =
+                super::misc::needs_win64_fat_ret(cfg!(windows), registry_ret.as_deref());
             let wire_ret_ty = if win_fat_ret {
                 "<16 x i8>"
             } else {

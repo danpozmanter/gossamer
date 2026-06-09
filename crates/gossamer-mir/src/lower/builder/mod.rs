@@ -127,6 +127,12 @@ pub(crate) struct Builder<'a> {
     /// drop pass must not release them (the region frees them wholesale at
     /// pop; a post-pop release would be a use-after-free).
     pub(crate) region_depth: u32,
+    /// One frame per lexical block currently being lowered; each frame holds
+    /// that block's `defer`red expressions in registration order. Block-scoped
+    /// `defer` (Swift/Zig semantics) emits a frame's expressions in LIFO order
+    /// at every edge that leaves the block — normal fall-through, `return`
+    /// (all frames), and `break`/`continue` (frames down to the loop's frame).
+    pub(crate) defer_stack: Vec<Vec<gossamer_hir::HirExpr>>,
 }
 
 /// A live loop context: where to jump on `break` vs. `continue`,
@@ -142,6 +148,10 @@ pub(crate) struct LoopContext {
     /// loops (no `break` at all), preventing a spurious `RETURN`
     /// assign at function-tail positions.
     pub(crate) break_used: bool,
+    /// `defer_stack` length at loop entry. `break`/`continue` run the defers
+    /// in frames at indices `>= defer_depth` (the blocks inside the loop body)
+    /// before jumping, but not the loop's enclosing frames.
+    pub(crate) defer_depth: usize,
 }
 
 mod ctrl;

@@ -188,3 +188,119 @@ jobs:
         with:
           name: perf-log
           path: .perf/
+
+  # Cross-platform native-binary perf gate. The `perf` job above only times
+  # `gos run` on Linux; this one builds a `gos build --release` native binary
+  # on all three Tier-1 platforms and times it, so an allocator/codegen
+  # regression (or a tier silently degrading to the interpreter) is visible on
+  # macOS and Windows too — not just Linux.
+  perf-native:
+    name: Perf native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTUP_TOOLCHAIN: 1.95.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 clang-18 lld-18
+          echo "GOS_LLC=/usr/bin/llc-18" >> "$GITHUB_ENV"
+          echo "GOS_LLVM_OPT=/usr/bin/opt-18" >> "$GITHUB_ENV"
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          set -euo pipefail
+          brew install llvm@18
+          prefix="$(brew --prefix llvm@18)"
+          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=$prefix/bin/llc"      >> "$GITHUB_ENV"
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Find-LlvmTool($name) {
+            $cmd = Get-Command $name -ErrorAction SilentlyContinue
+            if ($cmd) { return $cmd.Source }
+            foreach ($dir in @('C:\msys64\mingw64\bin', 'C:\msys64\clang64\bin')) {
+              $cand = Join-Path $dir $name
+              if (Test-Path $cand) { return $cand }
+            }
+            return $null
+          }
+          $opt = Find-LlvmTool 'opt.exe'
+          $llc = Find-LlvmTool 'llc.exe'
+          if (-not $opt -or -not $llc) {
+            & 'C:\msys64\usr\bin\pacman.exe' -S --noconfirm --needed mingw-w64-x86_64-llvm
+            $opt = Find-LlvmTool 'opt.exe'
+            $llc = Find-LlvmTool 'llc.exe'
+          }
+          if (-not $opt -or -not $llc) { throw "opt.exe/llc.exe not found after MSYS2 install" }
+          "GOS_LLVM_OPT=$opt" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "GOS_LLC=$llc"      | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - run: rustup set profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-perf-native
+
+      - name: Resolve cargo binary (shim guard)
+        shell: bash
+        run: |
+          set -euo pipefail
+          resolved_cargo="$("$HOME/.cargo/bin/rustup" which cargo)"
+          echo "CARGO_BIN=$resolved_cargo" >> "$GITHUB_ENV"
+
+      - name: Build release `gos`
+        shell: bash
+        run: |
+          "$CARGO_BIN" build --release -p gossamer-cli
+
+      - name: Build + time native binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOS=./target/release/gos
+          [ -x "$GOS" ] || GOS=./target/release/gos.exe
+          SRC=examples/factorial.gos
+          mkdir -p .perf
+          rm -f .perf/native-current.txt
+
+          # Build the native binary (the path this gate exists to cover).
+          "$GOS" build --release "$SRC"
+          BIN="$(find examples -type f \( -name factorial -o -name factorial.exe \) \
+                  -newer "$SRC" 2>/dev/null | head -n1)"
+          [ -n "$BIN" ] || { echo "native binary not produced for $SRC"; exit 1; }
+
+          start=$(date +%s%N)
+          "$BIN" >/dev/null 2>&1
+          end=$(date +%s%N)
+          echo "native_factorial $((end - start))" | tee -a .perf/native-current.txt
+
+      - name: Hard wall-clock cap (10 s)
+        shell: bash
+        run: |
+          set -euo pipefail
+          awk '{ if ($2 > 10000000000) {
+                   print "PERF ABORT: " $1 " took " int($2/1000000) "ms (> 10 s cap)"; exit 1 } }' \
+            .perf/native-current.txt
+
+      - name: Upload native perf log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-native-log-${{ matrix.os }}
+          path: .perf/native-current.txt

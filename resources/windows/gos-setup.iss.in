@@ -40,6 +40,9 @@ Name: "modifypath"; Description: "Add the Gossamer toolchain to the system PATH"
 
 [Files]
 Source: "{#SourceDir}/target/release/{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; `gos build` links user programs against this runtime archive, resolved next
+; to gos.exe in {app}.
+Source: "{#SourceDir}/target/release/gossamer_runtime.lib"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}/README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}/LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 

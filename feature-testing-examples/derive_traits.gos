@@ -1,0 +1,84 @@
+// `#[derive(...)]` for the standard traits. The synthesizer emits real `impl`
+// methods at parse time (the same path that derives JSON/TOML/YAML), so they
+// lower through every tier exactly like hand-written code: `==` / `!=` route
+// to the synthesized `eq`, `{:?}` / `{}` route to `fmt`, on the VM walker,
+// Cranelift, and LLVM.
+//
+// Covers structs with: primitive + String fields, a NESTED struct field, and
+// a GENERIC type parameter, plus tuple / unit-variant ENUMS. (Struct-payload
+// enum variants and `Hash` are not derived yet.)
+
+#[derive(Clone, PartialEq, Eq, Default, Debug)]
+struct Point { x: i64, y: i64 }
+
+#[derive(Clone, PartialEq, Default, Debug)]
+struct Line { from: Point, to: Point, label: String }
+
+#[derive(Clone, PartialEq, Debug)]
+struct Wrap<T> { value: T, tag: i64 }
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+enum Token { Num(i64), Pair(i64, i64), #[default] End }
+
+fn unit_x() -> Point { Point { x: 1, y: 0 } }
+fn diag() -> Line { Line { from: Point { x: 0, y: 0 }, to: Point { x: 2, y: 2 }, label: "d" } }
+fn wrapped() -> Wrap<i64> { Wrap { value: 7, tag: 1 } }
+fn zero_line() -> Line { Line::default() }
+fn pair() -> Token { Token::Pair(3, 4) }
+
+fn main() {
+    // PartialEq / Eq, including a nested-struct field.
+    println!("{}", unit_x() == unit_x())
+    println!("{}", unit_x() != Point { x: 9, y: 0 })
+    println!("{}", diag() == diag())
+    println!("{}", diag() != Line { from: Point { x: 0, y: 0 }, to: unit_x(), label: "d" })
+
+    // Clone + Default.
+    println!("{}", diag().clone() == diag())
+    let z = Line::default()
+    println!("{} {} '{}'", z.from.x, z.to.y, z.label)
+
+    // Debug (nested + generic).
+    println!("{:?}", unit_x())
+    println!("{:?}", diag())
+    println!("{:?}", wrapped())
+
+    // Generic PartialEq.
+    println!("{}", wrapped() == Wrap { value: 7, tag: 1 })
+    println!("{}", wrapped() != Wrap { value: 8, tag: 1 })
+
+    // Enum: Clone, PartialEq, Debug, Default.
+    println!("{}", pair() == pair().clone())
+    println!("{}", pair() != Token::Num(7))
+    println!("{:?}", pair())
+    println!("{:?}", Token::Num(5))
+    println!("{:?}", Token::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn nested_eq_and_clone() {
+        let d = super::diag()
+        testing::check(d == d.clone(), "nested struct equals its clone")
+    }
+
+    #[test]
+    fn default_is_zero_valued() {
+        let z = super::zero_line()
+        testing::check(z.from.x == 0 && z.to.y == 0, "Default zeroes nested fields")
+    }
+
+    #[test]
+    fn generic_eq() {
+        testing::check(super::wrapped() == super::wrapped(), "generic struct equality")
+    }
+
+    #[test]
+    fn enum_eq_and_default() {
+        testing::check(super::pair() == super::pair().clone(), "enum equals its clone")
+        testing::check(super::pair() != super::Token::Num(1), "different variants are unequal")
+    }
+}

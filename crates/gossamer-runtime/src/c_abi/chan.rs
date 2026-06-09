@@ -532,3 +532,215 @@ impl Drop for GosChan {
         self.not_full.notify_all();
     }
 }
+
+// ---------------------------------------------------------------
+// select { } multiplexing
+// ---------------------------------------------------------------
+//
+// The compiled tiers lower a `select` to a builder: one `gos_rt_select_new`,
+// one `gos_rt_select_arm_*` per arm in source order, then `gos_rt_select_wait`
+// (poll + park), `gos_rt_select_value` (the popped recv payload), and
+// `gos_rt_select_free`. This sequence-of-scalar-calls shape keeps the MIR
+// lowering free of array construction while the transfer stays atomic inside
+// `wait` (no recheck-after-return TOCTOU). Semantics match the VM walker:
+// lowest-index ready arm wins (deterministic source order), a closed+drained
+// recv arm is not ready, and the default arm fires only when nothing else is.
+
+enum SelectArmRt {
+    Recv(*mut GosChan),
+    Send(*mut GosChan, i64),
+    Default,
+}
+
+pub struct SelectBuilder {
+    arms: Vec<SelectArmRt>,
+    last_value: i64,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_select_new(n: i64) -> *mut SelectBuilder {
+    ffi_entry!(std::ptr::null_mut(), {
+        let cap = usize::try_from(n).unwrap_or(0);
+        Box::into_raw(Box::new(SelectBuilder {
+            arms: Vec::with_capacity(cap),
+            last_value: 0,
+        }))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_select_arm_recv(b: *mut SelectBuilder, c: *mut GosChan) {
+    ffi_entry!((), {
+        if b.is_null() {
+            return;
+        }
+        unsafe { &mut *b }.arms.push(SelectArmRt::Recv(c));
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_select_arm_send(b: *mut SelectBuilder, c: *mut GosChan, val: i64) {
+    ffi_entry!((), {
+        if b.is_null() {
+            return;
+        }
+        unsafe { &mut *b }.arms.push(SelectArmRt::Send(c, val));
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_select_arm_default(b: *mut SelectBuilder) {
+    ffi_entry!((), {
+        if b.is_null() {
+            return;
+        }
+        unsafe { &mut *b }.arms.push(SelectArmRt::Default);
+    });
+}
+
+/// Polls the registered arms in source order, parking the goroutine until one
+/// is ready when there is no default arm. Returns the chosen arm's source
+/// index (the default arm's index when nothing else is ready), or -1 on a null
+/// builder. The popped value of a chosen recv arm is stored for retrieval via
+/// `gos_rt_select_value`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
+    ffi_entry!(-1, {
+        if b.is_null() {
+            return -1;
+        }
+        let builder = unsafe { &mut *b };
+        // Snapshot (kind, chan, send_val) so the poll/park loops don't hold a
+        // borrow of `builder` across the `last_value` write. 0=recv, 1=send,
+        // 2=default. Raw pointers are Copy; the snapshot is cheap.
+        let arms: Vec<(u8, *mut GosChan, i64)> = builder
+            .arms
+            .iter()
+            .map(|a| match a {
+                SelectArmRt::Recv(c) => (0u8, *c, 0i64),
+                SelectArmRt::Send(c, v) => (1u8, *c, *v),
+                SelectArmRt::Default => (2u8, std::ptr::null_mut(), 0i64),
+            })
+            .collect();
+        let default_index = arms.iter().position(|(k, _, _)| *k == 2);
+        loop {
+            for (i, (kind, c, v)) in arms.iter().enumerate() {
+                if *kind == 0 {
+                    if c.is_null() {
+                        continue;
+                    }
+                    let chan = unsafe { &**c };
+                    let mut tmp = 0i64;
+                    let mut guard = chan.buf.lock();
+                    if pop_front(
+                        &mut guard,
+                        std::ptr::addr_of_mut!(tmp).cast::<u8>(),
+                        chan.elem_bytes as usize,
+                    ) {
+                        drop(guard);
+                        record_chan_handoff(chan);
+                        wake_one_send(chan);
+                        builder.last_value = tmp;
+                        return i as i64;
+                    }
+                } else if *kind == 1 {
+                    if c.is_null() {
+                        continue;
+                    }
+                    let chan = unsafe { &**c };
+                    let bytes_len = chan.elem_bytes as usize;
+                    let mut guard = chan.buf.lock();
+                    if chan.cap <= 0 || (storage_len(&guard) as i64) < chan.cap {
+                        let send_val = *v;
+                        push_back(
+                            &mut guard,
+                            std::ptr::addr_of!(send_val).cast::<u8>(),
+                            bytes_len,
+                        );
+                        drop(guard);
+                        chan.last_sender
+                            .store(i64::from(crate::race::current_gid()), Ordering::Release);
+                        wake_one_recv(chan);
+                        return i as i64;
+                    }
+                }
+            }
+            if let Some(idx) = default_index {
+                return idx as i64;
+            }
+            // Nothing ready, no default: block until a channel changes, then
+            // re-poll. Mirrors the single-channel recv/send park discipline,
+            // registering on every arm's queue so any sender/receiver wakes us.
+            if gossamer_coro::in_goroutine() {
+                crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
+                    for (kind, c, _) in &arms {
+                        if c.is_null() {
+                            continue;
+                        }
+                        let chan = unsafe { &**c };
+                        if *kind == 0 {
+                            chan.parked_recv.lock().push_back(parker.gid);
+                        } else if *kind == 1 {
+                            chan.parked_send.lock().push_back(parker.gid);
+                        }
+                    }
+                });
+                if let Some(gid) = crate::sched_global::current_gid() {
+                    for (kind, c, _) in &arms {
+                        if c.is_null() {
+                            continue;
+                        }
+                        let chan = unsafe { &**c };
+                        if *kind == 0 {
+                            chan.parked_recv.lock().retain(|g| *g != gid);
+                        } else if *kind == 1 {
+                            chan.parked_send.lock().retain(|g| *g != gid);
+                        }
+                    }
+                }
+            } else {
+                // OS-thread fallback: a select waits on several channels, but a
+                // single condvar wait tracks only one. Bounded-wait on the first
+                // operable channel and re-poll; the 50 ms bound is the
+                // missed-notify backstop, matching the walker's park cadence.
+                let first = arms
+                    .iter()
+                    .find(|(kind, c, _)| *kind != 2 && !c.is_null())
+                    .map(|(_, c, _)| *c);
+                if let Some(c) = first {
+                    let chan = unsafe { &*c };
+                    let mut guard = chan.buf.lock();
+                    chan.not_empty
+                        .wait_for(&mut guard, std::time::Duration::from_millis(50));
+                    drop(guard);
+                } else {
+                    return -1;
+                }
+            }
+        }
+    })
+}
+
+/// Returns the value popped by the most recent `gos_rt_select_wait` recv
+/// outcome on this builder (0 for a send/default outcome or a null builder).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_select_value(b: *mut SelectBuilder) -> i64 {
+    ffi_entry!(0, {
+        if b.is_null() {
+            return 0;
+        }
+        unsafe { &*b }.last_value
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_select_free(b: *mut SelectBuilder) {
+    ffi_entry!((), {
+        if b.is_null() {
+            return;
+        }
+        unsafe {
+            drop(Box::from_raw(b));
+        }
+    });
+}

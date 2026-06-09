@@ -16,7 +16,9 @@
 //! - `sigs/signatures.json` — JSON dump of every binding's module
 //!   + item signature, fed to the resolver / typechecker.
 
-#![forbid(unsafe_code)]
+// `deny` rather than `forbid` so `pid_alive` can opt into its FFI liveness
+// probe via a scoped `#[allow(unsafe_code)]`; nothing else here uses unsafe.
+#![deny(unsafe_code)]
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -1077,18 +1079,44 @@ impl Drop for AdvisoryLock {
     }
 }
 
+// The liveness probe is an unavoidable FFI call (`libc::kill` on unix,
+// `OpenProcess`/`GetExitCodeProcess` on Windows); there is no safe std API
+// for "is this pid alive". Unsafe is contained to this single function.
+#[allow(unsafe_code)]
 fn pid_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        // /proc/<pid> exists ↔ pid is alive on Linux. On non-linux
-        // unix we conservatively say "alive" so we don't steal a
-        // valid lock.
-        if cfg!(target_os = "linux") {
-            return PathBuf::from(format!("/proc/{pid}")).exists();
+        // POSIX signal 0 error-checks without delivering a signal. 0 (alive)
+        // or EPERM (alive but owned by another user) => alive; ESRCH => dead.
+        // Portable across Linux and macOS, unlike a /proc check.
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if rc == 0 {
+            return true;
         }
-        true
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, STILL_ACTIVE,
+        };
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        // Nonexistent pid => dead; any other open failure (e.g. access denied)
+        // => conservatively alive so a live process's lock is never stolen.
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return GetLastError() != ERROR_INVALID_PARAMETER;
+            }
+            let mut code: u32 = 0;
+            let ok = GetExitCodeProcess(h, &mut code);
+            CloseHandle(h);
+            ok != 0 && code == STILL_ACTIVE as u32
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         true

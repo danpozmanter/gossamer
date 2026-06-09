@@ -133,6 +133,10 @@ impl<'a> Builder<'a> {
                         );
                     }
                 }
+                // `return` leaves every enclosing block: run all pending defer
+                // frames (LIFO, innermost first) after the return value is
+                // computed, before the actual Return.
+                self.emit_defers_above(0);
                 self.terminate(Terminator::Return);
                 None
             }
@@ -141,13 +145,14 @@ impl<'a> Builder<'a> {
                 // a loop the resolver/typechecker is supposed to
                 // reject this; if it slips through, fall back to
                 // `Unreachable` rather than emit a dangling jump.
-                let (break_to, result_local) = if let Some(ctx) = self.loop_stack.last_mut() {
-                    ctx.break_used = true;
-                    (ctx.break_to, ctx.result)
-                } else {
-                    self.terminate(Terminator::Unreachable);
-                    return None;
-                };
+                let (break_to, result_local, defer_depth) =
+                    if let Some(ctx) = self.loop_stack.last_mut() {
+                        ctx.break_used = true;
+                        (ctx.break_to, ctx.result, ctx.defer_depth)
+                    } else {
+                        self.terminate(Terminator::Unreachable);
+                        return None;
+                    };
                 if let (Some(value), Some(result)) = (payload, result_local) {
                     if let Some(value_local) = self.lower_expr(value) {
                         self.emit_assign(
@@ -157,11 +162,15 @@ impl<'a> Builder<'a> {
                         );
                     }
                 }
+                // Run the defers of the blocks being exited (loop body and any
+                // nested blocks), but not the loop's enclosing frames.
+                self.emit_defers_above(defer_depth);
                 self.terminate(Terminator::Goto { target: break_to });
                 None
             }
             HirExprKind::Continue => {
                 if let Some(ctx) = self.loop_stack.last().copied() {
+                    self.emit_defers_above(ctx.defer_depth);
                     self.terminate(Terminator::Goto {
                         target: ctx.continue_to,
                     });
@@ -264,24 +273,151 @@ impl<'a> Builder<'a> {
                 Some(self.lower_unit(go_span))
             }
             HirExprKind::Select { arms } => {
-                // Sequential stub: run each arm's side-effects and
-                // then the first arm's body. The real runtime will
-                // pick the first ready channel, but under the
-                // single-task stub we just pretend arm 0 fired.
-                use gossamer_hir::HirSelectOp;
-                let mut result: Option<Local> = None;
-                for (i, arm) in arms.iter().enumerate() {
+                // Real multiplexing via the runtime select builder. The arms
+                // are registered in source order; `gos_rt_select_wait` polls
+                // them (lowest-index ready arm wins) and parks the goroutine
+                // until one is ready unless a default arm exists — matching the
+                // VM walker's `eval_select`. The recv payload rides the same
+                // 8-byte word contract as `gos_rt_chan_recv_option`.
+                use gossamer_hir::{HirPatKind, HirSelectOp};
+                let span = expr.span;
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let unit_ty = self.tcx.unit();
+
+                let n = arms.len() as i128;
+                let builder = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(builder),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_rt_select_new",
+                        args: vec![Operand::Const(ConstValue::Int(n))],
+                    },
+                    span,
+                );
+                for arm in arms {
+                    let d = self.fresh(unit_ty);
                     match &arm.op {
-                        HirSelectOp::Recv { channel, .. } | HirSelectOp::Send { channel, .. } => {
-                            let _ = self.lower_expr(channel);
+                        HirSelectOp::Recv { channel, .. } => {
+                            let ch = self.lower_expr(channel)?;
+                            self.emit_assign(
+                                Place::local(d),
+                                Rvalue::CallIntrinsic {
+                                    name: "gos_rt_select_arm_recv",
+                                    args: vec![
+                                        Operand::Copy(Place::local(builder)),
+                                        Operand::Copy(Place::local(ch)),
+                                    ],
+                                },
+                                span,
+                            );
                         }
-                        HirSelectOp::Default => {}
-                    }
-                    if i == 0 {
-                        result = self.lower_expr(&arm.body);
+                        HirSelectOp::Send { channel, value } => {
+                            let ch = self.lower_expr(channel)?;
+                            let v = self.lower_expr(value)?;
+                            self.emit_assign(
+                                Place::local(d),
+                                Rvalue::CallIntrinsic {
+                                    name: "gos_rt_select_arm_send",
+                                    args: vec![
+                                        Operand::Copy(Place::local(builder)),
+                                        Operand::Copy(Place::local(ch)),
+                                        Operand::Copy(Place::local(v)),
+                                    ],
+                                },
+                                span,
+                            );
+                        }
+                        HirSelectOp::Default => {
+                            self.emit_assign(
+                                Place::local(d),
+                                Rvalue::CallIntrinsic {
+                                    name: "gos_rt_select_arm_default",
+                                    args: vec![Operand::Copy(Place::local(builder))],
+                                },
+                                span,
+                            );
+                        }
                     }
                 }
-                result.or_else(|| Some(self.lower_unit(expr.span)))
+                let idx = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(idx),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_rt_select_wait",
+                        args: vec![Operand::Copy(Place::local(builder))],
+                    },
+                    span,
+                );
+                let recv_val = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(recv_val),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_rt_select_value",
+                        args: vec![Operand::Copy(Place::local(builder))],
+                    },
+                    span,
+                );
+                let freed = self.fresh(unit_ty);
+                self.emit_assign(
+                    Place::local(freed),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_rt_select_free",
+                        args: vec![Operand::Copy(Place::local(builder))],
+                    },
+                    span,
+                );
+
+                let result = self.fresh(expr.ty);
+                let join = self.new_block(span);
+                let arm_blocks: Vec<BlockId> = arms.iter().map(|_| self.new_block(span)).collect();
+                let switch_arms: Vec<(i128, BlockId)> = arm_blocks
+                    .iter()
+                    .enumerate()
+                    .map(|(i, b)| (i as i128, *b))
+                    .collect();
+                self.terminate(Terminator::SwitchInt {
+                    discriminant: Operand::Copy(Place::local(idx)),
+                    arms: switch_arms,
+                    default: join,
+                });
+                for (arm, block) in arms.iter().zip(arm_blocks) {
+                    self.set_current(block);
+                    self.push_scope();
+                    if let HirSelectOp::Recv { pattern, .. } = &arm.op {
+                        match &pattern.kind {
+                            HirPatKind::Binding { name, .. } => {
+                                self.bind_local(&name.name, recv_val);
+                            }
+                            HirPatKind::Wildcard => {}
+                            _ => panic!(
+                                "MIR lower: select recv arm has an unsupported pattern \
+                                 shape; bind the received value to a name or `_`"
+                            ),
+                        }
+                    }
+                    if let Some(v) = self.lower_expr(&arm.body) {
+                        use gossamer_types::TyKind;
+                        let arm_ty = self.locals[v.0 as usize].ty;
+                        let result_kind = self.tcx.kind_of(self.locals[result.0 as usize].ty);
+                        let arm_kind = self.tcx.kind_of(arm_ty);
+                        if matches!(result_kind, TyKind::Var(_) | TyKind::Error | TyKind::Never)
+                            && !matches!(arm_kind, TyKind::Var(_) | TyKind::Error | TyKind::Never)
+                        {
+                            self.locals[result.0 as usize].ty = arm_ty;
+                        }
+                        self.emit_assign(
+                            Place::local(result),
+                            Rvalue::Use(Operand::Copy(Place::local(v))),
+                            span,
+                        );
+                    }
+                    if self.current.is_some() {
+                        self.terminate(Terminator::Goto { target: join });
+                    }
+                    self.pop_scope();
+                }
+                self.set_current(join);
+                Some(result)
             }
             HirExprKind::Range {
                 start,
@@ -894,6 +1030,52 @@ impl<'a> Builder<'a> {
                 return Some(dest);
             }
             return Some(cmp);
+        }
+        // Struct / enum equality: route `==` / `!=` to a `Type::eq`
+        // method when one exists (synthesized by `#[derive(PartialEq)]`
+        // or hand-written). Without this an aggregate `==` pointer-
+        // compares, so two distinct allocations of equal values differ.
+        if matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne) {
+            let sname = self
+                .adt_dispatch_name(lhs.ty)
+                .or_else(|| self.adt_dispatch_name(self.locals[lhs_local.0 as usize].ty))
+                .or_else(|| self.adt_dispatch_name(rhs.ty))
+                .or_else(|| self.adt_dispatch_name(self.locals[rhs_local.0 as usize].ty))
+                .or_else(|| self.local_struct.get(&lhs_local).cloned())
+                .or_else(|| self.local_struct.get(&rhs_local).cloned())
+                .or_else(|| self.struct_name_from_expr(lhs))
+                .or_else(|| self.struct_name_from_expr(rhs));
+            if let Some(sname) = sname {
+                let mangled = format!("{sname}::eq");
+                if self.impl_methods.contains_key(&mangled) {
+                    let bool_ty = self.tcx.bool_ty();
+                    let cmp = self.fresh(bool_ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(mangled)),
+                        args: vec![
+                            Operand::Copy(Place::local(lhs_local)),
+                            Operand::Copy(Place::local(rhs_local)),
+                        ],
+                        destination: Place::local(cmp),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    if matches!(op, HirBinaryOp::Ne) {
+                        let dest = self.fresh(bool_ty);
+                        self.emit_assign(
+                            Place::local(dest),
+                            Rvalue::UnaryOp {
+                                op: UnOp::Not,
+                                operand: Operand::Copy(Place::local(cmp)),
+                            },
+                            span,
+                        );
+                        return Some(dest);
+                    }
+                    return Some(cmp);
+                }
+            }
         }
         // When the HIR type is still an inference variable, ground the
         // result type from the operands so the LLVM backend uses the

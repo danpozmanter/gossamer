@@ -290,11 +290,12 @@ impl Child {
         send_signal(self.pid as i32, sig, false)
     }
 
-    /// Sends a signal to the whole process group. Requires
-    /// `Command::process_group(true)`; otherwise behaves like
-    /// `signal()` on Unix. Windows uses
-    /// `GenerateConsoleCtrlEvent` for Ctrl-Break when the group flag
-    /// is set, and falls back to `TerminateProcess` otherwise.
+    /// Sends a signal to the whole process group. On Unix this targets the
+    /// process group (`kill(-pid, …)`) when the child was started with
+    /// `Command::process_group(true)`, otherwise it behaves like `signal()`.
+    /// Windows has no process-group signalling here: the group flag is ignored
+    /// and the lead process is terminated via `TerminateProcess`, so child
+    /// subprocesses are not reached.
     pub fn kill_group(&mut self) -> Result<(), IoError> {
         send_signal(self.pid as i32, Signal::Term, self.process_group)
     }

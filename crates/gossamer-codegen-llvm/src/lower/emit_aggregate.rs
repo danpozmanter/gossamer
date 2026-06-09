@@ -123,7 +123,15 @@ impl<'a> Lowerer<'a> {
                 // advancing `slot_idx`.
                 continue;
             }
-            if op_slots == 1 {
+            // A struct/tuple field whose own value is a single-slot
+            // aggregate (e.g. a nested `struct Inner { tag: i64 }`) must be
+            // copied by value into the parent's slot — `lower_operand` of an
+            // aggregate place yields its *address*, so the scalar-store branch
+            // would embed a pointer and the parent would read it back inline as
+            // garbage. Route 1-slot aggregate copies through the memcpy branch.
+            let op_is_aggregate_copy =
+                matches!(operand, Operand::Copy(_)) && is_aggregate(self.tcx, op_ty);
+            if op_slots == 1 && !op_is_aggregate_copy {
                 let v = self.lower_operand(operand)?;
                 let op_llvm = self.operand_llvm_ty(operand);
                 let dst = self.fresh();

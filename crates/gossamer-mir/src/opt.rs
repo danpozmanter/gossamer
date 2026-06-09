@@ -170,6 +170,16 @@ fn try_build_inlineable(body: &Body) -> Option<InlineableCallee> {
         if matches!(rvalue, Rvalue::CallIntrinsic { .. }) {
             return None;
         }
+        // Don't inline a callee that builds an aggregate (struct / tuple /
+        // array). Inlining splices the aggregate's construction into the
+        // caller and remaps the return slot, but the caller's downstream
+        // *nested* field access (`a.inner.tag` on the inlined result) then
+        // resolves its leaf type against a remapped local whose Adt type is
+        // lost — the field read defaults to a pointer and crashes. Such
+        // callees stay as typed `Call`s, where the return type is explicit.
+        if matches!(rvalue, Rvalue::Aggregate { .. } | Rvalue::Repeat { .. }) {
+            return None;
+        }
     }
     // Terminator of bb0: either Return or Goto{bb1}.
     match &bb0.terminator {

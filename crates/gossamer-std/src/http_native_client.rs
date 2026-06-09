@@ -366,14 +366,17 @@ impl NativeClient {
             }
         }
         let addr = format!("{host}:{port}");
-        let tcp = TcpStream::connect_timeout(
-            &addr.parse().or_else(|_| {
-                use std::net::ToSocketAddrs;
-                addr.to_socket_addrs()
-                    .map_err(|e| NativeError::Io(format!("dns: {e}")))?
-                    .next()
-                    .ok_or_else(|| NativeError::Io("no addresses".into()))
-            })?,
+        // Resolve every candidate and race them (RFC 8305 happy-eyeballs) so a
+        // filtered/unreachable first address (commonly an AAAA record) falls
+        // through to the next instead of stalling for the whole timeout.
+        use std::net::ToSocketAddrs;
+        let candidates: Vec<std::net::SocketAddr> = addr
+            .to_socket_addrs()
+            .map_err(|e| NativeError::Io(format!("dns: {e}")))?
+            .collect();
+        let tcp = crate::net::connect_happy_eyeballs_std(
+            &candidates,
+            Duration::from_millis(300),
             self.inner.config.timeout,
         )
         .map_err(|e| NativeError::Io(format!("connect: {e}")))?;

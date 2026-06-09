@@ -187,6 +187,11 @@ pub enum MapKey {
     Char(char),
     /// String key (stored inline when ≤ 7 bytes — see [`SmolStr`]).
     Str(SmolStr),
+    /// Aggregate key — struct / tuple / enum variant — hashed by *value*:
+    /// the type/variant name plus each field's `MapKey`, recursively. Two
+    /// equal-valued aggregates at distinct allocations produce equal keys, so
+    /// `HashMap<Point, _>` keys by content the way the compiled tier does.
+    Agg(&'static str, Box<[MapKey]>),
 }
 
 impl MapKey {
@@ -198,7 +203,25 @@ impl MapKey {
             Value::Bool(b) => Self::Bool(*b),
             Value::Int(n) => Self::Int(*n),
             Value::Char(c) => Self::Char(*c),
+            // Key floats by their bit pattern — matches the compiled tier,
+            // which hashes the raw 8 bytes.
+            Value::Float(f) => Self::Int(f.to_bits() as i64),
             Value::String(s) => Self::Str(s.clone()),
+            Value::Tuple(vals) => Self::Agg("", vals.iter().map(Self::from_value).collect()),
+            Value::Array(vals) => Self::Agg("[]", vals.iter().map(Self::from_value).collect()),
+            Value::IntArray(ns) => Self::Agg("[]", ns.iter().map(|n| Self::Int(*n)).collect()),
+            Value::Struct(inner) => Self::Agg(
+                inner.name,
+                inner
+                    .fields
+                    .iter()
+                    .map(|(_, fv)| Self::from_value(fv))
+                    .collect(),
+            ),
+            Value::Variant(inner) => Self::Agg(
+                inner.name,
+                inner.fields.iter().map(Self::from_value).collect(),
+            ),
             _ => Self::NonHashable,
         }
     }
@@ -212,7 +235,10 @@ impl MapKey {
             Self::Int(n) => Value::Int(*n),
             Self::Char(c) => Value::Char(*c),
             Self::Str(s) => Value::String(s.clone()),
-            Self::NonHashable => Value::Unit,
+            // Aggregate keys don't round-trip to their original typed shape
+            // (field names / element types aren't retained); `keys()` over a
+            // struct-keyed map is unsupported, matching the compiled tier.
+            Self::NonHashable | Self::Agg(..) => Value::Unit,
         }
     }
 }

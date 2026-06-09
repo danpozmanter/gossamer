@@ -33,8 +33,16 @@ env:
 
 jobs:
   asan:
-    name: ASan (Linux nightly)
-    runs-on: ubuntu-latest
+    name: ASan (${{ matrix.os }} nightly)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -42,14 +50,30 @@ jobs:
           toolchain: nightly-2026-04-14
           components: rust-src
       - run: rustup set profile minimal
-      - name: Install LLVM
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y llvm-18 clang-18
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          set -euo pipefail
+          brew install llvm@18
+          prefix="$(brew --prefix llvm@18)"
+          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=$prefix/bin/llc"      >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-asan
-      # ASan + leak detection. We skip the LLVM-build crates (they
-      # shell out to opt/llc which produce noise irrelevant to
-      # the unsafe surface we're hardening).
+          prefix-key: v1-asan-${{ matrix.os }}
+      # ASan catches the heap-corruption / use-after-free / double-free class
+      # the RC migration can regress. Running it on macOS as well as Linux
+      # closes the gap where `MALLOC_CHECK_` (glibc-only) gave that coverage on
+      # Linux alone — ASan is the portable, stronger equivalent. LeakSanitizer
+      # is Linux-only, so `detect_leaks` is left at its platform default. We
+      # skip the LLVM-build crates (they shell out to opt/llc, noise unrelated
+      # to the unsafe surface we're hardening).
       - name: cargo test under ASan
         env:
           RUSTFLAGS: "-Z sanitizer=address"
@@ -58,7 +82,7 @@ jobs:
         run: |
           cargo +nightly-2026-04-14 test \
             -Z build-std \
-            --target x86_64-unknown-linux-gnu \
+            --target ${{ matrix.target }} \
             --lib \
             -p gossamer-runtime \
             -p gossamer-interp \

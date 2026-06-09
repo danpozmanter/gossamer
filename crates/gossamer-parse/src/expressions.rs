@@ -1035,8 +1035,24 @@ impl Parser<'_> {
                         body,
                     });
                 } else {
+                    // Not `pattern = chan.recv()`: try a send arm
+                    // `chan.send(value) => body`.
                     self.tokens.rewind(checkpoint);
-                    self.bump();
+                    let raw = self.parse_expr_no_assign();
+                    if let Some((channel, value)) = strip_send_call(raw) {
+                        self.expect_punct(Punct::FatArrow, "after select send");
+                        let body = self.parse_expr();
+                        arms.push(gossamer_ast::SelectArm {
+                            op: gossamer_ast::SelectOp::Send { channel, value },
+                            body,
+                        });
+                    } else if self.eat_punct(Punct::FatArrow) {
+                        // Unrecognised arm head; consume its body to keep
+                        // forward progress instead of desyncing the parser.
+                        let _ = self.parse_expr();
+                    } else {
+                        self.bump();
+                    }
                 }
             }
             if !self.eat_punct(Punct::Comma) {
@@ -1730,6 +1746,24 @@ fn strip_recv_call(expr: Expr) -> Expr {
         }
     }
     expr
+}
+
+/// Splits a `chan.send(value)` method call into its `(channel, value)` parts
+/// for a `select` send arm. Returns `None` when the expression is not a
+/// single-argument `.send(...)` call.
+fn strip_send_call(expr: Expr) -> Option<(Expr, Expr)> {
+    if let ExprKind::MethodCall {
+        receiver,
+        name,
+        generics,
+        args,
+    } = &expr.kind
+    {
+        if name.name == "send" && generics.is_empty() && args.len() == 1 {
+            return Some(((**receiver).clone(), args[0].clone()));
+        }
+    }
+    None
 }
 
 /// Parses `:.N` or `name:.N` precision specs out of a `{...}` body.

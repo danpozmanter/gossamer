@@ -1212,6 +1212,19 @@ fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Float(x), Value::Float(y)) => x == y,
         (Value::Char(x), Value::Char(y)) => x == y,
         (Value::String(x), Value::String(y)) => x == y,
+        // Enum variants (incl. Option / Result) compare structurally: same
+        // variant, same payload. The compiled tiers already do this; without
+        // it `Some(5) == Some(5)` was `false` on the VM, and a derived enum's
+        // `==` (which routes to a field-wise `eq`) couldn't be matched.
+        (Value::Variant(va), Value::Variant(vb)) => {
+            va.name == vb.name
+                && va.fields.len() == vb.fields.len()
+                && va
+                    .fields
+                    .iter()
+                    .zip(vb.fields.iter())
+                    .all(|(x, y)| values_equal(x, y))
+        }
         _ => false,
     }
 }

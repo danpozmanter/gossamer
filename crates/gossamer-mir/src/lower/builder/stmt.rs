@@ -51,9 +51,14 @@ use super::Builder;
 impl<'a> Builder<'a> {
     pub(crate) fn lower_block(&mut self, block: &HirBlock) -> Option<Local> {
         self.push_scope();
+        self.defer_stack.push(Vec::new());
         for stmt in &block.stmts {
             self.lower_stmt(stmt);
             if self.current.is_none() {
+                // Diverged mid-block (a `return` / `break` / `continue` inside
+                // a statement). That construct already emitted the defers it
+                // needed; drop this frame without re-emitting.
+                self.defer_stack.pop();
                 self.pop_scope();
                 return None;
             }
@@ -75,6 +80,14 @@ impl<'a> Builder<'a> {
                 }
             }
         };
+        // Block-scoped `defer`: on a normal (non-diverging) exit, run this
+        // block's deferred expressions LIFO after the block's value is
+        // computed. A diverging tail (e.g. `return`) leaves `current` None and
+        // has already emitted the frames itself.
+        let frame = self.defer_stack.pop().unwrap_or_default();
+        if self.current.is_some() {
+            self.emit_defer_frame(&frame);
+        }
         self.pop_scope();
         if self.current.is_none() { None } else { result }
     }
@@ -438,10 +451,14 @@ impl<'a> Builder<'a> {
             HirStmtKind::Expr { expr, .. } => {
                 let _ = self.lower_expr(expr);
             }
-            HirStmtKind::Defer(_) => {
-                // Deferred calls are lowered to no-ops at the MIR
-                // level for now; full support lands with the
-                // runtime's unwind-and-run machinery.
+            HirStmtKind::Defer(expr) => {
+                // Register for block-scoped execution: the expression runs
+                // (LIFO) when control leaves the enclosing block, emitted by
+                // `lower_block` (normal exit) or by `return` / `break` /
+                // `continue` (the exit edges).
+                if let Some(frame) = self.defer_stack.last_mut() {
+                    frame.push(expr.clone());
+                }
             }
             HirStmtKind::Go(expr) => {
                 // `go f(args);` — spawn `f` on a fresh OS

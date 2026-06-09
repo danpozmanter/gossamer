@@ -497,71 +497,78 @@ impl TcpStream {
         stagger: Duration,
         timeout: Duration,
     ) -> Result<Self, IoError> {
-        use std::sync::mpsc;
-        if addrs.is_empty() {
-            return Err(IoError::from_std(
-                std::io::Error::new(ErrorKind::InvalidInput, "no addresses"),
-                "happy_eyeballs",
+        let stream = connect_happy_eyeballs_std(addrs, stagger, timeout)
+            .map_err(|e| IoError::from_std(e, "happy_eyeballs"))?;
+        Self::from_std(stream)
+    }
+}
+
+/// RFC 8305-style staggered parallel connect over `std::net::TcpStream`,
+/// returning the first established connection. Shared by
+/// [`TcpStream::connect_happy_eyeballs`] and the native HTTP client so both
+/// fall through from an unreachable first address (commonly a filtered AAAA)
+/// to the next candidate instead of stalling for the whole timeout.
+pub(crate) fn connect_happy_eyeballs_std(
+    addrs: &[SocketAddr],
+    stagger: Duration,
+    timeout: Duration,
+) -> std::io::Result<StdTcpStream> {
+    use std::sync::mpsc;
+    if addrs.is_empty() {
+        return Err(std::io::Error::new(ErrorKind::InvalidInput, "no addresses"));
+    }
+    // Interleave v6 and v4 candidates (Go's policy: prefer v6 first when
+    // available, then alternate).
+    let mut v6: Vec<SocketAddr> = addrs.iter().copied().filter(|a| a.is_ipv6()).collect();
+    let mut v4: Vec<SocketAddr> = addrs.iter().copied().filter(|a| a.is_ipv4()).collect();
+    let mut order: Vec<SocketAddr> = Vec::with_capacity(addrs.len());
+    while !v6.is_empty() || !v4.is_empty() {
+        if !v6.is_empty() {
+            order.push(v6.remove(0));
+        }
+        if !v4.is_empty() {
+            order.push(v4.remove(0));
+        }
+    }
+
+    let (tx, rx) = mpsc::channel::<Result<StdTcpStream, std::io::Error>>();
+    let per_attempt_timeout = timeout;
+    let started = std::time::Instant::now();
+    for (i, addr) in order.iter().copied().enumerate() {
+        let stagger_for_i = stagger.checked_mul(i as u32).unwrap_or(Duration::ZERO);
+        let tx_for_attempt = tx.clone();
+        let started_for_attempt = started;
+        std::thread::spawn(move || {
+            if !stagger_for_i.is_zero() {
+                std::thread::sleep(stagger_for_i);
+            }
+            let elapsed = started_for_attempt.elapsed();
+            if elapsed >= per_attempt_timeout {
+                return;
+            }
+            let remaining = per_attempt_timeout - elapsed;
+            let result = StdTcpStream::connect_timeout(&addr, remaining);
+            let _ = tx_for_attempt.send(result);
+        });
+    }
+    drop(tx);
+
+    let deadline = started + timeout;
+    loop {
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return Err(std::io::Error::new(
+                ErrorKind::TimedOut,
+                "happy_eyeballs deadline",
             ));
         }
-        // Interleave v6 and v4 candidates (Go's policy: prefer
-        // v6 first when available, then alternate).
-        let mut v6: Vec<SocketAddr> = addrs.iter().copied().filter(|a| a.is_ipv6()).collect();
-        let mut v4: Vec<SocketAddr> = addrs.iter().copied().filter(|a| a.is_ipv4()).collect();
-        let mut order: Vec<SocketAddr> = Vec::with_capacity(addrs.len());
-        while !v6.is_empty() || !v4.is_empty() {
-            if !v6.is_empty() {
-                order.push(v6.remove(0));
+        match rx.recv_timeout(deadline - now) {
+            Ok(Ok(stream)) => return Ok(stream),
+            Ok(Err(_)) => continue, // try next
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(std::io::Error::new(ErrorKind::Other, "all attempts failed"));
             }
-            if !v4.is_empty() {
-                order.push(v4.remove(0));
-            }
-        }
-
-        let (tx, rx) = mpsc::channel::<Result<StdTcpStream, std::io::Error>>();
-        let per_attempt_timeout = timeout;
-        let started = std::time::Instant::now();
-        let mut handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
-        for (i, addr) in order.iter().copied().enumerate() {
-            let stagger_for_i = stagger.checked_mul(i as u32).unwrap_or(Duration::ZERO);
-            let tx_for_attempt = tx.clone();
-            let started_for_attempt = started;
-            let handle = std::thread::spawn(move || {
-                if !stagger_for_i.is_zero() {
-                    std::thread::sleep(stagger_for_i);
-                }
-                let elapsed = started_for_attempt.elapsed();
-                if elapsed >= per_attempt_timeout {
-                    return;
-                }
-                let remaining = per_attempt_timeout - elapsed;
-                let result = StdTcpStream::connect_timeout(&addr, remaining);
-                let _ = tx_for_attempt.send(result);
-            });
-            handles.push(handle);
-        }
-        drop(tx);
-
-        let deadline = started + timeout;
-        loop {
-            let now = std::time::Instant::now();
-            if now >= deadline {
-                return Err(IoError::from_std(
-                    std::io::Error::new(ErrorKind::TimedOut, "happy_eyeballs deadline"),
-                    "happy_eyeballs",
-                ));
-            }
-            match rx.recv_timeout(deadline - now) {
-                Ok(Ok(stream)) => return Self::from_std(stream),
-                Ok(Err(_)) => continue, // try next
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(IoError::from_std(
-                        std::io::Error::new(ErrorKind::Other, "all attempts failed"),
-                        "happy_eyeballs",
-                    ));
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
         }
     }
 }

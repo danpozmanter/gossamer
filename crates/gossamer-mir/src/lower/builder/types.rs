@@ -89,6 +89,7 @@ impl<'a> Builder<'a> {
             grows_bindings: std::collections::HashSet::new(),
             grows_elem_ty: HashMap::new(),
             region_depth: 0,
+            defer_stack: Vec::new(),
         }
     }
 
@@ -205,6 +206,35 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Bare type name of an Adt for method dispatch (`Type::method`), seeing
+    /// through `&`. Unlike `struct_name_of` this also names user enums (which
+    /// aren't in `struct_defs`); the caller gates on the mangled method
+    /// actually existing in `impl_methods`, so naming a stdlib Adt is harmless.
+    pub(crate) fn adt_dispatch_name(&self, ty: Ty) -> Option<String> {
+        use gossamer_types::TyKind;
+        if let Some(name) = self.struct_name_of(ty) {
+            return Some(name);
+        }
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Adt { .. } => {
+                    let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
+                    let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
+                    // `adt#N` is the debug placeholder for an Adt whose name the
+                    // tcx never registered (user enums). Reject it so the caller
+                    // falls back to the `local_struct` tag, which has the name.
+                    if bare.starts_with("adt#") {
+                        return None;
+                    }
+                    return Some(bare.to_string());
+                }
+                TyKind::Ref { inner, .. } => cur = *inner,
+                _ => return None,
+            }
+        }
+    }
+
     pub(crate) fn router_bare_variant(symbol: &str) -> Option<&'static str> {
         match symbol {
             "gos_rt_router_get" => Some("gos_rt_router_get_fn"),
@@ -305,6 +335,82 @@ impl<'a> Builder<'a> {
                 }
                 _ => return None,
             }
+        }
+    }
+
+    /// `(K, V)` of a `HashMap<K, V>` (seeing through a leading `&`).
+    pub(crate) fn hash_map_kv_tys(&self, ty: Ty) -> Option<(Ty, Ty)> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::HashMap { key, value } => return Some((*key, *value)),
+                _ => return None,
+            }
+        }
+    }
+
+    /// True when `ty` (through a leading `&`) is a struct or tuple — the only
+    /// shapes that route through the content-hashing map key path. Bare
+    /// scalars / `String` / enums keep their own paths.
+    pub(crate) fn is_aggregate_key(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Tuple(_) => return true,
+                TyKind::Adt { .. } => return self.struct_name_of(cur).is_some(),
+                _ => return false,
+            }
+        }
+    }
+
+    /// Per-slot layout descriptor for a struct / tuple used as a map key, or
+    /// `None` if the type can't be content-keyed. Each character describes one
+    /// 8-byte slot of the aggregate's flat buffer: `'s'` = scalar (read
+    /// inline), `'S'` = `String` pointer (dereferenced and folded by content).
+    /// Nested all-scalar / String structs inline their slots, so the
+    /// descriptor flattens them. `Vec` / nested-enum fields aren't keyable.
+    pub(crate) fn key_descriptor(&self, ty: Ty) -> Option<String> {
+        let mut out = String::new();
+        if self.append_key_descriptor(ty, &mut out) && !out.is_empty() {
+            Some(out)
+        } else {
+            None
+        }
+    }
+
+    fn append_key_descriptor(&self, ty: Ty, out: &mut String) -> bool {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Ref { inner, .. } => self.append_key_descriptor(*inner, out),
+            TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(_) => {
+                out.push('s');
+                true
+            }
+            TyKind::String => {
+                out.push('S');
+                true
+            }
+            TyKind::Tuple(elems) => {
+                let elems = elems.clone();
+                !elems.is_empty() && elems.iter().all(|e| self.append_key_descriptor(*e, out))
+            }
+            TyKind::Adt { def, .. } => {
+                if self.struct_name_of(ty).is_none() {
+                    return false;
+                }
+                let fields = self.tcx.struct_field_tys(*def).map(<[Ty]>::to_vec);
+                match fields {
+                    Some(fields) if !fields.is_empty() => {
+                        fields.iter().all(|f| self.append_key_descriptor(*f, out))
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
         }
     }
 
@@ -850,6 +956,11 @@ impl<'a> Builder<'a> {
             HirExprKind::Path { segments, .. } => {
                 let first = segments.first()?;
                 let local = self.lookup_local(&first.name)?;
+                // A variant constructor's type is left a `Var`, so recover the
+                // struct / enum name from the `local_struct` tag first.
+                if let Some(name) = self.local_struct.get(&local).cloned() {
+                    return Some(name);
+                }
                 let ty = self.locals.get(local.0 as usize)?.ty;
                 self.struct_name_of(ty)
             }

@@ -45,6 +45,12 @@ else
     BIN_DIR="$HOME/.local/bin"
 fi
 
+# `gos build` links user programs against the runtime static archive. It is
+# resolved at link time relative to the `gos` binary as `<bin>/../lib/`
+# (see find_runtime_lib in gossamer-cli), so install it into the sibling lib/.
+LIB_DIR="$(dirname "$BIN_DIR")/lib"
+RUNTIME_LIB="libgossamer_runtime.a"
+
 uname_s=$(uname -s 2>/dev/null || echo unknown)
 uname_m=$(uname -m 2>/dev/null || echo unknown)
 
@@ -93,6 +99,21 @@ install_file() {
     fi
 }
 
+install_lib() {
+    src="$1"
+    dest="$2"
+    if [ -w "$(dirname "$dest")" ]; then
+        cp "$src" "$dest"
+        chmod 644 "$dest"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo cp "$src" "$dest"
+        sudo chmod 644 "$dest"
+    else
+        echo "gossamer-install: cannot write to $dest and sudo not available" >&2
+        exit 1
+    fi
+}
+
 ensure_dir() {
     dir="$1"
     if [ -d "$dir" ]; then
@@ -119,6 +140,11 @@ if [ -f "$script_dir/gos" ]; then
     ensure_dir "$BIN_DIR"
     install_file "$script_dir/gos" "$BIN_DIR/gos"
     printf 'Installed gos to %s\n' "$BIN_DIR/gos"
+    if [ -f "$script_dir/$RUNTIME_LIB" ]; then
+        ensure_dir "$LIB_DIR"
+        install_lib "$script_dir/$RUNTIME_LIB" "$LIB_DIR/$RUNTIME_LIB"
+        printf 'Installed %s to %s\n' "$RUNTIME_LIB" "$LIB_DIR/$RUNTIME_LIB"
+    fi
     "$BIN_DIR/gos" --version 2>/dev/null || true
     exit 0
 fi
@@ -176,6 +202,10 @@ fi
 
 ensure_dir "$BIN_DIR"
 install_file "$extracted_dir/gos" "$BIN_DIR/gos"
+if [ -f "$extracted_dir/$RUNTIME_LIB" ]; then
+    ensure_dir "$LIB_DIR"
+    install_lib "$extracted_dir/$RUNTIME_LIB" "$LIB_DIR/$RUNTIME_LIB"
+fi
 
 printf 'Installed gos %s to %s\n' "$TAG" "$BIN_DIR/gos"
 case ":$PATH:" in

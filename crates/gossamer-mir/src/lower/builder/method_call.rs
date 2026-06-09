@@ -358,6 +358,18 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        // `m.insert/get/contains` on a HashMap keyed by a flat struct or
+        // tuple: hash the key's content bytes (the VM value-keys; the compiled
+        // tier would otherwise use the key's pointer and miss on a distinct
+        // allocation of an equal value).
+        if matches!(
+            method.name.as_str(),
+            "insert" | "get" | "contains_key" | "contains"
+        ) && let Some(local) =
+            self.try_lower_struct_key_map_op(receiver, method.name.as_str(), args, span)
+        {
+            return Some(local);
+        }
         // `b.push_str(s)` on an owned `String` receiver. The runtime
         // models gos `String` as `*const c_char` (immutable
         // nul-terminated bytes), so true in-place mutation isn't
@@ -1897,12 +1909,24 @@ impl<'a> Builder<'a> {
         // tree-walker's qualified-method lookup so user code can
         // build natively without rewriting every method as a free
         // function.
-        let struct_name = self.struct_name_of(receiver_ty).or_else(|| {
-            self.local_struct
-                .get(&receiver_local)
-                .cloned()
-                .or_else(|| self.struct_name_from_expr(receiver))
-        });
+        let struct_name = self
+            .struct_name_of(receiver_ty)
+            .or_else(|| {
+                self.local_struct
+                    .get(&receiver_local)
+                    .cloned()
+                    .or_else(|| self.struct_name_from_expr(receiver))
+            })
+            .or_else(|| {
+                // Enum receivers aren't in `struct_defs`; dispatch `e.method()`
+                // to `Enum::method` when that impl method actually exists (so a
+                // derived `clone`/`eq`/`fmt` on an enum resolves instead of
+                // emitting an undefined bare `@method`).
+                self.adt_dispatch_name(receiver_ty).filter(|n| {
+                    self.impl_methods
+                        .contains_key(&format!("{n}::{}", method.name))
+                })
+            });
         if let Some(sname) = struct_name {
             let mangled = format!("{}::{}", sname, method.name);
             // Pin a sensible destination type if HIR left it

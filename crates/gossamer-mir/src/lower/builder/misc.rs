@@ -175,6 +175,7 @@ impl<'a> Builder<'a> {
             break_to: exit,
             result: None,
             break_used: false,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -379,6 +380,7 @@ impl<'a> Builder<'a> {
             break_to: exit,
             result: None,
             break_used: false,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -632,6 +634,7 @@ impl<'a> Builder<'a> {
             break_to: exit,
             result: None,
             break_used: false,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -739,6 +742,7 @@ impl<'a> Builder<'a> {
             break_to: exit,
             result: None,
             break_used: false,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -914,6 +918,7 @@ impl<'a> Builder<'a> {
             break_to: exit,
             result: None,
             break_used: false,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -1019,6 +1024,7 @@ impl<'a> Builder<'a> {
             break_to: exit,
             result: None,
             break_used: false,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();

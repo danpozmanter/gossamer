@@ -257,3 +257,10 @@ if [[ $run_fuzz -eq 1 ]] && command -v cargo-fuzz >/dev/null 2>&1 && rustup tool
 elif [[ $run_fuzz -eq 1 ]]; then
     echo "fuzz smoke skipped (need nightly toolchain + 'cargo install cargo-fuzz')"
 fi
+
+# `set -e` aborts on the first failing step, so reaching here means every gate
+# that ran passed. Print an explicit terminal banner: a non-zero exit already
+# signals failure, but piping this script (e.g. `./check.sh | tail`) discards
+# its exit code, so the banner is the in-stream success/failure signal.
+echo
+echo "check.sh: ALL GATES PASSED"

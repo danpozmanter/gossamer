@@ -1,0 +1,31 @@
+// Regression: an array literal bound without a `[T]` (Vec) annotation is kept
+// as an inline fixed array, but passing it as a `&[T]` slice parameter (by
+// `&var` or as a `&[literal]`) must coerce it to a GosVec. Before the fix the
+// call-site coercion only fired for by-value `[T]`/`Vec` params and skipped
+// every `&[T]` (`Ref { Slice }`) parameter, so the callee read the inline flat
+// buffer as a GosVec header and returned garbage / segfaulted on the compiled
+// tiers, while the VM read it correctly.
+
+fn total(xs: &[i64]) -> i64 {
+    let mut t = 0
+    for x in xs {
+        t += *x
+    }
+    t
+}
+
+fn first_gt(xs: &[i64], n: i64) -> i64 {
+    for x in xs {
+        if *x > n {
+            return *x
+        }
+    }
+    -1
+}
+
+fn main() {
+    let xs = [10, 20, 7]
+    println!("{}", total(&xs))
+    println!("{}", total(&[1, 2, 3, 4]))
+    println!("{}", first_gt(&xs, 15))
+}

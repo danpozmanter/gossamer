@@ -64,6 +64,13 @@ pub unsafe extern "C" fn gos_rt_panic(msg: *const c_char) {
         // converted the panic into a typed Err.
         std::panic::panic_any(text);
     }
+    // Fatal main-goroutine panic. Flush the runtime's line-buffered stdout
+    // before aborting — exactly as `gos_rt_exit` does — so any output emitted
+    // before the panic survives; `std::process::abort` otherwise skips the
+    // atexit/stdio flush and the buffered bytes are lost.
+    unsafe {
+        gos_rt_flush_stdout();
+    }
     std::process::abort();
 }
 

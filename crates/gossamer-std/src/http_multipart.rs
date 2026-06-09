@@ -618,7 +618,7 @@ impl<'a> FileSink<'a> {
         }
         name.push_str(".tmp");
         let path = dir.join(name);
-        let file = create_tempfile_0600(&path)?;
+        let file = create_private_tempfile(&path)?;
         // Flush any bytes already buffered.
         let mut f = file;
         if !self.mem.is_empty() {
@@ -665,7 +665,7 @@ impl BodySink for FileSink<'_> {
 }
 
 #[cfg(unix)]
-fn create_tempfile_0600(path: &PathBuf) -> Result<File, Error> {
+fn create_private_tempfile(path: &PathBuf) -> Result<File, Error> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .write(true)
@@ -680,8 +680,32 @@ fn create_tempfile_0600(path: &PathBuf) -> Result<File, Error> {
         })
 }
 
-#[cfg(not(unix))]
-fn create_tempfile_0600(path: &PathBuf) -> Result<File, Error> {
+#[cfg(windows)]
+fn create_private_tempfile(path: &PathBuf) -> Result<File, Error> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| {
+            Error::new(format!(
+                "multipart: create tempfile {}: {e}",
+                path.display()
+            ))
+        })?;
+    // `env::temp_dir()` can resolve to a directory shared by other users on
+    // Windows, so the spilled upload body must be restricted explicitly: an
+    // owner-only DACL, the analogue of the unix `0o600` above. Fail closed.
+    restrict_to_owner(path).map_err(|e| {
+        Error::new(format!(
+            "multipart: restrict tempfile {}: {e}",
+            path.display()
+        ))
+    })?;
+    Ok(file)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn create_private_tempfile(path: &PathBuf) -> Result<File, Error> {
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -692,6 +716,84 @@ fn create_tempfile_0600(path: &PathBuf) -> Result<File, Error> {
                 path.display()
             ))
         })
+}
+
+/// Replaces a file's DACL with a single ACE granting the current user
+/// read+write and nothing else, marking the DACL protected so inherited ACEs
+/// are dropped. The Windows analogue of `chmod 0600`.
+#[cfg(windows)]
+fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        EXPLICIT_ACCESS_W, SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW, SetNamedSecurityInfoW,
+        TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
+    };
+    use windows_sys::Win32::Security::{
+        ACL, DACL_SECURITY_INFORMATION, GetTokenInformation, NO_INHERITANCE,
+        PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{FILE_GENERIC_READ, FILE_GENERIC_WRITE};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut len: u32 = 0;
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+        let mut buf = vec![0u8; len as usize];
+        if GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len) == 0 {
+            CloseHandle(token);
+            return Err(io::Error::last_os_error());
+        }
+        let token_user = &*buf.as_ptr().cast::<TOKEN_USER>();
+        let sid = token_user.User.Sid;
+
+        let mut ea: EXPLICIT_ACCESS_W = std::mem::zeroed();
+        ea.grfAccessPermissions = FILE_GENERIC_READ | FILE_GENERIC_WRITE;
+        ea.grfAccessMode = SET_ACCESS;
+        ea.grfInheritance = NO_INHERITANCE;
+        ea.Trustee = TRUSTEE_W {
+            pMultipleTrustee: std::ptr::null_mut(),
+            MultipleTrusteeOperation: 0,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_USER,
+            ptstrName: sid.cast(),
+        };
+
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        let rc = SetEntriesInAclW(1, &mut ea, std::ptr::null_mut(), &mut acl);
+        CloseHandle(token);
+        if rc != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(rc as i32));
+        }
+
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let rc = SetNamedSecurityInfoW(
+            wide.as_ptr() as *mut u16,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            acl,
+            std::ptr::null_mut(),
+        );
+        if !acl.is_null() {
+            LocalFree(acl.cast());
+        }
+        if rc != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(rc as i32));
+        }
+    }
+    Ok(())
 }
 
 /// Parses the field-name and filename out of a Content-Disposition value.

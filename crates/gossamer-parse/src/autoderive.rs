@@ -19,8 +19,8 @@
 use std::collections::HashSet;
 
 use gossamer_ast::{
-    GenericArg, ItemKind, ModulePath, NodeId, SourceFile, StructBody, StructDecl, TypeKind,
-    UseDecl, UseTarget,
+    EnumDecl, EnumVariant, GenericArg, ItemKind, ModulePath, NodeId, SourceFile, StructBody,
+    StructDecl, TypeKind, UseDecl, UseTarget,
 };
 use gossamer_lex::{FileId, SourceMap, Span};
 
@@ -82,6 +82,20 @@ impl FieldKind {
                 Some(Self::Vec(Box::new(inner_kind)))
             }
             _ => None,
+        }
+    }
+
+    /// Source-level expression for this field's `Default::default()`
+    /// value, used by `#[derive(Default)]` synthesis.
+    fn default_literal(&self) -> String {
+        match self {
+            Self::I64 | Self::Int(_) => "0".to_string(),
+            Self::F64 => "0.0".to_string(),
+            Self::Bool => "false".to_string(),
+            Self::String => "\"\"".to_string(),
+            // Empty literal; the struct field's declared type pins the element.
+            Self::Vec(_) => "[]".to_string(),
+            Self::Struct(name) => format!("{name}::default()"),
         }
     }
 
@@ -321,6 +335,334 @@ fn emit_from_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) 
     out.push_str("}\n\n");
 }
 
+/// Extracts the trait names listed in an item's `#[derive(...)]`
+/// attributes (e.g. `["Clone", "PartialEq"]`). Multiple `#[derive(...)]`
+/// attributes accumulate.
+fn derive_list(attrs: &gossamer_ast::Attrs) -> Vec<String> {
+    let mut out = Vec::new();
+    for attr in &attrs.outer {
+        let is_derive =
+            attr.path.segments.len() == 1 && attr.path.segments[0].name.name == "derive";
+        if !is_derive {
+            continue;
+        }
+        if let Some(tokens) = &attr.tokens {
+            for tok in tokens.split(',') {
+                let name = tok.trim();
+                if !name.is_empty() {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Walks `parsed` for `#[derive(...)]`-annotated structs and synthesizes
+/// the requested trait methods as real Gossamer `impl` source. Clone,
+/// PartialEq/Eq, and Default lower through every tier exactly like
+/// hand-written methods; the `==` / `!=` operators route to the
+/// synthesized `eq` in MIR (see the builder's binary-op lowering).
+#[must_use]
+pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
+    let struct_names: HashSet<String> = parsed
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Struct(decl) if matches!(&decl.body, StructBody::Named(_)) => {
+                Some(decl.name.name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let mut out = String::new();
+    for item in &parsed.items {
+        let derives = derive_list(&item.attrs);
+        if derives.is_empty() {
+            continue;
+        }
+        match &item.kind {
+            ItemKind::Struct(decl) => {
+                if let StructBody::Named(fields) = &decl.body {
+                    emit_struct_derive_impl(&mut out, decl, fields, &derives, &struct_names);
+                }
+            }
+            ItemKind::Enum(decl) if decl.generics.params.is_empty() => {
+                emit_enum_derive_impl(&mut out, decl, &derives);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The match pattern and the value-reconstruction for one enum variant,
+/// binding each payload field to `{prefix}{i}` — e.g. for `V(a, b)` with prefix
+/// `__s`: `("E::V(__s0, __s1)", "E::V(__s0, __s1)", ["__s0", "__s1"])`.
+fn variant_shape(enum_name: &str, v: &EnumVariant, prefix: &str) -> (String, String, Vec<String>) {
+    let vn = &v.name.name;
+    match &v.body {
+        StructBody::Unit => (
+            format!("{enum_name}::{vn}"),
+            format!("{enum_name}::{vn}"),
+            Vec::new(),
+        ),
+        StructBody::Tuple(fields) => {
+            let binds: Vec<String> = (0..fields.len()).map(|i| format!("{prefix}{i}")).collect();
+            let joined = binds.join(", ");
+            (
+                format!("{enum_name}::{vn}({joined})"),
+                format!("{enum_name}::{vn}({joined})"),
+                binds,
+            )
+        }
+        StructBody::Named(fields) => {
+            let binds: Vec<String> = (0..fields.len()).map(|i| format!("{prefix}{i}")).collect();
+            let pat: Vec<String> = fields
+                .iter()
+                .zip(&binds)
+                .map(|(f, b)| format!("{}: {b}", f.name.name))
+                .collect();
+            (
+                format!("{enum_name}::{vn} {{ {} }}", pat.join(", ")),
+                format!("{enum_name}::{vn} {{ {} }}", pat.join(", ")),
+                binds,
+            )
+        }
+    }
+}
+
+fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) {
+    let name = &decl.name.name;
+    let has = |t: &str| derives.iter().any(|d| d == t);
+    let want_clone = has("Clone");
+    let want_eq = has("PartialEq") || has("Eq");
+    let want_default = has("Default");
+    let want_debug = has("Debug");
+    if !(want_clone || want_eq || want_default || want_debug) {
+        return;
+    }
+    // Struct-payload variants (`Rect { w, h }`) are `Value::Struct` on the VM
+    // walker, keyed by the bare variant name, so `==` / `{:?}` can't dispatch
+    // to `Enum::eq` / `Enum::fmt` there. Derive only enums whose variants are
+    // all tuple (`Circle(f64)`) or unit (`Point`) — those work on every tier.
+    if decl
+        .variants
+        .iter()
+        .any(|v| matches!(v.body, StructBody::Named(_)))
+    {
+        return;
+    }
+    out.push_str(&format!(
+        "// Auto-derived from #[derive(...)] for {name}.\nimpl {name} {{\n"
+    ));
+    if want_clone {
+        out.push_str(&format!(
+            "    fn clone(&self) -> {name} {{\n        match self {{\n"
+        ));
+        for v in &decl.variants {
+            let (pat, recon, _) = variant_shape(name, v, "__c");
+            out.push_str(&format!("            {pat} => {recon},\n"));
+        }
+        out.push_str("        }\n    }\n");
+    }
+    if want_eq {
+        // Nested single matches (a tuple `match (self, other)` over enum
+        // variant patterns isn't reliably matched): match `self`'s variant,
+        // then match `other` against the same variant inside the arm.
+        out.push_str(&format!(
+            "    fn eq(&self, other: &{name}) -> bool {{\n        match self {{\n"
+        ));
+        for v in &decl.variants {
+            let (lpat, _, lbinds) = variant_shape(name, v, "__a");
+            let (rpat, _, rbinds) = variant_shape(name, v, "__b");
+            let cond = if lbinds.is_empty() {
+                "true".to_string()
+            } else {
+                lbinds
+                    .iter()
+                    .zip(&rbinds)
+                    .map(|(a, b)| format!("{a} == {b}"))
+                    .collect::<Vec<_>>()
+                    .join(" && ")
+            };
+            out.push_str(&format!(
+                "            {lpat} => match other {{ {rpat} => {cond}, _ => false }},\n"
+            ));
+        }
+        out.push_str("        }\n    }\n");
+    }
+    if want_debug {
+        out.push_str("    fn fmt(&self) -> String {\n        match self {\n");
+        for v in &decl.variants {
+            let (pat, _, binds) = variant_shape(name, v, "__d");
+            let vn = &v.name.name;
+            let arm = match &v.body {
+                StructBody::Unit => format!("\"{vn}\""),
+                StructBody::Tuple(_) => {
+                    let holes = binds.iter().map(|_| "{}").collect::<Vec<_>>().join(", ");
+                    format!("format!(\"{vn}({holes})\", {})", binds.join(", "))
+                }
+                StructBody::Named(fields) => {
+                    let parts: Vec<String> = fields
+                        .iter()
+                        .map(|f| format!("{}: {{}}", f.name.name))
+                        .collect();
+                    format!(
+                        "format!(\"{vn} {{{{ {} }}}}\", {})",
+                        parts.join(", "),
+                        binds.join(", ")
+                    )
+                }
+            };
+            out.push_str(&format!("            {pat} => {arm},\n"));
+        }
+        out.push_str("        }\n    }\n");
+    }
+    if want_default {
+        // Rust requires `#[default]` on exactly one (unit) variant.
+        let default_variant = decl.variants.iter().find(|v| {
+            v.attrs
+                .outer
+                .iter()
+                .any(|a| a.path.segments.len() == 1 && a.path.segments[0].name.name == "default")
+        });
+        if let Some(v) = default_variant {
+            if matches!(v.body, StructBody::Unit) {
+                out.push_str(&format!(
+                    "    fn default() -> {name} {{ {name}::{} }}\n",
+                    v.name.name
+                ));
+            }
+        }
+    }
+    out.push_str("}\n\n");
+}
+
+/// `("<T, U>", "Name<T, U>")` for a generic struct, or `("", "Name")` for a
+/// non-generic one. Lifetime / const params are skipped (rare in derives).
+fn struct_generics(decl: &StructDecl) -> (String, String) {
+    let names: Vec<&str> = decl
+        .generics
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            gossamer_ast::GenericParam::Type { name, .. } => Some(name.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if names.is_empty() {
+        (String::new(), decl.name.name.clone())
+    } else {
+        let args = format!("<{}>", names.join(", "));
+        (args.clone(), format!("{}{args}", decl.name.name))
+    }
+}
+
+fn emit_struct_derive_impl(
+    out: &mut String,
+    decl: &StructDecl,
+    fields: &[gossamer_ast::StructField],
+    derives: &[String],
+    structs: &HashSet<String>,
+) {
+    let name = &decl.name.name;
+    let has = |t: &str| derives.iter().any(|d| d == t);
+    let want_clone = has("Clone");
+    let want_eq = has("PartialEq") || has("Eq");
+    let want_default = has("Default");
+    let want_debug = has("Debug");
+    if !(want_clone || want_eq || want_default || want_debug) {
+        return;
+    }
+    // `(gen_decl, self_ty)` = ("<T>", "Pair<T>") for a generic struct, else
+    // ("", "Pair"). Struct *literals* never carry the args, so the
+    // reconstruction below stays `{name} { … }`.
+    let (gen_decl, self_ty) = struct_generics(decl);
+    let field_names: Vec<&str> = fields.iter().map(|f| f.name.name.as_str()).collect();
+    out.push_str(&format!(
+        "// Auto-derived from #[derive(...)] for {name}.\nimpl{gen_decl} {self_ty} {{\n"
+    ));
+    if want_clone {
+        // Reconstruct with a field-by-field copy. In the GC model a value
+        // struct's fields are shared by copy; this avoids a per-field
+        // `.clone()` call (which the VM's name-global method dispatch would
+        // misroute back to `Type::clone`).
+        let init: Vec<String> = field_names
+            .iter()
+            .map(|f| format!("{f}: self.{f}"))
+            .collect();
+        out.push_str(&format!(
+            "    fn clone(&self) -> {self_ty} {{ {name} {{ {} }} }}\n",
+            init.join(", ")
+        ));
+    }
+    if want_eq {
+        if field_names.is_empty() {
+            out.push_str(&format!(
+                "    fn eq(&self, other: &{self_ty}) -> bool {{ true }}\n"
+            ));
+        } else {
+            let conds: Vec<String> = field_names
+                .iter()
+                .map(|f| format!("self.{f} == other.{f}"))
+                .collect();
+            out.push_str(&format!(
+                "    fn eq(&self, other: &{self_ty}) -> bool {{ {} }}\n",
+                conds.join(" && ")
+            ));
+        }
+    }
+    if want_default {
+        // Per-field default literal needs each field classified; if any
+        // field type is outside the supported set, skip Default rather
+        // than emit code that won't compile.
+        let typed: Option<Vec<(String, FieldKind)>> = fields
+            .iter()
+            .map(|f| FieldKind::from_type(&f.ty, structs).map(|k| (f.name.name.clone(), k)))
+            .collect();
+        if let Some(typed) = typed {
+            let init: Vec<String> = typed
+                .iter()
+                .map(|(f, k)| format!("{f}: {}", k.default_literal()))
+                .collect();
+            out.push_str(&format!(
+                "    fn default() -> {self_ty} {{ {name} {{ {} }} }}\n",
+                init.join(", ")
+            ));
+        }
+    }
+    if want_debug {
+        // `fmt(&self) -> String` rendering `Name { f0: v0, f1: v1 }`, matching
+        // the VM's `value.rs::write_struct` byte-for-byte so all tiers agree.
+        // `{}` on each field recurses (primitives print directly; a nested
+        // struct field routes to its own `fmt`). `{{` / `}}` are literal braces.
+        let mut tmpl = String::new();
+        tmpl.push_str(name);
+        tmpl.push_str(" {{ ");
+        for (i, f) in field_names.iter().enumerate() {
+            if i > 0 {
+                tmpl.push_str(", ");
+            }
+            tmpl.push_str(f);
+            tmpl.push_str(": {}");
+        }
+        tmpl.push_str(" }}");
+        let argvals: Vec<String> = field_names.iter().map(|f| format!("self.{f}")).collect();
+        if field_names.is_empty() {
+            out.push_str(&format!(
+                "    fn fmt(&self) -> String {{ format!(\"{tmpl}\") }}\n"
+            ));
+        } else {
+            out.push_str(&format!(
+                "    fn fmt(&self) -> String {{ format!(\"{tmpl}\", {}) }}\n",
+                argvals.join(", ")
+            ));
+        }
+    }
+    out.push_str("}\n\n");
+}
+
 /// Preprocesses a Gossamer source string by appending synthesized
 /// `from_json` / `to_json` impl blocks for every eligible struct.
 /// Returns the augmented source. Callers should put the augmented
@@ -331,6 +673,7 @@ pub fn augment_source(source: &str) -> String {
     let probe_file = probe_map.add_file("<autoderive-probe>", source.to_string());
     let (parsed, _) = crate::parse_source_file(source, probe_file);
     let serde = synthesize_serde_impls(&parsed);
+    let derives = synthesize_derive_impls(&parsed);
     // Stdlib structs (pem::Block, …) are real Gossamer structs +
     // wrapper functions injected here; the wrappers call leaf
     // `gos_rt_*` intrinsics that return tuples/bytes, so the same
@@ -350,14 +693,15 @@ pub fn augment_source(source: &str) -> String {
     if source.contains("zip::") {
         stdlib_wrappers.push_str(ZIP_WRAPPERS);
     }
-    if synth_is_empty(&serde) && stdlib_wrappers.is_empty() {
+    if synth_is_empty(&serde) && stdlib_wrappers.is_empty() && derives.is_empty() {
         return source.to_string();
     }
     if std::env::var_os("GOS_AUTODERIVE_DEBUG").is_some() {
-        eprintln!("=== autoderive synth ===\n{serde}{stdlib_wrappers}=== /autoderive ===");
+        eprintln!("=== autoderive synth ===\n{serde}{derives}{stdlib_wrappers}=== /autoderive ===");
     }
-    let mut combined =
-        String::with_capacity(source.len() + serde.len() + stdlib_wrappers.len() + 2);
+    let mut combined = String::with_capacity(
+        source.len() + serde.len() + derives.len() + stdlib_wrappers.len() + 2,
+    );
     combined.push_str(source);
     if !combined.ends_with('\n') {
         combined.push('\n');
@@ -366,6 +710,7 @@ pub fn augment_source(source: &str) -> String {
     if !synth_is_empty(&serde) {
         combined.push_str(&serde);
     }
+    combined.push_str(&derives);
     combined.push_str(&stdlib_wrappers);
     combined
 }

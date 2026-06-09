@@ -1,0 +1,70 @@
+// Block-scoped `defer` (Swift/Zig style).
+//
+// A `defer`red expression runs when control leaves its *enclosing block* —
+// whether by falling off the end, `return`, `break`, or `continue` — in
+// last-in-first-out order. Unlike Go's function-scoped defer, the unit of
+// scope is the nearest `{ }` block, so a defer inside a loop body runs at the
+// end of every iteration. Deferred expressions read the current value of any
+// variable they touch at the moment they run, not when they were registered.
+
+fn lifo() {
+    // Both defers run at the end of this block, in reverse order.
+    defer println!("  defer A (registered first, runs last)")
+    defer println!("  defer B (registered second, runs first)")
+    println!("  body")
+}
+
+fn early_return(open: bool) -> i64 {
+    // The defer still runs on the early `return` path.
+    defer println!("  cleanup (runs on every exit)")
+    if !open {
+        return 0
+    }
+    42
+}
+
+fn per_iteration() {
+    // The defer is scoped to the loop body, so it fires once per iteration.
+    let mut i = 0
+    while i < 3 {
+        defer println!("  <- end of iteration")
+        println!("  iteration {}", i)
+        i += 1
+    }
+}
+
+fn main() {
+    println!("lifo:")
+    lifo()
+    println!("early_return: returned {}", early_return(false))
+    println!("per_iteration:")
+    per_iteration()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn defers_run_lifo_at_block_exit() {
+        let mut order: [i64] = []
+        order.push(0)
+        {
+            defer order.push(1) // runs last
+            defer order.push(2) // runs first
+            order.push(9) // runs immediately, inside the block
+        }
+        // Block exit ran the defers LIFO: [0, 9, 2, 1].
+        testing::check(order.len() == 4, "all four pushes recorded")
+        testing::check(
+            order[0] == 0 && order[1] == 9 && order[2] == 2 && order[3] == 1,
+            "LIFO defer order at block exit",
+        )
+    }
+
+    #[test]
+    fn defer_runs_on_early_return() {
+        testing::check(super::early_return(false) == 0, "early return still returns 0")
+        testing::check(super::early_return(true) == 42, "open path returns 42")
+    }
+}

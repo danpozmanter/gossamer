@@ -288,6 +288,67 @@ impl<'a> Builder<'a> {
         Some(unit_local)
     }
 
+    /// `m.insert/get/contains` on a `HashMap` keyed by a flat struct / tuple,
+    /// routed to the content-hashing `skey` runtime so two equal-but-distinct
+    /// allocations key the same slot (matching the VM). Returns `None` for any
+    /// other key shape, leaving the normal pointer-keyed path to run.
+    pub(crate) fn try_lower_struct_key_map_op(
+        &mut self,
+        receiver: &HirExpr,
+        op: &str,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        let recv_ty = self
+            .receiver_local_from_path(receiver)
+            .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
+        let (key_ty, val_ty) = self.hash_map_kv_tys(recv_ty)?;
+        // Only aggregate keys (struct / tuple) content-hash; bare scalar and
+        // `String` keys keep their dedicated `_i64` / `_str` fast paths.
+        if !self.is_aggregate_key(key_ty) {
+            return None;
+        }
+        let descriptor = self.key_descriptor(key_ty)?;
+        let recv_local = self.lower_expr(receiver)?;
+        let key_local = self.lower_expr(args.first()?)?;
+        let desc_op = Operand::Const(ConstValue::Str(descriptor));
+        let (name, dest_ty, val_arg) = match op {
+            "insert" if args.len() == 2 => {
+                let val_local = self.lower_expr(&args[1])?;
+                (
+                    "gos_rt_map_insert_skey",
+                    self.tcx.unit(),
+                    Some(Operand::Copy(Place::local(val_local))),
+                )
+            }
+            "get" if args.len() == 1 => (
+                "gos_rt_map_get_skey_opt",
+                self.option_payload_adt_ty(val_ty),
+                None,
+            ),
+            "contains_key" | "contains" if args.len() == 1 => {
+                ("gos_rt_map_contains_skey", self.tcx.bool_ty(), None)
+            }
+            _ => return None,
+        };
+        let mut call_args = vec![
+            Operand::Copy(Place::local(recv_local)),
+            Operand::Copy(Place::local(key_local)),
+            desc_op,
+        ];
+        call_args.extend(val_arg);
+        let dest = self.fresh(dest_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name.to_string())),
+            args: call_args,
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
     pub(crate) fn try_lower_map_inc(
         &mut self,
         outer_recv: &HirExpr,

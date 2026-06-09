@@ -609,6 +609,9 @@ fn map_key_to_value(k: &MapKey) -> Value {
         MapKey::Int(i) => Value::Int(*i),
         MapKey::Char(c) => Value::Char(*c),
         MapKey::Str(s) => Value::String(s.clone()),
+        // Aggregate keys don't round-trip to their typed shape (field names /
+        // element types aren't retained in the key).
+        MapKey::Agg(..) => Value::Unit,
     }
 }
 

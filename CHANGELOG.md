@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.11.0 — Process isolation, cross platform parity, block scoped defer and derive.
+
+A panic in a spawned goroutine now terminates only that goroutine: the process keeps running and exits cleanly, on every tier (bytecode VM, Cranelift JIT, LLVM AOT). A panic on the main goroutine stays fatal, as in Rust — isolation is goroutine-scoped, not panic-swallowing.
+
+- **Goroutine fault isolation, verified across tiers.** The compiled tier's `gos_rt_panic` contains a panic raised inside a goroutine (the M:N scheduler keeps running other goroutines) and the interpreter catches the runtime error in the goroutine thread. `crates/gossamer-cli/tests/process_isolation.rs` builds and runs both a panic-in-goroutine and a panic-in-main program on `gos run` and `gos build`, asserting the process survives the former (and that the goroutine genuinely panicked) and dies on the latter.
+- **Buffered stdout is flushed before a fatal panic.** A main-goroutine panic aborts the process; `gos_rt_panic` now flushes the runtime's line-buffered stdout first — as `gos_rt_exit` already does — so output printed before the panic is no longer swallowed by `abort()`.
+
+### Language features
+
+- **Real `select { }` on the compiled tiers.** Cranelift and LLVM previously lowered `select` to an "arm 0 always fires" stub; they now poll arms in source order and park the goroutine until one is ready (or a `default` arm fires) via a new `gos_rt_select_*` runtime, matching the VM walker bit-for-bit. Send arms (`tx.send(v) => …`) now parse. Fixture: `feature-testing-examples/select_multiplex.gos`.
+- **Block-scoped `defer` (Swift/Zig style).** The reserved-but-no-op `defer` now runs its expression when control leaves the enclosing `{ }` block — fall-through, `return`, `break`, or `continue` — in LIFO order, on every tier. A `defer` in a loop body runs each iteration. Example: `examples/defer_cleanup.gos`.
+- **`let PAT = expr else { … }`.** Refutable-let-or-diverge, desugared to a `match` so it runs on every tier. Fixture: `feature-testing-examples/let_else_binding.gos`.
+- **`#[derive(Clone, PartialEq, Eq, Default, Debug)]` for structs and enums.** Synthesizes the matching methods as real Gossamer source (the same parse-time path that derives JSON/TOML/YAML), so `==` / `!=` (field-wise), `.clone()`, `Type::default()`, and `{:?}` / `{}` (rendering `Name { field: value }`) work identically on the VM walker, Cranelift, and LLVM. Struct fields may be primitives, `String`, `[T]`, **nested structs**, and the struct may be **generic** (`struct Wrap<T>`). Enums derive too when their variants are all **tuple** (`Circle(f64)`) or **unit** (`Point`) — `Debug` renders `Circle(5.0)` and `Default` picks the `#[default]` variant. Example: `examples/derive.gos`; fixture: `feature-testing-examples/derive_traits.gos`. (Struct-payload enum variants are not yet derivable.)
+- **Structs and tuples as `HashMap` / `HashSet` keys.** Keys are now compared and hashed by *value* on every tier: two equal-valued keys at distinct allocations share a slot, a re-insert overwrites, and a distinct key is a distinct slot. Works for flat structs (`struct Point { x, y }`), `String`-field structs, nested structs, and tuples. The compiled tiers hash the key's content via a per-slot layout descriptor (dereferencing `String` fields); the VM keys aggregates structurally — previously it collapsed every aggregate key into a single slot (`len()` of a struct-keyed map was always 1). `#[derive(Hash)]` is accepted on a key type. Fixture: `feature-testing-examples/struct_map_keys.gos`.
+
+### Compiled-tier correctness fixes
+
+- **Nested structs by value work on the compiled tiers.** A struct with a struct-typed field (`struct Outer { inner: Inner }`) read garbage for `o.inner.tag` under `gos build` / `--jit` (a 1-slot aggregate field was stored as a pointer and read back inline). Aggregate construction now inlines such fields; multi-slot, deeply-nested, by-argument, by-return, and mutated cases all match the VM.
+- **Struct-returning functions no longer corrupt their drop-pass temporaries.** The RC drop inserter typed its throwaway locals from the return slot, so a function returning a struct produced an aggregate-typed `gos_rt_rc_release` destination and a `memcpy` from `null`. It now uses the interned `()` type.
+- **Chained field access on a call result resolves its type.** `let a = mk(); a.inner.tag` defaulted the leaf type to a pointer (crash) when `a` came from a struct-returning impl method; copy-type propagation now flows through one field projection, and aggregate-returning callees are no longer inlined (which dropped the type).
+- **`Option` / `Result` equality on the VM.** `Some(5) == Some(5)` returned `false` on the VM (variant values weren't compared); enum variants now compare structurally, matching the compiled tiers.
+
+### Cross-platform parity
+
+- **Windows: user functions returning `Result`/`Option`/inline-enum no longer miscompile.** The Win64 `<16 x i8>` fat-return ABI was applied to user-function calls, not just runtime shims; it is now gated to the ABI registry, with both LLVM call emitters routed through one `needs_win64_fat_ret` decision.
+- **`gos build` works from a released install.** Every release artifact (tarball, zip, deb, rpm, Inno Setup, Docker) now ships `libgossamer_runtime.a` / `gossamer_runtime.lib`; the installer places it where `gos build` resolves it, and the cross-compiled Linux-aarch64 / macOS-x86_64 jobs build the runtime for their target.
+- **mimalloc is the process allocator** on every platform and binary (toolchain and compiled programs), replacing the platform default — notably musl `malloc` on the static-musl release path.
+- **Windows credential and multipart-upload files get an owner-only DACL**, the analogue of the POSIX `0o600` they already set; the write fails closed rather than leaving a world-readable file.
+- **`pid_alive` is accurate on macOS and Windows** (`kill(pid, 0)` / `OpenProcess` + `GetExitCodeProcess`), so a stale build lock from a crashed `gos` is reclaimed instead of waiting out the deadline.
+- **The native HTTP client uses happy-eyeballs**, racing all resolved addresses so an unreachable first record (commonly a filtered AAAA) falls through instead of stalling for the whole timeout.
+- **`Child::kill_group` documentation corrected** on Windows (it terminates the lead process via `TerminateProcess`; there is no process-group signalling).
+
+### CI
+
+- **Cross-platform perf gate.** A new `perf-native` matrix job times a `gos build --release` native binary on Linux, macOS, and Windows, so an allocator/codegen regression is visible off Linux.
+- **AddressSanitizer now runs on macOS** as well as Linux, giving the RC use-after-free / double-free suite portable coverage (glibc `MALLOC_CHECK_` was Linux-only).
+
 ## 0.10.0 — LLVM AOT tier completeness and soundness in the GC + fixes
 
 Audit-driven sweep that closes 43 wiring gaps where features worked in the VM and Cranelift JIT but diverged under `gos build --release`. A new gauge — `crates/gossamer-cli/tests/llvm_aot_coverage.rs` — builds a binary per feature, runs it, and asserts stdout, so regressions surface as red bars instead of silent miscompiles.

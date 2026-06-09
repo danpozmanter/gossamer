@@ -1,0 +1,58 @@
+/*
+ * #[derive(...)] — auto-generated trait methods.
+ *
+ * Annotating a struct with `#[derive(Clone, PartialEq, Eq, Default, Debug)]`
+ * synthesizes the matching methods so the natural syntax just works:
+ * `==` / `!=` compare field-by-field, `.clone()` makes a copy,
+ * `Type::default()` builds a zero-valued instance, and `{:?}` prints
+ * `Name { field: value }`. Nested-struct fields derive recursively. The
+ * methods are generated as ordinary Gossamer code, so they run identically on
+ * every tier.
+ */
+
+#[derive(Clone, PartialEq, Eq, Default, Debug)]
+struct Color { r: i64, g: i64, b: i64 }
+
+#[derive(Clone, PartialEq, Default, Debug)]
+struct Pixel { at: i64, color: Color }
+
+fn rgb(r: i64, g: i64, b: i64) -> Color { Color { r: r, g: g, b: b } }
+fn default_color() -> Color { Color::default() }
+
+fn main() {
+    let black = Color::default()
+    println!("black = {:?}", black)
+
+    let red = Color { r: 255, g: 0, b: 0 }
+    let also_red = red.clone()
+    println!("red == also_red: {}", red == also_red)
+    println!("red != black:    {}", red != black)
+
+    // Nested struct: Debug and equality recurse into `color`.
+    let p = Pixel { at: 3, color: red }
+    println!("pixel = {:?}", p)
+    println!("same pixel: {}", p == Pixel { at: 3, color: rgb(255, 0, 0) })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn default_is_black() {
+        let c = super::default_color()
+        testing::check(c.r == 0 && c.g == 0 && c.b == 0, "default Color is all-zero")
+    }
+
+    #[test]
+    fn equality_is_structural() {
+        testing::check(super::rgb(1, 2, 3) == super::rgb(1, 2, 3), "same fields compare equal")
+        testing::check(super::rgb(1, 2, 3) != super::rgb(9, 2, 3), "a differing field compares unequal")
+    }
+
+    #[test]
+    fn clone_equals_source() {
+        let a = super::rgb(10, 20, 30)
+        testing::check(a.clone() == a, "a clone equals its source")
+    }
+}

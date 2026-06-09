@@ -738,3 +738,44 @@ impl<'a> Lowerer<'a> {
         None
     }
 }
+
+// Win64 carries a runtime helper's 2-word `i128` (Fat) return in a 16-byte
+// vector register (`<16 x i8>`), matching the rustc-compiled runtime; llc
+// returns a bare `i128` GP-register pair, so a `gos_rt_*` call must be wired as
+// `<16 x i8>` + bitcast to agree with the runtime. This boundary exists ONLY
+// for `gos_rt_*` symbols, whose return type comes from the ABI registry. A bare
+// `i128` returned by a user function is a gossamer->gossamer call (the callee is
+// `define i128`/`ret i128` in the same module) and must stay a GP-register-pair
+// `i128` on both sides — applying the vector ABI to it asymmetrically miscompiles
+// every `Result`/`Option`/inline-enum a user function returns on Windows. Both
+// call emitters (`emit_named_call`, `lower_runtime_call_intrinsic`) MUST gate on
+// the registry return type via this one decision so they cannot drift apart.
+pub(crate) fn needs_win64_fat_ret(is_windows: bool, registry_ret: Option<&str>) -> bool {
+    is_windows && registry_ret == Some("i128")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_win64_fat_ret;
+
+    #[test]
+    fn user_fn_i128_return_is_not_marshalled_on_windows() {
+        // A user function (no ABI-registry entry) returning a Fat `i128`
+        // aggregate must NOT get the `<16 x i8>` wire ABI, on any platform.
+        assert!(!needs_win64_fat_ret(true, None));
+        assert!(!needs_win64_fat_ret(false, None));
+    }
+
+    #[test]
+    fn runtime_i128_return_is_marshalled_only_on_windows() {
+        assert!(needs_win64_fat_ret(true, Some("i128")));
+        assert!(!needs_win64_fat_ret(false, Some("i128")));
+    }
+
+    #[test]
+    fn non_i128_runtime_return_is_never_marshalled() {
+        assert!(!needs_win64_fat_ret(true, Some("ptr")));
+        assert!(!needs_win64_fat_ret(true, Some("i64")));
+        assert!(!needs_win64_fat_ret(true, Some("void")));
+    }
+}

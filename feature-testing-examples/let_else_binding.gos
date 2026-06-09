@@ -1,0 +1,70 @@
+// `let PAT = expr else { diverge }` — the refutable-let-or-bail form. The
+// pattern's bindings escape into the enclosing scope; the else block must
+// diverge (return / break / continue / panic). Desugars to a `match`, so it
+// runs identically on the VM, Cranelift, and LLVM tiers.
+
+fn double_or_zero(opt: Option<i64>) -> i64 {
+    let Some(n) = opt else { return 0 }
+    n * 2
+}
+
+fn sum_or_zero(a: Option<i64>, b: Option<i64>) -> i64 {
+    // Chained let-else: each binding escapes to the lines below it.
+    let Some(x) = a else { return 0 }
+    let Some(y) = b else { return 0 }
+    x + y
+}
+
+fn half(n: i64) -> Option<i64> {
+    if n % 2 == 0 {
+        Some(n / 2)
+    } else {
+        None
+    }
+}
+
+fn first_half(xs: &[i64]) -> i64 {
+    // `else { continue }` inside a loop over a `&[i64]` slice parameter:
+    // skip odd elements, bind and use the half of the first even one.
+    let mut found = -1
+    for x in xs {
+        let Some(h) = half(*x) else { continue }
+        found = h
+        break
+    }
+    found
+}
+
+fn main() {
+    println!("{}", double_or_zero(Some(21)))
+    println!("{}", double_or_zero(None))
+    println!("{}", sum_or_zero(Some(10), Some(32)))
+    println!("{}", sum_or_zero(Some(10), None))
+    println!("{}", first_half(&[3, 5, 8, 9]))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn binds_on_match() {
+        testing::check(super::double_or_zero(Some(5)) == 10, "Some(5) doubles to 10")
+    }
+
+    #[test]
+    fn diverges_on_no_match() {
+        testing::check(super::double_or_zero(None) == 0, "None takes the else arm")
+    }
+
+    #[test]
+    fn chained_let_else() {
+        testing::check(super::sum_or_zero(Some(10), Some(32)) == 42, "both Some sums")
+        testing::check(super::sum_or_zero(Some(10), None) == 0, "a None bails to 0")
+    }
+
+    #[test]
+    fn else_continue_over_slice() {
+        testing::check(super::first_half(&[3, 5, 8, 9]) == 4, "first even (8) halves to 4")
+    }
+}

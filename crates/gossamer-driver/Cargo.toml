@@ -39,5 +39,16 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 which = { workspace = true }
 
+# Liveness probe for the advisory build-lock holder, so a stale lock from a
+# crashed `gos` is reclaimed promptly instead of waiting out the deadline.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 toml = { workspace = true }

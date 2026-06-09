@@ -87,6 +87,30 @@ impl<'a> Builder<'a> {
         self.scopes.pop();
     }
 
+    /// Lowers the expressions in a defer frame in LIFO (reverse-registration)
+    /// order for their side effects. A frame is emitted at every edge that
+    /// leaves its block.
+    pub(crate) fn emit_defer_frame(&mut self, frame: &[HirExpr]) {
+        for expr in frame.iter().rev() {
+            if self.current.is_none() {
+                break;
+            }
+            let _ = self.lower_expr(expr);
+        }
+    }
+
+    /// Emits every defer frame at index `>= from_depth`, innermost block first,
+    /// without removing them — the owning `lower_block` calls pop their frames
+    /// as control unwinds. `return` passes `0` (all frames); `break`/`continue`
+    /// pass the target loop's `defer_depth` (only the frames inside the loop).
+    pub(crate) fn emit_defers_above(&mut self, from_depth: usize) {
+        let depth = self.defer_stack.len();
+        for i in (from_depth..depth).rev() {
+            let frame = self.defer_stack[i].clone();
+            self.emit_defer_frame(&frame);
+        }
+    }
+
     pub(crate) fn new_block(&mut self, span: Span) -> BlockId {
         let id = BlockId(u32::try_from(self.blocks.len()).expect("block overflow"));
         self.blocks.push(BasicBlock {

@@ -483,6 +483,40 @@ heap-allocated collections are already GC-managed references, writing
 TypeAlias = "type" Ident [ Generics ] "=" Type ";"
 ```
 
+### 3.13 Derivable traits
+
+A struct may be annotated with `#[derive(...)]` to have standard trait methods
+generated automatically:
+
+```
+#[derive(Clone, PartialEq, Eq, Default, Debug)]
+struct Point { x: i64, y: i64 }
+```
+
+The supported traits are:
+
+- `Clone` — `.clone()` returns a field-by-field copy.
+- `PartialEq` / `Eq` — `==` and `!=` compare field-by-field. (`Eq` is a marker
+  requiring `PartialEq`.)
+- `Default` — `Type::default()` builds a zero-valued instance (`0` / `false` /
+  `""` / `[]` / each field type's own default; skipped when a field type has no
+  derivable default).
+- `Debug` — `{:?}` / `{}` render `Name { field: value, … }`.
+
+The methods are synthesized as ordinary Gossamer `impl` source at parse time,
+so they compile and run identically on every tier. Fields may be primitives,
+`String`, `[T]`, **nested structs** (which derive the same traits), and the
+struct may be **generic** (`struct Wrap<T> { … }`).
+
+`#[derive(...)]` also works on **enums whose variants are all tuple
+(`Circle(f64)`) or unit (`Point`)** — `Clone`, `PartialEq` / `Eq`, `Debug`
+(`Circle(5.0)`), and `Default` (which selects the `#[default]` unit variant).
+Enums with struct-payload variants (`Rect { w, h }`) are not yet derivable.
+
+`#[derive(Hash)]` is accepted on a struct / tuple used as a `HashMap` /
+`HashSet` key: such keys are hashed and compared by value on every tier, so two
+equal-valued keys at distinct allocations resolve to the same entry.
+
 ---
 
 ## 4. Variables, expressions, statements
@@ -582,23 +616,37 @@ ranged over. The built-in ranges `a..b` and `a..=b` implement
 #### `defer`
 
 ```
-DeferStmt = "defer" Block
+DeferStmt = "defer" Expr
 ```
 
-Like Go's `defer`, but takes a block instead of a single call. Deferred
-blocks run in LIFO order when the enclosing function returns (normally
-or via panic).
+`defer` is **block-scoped**, following Swift and Zig rather than Go: a
+deferred expression runs when control leaves its *enclosing block* — by
+falling off the end, `return`, `break`, or `continue` — not when the whole
+function returns. Within a block, deferred expressions run in LIFO order. The
+argument is any expression, commonly a call or a `{ }` block.
 
 ```
 fn read_all(path: String) -> Result<Vec<u8>, Error> {
   let file = os::open(path)?
-  defer { file.close() }
+  defer file.close()      // runs when this function's block exits
   file.read_to_end()
 }
 ```
 
-Captured variables in a `defer` block are snapshotted at the time of
-the `defer`, following the same semantics as Go.
+Because the scope is the nearest `{ }`, a `defer` inside a loop body runs at
+the end of *each* iteration:
+
+```
+while let Some(conn) = listener.accept() {
+  defer conn.close()      // closed at the end of every iteration
+  handle(conn)
+}
+```
+
+Deferred expressions are **evaluated when they run**, not when registered:
+they read the current value of any variable they reference at block exit (the
+same capture rule as Swift/Zig). A deferred expression's own value and any
+control flow inside it are discarded; a panic raised inside one propagates.
 
 #### `go`
 
@@ -1326,10 +1374,13 @@ select {
 
 ### 8.4 `defer` and goroutines
 
-Deferred blocks run when the **goroutine** (not the program) unwinds
-past the enclosing function. Panics within a goroutine unwind that
-goroutine's stack, running its defers. A panic that is not recovered
-inside the goroutine crashes the whole process (like Go).
+Deferred expressions are **block-scoped** (see §`defer`): each runs when
+control leaves its enclosing `{ }` block, not when the whole function or
+goroutine unwinds. As a goroutine's stack unwinds — whether by normal return
+or by a panic — every block it leaves runs that block's pending defers in LIFO
+order. A panic that is not recovered inside the goroutine ends that goroutine
+(its defers still run as the stack unwinds); a panic on the main goroutine
+crashes the process.
 
 ### 8.5 `recover`
 

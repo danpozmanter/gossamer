@@ -52,6 +52,7 @@ jobs:
           BASE="gos-${VERSION}-linux-x86_64"
           mkdir "$BASE"
           cp target/release/gos "$BASE/"
+          cp target/release/libgossamer_runtime.a "$BASE/"
           cp README.md LICENSE "$BASE/"
           cp scripts/install.sh "$BASE/"
           chmod +x "$BASE/install.sh"
@@ -110,7 +111,12 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-        run: cargo build --release --target aarch64-unknown-linux-gnu --bin gos
+        run: |
+          cargo build --release --target aarch64-unknown-linux-gnu --bin gos
+          # The CLI build script builds the runtime staticlib for the host;
+          # `gos build` on aarch64 needs the aarch64 archive, so build it for
+          # the target explicitly into target/<triple>/release/.
+          cargo build --release --target aarch64-unknown-linux-gnu -p gossamer-runtime
 
       - name: Install packaging tools
         run: cargo install --locked cargo-deb cargo-generate-rpm
@@ -120,6 +126,7 @@ jobs:
           BASE="gos-${VERSION}-linux-aarch64"
           mkdir "$BASE"
           cp target/aarch64-unknown-linux-gnu/release/gos "$BASE/"
+          cp target/aarch64-unknown-linux-gnu/release/libgossamer_runtime.a "$BASE/"
           cp README.md LICENSE "$BASE/"
           cp scripts/install.sh "$BASE/"
           chmod +x "$BASE/install.sh"
@@ -182,13 +189,19 @@ jobs:
       - name: Build
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
-        run: cargo build --release --target ${{ matrix.target }} --bin gos
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin gos
+          # `gos build` needs the runtime archive matching the binary's arch;
+          # the x86_64 leg cross-compiles from the arm64 runner, so build the
+          # runtime for the target explicitly.
+          cargo build --release --target ${{ matrix.target }} -p gossamer-runtime
 
       - name: Package zip
         run: |
           BASE="gos-${VERSION}-macos-${{ matrix.arch }}"
           mkdir "$BASE"
           cp target/${{ matrix.target }}/release/gos "$BASE/"
+          cp target/${{ matrix.target }}/release/libgossamer_runtime.a "$BASE/"
           cp README.md LICENSE "$BASE/"
           cp scripts/install.sh "$BASE/"
           chmod +x "$BASE/install.sh"
@@ -231,6 +244,7 @@ jobs:
           $base = "gos-$env:VERSION-windows-x86_64"
           New-Item -ItemType Directory -Force -Path $base | Out-Null
           Copy-Item target\release\gos.exe "$base\"
+          Copy-Item target\release\gossamer_runtime.lib "$base\"
           Copy-Item README.md, LICENSE "$base\"
           Compress-Archive -Path "$base\*" -DestinationPath "$base.zip"
 

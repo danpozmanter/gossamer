@@ -119,6 +119,7 @@ const SPECS: &[Spec] = &[
     spec("examples/binary_search.gos"),
     spec("examples/bubble_sort.gos"),
     spec("examples/caesar_cipher.gos"),
+    spec("examples/defer_cleanup.gos"),
     Spec {
         args: &[
             "--name",
@@ -214,6 +215,11 @@ const SPECS: &[Spec] = &[
     },
     spec("feature-testing-examples/closure_capture_mutation.gos"),
     spec("feature-testing-examples/closure_lifetime_inference.gos"),
+    spec("feature-testing-examples/select_multiplex.gos"),
+    spec("feature-testing-examples/let_else_binding.gos"),
+    spec("feature-testing-examples/slice_param_coercion.gos"),
+    spec("feature-testing-examples/derive_traits.gos"),
+    spec("feature-testing-examples/struct_map_keys.gos"),
     spec("feature-testing-examples/cycle_collector.gos"),
     spec("feature-testing-examples/arena_regions.gos"),
     spec("feature-testing-examples/auto_regions.gos"),

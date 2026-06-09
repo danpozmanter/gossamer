@@ -359,9 +359,11 @@ data-last argument order lets both thread through `|>`.
 like `print!("{}", expr?)`) for sequential `let`-binding
 style when that is clearer.
 
-Panics abort the current goroutine (and, for now, usually the
-process). Reserve them for invariant violations, not
-recoverable failure.
+Panics are goroutine-scoped: a panic in a spawned goroutine ends
+only that goroutine — the scheduler keeps running and the process
+exits cleanly — while a panic on the main goroutine is fatal, as
+in Rust. Reserve them for invariant violations, not recoverable
+failure.
 
 ## 8. Concurrency
 

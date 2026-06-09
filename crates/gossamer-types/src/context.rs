@@ -119,6 +119,15 @@ impl TyCtxt {
         ty
     }
 
+    /// Returns the interned `()` type if it already exists. Immutable
+    /// counterpart to [`unit`](Self::unit) for passes holding `&TyCtxt`
+    /// (e.g. the drop/RC inserter, which must type a throwaway local as unit
+    /// without assuming the return slot is unit-typed).
+    #[must_use]
+    pub fn unit_interned(&self) -> Option<Ty> {
+        self.primitives.unit
+    }
+
     /// Interns `!`.
     pub fn never(&mut self) -> Ty {
         if let Some(ty) = self.primitives.never {

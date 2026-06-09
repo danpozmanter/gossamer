@@ -98,8 +98,12 @@ impl CredentialStore {
         self.entries.remove(registry_url).is_some()
     }
 
-    /// Writes the store to `path` atomically (write-to-tmp + rename)
-    /// with mode 600 on POSIX.
+    /// Writes the store to `path` atomically (write-to-tmp + rename),
+    /// restricted to the current user: mode 600 on POSIX, an owner-only DACL
+    /// on Windows. The restriction is applied to the temp file before the
+    /// rename so the credential bytes are never visible to other users; a
+    /// failure to restrict aborts the write rather than leaving an
+    /// world-readable file in place.
     pub fn save(&self, path: &Path) -> Result<(), CredentialStoreError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| CredentialStoreError::Io(e.to_string()))?;
@@ -116,6 +120,10 @@ impl CredentialStore {
             perms.set_mode(0o600);
             fs::set_permissions(&tmp, perms)
                 .map_err(|e| CredentialStoreError::Io(e.to_string()))?;
+        }
+        #[cfg(windows)]
+        {
+            restrict_to_owner(&tmp).map_err(|e| CredentialStoreError::Io(e.to_string()))?;
         }
         fs::rename(&tmp, path).map_err(|e| CredentialStoreError::Io(e.to_string()))?;
         Ok(())
@@ -204,6 +212,85 @@ fn unquote(s: &str) -> String {
         }
     }
     out
+}
+
+/// Replaces a file's DACL with a single ACE granting the current user
+/// read+write and nothing else, marking the DACL protected so inherited ACEs
+/// are dropped. The Windows analogue of `chmod 0600`.
+#[cfg(windows)]
+fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        EXPLICIT_ACCESS_W, SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW, SetNamedSecurityInfoW,
+        TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
+    };
+    use windows_sys::Win32::Security::{
+        ACL, DACL_SECURITY_INFORMATION, GetTokenInformation, NO_INHERITANCE,
+        PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{FILE_GENERIC_READ, FILE_GENERIC_WRITE};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // Two-call pattern: size the buffer, then read TOKEN_USER.
+        let mut len: u32 = 0;
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+        let mut buf = vec![0u8; len as usize];
+        if GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len) == 0 {
+            CloseHandle(token);
+            return Err(io::Error::last_os_error());
+        }
+        let token_user = &*buf.as_ptr().cast::<TOKEN_USER>();
+        let sid = token_user.User.Sid;
+
+        let mut ea: EXPLICIT_ACCESS_W = std::mem::zeroed();
+        ea.grfAccessPermissions = FILE_GENERIC_READ | FILE_GENERIC_WRITE;
+        ea.grfAccessMode = SET_ACCESS;
+        ea.grfInheritance = NO_INHERITANCE;
+        ea.Trustee = TRUSTEE_W {
+            pMultipleTrustee: std::ptr::null_mut(),
+            MultipleTrusteeOperation: 0,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_USER,
+            ptstrName: sid.cast(),
+        };
+
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        let rc = SetEntriesInAclW(1, &mut ea, std::ptr::null_mut(), &mut acl);
+        CloseHandle(token);
+        if rc != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(rc as i32));
+        }
+
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let rc = SetNamedSecurityInfoW(
+            wide.as_ptr() as *mut u16,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            acl,
+            std::ptr::null_mut(),
+        );
+        if !acl.is_null() {
+            LocalFree(acl.cast());
+        }
+        if rc != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(rc as i32));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

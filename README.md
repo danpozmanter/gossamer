@@ -24,6 +24,8 @@ A language that balances developer experience, execution efficiency, and safety.
 | Optimized native release builds | ✓ | ✓ | ✓ |  |  |
 | Garbage collected |  | ✓ | ✓ | ✓ | ✓ |
 | Lightweight concurrency primitives |  | ✓ | ✓ |  | ✓ |
+| Fault-isolated goroutines (a panic ends one task, not the process) | ✓ |  |  |  | ✓ |
+| Crashed-task memory reclaimed automatically | ✓ |  |  |  | ✓ |
 | Async-first ecosystem | ✓ | ✓ |  | ✓ | ✓ |
 | Batteries-included standard library | ✓ | ✓ |  | ✓ | ✓ |
 | Fast compilation |  | ✓ |  |  |  |
@@ -32,6 +34,20 @@ A language that balances developer experience, execution efficiency, and safety.
 | Functional-first programming style |  |  | ✓ |  | ✓ |
 | Interpreted / scripting mode |  |  | ✓ | ✓ | ✓ |
 | Interactive REPL |  |  | ✓ | ✓ | ✓ |
+
+> **Block-scoped `defer`** (Swift / Zig style, not Go's function scope): a
+> deferred expression runs when control leaves its enclosing `{ }` block —
+> by fall-through, `return`, `break`, or `continue` — in LIFO order. A `defer`
+> inside a loop body therefore runs at the end of *every* iteration. See
+> [`examples/defer_cleanup.gos`](examples/defer_cleanup.gos).
+
+> **`#[derive(...)]`** (Rust style): annotate a struct or enum with
+> `#[derive(Clone, PartialEq, Eq, Default, Debug)]` and the matching methods are
+> generated for you — `==` / `!=` compare field-by-field, `.clone()` copies,
+> `Type::default()` builds a zero-valued instance, and `{:?}` prints
+> `Name { field: value }`. Works with nested-struct fields, generic structs, and
+> tuple/unit-variant enums; emitted as ordinary Gossamer code, so it runs
+> identically on every tier. See [`examples/derive.gos`](examples/derive.gos).
 
 ## Details
 

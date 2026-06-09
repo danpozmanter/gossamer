@@ -53,6 +53,11 @@ enum MapStorage {
     StrStr(FxHashMap<Box<[u8]>, Box<[u8]>>),
     I64Str(FxHashMap<i64, Box<[u8]>>),
     Bytes(FxHashMap<Box<[u8]>, Box<[u8]>>),
+    /// Struct / aggregate keys: the key is the flat content bytes of the
+    /// aggregate (so two distinct allocations of an equal value hash and
+    /// compare equal, matching the VM), the value is an 8-byte word — an
+    /// `i64`, or a heap pointer for `String` / struct values.
+    SkeyVal(FxHashMap<Box<[u8]>, i64>),
 }
 
 #[unsafe(no_mangle)]
@@ -269,6 +274,124 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_i64(m: *mut GosMap, key: i64, val
             map.len_cache += 1;
         }
     });
+}
+
+/// Builds a canonical by-value key for an aggregate from its flat slot buffer,
+/// driven by a per-slot layout descriptor: `'s'` = an 8-byte scalar (read
+/// inline), `'S'` = a `String` pointer (dereferenced; its length-prefixed
+/// content is folded in). Nested all-scalar structs inline their slots, so
+/// they appear as runs of `'s'`. The result is identical for two equal values
+/// at distinct allocations, matching the VM's value-keying.
+unsafe fn build_skey(key: *const u8, desc: *const c_char) -> Option<Vec<u8>> {
+    if key.is_null() || desc.is_null() {
+        return None;
+    }
+    let desc = unsafe { CStr::from_ptr(desc) }.to_bytes();
+    let mut out = Vec::with_capacity(desc.len() * 8);
+    let mut off = 0usize;
+    for &c in desc {
+        let slot = unsafe { key.add(off) };
+        match c {
+            b's' => out.extend_from_slice(unsafe { std::slice::from_raw_parts(slot, 8) }),
+            b'S' => {
+                let sptr = unsafe { *(slot as *const *const c_char) };
+                if sptr.is_null() {
+                    out.extend_from_slice(&0u64.to_le_bytes());
+                } else {
+                    let bytes = unsafe { CStr::from_ptr(sptr) }.to_bytes();
+                    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+                    out.extend_from_slice(bytes);
+                }
+            }
+            _ => return None,
+        }
+        off += 8;
+    }
+    Some(out)
+}
+
+/// Struct-keyed insert: keys by the aggregate's content (per `desc`) rather
+/// than its pointer, so two equal values share a slot, matching the VM. `val`
+/// is the 8-byte value word (an `i64`, or a pointer for `String` / struct
+/// values).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_skey(
+    m: *mut GosMap,
+    key: *const u8,
+    desc: *const c_char,
+    val: i64,
+) {
+    ffi_entry!((), {
+        let Some(k) = (unsafe { build_skey(key, desc) }) else {
+            return;
+        };
+        if m.is_null() {
+            return;
+        }
+        let map = unsafe { &mut *m };
+        let mut storage = map.storage.lock();
+        if matches!(*storage, MapStorage::Empty) {
+            *storage = MapStorage::SkeyVal(FxHashMap::default());
+        }
+        let MapStorage::SkeyVal(inner) = &mut *storage else {
+            return;
+        };
+        if inner.insert(k.into_boxed_slice(), val).is_none() {
+            map.len_cache += 1;
+        }
+    });
+}
+
+/// Struct-keyed lookup. Returns `Option<i64>` in the `gos_rt_result_new`
+/// i128 layout (0 = Some, 1 = None), matching [`gos_rt_map_get_i64_opt`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_skey_opt(
+    m: *const GosMap,
+    key: *const u8,
+    desc: *const c_char,
+) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let none = unsafe { gos_rt_result_new(1, 0) };
+        let Some(k) = (unsafe { build_skey(key, desc) }) else {
+            return none;
+        };
+        if m.is_null() {
+            return none;
+        }
+        let map = unsafe { &*m };
+        let storage = map.storage.lock();
+        let payload: Option<i64> = match &*storage {
+            MapStorage::SkeyVal(inner) => inner.get(k.as_slice()).copied(),
+            _ => None,
+        };
+        match payload {
+            Some(v) => unsafe { gos_rt_result_new(0, v) },
+            None => none,
+        }
+    })
+}
+
+/// Struct-keyed membership test (for `HashSet` of structs).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_contains_skey(
+    m: *const GosMap,
+    key: *const u8,
+    desc: *const c_char,
+) -> bool {
+    ffi_entry!(false, {
+        let Some(k) = (unsafe { build_skey(key, desc) }) else {
+            return false;
+        };
+        if m.is_null() {
+            return false;
+        }
+        let map = unsafe { &*m };
+        let storage = map.storage.lock();
+        match &*storage {
+            MapStorage::SkeyVal(inner) => inner.contains_key(k.as_slice()),
+            _ => false,
+        }
+    })
 }
 
 /// Fused increment: `m[k] = m.get_or(k, 0) + by`. Single lock,
@@ -1052,7 +1175,10 @@ pub unsafe extern "C" fn gos_rt_map_keys_vec(m: *const GosMap) -> *mut GosVec {
                 drop(storage);
                 unsafe { gos_rt_map_keys_str(m) }
             }
-            MapStorage::Empty => unsafe { gos_rt_vec_new(8) },
+            // Struct keys are stored as flat content bytes; rebuilding the
+            // aggregate values would need the key's layout, which isn't
+            // threaded here. `keys()` over a struct-keyed map is unsupported.
+            MapStorage::SkeyVal(_) | MapStorage::Empty => unsafe { gos_rt_vec_new(8) },
         }
     })
 }
@@ -1076,7 +1202,7 @@ pub unsafe extern "C" fn gos_rt_map_values_vec(m: *const GosMap) -> *mut GosVec 
                 drop(storage);
                 unsafe { gos_rt_map_values_str(m) }
             }
-            MapStorage::Empty => unsafe { gos_rt_vec_new(8) },
+            MapStorage::SkeyVal(_) | MapStorage::Empty => unsafe { gos_rt_vec_new(8) },
         }
     })
 }

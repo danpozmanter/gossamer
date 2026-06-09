@@ -9,6 +9,16 @@
 // raw-pointer dispatch. The rest of the crate stays safe by
 // scoping unsafe blocks inside that module.
 
+// Process-wide allocator for the Gossamer toolchain and every compiled
+// program. Replacing the platform default — notably musl's malloc on the
+// static-musl release link path and Windows ucrt HeapAlloc, both slow under
+// goroutine-heavy allocation contention — equalises allocator performance
+// across Linux, macOS, and Windows. Defined here so the single definition
+// covers both the `gos` binary (which links this crate as an rlib) and every
+// program `gos build` links against libgossamer_runtime.a.
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod builtins;
 pub mod c_abi;
 pub mod coverage;

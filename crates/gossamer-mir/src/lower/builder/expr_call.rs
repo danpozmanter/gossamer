@@ -148,13 +148,21 @@ impl<'a> Builder<'a> {
             if !args.is_empty()
                 && let Some((enum_name, idx)) = self.enums.lookup(segments)
             {
-                return self.lower_user_enum_ctor(
+                let result = self.lower_user_enum_ctor(
                     &enum_name,
                     u32::try_from(idx).unwrap_or(0),
                     args,
                     ty,
                     span,
                 );
+                // Tag the result local with its enum name. The checker leaves a
+                // variant constructor's type a `Var`, so `==` / `.method()` /
+                // `{:?}` on the value (or a `let`-bound copy of it, propagated
+                // by the Let lowering) recover the enum from `local_struct`.
+                if let Some(local) = result {
+                    self.local_struct.insert(local, enum_name);
+                }
+                return result;
             }
             // F#-style iter / option / result combinator surface
             // (SPEC §10.4 / §10.4a / §10.4b). Data-last; closures
@@ -459,6 +467,14 @@ impl<'a> Builder<'a> {
             HirExprKind::Path { def: Some(def), .. } => self.fn_inputs.get(def).cloned(),
             _ => None,
         };
+        // `__concat` carries every `println!` / `format!` argument. A struct
+        // argument with a derived `Type::fmt` is rendered to a String first so
+        // the compiled tiers can format it (they cannot print an aggregate).
+        let callee_is_concat = matches!(
+            &callee.kind,
+            HirExprKind::Path { segments, .. }
+                if segments.len() == 1 && segments[0].name.as_str() == "__concat"
+        );
         let mut arg_operands = Vec::with_capacity(args.len());
         for (idx, arg) in args.iter().enumerate() {
             let local = self.lower_expr(arg)?;
@@ -505,10 +521,26 @@ impl<'a> Builder<'a> {
                 use gossamer_types::TyKind;
                 let local_ty = self.locals[local.0 as usize].ty;
                 let expected_opt = callee_param_tys.as_ref().and_then(|p| p.get(idx).copied());
-                if let TyKind::Array { elem, len } = self.tcx.kind_of(local_ty).clone() {
+                // See through a `&` borrow on both sides. In the GC aliasing
+                // model `&[T]` and `[T]` share a representation, so a `&[T]` /
+                // `&Vec<T>` parameter is `Ref { Slice/Vec }`; and an inline
+                // `[T; N]` array borrowed as `&[T]` (e.g. `f(&xs)` where
+                // `let xs = [1,2,3]`) reaches here as `Ref { Array }`. Both
+                // must still trigger the array→GosVec coercion, or the callee
+                // reads the inline flat buffer as a GosVec header (garbage /
+                // segfault). Without unwrapping the ref, the coercion fired
+                // only for by-value `[T]`/`Vec` params and silently skipped
+                // every `&[T]` parameter.
+                let deref = |b: &Self, t: Ty| match b.tcx.kind_of(t) {
+                    TyKind::Ref { inner, .. } => *inner,
+                    _ => t,
+                };
+                let local_inner = deref(self, local_ty);
+                if let TyKind::Array { elem, len } = self.tcx.kind_of(local_inner).clone() {
                     if let Some(expected) = expected_opt {
+                        let expected_inner = deref(self, expected);
                         if matches!(
-                            self.tcx.kind_of(expected),
+                            self.tcx.kind_of(expected_inner),
                             TyKind::Vec(_) | TyKind::Slice(_)
                         ) {
                             self.coerce_array_to_vec(local, elem, len, span)
@@ -521,6 +553,33 @@ impl<'a> Builder<'a> {
                 } else {
                     local
                 }
+            };
+            // Debug routing: render a struct/enum `__concat` argument through
+            // its derived `Type::fmt` (a String), so a `println!("{:?}", s)`
+            // compiles on Cranelift / LLVM instead of bailing on an aggregate.
+            let local = if callee_is_concat {
+                let arg_ty = self.locals[local.0 as usize].ty;
+                match self
+                    .adt_dispatch_name(arg_ty)
+                    .or_else(|| self.local_struct.get(&local).cloned())
+                {
+                    Some(sname) if self.impl_methods.contains_key(&format!("{sname}::fmt")) => {
+                        let str_ty = self.tcx.string_ty();
+                        let dest = self.fresh(str_ty);
+                        let next = self.new_block(span);
+                        self.terminate(Terminator::Call {
+                            callee: Operand::Const(ConstValue::Str(format!("{sname}::fmt"))),
+                            args: vec![Operand::Copy(Place::local(local))],
+                            destination: Place::local(dest),
+                            target: Some(next),
+                        });
+                        self.set_current(next);
+                        dest
+                    }
+                    _ => local,
+                }
+            } else {
+                local
             };
             arg_operands.push(Operand::Copy(Place::local(local)));
         }

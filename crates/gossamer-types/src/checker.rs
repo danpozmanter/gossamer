@@ -496,6 +496,7 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Struct(decl) => {
                     self.register_struct(item.id, decl);
                 }
+                ItemKind::Enum(decl) => self.register_enum(item.id, decl),
                 ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
@@ -532,6 +533,15 @@ impl<'a> TypeChecker<'a> {
         };
         let resolved = self.type_from_ast(ty);
         self.const_tys.insert(def, resolved);
+    }
+
+    /// Registers an enum's `DefId -> name` so `render_ty` / `adt_dispatch_name`
+    /// recover "Shape" instead of the "adt#N" placeholder — needed for `==` /
+    /// `{:?}` dispatch on enum values whose type resolves to the Adt.
+    fn register_enum(&mut self, item_id: NodeId, decl: &gossamer_ast::EnumDecl) {
+        if let Some(def) = self.resolutions.definition_of(item_id) {
+            self.tcx.register_def_name(def, decl.name.name.as_str());
+        }
     }
 
     fn register_struct(&mut self, item_id: NodeId, decl: &gossamer_ast::StructDecl) {
@@ -1052,7 +1062,8 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr(inner);
                 self.fresh()
             }
-            ExprKind::Select(_) | ExprKind::MacroCall(_) | ExprKind::Error => self.fresh(),
+            ExprKind::Select(arms) => self.check_select(arms),
+            ExprKind::MacroCall(_) | ExprKind::Error => self.fresh(),
         }
     }
 
@@ -1498,6 +1509,46 @@ impl<'a> TypeChecker<'a> {
                 let guard_ty = self.check_expr(guard);
                 let bool_ty = self.tcx.bool_ty();
                 self.unify(bool_ty, guard_ty, guard.span);
+            }
+            let body_ty = self.check_expr(&arm.body);
+            self.unify(result_ty, body_ty, arm.body.span);
+            self.pop_scope();
+        }
+        result_ty
+    }
+
+    /// Type-checks a `select { … }` expression. Each arm is checked in its own
+    /// scope: a recv arm binds its pattern to the channel's element type, a
+    /// send arm unifies the sent value against the channel's element type, and
+    /// every arm body unifies into the shared result type.
+    fn check_select(&mut self, arms: &[gossamer_ast::SelectArm]) -> Ty {
+        use gossamer_ast::SelectOp;
+        let result_ty = self.fresh();
+        for arm in arms {
+            self.push_scope();
+            match &arm.op {
+                SelectOp::Recv { pattern, channel } => {
+                    let chan_ty = self.check_expr(channel);
+                    let resolved = self.infer.resolve(self.tcx, chan_ty);
+                    let elem = match self.tcx.kind_of(resolved).clone() {
+                        TyKind::Receiver(inner) | TyKind::Sender(inner) => inner,
+                        _ => self.fresh(),
+                    };
+                    let pat_ty = self.type_of_pattern(pattern);
+                    self.unify(pat_ty, elem, pattern.span);
+                    self.bind_pattern(pattern, elem);
+                }
+                SelectOp::Send { channel, value } => {
+                    let chan_ty = self.check_expr(channel);
+                    let resolved = self.infer.resolve(self.tcx, chan_ty);
+                    let elem = match self.tcx.kind_of(resolved).clone() {
+                        TyKind::Sender(inner) | TyKind::Receiver(inner) => inner,
+                        _ => self.fresh(),
+                    };
+                    let val_ty = self.check_expr(value);
+                    self.unify(elem, val_ty, value.span);
+                }
+                SelectOp::Default => {}
             }
             let body_ty = self.check_expr(&arm.body);
             self.unify(result_ty, body_ty, arm.body.span);
