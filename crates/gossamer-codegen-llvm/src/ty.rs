@@ -45,7 +45,8 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
             | TyKind::Dyn(_)
             | TyKind::HashMap { .. }
             | TyKind::Sender(_)
-            | TyKind::Receiver(_),
+            | TyKind::Receiver(_)
+            | TyKind::JoinHandle(_),
         ) => "ptr".to_string(),
         // `Never` / `Error` / `Var` / `Param` / `Closure` /
         // `Alias` — treated as opaque pointers by the runtime
@@ -123,7 +124,8 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
         | TyKind::Vec(_)
         | TyKind::HashMap { .. }
         | TyKind::Sender(_)
-        | TyKind::Receiver(_) => Some(1),
+        | TyKind::Receiver(_)
+        | TyKind::JoinHandle(_) => Some(1),
         TyKind::Tuple(elems) => {
             // Mirror `Array`'s behaviour: if any element type didn't
             // resolve to anything concrete (typeck left a `Var(_)`),

@@ -198,6 +198,129 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_6(
     });
 }
 
+// ---------------------------------------------------------------
+// Join handles — `spawn(f)` captures the goroutine's outcome
+// ---------------------------------------------------------------
+
+/// Heap-boxed result of a spawned goroutine, carried over the
+/// one-shot handle channel as a single 8-byte pointer.
+/// `disc` 0 = Ok (`payload` is the returned i64); `disc` 1 = Err
+/// (`payload` is a c-string pointer to the panic message).
+#[repr(C)]
+struct SpawnOutcome {
+    disc: i64,
+    payload: i64,
+}
+
+/// Sends a boxed `SpawnOutcome` over the one-shot handle channel.
+fn deliver_outcome(ch_addr: usize, disc: i64, payload: i64) {
+    let boxed = Box::new(SpawnOutcome { disc, payload });
+    let outcome_ptr = Box::into_raw(boxed) as i64;
+    let bytes = outcome_ptr.to_ne_bytes();
+    let ch = ch_addr as *mut super::chan::GosChan;
+    // SAFETY: `ch` is the live one-shot channel; `bytes` is an 8-byte
+    // buffer matching the channel's element width.
+    unsafe {
+        super::chan::gos_rt_chan_send(ch, bytes.as_ptr());
+    }
+}
+
+/// Delivers `Err(message)` to the join handle if the spawned body is
+/// unwinding (a panic). On the normal path it is disarmed after the
+/// `Ok` outcome is sent.
+struct SpawnOutcomeGuard {
+    ch_addr: usize,
+    armed: bool,
+}
+
+impl Drop for SpawnOutcomeGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Unwinding: the goroutine panicked. `gos_rt_panic` stashed the
+        // message before raising; recover it (falling back to a generic
+        // note for a non-`gos_rt_panic` unwind) and hand the joiner an
+        // Err. The panic itself continues up to the coroutine wrapper,
+        // which isolates the goroutine.
+        let msg = super::panic::take_last_goroutine_panic()
+            .unwrap_or_else(|| "spawned goroutine panicked".to_string());
+        let cstr = super::string::alloc_cstring(msg.as_bytes());
+        deliver_outcome(self.ch_addr, 1, cstr as i64);
+    }
+}
+
+/// `spawn(f) -> handle` — runs the callable `code`/`env` pair on the
+/// goroutine pool and returns a one-shot channel handle. The outcome
+/// (returned value, or panic message) is delivered to `gos_rt_join`.
+/// `code` is the per-shape thunk / lifted-closure address; `env` is
+/// the closure environment blob (passed as the implicit first arg).
+///
+/// A panic is NOT caught here: catching across the runtime-call
+/// boundary trips the nounwind contract on the `gos_rt_panic` frame
+/// and aborts. Instead the panic propagates to the coroutine wrapper
+/// (the same path `go` uses to isolate goroutine panics), and a
+/// Drop-guard delivers `Err(message)` to the handle as the stack
+/// unwinds past it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_spawn(code: usize, env: usize) -> *mut super::chan::GosChan {
+    ffi_entry!(std::ptr::null_mut(), {
+        if code == 0 {
+            return std::ptr::null_mut();
+        }
+        // One-shot, capacity-1 channel carrying a single SpawnOutcome
+        // pointer. Capacity 1 lets the worker deposit the outcome
+        // without waiting for the joiner to arrive.
+        let ch = unsafe { super::chan::gos_rt_chan_new(8, 1) };
+        let ch_addr = ch as usize;
+        spawn_task(Box::new(move || {
+            let mut guard = SpawnOutcomeGuard {
+                ch_addr,
+                armed: true,
+            };
+            // SAFETY: `code` is the callable's entry address; the
+            // closure ABI calls it as `fn(env) -> i64` with the
+            // environment blob as the implicit argument. The
+            // `C-unwind` ABI lets a goroutine panic propagate across
+            // this call into the Drop-guard above.
+            type Fn1 = unsafe extern "C-unwind" fn(usize) -> i64;
+            let f: Fn1 = unsafe { std::mem::transmute(code) };
+            let value = unsafe { f(env) };
+            // Normal completion: disarm the guard and deliver Ok.
+            guard.armed = false;
+            deliver_outcome(ch_addr, 0, value);
+        }));
+        ch
+    })
+}
+
+/// `handle.join() -> Result<T, String>` — blocks (parking the caller
+/// cooperatively in a goroutine, or condvar-blocking on an OS thread)
+/// until the spawned goroutine deposits its outcome, then unpacks it
+/// into the 2-word Result aggregate.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_join(ch: *mut super::chan::GosChan) -> i128 {
+    ffi_entry!(super::vec::pack_result(1, 0), {
+        if ch.is_null() {
+            return super::vec::pack_result(1, 0);
+        }
+        let mut buf = [0u8; 8];
+        // SAFETY: `buf` is an 8-byte sink matching the channel width.
+        let ok = unsafe { super::chan::gos_rt_chan_recv(ch, buf.as_mut_ptr()) };
+        if ok == 0 {
+            return super::vec::pack_result(1, 0);
+        }
+        let outcome_ptr = i64::from_ne_bytes(buf) as *mut SpawnOutcome;
+        if outcome_ptr.is_null() {
+            return super::vec::pack_result(1, 0);
+        }
+        // SAFETY: the pointer was produced by `Box::into_raw` in the
+        // spawn body; reclaim ownership and free it here.
+        let outcome = unsafe { Box::from_raw(outcome_ptr) };
+        super::vec::pack_result(outcome.disc, outcome.payload)
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_go_yield() {
     ffi_entry!((), {

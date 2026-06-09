@@ -233,6 +233,10 @@ const PRELUDE_VALUES: &[&str] = &[
     "min",
     "max",
     "clamp",
+    // Goroutine join handle: `spawn(f)` runs `f` on a goroutine and
+    // returns a handle whose `.join()` blocks for the outcome. Bare
+    // prelude name so a user `fn spawn` overrides it.
+    "spawn",
     // Compile-time intrinsics referenced by macro expansion
     // (`println!` → `println(__concat(…))`) and struct-literal
     // lowering (`Path { f: v }` → `__struct("Path", "f", v)`).

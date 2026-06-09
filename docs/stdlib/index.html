@@ -187,6 +187,34 @@
 <td>Built-in container types.</td>
 </tr>
 <tr>
+<td><a href="collections_deque/"><code>std::collections::deque</code></a></td>
+<td>Double-ended queue over Vec<i64>. Re-bind shape on every mutator.</td>
+</tr>
+<tr>
+<td><a href="collections_heap/"><code>std::collections::heap</code></a></td>
+<td>Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: <code>let h = heap::push(h, v)</code>.</td>
+</tr>
+<tr>
+<td><a href="collections_ordered_map/"><code>std::collections::ordered_map</code></a></td>
+<td>Sorted key/value map (i64 -&gt; i64) backed by a flat pair Vec. Re-bind on every mutator.</td>
+</tr>
+<tr>
+<td><a href="collections_ordered_set/"><code>std::collections::ordered_set</code></a></td>
+<td>Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator.</td>
+</tr>
+<tr>
+<td><a href="collections_ordered_vec/"><code>std::collections::ordered_vec</code></a></td>
+<td>Sorted-on-insert Vec<i64> with binary-search lookups.</td>
+</tr>
+<tr>
+<td><a href="collections_queue/"><code>std::collections::queue</code></a></td>
+<td>FIFO queue over Vec<i64>. Re-bind shape: <code>let q = queue::push(q, v)</code>.</td>
+</tr>
+<tr>
+<td><a href="collections_stack/"><code>std::collections::stack</code></a></td>
+<td>LIFO stack over Vec<i64>. Re-bind shape: <code>let s = stack::push(s, v)</code>.</td>
+</tr>
+<tr>
 <td><a href="compress_bzip2/"><code>std::compress::bzip2</code></a></td>
 <td>bzip2 encoder / decoder (BZh format).</td>
 </tr>
@@ -201,6 +229,10 @@
 <tr>
 <td><a href="compress_zlib/"><code>std::compress::zlib</code></a></td>
 <td>zlib (RFC 1950) encoder / decoder.</td>
+</tr>
+<tr>
+<td><a href="compress_zstd/"><code>std::compress::zstd</code></a></td>
+<td>Zstandard encoder / decoder (RFC 8478; libzstd-vendored).</td>
 </tr>
 <tr>
 <td><a href="context/"><code>std::context</code></a></td>
@@ -239,6 +271,10 @@
 <td>Password-based key-derivation functions.</td>
 </tr>
 <tr>
+<td><a href="crypto_password/"><code>std::crypto::password</code></a></td>
+<td>Argon2id password hashing facade: PHC-string hash / verify / re-hash policy.</td>
+</tr>
+<tr>
 <td><a href="crypto_rand/"><code>std::crypto::rand</code></a></td>
 <td>Secure random bytes from the host CSPRNG.</td>
 </tr>
@@ -260,7 +296,7 @@
 </tr>
 <tr>
 <td><a href="database_sql/"><code>std::database::sql</code></a></td>
-<td>Driver-pluggable SQL database access.</td>
+<td>Driver-pluggable SQL database access. No driver ships in the box; bring your own (Postgres, MySQL, SQLite, ...) by registering one at startup.</td>
 </tr>
 <tr>
 <td><a href="encoding_ascii85/"><code>std::encoding::ascii85</code></a></td>
@@ -293,6 +329,10 @@
 <tr>
 <td><a href="encoding_pem/"><code>std::encoding::pem</code></a></td>
 <td>PEM block encoder and decoder.</td>
+</tr>
+<tr>
+<td><a href="encoding_toml/"><code>std::encoding::toml</code></a></td>
+<td>TOML 1.0 parsing + emission. Pair with <code>&lt;Type&gt;::from_toml</code> for typed decoding (struct auto-derive).</td>
 </tr>
 <tr>
 <td><a href="encoding_xml/"><code>std::encoding::xml</code></a></td>
@@ -339,8 +379,28 @@
 <td>RFC 7230 §4.1 chunked transfer-encoding reader and writer.</td>
 </tr>
 <tr>
+<td><a href="http_cookie/"><code>std::http::cookie</code></a></td>
+<td>RFC 6265 cookie parser and Set-Cookie builder.</td>
+</tr>
+<tr>
+<td><a href="http_csrf/"><code>std::http::csrf</code></a></td>
+<td>Double-submit-cookie CSRF protection with Origin / Referer allowlist.</td>
+</tr>
+<tr>
+<td><a href="http_form/"><code>std::http::form</code></a></td>
+<td>application/x-www-form-urlencoded parser and builder.</td>
+</tr>
+<tr>
+<td><a href="http_health/"><code>std::http::health</code></a></td>
+<td>Liveness / readiness probes for HTTP health endpoints.</td>
+</tr>
+<tr>
 <td><a href="http_middleware/"><code>std::http::middleware</code></a></td>
 <td>Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.</td>
+</tr>
+<tr>
+<td><a href="http_multipart/"><code>std::http::multipart</code></a></td>
+<td>RFC 7578 multipart/form-data streaming parser.</td>
 </tr>
 <tr>
 <td><a href="http_native_client/"><code>std::http::native_client</code></a></td>
@@ -351,12 +411,24 @@
 <td>Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler.</td>
 </tr>
 <tr>
+<td><a href="http_query/"><code>std::http::query</code></a></td>
+<td>Typed wrapper over URL query strings.</td>
+</tr>
+<tr>
 <td><a href="http_router/"><code>std::http::router</code></a></td>
 <td>Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes.</td>
 </tr>
 <tr>
+<td><a href="http_session/"><code>std::http::session</code></a></td>
+<td>Signed-cookie session store with pluggable backend trait.</td>
+</tr>
+<tr>
 <td><a href="http_sse/"><code>std::http::sse</code></a></td>
 <td>Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint.</td>
+</tr>
+<tr>
+<td><a href="http_state/"><code>std::http::state</code></a></td>
+<td>Handler-side dependency injection via a typed AppState.</td>
 </tr>
 <tr>
 <td><a href="http_static_files/"><code>std::http::static_files</code></a></td>
@@ -367,12 +439,24 @@
 <td>RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close.</td>
 </tr>
 <tr>
+<td><a href="http_h3/"><code>std::http_h3</code></a></td>
+<td>First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each <code>serve</code> and <code>Client</code> instance owns a private tokio runtime; callers see only synchronous entry points.</td>
+</tr>
+<tr>
 <td><a href="io/"><code>std::io</code></a></td>
 <td>Stream-oriented I/O abstractions.</td>
 </tr>
 <tr>
 <td><a href="iter/"><code>std::iter</code></a></td>
 <td>Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.</td>
+</tr>
+<tr>
+<td><a href="jwt/"><code>std::jwt</code></a></td>
+<td>RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens.</td>
+</tr>
+<tr>
+<td><a href="lifecycle/"><code>std::lifecycle</code></a></td>
+<td>Graceful-shutdown coordinator with signal handling and sd_notify support.</td>
 </tr>
 <tr>
 <td><a href="log/"><code>std::log</code></a></td>
@@ -395,8 +479,20 @@
 <td>Deterministic pseudo-random number generation.</td>
 </tr>
 <tr>
+<td><a href="metrics/"><code>std::metrics</code></a></td>
+<td>Prometheus-compatible primitives (Counter, Gauge, Histogram) and a Registry rendering the standard text-exposition format.</td>
+</tr>
+<tr>
+<td><a href="mime/"><code>std::mime</code></a></td>
+<td>RFC 2045 media type parsing, parameter extraction, and extension lookup.</td>
+</tr>
+<tr>
 <td><a href="net/"><code>std::net</code></a></td>
 <td>TCP/UDP networking primitives.</td>
+</tr>
+<tr>
+<td><a href="net_netip/"><code>std::net::netip</code></a></td>
+<td>Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape).</td>
 </tr>
 <tr>
 <td><a href="net_url/"><code>std::net::url</code></a></td>
@@ -413,6 +509,10 @@
 <tr>
 <td><a href="os_signal/"><code>std::os::signal</code></a></td>
 <td>POSIX-style signal subscription (Go's os/signal shape).</td>
+</tr>
+<tr>
+<td><a href="os_user/"><code>std::os::user</code></a></td>
+<td>POSIX user / group lookup. Unix-backed by <code>nix</code>; Windows falls back to env vars.</td>
 </tr>
 <tr>
 <td><a href="panic/"><code>std::panic</code></a></td>
@@ -479,8 +579,12 @@
 <td>TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed.</td>
 </tr>
 <tr>
+<td><a href="trace/"><code>std::trace</code></a></td>
+<td>W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export.</td>
+</tr>
+<tr>
 <td><a href="unicode/"><code>std::unicode</code></a></td>
-<td>Unicode character property predicates and casing operations.</td>
+<td>Unicode general-category predicates, casing, normalization, and segmentation.</td>
 </tr>
 <tr>
 <td><a href="utf16/"><code>std::utf16</code></a></td>
@@ -489,6 +593,14 @@
 <tr>
 <td><a href="utf8/"><code>std::utf8</code></a></td>
 <td>UTF-8 validation and scalar decoding.</td>
+</tr>
+<tr>
+<td><a href="uuid/"><code>std::uuid</code></a></td>
+<td>UUID v4 (random) and v7 (timestamp-ordered) generation, parse, and normalize.</td>
+</tr>
+<tr>
+<td><a href="validate/"><code>std::validate</code></a></td>
+<td>Trait-based field validation: implement Validate, collect FieldErrors into Errors.</td>
 </tr>
 </tbody>
 </table>

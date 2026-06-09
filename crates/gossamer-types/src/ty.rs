@@ -224,6 +224,10 @@ pub enum TyKind {
     Sender(Ty),
     /// `Receiver<T>` — channel receive endpoint.
     Receiver(Ty),
+    /// `JoinHandle<T>` — handle returned by `spawn(f)`; `.join()`
+    /// blocks for the goroutine's `Result<T, String>` outcome.
+    /// Carried as a one-shot channel pointer at runtime.
+    JoinHandle(Ty),
     /// `json::Value` — opaque dynamic JSON node. Carries no
     /// generic parameters; the runtime backs every node with a
     /// boxed `serde_json::Value`. Field access on a `JsonValue`

@@ -325,7 +325,8 @@ impl InferCtxt {
             (TyKind::Slice(a), TyKind::Slice(b))
             | (TyKind::Vec(a), TyKind::Vec(b))
             | (TyKind::Sender(a), TyKind::Sender(b))
-            | (TyKind::Receiver(a), TyKind::Receiver(b)) => self.unify(tcx, *a, *b),
+            | (TyKind::Receiver(a), TyKind::Receiver(b))
+            | (TyKind::JoinHandle(a), TyKind::JoinHandle(b)) => self.unify(tcx, *a, *b),
             (TyKind::HashMap { key: ak, value: av }, TyKind::HashMap { key: bk, value: bv }) => {
                 self.unify(tcx, *ak, *bk)?;
                 self.unify(tcx, *av, *bv)
@@ -502,6 +503,7 @@ fn occurs_in_kind(infer: &InferCtxt, tcx: &TyCtxt, vid: TyVid, kind: &TyKind) ->
         }
         TyKind::Sender(pointee)
         | TyKind::Receiver(pointee)
+        | TyKind::JoinHandle(pointee)
         | TyKind::Ref { inner: pointee, .. } => occurs(infer, tcx, vid, *pointee),
         TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
             sig.inputs.iter().any(|t| occurs(infer, tcx, vid, *t))

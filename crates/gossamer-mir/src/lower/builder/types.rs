@@ -652,6 +652,17 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// `Result<ok, String>` — the shape `gos_rt_join` produces (Ok
+    /// value, or Err panic message as a String).
+    pub(crate) fn result_payload_string_error_ty(&mut self, ok: Ty) -> Ty {
+        let s = self.tcx.string_ty();
+        let substs = gossamer_types::Substs::from_types([ok, s]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
     pub(crate) fn result_i64_error_adt_ty(&mut self) -> Ty {
         let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let e = self.tcx.dyn_error_ty();

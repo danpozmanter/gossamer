@@ -58,6 +58,11 @@ pub struct RuntimeEntry {
     /// When true the LLVM declaration gains `noreturn cold nounwind` attributes.
     /// Only set for functions that provably never return (abort / panic paths).
     pub noreturn: bool,
+    /// When true the function may unwind, so the declaration omits the
+    /// `nounwind` attribute (even when `noreturn` is set). Required for
+    /// `gos_rt_panic`, which raises a Rust panic on the goroutine path
+    /// that must propagate across its caller to the coroutine catch.
+    pub unwinds: bool,
 }
 
 impl AbiType {
@@ -123,10 +128,17 @@ impl RuntimeEntry {
             .collect::<Vec<_>>()
             .join(", ");
         if self.noreturn {
-            format!(
-                "declare {} @{}({}) noreturn cold nounwind",
-                ret_ir, self.name, params
-            )
+            // `noreturn` functions never return normally, but one that
+            // may unwind (`gos_rt_panic` on the goroutine path) must NOT
+            // be `nounwind` — that would abort the unwind at any cleanup
+            // frame. LLVM permits `noreturn` together with a may-unwind
+            // function.
+            let tail = if self.unwinds {
+                "noreturn cold"
+            } else {
+                "noreturn cold nounwind"
+            };
+            format!("declare {} @{}({}) {tail}", ret_ir, self.name, params)
         } else {
             // Every `gos_rt_*` symbol is an `extern "C"` Rust function, and
             // unwinding out of an `extern "C"` boundary aborts (Rust never

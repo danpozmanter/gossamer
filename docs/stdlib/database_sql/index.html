@@ -157,7 +157,8 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="stddatabasesql"><code>std::database::sql</code><a class="headerlink" href="#stddatabasesql" title="Permanent link">&para;</a></h1>
-<p>Driver-pluggable SQL database access.</p>
+<p>Status: experimental</p>
+<p>Driver-pluggable SQL database access. No driver ships in the box; bring your own (Postgres, MySQL, SQLite, ...) by registering one at startup.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -171,17 +172,32 @@
 <tr>
 <td><code>Driver</code></td>
 <td>trait</td>
-<td>Database driver — opens connections.</td>
+<td>Database driver — opens connections. Implementations call <code>register</code> at startup.</td>
+</tr>
+<tr>
+<td><code>register</code></td>
+<td>fn</td>
+<td>Registers a <code>Driver</code> under its canonical name in the process-wide registry.</td>
+</tr>
+<tr>
+<td><code>drivers</code></td>
+<td>fn</td>
+<td>Lists every currently-registered driver name.</td>
+</tr>
+<tr>
+<td><code>open</code></td>
+<td>fn</td>
+<td>Opens a database connection by driver name + URL.</td>
 </tr>
 <tr>
 <td><code>Conn</code></td>
 <td>type</td>
-<td>Open database connection.</td>
+<td>Open database connection. <code>prepare</code>, <code>execute</code>, <code>query</code>, <code>begin</code>, <code>begin_with</code>, <code>ping</code>, <code>execute_many</code>, <code>execute_ctx</code>, <code>query_ctx</code>, <code>interrupt</code>.</td>
 </tr>
 <tr>
 <td><code>Tx</code></td>
 <td>type</td>
-<td>Active transaction handle.</td>
+<td>Active transaction. <code>commit</code>, <code>rollback</code>, <code>savepoint</code>, <code>release_savepoint</code>, <code>rollback_to_savepoint</code>, <code>execute</code>.</td>
 </tr>
 <tr>
 <td><code>Stmt</code></td>
@@ -191,12 +207,52 @@
 <tr>
 <td><code>Rows</code></td>
 <td>type</td>
-<td>Result-set iterator.</td>
+<td>Result-set iterator. <code>next_row</code>, <code>columns</code>.</td>
 </tr>
 <tr>
-<td><code>open</code></td>
+<td><code>Row</code></td>
+<td>type</td>
+<td>Current row inside a <code>Rows</code> walk. Typed <code>get_i64</code>, <code>get_f64</code>, <code>get_bool</code>, <code>get_text</code>, <code>get_blob</code> plus <code>get_opt_*</code> and <code>is_null</code>.</td>
+</tr>
+<tr>
+<td><code>Value</code></td>
+<td>type</td>
+<td>Bound or fetched value. Null / Bool / Int / Float / Text / Blob.</td>
+</tr>
+<tr>
+<td><code>IsolationLevel</code></td>
+<td>type</td>
+<td>Default / ReadUncommitted / ReadCommitted / RepeatableRead / Serializable. Passed to <code>Conn::begin_with</code>.</td>
+</tr>
+<tr>
+<td><code>Error</code></td>
+<td>type</td>
+<td>Driver error. <code>Error::driver(driver, msg)</code> builds one; <code>Error::PoolExhausted</code> and <code>Error::Cancelled</code> are variants.</td>
+</tr>
+<tr>
+<td><code>Pool</code></td>
+<td>type</td>
+<td>Connection pool. <code>new</code>, <code>fill</code>, <code>get</code> (blocks up to <code>acquire_timeout</code>), <code>len</code>. Cheap to clone.</td>
+</tr>
+<tr>
+<td><code>PoolConfig</code></td>
+<td>type</td>
+<td>Pool tuning: <code>min</code>, <code>max</code>, <code>idle_timeout</code>, <code>max_lifetime</code>, <code>acquire_timeout</code>, <code>statement_cache</code>. Fluent <code>with_*</code> builders.</td>
+</tr>
+<tr>
+<td><code>PooledConn</code></td>
+<td>type</td>
+<td>Connection checked out from a <code>Pool</code>; returned on drop.</td>
+</tr>
+<tr>
+<td><code>Select</code></td>
+<td>type</td>
+<td>Fluent SELECT builder. <code>Select::new(table).columns(&amp;[..]).where_eq(col, val).order_by(col, asc).limit(n).render() -&gt; (sql, params)</code>. Emits Postgres-style <code>$N</code> placeholders.</td>
+</tr>
+<tr>
+<td><code>migrate</code></td>
 <td>fn</td>
-<td>Opens a database connection by driver name + URL.</td>
+<td>Forward-only schema migrations from a directory of <code>&lt;version&gt;_&lt;slug&gt;.sql</code> files. <code>migrate::up(&amp;mut conn, dir)</code> applies pending migrations, each in its own transaction; <code>migrate::discover</code>, <code>migrate::applied</code>, <code>migrate::plan</code>, <code>migrate::init</code> round out the surface.</td>
 </tr>
 </tbody>
 </table>

@@ -1542,6 +1542,12 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Channel::recv",
         builtin("Channel::recv", builtin_channel_recv),
     ));
+    // `spawn(f)` hands back a one-shot channel as its join handle;
+    // `.join()` on that Channel blocks for the outcome variant.
+    globals.push((
+        "Channel::join",
+        builtin("Channel::join", builtin_channel_join),
+    ));
     globals.push((
         "Channel::try_recv",
         builtin("Channel::try_recv", builtin_channel_try_recv),
@@ -5755,8 +5761,27 @@ fn native_spawn(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeRes
         return Ok(Value::Unit);
     };
     let rest = args.iter().skip(1).cloned().collect();
-    dispatch.spawn_callable(callable, rest)?;
-    Ok(Value::Unit)
+    // `spawn(f)` returns a join handle (a one-shot channel) whose
+    // `.join()` blocks for the goroutine's `Result<T, String>`.
+    dispatch.spawn_join(callable, rest)
+}
+
+/// `handle.join() -> Result<T, String>` — blocks on the one-shot
+/// handle channel for the spawned goroutine's outcome variant.
+fn builtin_channel_join(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Channel(channel)) = args.first() else {
+        return Ok(Value::variant(
+            "Err",
+            std::sync::Arc::new(vec![Value::String("join on a non-handle value".into())]),
+        ));
+    };
+    match channel.recv() {
+        Some(outcome) => Ok(outcome),
+        None => Ok(Value::variant(
+            "Err",
+            std::sync::Arc::new(vec![Value::String("join: handle channel closed".into())]),
+        )),
+    }
 }
 
 fn builtin_testing_check(args: &[Value]) -> RuntimeResult<Value> {

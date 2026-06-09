@@ -1178,6 +1178,7 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_iter_take_i64",
             crate::c_abi::gos_rt_iter_take_i64 as *const u8,
         ),
+        ("gos_rt_join", crate::c_abi::gos_rt_join as *const u8),
         (
             "gos_rt_json_array_from_scalar_vec",
             crate::c_abi::gos_rt_json_array_from_scalar_vec as *const u8,
@@ -2411,6 +2412,7 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_slog_warn",
             crate::c_abi::gos_rt_slog_warn as *const u8,
         ),
+        ("gos_rt_spawn", crate::c_abi::gos_rt_spawn as *const u8),
         (
             "gos_rt_sql_conn_begin",
             crate::c_abi::gos_rt_sql_conn_begin as *const u8,

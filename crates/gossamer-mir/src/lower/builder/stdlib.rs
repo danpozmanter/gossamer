@@ -192,6 +192,60 @@ impl<'a> Builder<'a> {
         env_local
     }
 
+    /// Lowers `spawn(f) -> JoinHandle<T>`. The callable `f` is coerced
+    /// into the closure env-blob shape (`[code_ptr, captures…]`); the
+    /// entry address sits at offset 0 and the blob itself is the env
+    /// passed as the implicit first argument. The runtime helper runs
+    /// it on a goroutine and threads the outcome back through the
+    /// handle's `gos_rt_join`.
+    pub(crate) fn lower_spawn(&mut self, f_expr: &HirExpr, span: Span) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let f_local = self.lower_expr(f_expr)?;
+        let f_ty = self.locals[f_local.0 as usize].ty;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        // The handle's element type is the callable's return type when
+        // it is statically known; otherwise default to i64 (the raw
+        // 8-byte slot the runtime carries).
+        let elem = match self.tcx.kind_of(f_ty).clone() {
+            TyKind::FnTrait(sig) | TyKind::FnPtr(sig) => sig.output,
+            _ => i64_ty,
+        };
+        // Coerce a bare fn / non-capturing closure into the env-blob
+        // shape so `code = load(env+0)` is uniform; capturing closures
+        // are already env-shaped and pass through unchanged.
+        let fn_trait_ty = self.tcx.intern(TyKind::FnTrait(gossamer_types::FnSig {
+            inputs: Vec::new(),
+            output: elem,
+        }));
+        let env_local = self.coerce_to_fn_trait_if_needed(f_local, fn_trait_ty, span);
+        let code_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(code_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_load",
+                args: vec![
+                    Operand::Copy(Place::local(env_local)),
+                    Operand::Const(ConstValue::Int(0)),
+                ],
+            },
+            span,
+        );
+        let handle_ty = self.tcx.intern(TyKind::JoinHandle(elem));
+        let dest = self.fresh(handle_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_spawn".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(code_local)),
+                Operand::Copy(Place::local(env_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
     pub(crate) fn lower_http_serve(
         &mut self,
         addr_expr: &HirExpr,

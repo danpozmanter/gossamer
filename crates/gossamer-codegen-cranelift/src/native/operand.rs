@@ -304,7 +304,9 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     _ => PrintKind::Unsupported("Vec"),
                 },
                 TyKind::HashMap { .. } => PrintKind::Unsupported("HashMap"),
-                TyKind::Sender(_) | TyKind::Receiver(_) => PrintKind::Unsupported("channel"),
+                TyKind::Sender(_) | TyKind::Receiver(_) | TyKind::JoinHandle(_) => {
+                    PrintKind::Unsupported("channel")
+                }
                 TyKind::JsonValue => PrintKind::JsonValue,
                 TyKind::Adt { .. } => PrintKind::Unsupported("struct or enum"),
                 TyKind::Closure { .. } => PrintKind::Unsupported("closure"),

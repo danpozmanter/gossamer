@@ -1784,6 +1784,34 @@ impl NativeDispatch for Interpreter {
         GOROUTINE_HANDLES.with(|cell| cell.borrow_mut().push(handle));
         Ok(())
     }
+    fn spawn_join(&mut self, callable: Value, args: Vec<Value>) -> RuntimeResult<Value> {
+        let channel = crate::value::Channel::new();
+        let worker_channel = channel.clone();
+        let mut worker = self.clone();
+        let handle = std::thread::Builder::new()
+            .name("gossamer-spawn".to_string())
+            .spawn(move || {
+                // The outcome rides the one-shot channel as the final
+                // `Result<T, String>` variant so `.join()` is a plain
+                // recv. A panic is captured as `Err(message)` with the
+                // bare panic text — matching the compiled tier, whose
+                // `gos_rt_join` carries `alloc_cstring(message)`.
+                let outcome = match worker.apply(&callable, args) {
+                    Ok(v) => Value::variant("Ok", std::sync::Arc::new(vec![v])),
+                    Err(RuntimeError::Panic(msg)) => {
+                        Value::variant("Err", std::sync::Arc::new(vec![Value::String(msg.into())]))
+                    }
+                    Err(other) => Value::variant(
+                        "Err",
+                        std::sync::Arc::new(vec![Value::String(format!("{other}").into())]),
+                    ),
+                };
+                worker_channel.send(outcome);
+            })
+            .map_err(|e| RuntimeError::Panic(format!("spawn worker: {e}")))?;
+        GOROUTINE_HANDLES.with(|cell| cell.borrow_mut().push(handle));
+        Ok(Value::Channel(channel))
+    }
 }
 
 /// Runtime shape of one `select` arm after evaluating its channel

@@ -157,6 +157,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="stdosexec"><code>std::os::exec</code><a class="headerlink" href="#stdosexec" title="Permanent link">&para;</a></h1>
+<p>Status: shipped</p>
 <p>Spawn / wait for child processes (Go's os/exec shape).</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -194,9 +195,49 @@
 <td>Handle to a still-running child supporting wait / kill.</td>
 </tr>
 <tr>
+<td><code>Pipeline</code></td>
+<td>type</td>
+<td>Multi-stage subprocess pipeline (stdout-to-stdin chain).</td>
+</tr>
+<tr>
+<td><code>Signal</code></td>
+<td>type</td>
+<td>Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit).</td>
+</tr>
+<tr>
 <td><code>run</code></td>
 <td>fn</td>
 <td>One-shot: runs a program with args, captures stdout/stderr, returns Result&lt;{stdout, stderr, code}, String&gt;.</td>
+</tr>
+<tr>
+<td><code>spawn</code></td>
+<td>fn</td>
+<td>Non-blocking launch; returns the child PID as Result<i64, errors::Error>.</td>
+</tr>
+<tr>
+<td><code>kill</code></td>
+<td>fn</td>
+<td>Best-effort SIGTERM by pid; returns true on success.</td>
+</tr>
+<tr>
+<td><code>signal</code></td>
+<td>fn</td>
+<td>Send an arbitrary signal number to a pid; returns true on success.</td>
+</tr>
+<tr>
+<td><code>kill_group</code></td>
+<td>fn</td>
+<td>Send SIGTERM to the entire process group (Unix); best-effort TerminateProcess on Windows.</td>
+</tr>
+<tr>
+<td><code>wait_timeout</code></td>
+<td>fn</td>
+<td>Wait up to N ms for a pid to exit; returns exit code, -1 on timeout, -2 on error.</td>
+</tr>
+<tr>
+<td><code>pipeline_run</code></td>
+<td>fn</td>
+<td>Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline; returns Result<Output, errors::Error>.</td>
 </tr>
 </tbody>
 </table>

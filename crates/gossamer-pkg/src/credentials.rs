@@ -8,7 +8,12 @@
 //! `$GOS_TOKEN`); `gos logout --registry URL` removes it. Every
 //! authenticated registry request sends `Authorization: Bearer <token>`.
 
-#![forbid(unsafe_code)]
+// `deny`, not `forbid`: this module is safe everywhere except the
+// audited Windows-only DACL helper below, which must call Win32 FFI.
+// `forbid` cannot be relaxed by a narrower `#[allow]`, so it would
+// break the Windows build outright; `deny` keeps unsafe rejected by
+// default while letting that one gated function opt in.
+#![deny(unsafe_code)]
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -217,7 +222,10 @@ fn unquote(s: &str) -> String {
 /// Replaces a file's DACL with a single ACE granting the current user
 /// read+write and nothing else, marking the DACL protected so inherited ACEs
 /// are dropped. The Windows analogue of `chmod 0600`.
+// Win32 ACL programming is inherently `unsafe` FFI; the block is
+// self-contained and audited (two-call TOKEN_USER pattern + DACL set).
 #[cfg(windows)]
+#[allow(unsafe_code)]
 fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     use std::io;
     use std::os::windows::ffi::OsStrExt;

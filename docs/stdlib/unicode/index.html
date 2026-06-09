@@ -157,7 +157,8 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="stdunicode"><code>std::unicode</code><a class="headerlink" href="#stdunicode" title="Permanent link">&para;</a></h1>
-<p>Unicode character property predicates and casing operations.</p>
+<p>Status: shipped</p>
+<p>Unicode general-category predicates, casing, normalization, and segmentation.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -171,87 +172,187 @@
 <tr>
 <td><code>is_letter</code></td>
 <td>fn</td>
-<td>True if r is a Unicode letter.</td>
+<td>True if r is in general-category group L.</td>
 </tr>
 <tr>
 <td><code>is_digit</code></td>
 <td>fn</td>
-<td>True if r is a decimal digit.</td>
+<td>True if r is a decimal digit (category Nd).</td>
 </tr>
 <tr>
 <td><code>is_number</code></td>
 <td>fn</td>
-<td>True if r is a numeric character.</td>
+<td>True if r is any numeric (Nd|Nl|No).</td>
 </tr>
 <tr>
 <td><code>is_space</code></td>
 <td>fn</td>
-<td>True if r is whitespace.</td>
+<td>True if r is whitespace (Z* plus HT/LF/VT/FF/CR/NEL).</td>
 </tr>
 <tr>
 <td><code>is_upper</code></td>
 <td>fn</td>
-<td>True if r is an uppercase letter.</td>
+<td>True if r is category Lu.</td>
 </tr>
 <tr>
 <td><code>is_lower</code></td>
 <td>fn</td>
-<td>True if r is a lowercase letter.</td>
+<td>True if r is category Ll.</td>
 </tr>
 <tr>
 <td><code>is_title</code></td>
 <td>fn</td>
-<td>True if r is a titlecase letter.</td>
+<td>True if r is category Lt.</td>
 </tr>
 <tr>
 <td><code>is_punct</code></td>
 <td>fn</td>
-<td>True if r is a punctuation character.</td>
+<td>True if r is in general-category group P.</td>
 </tr>
 <tr>
 <td><code>is_symbol</code></td>
 <td>fn</td>
-<td>True if r is a symbol character.</td>
+<td>True if r is in general-category group S.</td>
 </tr>
 <tr>
 <td><code>is_mark</code></td>
 <td>fn</td>
-<td>True if r is a combining mark.</td>
+<td>True if r is in general-category group M.</td>
 </tr>
 <tr>
 <td><code>is_print</code></td>
 <td>fn</td>
-<td>True if r is a printable character.</td>
+<td>True if r is printable (not Cc/Cf/Cs/Co/Cn).</td>
 </tr>
 <tr>
 <td><code>is_graphic</code></td>
 <td>fn</td>
-<td>True if r is a graphic character.</td>
+<td>True if r is graphic (printable and not whitespace).</td>
 </tr>
 <tr>
 <td><code>is_control</code></td>
 <td>fn</td>
-<td>True if r is a control character.</td>
+<td>True if r is category Cc.</td>
+</tr>
+<tr>
+<td><code>is_assigned</code></td>
+<td>fn</td>
+<td>True if r is an assigned code point (not Cn).</td>
 </tr>
 <tr>
 <td><code>to_upper</code></td>
 <td>fn</td>
-<td>Maps r to its uppercase equivalent.</td>
+<td>Simple uppercase mapping for one rune.</td>
 </tr>
 <tr>
 <td><code>to_lower</code></td>
 <td>fn</td>
-<td>Maps r to its lowercase equivalent.</td>
+<td>Simple lowercase mapping for one rune.</td>
 </tr>
 <tr>
 <td><code>to_title</code></td>
 <td>fn</td>
-<td>Maps r to its titlecase equivalent.</td>
+<td>Simple titlecase mapping for one rune.</td>
 </tr>
 <tr>
 <td><code>simple_fold</code></td>
 <td>fn</td>
 <td>Next rune in Unicode case-folding cycle.</td>
+</tr>
+<tr>
+<td><code>combining_class</code></td>
+<td>fn</td>
+<td>Canonical combining class (0-254) for r.</td>
+</tr>
+<tr>
+<td><code>to_upper_str</code></td>
+<td>fn</td>
+<td>Full uppercase mapping for a string (ss -&gt; SS).</td>
+</tr>
+<tr>
+<td><code>to_lower_str</code></td>
+<td>fn</td>
+<td>Full lowercase mapping for a string.</td>
+</tr>
+<tr>
+<td><code>fold_case</code></td>
+<td>fn</td>
+<td>Simple case-folded comparison form for a string.</td>
+</tr>
+<tr>
+<td><code>nfc</code></td>
+<td>fn</td>
+<td>Normalize a string to NFC (canonical composition).</td>
+</tr>
+<tr>
+<td><code>nfd</code></td>
+<td>fn</td>
+<td>Normalize a string to NFD (canonical decomposition).</td>
+</tr>
+<tr>
+<td><code>nfkc</code></td>
+<td>fn</td>
+<td>Normalize a string to NFKC (compat composition).</td>
+</tr>
+<tr>
+<td><code>nfkd</code></td>
+<td>fn</td>
+<td>Normalize a string to NFKD (compat decomposition).</td>
+</tr>
+<tr>
+<td><code>is_nfc</code></td>
+<td>fn</td>
+<td>True if a string is already in NFC.</td>
+</tr>
+<tr>
+<td><code>is_nfd</code></td>
+<td>fn</td>
+<td>True if a string is already in NFD.</td>
+</tr>
+<tr>
+<td><code>is_nfkc</code></td>
+<td>fn</td>
+<td>True if a string is already in NFKC.</td>
+</tr>
+<tr>
+<td><code>is_nfkd</code></td>
+<td>fn</td>
+<td>True if a string is already in NFKD.</td>
+</tr>
+<tr>
+<td><code>graphemes</code></td>
+<td>fn</td>
+<td>UAX #29 extended grapheme clusters of a string.</td>
+</tr>
+<tr>
+<td><code>grapheme_count</code></td>
+<td>fn</td>
+<td>Number of UAX #29 grapheme clusters in a string.</td>
+</tr>
+<tr>
+<td><code>words</code></td>
+<td>fn</td>
+<td>UAX #29 Unicode words in a string (skips punct/whitespace).</td>
+</tr>
+<tr>
+<td><code>word_bounds</code></td>
+<td>fn</td>
+<td>UAX #29 word boundaries (includes punct + whitespace runs).</td>
+</tr>
+<tr>
+<td><code>word_count</code></td>
+<td>fn</td>
+<td>Number of UAX #29 words in a string.</td>
+</tr>
+<tr>
+<td><code>sentences</code></td>
+<td>fn</td>
+<td>UAX #29 Unicode sentences in a string.</td>
+</tr>
+<tr>
+<td><code>sentence_count</code></td>
+<td>fn</td>
+<td>Number of UAX #29 sentences in a string.</td>
 </tr>
 </tbody>
 </table>

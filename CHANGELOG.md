@@ -9,6 +9,7 @@ A panic in a spawned goroutine now terminates only that goroutine: the process k
 
 ### Language features
 
+- **`spawn(f)` join handles.** `spawn(f)` runs `f` on a goroutine and returns a `JoinHandle<T>`; `handle.join()` blocks for the outcome as `Result<T, String>` — `Ok(value)` on normal return, or `Err(message)` if the goroutine panicked. Works on every tier (the runtime delivers the panic message to the handle as the stack unwinds, then isolates the goroutine like `go`). Closures may capture their environment. Fixture: `feature-testing-examples/spawn_join.gos`.
 - **Real `select { }` on the compiled tiers.** Cranelift and LLVM previously lowered `select` to an "arm 0 always fires" stub; they now poll arms in source order and park the goroutine until one is ready (or a `default` arm fires) via a new `gos_rt_select_*` runtime, matching the VM walker bit-for-bit. Send arms (`tx.send(v) => …`) now parse. Fixture: `feature-testing-examples/select_multiplex.gos`.
 - **Block-scoped `defer` (Swift/Zig style).** The reserved-but-no-op `defer` now runs its expression when control leaves the enclosing `{ }` block — fall-through, `return`, `break`, or `continue` — in LIFO order, on every tier. A `defer` in a loop body runs each iteration. Example: `examples/defer_cleanup.gos`.
 - **`let PAT = expr else { … }`.** Refutable-let-or-diverge, desugared to a `match` so it runs on every tier. Fixture: `feature-testing-examples/let_else_binding.gos`.

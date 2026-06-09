@@ -417,9 +417,18 @@ fn load_config(path: &amp;String) -&gt; Result&lt;String, errors::Error&gt; {
 process). Reserve them for invariant violations, not
 recoverable failure.</p>
 <h2 id="8-concurrency">8. Concurrency<a class="headerlink" href="#8-concurrency" title="Permanent link">&para;</a></h2>
-<p>Goroutines via <code>go expr</code>. Typed channels via
-<code>std::sync::channel()</code>. <code>select { }</code> multiplexes receives and
-sends:</p>
+<p>Goroutines via <code>go expr</code> (fire-and-forget). For a result, <code>spawn(f)</code>
+runs <code>f</code> on a goroutine and returns a <code>JoinHandle&lt;T&gt;</code>; <code>handle.join()</code>
+blocks for <code>Result&lt;T, String&gt;</code> — <code>Ok(value)</code>, or <code>Err(message)</code> if the
+goroutine panicked:</p>
+<pre><code class="language-gossamer">let h = spawn(|| compute())
+match h.join() {
+    Ok(v) =&gt; println!(&quot;{}&quot;, v),
+    Err(e) =&gt; eprintln!(&quot;worker failed: {}&quot;, e),
+}
+</code></pre>
+<p>Typed channels via <code>std::sync::channel()</code>. <code>select { }</code> multiplexes
+receives and sends:</p>
 <pre><code class="language-gossamer">use std::sync::channel
 use std::time
 

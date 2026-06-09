@@ -230,11 +230,14 @@ the spec, see <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.m
 <li><strong>What changes:</strong> syntax (Rust-shaped), error handling
   (<code>Result&lt;T, E&gt;</code> + <code>?</code>), interfaces become traits (nominal),
   no implicit numeric coercion (<code>as</code> is explicit).</li>
-<li><strong>What's missing today:</strong> HTTP/2, gRPC, WebSockets, Postgres /
-  MySQL drivers (drivers belong with the package ecosystem,
-  same as Go pre-2009), real package registry.
-  <code>database/sql</code> ships with a bundled SQLite driver; other
-  drivers come through the package manager.</li>
+<li><strong>What's missing today:</strong> gRPC, real package registry,
+  first-party SQL drivers. <code>std::database::sql</code> is the
+  driver-pluggable surface (Conn / Tx / Stmt / Rows / Pool /
+  migrate / Select); every driver — including SQLite — is a
+  third-party Rust binding that registers itself at startup.
+  HTTP/1, HTTP/2, HTTP/3, WebSockets, and SSE are all
+  first-party (<code>std::http</code>, <code>std::http_h3</code>, <code>std::http::websocket</code>,
+  <code>std::http::sse</code>).</li>
 </ul>
 <h2 id="syntax-cheat-sheet">Syntax cheat-sheet<a class="headerlink" href="#syntax-cheat-sheet" title="Permanent link">&para;</a></h2>
 <table>
@@ -825,8 +828,12 @@ for rows.Next() {
 }
 </code></pre>
 <p>Gossamer:</p>
-<pre><code class="language-gos">let mut conn = database::sql::open(&quot;sqlite&quot;, &quot;:memory:&quot;)?
-let mut rows = conn.query(&quot;SELECT id, body FROM notes WHERE id = ?1&quot;,
+<pre><code class="language-gos">// A SQL driver (sqlite / postgres / mysql / ...) is brought in
+// as a Rust binding; the binding crate calls
+// `gossamer_runtime::sql::register` at link time. After that,
+// `open(name, url)` resolves to the right driver:
+let mut conn = database::sql::open(&quot;sqlite&quot;, &quot;:memory:&quot;)?
+let mut rows = conn.query(&quot;SELECT id, body FROM notes WHERE id = $1&quot;,
                           &amp;[database::sql::Value::Int(1)])?
 while let Some(row) = rows.next_row()? {
     let id   = row.get_i64(&quot;id&quot;)?

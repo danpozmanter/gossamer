@@ -367,9 +367,22 @@ failure.
 
 ## 8. Concurrency
 
-Goroutines via `go expr`. Typed channels via
-`std::sync::channel()`. `select { }` multiplexes receives and
-sends:
+Goroutines via `go expr` (fire-and-forget). When you need the
+result, `spawn(f)` runs `f` on a goroutine and returns a
+`JoinHandle<T>`; `handle.join()` blocks for `Result<T, String>` —
+`Ok(value)` on a normal return, or `Err(message)` if the goroutine
+panicked. Closures may capture their environment.
+
+```gossamer
+let h = spawn(|| compute())
+match h.join() {
+    Ok(v) => println!("{}", v),
+    Err(e) => eprintln!("worker failed: {}", e),
+}
+```
+
+Typed channels via `std::sync::channel()`. `select { }` multiplexes
+receives and sends:
 
 ```gossamer
 use std::sync::channel

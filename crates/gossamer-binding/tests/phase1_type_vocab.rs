@@ -98,6 +98,15 @@ impl gossamer_binding::value::NativeDispatch for NullDispatch {
             "no dispatch".into(),
         ))
     }
+    fn spawn_join(
+        &mut self,
+        _callable: Value,
+        _args: Vec<Value>,
+    ) -> gossamer_binding::value::RuntimeResult<Value> {
+        Err(gossamer_binding::value::RuntimeError::Type(
+            "no dispatch".into(),
+        ))
+    }
 }
 
 fn call(name: &str, args: Vec<Value>) -> Value {

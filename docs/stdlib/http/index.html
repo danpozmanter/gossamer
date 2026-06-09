@@ -157,6 +157,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="stdhttp"><code>std::http</code><a class="headerlink" href="#stdhttp" title="Permanent link">&para;</a></h1>
+<p>Status: shipped</p>
 <p>HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -257,6 +258,21 @@
 <td><code>serve_h2c_streaming</code></td>
 <td>fn</td>
 <td>Same shape for Http2StreamingHandler.</td>
+</tr>
+<tr>
+<td><code>Trailers</code></td>
+<td>type</td>
+<td>HTTP/2 trailing HEADERS (alias for Headers) — used by <code>ResponseWriter::write_trailers</code> and <code>Request::trailers</code>.</td>
+</tr>
+<tr>
+<td><code>PushOptions</code></td>
+<td>type</td>
+<td>Prioritization knobs for <code>ResponseWriter::push_promise</code> (weight, depends_on, exclusive).</td>
+</tr>
+<tr>
+<td><code>PushStream</code></td>
+<td>type</td>
+<td>Server-initiated push stream returned by <code>ResponseWriter::push_promise</code>. Supports send_head / write / write_trailers / end.</td>
 </tr>
 </tbody>
 </table>

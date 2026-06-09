@@ -225,6 +225,7 @@ impl<'a> Lowerer<'a> {
                     | TyKind::HashMap { .. }
                     | TyKind::Sender(_)
                     | TyKind::Receiver(_)
+                    | TyKind::JoinHandle(_)
                     | TyKind::Dyn(_)
                     | TyKind::FnPtr(_)
                     | TyKind::FnDef { .. }
@@ -388,6 +389,7 @@ impl<'a> Lowerer<'a> {
                         | TyKind::HashMap { .. }
                         | TyKind::Sender(_)
                         | TyKind::Receiver(_)
+                        | TyKind::JoinHandle(_)
                         | TyKind::Adt { .. }
                         | TyKind::Closure { .. }
                         | TyKind::FnDef { .. }

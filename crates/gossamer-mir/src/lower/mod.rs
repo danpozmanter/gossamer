@@ -149,6 +149,7 @@ fn field_fits_inline(tcx: &TyCtxt, ty: gossamer_types::Ty) -> bool {
             | TyKind::HashMap { .. }
             | TyKind::Sender(_)
             | TyKind::Receiver(_)
+            | TyKind::JoinHandle(_)
             | TyKind::Ref { .. }
             | TyKind::FnPtr(_)
             | TyKind::JsonValue

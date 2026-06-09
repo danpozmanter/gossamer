@@ -47,6 +47,9 @@ impl NativeDispatch for NullDispatch {
     fn spawn_callable(&mut self, _callable: Value, _args: Vec<Value>) -> RuntimeResult<()> {
         Err(RuntimeError::Unsupported("spawn_callable"))
     }
+    fn spawn_join(&mut self, _callable: Value, _args: Vec<Value>) -> RuntimeResult<Value> {
+        Err(RuntimeError::Unsupported("spawn_join"))
+    }
 }
 
 fn lookup(qualified: &str) -> &'static gossamer_binding::ItemFn {
@@ -223,6 +226,9 @@ impl NativeDispatch for CountingDispatch {
     }
     fn spawn_callable(&mut self, _callable: Value, _args: Vec<Value>) -> RuntimeResult<()> {
         Ok(())
+    }
+    fn spawn_join(&mut self, _callable: Value, _args: Vec<Value>) -> RuntimeResult<Value> {
+        Ok(Value::Unit)
     }
 }
 

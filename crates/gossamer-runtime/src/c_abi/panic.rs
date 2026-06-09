@@ -24,8 +24,37 @@ use super::*;
 // Panic
 // ---------------------------------------------------------------
 
+thread_local! {
+    /// The message of the most recent goroutine panic on this worker
+    /// thread. Set by `gos_rt_panic` just before it raises the Rust
+    /// panic, so a spawned goroutine's Drop-guard (in `gos_rt_spawn`)
+    /// can read it during unwinding and deliver `Err(message)` to the
+    /// join handle. The runtime catches the panic itself, so the
+    /// payload string is otherwise unreachable from the spawn body.
+    static LAST_GOROUTINE_PANIC: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Records the current goroutine's panic message for `gos_rt_spawn`'s
+/// join-handle delivery.
+pub(crate) fn set_last_goroutine_panic(msg: &str) {
+    LAST_GOROUTINE_PANIC.with(|c| *c.borrow_mut() = Some(msg.to_string()));
+}
+
+/// Takes (and clears) the last goroutine panic message recorded on
+/// this thread, if any.
+pub(crate) fn take_last_goroutine_panic() -> Option<String> {
+    LAST_GOROUTINE_PANIC.with(|c| c.borrow_mut().take())
+}
+
+// `C-unwind`, not `C`: on the goroutine path this raises a Rust panic
+// that must unwind back through its Gossamer caller to the coroutine
+// wrapper (and to a `spawn` join handle's Drop-guard). A plain
+// `extern "C"` declares the function nounwind, so that unwind would
+// trip the nounwind contract and abort whenever a cleanup frame sits
+// between the panic and its catch.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_panic(msg: *const c_char) {
+pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     let text = if msg.is_null() {
         "panic".to_string()
     } else {
@@ -59,9 +88,10 @@ pub unsafe extern "C" fn gos_rt_panic(msg: *const c_char) {
     // and abort the process: a panic in `fn main()` is fatal,
     // just like in Rust.
     if gossamer_coro::in_goroutine() {
-        // Set the panicked flag explicitly so the test-helper
-        // path observes it even if catch_unwind has already
-        // converted the panic into a typed Err.
+        // Stash the message so a `spawn`-created join handle can
+        // deliver `Err(message)` from its unwinding Drop-guard before
+        // the coroutine wrapper catches and isolates this panic.
+        set_last_goroutine_panic(&text);
         std::panic::panic_any(text);
     }
     // Fatal main-goroutine panic. Flush the runtime's line-buffered stdout

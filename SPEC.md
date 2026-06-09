@@ -664,6 +664,24 @@ go producer.step()
 go fn() { process(item) }          // sugar for: go (fn() { process(item) })()
 ```
 
+#### `spawn` / `join`
+
+`spawn(f)` runs the callable `f` (a function or closure taking no
+arguments) on a goroutine and returns a `JoinHandle<T>`, where `T` is
+`f`'s return type. `handle.join()` blocks until the goroutine finishes
+and yields its outcome as `Result<T, String>`: `Ok(value)` on a normal
+return, or `Err(message)` if the goroutine panicked. Unlike `go`, which
+is fire-and-forget, `spawn` lets the caller recover the result and
+isolate a panic without ending the process.
+
+```
+let h = spawn(|| compute())
+match h.join() {
+    Ok(v)  => use(v),
+    Err(e) => report(e),
+}
+```
+
 #### `select`
 
 ```

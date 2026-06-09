@@ -125,6 +125,10 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     lang("lang::select", "Channel multiplex select expression."),
     lang("lang::channel", "Typed channel via `std::sync::channel`."),
     lang(
+        "lang::spawn",
+        "Goroutine join handle: `spawn(f)` -> `JoinHandle<T>`, `.join()` -> `Result<T, String>`.",
+    ),
+    lang(
         "lang::macros",
         "Six built-in format macros (print/println/eprint/eprintln/format/panic).",
     ),

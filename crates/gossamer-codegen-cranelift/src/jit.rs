@@ -793,6 +793,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_go_spawn_call_1"     => rt::gos_rt_go_spawn_call_1,
         "gos_rt_go_spawn_call_2"     => rt::gos_rt_go_spawn_call_2,
         "gos_rt_go_yield"            => rt::gos_rt_go_yield,
+        "gos_rt_spawn"               => rt::gos_rt_spawn,
+        "gos_rt_join"                => rt::gos_rt_join,
         "gos_rt_sleep_ns"            => rt::gos_rt_sleep_ns,
         "gos_rt_sleep_ms"            => rt::gos_rt_sleep_ms,
         "gos_rt_now_ns"              => rt::gos_rt_now_ns,

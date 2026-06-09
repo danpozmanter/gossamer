@@ -68,6 +68,13 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     "gos_rt_cov_record",
     "gos_rt_cov_reset",
     "gos_rt_cov_set_enabled",
+    // Goroutine join-handle primitives. The runtime surface ships
+    // ahead (spawn + join) so the interpreter can use them; the
+    // compiled-tier dispatch tables (MIR → LLVM/Cranelift) are not
+    // yet wired. Will be lowered once the `spawn` prelude binding
+    // reaches the codegen backends.
+    "gos_rt_join",
+    "gos_rt_spawn",
 ];
 
 fn main() {

@@ -43,6 +43,7 @@ fn write_kind(tcx: &TyCtxt, kind: &TyKind, out: &mut String) {
         TyKind::HashMap { key, value } => write_named(tcx, "HashMap", &[*key, *value], out),
         TyKind::Sender(elem) => write_named(tcx, "Sender", &[*elem], out),
         TyKind::Receiver(elem) => write_named(tcx, "Receiver", &[*elem], out),
+        TyKind::JoinHandle(elem) => write_named(tcx, "JoinHandle", &[*elem], out),
         TyKind::JsonValue => out.push_str("json::Value"),
         TyKind::DynError => out.push_str("errors::Error"),
         TyKind::Ref { mutability, inner } => {

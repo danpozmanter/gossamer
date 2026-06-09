@@ -281,6 +281,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/slice_methods.gos"),
     spec("feature-testing-examples/slice_subslicing.gos"),
     spec("feature-testing-examples/sort_with_closure.gos"),
+    spec("feature-testing-examples/spawn_join.gos"),
     spec("feature-testing-examples/string_concatenation_stress.gos"),
     spec("feature-testing-examples/string_unicode_boundaries.gos"),
     spec("feature-testing-examples/time_monotonic_vs_wall.gos"),

@@ -253,8 +253,8 @@ the implementation by a rev.</p>
 <td>Run <code>#[test]</code> functions <strong>and</strong> doc-tests extracted from <code>```</code>-fenced code inside <code>//</code> doc comments. <code>```text</code> and other language tags are skipped. Accepts a file or a directory.</td>
 </tr>
 <tr>
-<td><code>gos bench [--iterations N] FILE</code></td>
-<td>Time <code>#[bench]</code> functions.</td>
+<td><code>gos bench [--parallel N] [PATH]</code></td>
+<td>Discover and time <code>#[bench]</code> functions; reports <code>ns/op</code> plus <code>allocs/op</code> per benchmark. Per-bench iteration counts auto-tune against a 50 ms calibration window (cap 2^20). <code>PATH</code> defaults to the project's <code>src/</code>.</td>
 </tr>
 </tbody>
 </table>

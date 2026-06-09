@@ -840,6 +840,10 @@ pub trait NativeDispatch {
     /// arguments. A panic in the spawned callable is isolated to the
     /// worker and does not propagate to the caller.
     fn spawn_callable(&mut self, callable: Value, args: Vec<Value>) -> RuntimeResult<()>;
+    /// Spawns `callable` and returns a one-shot channel handle that
+    /// `.join()` blocks on for the outcome (`Ok(value)`, or
+    /// `Err(message)` if the callable panicked). Backs `spawn(f)`.
+    fn spawn_join(&mut self, callable: Value, args: Vec<Value>) -> RuntimeResult<Value>;
 }
 
 /// Function pointer for [`Value::Native`] builtins.

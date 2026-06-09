@@ -157,6 +157,7 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="stdio"><code>std::io</code><a class="headerlink" href="#stdio" title="Permanent link">&para;</a></h1>
+<p>Status: shipped</p>
 <p>Stream-oriented I/O abstractions.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
@@ -202,6 +203,16 @@
 <td><code>stderr</code></td>
 <td>fn</td>
 <td>Returns a handle to the process's standard error stream.</td>
+</tr>
+<tr>
+<td><code>ReadAll</code></td>
+<td>fn</td>
+<td>Drains a reader to a String. Mirrors Go's io.ReadAll.</td>
+</tr>
+<tr>
+<td><code>Copy</code></td>
+<td>fn</td>
+<td>Copies all bytes from src to dst; returns the byte count.</td>
 </tr>
 <tr>
 <td><code>Error</code></td>

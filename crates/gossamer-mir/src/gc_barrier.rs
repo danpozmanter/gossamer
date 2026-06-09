@@ -157,6 +157,7 @@ pub(crate) fn ty_is_pointer(tcx: &TyCtxt, ty: Ty) -> bool {
         | TyKind::HashMap { .. }
         | TyKind::Sender(_)
         | TyKind::Receiver(_)
+        | TyKind::JoinHandle(_)
         | TyKind::JsonValue
         | TyKind::DynError
         | TyKind::Closure { .. }

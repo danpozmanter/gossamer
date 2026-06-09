@@ -311,6 +311,14 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.intern(TyKind::Receiver(new))
                 }
             }
+            TyKind::JoinHandle(inner) => {
+                let new = self.subst_params_in_ty(inner, substs);
+                if new == inner {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::JoinHandle(new))
+                }
+            }
             // Adt / Alias / Closure carry their own substs lists;
             // substituting inside them is the monomorph layer's
             // responsibility. For the struct-literal use case
@@ -2486,6 +2494,7 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         | TyKind::Vec(elem)
         | TyKind::Sender(elem)
         | TyKind::Receiver(elem)
+        | TyKind::JoinHandle(elem)
         | TyKind::Ref { inner: elem, .. } => checker.is_concrete(*elem),
         TyKind::HashMap { key, value } => checker.is_concrete(*key) && checker.is_concrete(*value),
         TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {

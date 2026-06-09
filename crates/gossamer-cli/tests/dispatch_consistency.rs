@@ -119,10 +119,14 @@ fn extract_runtime_exports() -> Vec<String> {
         for line in source.lines() {
             let trimmed = line.trim_start();
             // Match `pub extern "C" fn ...` or
-            // `pub unsafe extern "C" fn ...`.
+            // `pub unsafe extern "C" fn ...`, plus the `C-unwind`
+            // variants used by helpers that may propagate a panic
+            // (e.g. `gos_rt_panic`).
             if let Some(rest) = trimmed
                 .strip_prefix("pub unsafe extern \"C\" fn ")
                 .or_else(|| trimmed.strip_prefix("pub extern \"C\" fn "))
+                .or_else(|| trimmed.strip_prefix("pub unsafe extern \"C-unwind\" fn "))
+                .or_else(|| trimmed.strip_prefix("pub extern \"C-unwind\" fn "))
             {
                 let end = rest
                     .find(|c: char| c == '(' || c == '<' || c.is_whitespace())

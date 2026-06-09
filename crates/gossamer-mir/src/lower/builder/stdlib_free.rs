@@ -81,6 +81,14 @@ impl<'a> Builder<'a> {
         {
             return None;
         }
+        // spawn(f) -> JoinHandle<T>: run the callable on a goroutine
+        // and return a one-shot join handle. Custom-lowered because
+        // the callable's code/env must be extracted before the
+        // runtime call. A user-defined `fn spawn` (non-None `def`)
+        // shadows the prelude builtin.
+        if callee_def.is_none() && segments.len() == 1 && joined == "spawn" && args.len() == 1 {
+            return self.lower_spawn(&args[0], span);
+        }
         let (rt_name, ret_ty) = match joined.as_str() {
             "errors::new" => (
                 "gos_rt_error_new",

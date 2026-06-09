@@ -101,6 +101,38 @@ impl<'a> Builder<'a> {
             self.set_current(next);
             return Some(dest);
         }
+        // `h.join()` — block on a spawned goroutine's outcome.
+        // `gos_rt_join` recvs the SpawnOutcome over the handle's
+        // one-shot channel and packs it into `Result<T, String>` (Ok
+        // value, or Err panic message). Gated on a `JoinHandle`
+        // receiver so a same-named user method or the string / Vec
+        // `.join(sep)` (which takes a separator argument) is never
+        // shadowed. Peek the receiver type first so the receiver is
+        // lowered only when this arm actually consumes it.
+        if method.name.as_str() == "join"
+            && args.is_empty()
+            && self
+                .peek_struct_type(receiver)
+                .is_some_and(|t| matches!(self.tcx.kind_of(t), TyKind::JoinHandle(_)))
+        {
+            let recv_local = self.lower_expr(receiver)?;
+            let recv_ty = self.locals[recv_local.0 as usize].ty;
+            let elem = match self.tcx.kind_of(recv_ty).clone() {
+                TyKind::JoinHandle(e) => e,
+                _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            };
+            let result_ty = self.result_payload_string_error_ty(elem);
+            let dest = self.fresh(result_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_join".to_string())),
+                args: vec![Operand::Copy(Place::local(recv_local))],
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
+        }
         // `.clone()` on a `json::Value` receiver. The generic
         // identity-copy arm walks `match self.tcx.kind_of(ty)` and
         // falls through to `_ =>` for `JsonValue`, then the MIR

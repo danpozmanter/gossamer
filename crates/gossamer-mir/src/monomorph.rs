@@ -235,6 +235,7 @@ fn fits_flat_i64_abi(tcx: &TyCtxt, ty: Ty) -> bool {
         | TyKind::HashMap { .. }
         | TyKind::Sender(_)
         | TyKind::Receiver(_)
+        | TyKind::JoinHandle(_)
         | TyKind::Ref { .. }
         | TyKind::FnDef { .. }
         | TyKind::FnPtr(_)
@@ -267,6 +268,7 @@ fn render_ty_for_diagnostic(tcx: &TyCtxt, ty: Ty) -> String {
         TyKind::HashMap { .. } => "HashMap<...>".to_string(),
         TyKind::Sender(_) => "Sender<...>".to_string(),
         TyKind::Receiver(_) => "Receiver<...>".to_string(),
+        TyKind::JoinHandle(_) => "JoinHandle<...>".to_string(),
         TyKind::Ref { .. } => "&T".to_string(),
         TyKind::FnDef { .. } => "fn-item".to_string(),
         TyKind::FnPtr(_) => "fn-pointer".to_string(),

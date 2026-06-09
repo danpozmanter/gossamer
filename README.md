@@ -108,6 +108,19 @@ fn main() {
     println("answer:", rx.recv())
 }
 ```
+
+Or spawn a goroutine and join its result — `Ok(value)`, or `Err(message)`
+if it panicked:
+
+```gossamer
+fn main() {
+    let h = spawn(|| 40 |> add(2))
+    match h.join() {
+        Ok(v) => println!("answer: {}", v),
+        Err(e) => println!("worker failed: {}", e),
+    }
+}
+```
 ## Toolchain cheat-sheet
 
 ```sh

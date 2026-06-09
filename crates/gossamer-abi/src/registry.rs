@@ -14,6 +14,7 @@ macro_rules! rt {
             tier: $tier,
             docs: $docs,
             noreturn: false,
+            unwinds: false,
         }
     };
 }
@@ -32,6 +33,26 @@ macro_rules! rt_nr {
             tier: $tier,
             docs: $docs,
             noreturn: true,
+            unwinds: false,
+        }
+    };
+}
+
+/// Like [`rt_nr!`] but marks the entry as may-unwind: the LLVM
+/// declaration keeps `noreturn cold` and drops `nounwind`. Only for
+/// the panic helper, which raises a Rust panic on the goroutine path.
+macro_rules! rt_nr_unwind {
+    ($name:literal, ($($p:expr),*) -> $ret:expr, $tier:expr, $docs:literal) => {
+        RuntimeEntry {
+            name: $name,
+            sig: AbiSig {
+                params: &[$($p),*],
+                ret: $ret,
+            },
+            tier: $tier,
+            docs: $docs,
+            noreturn: true,
+            unwinds: true,
         }
     };
 }
@@ -337,6 +358,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_iter_sum_f64", (Ptr) -> F64, Both, "iter::sum over Vec<f64>."),
     rt!("gos_rt_iter_sum_i64", (Ptr) -> I64, Both, "iter::sum over Vec<i64>."),
     rt!("gos_rt_iter_take_i64", (I64, Ptr) -> Ptr, Both, "iter::take(n, xs) -> Vec<i64> with the first n elements."),
+    rt!("gos_rt_join", (Ptr) -> I128, Cranelift, "Block until a spawned goroutine completes; returns its outcome as Result<i64, String> (Ok value, or Err panic message)."),
     rt!("gos_rt_json_array_from_scalar_vec", (Ptr, I64) -> Ptr, Cranelift, "Build a JSON array Value from a typed scalar Vec (kind 0=i64 1=f64 2=String 3=bool)."),
     rt!("gos_rt_json_as_array_opt", (Ptr) -> I128, Cranelift, "Return the JSON value as an array, or null if it is not an array."),
     rt!("gos_rt_json_as_bool", (Ptr) -> I32, Cranelift, "Coerce a JSON value to a bool; panics if the value is not a boolean."),
@@ -372,6 +394,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_map_clear", (Ptr) -> Void, Cranelift, "Remove all entries from a GosMap."),
     rt!("gos_rt_map_contains_key_i64", (Ptr, I64) -> I8, Cranelift, "Return 1 if the map contains the given i64 key."),
     rt!("gos_rt_map_contains_key_str", (Ptr, Ptr) -> I8, Cranelift, "Return 1 if the map contains the given string key."),
+    rt!("gos_rt_map_contains_skey", (Ptr, Ptr, Ptr) -> I8, Cranelift, "Return 1 if the map contains the given struct key (content-hashed per a layout descriptor)."),
     rt!("gos_rt_map_free", (Ptr) -> Void, Cranelift, "Drop a GosMap and release its memory."),
     rt!("gos_rt_map_get", (Ptr, Ptr, Ptr) -> I32, Cranelift, "Generic map get: writes the value to an out-pointer; returns 1 if present."),
     rt!("gos_rt_map_get_i64", (Ptr, I64) -> I64, Cranelift, "Get an i64 value by i64 key; returns 0 if absent."),
@@ -381,6 +404,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_map_get_or_i64_str", (Ptr, I64, Ptr) -> Ptr, Cranelift, "Get a string value by i64 key, or a default string if absent."),
     rt!("gos_rt_map_get_or_str_i64", (Ptr, Ptr, I64) -> I64, Cranelift, "Get an i64 value by string key, or a default if absent."),
     rt!("gos_rt_map_get_or_str_str", (Ptr, Ptr, Ptr) -> Ptr, Cranelift, "Get a string value by string key, or a default string if absent."),
+    rt!("gos_rt_map_get_skey_opt", (Ptr, Ptr, Ptr) -> I128, Cranelift, "Get an 8-byte value by struct key (content-hashed per a layout descriptor) as Option<V> packed in *mut GosResult."),
     rt!("gos_rt_map_get_str_i64", (Ptr, Ptr) -> I64, Cranelift, "Get an i64 value by string key; returns 0 if absent."),
     rt!("gos_rt_map_get_str_opt", (Ptr, Ptr) -> I128, Cranelift, "Get any 8-byte value by string key as Option<V> packed in *mut GosResult."),
     rt!("gos_rt_map_get_str_str", (Ptr, Ptr) -> Ptr, Cranelift, "Get a string value by string key; returns null if absent."),
@@ -388,11 +412,9 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_map_inc_i64", (Ptr, I64, I64) -> I64, Cranelift, "Increment the i64 at an i64 key by a given amount."),
     rt!("gos_rt_map_inc_str_i64", (Ptr, Ptr, I64) -> I64, Cranelift, "Increment the i64 at a string key by a given amount."),
     rt!("gos_rt_map_insert", (Ptr, Ptr, Ptr) -> Void, Cranelift, "Generic raw-pointer map insert; prefer typed variants for new code."),
-    rt!("gos_rt_map_insert_skey", (Ptr, Ptr, Ptr, I64) -> Void, Cranelift, "Insert a struct/aggregate key (content-hashed per a layout descriptor) to an 8-byte value."),
-    rt!("gos_rt_map_get_skey_opt", (Ptr, Ptr, Ptr) -> I128, Cranelift, "Get an 8-byte value by struct key (content-hashed per a layout descriptor) as Option<V> packed in *mut GosResult."),
-    rt!("gos_rt_map_contains_skey", (Ptr, Ptr, Ptr) -> I8, Cranelift, "Return 1 if the map contains the given struct key (content-hashed per a layout descriptor)."),
     rt!("gos_rt_map_insert_i64_i64", (Ptr, I64, I64) -> Void, Cranelift, "Insert or update an i64-to-i64 entry."),
     rt!("gos_rt_map_insert_i64_str", (Ptr, I64, Ptr) -> Void, Cranelift, "Insert or update an i64-to-String entry."),
+    rt!("gos_rt_map_insert_skey", (Ptr, Ptr, Ptr, I64) -> Void, Cranelift, "Insert a struct/aggregate key (content-hashed per a layout descriptor) to an 8-byte value."),
     rt!("gos_rt_map_insert_str_i64", (Ptr, Ptr, I64) -> Void, Cranelift, "Insert or update a String-to-i64 entry."),
     rt!("gos_rt_map_insert_str_str", (Ptr, Ptr, Ptr) -> Void, Cranelift, "Insert or update a String-to-String entry."),
     rt!("gos_rt_map_keys_i64", (Ptr) -> Ptr, Cranelift, "Return all i64 keys of a GosMap as a GosVec."),
@@ -544,7 +566,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_ovec_index_of_i64", (Ptr, I64) -> I64, Cranelift, "Return the index of `value` in a sorted Vec<i64>, or -1."),
     rt!("gos_rt_ovec_insert_i64", (Ptr, I64) -> Ptr, Cranelift, "Insert `value` into a sorted Vec<i64> at the unique sorted position."),
     rt!("gos_rt_ovec_remove_at_i64", (Ptr, I64) -> Ptr, Cranelift, "Remove element at index from a sorted Vec<i64>."),
-    rt_nr!("gos_rt_panic", (Ptr) -> Void, Both, "Abort the current goroutine with a message string."),
+    rt_nr_unwind!("gos_rt_panic", (Ptr) -> Void, Both, "Abort the current goroutine with a message string (unwinds on the goroutine path so spawn join handles observe Err)."),
     rt_nr!("gos_rt_panic_oob", (Ptr, I64, I64) -> Void, Both, "Abort with an out-of-bounds diagnostic naming the operation, the index, and the array length."),
     rt!("gos_rt_parse_f64", (Ptr, Ptr) -> F64, Cranelift, "Parse a string as an f64; second arg is the default on error."),
     rt!("gos_rt_parse_i64", (Ptr, Ptr) -> I64, Cranelift, "Parse a string as an i64; second arg is the default on error."),
@@ -658,6 +680,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_slog_error", (Ptr) -> Void, Cranelift, "Emit an error-level structured log line."),
     rt!("gos_rt_slog_info", (Ptr) -> Void, Cranelift, "Emit an info-level structured log line."),
     rt!("gos_rt_slog_warn", (Ptr) -> Void, Cranelift, "Emit a warning-level structured log line."),
+    rt!("gos_rt_spawn", (I64, I64) -> Ptr, Cranelift, "spawn(f) -> handle: run a callable (code, env) on a goroutine and return a one-shot channel handle whose gos_rt_join yields the outcome."),
     rt!("gos_rt_sql_conn_begin", (I64) -> I64, Both, "Begin a transaction on the SQL connection handle; returns Tx handle or -1 on error."),
     rt!("gos_rt_sql_conn_begin_with", (I64, I64) -> I64, Both, "Begin a transaction at the given isolation level (0=Default/1=ReadUncommitted/2=ReadCommitted/3=RepeatableRead/4=Serializable)."),
     rt!("gos_rt_sql_conn_execute", (I64, Ptr) -> I64, Both, "Execute a SQL statement on the connection; returns rows affected or -1 on error."),
