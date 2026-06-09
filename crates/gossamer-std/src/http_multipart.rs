@@ -5,7 +5,12 @@
 //! directory; smaller parts stay in a `Vec<u8>`. The on-disk files are
 //! reaped by `Form::drop_temp_files` (called from `Drop`).
 
-#![forbid(unsafe_code)]
+// `deny`, not `forbid`: this module is unsafe-free except for one
+// audited Win32 ACL FFI block (`restrict_to_owner`, the Windows
+// `chmod 0600` analogue for spilled temp parts) that carries a local
+// `#[allow(unsafe_code)]`. `forbid` cannot be locally overridden;
+// `deny` denies everywhere else.
+#![deny(unsafe_code)]
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -721,7 +726,10 @@ fn create_private_tempfile(path: &PathBuf) -> Result<File, Error> {
 /// Replaces a file's DACL with a single ACE granting the current user
 /// read+write and nothing else, marking the DACL protected so inherited ACEs
 /// are dropped. The Windows analogue of `chmod 0600`.
+// Win32 ACL programming is inherently `unsafe` FFI; the block is
+// self-contained and audited (two-call TOKEN_USER pattern + DACL set).
 #[cfg(windows)]
+#[allow(unsafe_code)]
 fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
     use std::io;
     use std::os::windows::ffi::OsStrExt;

@@ -206,13 +206,13 @@ impl Parser<'_> {
             return Vec::new();
         }
         let mut args = Vec::new();
-        while !self.at_punct(Punct::Gt) && !self.at_eof() {
+        while !self.at_close_angle() && !self.at_eof() {
             args.push(self.parse_generic_arg());
             if !self.eat_punct(Punct::Comma) {
                 break;
             }
         }
-        self.expect_punct(Punct::Gt, "to close generic argument list");
+        self.expect_close_angle("to close generic argument list");
         args
     }
 

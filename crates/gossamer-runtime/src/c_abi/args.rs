@@ -151,11 +151,25 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
     });
 }
 
+/// Returns freed pages to the OS promptly by setting mimalloc's purge
+/// delay to zero. mimalloc's default (1000 ms in v3) defers the
+/// `madvise` purge to batch it; on a phase-structured program — build a
+/// large map, drop it, build the next — every dropped phase's pages stay
+/// resident until process exit, so peak RSS becomes the SUM of all
+/// phases instead of the largest live set (measured: k-nucleotide
+/// `--release` 52.6 MB -> 28.8 MB, wall-clock unchanged). Delegates to
+/// the single implementation in the crate root; the option index and
+/// rationale live there.
+fn configure_allocator() {
+    crate::init_process_allocator();
+}
+
 #[cfg(unix)]
 fn runtime_init() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
+        configure_allocator();
         // SIGPIPE → SIG_IGN. Mirrors what `std::rt::lang_start`'s
         // `sys::unix::init` does. Without this, a write to a
         // closed peer (very common under heavy keep-alive load)
@@ -184,6 +198,7 @@ fn runtime_init() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
+        configure_allocator();
         let handle = std::thread::Builder::new()
             .name("gos-rt-init".to_string())
             .spawn(|| {})

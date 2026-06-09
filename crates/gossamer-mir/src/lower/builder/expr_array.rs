@@ -230,30 +230,46 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
-        if let Some(count_u64) = literal_u64(count) {
-            let value_local = self.lower_expr(value)?;
-            let dest = self.fresh(ty);
-            self.emit_assign(
-                Place::local(dest),
-                Rvalue::Repeat {
-                    value: Operand::Copy(Place::local(value_local)),
-                    count: count_u64,
-                },
-                span,
-            );
-            return Some(dest);
+        use gossamer_types::TyKind;
+        // A `[value; N]` literal whose context wants a growable Vec/Slice
+        // builds a heap GosVec of N copies, byte-correct for the element
+        // type — not a fixed inline array. Mirrors `lower_array_list`'s
+        // Vec promotion and covers both a literal and a runtime count.
+        let wants_vec = matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_));
+        if !wants_vec {
+            if let Some(count_u64) = literal_u64(count) {
+                let value_local = self.lower_expr(value)?;
+                let dest = self.fresh(ty);
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::Repeat {
+                        value: Operand::Copy(Place::local(value_local)),
+                        count: count_u64,
+                    },
+                    span,
+                );
+                return Some(dest);
+            }
         }
-        // Runtime-count fallback: build a heap `GosVec` whose
-        // length matches the dynamic `count`, seeded with
-        // `value`. The result is shape-compatible with the
-        // existing for-loop / `len()` lowering for `Vec<T>`.
+        // Build a heap `GosVec` of `count` copies of `value`. Used when
+        // the target type is a growable Vec/Slice, and as the fallback
+        // for a runtime (non-literal) count where an inline fixed array
+        // is impossible.
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let value_local = self.lower_expr(value)?;
         let count_local = self.lower_expr(count)?;
+        // Size each slot by the element's own byte width so a Vec of
+        // multi-slot elements (tuples, String, fixed arrays) copies the
+        // whole element on every push rather than truncating to 8 bytes.
+        let elem_src_ty = match self.tcx.kind_of(ty) {
+            TyKind::Vec(e) | TyKind::Slice(e) => *e,
+            _ => self.locals[value_local.0 as usize].ty,
+        };
+        let elem_bytes_val = i128::from(self.elem_bytes_of(elem_src_ty).max(8));
         let elem_bytes_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(elem_bytes_local),
-            Rvalue::Use(Operand::Const(ConstValue::Int(8))),
+            Rvalue::Use(Operand::Const(ConstValue::Int(elem_bytes_val))),
             span,
         );
         let vec_local = self.fresh(ty);
@@ -300,9 +316,13 @@ impl<'a> Builder<'a> {
 
         self.set_current(body_block);
         let after_push = self.new_block(span);
-        let push_dest = self.fresh(i64_ty);
+        let unit_ty = self.tcx.unit();
+        let push_dest = self.fresh(unit_ty);
+        // Byte-erased push: `gos_rt_vec_push` copies the vec's per-slot
+        // byte width (set at `with_capacity`), so it handles any element
+        // type, unlike the i64-only `gos_rt_vec_push_i64`.
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_vec_push_i64".to_string())),
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".to_string())),
             args: vec![
                 Operand::Copy(Place::local(vec_local)),
                 Operand::Copy(Place::local(value_local)),

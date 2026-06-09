@@ -68,7 +68,20 @@ pub(crate) fn is_aggregate_ctor_callee(callee: &Operand) -> bool {
 }
 
 pub(crate) fn returns_borrowed_pointer(name: &str) -> bool {
-    matches!(name, "gos_rt_os_args")
+    matches!(
+        name,
+        "gos_rt_os_args"
+            // Container element accessors return an interior borrow into the
+            // container's own storage, not an owned value. The container
+            // still owns each element and deep-frees it on drop, so releasing
+            // the borrow here double-frees — `x[0]` on a `Vec<Vec<T>>` (the
+            // inner Vec) or a `Vec<String>` (the element string) frees memory
+            // the outer container reclaims again at scope end.
+            | "gos_rt_vec_get_i64"
+            | "gos_rt_vec_get_ptr"
+            | "gos_rt_vec_first"
+            | "gos_rt_vec_last"
+    )
 }
 
 pub(crate) fn aggr_size_bytes(tcx: &gossamer_types::TyCtxt, ty: Ty) -> i64 {

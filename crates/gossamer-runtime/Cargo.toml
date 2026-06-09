@@ -43,6 +43,10 @@ collapsible_if = "allow"
 [dependencies]
 itoa = "1"
 mimalloc = "0.1"
+# Direct handle on the same native lib `mimalloc` links, with the
+# `extended` bindings so the runtime can set `mi_option_purge_delay`
+# (return freed pages to the OS promptly — see `configure_allocator`).
+libmimalloc-sys = { version = "0.1", features = ["extended"] }
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"

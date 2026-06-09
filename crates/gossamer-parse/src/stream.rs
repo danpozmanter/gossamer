@@ -175,6 +175,49 @@ impl TokenStream {
         false
     }
 
+    /// Returns `true` when the cursor is at a token whose leading `>`
+    /// closes a generic list — a bare `>`, or a compound `>>` / `>=` /
+    /// `>>=` produced by the maximal-munch lexer for nested generics
+    /// like `Vec<Vec<T>>`.
+    #[must_use]
+    pub fn at_close_angle(&self) -> bool {
+        matches!(
+            self.peek().kind,
+            TokenKind::Punct(Punct::Gt | Punct::ShiftR | Punct::GtEq | Punct::ShiftREq)
+        )
+    }
+
+    /// Consumes a single closing `>` for a generic list. A compound
+    /// `>>` / `>=` / `>>=` token is split: the leading `>` is consumed
+    /// and the remainder (`>` / `=` / `>=`) is rewritten in place so an
+    /// enclosing generic list — or the trailing operator — still sees
+    /// it. Returns `false` when the cursor is not at a closing angle.
+    pub fn eat_close_angle(&mut self) -> bool {
+        let tok = self.peek();
+        let TokenKind::Punct(p) = tok.kind else {
+            return false;
+        };
+        let remainder = match p {
+            Punct::Gt => {
+                self.bump();
+                return true;
+            }
+            Punct::ShiftR => Punct::Gt,
+            Punct::GtEq => Punct::Eq,
+            Punct::ShiftREq => Punct::GtEq,
+            _ => return false,
+        };
+        self.tokens[self.position] = Token {
+            kind: TokenKind::Punct(remainder),
+            span: Span {
+                file: tok.span.file,
+                start: tok.span.start + 1,
+                end: tok.span.end,
+            },
+        };
+        true
+    }
+
     /// Returns `true` when the cursor is at the synthetic `Eof` token.
     #[must_use]
     pub fn at_eof(&self) -> bool {

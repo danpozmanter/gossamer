@@ -295,6 +295,14 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::VecVecString => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_vec_string");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_vec_string(ptr {value})"
+                )
+                .unwrap();
+            }
             ConcatKind::ArrI64(n) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_i64");
                 writeln!(

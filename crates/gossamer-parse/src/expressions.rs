@@ -448,13 +448,13 @@ impl Parser<'_> {
 
     fn parse_generic_args_in_turbofish(&mut self) -> Vec<gossamer_ast::GenericArg> {
         let mut args = Vec::new();
-        while !self.at_punct(Punct::Gt) && !self.at_eof() {
+        while !self.at_close_angle() && !self.at_eof() {
             args.push(self.parse_generic_arg());
             if !self.eat_punct(Punct::Comma) {
                 break;
             }
         }
-        self.expect_punct(Punct::Gt, "to close turbofish generics");
+        self.expect_close_angle("to close turbofish generics");
         args
     }
 

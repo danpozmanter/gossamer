@@ -226,6 +226,10 @@ impl<'a> Lowerer<'a> {
     ) -> Result<(), BuildError> {
         let v = self.lower_operand(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
+        // The inline bounds check and address math operate on i64; widen a
+        // narrow-typed index (`u8`/`u16`/`u32`/`i8`/`i16`/`i32`) first so the
+        // emitted `icmp i64` / `mul i64` don't reference an i32 SSA value.
+        let idx = self.widen_to_i64(&args[1], &idx);
         let val = self.lower_operand(&args[2])?;
         let data_ptr_addr = self.fresh();
         writeln!(
@@ -257,6 +261,10 @@ impl<'a> Lowerer<'a> {
     ) -> Result<(), BuildError> {
         let v = self.lower_operand(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
+        // The inline bounds check and address math operate on i64; widen a
+        // narrow-typed index (`u8`/`u16`/`u32`/`i8`/`i16`/`i32`) first so the
+        // emitted `icmp i64` / `mul i64` don't reference an i32 SSA value.
+        let idx = self.widen_to_i64(&args[1], &idx);
         let data_ptr_addr = self.fresh();
         writeln!(
             self.out,
@@ -308,6 +316,10 @@ impl<'a> Lowerer<'a> {
     ) -> Result<(), BuildError> {
         let vec_ptr = self.vec_operand_ptr(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
+        // The inline bounds check and address math operate on i64; widen a
+        // narrow-typed index (`u8`/`u16`/`u32`/`i8`/`i16`/`i32`) first so the
+        // emitted `icmp i64` / `mul i64` don't reference an i32 SSA value.
+        let idx = self.widen_to_i64(&args[1], &idx);
         let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
         let dest_slot = local_slot(destination.local);
         let s = self.next_ssa;
@@ -381,6 +393,10 @@ impl<'a> Lowerer<'a> {
     ) -> Result<(), BuildError> {
         let vec_ptr = self.vec_operand_ptr(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
+        // The inline bounds check and address math operate on i64; widen a
+        // narrow-typed index (`u8`/`u16`/`u32`/`i8`/`i16`/`i32`) first so the
+        // emitted `icmp i64` / `mul i64` don't reference an i32 SSA value.
+        let idx = self.widen_to_i64(&args[1], &idx);
         let val_v = self.lower_operand(&args[2])?;
         let val_ty = self.operand_llvm_ty(&args[2]);
         let val = self.value_to_i64(&val_v, &val_ty);
@@ -887,6 +903,9 @@ impl<'a> Lowerer<'a> {
     ) -> Result<(), BuildError> {
         let s_v = self.lower_operand(&args[0])?;
         let i_v = self.lower_operand(&args[1])?;
+        // The GEP indexes with i64; widen a narrow-typed index so the
+        // emitted `getelementptr ... i64 {idx}` doesn't reference an i32.
+        let i_v = self.widen_to_i64(&args[1], &i_v);
         let addr = self.fresh();
         writeln!(
             self.out,

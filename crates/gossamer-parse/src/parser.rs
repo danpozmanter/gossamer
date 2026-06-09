@@ -166,6 +166,31 @@ impl<'src> Parser<'src> {
         self.tokens.eat_punct(punct)
     }
 
+    /// Returns `true` when the cursor is at a closing `>` for a generic
+    /// list, including a compound `>>` / `>=` / `>>=` token.
+    #[must_use]
+    pub(crate) fn at_close_angle(&self) -> bool {
+        self.tokens.at_close_angle()
+    }
+
+    /// Consumes a closing `>` for a generic list, splitting a compound
+    /// `>>` / `>=` / `>>=` token so the remainder stays available, and
+    /// records a diagnostic when the cursor is not at a closing angle.
+    pub(crate) fn expect_close_angle(&mut self, context: &str) -> bool {
+        if self.tokens.eat_close_angle() {
+            return true;
+        }
+        let found = self.peek_text();
+        self.record(
+            ParseError::Unexpected {
+                expected: format!("`>` {context}"),
+                found,
+            },
+            self.peek_span(),
+        );
+        false
+    }
+
     /// Attempts to consume `keyword`, returning whether it was present.
     pub(crate) fn eat_keyword(&mut self, keyword: Keyword) -> bool {
         self.tokens.eat_keyword(keyword)

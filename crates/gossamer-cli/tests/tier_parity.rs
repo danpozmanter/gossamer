@@ -218,6 +218,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/select_multiplex.gos"),
     spec("feature-testing-examples/let_else_binding.gos"),
     spec("feature-testing-examples/slice_param_coercion.gos"),
+    spec("feature-testing-examples/vec_literal_coercion.gos"),
     spec("feature-testing-examples/derive_traits.gos"),
     spec("feature-testing-examples/struct_map_keys.gos"),
     spec("feature-testing-examples/cycle_collector.gos"),

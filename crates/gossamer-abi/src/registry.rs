@@ -900,6 +900,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_vec_format_i64", (Ptr) -> Ptr, Cranelift, "Format a GosVec<i64> as a debug string."),
     rt!("gos_rt_vec_format_string", (Ptr) -> Ptr, Cranelift, "Format a GosVec<String> as a debug string."),
     rt!("gos_rt_vec_format_vec_i64", (Ptr) -> Ptr, Cranelift, "Format a GosVec<Vec<i64>> as a debug string."),
+    rt!("gos_rt_vec_format_vec_string", (Ptr) -> Ptr, Cranelift, "Format a GosVec<Vec<String>> as a debug string."),
     rt!("gos_rt_vec_free", (Ptr) -> Void, Cranelift, "Drop a GosVec and release its memory."),
     rt!("gos_rt_vec_from_arr", (I32, Ptr, I64) -> Ptr, Cranelift, "Construct a GosVec from a raw element array with type tag and length."),
     rt!("gos_rt_vec_get_i128", (Ptr, I64) -> I128, Cranelift, "Read the 16-byte i128 (by-value Result/Option) at index `i` from a GosVec."),

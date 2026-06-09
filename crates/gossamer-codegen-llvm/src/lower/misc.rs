@@ -376,6 +376,7 @@ impl<'a> Lowerer<'a> {
                         Some(TyKind::Vec(inner) | TyKind::Slice(inner)) => {
                             match self.tcx.kind(*inner) {
                                 Some(TyKind::Int(_)) => ConcatKind::VecVecI64,
+                                Some(TyKind::String) => ConcatKind::VecVecString,
                                 _ => ConcatKind::Unsupported,
                             }
                         }

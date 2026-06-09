@@ -567,6 +567,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_vec_format_bool"     => rt::gos_rt_vec_format_bool,
         "gos_rt_vec_format_string"   => rt::gos_rt_vec_format_string,
         "gos_rt_vec_format_vec_i64"  => rt::gos_rt_vec_format_vec_i64,
+        "gos_rt_vec_format_vec_string" => rt::gos_rt_vec_format_vec_string,
         "gos_rt_concat_init"         => rt::gos_rt_concat_init,
         "gos_rt_concat_str"          => rt::gos_rt_concat_str,
         "gos_rt_concat_i64"          => rt::gos_rt_concat_i64,

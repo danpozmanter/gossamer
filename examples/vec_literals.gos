@@ -1,0 +1,56 @@
+// Collection literals: `[a, b, c]` and `[value; count]` build a growable
+// `Vec<T>` / `[T]` wherever the expected type calls for one. The same literal
+// syntax serves a `let` annotation, a function return, a struct field, and a
+// Vec or slice argument — no separate constructor needed.
+
+struct Basket { fruits: Vec<String> }
+
+// A literal in return position becomes the declared `Vec<T>`.
+fn greetings() -> Vec<String> {
+    ["hello", "hi", "hey"]
+}
+
+// Branches of differing length join to a `Vec<T>`.
+fn scores(high: bool) -> Vec<i64> {
+    if high { [90, 95, 100] } else { [60] }
+}
+
+// A `Vec<T>` parameter accepts a bare literal at the call site.
+fn total(values: Vec<i64>) -> i64 {
+    let mut sum = 0
+    for v in values {
+        sum += v
+    }
+    sum
+}
+
+// A `&[T]` slice parameter accepts one too.
+fn count(items: &[String]) -> i64 {
+    items.len()
+}
+
+fn main() {
+    // List form and the `[value; count]` repeat form.
+    let names: Vec<String> = ["ada", "grace", "edsger"]
+    let zeros: Vec<i64> = [0; 5]
+
+    println!("first name: {}", names[0])
+    println!("zeros: {} entries, last = {}", zeros.len(), zeros[4])
+
+    // Return position.
+    let hellos = greetings()
+    println!("greetings: {}", hellos.len())
+    println!("scores(true) has {} entries", scores(true).len())
+
+    // Struct field.
+    let basket = Basket { fruits: ["apple", "pear"] }
+    println!("basket holds {} and {}", basket.fruits[0], basket.fruits[1])
+
+    // Arguments.
+    println!("total = {}", total([3, 4, 5]))
+    println!("count = {}", count(["x", "y", "z"]))
+
+    // Nested literals build a Vec of Vecs.
+    let grid: Vec<Vec<i64>> = [[1, 2, 3], [4, 5], [6]]
+    println!("grid rows = {}, grid[0][2] = {}", grid.len(), grid[0][2])
+}

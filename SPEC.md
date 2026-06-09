@@ -305,6 +305,33 @@ All collections are GC-managed reference types. Assigning
 underlying slice (same as Go's behavior). For a deep copy, use
 `.clone()`.
 
+#### Collection literals
+
+`[a, b, c]` (list) and `[value; count]` (repeat) are the literal forms
+for sequences. With no contextual type they infer a fixed `[T; N]`
+array; where the expected type is a growable `Vec<T>` or `[T]` slice,
+the literal **coerces** to that growable form. Coercion fires at every
+expected-type site:
+
+```gossamer
+let words: Vec<String> = ["yes", "wow"]      // let annotation
+let zeros: Vec<i64> = [0; 4]                  // repeat form
+fn names() -> Vec<String> { ["ada", "grace"] }   // return position
+struct Basket { fruits: Vec<String> }
+let b = Basket { fruits: ["apple", "pear"] }  // struct field
+fn total(xs: Vec<i64>) -> i64 { /* … */ }
+total([1, 2, 3])                              // by-value argument
+fn count(xs: &[String]) -> i64 { xs.len() }
+count(["m", "n"])                             // slice argument
+```
+
+An `if` or `match` whose branches are array literals of differing
+length joins to `Vec<T>` — the only type that holds both — for every
+element type (`if c { ["a", "b"] } else { ["c"] }` is a
+`Vec<String>`). Equal-length branches stay a fixed `[T; N]` unless the
+surrounding context asks for a Vec. Nested literals follow the element
+type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
+
 ### 3.4 Pointers and references
 
 - `T` — a value. For `Copy` types (primitive numerics, `bool`, `char`,

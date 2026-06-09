@@ -1,0 +1,80 @@
+// Array/collection literals coerce to a growable `Vec<T>` / `[T]` slice at
+// every expected-type site: an explicit `let` annotation, a `-> Vec<T>`
+// return, a Vec-typed struct field, and a Vec/slice parameter. The `[v; N]`
+// repeat form coerces too. An `if` / `match` whose branches are array literals
+// of differing length joins to `Vec<T>` (the only type that holds both),
+// consistently for every element type — not just untyped integer literals.
+// Nested `Vec<Vec<T>>` literals build and index correctly, and indexing a
+// nested container returns an interior borrow that the container still owns
+// (no double free at scope end).
+
+struct Bag { items: Vec<String> }
+
+fn labels() -> Vec<String> {
+    ["alpha", "beta", "gamma"]
+}
+
+fn pick(branch: bool) -> Vec<i64> {
+    if branch { [1, 2] } else { [3, 4, 5] }
+}
+
+fn classify(n: i64) -> Vec<String> {
+    match n {
+        0 => ["zero"],
+        _ => ["many", "values"],
+    }
+}
+
+fn sum(xs: Vec<i64>) -> i64 {
+    let mut total = 0
+    for x in xs {
+        total += x
+    }
+    total
+}
+
+fn slice_len(xs: &[String]) -> i64 {
+    xs.len()
+}
+
+fn main() {
+    // let-annotated List and slice forms.
+    let words: Vec<String> = ["yes", "wow"]
+    let slice: [String] = ["p", "q", "r"]
+    let chars: Vec<char> = ['a', 'b']
+    // let-annotated Repeat form.
+    let zeros: Vec<i64> = [0; 4]
+    let sevens: Vec<i64> = [7; 3]
+
+    println!("{} {} {}", words[0], words[1], words.len())
+    println!("{} {}", slice[2], slice.len())
+    println!("{} {}", chars[0], chars.len())
+    println!("{} {} {}", zeros.len(), zeros[0], zeros[3])
+    println!("{} {}", sevens.len(), sevens[1])
+
+    // Return position (plain block tail and if/match branches).
+    let names = labels()
+    println!("{} {} {}", names.len(), names[0], names[2])
+    println!("{} {}", pick(true).len(), pick(false).len())
+    println!("{} {}", classify(0)[0], classify(9)[1])
+
+    // Struct field and call arguments.
+    let bag = Bag { items: ["one", "two"] }
+    println!("{} {}", bag.items[1], bag.items.len())
+    println!("{}", sum([10, 20, 30]))
+    println!("{}", slice_len(["m", "n", "o", "p"]))
+
+    // Inferred if/match branch join to Vec for differing lengths.
+    let joined = if true { [1, 2] } else { [3, 4, 5] }
+    println!("{} {}", joined.len(), joined[1])
+
+    // Nested Vec<Vec<T>>: build, index, and drop cleanly.
+    let grid: Vec<Vec<String>> = [["a", "b"], ["c"]]
+    println!("{} {} {}", grid.len(), grid[0][1], grid[1][0])
+    let nums: Vec<Vec<i64>> = [[1, 2], [3]]
+    println!("{} {}", nums[0][1], nums[1][0])
+
+    // Debug-format the nested containers.
+    println!("{:?}", grid)
+    println!("{:?}", nums)
+}

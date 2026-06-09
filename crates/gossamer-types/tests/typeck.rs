@@ -306,3 +306,51 @@ fn unsuffixed_integer_literal_rejected_in_string_position() {
     assert_eq!(expected, "String");
     assert_eq!(found, "{integer}");
 }
+
+#[test]
+fn array_literal_coerces_to_vec_annotation() {
+    let checked = run("fn main() { let xs: Vec<String> = [\"a\", \"b\"] }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn array_literal_coerces_to_slice_annotation() {
+    let checked = run("fn main() { let xs: [String] = [\"a\", \"b\"] }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn repeat_literal_coerces_to_vec_annotation() {
+    let checked = run("fn main() { let xs: Vec<i64> = [0; 4] }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn array_literal_return_coerces_to_vec() {
+    let checked = run("fn make() -> Vec<String> { [\"x\", \"y\"] }\nfn main() { make(); }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn vec_literal_rejects_wrong_element_type() {
+    let checked = run("fn main() { let xs: Vec<String> = [1, 2] }\n");
+    assert!(
+        !checked.diagnostics.is_empty(),
+        "assigning integer literals to Vec<String> must error",
+    );
+}
+
+#[test]
+fn if_branches_of_differing_array_length_join_to_vec() {
+    // Differing lengths can only co-type as a Vec; this must check for any
+    // element type, not only integer literals.
+    let checked =
+        run("fn main() { let v: Vec<String> = if true { [\"a\", \"b\"] } else { [\"c\"] } }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn nested_vec_literal_with_differing_inner_lengths_checks() {
+    let checked = run("fn main() { let g: Vec<Vec<i64>> = [[1, 2], [3]] }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}

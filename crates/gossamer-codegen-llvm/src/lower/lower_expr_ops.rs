@@ -555,6 +555,7 @@ impl<'a> Lowerer<'a> {
                 | ConcatKind::VecBool
                 | ConcatKind::VecString
                 | ConcatKind::VecVecI64
+                | ConcatKind::VecVecString
                 | ConcatKind::ArrI64(_)
                 | ConcatKind::ArrF64(_)
                 | ConcatKind::ArrBool(_)

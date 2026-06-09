@@ -16,13 +16,13 @@ impl Parser<'_> {
         }
         self.bump();
         let mut params = Vec::new();
-        while !self.at_punct(Punct::Gt) && !self.at_eof() {
+        while !self.at_close_angle() && !self.at_eof() {
             params.push(self.parse_generic_param());
             if !self.eat_punct(Punct::Comma) {
                 break;
             }
         }
-        self.expect_punct(Punct::Gt, "to close generic parameters");
+        self.expect_close_angle("to close generic parameters");
         Generics { params }
     }
 

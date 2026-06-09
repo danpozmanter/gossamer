@@ -287,6 +287,14 @@ pub(super) fn emit_per_arg_print(
                 print_str,
                 intrinsics,
             )?,
+            PrintKind::VecVecString => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_vec_string",
+                value,
+                print_str,
+                intrinsics,
+            )?,
             PrintKind::ArrI64(len) => emit_arr_print(
                 module,
                 builder,
@@ -507,13 +515,15 @@ pub(super) fn emit_args_to_concat_string(
             | PrintKind::VecF64
             | PrintKind::VecBool
             | PrintKind::VecString
-            | PrintKind::VecVecI64 => {
+            | PrintKind::VecVecI64
+            | PrintKind::VecVecString => {
                 let helper = match kind {
                     PrintKind::VecI64 => "gos_rt_vec_format_i64",
                     PrintKind::VecF64 => "gos_rt_vec_format_f64",
                     PrintKind::VecBool => "gos_rt_vec_format_bool",
                     PrintKind::VecString => "gos_rt_vec_format_string",
                     PrintKind::VecVecI64 => "gos_rt_vec_format_vec_i64",
+                    PrintKind::VecVecString => "gos_rt_vec_format_vec_string",
                     _ => unreachable!(),
                 };
                 let format_fn = intrinsics.extern_fn(module, helper, &[ptr_ty], &[ptr_ty])?;

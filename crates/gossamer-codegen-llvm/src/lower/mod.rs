@@ -254,6 +254,7 @@ pub(super) enum ConcatKind {
     VecBool,
     VecString,
     VecVecI64,
+    VecVecString,
     /// `[i64; N]` flat-buffer literal; the embedded length is
     /// passed alongside the buffer pointer to the runtime helper.
     ArrI64(i64),

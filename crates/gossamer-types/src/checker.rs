@@ -408,7 +408,69 @@ impl<'a> TypeChecker<'a> {
                     })
                 }
             }
+            // Recurse into element / payload types so a composite whose
+            // inner inference var only gained a concrete type via the
+            // late integer/float defaulting (`let v = if c { [1, 2] }
+            // else { [3, 4] }` -> `[i64; 2]`) is recorded fully grounded.
+            // Without this the recorded node keeps `[?v; 2]` and the
+            // format/codegen dispatch can't classify the element.
+            TyKind::Array { elem, len } => {
+                let new_elem = self.deep_resolve(elem);
+                if new_elem == elem {
+                    resolved
+                } else {
+                    self.tcx.intern(TyKind::Array {
+                        elem: new_elem,
+                        len,
+                    })
+                }
+            }
+            TyKind::Slice(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Slice),
+            TyKind::Vec(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Vec),
+            TyKind::Sender(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Sender),
+            TyKind::Receiver(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Receiver),
+            TyKind::JoinHandle(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::JoinHandle),
+            TyKind::Ref { mutability, inner } => {
+                let new_inner = self.deep_resolve(inner);
+                if new_inner == inner {
+                    resolved
+                } else {
+                    self.tcx.intern(TyKind::Ref {
+                        mutability,
+                        inner: new_inner,
+                    })
+                }
+            }
+            TyKind::Tuple(elems) => {
+                let new: Vec<Ty> = elems.iter().map(|&t| self.deep_resolve(t)).collect();
+                if new == elems {
+                    resolved
+                } else {
+                    self.tcx.intern(TyKind::Tuple(new))
+                }
+            }
+            TyKind::HashMap { key, value } => {
+                let k = self.deep_resolve(key);
+                let v = self.deep_resolve(value);
+                if k == key && v == value {
+                    resolved
+                } else {
+                    self.tcx.intern(TyKind::HashMap { key: k, value: v })
+                }
+            }
             _ => resolved,
+        }
+    }
+
+    /// Deep-resolves a single-payload composite (`Vec`/`Slice`/channel
+    /// endpoints) and re-interns it through `wrap` only when the payload
+    /// actually changed.
+    fn deep_resolve_wrap(&mut self, resolved: Ty, elem: Ty, wrap: fn(Ty) -> TyKind) -> Ty {
+        let new_elem = self.deep_resolve(elem);
+        if new_elem == elem {
+            resolved
+        } else {
+            self.tcx.intern(wrap(new_elem))
         }
     }
 
@@ -760,11 +822,13 @@ impl<'a> TypeChecker<'a> {
                 let annotated = self.type_from_ast(&decl.ty);
                 let init = self.check_expr(&decl.value);
                 self.unify(annotated, init, decl.value.span);
+                self.recoerce_arg_literal(&decl.value, annotated);
             }
             ItemKind::Static(decl) => {
                 let annotated = self.type_from_ast(&decl.ty);
                 let init = self.check_expr(&decl.value);
                 self.unify(annotated, init, decl.value.span);
+                self.recoerce_arg_literal(&decl.value, annotated);
             }
             ItemKind::Struct(decl) => self.check_struct_body(&decl.body),
             ItemKind::Enum(decl) => {
@@ -815,6 +879,10 @@ impl<'a> TypeChecker<'a> {
             self.collect_write_arg_bindings(body);
             let body_ty = self.check_expr(body);
             self.unify(ret, body_ty, body.span);
+            // Re-record an array/tuple literal in the return position
+            // (block tail / branch / arm) to the declared return shape so
+            // `fn f() -> Vec<T> { [..] }` yields a growable Vec, not `[T; N]`.
+            self.recoerce_arg_literal(body, ret);
         }
         self.pop_scope();
     }
@@ -1042,6 +1110,11 @@ impl<'a> TypeChecker<'a> {
                                 // each literal's value type.
                                 let dty_sub = self.subst_params_in_ty(*dty, &substs_table);
                                 self.unify(dty_sub, val_ty, value.span);
+                                // A Vec/slice-typed field initialized with an
+                                // array literal: re-record it as the growable
+                                // shape so `S { xs: ["a", "b"] }` lays a heap
+                                // Vec, not a fixed `[T; N]`, into the struct.
+                                self.recoerce_arg_literal(value, dty_sub);
                             }
                         }
                     }
@@ -1268,6 +1341,12 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
             }
+            ExprKind::Array(ArrayExpr::Repeat { value, .. }) => {
+                if let Some(TyKind::Vec(e) | TyKind::Slice(e)) = self.tcx.kind(expected).cloned() {
+                    self.record(expr.id, expected);
+                    self.recoerce_arg_literal(value, e);
+                }
+            }
             ExprKind::Tuple(elems) => {
                 if let Some(TyKind::Tuple(tys)) = self.tcx.kind(expected).cloned() {
                     if tys.len() == elems.len() {
@@ -1276,6 +1355,36 @@ impl<'a> TypeChecker<'a> {
                             self.recoerce_arg_literal(el, t);
                         }
                     }
+                }
+            }
+            // Push the expected type through value-producing positions so
+            // a literal in a block tail / branch / arm is re-recorded too:
+            // `fn f() -> Vec<T> { [..] }`,
+            // `let v: Vec<T> = if c { [..] } else { [..] }`. The wrapping
+            // node is re-recorded as well — codegen sizes the block/if/
+            // match result slot from its node type, so leaving it `[T; N]`
+            // while the branches build a heap Vec would desync the slot.
+            ExprKind::Block(block) | ExprKind::Unsafe(block) => {
+                if let Some(tail) = &block.tail {
+                    self.record(expr.id, expected);
+                    self.recoerce_arg_literal(tail, expected);
+                }
+            }
+            ExprKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.record(expr.id, expected);
+                self.recoerce_arg_literal(then_branch, expected);
+                if let Some(else_branch) = else_branch {
+                    self.recoerce_arg_literal(else_branch, expected);
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                self.record(expr.id, expected);
+                for arm in arms {
+                    self.recoerce_arg_literal(&arm.body, expected);
                 }
             }
             _ => {}
@@ -1498,16 +1607,51 @@ impl<'a> TypeChecker<'a> {
         let then_ty = self.check_expr(then_branch);
         if let Some(else_branch) = else_branch {
             let else_ty = self.check_expr(else_branch);
-            self.unify(then_ty, else_ty, else_branch.span);
-            then_ty
+            let joined = self.join_branch_tys(then_ty, else_ty, else_branch.span);
+            // When the branches joined to a Vec/slice, re-record each
+            // array-literal branch to that shape so an unannotated
+            // `let v = if c { [1, 2] } else { [3, 4, 5] }` lowers both
+            // arms as a heap Vec, matching the joined result slot.
+            self.recoerce_arg_literal(then_branch, joined);
+            self.recoerce_arg_literal(else_branch, joined);
+            joined
         } else {
             self.tcx.unit()
         }
     }
 
+    /// Joins two branch result types (if/else, match arms). Two array
+    /// literals of differing length — or an array and a Vec/slice — join
+    /// to a growable `Vec<T>`, the only type that holds both, so
+    /// `if c { ["a", "b"] } else { ["c"] }` is a `Vec<String>` rather than
+    /// a length mismatch. Equal-length arrays and every other type unify
+    /// normally (a same-length pair stays a fixed `[T; N]`, coercible to a
+    /// Vec later if the surrounding context wants one).
+    fn join_branch_tys(&mut self, a: Ty, b: Ty, span: Span) -> Ty {
+        let ra = self.infer.resolve(self.tcx, a);
+        let rb = self.infer.resolve(self.tcx, b);
+        let elem_of = |k: &TyKind| match k {
+            TyKind::Array { elem, len } => Some((*elem, Some(*len))),
+            TyKind::Vec(elem) | TyKind::Slice(elem) => Some((*elem, None)),
+            _ => None,
+        };
+        if let (Some(ka), Some(kb)) = (self.tcx.kind(ra).cloned(), self.tcx.kind(rb).cloned()) {
+            if let (Some((ea, la)), Some((eb, lb))) = (elem_of(&ka), elem_of(&kb)) {
+                self.unify(ea, eb, span);
+                if la.is_none() || lb.is_none() || la != lb {
+                    return self.tcx.intern(TyKind::Vec(ea));
+                }
+                self.unify(a, b, span);
+                return a;
+            }
+        }
+        self.unify(a, b, span);
+        a
+    }
+
     fn check_match(&mut self, scrutinee: &Expr, arms: &[MatchArm]) -> Ty {
         let scrut_ty = self.check_expr(scrutinee);
-        let result_ty = self.fresh();
+        let mut result_ty = self.fresh();
         for arm in arms {
             self.push_scope();
             let pat_ty = self.type_of_pattern(&arm.pattern);
@@ -1519,8 +1663,15 @@ impl<'a> TypeChecker<'a> {
                 self.unify(bool_ty, guard_ty, guard.span);
             }
             let body_ty = self.check_expr(&arm.body);
-            self.unify(result_ty, body_ty, arm.body.span);
+            result_ty = self.join_branch_tys(result_ty, body_ty, arm.body.span);
             self.pop_scope();
+        }
+        // Second pass: if the arms joined to a Vec/slice, re-record every
+        // array-literal arm body to that shape so an unannotated
+        // `let v = match n { 0 => ["a"], _ => ["b", "c"] }` lowers each
+        // arm as a heap Vec, matching the joined result slot.
+        for arm in arms {
+            self.recoerce_arg_literal(&arm.body, result_ty);
         }
         result_ty
     }
@@ -1651,10 +1802,15 @@ impl<'a> TypeChecker<'a> {
                 if let Some(init) = init {
                     let init_ty = self.check_expr(init);
                     self.unify(binding_ty, init_ty, init.span);
-                    // Re-type a literal initializer to the parameter
-                    // type it later flows into (see
-                    // `collect_write_arg_bindings`).
-                    if let Some(forced) = forced {
+                    // Re-record an array/tuple literal initializer to the
+                    // binding's declared shape: an explicit annotation
+                    // (`let x: Vec<String> = ["a", "b"]`) makes the literal
+                    // a growable Vec/slice rather than a fixed `[T; N]`,
+                    // and a `forced` write-arg binding flows the parameter
+                    // type in (see `collect_write_arg_bindings`).
+                    if ty.is_some() {
+                        self.recoerce_arg_literal(init, binding_ty);
+                    } else if let Some(forced) = forced {
                         self.recoerce_arg_literal(init, forced);
                     }
                 }
@@ -1699,6 +1855,9 @@ impl<'a> TypeChecker<'a> {
         };
         let body_ty = self.check_expr(body);
         self.unify(output, body_ty, body.span);
+        if ret.is_some() {
+            self.recoerce_arg_literal(body, output);
+        }
         self.pop_scope();
         self.tcx.intern(TyKind::FnPtr(FnSig { inputs, output }))
     }
@@ -1706,14 +1865,30 @@ impl<'a> TypeChecker<'a> {
     fn check_array(&mut self, arr: &ArrayExpr) -> Ty {
         match arr {
             ArrayExpr::List(elems) => {
-                let elem_ty = if let Some(first) = elems.first() {
+                let mut elem_ty = if let Some(first) = elems.first() {
                     self.check_expr(first)
                 } else {
                     self.fresh()
                 };
+                // Join element types rather than a plain unify so a nested
+                // literal whose inner arrays differ in length —
+                // `[["a", "b"], ["c"]]` — settles on `Vec<String>` instead
+                // of failing `[String; 2]` vs `[String; 1]`.
                 for elem in elems.iter().skip(1) {
                     let ty = self.check_expr(elem);
-                    self.unify(elem_ty, ty, elem.span);
+                    elem_ty = self.join_branch_tys(elem_ty, ty, elem.span);
+                }
+                // If the elements joined to a growable Vec/slice, re-record
+                // each one to that shape so every inner array literal lowers
+                // as a heap Vec, matching the outer element slot.
+                let resolved_elem = self.infer.resolve(self.tcx, elem_ty);
+                if matches!(
+                    self.tcx.kind(resolved_elem),
+                    Some(TyKind::Vec(_) | TyKind::Slice(_))
+                ) {
+                    for elem in elems {
+                        self.recoerce_arg_literal(elem, elem_ty);
+                    }
                 }
                 self.tcx.intern(TyKind::Array {
                     elem: elem_ty,

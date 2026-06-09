@@ -327,6 +327,17 @@ impl InferCtxt {
             | (TyKind::Sender(a), TyKind::Sender(b))
             | (TyKind::Receiver(a), TyKind::Receiver(b))
             | (TyKind::JoinHandle(a), TyKind::JoinHandle(b)) => self.unify(tcx, *a, *b),
+            // A `[a, b, c]` literal is typed bottom-up as a fixed
+            // `[T; N]`; it coerces into a growable `Vec<T>` / `[T]`
+            // (slice) when the expected type wants one — `let x:
+            // Vec<String> = ["a", "b"]`, a `-> Vec<T>` return, a
+            // Vec-typed struct field, or a Vec/slice parameter.
+            // Directional: the expected type is the unifier's left
+            // operand at every such site, so the reverse (`[T; N]`
+            // expected, Vec/slice found) stays a mismatch.
+            (TyKind::Vec(elem) | TyKind::Slice(elem), TyKind::Array { elem: lit, .. }) => {
+                self.unify(tcx, *elem, *lit)
+            }
             (TyKind::HashMap { key: ak, value: av }, TyKind::HashMap { key: bk, value: bv }) => {
                 self.unify(tcx, *ak, *bk)?;
                 self.unify(tcx, *av, *bv)

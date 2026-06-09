@@ -269,6 +269,42 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_c
     })
 }
 
+/// Renders a `Vec<Vec<String>>` as `[[s0, s1], [s2], …]`. Each
+/// element is a `*mut GosVec` (8-byte slot); we recursively
+/// stringify each inner `Vec<String>`. Returns a fresh String
+/// pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_vec_string(v: *const GosVec) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return alloc_cstring(b"[]");
+        }
+        let vec = unsafe { &*v };
+        let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
+        out.push('[');
+        for i in 0..vec.len {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+            let inner_ptr = unsafe { (p as *const *const GosVec).read_unaligned() };
+            if inner_ptr.is_null() {
+                out.push_str("[]");
+            } else {
+                let rendered = unsafe { gos_rt_vec_format_string(inner_ptr) };
+                if rendered.is_null() {
+                    out.push_str("[]");
+                } else {
+                    let cs = unsafe { std::ffi::CStr::from_ptr(rendered) };
+                    out.push_str(&cs.to_string_lossy());
+                }
+            }
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
 /// Renders a flat `[i64; N]` raw buffer as `[v0, v1, …]`. Used by
 /// the print/format dispatch for fixed-size array literals
 /// (`let xs = [a, b, c]`) whose storage is a flat heap blob, not a

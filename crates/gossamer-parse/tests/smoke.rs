@@ -139,3 +139,28 @@ fn bom_prefixed_malformed_input_does_not_panic() {
     let file = map.add_file("crash.gos", src.to_string());
     let _ = parse_source_file(src, file);
 }
+
+/// Regression: nested generic argument lists close with a maximal-munch
+/// `>>` (or `>>=` / `>=`) token. The type/turbofish/generic-param parsers
+/// must split that token into the closing `>` for each level instead of
+/// rejecting it (`Vec<Vec<String>>`, `HashMap<String, Vec<i64>>`).
+#[test]
+fn nested_generics_closing_shift_right_parses() {
+    let source = concat!(
+        "fn f(a: Vec<Vec<String>>, b: Vec<Vec<Vec<i64>>>) -> Vec<Vec<i64>> {\n",
+        "    b\n",
+        "}\n",
+    );
+    let mut map = SourceMap::new();
+    let file = map.add_file("nested_generics.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    for diag in &diags {
+        eprintln!("  {diag}");
+    }
+    assert!(
+        diags.is_empty(),
+        "nested generics with `>>` must parse cleanly; got {} diag(s)",
+        diags.len()
+    );
+    assert_eq!(sf.items.len(), 1, "expected exactly one item (`fn f`)");
+}

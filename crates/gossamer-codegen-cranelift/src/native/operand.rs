@@ -176,6 +176,8 @@ pub(super) enum PrintKind {
     VecString,
     /// `Vec<Vec<i64>>` formatted via `gos_rt_vec_format_vec_i64`.
     VecVecI64,
+    /// `Vec<Vec<String>>` formatted via `gos_rt_vec_format_vec_string`.
+    VecVecString,
     /// `[i64; N]` flat-buffer literal (no GosVec header). Formatted
     /// via `gos_rt_arr_format_i64(ptr, len)`.
     ArrI64(i64),
@@ -288,6 +290,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     TyKind::String => PrintKind::VecString,
                     TyKind::Vec(inner) => match tcx.kind_of(*inner) {
                         TyKind::Int(_) => PrintKind::VecVecI64,
+                        TyKind::String => PrintKind::VecVecString,
                         _ => PrintKind::Unsupported("nested slice"),
                     },
                     _ => PrintKind::Unsupported("slice"),
@@ -299,6 +302,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     TyKind::String => PrintKind::VecString,
                     TyKind::Vec(inner) => match tcx.kind_of(*inner) {
                         TyKind::Int(_) => PrintKind::VecVecI64,
+                        TyKind::String => PrintKind::VecVecString,
                         _ => PrintKind::Unsupported("nested Vec"),
                     },
                     _ => PrintKind::Unsupported("Vec"),

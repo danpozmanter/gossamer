@@ -279,13 +279,15 @@ pub(super) fn lower_intrinsic_call_io_math(
                     | PrintKind::VecF64
                     | PrintKind::VecBool
                     | PrintKind::VecString
-                    | PrintKind::VecVecI64 => {
+                    | PrintKind::VecVecI64
+                    | PrintKind::VecVecString => {
                         let helper = match kind {
                             PrintKind::VecI64 => "gos_rt_vec_format_i64",
                             PrintKind::VecF64 => "gos_rt_vec_format_f64",
                             PrintKind::VecBool => "gos_rt_vec_format_bool",
                             PrintKind::VecString => "gos_rt_vec_format_string",
                             PrintKind::VecVecI64 => "gos_rt_vec_format_vec_i64",
+                            PrintKind::VecVecString => "gos_rt_vec_format_vec_string",
                             _ => unreachable!(),
                         };
                         let format_fn =
