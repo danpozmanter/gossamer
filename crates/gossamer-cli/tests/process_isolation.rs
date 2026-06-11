@@ -142,6 +142,11 @@ fn main_goroutine_panic_stays_fatal_on_vm() {
         !out.status.success(),
         "a panic on the MAIN goroutine must stay fatal (isolation is goroutine-scoped, not panic-swallowing)"
     );
+    assert_eq!(
+        out.status.code(),
+        Some(101),
+        "main-goroutine panic exit code is pinned to 101 (Rust parity; scripts depend on it)"
+    );
 }
 
 #[test]
@@ -158,4 +163,35 @@ fn main_goroutine_panic_stays_fatal_native() {
         !out.status.success(),
         "a panic on the MAIN goroutine must stay fatal in the native binary"
     );
+    assert_eq!(
+        out.status.code(),
+        Some(101),
+        "main-goroutine panic exit code is pinned to 101 (Rust parity; scripts depend on it)"
+    );
+}
+
+/// `panic = "abort"` in any workspace profile silently breaks goroutine
+/// isolation and `join()` Err delivery (unwinding is load-bearing). The
+/// setting sat in the workspace manifest from 0.0.0 until 0.11.1 and
+/// broke both in release builds; this guard prevents reintroduction.
+#[test]
+fn no_panic_abort_in_any_workspace_profile() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    let text = std::fs::read_to_string(&root).expect("read workspace Cargo.toml");
+    let mut in_profile = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_profile = trimmed.starts_with("[profile");
+            continue;
+        }
+        if in_profile {
+            let no_spaces: String = trimmed.split_whitespace().collect();
+            assert!(
+                !no_spaces.starts_with("panic=\"abort\""),
+                "panic = \"abort\" found in a workspace profile: unwinding is \
+                 load-bearing for goroutine isolation and join() Err delivery"
+            );
+        }
+    }
 }

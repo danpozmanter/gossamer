@@ -150,11 +150,11 @@ pub(crate) fn builtin_zip_read_raw(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn zip_entry_to_value(entry: gossamer_std::archive::zip::ZipEntry) -> Value {
     Value::struct_(
         "archive::ZipEntry",
-        Arc::new(vec![
+        Arc::unwrap_or_clone(Arc::new(vec![
             (Ident::new("name"), Value::String(entry.name.into())),
             (Ident::new("data"), bytes_to_array(entry.data)),
             (Ident::new("is_dir"), Value::Bool(entry.is_dir)),
-        ]),
+        ])),
     )
 }
 

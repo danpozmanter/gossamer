@@ -32,6 +32,16 @@ impl Parser<'_> {
             self.eat_punct(Punct::Semi);
             return StmtKind::Defer(Box::new(body));
         }
+        // `arena { ... }` — contextual keyword (an identifier `arena` not
+        // followed by `{` still parses as a normal expression). Every
+        // allocation made while the block runs lands in a bump arena and
+        // is freed wholesale when the block exits — desugars to
+        // `{ runtime::arena_push(); defer runtime::arena_pop(); ... }`,
+        // so the pop runs on every exit path. The matching
+        // `use std::runtime` is injected after parse.
+        if self.at_arena_block() {
+            return self.parse_arena_block();
+        }
         if self.at_keyword(Keyword::Go) {
             self.bump();
             let value = self.parse_expr();
@@ -51,6 +61,79 @@ impl Parser<'_> {
         StmtKind::Expr {
             expr: Box::new(expression),
             has_semi,
+        }
+    }
+
+    fn at_arena_block(&mut self) -> bool {
+        use gossamer_lex::TokenKind;
+        let cur = self.peek();
+        if !matches!(cur.kind, TokenKind::Ident) || self.slice(cur.span) != "arena" {
+            return false;
+        }
+        matches!(self.peek_nth(1).kind, TokenKind::Punct(Punct::LBrace))
+    }
+
+    fn parse_arena_block(&mut self) -> StmtKind {
+        let start = self.peek_span();
+        self.bump(); // `arena`
+        self.expect_punct(Punct::LBrace, "an `arena` block body");
+        let mut block = self.parse_block_body();
+        let runtime_call = |p: &mut Self, fn_name: &str, span| {
+            let path = Expr::new(
+                p.alloc_id(),
+                span,
+                ExprKind::Path(PathExpr::from_names(["runtime", fn_name])),
+            );
+            Expr::new(
+                p.alloc_id(),
+                span,
+                ExprKind::Call {
+                    callee: Box::new(path),
+                    args: Vec::new(),
+                },
+            )
+        };
+        let push_call = runtime_call(self, "arena_push", start);
+        let pop_call = runtime_call(self, "arena_pop", start);
+        let mut stmts = Vec::with_capacity(block.stmts.len() + 2);
+        stmts.push(Stmt::new(
+            self.alloc_id(),
+            start,
+            StmtKind::Expr {
+                expr: Box::new(push_call),
+                has_semi: true,
+            },
+        ));
+        stmts.push(Stmt::new(
+            self.alloc_id(),
+            start,
+            StmtKind::Defer(Box::new(pop_call)),
+        ));
+        stmts.append(&mut block.stmts);
+        block.stmts = stmts;
+        // An arena block is statement-position only: its value would
+        // outlive the arena, so any tail expression is demoted to a
+        // statement and the block yields unit.
+        if let Some(tail) = block.tail.take() {
+            let span = tail.span;
+            block.stmts.push(Stmt::new(
+                self.alloc_id(),
+                span,
+                StmtKind::Expr {
+                    expr: tail,
+                    has_semi: true,
+                },
+            ));
+        }
+        let end = self.peek_span();
+        let expr = Expr::new(
+            self.alloc_id(),
+            self.join(start, end),
+            ExprKind::Block(block),
+        );
+        StmtKind::Expr {
+            expr: Box::new(expr),
+            has_semi: true,
         }
     }
 

@@ -566,7 +566,7 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Struct(decl) => {
                     self.register_struct(item.id, decl);
                 }
-                ItemKind::Enum(decl) => self.register_enum(item.id, decl),
+                ItemKind::Enum(decl) => self.register_enum(item.id, decl, item.span),
                 ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
@@ -608,9 +608,20 @@ impl<'a> TypeChecker<'a> {
     /// Registers an enum's `DefId -> name` so `render_ty` / `adt_dispatch_name`
     /// recover "Shape" instead of the "adt#N" placeholder — needed for `==` /
     /// `{:?}` dispatch on enum values whose type resolves to the Adt.
-    fn register_enum(&mut self, item_id: NodeId, decl: &gossamer_ast::EnumDecl) {
+    fn register_enum(&mut self, item_id: NodeId, decl: &gossamer_ast::EnumDecl, span: Span) {
         if let Some(def) = self.resolutions.definition_of(item_id) {
             self.tcx.register_def_name(def, decl.name.name.as_str());
+        }
+        // The heap representation stores the discriminant in a one-byte
+        // header field.
+        if decl.variants.len() > 256 {
+            self.emit(
+                TypeError::TooManyVariants {
+                    name: decl.name.name.clone(),
+                    count: decl.variants.len(),
+                },
+                span,
+            );
         }
     }
 

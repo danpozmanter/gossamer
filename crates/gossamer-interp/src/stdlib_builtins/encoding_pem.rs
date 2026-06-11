@@ -205,20 +205,20 @@ pub(crate) fn pem_block_to_value(block: gossamer_std::encoding::pem::Block) -> V
     ));
     Value::struct_(
         "encoding::pem::Block",
-        Arc::new(vec![
+        Arc::unwrap_or_clone(Arc::new(vec![
             (
                 Ident::new("block_type"),
                 Value::String(block.block_type.into()),
             ),
             (Ident::new("bytes"), bytes_val),
-        ]),
+        ])),
     )
 }
 
 pub(crate) fn pem_block_from_value(v: &Value) -> gossamer_std::encoding::pem::Block {
     let (mut block_type, mut bytes) = (String::new(), Vec::new());
     if let Value::Struct(s) = v {
-        for (k, val) in s.fields.iter() {
+        for (k, val) in &s.fields {
             match k.name.as_str() {
                 "block_type" => {
                     if let Value::String(s) = val {

@@ -148,7 +148,10 @@ pub(crate) fn builtin_mw_decode_basic_auth(args: &[Value]) -> RuntimeResult<Valu
             Value::String(pass.to_string().into()),
         ),
     ];
-    Ok(ok_variant(Value::struct_("BasicAuth", Arc::new(fields))))
+    Ok(ok_variant(Value::struct_(
+        "BasicAuth",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    )))
 }
 
 pub(crate) fn builtin_mw_accepts_gzip(args: &[Value]) -> RuntimeResult<Value> {

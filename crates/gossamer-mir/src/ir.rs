@@ -111,7 +111,7 @@ pub struct LocalDecl {
     /// `true` when the local is declared mutable at the source level.
     pub mutable: bool,
     /// `true` when the local was created inside an arena region
-    /// (`runtime::region_push` .. `region_pop`). Its RC value is freed
+    /// (`runtime::arena_push` .. `arena_pop`). Its RC value is freed
     /// wholesale at region pop, so the drop pass must NOT emit a
     /// retain/release for it — doing so would touch freed memory after the
     /// pop (use-after-free).

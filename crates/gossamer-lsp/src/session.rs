@@ -10,7 +10,6 @@
 use gossamer_ast::SourceFile;
 use gossamer_diagnostics::Diagnostic;
 use gossamer_lex::{FileId, SourceMap, Span};
-use gossamer_parse::parse_source_file;
 use gossamer_resolve::{Resolutions, resolve_source_file};
 use gossamer_types::{TyCtxt, TypeTable, typecheck_source_file};
 
@@ -71,9 +70,18 @@ pub(crate) struct DocumentAnalysis {
 /// Runs the full pipeline over `source` and returns the resulting
 /// [`DocumentAnalysis`].
 pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
+    // Mirror the driver pipeline: the parse-time autoderive step
+    // synthesizes the serde free functions (`from_json::<T>` and
+    // friends), `#[derive]` impls, and stdlib struct wrappers. The
+    // synthesized text is APPENDED, so every user-code span is
+    // unchanged; without this step the LSP reports `from_json` (and
+    // every other synthesized name) as unresolved while `gos check`
+    // accepts the file.
+    let augmented = gossamer_parse::autoderive::augment_source(source);
+    let user_len = u32::try_from(source.len()).unwrap_or(u32::MAX);
     let mut map = SourceMap::new();
-    let file = map.add_file(uri.to_string(), source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let file = map.add_file(uri.to_string(), augmented.clone());
+    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file);
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
     let (types, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
@@ -94,8 +102,21 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
             .iter()
             .map(gossamer_types::TypeDiagnostic::to_diagnostic),
     );
+    // Diagnostics pointing into the synthesized tail would land past
+    // the end of the buffer the editor displays; `gos check` surfaces
+    // them against the augmented text, but an LSP client cannot.
+    // `<=` keeps unexpected-EOF parse errors, which point exactly AT
+    // the user text's end; the synthesized tail begins at least two
+    // newlines later.
+    diagnostics.retain(|d| {
+        d.labels
+            .iter()
+            .find(|l| l.primary)
+            .or_else(|| d.labels.first())
+            .is_none_or(|l| l.location.span.start <= user_len)
+    });
 
-    let index = DefinitionIndex::build(&sf, source, &resolutions);
+    let index = DefinitionIndex::build(&sf, &augmented, &resolutions);
 
     DocumentAnalysis {
         uri: uri.to_string(),

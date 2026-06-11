@@ -130,11 +130,11 @@ pub(crate) fn ip_to_value(ip: gossamer_std::net::ip::Ip) -> Value {
     };
     Value::struct_(
         "net::ip::Ip",
-        Arc::new(vec![
+        Arc::unwrap_or_clone(Arc::new(vec![
             (Ident::new("__tag"), Value::String(tag.into())),
             (Ident::new("__str"), Value::String(ip.to_string().into())),
             (Ident::new("__octets"), bytes_to_value_array(&octets)),
-        ]),
+        ])),
     )
 }
 

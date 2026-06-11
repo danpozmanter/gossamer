@@ -134,14 +134,14 @@ pub(crate) fn next_set_handle() -> i64 {
 pub(crate) fn set_handle(id: i64) -> Value {
     Value::struct_(
         "HashSet",
-        Arc::new(vec![(Ident::new("__set"), Value::Int(id))]),
+        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__set"), Value::Int(id))])),
     )
 }
 
 pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "HashSet" {
-            for (i, v) in inner.fields.iter() {
+            for (i, v) in &inner.fields {
                 if i.name == "__set" {
                     if let Value::Int(n) = v {
                         return Some(*n);
@@ -295,14 +295,14 @@ pub(crate) fn next_atomic_id() -> i64 {
 pub(crate) fn atomic_handle(name: &'static str, id: i64) -> Value {
     Value::struct_(
         name,
-        Arc::new(vec![(Ident::new("__atomic"), Value::Int(id))]),
+        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__atomic"), Value::Int(id))])),
     )
 }
 
 pub(crate) fn atomic_id_of(value: &Value, expected: &str) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == expected {
-            for (i, v) in inner.fields.iter() {
+            for (i, v) in &inner.fields {
                 if i.name == "__atomic" {
                     if let Value::Int(n) = v {
                         return Some(*n);

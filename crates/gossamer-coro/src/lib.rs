@@ -40,6 +40,13 @@ use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
+/// Payload type for Gossamer-originated panics. Raised by the
+/// runtime's `gos_rt_panic` on the goroutine path and recognised by
+/// the process panic hook (which stays silent for it — the Gossamer
+/// report has already been printed) and by the catch in
+/// [`Goroutine::new`].
+pub struct GosPanic(pub String);
+
 /// Set to `true` whenever any spawned goroutine has panicked.
 /// Tests / runtime status helpers read this flag via
 /// [`any_goroutine_panicked`] to assert that long-running services
@@ -149,7 +156,9 @@ impl Goroutine {
             // assert clean execution.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(main));
             if let Err(payload) = result {
-                let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                let msg = if let Some(p) = payload.downcast_ref::<GosPanic>() {
+                    p.0.clone()
+                } else if let Some(s) = payload.downcast_ref::<&'static str>() {
                     (*s).to_string()
                 } else if let Some(s) = payload.downcast_ref::<String>() {
                     s.clone()

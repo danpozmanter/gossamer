@@ -323,12 +323,17 @@ pub(crate) fn collect_enum_variants(program: &HirProgram) -> EnumIndex {
                     if let Some(fields) = &v.struct_fields {
                         let field_names: Vec<String> =
                             fields.iter().map(|f| f.name.clone()).collect();
-                        if !field_names.is_empty() {
-                            variant_has_payload.insert(v.name.name.clone(), true);
-                        }
                         variant_fields.insert(v.name.name.clone(), field_names);
                     }
                     if let Some(tys) = &v.struct_field_tys {
+                        // Both named and tuple payloads carry their field
+                        // types here, so the declaration alone decides the
+                        // payload question — the body scan below only
+                        // supplements constructors of enums declared in
+                        // other modules.
+                        if !tys.is_empty() {
+                            variant_has_payload.insert(v.name.name.clone(), true);
+                        }
                         variant_field_tys.insert(v.name.name.clone(), tys.clone());
                     }
                 }

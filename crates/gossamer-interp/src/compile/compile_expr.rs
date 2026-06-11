@@ -639,10 +639,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 }));
             }
             HirPatKind::Variant { name, fields } => {
-                let name_idx = self.const_idx(
-                    ConstKey::String(name.name.clone()),
-                    Value::String(SmolStr::from(name.name.as_str())),
-                );
+                let name_idx = self.shape_name_idx(name.name.as_str());
                 let arity = u16::try_from(fields.len())
                     .map_err(|_| RuntimeError::Unsupported("variant arity exceeds 65535"))?;
                 let test = self.alloc_reg();
@@ -667,10 +664,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
             }
             HirPatKind::Struct { name, fields, .. } => {
-                let name_idx = self.const_idx(
-                    ConstKey::String(name.name.clone()),
-                    Value::String(SmolStr::from(name.name.as_str())),
-                );
+                let name_idx = self.shape_name_idx(name.name.as_str());
                 let test = self.alloc_reg();
                 self.emit(Op::StructIs {
                     dst: test,

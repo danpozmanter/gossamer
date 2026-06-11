@@ -122,7 +122,7 @@ pub(crate) struct Builder<'a> {
     /// truncate every multi-slot element (`[i64; 2]`, tuple, struct) on
     /// push. This map supplies the real element stride for that case.
     pub(crate) grows_elem_ty: std::collections::HashMap<String, Ty>,
-    /// Nesting depth of `runtime::region_push` .. `region_pop` while
+    /// Nesting depth of `runtime::arena_push` .. `arena_pop` while
     /// lowering. Locals created at depth > 0 are arena-region-owned: the
     /// drop pass must not release them (the region frees them wholesale at
     /// pop; a post-pop release would be a use-after-free).

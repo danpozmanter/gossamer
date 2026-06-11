@@ -74,7 +74,8 @@ impl<'a> Builder<'a> {
         // name is a struct-payload enum variant (`Shape::Rect { w,
         // h }`); if so, route through `lower_user_enum_ctor` so
         // the runtime layout matches what the variant-pattern
-        // match expects (`[disc, p0, p1, …]` heap aggregate).
+        // match expects (`[p0, p1, …]` heap aggregate; the discriminant
+        // lives in the RC header byte).
         // Mixing the flat-tuple lowering with the disc-prefixed
         // match was the root cause of the
         // control_flow / data_structures crash — the match read
@@ -116,7 +117,7 @@ impl<'a> Builder<'a> {
             provided.insert(field_name.clone(), &chunk[1]);
         }
         if let Some(idx) = variant_idx {
-            // Enum struct-variant: build a `[disc, w, h, …]` heap
+            // Enum struct-variant: build a `[w, h, …]` heap
             // aggregate. Args are HirExpr in field-declaration
             // order so the load offsets in
             // `lower_pattern_predicate`'s Struct arm line up.
@@ -197,6 +198,10 @@ impl<'a> Builder<'a> {
         }
         let dest = self.fresh(ty);
         self.local_struct.insert(dest, struct_name.clone());
+        // Make the guarded copy-blob meta for this struct type available
+        // to the drop pass and the backend heap-copy site (idempotent;
+        // no-op for types without guarded child slots).
+        let _ = self.ensure_aggr_copy_meta(ty);
         // Adt requires a DefId we don't have handy at this layer.
         // The native codegen treats every aggregate as a flat i64-per
         // slot stack slot regardless of kind, so `Tuple` is a safe

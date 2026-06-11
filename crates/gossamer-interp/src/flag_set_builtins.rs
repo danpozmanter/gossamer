@@ -41,7 +41,7 @@ pub(crate) fn builtin_flag_set_new(args: &[Value]) -> RuntimeResult<Value> {
     });
     Ok(Value::struct_(
         "Set",
-        Arc::new(vec![(Ident::new("__id"), Value::Int(id as i64))]),
+        vec![(Ident::new("__id"), Value::Int(id as i64))],
     ))
 }
 

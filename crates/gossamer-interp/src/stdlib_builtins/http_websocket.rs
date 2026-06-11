@@ -138,7 +138,7 @@ pub(crate) fn builtin_ws_is_upgrade(args: &[Value]) -> RuntimeResult<Value> {
     };
     let mut has_upgrade_ws = false;
     let mut has_connection_upgrade = false;
-    for (i, v) in inner.fields.iter() {
+    for (i, v) in &inner.fields {
         if i.name == "headers" {
             if let Value::Array(arr) = v {
                 for entry in arr.iter() {

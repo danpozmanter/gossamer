@@ -597,6 +597,32 @@ impl MultiScheduler {
         }
     }
 
+    /// Blocks until every spawned task has finished (`live == 0` and
+    /// `spawned == finished`), or `timeout` passes. Returns whether the
+    /// pool quiesced. The bound is a liveness guarantee for process
+    /// exit: a goroutine blocked forever (say, on a channel nobody
+    /// sends to) must not wedge the process. Waits on `idle_cv` — the
+    /// workers notify it on every transition that could make the pool
+    /// idle, and the 200 ms re-check cap covers the same missed-wake
+    /// races `wait_until_idle` documents.
+    #[must_use]
+    pub fn wait_quiescent(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut g = self.inner.idle_mu.lock();
+        loop {
+            let stats = self.inner.stats.snapshot();
+            if self.live_goroutines() == 0 && stats.spawned == stats.finished {
+                return true;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            let wait = (deadline - now).min(Duration::from_millis(200));
+            self.inner.idle_cv.wait_for(&mut g, wait);
+        }
+    }
+
     fn wait_until_idle(&self) {
         let mut g = self.inner.idle_mu.lock();
         loop {

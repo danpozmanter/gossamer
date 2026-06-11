@@ -394,7 +394,7 @@ pub(crate) fn builtin_crypto_x509_parse_pem(args: &[Value]) -> RuntimeResult<Val
             ));
             let struct_v = Value::struct_(
                 "crypto::x509::CertInfo",
-                Arc::new(vec![
+                Arc::unwrap_or_clone(Arc::new(vec![
                     (Ident::new("subject"), Value::String(info.subject.into())),
                     (Ident::new("issuer"), Value::String(info.issuer.into())),
                     (Ident::new("serial"), bytes_to_value_array(&info.serial)),
@@ -408,7 +408,7 @@ pub(crate) fn builtin_crypto_x509_parse_pem(args: &[Value]) -> RuntimeResult<Val
                     ),
                     (Ident::new("san_dns"), san_v),
                     (Ident::new("sha256"), bytes_to_value_array(&info.sha256)),
-                ]),
+                ])),
             );
             Ok(ok_variant(struct_v))
         }

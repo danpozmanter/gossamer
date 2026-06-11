@@ -135,7 +135,10 @@ pub(crate) fn builtin_static_serve_file(args: &[Value]) -> RuntimeResult<Value> 
                 ),
             ];
             fields.push((Ident::new("headers"), Value::Array(Arc::new(Vec::new()))));
-            Ok(ok_variant(Value::struct_("Response", Arc::new(fields))))
+            Ok(ok_variant(Value::struct_(
+                "Response",
+                Arc::unwrap_or_clone(Arc::new(fields)),
+            )))
         }
         Err(e) => Ok(err_variant(format!("{e}"))),
     }

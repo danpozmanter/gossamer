@@ -44,6 +44,12 @@ pub enum JitKind {
     /// handles; the trampoline marshals via
     /// `Value::to_raw` / `Value::from_raw`.
     Value,
+    /// A heap enum crossing the boundary as its NATIVE tagged pointer
+    /// (the compiled-tier representation the JIT body works with
+    /// directly, zero conversion). The payload is the VM-side
+    /// shape-table index used to re-wrap returned pointers. Integer
+    /// register class.
+    EnumPtr(u32),
 }
 
 /// Raw handle for a JIT-compiled function: a fn pointer plus the
@@ -104,24 +110,35 @@ impl Drop for JitArtifact {
 }
 
 /// Returns the names of user-defined bodies called by `body`.
+/// User-function callees of `body`: by-name calls into known bodies
+/// plus `FnRef` calls resolved through the def -> body-name map. The
+/// second tuple slot reports an UNRESOLVABLE `FnRef` (a def with no
+/// MIR body — e.g. a prelude scalar): such a body cannot be compiled
+/// (the lowering refuses zero-stubs) and must be excluded.
 fn body_user_calls<'a>(
     body: &'a Body,
-    all_names: &std::collections::HashSet<&str>,
-) -> Vec<&'a str> {
+    all_names: &std::collections::HashSet<&'a str>,
+    def_to_name: &HashMap<u32, &'a str>,
+) -> (Vec<&'a str>, bool) {
     use gossamer_mir::{ConstValue, Operand, Terminator};
     let mut calls = Vec::new();
+    let mut unresolved = false;
     for block in &body.blocks {
         let Terminator::Call { callee, .. } = &block.terminator else {
             continue;
         };
-        let Operand::Const(ConstValue::Str(name)) = callee else {
-            continue;
-        };
-        if all_names.contains(name.as_str()) {
-            calls.push(name.as_str());
+        match callee {
+            Operand::Const(ConstValue::Str(name)) if all_names.contains(name.as_str()) => {
+                calls.push(name.as_str());
+            }
+            Operand::FnRef { def, .. } => match def_to_name.get(&def.local) {
+                Some(name) => calls.push(name),
+                None => unresolved = true,
+            },
+            _ => {}
         }
     }
-    calls
+    (calls, unresolved)
 }
 
 /// Computes the minimal set of body names needed in the JIT module.
@@ -130,14 +147,45 @@ fn body_user_calls<'a>(
 /// (scalar scalars only), then BFS-expands to include every user body
 /// they transitively call — those need to be compiled too so that
 /// intra-module call references resolve at finalize time.
-fn jit_compile_set<'a>(bodies: &'a [Body], tcx: &TyCtxt) -> std::collections::HashSet<&'a str> {
+fn jit_compile_set<'a>(
+    bodies: &'a [Body],
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+) -> std::collections::HashSet<&'a str> {
     let all_names: std::collections::HashSet<&str> =
         bodies.iter().map(|b| b.name.as_str()).collect();
     let body_map: HashMap<&str, &Body> = bodies.iter().map(|b| (b.name.as_str(), b)).collect();
+    let def_to_name: HashMap<u32, &str> = bodies
+        .iter()
+        .filter_map(|b| b.def.map(|d| (d.local, b.name.as_str())))
+        .collect();
 
+    // Bodies whose LOCALS include the two-word inline Option/Result
+    // representation (sentinel Adt) or raw i128 integers are declined:
+    // the JIT lowering's i64 register model fails cranelift's verifier
+    // on them. They stay on bytecode; callees they invoke can still
+    // compile (the trampoline marshals at the boundary).
+    let uses_i128_repr = |b: &Body| -> bool {
+        b.locals.iter().any(|l| match tcx.kind_of(l.ty) {
+            // Inline Option/Result sentinels are two-word i128 values.
+            // Non-enum Adts (structs) are also declined: the JIT-side
+            // struct lowering is unexercised — bodies holding struct
+            // locals stay on bytecode until that lands.
+            TyKind::Adt { def, .. } => {
+                def.local == u32::MAX || def.local == u32::MAX - 1 || !tcx.is_rc_managed(l.ty)
+            }
+            TyKind::Int(it) => {
+                matches!(
+                    it,
+                    gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128
+                )
+            }
+            _ => false,
+        })
+    };
     let mut included: std::collections::HashSet<&str> = bodies
         .iter()
-        .filter(|b| body_kinds(b, tcx).is_some())
+        .filter(|b| body_kinds(b, tcx, enum_shapes).is_some() && !uses_i128_repr(b))
         .map(|b| b.name.as_str())
         .collect();
 
@@ -146,10 +194,34 @@ fn jit_compile_set<'a>(bodies: &'a [Body], tcx: &TyCtxt) -> std::collections::Ha
         let Some(body) = body_map.get(name) else {
             continue;
         };
-        for callee in body_user_calls(body, &all_names) {
-            if included.insert(callee) {
+        let (calls, _) = body_user_calls(body, &all_names, &def_to_name);
+        for callee in calls {
+            let ok = body_map.get(callee).is_some_and(|b| !uses_i128_repr(b));
+            if ok && included.insert(callee) {
                 worklist.push(callee);
             }
+        }
+    }
+    // Exclude bodies the lowering would hard-fail on (an FnRef to a
+    // def with no MIR body), and propagate: a caller of an excluded
+    // body is itself uncompilable. One bad body must not fail the
+    // whole module.
+    loop {
+        let mut removed = false;
+        let snapshot: Vec<&str> = included.iter().copied().collect();
+        for name in snapshot {
+            let Some(body) = body_map.get(name) else {
+                continue;
+            };
+            let (calls, unresolved) = body_user_calls(body, &all_names, &def_to_name);
+            let calls_excluded = calls.iter().any(|c| !included.contains(c));
+            if unresolved || calls_excluded {
+                included.remove(name);
+                removed = true;
+            }
+        }
+        if !removed {
+            break;
         }
     }
     included
@@ -160,7 +232,15 @@ fn jit_compile_set<'a>(bodies: &'a [Body], tcx: &TyCtxt) -> std::collections::Ha
 /// or whose ABI shape is not supported by the dispatch trampoline,
 /// are silently skipped — the VM's existing bytecode dispatch picks
 /// them up.
-pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single internal caller; generalizing the hasher adds a type parameter for nothing"
+)]
+pub fn compile_to_jit(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+) -> Result<JitArtifact> {
     let isa = build_native_isa(false)?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     let mut runtime_symbol_set = register_runtime_symbols(&mut builder);
@@ -180,7 +260,7 @@ pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
     // them wastes Cranelift IR capacity and inflates peak RSS.  The BFS
     // below finds the transitive closure of user-function calls from the
     // promotable roots so inter-body calls inside the compiled set resolve.
-    let compile_set = jit_compile_set(bodies, tcx);
+    let compile_set = jit_compile_set(bodies, tcx, enum_shapes);
     // Clone only the bodies we'll actually compile. Skipping bodies
     // that can never be promoted (aggregate params/returns) saves
     // tens of megabytes of peak RSS without affecting correctness —
@@ -210,7 +290,7 @@ pub fn compile_to_jit(bodies: &[Body], tcx: &TyCtxt) -> Result<JitArtifact> {
         let Some(id) = lowered.function_ids_by_name.get(&body.name).copied() else {
             continue;
         };
-        let Some((params, returns)) = body_kinds(body, tcx) else {
+        let Some((params, returns)) = body_kinds(body, tcx, enum_shapes) else {
             // Some param/return type isn't a primitive scalar — the
             // dispatch trampoline can't marshal it, so the VM will
             // fall back to bytecode for this fn.
@@ -294,23 +374,39 @@ fn body_calls_jit_unsafe(
     false
 }
 
-fn body_kinds(body: &Body, tcx: &TyCtxt) -> Option<(Vec<JitKind>, JitKind)> {
+fn body_kinds(
+    body: &Body,
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+) -> Option<(Vec<JitKind>, JitKind)> {
     let mut params = Vec::with_capacity(body.arity as usize);
     for pidx in 1..=body.arity {
         let local = gossamer_mir::Local(pidx);
-        let kind = ty_to_kind(tcx, body.local_ty(local))?;
+        let kind = ty_to_kind(tcx, body.local_ty(local), enum_shapes)?;
         params.push(kind);
     }
-    let returns = ty_to_kind(tcx, body.local_ty(gossamer_mir::Local::RETURN))?;
+    let returns = ty_to_kind(tcx, body.local_ty(gossamer_mir::Local::RETURN), enum_shapes)?;
     Some((params, returns))
 }
 
-fn ty_to_kind(tcx: &TyCtxt, ty: Ty) -> Option<JitKind> {
+fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<JitKind> {
+    // References to heap enums are the same native pointer at the ABI
+    // (compiled convention) — peel before classifying.
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
     match tcx.kind_of(ty) {
         TyKind::Bool => Some(JitKind::Bool),
         TyKind::Int(_) => Some(JitKind::I64),
         TyKind::Float(_) => Some(JitKind::F64),
         TyKind::Unit => Some(JitKind::Unit),
+        // Heap enums with a registered VM-side shape cross as native
+        // tagged pointers; the body works on the compiled-tier
+        // representation directly (zero conversion).
+        TyKind::Adt { def, .. } if tcx.is_rc_managed(ty) => enum_shapes
+            .get(&def.local)
+            .map(|idx| JitKind::EnumPtr(*idx)),
         // Aggregate types (`String`, `Tuple`, `Adt`, channels …)
         // intentionally return `None` here. The codegen lowers
         // them as native struct-pointer ABIs (load/store at
@@ -810,8 +906,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_rc_weak_release"     => rt::gos_rt_rc_weak_release,
         "gos_rt_rc_weak_upgrade"     => rt::gos_rt_rc_weak_upgrade,
         "gos_rt_rc_weak_upgrade_opt" => rt::gos_rt_rc_weak_upgrade_opt,
-        "gos_rt_region_push"         => rt::gos_rt_region_push,
-        "gos_rt_region_pop"          => rt::gos_rt_region_pop,
+        "gos_rt_arena_push"         => rt::gos_rt_arena_push,
+        "gos_rt_arena_pop"          => rt::gos_rt_arena_pop,
         "gos_rt_collect_cycles"      => rt::gos_rt_collect_cycles,
         "gos_rt_gc_alloc_rooted"     => gc::gos_rt_gc_alloc_rooted,
         "gos_rt_gc_safepoint"        => gc::gos_rt_gc_safepoint,

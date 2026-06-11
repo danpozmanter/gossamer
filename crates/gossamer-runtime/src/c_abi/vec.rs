@@ -52,6 +52,12 @@ pub mod vec_elem_kind {
     /// Element is a `*mut GosError`; each element is freed via
     /// `gos_rt_error_free`.
     pub const ERROR: u8 = 4;
+    /// Element is a multi-slot struct/tuple stored inline whose option
+    /// payload words may hold copy-blob pointers. The per-type guarded
+    /// meta lives in the side table (`vec_elem_meta`); `gos_rt_vec_free`
+    /// releases each element's guarded children, and `gos_rt_vec_push`
+    /// retains them when the element bytes are copied in.
+    pub const AGGR_GUARDED: u8 = 5;
 }
 
 #[repr(C)]
@@ -76,7 +82,7 @@ pub struct GosVec {
 
 /// `_reserved[0]` value marking a GosVec (and its backing buffer) as
 /// arena-region-allocated: both live in region slabs, so `gos_rt_vec_free`
-/// must skip them (they are freed wholesale at `region_pop`).
+/// must skip them (they are freed wholesale at `arena_pop`).
 const VEC_REGION_FLAG: u8 = 1;
 
 /// Allocate a GosVec header from the active region if one is open (so it is
@@ -93,6 +99,60 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
         let hp = p.cast::<GosVec>();
         unsafe { std::ptr::write(hp, v) };
         hp
+    }
+}
+
+/// Per-vec guarded element meta, keyed by the stable `GosVec` header
+/// pointer. Only vecs tagged `vec_elem_kind::AGGR_GUARDED` have entries,
+/// so ordinary vecs never consult the table — the tag byte (already in
+/// the header) gates every lookup. Entries are removed when the vec is
+/// reclaimed, so a reused header address cannot inherit a stale meta.
+static VEC_ELEM_METAS: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<usize, usize>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+
+pub(crate) fn vec_elem_meta(v: *const GosVec) -> *const i64 {
+    *VEC_ELEM_METAS.lock().get(&(v as usize)).unwrap_or(&0) as *const i64
+}
+
+pub(crate) fn vec_elem_meta_remove(v: *const GosVec) {
+    VEC_ELEM_METAS.lock().remove(&(v as usize));
+}
+
+/// Tags `v` as holding guarded aggregate elements and records the
+/// per-type meta used to retain/release their copy-blob children.
+/// Emitted by the MIR lowering right after constructing a vec whose
+/// element type carries a guarded meta. No-op for null / region vecs
+/// (region storage is freed wholesale and never walked).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_set_elem_meta(v: *mut GosVec, meta: *const i64) {
+    if v.is_null() || meta.is_null() {
+        return;
+    }
+    let vec = unsafe { &mut *v };
+    if vec_is_region(vec) {
+        return;
+    }
+    vec.elem_kind = vec_elem_kind::AGGR_GUARDED;
+    VEC_ELEM_METAS.lock().insert(v as usize, meta as usize);
+}
+
+/// Release the guarded children of every element of an
+/// `AGGR_GUARDED` vec. Called by `gos_rt_vec_free` before the buffer
+/// is reclaimed.
+pub(crate) unsafe fn vec_release_guarded_elements(v: &GosVec) {
+    let meta = vec_elem_meta(v);
+    if meta.is_null() || v.ptr.is_null() {
+        return;
+    }
+    let stride = v.elem_bytes as usize;
+    if stride == 0 {
+        return;
+    }
+    for i in 0..v.len.max(0) as usize {
+        unsafe {
+            crate::c_abi::rc::gos_rt_aggr_release_children(v.ptr.add(i * stride), meta);
+        }
     }
 }
 
@@ -361,7 +421,7 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
             if vec_is_region(vec) {
                 // Region-allocated: grow into a fresh region buffer (zeroed)
                 // and abandon the old one in the region — it is reclaimed
-                // wholesale at `region_pop`, never individually freed.
+                // wholesale at `arena_pop`, never individually freed.
                 let region_buf = crate::c_abi::rc::region_alloc_bytes(new_bytes);
                 if region_buf.is_null() {
                     // No active region (grown after its pop — unusual): fall
@@ -426,6 +486,15 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
             std::ptr::copy_nonoverlapping(elem, dst, vec.elem_bytes as usize);
         }
         vec.len += 1;
+        // A guarded aggregate element shares its copy-blob children with
+        // the source slots (which keep their own shares and release them
+        // when the source dies); the vec's copy must hold its own.
+        if vec.elem_kind == vec_elem_kind::AGGR_GUARDED {
+            let meta = vec_elem_meta(v);
+            if !meta.is_null() {
+                unsafe { crate::c_abi::rc::gos_rt_aggr_retain_children(dst, meta) };
+            }
+        }
     });
 }
 
@@ -584,41 +653,13 @@ pub extern "C" fn gos_rt_result_is_err(r: i128) -> i64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_main_exit_code(raw: i64) -> i32 {
     ffi_entry!(-1, {
-        // Wait for every goroutine spawned via `go expr` to finish.
-        // Without this the M:N pool keeps workers alive on a Condvar
-        // while the main thread races straight to `_exit`, dropping
-        // unflushed stdout and any worker output that hadn't yet
-        // reached the underlying file descriptor.
-        // Wait for outstanding goroutines so their stdout reaches
-        // the user before the process exits. The M:N pool's worker
-        // threads boot lazily on first `spawn`, so a fast main
-        // (`go expr; return`) can race the worker start-up. Two
-        // guards: (1) seed wait so the worker pool has time to
-        // dequeue the first task, and (2) settle wait so a
-        // task that just decremented `live` has time to actually
-        // emit its stdout before the next sample.
-        let sched = crate::sched_global::scheduler();
-        let start = std::time::Instant::now();
-        let deadline = start + std::time::Duration::from_secs(5);
-        let mut consecutive_settled = 0_u32;
-        let mut iters = 0_u64;
-        while std::time::Instant::now() < deadline {
-            let live = sched.live_goroutines();
-            let stats = sched.stats();
-            let settled =
-                live == 0 && stats.spawned == stats.finished && start.elapsed().as_millis() >= 100;
-            if settled {
-                consecutive_settled += 1;
-                if consecutive_settled >= 5 {
-                    break;
-                }
-            } else {
-                consecutive_settled = 0;
-            }
-            iters += 1;
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        let _ = iters;
+        // Drain goroutines spawned via `go expr` before exiting:
+        // `live_goroutines` is incremented at spawn admission, so a
+        // fast `go expr; return` main observes its goroutine here, and
+        // a body that finished has already written into the buffered
+        // stdout the flush below drains. Skips (and does not boot) the
+        // scheduler when the program never used it.
+        crate::sched_global::drain_goroutines_for_exit();
         // Flush any buffered stdout that workers wrote so it
         // reaches the user before the process exits.
         unsafe { gos_rt_flush_stdout() };

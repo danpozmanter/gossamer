@@ -323,6 +323,31 @@ struct ModuleCtx<'a> {
 
 /// Mixes per-body cache keys for all bodies in a chunk into a single
 /// chunk-level cache key. Stable across process restarts (FNV-1a).
+/// Module data layout for x86-64 targets: the LLVM defaults with one
+/// deviation — `i128` ABI alignment is 8, not 16. The runtime stores
+/// every value in flat 8-byte slots, so a by-value `{disc, payload}`
+/// Option/Result living at an odd word offset inside a struct is only
+/// ever 8-aligned; without an explicit layout, opt assumes the target's
+/// 16-byte i128 alignment and expands copies of such fields into
+/// *aligned* vector ops (`vmovaps`) that fault at run time. Only x86
+/// faults on unaligned vector ops, and the aarch64 default strings vary
+/// by LLVM version, so non-x86_64 triples keep the implicit layout.
+fn module_datalayout(triple: &str) -> Option<String> {
+    if !triple.starts_with("x86_64") {
+        return None;
+    }
+    let mangling = if triple.contains("apple") || triple.contains("darwin") {
+        "m:o"
+    } else if triple.contains("windows") {
+        "m:w"
+    } else {
+        "m:e"
+    };
+    Some(format!(
+        "e-{mangling}-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:64-f80:128-n8:16:32:64-S128"
+    ))
+}
+
 fn chunk_cache_key(
     chunk_indices: &[usize],
     bodies: &[Body],
@@ -403,6 +428,9 @@ fn render_chunk_module(
 
     let mut out = String::new();
     writeln!(out, "; ModuleID = \"gossamer\"").unwrap();
+    if let Some(dl) = module_datalayout(ctx.triple) {
+        writeln!(out, "target datalayout = \"{dl}\"").unwrap();
+    }
     writeln!(out, "target triple = \"{}\"", ctx.triple).unwrap();
     writeln!(out).unwrap();
     for d in LLVM_SPECIAL_DECLS {
@@ -970,6 +998,9 @@ fn render_module_to_path(
         .with_context(|| format!("creating {}", ll_path.display()))?;
     let mut ll_w = BufWriter::with_capacity(64 * 1024, ll_file);
     writeln!(ll_w, "; ModuleID = \"gossamer\"")?;
+    if let Some(dl) = module_datalayout(&host_triple()) {
+        writeln!(ll_w, "target datalayout = \"{dl}\"")?;
+    }
     writeln!(ll_w, "target triple = \"{}\"", host_triple())?;
     if want_reproducible() {
         writeln!(ll_w, "; reproducible-build = true")?;
@@ -1017,6 +1048,25 @@ fn render_module_to_path(
     let pool_text = string_pool.borrow().render();
     if !pool_text.is_empty() {
         ll_w.write_all(pool_text.as_bytes())?;
+        writeln!(ll_w)?;
+    }
+    // RC type-meta blobs. The chunked renderer emits these per chunk;
+    // this streaming single-unit path previously skipped them, leaving
+    // every `@"gos_rc_meta_*"` reference undefined when a program with
+    // RC-managed allocations routed through here (fallback bodies,
+    // DWARF, single-body programs).
+    let mut any_meta = false;
+    for (symbol, blob) in tcx.rc_metas() {
+        let elems: Vec<String> = blob.iter().map(|v| format!("i64 {v}")).collect();
+        writeln!(
+            ll_w,
+            "@\"{symbol}\" = private constant [{} x i64] [{}]",
+            blob.len(),
+            elems.join(", ")
+        )?;
+        any_meta = true;
+    }
+    if any_meta {
         writeln!(ll_w)?;
     }
     let mut body_in = std::fs::File::open(&body_path)

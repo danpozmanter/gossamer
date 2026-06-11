@@ -78,7 +78,7 @@ impl Vm {
                         if inner.name == "__Cell" {
                             let mut set_id: u64 = 0;
                             let mut flag_name = String::new();
-                            for (ident, val) in inner.fields.iter() {
+                            for (ident, val) in &inner.fields {
                                 if ident.name == "__set_id"
                                     && let Value::Int(n) = val
                                 {
@@ -472,7 +472,7 @@ impl Vm {
                         let fd = match recv {
                             Value::Struct(inner) => {
                                 let mut fd = 1i64;
-                                for (n, v) in inner.fields.iter() {
+                                for (n, v) in &inner.fields {
                                     if n.name == "fd" {
                                         if let Value::Int(f) = v {
                                             fd = *f;
@@ -548,7 +548,7 @@ impl Vm {
                         let handle = match recv {
                             Value::Struct(inner) => {
                                 let mut h = 0i64;
-                                for (n, v) in inner.fields.iter() {
+                                for (n, v) in &inner.fields {
                                     if n.name == "handle" {
                                         if let Value::Int(x) = v {
                                             h = *x;
@@ -611,7 +611,7 @@ impl Vm {
                         let handle = match recv {
                             Value::Struct(inner) => {
                                 let mut h = 0i64;
-                                for (n, v) in inner.fields.iter() {
+                                for (n, v) in &inner.fields {
                                     if n.name == "handle" {
                                         if let Value::Int(x) = v {
                                             h = *x;
@@ -1057,7 +1057,7 @@ impl Vm {
                         )));
                     };
                     let struct_inner = Arc::make_mut(struct_arc);
-                    let field_slots = Arc::make_mut(&mut struct_inner.fields);
+                    let field_slots = &mut struct_inner.fields;
                     let pos = field_slots
                         .iter()
                         .position(|(ident, _)| ident.name == field_name);
@@ -1494,7 +1494,7 @@ impl Vm {
                         )));
                     };
                     let mut val = 0.0f64;
-                    for (ident, v) in struct_inner.fields.iter() {
+                    for (ident, v) in &struct_inner.fields {
                         if ident.name == field_name.as_str() {
                             val = match v {
                                 Value::Float(f) => *f,
@@ -1543,7 +1543,7 @@ impl Vm {
                         ));
                     };
                     let mut found = None;
-                    for (ident, v) in struct_inner.fields.iter() {
+                    for (ident, v) in &struct_inner.fields {
                         if ident.name == field_name.as_str() {
                             found = Some(v);
                             break;
@@ -1602,7 +1602,7 @@ impl Vm {
                         ));
                     };
                     let mut val = 0.0f64;
-                    for (ident, v) in struct_inner.fields.iter() {
+                    for (ident, v) in &struct_inner.fields {
                         if ident.name == field_name.as_str() {
                             val = match v {
                                 Value::Float(f) => *f,
@@ -1657,7 +1657,7 @@ impl Vm {
                         )));
                     };
                     let struct_inner = Arc::make_mut(struct_arc);
-                    let field_slots = Arc::make_mut(&mut struct_inner.fields);
+                    let field_slots = &mut struct_inner.fields;
                     let pos = field_slots
                         .iter()
                         .position(|(ident, _)| ident.name == field_name);
@@ -1789,7 +1789,7 @@ impl Vm {
                             ));
                         };
                         let struct_inner = Arc::make_mut(struct_arc);
-                        let field_slots = Arc::make_mut(&mut struct_inner.fields);
+                        let field_slots = &mut struct_inner.fields;
                         if let Some(entry) = field_slots.get_mut(offset as usize) {
                             entry.1 = new_value;
                         }
@@ -2016,13 +2016,19 @@ impl Vm {
                     name_idx,
                     arity,
                 } => {
-                    let expected = match &chunk.consts[name_idx as usize] {
-                        Value::String(s) => s.as_str(),
-                        _ => "",
-                    };
+                    // Both names come from `intern_type_name`: one
+                    // pointer compare replaces string content equality.
+                    let expected: &'static str = chunk.shape_names[name_idx as usize];
                     let matches = match &registers[src as usize] {
                         Value::Variant(inner) => {
-                            inner.name == expected && inner.fields.len() == arity as usize
+                            std::ptr::eq(inner.name, expected)
+                                && inner.fields.len() == arity as usize
+                        }
+                        Value::NativeEnum(owner) => {
+                            let disc = crate::value::native_enum_disc(owner.ptr, owner.shape);
+                            owner.shape.variants.get(disc).is_some_and(|v| {
+                                std::ptr::eq(v.name, expected) && v.fields.len() == arity as usize
+                            })
                         }
                         _ => false,
                     };
@@ -2035,17 +2041,17 @@ impl Vm {
                             .get(idx as usize)
                             .cloned()
                             .unwrap_or(Value::Unit),
+                        Value::NativeEnum(owner) => {
+                            crate::value::native_enum_field(owner, idx as usize)
+                        }
                         _ => Value::Unit,
                     };
                 }
                 Op::StructIs { dst, src, name_idx } => {
-                    let expected = match &chunk.consts[name_idx as usize] {
-                        Value::String(s) => s.as_str(),
-                        _ => "",
-                    };
+                    let expected: &'static str = chunk.shape_names[name_idx as usize];
                     let matches = matches!(
                         &registers[src as usize],
-                        Value::Struct(inner) if inner.name == expected
+                        Value::Struct(inner) if std::ptr::eq(inner.name, expected)
                     );
                     registers[dst as usize] = Value::Bool(matches);
                 }

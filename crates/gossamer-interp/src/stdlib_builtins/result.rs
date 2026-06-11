@@ -213,7 +213,7 @@ pub(crate) fn native_result_map_err(
         .unwrap_or_else(|| ok_variant(Value::Unit));
     if let Some(e) = err_payload(&r) {
         let mapped = dispatch.call_value(&f, vec![e])?;
-        return Ok(Value::variant("Err", Arc::new(vec![mapped])));
+        return Ok(Value::variant("Err", vec![mapped]));
     }
     Ok(r)
 }

@@ -1,0 +1,18 @@
+enum E { A(Box<E>, Box<E>), B }
+
+fn classify(e: &E) -> i64 {
+    match e {
+        E::A(_, _) => 1,
+        E::B => 2,
+    }
+}
+
+fn main() {
+    let b = E::B
+    let a = E::A(E::B, E::B)
+    println!("{} {}", classify(&b), classify(&a))
+    match &b {
+        E::A(_, _) => println!("wrong"),
+        E::B => println!("B"),
+    }
+}

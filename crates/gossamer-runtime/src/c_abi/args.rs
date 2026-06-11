@@ -164,6 +164,30 @@ fn configure_allocator() {
     crate::init_process_allocator();
 }
 
+// Runs the allocator configuration from `.init_array`, before `main`
+// and therefore before the process's first heap allocation. The
+// `allow_thp` option only takes effect if set before mimalloc maps its
+// first arena (the `MADV_HUGEPAGE` advice is applied at arena mmap
+// time), and that arena is created by the very first allocation —
+// argv capture above in compiled programs, Rust's pre-main runtime in
+// the `gos` binary — which precedes every `runtime_init` call site.
+// THP is Linux-only, so the constructor is too; other platforms keep
+// the `runtime_init`/CLI-main call, where only the purge delay
+// matters and late application is harmless. Lives in this module
+// (not lib.rs) so the archive member is always pulled in: every
+// compiled binary references `gos_rt_set_args`. Excluded from this
+// crate's own test binary, whose option-index guard test must read
+// the pristine mimalloc defaults before anything sets them.
+#[cfg(all(target_os = "linux", not(tsan), not(test)))]
+#[used]
+#[unsafe(link_section = ".init_array")]
+static CONFIGURE_ALLOCATOR_CTOR: extern "C" fn() = {
+    extern "C" fn configure_allocator_early() {
+        crate::init_process_allocator();
+    }
+    configure_allocator_early
+};
+
 #[cfg(unix)]
 fn runtime_init() {
     use std::sync::Once;

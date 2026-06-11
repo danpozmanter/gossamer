@@ -137,6 +137,15 @@ pub enum TypeError {
         /// Trait name as written.
         name: String,
     },
+    /// An enum declares more variants than the heap representation's
+    /// one-byte discriminant can index.
+    #[error("enum `{name}` has {count} variants; the maximum is 256")]
+    TooManyVariants {
+        /// Enum name.
+        name: String,
+        /// Declared variant count.
+        count: usize,
+    },
 }
 
 impl TypeError {
@@ -155,6 +164,7 @@ impl TypeError {
             Self::IntLiteralOverflow { .. } => "int-literal-overflow",
             Self::InvalidEscape { .. } => "invalid-escape",
             Self::UnknownTraitBound { .. } => "unknown-trait-bound",
+            Self::TooManyVariants { .. } => "too-many-variants",
         }
     }
 
@@ -173,6 +183,7 @@ impl TypeError {
             Self::IntLiteralOverflow { .. } => "GT0009",
             Self::InvalidEscape { .. } => "GT0010",
             Self::UnknownTraitBound { .. } => "GT0011",
+            Self::TooManyVariants { .. } => "GT0012",
         }
     }
 }
@@ -282,6 +293,11 @@ impl TypeDiagnostic {
                          definition for `{ty}` is in scope."
                     ));
                 }
+            }
+            TypeError::TooManyVariants { .. } => {
+                out = out.with_help(
+                    "the heap enum discriminant is one byte; split the enum or                      group variants into nested enums.",
+                );
             }
             TypeError::DiscardedResult => {
                 out = out

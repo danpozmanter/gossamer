@@ -212,7 +212,17 @@ impl<'a> Lowerer<'a> {
                 writeln!(self.out, "  {slot} = alloca [{slots} x i64]").unwrap();
             } else {
                 let ty = render_ty(self.tcx, decl.ty);
-                writeln!(self.out, "  {slot} = alloca {ty}").unwrap();
+                if ty == "i128" {
+                    // Explicit ABI alignment: without it opt and llc can
+                    // disagree about the slot's alignment (the module
+                    // carries no datalayout string) and opt's memcpy
+                    // expansion then emits 16-byte *aligned* vector ops
+                    // against a frame slot llc placed at 8-mod-16 — a
+                    // SIGSEGV at the first `vmovaps`.
+                    writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
+                } else {
+                    writeln!(self.out, "  {slot} = alloca {ty}").unwrap();
+                }
             }
         }
     }

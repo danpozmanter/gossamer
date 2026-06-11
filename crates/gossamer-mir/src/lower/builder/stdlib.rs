@@ -573,7 +573,8 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let n_args = args.len();
-        let bytes = ((n_args + 1) * 8) as i128;
+        // Payload bytes only: the discriminant lives in the RC header byte.
+        let bytes = (n_args.max(1) * 8) as i128;
 
         // Inline-able enums (every variant <=1 field that fits in 8 bytes) use
         // the 2-word by-value `i128` [disc, payload] representation — pack the
@@ -634,6 +635,24 @@ impl<'a> Builder<'a> {
         // leaves). The runtime returns a borrow; the enclosing aggregate's
         // store retains it and teardown releases it (balanced).
         if n_args == 0 {
+            // Tagged repr: a unit variant needs no object at all — the
+            // value is a TAGGED NULL (`disc << 1`, base pointer zero),
+            // the niche encoding Rust uses for `Option<Box<T>>`. No
+            // allocation, no singleton cache, and every accounting
+            // entry sees a null base and no-ops. Payload loads are
+            // null-guarded in `gos_enum_load`, and unit variants have
+            // no fields to load anyway.
+            if self.enum_repr_tagged(enum_name) {
+                let dest = self.fresh(ty);
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(
+                        i128::from(variant_idx) << 1,
+                    ))),
+                    span,
+                );
+                return Some(dest);
+            }
             let tag_local = self.fresh(i64_ty);
             self.emit_assign(
                 Place::local(tag_local),
@@ -664,7 +683,7 @@ impl<'a> Builder<'a> {
             let payload_local = self.lower_expr(arg)?;
             let payload_ty = self.locals[payload_local.0 as usize].ty;
             if payload_ty == ty || self.tcx.is_rc_managed(payload_ty) {
-                child_offsets.push((i + 1) as i64);
+                child_offsets.push(i as i64);
             }
             payload_locals.push(payload_local);
         }
@@ -686,10 +705,15 @@ impl<'a> Builder<'a> {
             span,
         );
         let dest = self.fresh(ty);
+        let tagged = self.enum_repr_tagged(enum_name);
         self.emit_assign(
             Place::local(dest),
             Rvalue::CallIntrinsic {
-                name: "gos_rc_alloc",
+                name: if tagged {
+                    "gos_rc_alloc_tagged"
+                } else {
+                    "gos_rc_alloc"
+                },
                 args: vec![
                     Operand::Copy(Place::local(size_local)),
                     Operand::Const(ConstValue::Str(meta_symbol)),
@@ -697,39 +721,34 @@ impl<'a> Builder<'a> {
             },
             span,
         );
-        // Write disc at offset 0
+        let unit_ty = self.tcx.unit();
         let disc_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(disc_local),
             Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(variant_idx)))),
             span,
         );
-        let zero_off = self.fresh(i64_ty);
-        self.emit_assign(
-            Place::local(zero_off),
-            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-            span,
-        );
-        let unit_ty = self.tcx.unit();
-        let store_dest = self.fresh(unit_ty);
-        self.emit_assign(
-            Place::local(store_dest),
-            Rvalue::CallIntrinsic {
-                name: "gos_store",
-                args: vec![
-                    Operand::Copy(Place::local(dest)),
-                    Operand::Copy(Place::local(zero_off)),
-                    Operand::Copy(Place::local(disc_local)),
-                ],
-            },
-            span,
-        );
-        // Write each payload at offset (i+1)*8 (already lowered above).
+        if !tagged {
+            // Header representation: write the discriminant byte.
+            let store_dest = self.fresh(unit_ty);
+            self.emit_assign(
+                Place::local(store_dest),
+                Rvalue::CallIntrinsic {
+                    name: "gos_enum_set_disc",
+                    args: vec![
+                        Operand::Copy(Place::local(dest)),
+                        Operand::Copy(Place::local(disc_local)),
+                    ],
+                },
+                span,
+            );
+        }
+        // Write each payload at offset i*8 (already lowered above).
         for (i, payload_local) in payload_locals.into_iter().enumerate() {
             let off_local = self.fresh(i64_ty);
             self.emit_assign(
                 Place::local(off_local),
-                Rvalue::Use(Operand::Const(ConstValue::Int(((i + 1) * 8) as i128))),
+                Rvalue::Use(Operand::Const(ConstValue::Int((i * 8) as i128))),
                 span,
             );
             let payload_dest = self.fresh(unit_ty);
@@ -746,6 +765,23 @@ impl<'a> Builder<'a> {
                 span,
             );
         }
+        if tagged {
+            // Fold the discriminant into pointer bits 1-2; the tagged
+            // pointer is the value every consumer sees.
+            let tagged_dest = self.fresh(ty);
+            self.emit_assign(
+                Place::local(tagged_dest),
+                Rvalue::CallIntrinsic {
+                    name: "gos_enum_tag",
+                    args: vec![
+                        Operand::Copy(Place::local(dest)),
+                        Operand::Copy(Place::local(disc_local)),
+                    ],
+                },
+                span,
+            );
+            return Some(tagged_dest);
+        }
         Some(dest)
     }
 
@@ -756,6 +792,19 @@ impl<'a> Builder<'a> {
     /// variant's children — so it uses the struct-kind shape (one
     /// record, discriminant ignored at release time). See the blob
     /// format in `gossamer-runtime` `c_abi::rc`.
+    /// True when `enum_name`'s heap representation carries the
+    /// discriminant in pointer bits 1-2 instead of a header byte:
+    /// at most 4 variants. Bit 0 stays 0 — odd pointers are string
+    /// bodies — and 8-byte alignment frees exactly bits 0-2. Larger
+    /// enums keep the header-disc representation. Every construction
+    /// and match site for a type must agree, so both consult this.
+    pub(crate) fn enum_repr_tagged(&self, enum_name: &str) -> bool {
+        self.enums
+            .by_enum
+            .get(enum_name)
+            .is_some_and(|v| !v.is_empty() && v.len() <= 4)
+    }
+
     fn register_rc_variant_meta(
         &mut self,
         enum_name: &str,
@@ -803,6 +852,17 @@ impl<'a> Builder<'a> {
         // this, the LLVM tier coerces f64 → i64 via `fptosi`,
         // truncating values like `3.5` to `3`.
         let payload_ty = self.locals[payload_local.0 as usize].ty;
+        // A multi-slot aggregate payload is heap-copied by the backend;
+        // registering its guarded meta here turns that copy into a
+        // reference-counted blob the drop pass can reclaim.
+        if self.type_slot_bytes(payload_ty) > 8
+            && matches!(
+                self.tcx.kind_of(payload_ty),
+                gossamer_types::TyKind::Adt { .. } | gossamer_types::TyKind::Tuple(_)
+            )
+        {
+            let _ = self.ensure_aggr_copy_meta(payload_ty);
+        }
         let payload_is_f64 = matches!(
             self.tcx.kind_of(payload_ty),
             gossamer_types::TyKind::Float(_)

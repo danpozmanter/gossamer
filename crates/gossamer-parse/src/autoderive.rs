@@ -898,8 +898,26 @@ pub fn rewrite_serde_generic_calls(sf: &mut SourceFile) {
             let ExprKind::Path(path) = &mut callee.kind else {
                 return;
             };
-            if path.segments.len() != 1 {
-                return;
+            // Bare `from_json::<T>(s)` or the qualified spelling
+            // `json::from_json::<T>(s)` (head must name the matching
+            // format module); both collapse to the mangled free fn.
+            match path.segments.len() {
+                1 => {}
+                2 => {
+                    let head = path.segments[0].name.name.as_str();
+                    let tail = path.segments[1].name.name.as_str();
+                    let matched = matches!(
+                        (head, tail),
+                        ("json", "from_json" | "to_json")
+                            | ("yaml", "from_yaml" | "to_yaml")
+                            | ("toml", "from_toml" | "to_toml")
+                    );
+                    if !matched {
+                        return;
+                    }
+                    path.segments.remove(0);
+                }
+                _ => return,
             }
             let seg = &mut path.segments[0];
             if !matches!(
@@ -930,6 +948,15 @@ pub fn rewrite_serde_generic_calls(sf: &mut SourceFile) {
 /// if it has synthesized impl blocks that depend on them. Idempotent
 /// — checks for existing imports before inserting.
 pub fn inject_synthetic_uses(sf: &mut SourceFile, file: FileId) {
+    // `arena { ... }` desugars to `runtime::arena_push/pop` calls; make
+    // the module available without requiring an explicit import.
+    if uses_runtime_regions(sf) && !already_imports(&sf.uses, &["std", "runtime"]) {
+        sf.uses.push(UseDecl::simple(
+            NodeId::DUMMY,
+            Span::new(file, 0, 0),
+            UseTarget::Module(ModulePath::from_names(["std", "runtime"])),
+        ));
+    }
     let has_synth = sf.items.iter().any(|item| {
         matches!(&item.kind, ItemKind::Fn(decl)
             if decl.name.name.starts_with("__gos_serde_")
@@ -940,7 +967,11 @@ pub fn inject_synthetic_uses(sf: &mut SourceFile, file: FileId) {
     }
     let dummy_span = Span::new(file, 0, 0);
     for segs in [
-        &["std", "json"][..],
+        // Canonical path (matches the manifest and docs); the bare
+        // `std::json` spelling is an accepted alias but injecting it
+        // alongside a user's `use std::encoding::json` made the two
+        // look like rival modules.
+        &["std", "encoding", "json"][..],
         &["std", "errors"][..],
         &["std", "encoding", "toml"][..],
         &["std", "encoding", "yaml"][..],
@@ -955,14 +986,65 @@ pub fn inject_synthetic_uses(sf: &mut SourceFile, file: FileId) {
     }
 }
 
+/// True when any expression in the file calls `runtime::arena_push`
+/// (the `arena { ... }` desugar, or hand-written region management).
+fn uses_runtime_regions(sf: &SourceFile) -> bool {
+    use gossamer_ast::Visitor;
+    use gossamer_ast::expr::{Expr, ExprKind};
+    struct Finder {
+        found: bool,
+    }
+    impl Visitor for Finder {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if self.found {
+                return;
+            }
+            if let ExprKind::Path(p) = &expr.kind
+                && p.segments.len() == 2
+                && p.segments[0].name.name == "runtime"
+                && matches!(p.segments[1].name.name.as_str(), "arena_push" | "arena_pop")
+            {
+                self.found = true;
+                return;
+            }
+            gossamer_ast::visitor::walk_expr(self, expr);
+        }
+    }
+    let mut f = Finder { found: false };
+    for item in &sf.items {
+        gossamer_ast::visitor::walk_item(&mut f, item);
+        if f.found {
+            return true;
+        }
+    }
+    false
+}
+
 fn already_imports(uses: &[UseDecl], segs: &[&str]) -> bool {
-    uses.iter().any(|u| match &u.target {
-        UseTarget::Module(p) if p.segments.len() == segs.len() => p
-            .segments
-            .iter()
-            .zip(segs.iter())
-            .all(|(a, b)| a.name == *b),
-        _ => false,
+    // A use binds its LAST segment (or alias / brace-list entries):
+    // `use std::encoding::json` and the synthesized `use std::json`
+    // both bind `json`, and injecting the second produces a duplicate
+    // -import diagnostic on perfectly valid user code. Compare the
+    // bound name, not the full path.
+    let bound = segs.last().copied().unwrap_or_default();
+    uses.iter().any(|u| {
+        if let Some(alias) = &u.alias {
+            return alias.name == bound;
+        }
+        if let Some(list) = &u.list {
+            return list.iter().any(|e| {
+                e.alias
+                    .as_ref()
+                    .map_or(e.name.name == bound, |a| a.name == bound)
+            });
+        }
+        match &u.target {
+            UseTarget::Module(p) => p.segments.last().is_some_and(|s| s.name == bound),
+            UseTarget::Project { id, module } => match module {
+                Some(p) => p.segments.last().is_some_and(|s| s.name == bound),
+                None => id == bound,
+            },
+        }
     })
 }
 

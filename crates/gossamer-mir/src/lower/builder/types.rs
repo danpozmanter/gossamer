@@ -776,11 +776,126 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Flat `(disc_word, payload_word)` pairs for the guarded copy-blob
+    /// meta of a struct type: one pair per `Option`/`Result` field whose
+    /// `Ok`/`Some` payload is a multi-slot aggregate (the shapes the LLVM
+    /// backend heap-copies and stores by pointer in the payload word),
+    /// recursing through multi-slot inline struct fields. Word offsets
+    /// are absolute within the struct's flat slot layout.
+    pub(crate) fn guarded_child_pairs(&self, ty: Ty) -> Vec<(i64, i64, i64)> {
+        let mut pairs = Vec::new();
+        self.collect_guarded_pairs(ty, 0, 0, &mut pairs);
+        pairs
+    }
+
+    fn collect_guarded_pairs(
+        &self,
+        ty: Ty,
+        base_word: i64,
+        depth: u32,
+        out: &mut Vec<(i64, i64, i64)>,
+    ) {
+        use gossamer_types::TyKind;
+        if depth > 8 {
+            return;
+        }
+        let TyKind::Adt { def, .. } = self.tcx.kind_of(ty) else {
+            return;
+        };
+        if def.local == u32::MAX || def.local == u32::MAX - 1 {
+            return;
+        }
+        let Some(field_tys) = self.tcx.struct_field_tys(*def) else {
+            return;
+        };
+        let field_tys: Vec<Ty> = field_tys.to_vec();
+        let mut word = base_word;
+        for fty in field_tys {
+            let fwords = i64::from(self.type_slot_bytes(fty).max(8) / 8);
+            match self.tcx.kind_of(fty) {
+                TyKind::Adt { def, substs }
+                    if def.local == u32::MAX || def.local == u32::MAX - 1 =>
+                {
+                    // By-value `{disc, payload}` field. The payload word
+                    // holds a heap-copy pointer exactly when the active
+                    // side's payload type needs more than one slot:
+                    // substs[0] (Ok/Some) under disc 0, substs[1] (Err)
+                    // under disc 1. When both sides are copies the entry
+                    // is unconditional (gate -1). The runtime walk
+                    // re-checks the discriminant gate and the copy-blob
+                    // provenance set, so over-approximating is safe.
+                    let is_copy_shape = |t: Ty| {
+                        self.type_slot_bytes(t) > 8
+                            && matches!(self.tcx.kind_of(t), TyKind::Adt { .. } | TyKind::Tuple(_))
+                    };
+                    let ok_side = substs.types().first().copied().is_some_and(is_copy_shape);
+                    let err_side = substs.types().get(1).copied().is_some_and(is_copy_shape);
+                    match (ok_side, err_side) {
+                        (true, true) => out.push((-1, word, word + 1)),
+                        (true, false) => out.push((0, word, word + 1)),
+                        (false, true) => out.push((1, word, word + 1)),
+                        (false, false) => {}
+                    }
+                }
+                TyKind::Adt { .. } if fwords > 1 => {
+                    // Multi-slot inline sub-struct: its fields occupy this
+                    // struct's slots directly.
+                    self.collect_guarded_pairs(fty, word, depth + 1, out);
+                }
+                _ => {}
+            }
+            word += fwords;
+        }
+    }
+
+    /// Registers (idempotently) the `RC_KIND_STRUCT_GUARDED` copy-blob
+    /// meta for `ty` and returns its symbol, or `None` when the type has
+    /// no guarded child slots (a leaf — its copies need no meta and no
+    /// drop-pass walks).
+    pub(crate) fn ensure_aggr_copy_meta(&mut self, ty: Ty) -> Option<String> {
+        if let Some(sym) = self.tcx.aggr_copy_meta(ty) {
+            return Some(sym.to_string());
+        }
+        let pairs = self.guarded_child_pairs(ty);
+        let symbol = if pairs.is_empty() {
+            // Leaf struct: its copies carry no child pointers of their
+            // own, but they still need the guarded-kind meta so the
+            // provenance set entry is removed at free, and so a parent's
+            // guarded slot can reclaim them. One shared blob serves
+            // every leaf type.
+            let symbol = "gos_rc_meta_copyblob_leaf".to_string();
+            self.tcx.register_rc_meta(
+                symbol.clone(),
+                vec![gossamer_abi::rc::RC_KIND_STRUCT_GUARDED, 0],
+            );
+            symbol
+        } else {
+            let symbol = format!("gos_rc_meta_copyblob_{}", ty.as_u32());
+            let mut blob = vec![gossamer_abi::rc::RC_KIND_STRUCT_GUARDED, pairs.len() as i64];
+            for (g, d, p) in &pairs {
+                blob.push(*g);
+                blob.push(*d);
+                blob.push(*p);
+            }
+            self.tcx.register_rc_meta(symbol.clone(), blob);
+            symbol
+        };
+        self.tcx.register_aggr_copy_meta(ty, symbol.clone());
+        Some(symbol)
+    }
+
     pub(crate) fn elem_bytes_of(&self, ty: Ty) -> u32 {
         use gossamer_types::TyKind;
         match self.tcx.kind_of(ty) {
-            TyKind::Bool => 1,
-            TyKind::Char => 4,
+            // The compiled tiers store every scalar element in a full
+            // 8-byte slot: the flat-stack representation, the inline
+            // index fast paths, and the array->Vec coercions all copy
+            // and address elements at i64 width. Narrower widths here
+            // (bool was 1, char was 4) made `[].to_vec()`-constructed
+            // vecs disagree with literal-constructed ones (which clamp
+            // to 8), and an 8-byte inline element store into a
+            // 1-byte-stride vec corrupts the neighbouring elements.
+            TyKind::Bool | TyKind::Char => 8,
             TyKind::Int(_) | TyKind::Float(_) => 8,
             TyKind::String => 8,
             // Tuples / aggregate ADTs occupy `slot_count * 8` bytes

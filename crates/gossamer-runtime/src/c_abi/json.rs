@@ -179,6 +179,17 @@ pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> i128 {
     })
 }
 
+/// Frees a `GosJson` handle (drops its `Arc` share of the parsed
+/// tree; the tree itself dies with its last handle). Null-safe.
+/// Emitted by the drop pass for provably single-owner JSON locals.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_free(j: *mut GosJson) {
+    if j.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(j) });
+}
+
 /// `json::render(value) -> String`. Always returns a non-null
 /// C-string (empty on null input) into the GC arena.
 #[unsafe(no_mangle)]

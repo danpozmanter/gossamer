@@ -318,9 +318,10 @@ impl Interpreter {
             Value::Native(inner) => (inner.call)(self, &args),
             Value::Closure(closure) => self.apply_closure(&closure, args),
             Value::String(name) => self.call(&name, args),
-            Value::Variant(inner) if inner.fields.is_empty() => {
-                Ok(Value::variant(inner.name, Arc::new(args)))
-            }
+            Value::Variant(inner) if inner.fields.is_empty() => Ok(Value::variant(
+                inner.name,
+                Arc::unwrap_or_clone(Arc::new(args)),
+            )),
             other => Err(RuntimeError::Type(format!(
                 "value of kind `{other}` is not callable"
             ))),
@@ -474,7 +475,7 @@ impl Interpreter {
         for variant in variants {
             let variant_name = variant.name.name.clone();
             let qualified = format!("{type_name}::{variant_name}");
-            let sentinel = Value::variant(variant_name.clone(), crate::value::empty_value_arc());
+            let sentinel = Value::variant(variant_name.clone(), Vec::new());
             if let Some(prefix) = module_prefix {
                 self.globals
                     .insert(format!("{prefix}::{qualified}"), sentinel.clone());
@@ -538,9 +539,10 @@ impl Interpreter {
             // `Value::variant("Circle", [1.5])`,
             // and `None()` round-trips to `None` because its args
             // vector is empty.
-            Value::Variant(inner) if inner.fields.is_empty() => {
-                Ok(Value::variant(inner.name, Arc::new(args)))
-            }
+            Value::Variant(inner) if inner.fields.is_empty() => Ok(Value::variant(
+                inner.name,
+                Arc::unwrap_or_clone(Arc::new(args)),
+            )),
             // Fn-name surrogate. The bytecode VM emits
             // `Value::String(name)` when a top-level function appears
             // as a value (because the underlying `Global::Fn(chunk)`
@@ -734,7 +736,26 @@ impl Interpreter {
                             env.bind(name, value);
                         }
                         if let Err(err) = worker.eval_expr_to_value(&body, &mut env) {
-                            eprintln!("goroutine panic (isolated): {err}");
+                            let handled = match crate::panic_hook_value() {
+                                Some(h) => {
+                                    let msg =
+                                        Value::String(SmolStr::from(crate::panic_message(&err)));
+                                    let resolved = match &h {
+                                        Value::String(name) => {
+                                            worker.globals.get(name.as_str()).cloned()
+                                        }
+                                        other => Some(other.clone()),
+                                    };
+                                    match resolved {
+                                        Some(f) => worker.apply(&f, vec![msg]).is_ok(),
+                                        None => false,
+                                    }
+                                }
+                                None => false,
+                            };
+                            if !handled {
+                                eprintln!("goroutine panic (isolated): {err}");
+                            }
                         }
                     })
                     .map_err(|e| RuntimeError::Panic(format!("spawn goroutine: {e}")))?;
@@ -752,7 +773,7 @@ impl Interpreter {
                 // back stub fields without crashing.
                 Ok(Flow::Value(Value::struct_(
                     "<stub>",
-                    crate::value::empty_struct_fields(),
+                    Arc::unwrap_or_clone(crate::value::empty_struct_fields()),
                 )))
             }
         }
@@ -1797,14 +1818,13 @@ impl NativeDispatch for Interpreter {
                 // bare panic text — matching the compiled tier, whose
                 // `gos_rt_join` carries `alloc_cstring(message)`.
                 let outcome = match worker.apply(&callable, args) {
-                    Ok(v) => Value::variant("Ok", std::sync::Arc::new(vec![v])),
+                    Ok(v) => Value::variant("Ok", vec![v]),
                     Err(RuntimeError::Panic(msg)) => {
-                        Value::variant("Err", std::sync::Arc::new(vec![Value::String(msg.into())]))
+                        Value::variant("Err", vec![Value::String(msg.into())])
                     }
-                    Err(other) => Value::variant(
-                        "Err",
-                        std::sync::Arc::new(vec![Value::String(format!("{other}").into())]),
-                    ),
+                    Err(other) => {
+                        Value::variant("Err", vec![Value::String(format!("{other}").into())])
+                    }
                 };
                 worker_channel.send(outcome);
             })
@@ -2401,6 +2421,7 @@ fn literal_matches(lit: &HirLiteral, value: &Value) -> bool {
 
 fn classify(value: &Value) -> &'static str {
     match value {
+        Value::NativeEnum(o) => o.shape.enum_name,
         Value::Unit => "()",
         Value::Bool(_) => "bool",
         Value::Int(_) => "int",
@@ -2443,7 +2464,7 @@ fn update_struct_field(
             classify(current)
         )));
     };
-    let mut owned = inner.fields.as_ref().clone();
+    let mut owned = inner.fields.clone();
     let mut replaced = false;
     for (ident, slot) in &mut owned {
         if ident.name == field_name {
@@ -2455,7 +2476,7 @@ fn update_struct_field(
     if !replaced {
         owned.push((Ident::new(field_name), new_value));
     }
-    Ok(Value::struct_(inner.name, Arc::new(owned)))
+    Ok(Value::struct_(inner.name, owned))
 }
 
 /// Returns a fresh array value with `index`-th element replaced by

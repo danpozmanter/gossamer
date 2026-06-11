@@ -55,7 +55,7 @@ fn as_str(value: &Value) -> Option<&str> {
 pub(crate) fn builtin_http_client_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_(
         "Client",
-        crate::value::empty_struct_fields(),
+        Arc::unwrap_or_clone(crate::value::empty_struct_fields()),
     ))
 }
 
@@ -63,10 +63,10 @@ pub(crate) fn builtin_http_client_get(args: &[Value]) -> RuntimeResult<Value> {
     let url = args.get(1).and_then(as_str).unwrap_or("");
     Ok(Value::struct_(
         "Request",
-        Arc::new(vec![(
+        vec![(
             Ident::new("url"),
             Value::String(SmolStr::from(url.to_string())),
-        )]),
+        )],
     ))
 }
 
@@ -214,7 +214,10 @@ fn http_get_tls(url: &str) -> Result<Value, String> {
             Value::String(SmolStr::from(String::new())),
         ),
     ];
-    Ok(Value::struct_("Response", Arc::new(fields)))
+    Ok(Value::struct_(
+        "Response",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
 }
 
 fn http_get_plain(url: &str) -> Result<Value, String> {
@@ -272,7 +275,10 @@ fn http_get_plain(url: &str) -> Result<Value, String> {
         ),
         (Ident::new("location"), Value::String(location.into())),
     ];
-    Ok(Value::struct_("Response", Arc::new(fields)))
+    Ok(Value::struct_(
+        "Response",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
 }
 
 pub(crate) fn parse_http_url(url: &str) -> Option<(String, String)> {
@@ -336,7 +342,7 @@ fn handle_field(value: &Value, expected_name: &str) -> Option<i64> {
     if inner.name != expected_name {
         return None;
     }
-    for (ident, val) in inner.fields.iter() {
+    for (ident, val) in &inner.fields {
         if ident.name == "__handle" {
             if let Value::Int(n) = val {
                 return Some(*n);
@@ -376,7 +382,7 @@ fn lift_response(resp: gossamer_std::http::Response) -> Value {
             Value::String(SmolStr::from(location)),
         ),
     ];
-    Value::struct_("Response", Arc::new(fields))
+    Value::struct_("Response", Arc::unwrap_or_clone(Arc::new(fields)))
 }
 
 fn extract_header_pairs(value: Option<&Value>) -> Vec<(String, String)> {
@@ -542,7 +548,7 @@ pub(crate) fn builtin_http_stream(args: &[Value]) -> RuntimeResult<Value> {
             ];
             Ok(crate::builtins::ok_variant(Value::struct_(
                 "ResponseStream",
-                Arc::new(fields),
+                Arc::unwrap_or_clone(Arc::new(fields)),
             )))
         }
         Err(e) => Ok(crate::builtins::err_variant(format!("{e}"))),
@@ -575,7 +581,7 @@ pub(crate) fn builtin_response_stream_next_line(args: &[Value]) -> RuntimeResult
 fn pending_request(method: &str, url: &str) -> Value {
     Value::struct_(
         "Request",
-        Arc::new(vec![
+        vec![
             (
                 Ident::new("method"),
                 Value::String(SmolStr::from(method.to_string())),
@@ -584,7 +590,7 @@ fn pending_request(method: &str, url: &str) -> Value {
                 Ident::new("url"),
                 Value::String(SmolStr::from(url.to_string())),
             ),
-        ]),
+        ],
     )
 }
 

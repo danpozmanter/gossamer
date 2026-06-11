@@ -50,6 +50,12 @@ pub enum ResolveError {
         /// Namespace where the name actually lives.
         found: &'static str,
     },
+    /// A `use std::...` path that names no stdlib module.
+    #[error("module `std::{path}` does not exist")]
+    UnknownModulePath {
+        /// The path as written (without the `std::` prefix).
+        path: String,
+    },
     /// Two items in the same module share a name.
     #[error("the name `{name}` is defined multiple times in this module")]
     DuplicateItem {
@@ -69,6 +75,7 @@ impl ResolveError {
     #[must_use]
     pub const fn tag(&self) -> &'static str {
         match self {
+            Self::UnknownModulePath { .. } => "unknown-module-path",
             Self::UnresolvedName { .. } => "unresolved-name",
             Self::WrongNamespace { .. } => "wrong-namespace",
             Self::DuplicateItem { .. } => "duplicate-item",
@@ -84,6 +91,7 @@ impl ResolveError {
             Self::WrongNamespace { .. } => "GR0002",
             Self::DuplicateItem { .. } => "GR0003",
             Self::DuplicateImport { .. } => "GR0004",
+            Self::UnknownModulePath { .. } => "GR0005",
         }
     }
 }

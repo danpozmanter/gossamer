@@ -52,4 +52,5 @@ interpreter and a REPL. Ship an optimized compiled single binary.
 - [Writing libraries](libraries.md) — `project.toml`, module
   layout, publishing.
 - [Standard library](stdlib.md) — module index.
+- [Prelude](prelude.md) — everything available without imports.
 - [Toolchain](toolchain.md) — every subcommand.

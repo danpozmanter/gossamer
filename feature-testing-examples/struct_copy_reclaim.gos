@@ -1,0 +1,86 @@
+use std::strconv
+
+struct Node { val: i64, next: Option<Box<Node>> }
+
+// Case 1: None payload — release walk must skip cleanly.
+fn case_none() -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        let n = Node { val: i, next: None }
+        total += n.val
+        i += 1
+    }
+    total
+}
+
+// Case 2: one struct copied into two locals — both walks release;
+// counts must balance with the copy retain (no double-free).
+fn case_two_slots() -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        let inner = Node { val: i, next: None }
+        let a = Node { val: i, next: Some(inner) }
+        let b = a
+        total += a.val + b.val
+        i += 1
+    }
+    total
+}
+
+// Case 3: borrow into the chain — reads must not consume ownership.
+fn case_borrow() -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        let inner = Node { val: i + 1, next: None }
+        let a = Node { val: i, next: Some(inner) }
+        if let Some(nxt) = &a.next {
+            total += nxt.val
+        }
+        i += 1
+    }
+    total
+}
+
+// Case 4: ownership returned out of the producing frame.
+fn make_chain(v: i64) -> Node {
+    let inner = Node { val: v + 1, next: None }
+    Node { val: v, next: Some(inner) }
+}
+
+fn case_return() -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        let n = make_chain(i)
+        if let Some(nxt) = &n.next {
+            total += nxt.val
+        }
+        i += 1
+    }
+    total
+}
+
+// Case 5: acyclic deep chain (the other leak shape).
+fn case_chain() -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < 2000 {
+        let n3 = Node { val: 3, next: None }
+        let n2 = Node { val: 2, next: Some(n3) }
+        let n1 = Node { val: 1, next: Some(n2) }
+        if let Some(a) = &n1.next {
+            if let Some(b) = &a.next {
+                total += b.val
+            }
+        }
+        i += 1
+    }
+    total
+}
+
+fn main() {
+    println!("{} {} {} {} {}", case_none(), case_two_slots(), case_borrow(), case_return(), case_chain())
+}

@@ -45,13 +45,13 @@ thread_local! {
 fn regex_handle(id: u64, source: &str) -> Value {
     Value::struct_(
         "regex::Pattern",
-        Arc::new(vec![
+        vec![
             (Ident::new("__regex_id"), Value::Int(id as i64)),
             (
                 Ident::new("__source"),
                 Value::String(SmolStr::from(source.to_string())),
             ),
-        ]),
+        ],
     )
 }
 
@@ -66,7 +66,7 @@ fn regex_id_from(value: &Value) -> RuntimeResult<u64> {
             "regex: expected Pattern handle".to_string(),
         ));
     }
-    for (ident, v) in inner.fields.iter() {
+    for (ident, v) in &inner.fields {
         if ident.name == "__regex_id" {
             if let Value::Int(id) = v {
                 return Ok(*id as u64);
@@ -109,8 +109,8 @@ fn captures_to_array(caps: Vec<Option<String>>) -> Value {
     Value::Array(Arc::new(
         caps.into_iter()
             .map(|opt| match opt {
-                Some(s) => Value::variant("Some", Arc::new(vec![Value::String(s.into())])),
-                None => Value::variant("None", crate::value::empty_value_arc()),
+                Some(s) => Value::variant("Some", vec![Value::String(s.into())]),
+                None => Value::variant("None", Vec::new()),
             })
             .collect(),
     ))
@@ -129,14 +129,11 @@ fn builtin_regex_compile(args: &[Value]) -> RuntimeResult<Value> {
             REGEX_REGISTRY.with(|reg| {
                 reg.borrow_mut().insert(id, p);
             });
-            Ok(Value::variant(
-                "Ok",
-                Arc::new(vec![regex_handle(id, pattern)]),
-            ))
+            Ok(Value::variant("Ok", vec![regex_handle(id, pattern)]))
         }
         Err(err) => Ok(Value::variant(
             "Err",
-            Arc::new(vec![Value::String(SmolStr::from(err.to_string()))]),
+            vec![Value::String(SmolStr::from(err.to_string()))],
         )),
     }
 }
@@ -157,8 +154,8 @@ fn builtin_regex_find(args: &[Value]) -> RuntimeResult<Value> {
     let text = arg_string(args, 1, "regex::find")?;
     let hit = with_regex(handle, |p| regex_std::find(p, text))?;
     Ok(match hit {
-        Some((s, e, t)) => Value::variant("Some", Arc::new(vec![match_triple(s, e, t)])),
-        None => Value::variant("None", Arc::new(vec![])),
+        Some((s, e, t)) => Value::variant("Some", vec![match_triple(s, e, t)]),
+        None => Value::variant("None", vec![]),
     })
 }
 
@@ -182,8 +179,8 @@ fn builtin_regex_captures(args: &[Value]) -> RuntimeResult<Value> {
     let text = arg_string(args, 1, "regex::captures")?;
     let caps = with_regex(handle, |p| regex_std::captures(p, text))?;
     Ok(match caps {
-        Some(groups) => Value::variant("Some", Arc::new(vec![captures_to_array(groups)])),
-        None => Value::variant("None", Arc::new(vec![])),
+        Some(groups) => Value::variant("Some", vec![captures_to_array(groups)]),
+        None => Value::variant("None", vec![]),
     })
 }
 

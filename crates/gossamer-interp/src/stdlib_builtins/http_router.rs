@@ -237,14 +237,14 @@ pub(crate) fn http_404_response() -> Value {
         (Ident::new("body"), Value::String("not found".into())),
     ];
     fields.push((Ident::new("headers"), Value::Array(Arc::new(Vec::new()))));
-    Value::struct_("Response", Arc::new(fields))
+    Value::struct_("Response", Arc::unwrap_or_clone(Arc::new(fields)))
 }
 
 pub(crate) fn request_method_and_path(v: &Value) -> (String, String) {
     let mut method = String::new();
     let mut path = String::new();
     if let Value::Struct(inner) = v {
-        for (i, val) in inner.fields.iter() {
+        for (i, val) in &inner.fields {
             match (i.name.as_str(), val) {
                 ("method", Value::String(s)) => method = s.as_str().to_string(),
                 ("path", Value::String(s)) => path = s.as_str().to_string(),
@@ -267,13 +267,16 @@ pub(crate) fn builtin_router_new(_args: &[Value]) -> RuntimeResult<Value> {
             .insert(id, RefCell::new(RouterTable::default()));
     });
     let fields = vec![(Ident::new("__router"), Value::Int(id))];
-    Ok(Value::struct_("Router", Arc::new(fields)))
+    Ok(Value::struct_(
+        "Router",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
 }
 
 pub(crate) fn router_id_of(v: &Value) -> Option<i64> {
     if let Value::Struct(inner) = v {
         if inner.name == "Router" {
-            for (i, val) in inner.fields.iter() {
+            for (i, val) in &inner.fields {
                 if i.name == "__router" {
                     if let Value::Int(n) = val {
                         return Some(*n);

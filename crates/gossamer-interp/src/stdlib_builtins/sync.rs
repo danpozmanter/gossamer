@@ -148,7 +148,7 @@ pub(crate) fn install_sync_extras(globals: &mut Vec<(&'static str, Value)>) {
 fn sync_map_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "sync::Map" {
-            for (i, v) in inner.fields.iter() {
+            for (i, v) in &inner.fields {
                 if i.name == "__map" {
                     if let Value::Int(n) = v {
                         return Some(*n);
@@ -168,7 +168,7 @@ pub(crate) fn builtin_sync_map_new(_args: &[Value]) -> RuntimeResult<Value> {
     });
     Ok(Value::struct_(
         "sync::Map",
-        Arc::new(vec![(Ident::new("__map"), Value::Int(id))]),
+        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__map"), Value::Int(id))])),
     ))
 }
 
@@ -374,14 +374,14 @@ pub(crate) fn builtin_mutex_new(args: &[Value]) -> RuntimeResult<Value> {
     });
     Ok(Value::struct_(
         "sync::Mutex",
-        Arc::new(vec![(Ident::new("__mutex"), Value::Int(id))]),
+        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__mutex"), Value::Int(id))])),
     ))
 }
 
 pub(crate) fn mutex_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "sync::Mutex" {
-            for (i, v) in inner.fields.iter() {
+            for (i, v) in &inner.fields {
                 if i.name == "__mutex" {
                     if let Value::Int(n) = v {
                         return Some(*n);
@@ -435,7 +435,7 @@ pub(crate) fn builtin_once_new(_args: &[Value]) -> RuntimeResult<Value> {
     });
     Ok(Value::struct_(
         "sync::Once",
-        Arc::new(vec![(Ident::new("__once"), Value::Int(id))]),
+        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__once"), Value::Int(id))])),
     ))
 }
 

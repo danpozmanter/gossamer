@@ -112,6 +112,56 @@ impl<'a> Lowerer<'a> {
                 if let Some(TyKind::Array { len, .. }) = self.tcx.kind(ty) {
                     return Ok(format!("{len}"));
                 }
+                // A bare local of Vec/Slice type with a non-String
+                // element reads its length straight from the leading
+                // i64 of the GosVec header (NULL -> 0), which removes
+                // a per-iteration FFI call from every
+                // `while i < xs.len()` loop. `Vec<String>` stays on
+                // `gos_rt_len`: `env::args()` hands out a sentinel
+                // pointer whose length lives in `ARGS_LEN`, not at
+                // `*p`. Projected places keep the call as well.
+                if place.projection.is_empty() {
+                    let mut peeled = ty;
+                    while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(peeled) {
+                        peeled = *inner;
+                    }
+                    let elem = match self.tcx.kind(peeled) {
+                        Some(TyKind::Vec(e) | TyKind::Slice(e)) => Some(*e),
+                        _ => None,
+                    };
+                    let inlineable =
+                        elem.is_some_and(|e| !matches!(self.tcx.kind(e), Some(TyKind::String)));
+                    if inlineable {
+                        let ptr = self.fresh();
+                        writeln!(
+                            self.out,
+                            "  {ptr} = load ptr, ptr {slot}",
+                            slot = local_slot(place.local),
+                        )
+                        .unwrap();
+                        let s = self.next_ssa;
+                        self.next_ssa += 1;
+                        let (lz, ll, lc) = (
+                            format!("len_z_{s}"),
+                            format!("len_l_{s}"),
+                            format!("len_c_{s}"),
+                        );
+                        let isnull = self.fresh();
+                        writeln!(self.out, "  {isnull} = icmp eq ptr {ptr}, null").unwrap();
+                        writeln!(self.out, "  br i1 {isnull}, label %{lz}, label %{ll}").unwrap();
+                        writeln!(self.out, "{ll}:").unwrap();
+                        let n = self.fresh();
+                        writeln!(self.out, "  {n} = load i64, ptr {ptr}").unwrap();
+                        writeln!(self.out, "  br label %{lc}").unwrap();
+                        writeln!(self.out, "{lz}:").unwrap();
+                        writeln!(self.out, "  br label %{lc}").unwrap();
+                        writeln!(self.out, "{lc}:").unwrap();
+                        let res = self.fresh();
+                        writeln!(self.out, "  {res} = phi i64 [ {n}, %{ll} ], [ 0, %{lz} ]")
+                            .unwrap();
+                        return Ok(res);
+                    }
+                }
                 // For heap-backed shapes the operand is the
                 // opaque pointer; call the runtime.
                 declare_rt(&mut self.runtime_refs, "gos_rt_len");

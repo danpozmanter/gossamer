@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/prelude/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Prelude (no imports) - Gossamer</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../stylesheets/extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Prelude (no imports)";
+        var mkdocs_page_input_path = "prelude.md";
+        var mkdocs_page_url = "/gossamer/docs/prelude/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="..">
+          <img src="../img/GossamerLogo.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Standard library</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Prelude (no imports)</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#output-and-failure">Output and failure</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#assertions">Assertions</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#scalars">Scalars</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#concurrency">Concurrency</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#serialization-synthesized-per-struct">Serialization (synthesized per struct)</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#types">Types</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#statement-keywords-with-runtime-effects">Statement keywords with runtime effects</a>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Toolchain</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Production</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Migrating</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/fsharp/">From F#</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../migration/kotlin/">From Kotlin</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Design notes</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../skill_card/">Skill card</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Gossamer</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Standard library</li>
+      <li class="breadcrumb-item active">Prelude (no imports)</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="prelude-available-without-imports">Prelude — available without imports<a class="headerlink" href="#prelude-available-without-imports" title="Permanent link">&para;</a></h1>
+<p>Every Gossamer program starts with these names in scope. No <code>use</code>
+needed.</p>
+<h2 id="output-and-failure">Output and failure<a class="headerlink" href="#output-and-failure" title="Permanent link">&para;</a></h2>
+<p>The six macros (the only macros in the language), all
+<code>format!</code>-style with <code>{}</code> / <code>{name}</code> placeholders:</p>
+<table>
+<thead>
+<tr>
+<th>Macro</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>println!("…", a)</code></td>
+<td>stdout, newline appended</td>
+</tr>
+<tr>
+<td><code>print!("…", a)</code></td>
+<td>stdout, no newline</td>
+</tr>
+<tr>
+<td><code>eprintln!("…", a)</code></td>
+<td>stderr, newline appended</td>
+</tr>
+<tr>
+<td><code>eprint!("…", a)</code></td>
+<td>stderr, no newline</td>
+</tr>
+<tr>
+<td><code>format!("…", a)</code></td>
+<td>returns the rendered <code>String</code></td>
+</tr>
+<tr>
+<td><code>panic!("…", a)</code></td>
+<td>unwinds with the rendered message</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-gossamer">let who = &quot;world&quot;
+println!(&quot;hello, {who}&quot;)
+println!(&quot;{} + {} = {}&quot;, 1, 2, 1 + 2)
+</code></pre>
+<h2 id="assertions">Assertions<a class="headerlink" href="#assertions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>assert(cond)</code> — panics when <code>cond</code> is false.</li>
+<li><code>assert_eq(a, b)</code> — panics when <code>a != b</code>, printing both values.</li>
+<li><code>todo()</code> — panics with a "not yet implemented" marker.</li>
+</ul>
+<h2 id="scalars">Scalars<a class="headerlink" href="#scalars" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>min(a, b)</code> / <code>max(a, b)</code> — work on any pair of comparable
+  scalars. The one-argument collection forms <code>min(xs)</code> / <code>max(xs)</code>
+  return <code>Option&lt;T&gt;</code>.</li>
+<li><code>clamp(x, lo, hi)</code> — <code>x</code> limited to <code>[lo, hi]</code>.</li>
+</ul>
+<pre><code class="language-gossamer">let speed = clamp(input, 0, 120)
+let better = max(score_a, score_b)
+</code></pre>
+<h2 id="concurrency">Concurrency<a class="headerlink" href="#concurrency" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>go expr</code> — statement keyword: run <code>expr</code> on a goroutine,
+  fire-and-forget.</li>
+<li><code>spawn(f)</code> — run <code>f</code> on a goroutine and get a <code>JoinHandle&lt;T&gt;</code>;
+  <code>handle.join()</code> blocks for <code>Result&lt;T, String&gt;</code> (<code>Err</code> carries the
+  panic message if the goroutine panicked).</li>
+</ul>
+<pre><code class="language-gossamer">let h = spawn(|| heavy_compute())
+match h.join() {
+    Ok(v) =&gt; println!(&quot;{v}&quot;),
+    Err(e) =&gt; eprintln!(&quot;worker panicked: {e}&quot;),
+}
+</code></pre>
+<p>Channels, <code>Mutex</code>, and <code>WaitGroup</code> come from <code>std::sync</code>, but the
+<code>Sender</code> / <code>Receiver</code> / <code>Mutex</code> / <code>WaitGroup</code> <em>type names</em> resolve
+without an import when they appear in signatures.</p>
+<h2 id="serialization-synthesized-per-struct">Serialization (synthesized per struct)<a class="headerlink" href="#serialization-synthesized-per-struct" title="Permanent link">&para;</a></h2>
+<p>Every user <code>struct</code> automatically gets free functions callable with
+a turbofish — no import, no derive attribute:</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>from_json::&lt;T&gt;(&amp;text)</code></td>
+<td><code>Result&lt;T, errors::Error&gt;</code></td>
+</tr>
+<tr>
+<td><code>to_json::&lt;T&gt;(&amp;value)</code></td>
+<td><code>Result&lt;String, errors::Error&gt;</code></td>
+</tr>
+<tr>
+<td><code>from_toml::&lt;T&gt;</code> / <code>to_toml::&lt;T&gt;</code></td>
+<td>same shapes, TOML</td>
+</tr>
+<tr>
+<td><code>from_yaml::&lt;T&gt;</code> / <code>to_yaml::&lt;T&gt;</code></td>
+<td>same shapes, YAML</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-gossamer">struct Config { host: String, port: i64 }
+
+let cfg = from_json::&lt;Config&gt;(&amp;text)?
+</code></pre>
+<p>Decoding is strict: missing required fields and type mismatches
+return <code>Err</code> naming the offending field. The dynamic surface
+(<code>json::parse</code>, <code>json::get</code>, <code>json::as_i64</code>, …) lives in
+<code>std::encoding::json</code> for documents whose shape is not known at
+compile time.</p>
+<h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
+<p>Always-in-scope type names:</p>
+<ul>
+<li>Primitives: <code>bool</code>, <code>char</code>, <code>i8</code>…<code>i128</code>, <code>u8</code>…<code>u128</code>, <code>isize</code>,
+  <code>usize</code>, <code>f32</code>, <code>f64</code>, <code>String</code>, <code>str</code>.</li>
+<li>Wrappers: <code>Option&lt;T&gt;</code> (<code>Some</code> / <code>None</code>), <code>Result&lt;T, E&gt;</code>
+  (<code>Ok</code> / <code>Err</code>), <code>Box&lt;T&gt;</code>, <code>Rc&lt;T&gt;</code>, <code>Arc&lt;T&gt;</code> (all three are
+  transparent in a GC'd runtime — spelling compatibility with
+  Rust), <code>Weak&lt;T&gt;</code>.</li>
+<li>Collections: <code>Vec&lt;T&gt;</code>, <code>HashMap&lt;K, V&gt;</code>, <code>HashSet&lt;T&gt;</code>,
+  <code>BTreeMap&lt;K, V&gt;</code>, <code>BTreeSet&lt;T&gt;</code>, <code>VecDeque&lt;T&gt;</code>, <code>Range</code>.</li>
+<li>Concurrency: <code>Sender&lt;T&gt;</code>, <code>Receiver&lt;T&gt;</code>, <code>Mutex&lt;T&gt;</code>,
+  <code>WaitGroup</code>, <code>JoinHandle&lt;T&gt;</code>.</li>
+</ul>
+<h2 id="statement-keywords-with-runtime-effects">Statement keywords with runtime effects<a class="headerlink" href="#statement-keywords-with-runtime-effects" title="Permanent link">&para;</a></h2>
+<p>Not functions, but also available everywhere:</p>
+<ul>
+<li><code>defer expr</code> — run <code>expr</code> on every exit path of the enclosing
+  block.</li>
+<li><code>arena { … }</code> — bump-allocate everything created inside; free it
+  wholesale at the block's exit (<a href="../memory/">memory model</a>).</li>
+<li><code>select { … }</code> — multiplex channel operations.</li>
+</ul>
+<p>A user definition with the same name shadows any prelude entry —
+prelude bindings never collide with your code.</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../stdlib/" class="btn btn-neutral float-left" title="Overview"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../method_support/" class="btn btn-neutral float-right" title="Method support">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/danpozmanter/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> danpozmanter/gossamer</a>
+        </span>
+    
+    
+      <span><a href="../stdlib/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../method_support/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../js/hljs_gossamer.js"></script>
+      <script src="../js/repo_button.js"></script>
+      <script src="../js/scroll_top.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

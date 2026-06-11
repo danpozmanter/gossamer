@@ -1,7 +1,7 @@
 //! Conservative escape analysis driving automatic arena regions.
 //!
 //! A loop body whose allocations provably do not outlive the iteration can
-//! be wrapped in an arena region (`gos_rt_region_push` .. `region_pop`) so
+//! be wrapped in an arena region (`gos_rt_arena_push` .. `arena_pop`) so
 //! the whole iteration's heap is reclaimed in one bulk free instead of a
 //! per-node reference-count teardown. This is what lets idiomatic
 //! allocation-churn code (build a tree, consume it, discard) approach a
@@ -323,7 +323,7 @@ pub(crate) struct LoopEligibility<'a> {
     /// True once the body is seen to allocate a heap value (a call returning a
     /// heap type, etc.). A region only pays off if there is something to arena;
     /// a purely-scalar body (a counter scan, byte stores) must NOT be wrapped,
-    /// or every iteration pays two `region_push`/`region_pop` calls for nothing.
+    /// or every iteration pays two `arena_push`/`arena_pop` calls for nothing.
     allocates: bool,
 }
 

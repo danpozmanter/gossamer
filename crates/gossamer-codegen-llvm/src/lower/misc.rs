@@ -278,6 +278,85 @@ impl<'a> Lowerer<'a> {
         self.maybe_heap_copy_aggregate_with(arg, /* leak */ true)
     }
 
+    /// Lowers the guarded copy-blob walk intrinsics emitted by the MIR
+    /// aggregate drop pass. The first argument is a bare local whose
+    /// SLOT ADDRESS is passed (the runtime walks the aggregate's flat
+    /// words in place); the optional second argument names the
+    /// module-global guarded meta blob.
+    pub(crate) fn lower_guarded_walk_intrinsic(
+        &mut self,
+        name: &str,
+        args: &[Operand],
+    ) -> Result<(), BuildError> {
+        let Some(Operand::Copy(p)) = args.first() else {
+            return Ok(());
+        };
+        // Bare local: the alloca is the slot address. Projected place
+        // (an option field being overwritten in place): resolve the
+        // field address — the walk reads/writes the slot words there.
+        // `map_set_blob_values` takes the map POINTER VALUE.
+        if name == "gos_rt_map_set_blob_values" {
+            if !p.projection.is_empty() {
+                return Ok(());
+            }
+            let v = self.fresh();
+            writeln!(
+                self.out,
+                "  {v} = load ptr, ptr {slot}",
+                slot = local_slot(p.local)
+            )
+            .unwrap();
+            declare_rt(&mut self.runtime_refs, name);
+            writeln!(self.out, "  call void @gos_rt_map_set_blob_values(ptr {v})").unwrap();
+            return Ok(());
+        }
+        // `vec_set_elem_meta` takes the vec POINTER VALUE; the walk
+        // intrinsics take the aggregate's slot address.
+        if name == "gos_rt_vec_set_elem_meta" {
+            if !p.projection.is_empty() {
+                return Ok(());
+            }
+            let v = self.fresh();
+            writeln!(
+                self.out,
+                "  {v} = load ptr, ptr {slot}",
+                slot = local_slot(p.local)
+            )
+            .unwrap();
+            let meta = match args.get(1) {
+                Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                    format!("@\"{sym}\"")
+                }
+                _ => "null".to_string(),
+            };
+            declare_rt(&mut self.runtime_refs, name);
+            writeln!(
+                self.out,
+                "  call void @gos_rt_vec_set_elem_meta(ptr {v}, ptr {meta})"
+            )
+            .unwrap();
+            return Ok(());
+        }
+        let base = if p.projection.is_empty() {
+            local_slot(p.local)
+        } else {
+            self.lower_place_address(p)
+        };
+        declare_rt(&mut self.runtime_refs, name);
+        if name == "gos_rt_option_slot_retain" || name == "gos_rt_option_slot_release" {
+            writeln!(self.out, "  call void @{name}(ptr {base})").unwrap();
+            return Ok(());
+        }
+        let meta = match args.get(1) {
+            Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                format!("@\"{sym}\"")
+            }
+            _ => "null".to_string(),
+        };
+        writeln!(self.out, "  call void @{name}(ptr {base}, ptr {meta})").unwrap();
+        Ok(())
+    }
+
     fn maybe_heap_copy_aggregate_with(&mut self, arg: &Operand, leak: bool) -> Option<String> {
         let Operand::Copy(place) = arg else {
             return None;
@@ -302,6 +381,32 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         let bytes = u64::from(slots) * 8;
+        // Aggregate types with a registered copy-blob meta become
+        // reference-counted copies (`gos_rt_rc_alloc_copy`): the blob
+        // retains the guarded children it now shares, registers in the
+        // copy-blob provenance set, and is reclaimed deterministically
+        // when its owning slot's guarded walk releases it. Map inserts
+        // (the `leak` variant) keep the unmanaged allocator: map
+        // storage never releases values, and an RC header under a
+        // pointer the map hands back out would be mis-freed.
+        if !leak && let Some(sym) = self.tcx.aggr_copy_meta(local_ty) {
+            let meta = if sym.is_empty() {
+                "null".to_string()
+            } else {
+                format!("@\"{sym}\"")
+            };
+            declare_rt(&mut self.runtime_refs, "gos_rt_rc_alloc_copy");
+            let src = local_slot(place.local);
+            let heap = self.fresh();
+            writeln!(
+                self.out,
+                "  {heap} = call ptr @gos_rt_rc_alloc_copy(i64 {bytes}, ptr {meta}, ptr {src})"
+            )
+            .unwrap();
+            let heap_i64 = self.fresh();
+            writeln!(self.out, "  {heap_i64} = ptrtoint ptr {heap} to i64").unwrap();
+            return Some(heap_i64);
+        }
         let helper = if leak {
             "gos_rt_aggr_alloc_leak"
         } else {

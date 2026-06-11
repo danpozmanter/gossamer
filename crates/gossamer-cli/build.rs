@@ -81,6 +81,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../gossamer-runtime/src");
     println!("cargo:rerun-if-changed=../gossamer-runtime/Cargo.toml");
+    // The workspace manifest owns the [profile.*] sections the inner
+    // runtime build inherits (panic strategy, LTO); a profile edit
+    // must regenerate the archive.
+    println!("cargo:rerun-if-changed=../../Cargo.toml");
     println!("cargo:rerun-if-changed=../gossamer-codegen-cranelift/src/native.rs");
     println!("cargo:rerun-if-changed=../gossamer-codegen-cranelift/src/jit.rs");
     println!("cargo:rerun-if-changed=../gossamer-codegen-llvm/src/emit.rs");

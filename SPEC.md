@@ -640,6 +640,26 @@ ranged over. The built-in ranges `a..b` and `a..=b` implement
 
 `return expr;` exits the enclosing function. `return;` returns `()`.
 
+#### `arena`
+
+```
+ArenaStmt = "arena" Block
+```
+
+`arena` is a contextual keyword (an identifier `arena` not followed by
+`{` is an ordinary name). Every allocation made while the block runs is
+bump-allocated into a fresh arena and freed wholesale when the block
+exits, on every exit path — the construct desugars to
+`runtime::arena_push()` plus a block-scoped
+`defer runtime::arena_pop()`. The block is statement-position only and
+yields `()`; a tail expression is evaluated and discarded.
+
+Contract: a value allocated inside the block must not be referenced
+after the block exits (no assignment to outer bindings, no stores into
+outliving containers, no channel sends, no captures that outrun the
+block). `Weak` references to arena values upgrade to `None`. Arenas
+nest; inner arenas free at their own close brace.
+
 #### `defer`
 
 ```

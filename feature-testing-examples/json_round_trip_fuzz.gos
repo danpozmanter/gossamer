@@ -2,7 +2,7 @@
 // Programmatically build json::Value trees, serialize to string,
 // parse back, and assert deep structural equality.
 
-use std::json
+use std::encoding::json
 
 fn run() -> Result<(), String> {
     // Basic parse and access. `json::get` returns
@@ -72,7 +72,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::json
+    use std::encoding::json
     use std::testing
 
     #[test]

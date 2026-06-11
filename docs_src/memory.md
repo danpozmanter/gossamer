@@ -1,9 +1,16 @@
 # Memory model
 
-Gossamer is garbage-collected. There is no borrow checker, no
-lifetime annotations, and no manual ownership transfer. `&` and
-`&mut` still exist — but they express *aliasing intent*, not
-ownership.
+Gossamer is garbage-collected from the programmer's point of view:
+there is no borrow checker, no lifetime annotations, and no manual
+ownership transfer. `&` and `&mut` exist — but they express *aliasing
+intent*, not ownership.
+
+Under the hood the compiled tiers use **deterministic reference
+counting** with a cycle collector, not a tracing collector: most
+values are reclaimed at the moment their last reference dies, RAM
+stays flat and predictable, and there are no pause times. The
+`arena { }` block (below) layers bulk allocation on top for
+short-lived object graphs.
 
 ## Values vs references
 
@@ -11,8 +18,8 @@ ownership.
   by value: `bool`, `char`, `i8`..`i128`, `u8`..`u128`,
   `isize`/`usize`, `f32`/`f64`.
 - **Reference-semantic types** share their backing storage when
-  cloned. The GC reclaims the backing when no root references it.
-  This includes `String`, `Vec<T>`, `[T]`, `struct`, `enum`,
+  copied; the runtime reclaims the backing when the last reference
+  dies. This includes `String`, `Vec<T>`, `[T]`, `struct`, `enum`,
   closures.
 
 ## `&` and `&mut`
@@ -27,47 +34,106 @@ ownership.
 These are *correctness* rules, not lifetime proofs. You never
 write `'a`.
 
-## The garbage collector
+## How reclamation works
 
-Phase-14 GC is a stop-the-world mark-sweep. Upcoming phases
-layer on:
+- **Reference counting, compiler-inserted.** The MIR lowering inserts
+  balanced retain/release pairs; a liveness pass releases owned values
+  at their *last use* rather than at function exit, so a large
+  structure does not pin memory while unrelated code runs.
+- **Cycle collector.** Reference cycles (`a.next = Some(b);
+  b.next = Some(a)`) are reclaimed by a Bacon–Rajan style cycle
+  collector that runs on demand (`runtime::collect_cycles()`) and from
+  allocation pressure. Acyclic data never pays for it.
+- **Weak references.** `Weak<T>` observes a value without keeping it
+  alive; `w.upgrade()` returns `Option<T>` and answers `None` once the
+  referent has been reclaimed.
+- **Compact representation.** A heap enum node carries an 8-byte
+  runtime header. Enums with at most 4 variants store their
+  discriminant in pointer tag bits, so a two-pointer tree node costs
+  24 bytes — and only 16 inside an arena.
 
-- **Concurrent marking** — `Heap::concurrent_start` +
-  `concurrent_step` lets the mutator run while the grey-set is
-  drained incrementally.
-- **Pause histogram** — `GcStats.{last_pause_nanos,
-  total_pause_nanos, max_pause_nanos}` are populated on every
-  `Heap::collect` call. See
-  `gos bench` for
-  reference numbers.
-- **Weak references** — `gossamer_gc::weak::WeakTable` lets code
-  observe an allocation without rooting it.
-- **Finalisers** — `FinalizerSet::register(handle, callback)`
-  runs a cleanup closure when the target is swept. Use for OS
-  handles (files, sockets, listeners).
+## Arenas: `arena { }`
+
+An `arena` block bump-allocates everything created while it runs and
+frees the whole lot at once when the block exits:
+
+```gossamer
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        arena {
+            let tree = build_tree(16)
+            total += check(&tree)
+        }
+        i += 1
+    }
+    println!("{}", total)
+}
+```
+
+Semantics:
+
+- **Allocation is a pointer bump** — a compare and an add, roughly an
+  order of magnitude cheaper than a general heap allocation.
+- **Reclamation is wholesale** — the arena's slabs are released in
+  O(slabs) when the block exits, with no per-object teardown walk. The
+  exit is exact on every path: early `return`, `?`, `break`, and
+  normal fall-through all release the arena (the block desugars to a
+  `defer`).
+- **Headerless nodes.** Enum nodes of tagged-repr types (at most 4
+  variants) allocated inside an arena carry **no header at all**: a
+  `Node(Box<Tree>, Box<Tree>)` is exactly 16 bytes.
+- **Arenas nest.** An inner `arena { }` frees at its own close brace;
+  the outer arena is unaffected. Slabs from finished arenas are
+  recycled, so an arena per loop iteration costs a bump-pointer reset,
+  not an `mmap`.
+- **Retain/release become no-ops** for arena values — the accounting
+  entries recognize arena memory with a two-instruction range check.
+
+### The contract
+
+Nothing allocated inside an `arena { }` may be referenced after the
+block exits. The block is statement-position only and yields unit, so
+the obvious escape (the block's value) cannot happen, and a tail
+expression inside it is deliberately discarded. The remaining ways to
+leak a pointer out are yours to avoid:
+
+- assigning an arena value to a binding declared **outside** the block,
+- pushing arena values into a container that outlives the block,
+- sending arena values down a channel,
+- capturing them in a closure or goroutine that outruns the block.
+
+Use an arena when the block is *pure computation over data that dies
+together* — build, traverse, summarize, exit. If a value must survive,
+let the block compute a scalar/string summary, or build the surviving
+value before (outside) the arena.
+
+Two deliberate edge-case rules: `Weak` references to arena values
+upgrade to `None` (the referent is not individually tracked), and a
+panic that unwinds out of a goroutine mid-arena abandons the arena's
+slabs to the goroutine's teardown rather than corrupting them.
+
+`runtime::arena_push()` / `runtime::arena_pop()` remain available as
+the low-level primitive when block structure does not fit; the block
+form is the idiom because it cannot be left unbalanced.
 
 ## Goroutine stacks
 
-Each `go expr` launches a goroutine with its own stack (fixed-
-size for the moment — growable stacks land with the Stream E.4
-scheduler rewrite). Captures are reference-counted into the GC
-heap exactly as regular struct fields would be.
+Each `go expr` launches a goroutine with its own stack. Captures are
+reference-counted exactly as regular struct fields would be.
 
 ## When to reach for `Rc<RefCell<T>>`-like patterns
 
-You generally don't. The GC rescues most single-threaded
-aliasing. If you need to mutate through a shared handle, hold a
-`struct` inside a `Mutex<T>` (from `std::sync`) and lock around
-every mutation.
+You generally don't. Shared aliasing works directly. If you need to
+mutate through a shared handle across goroutines, hold the value in a
+`Mutex<T>` (from `std::sync`) and lock around every mutation.
 
 ## Stack vs heap — the pragmatic answer
 
 - Small value types live on the stack or inline inside their
   aggregate.
-- Aggregates (`String`, `Vec<T>`, structs, closures) live on the
-  GC heap. There is no syntactic `Box<T>`.
-- An [escape analysis][escape] pass (Stream E.6) has landed in
-  MIR and can demote short-lived allocations to the stack once
-  the codegen picks them up.
-
-[escape]: https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-mir/src/escape.rs
+- Aggregates (`String`, `Vec<T>`, structs, enums, closures) live on
+  the heap, reference-counted; `Box<T>` / `Rc<T>` / `Arc<T>` spellings
+  are accepted and transparent.
+- Short-lived object graphs belong in an `arena { }`.

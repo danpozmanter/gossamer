@@ -201,6 +201,11 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         rewrite_str_concat_consuming(body);
         insert_drops_at_returns(body, tcx);
         insert_rc_releases(body, tcx);
+        insert_aggr_copy_drops(body, tcx);
+        insert_json_frees(body, tcx);
+        insert_vec_elem_metas(body, tcx);
+        insert_early_releases(body, tcx);
+        hoist_loop_carried_releases(body, tcx);
     }
     #[cfg(debug_assertions)]
     crate::verify::debug_verify_program(&bodies, tcx);

@@ -142,7 +142,7 @@ thread_local! {
 /// the outgoing goroutine's frames are checked back into the registry
 /// (so a SIGQUIT dump can render a parked goroutine), and the
 /// incoming goroutine's saved frames are checked out to this thread's
-/// [`LOCAL_FRAMES`]. The registry lock is taken at most twice here —
+/// `LOCAL_FRAMES`. The registry lock is taken at most twice here —
 /// per step, never per call.
 pub fn set_active_gid(gid: u32) {
     let old = ACTIVE_GID.with(std::cell::Cell::get);
@@ -185,7 +185,7 @@ pub fn active_gid() -> Option<u32> {
 
 /// Pushes a new frame onto the active goroutine's call stack.
 /// Called by the interpreter on every call. Lock-free: it touches
-/// only this thread's [`LOCAL_FRAMES`]. The compiled tier emits no
+/// only this thread's `LOCAL_FRAMES`. The compiled tier emits no
 /// such call — it recovers traces by unwinding the real machine
 /// stack ([`render_native_panic_trace`]).
 pub fn stack_push(function: impl Into<String>, file: impl Into<String>, line: u32) {
@@ -208,7 +208,7 @@ pub fn stack_pop() {
 
 /// Snapshots the active goroutine's call stack (outermost first).
 /// Used by the panic helper to render the failing frame chain inline
-/// with the diagnostic. Reads this thread's [`LOCAL_FRAMES`], so it
+/// with the diagnostic. Reads this thread's `LOCAL_FRAMES`, so it
 /// reflects the goroutine that is panicking on the calling thread.
 #[must_use]
 pub fn active_frames() -> Vec<Frame> {
@@ -366,9 +366,12 @@ fn is_runtime_frame(symbol: &str) -> bool {
         "gos_rt_",
         "gossamer",
         "std::",
+        "std[",
         "core::",
         "alloc::",
         "backtrace",
+        "corosensei",
+        "stack_init_trampoline",
         "__rust",
         "rust_begin_unwind",
         "_start",
@@ -398,15 +401,13 @@ pub fn render_native_panic_trace() -> String {
         true
     });
     let mut out = String::new();
-    let mut started = false;
     for sym in &symbols {
-        // Skip the panic / runtime machinery at the top of the stack
-        // until the first gos frame appears.
-        if !started {
-            if is_runtime_frame(sym) {
-                continue;
-            }
-            started = true;
+        // Runtime / unwinder machinery is filtered everywhere, not just
+        // at the top: a goroutine stack bottoms out in coroutine
+        // trampoline frames rather than `gos_main`, and printing those
+        // leaks runtime internals into a user-facing panic report.
+        if is_runtime_frame(sym) {
+            continue;
         }
         out.push_str("    at ");
         out.push_str(sym);

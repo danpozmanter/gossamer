@@ -150,7 +150,10 @@ pub(crate) fn builtin_fs_metadata(args: &[Value]) -> RuntimeResult<Value> {
                     ),
                 ),
             ];
-            Ok(ok_variant(Value::struct_("fs::Metadata", Arc::new(fields))))
+            Ok(ok_variant(Value::struct_(
+                "fs::Metadata",
+                Arc::unwrap_or_clone(Arc::new(fields)),
+            )))
         }
         Err(e) => Ok(err_variant(format!("metadata: {e}"))),
     }

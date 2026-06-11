@@ -105,6 +105,7 @@ pub(crate) fn run(
                 d.error,
                 gossamer_resolve::ResolveError::UnresolvedName { .. }
                     | gossamer_resolve::ResolveError::DuplicateItem { .. }
+                    | gossamer_resolve::ResolveError::UnknownModulePath { .. }
             )
         })
         .collect();

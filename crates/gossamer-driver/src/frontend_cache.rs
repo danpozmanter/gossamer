@@ -40,8 +40,14 @@ impl FrontendCacheKey {
     /// toolchain identifier (typically `env!("CARGO_PKG_VERSION")`).
     #[must_use]
     pub fn new(source: &str, toolchain: &str) -> Self {
-        let mut buf = Vec::with_capacity(source.len() + toolchain.len() + 8);
+        // The build stamp changes on every compiler build, so a
+        // development rebuild with an unchanged version string cannot
+        // serve ASTs parsed by older frontend code.
+        let stamp = env!("GOS_DRIVER_BUILD_STAMP");
+        let mut buf = Vec::with_capacity(source.len() + toolchain.len() + stamp.len() + 8);
         buf.extend_from_slice(toolchain.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(stamp.as_bytes());
         buf.push(0);
         buf.extend_from_slice(source.as_bytes());
         Self {

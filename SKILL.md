@@ -79,6 +79,13 @@ Prefer these shapes when writing Gossamer:
 - **Goroutines + channels for async work.** Share by
   communicating; reach for `sync::Mutex` only when
   shared-memory is the simpler model.
+- **`arena { ... }` for object graphs that die together.** Everything
+  allocated inside the block is bump-allocated and freed wholesale at
+  the block's exit (every exit path). Small-enum nodes drop their
+  header (16-byte tree nodes); allocation is a pointer bump. Contract:
+  nothing allocated inside may be referenced after the block — compute
+  scalar/string summaries inside, keep survivors outside. Statement
+  position only; arenas nest.
 - **Bare numeric literals — always.** Write `0`, `200`, `1.5`,
   not `0i64`, `200i64`, `1.5f64`. Inference picks the type from
   the binding, the call site, or the return type, so the suffix
@@ -785,7 +792,8 @@ executed by `gos test`. Mark non-runnable fences as
 - `std::validate` (**0.8.0**) — `Validate` trait plus `FieldError`
   / `Errors` for form-style field validation.
 - `std::slog` — structured logging.
-- `std::runtime` — scheduler + GC knobs.
+- `std::runtime` — scheduler + memory knobs: `collect_cycles()`,
+  `arena_push()` / `arena_pop()` (prefer the `arena {}` block).
 - `std::testing` — `check`, `check_eq`, `Runner`, `check_ok`.
 - `std::regex` — wraps the Rust `regex` crate.
 

@@ -12,6 +12,7 @@ impl Vm {
             pool: RefCell::new(FramePool::default()),
             mir_bodies: None,
             tcx_snapshot: None,
+            enum_shape_defs: None,
             jit: parking_lot::RwLock::new(JitState::default()),
             jit_override_count: AtomicUsize::new(0),
             chunk_state_arena: RefCell::new(Vec::new()),
@@ -42,6 +43,7 @@ impl Vm {
         globals: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
         mir_bodies: Option<Arc<Vec<Body>>>,
         tcx_snapshot: Option<Arc<TyCtxt>>,
+        enum_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
     ) -> Self {
         Self {
             globals,
@@ -50,6 +52,7 @@ impl Vm {
             pool: RefCell::new(FramePool::default()),
             mir_bodies,
             tcx_snapshot,
+            enum_shape_defs,
             jit: parking_lot::RwLock::new(JitState::default()),
             jit_override_count: AtomicUsize::new(0),
             chunk_state_arena: RefCell::new(Vec::new()),
@@ -256,6 +259,7 @@ impl Vm {
         // would never be consumed. `hello.gos` lands in this
         // bucket, shaving the lower + the tcx clone.
         if jit_call::jit_enabled() && has_jit_eligible_fn(program) {
+            self.enum_shape_defs = Some(Arc::new(build_native_enum_shapes(program, &tcx)));
             let mut bodies = gossamer_mir::lower_program(program, &mut tcx);
             gossamer_mir::inline_trivial_wrappers(&mut bodies);
             gossamer_mir::inline_small_callees(&mut bodies);
@@ -324,7 +328,10 @@ impl Vm {
         };
         let trace = jit_call::jit_trace();
         let started = std::time::Instant::now();
-        let artifact = match gossamer_codegen_cranelift::compile_to_jit(bodies, tcx) {
+        let empty = std::collections::HashMap::new();
+        let shape_defs: &std::collections::HashMap<u32, u32> =
+            self.enum_shape_defs.as_deref().unwrap_or(&empty);
+        let artifact = match gossamer_codegen_cranelift::compile_to_jit(bodies, tcx, shape_defs) {
             Ok(art) => art,
             Err(err) => {
                 if trace {
@@ -496,8 +503,7 @@ impl Vm {
                     for variant in variants {
                         let variant_name = variant.name.name.as_str();
                         let qualified = format!("{type_name}::{variant_name}");
-                        let sentinel =
-                            Value::variant(variant_name, crate::value::empty_value_arc());
+                        let sentinel = Value::variant(variant_name, Vec::new());
                         if let Some(prefix) = &module_prefix {
                             globals.insert(
                                 intern(&format!("{prefix}::{qualified}")),
@@ -512,4 +518,120 @@ impl Vm {
         }
         Ok(())
     }
+}
+
+/// Builds native shape descriptors for every heap enum whose values
+/// can cross the JIT boundary as raw pointers (all variant fields are
+/// scalars, strings, or other supported heap enums), registers them in
+/// the process-global shape table, and returns `DefId.local -> shape
+/// index` for the cranelift eligibility check.
+fn build_native_enum_shapes(
+    program: &HirProgram,
+    tcx: &TyCtxt,
+) -> std::collections::HashMap<u32, u32> {
+    use crate::value::{
+        NativeEnumShape, NativeFieldKind, NativeVariantShape, intern_type_name,
+        native_shape_next_index, register_native_shape,
+    };
+    use gossamer_types::TyKind;
+    struct Cand<'a> {
+        def_local: u32,
+        name: &'a str,
+        variants: Vec<(&'a str, Vec<gossamer_types::Ty>)>,
+    }
+    let mut cands: Vec<Cand> = Vec::new();
+    for item in &program.items {
+        let HirItemKind::Adt(adt) = &item.kind else {
+            continue;
+        };
+        let gossamer_hir::HirAdtKind::Enum(variants) = &adt.kind else {
+            continue;
+        };
+        let Some(def) = item.def else { continue };
+        let vs: Vec<(&str, Vec<gossamer_types::Ty>)> = variants
+            .iter()
+            .map(|v| {
+                (
+                    v.name.name.as_str(),
+                    v.struct_field_tys.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        cands.push(Cand {
+            def_local: def.local,
+            name: adt.name.name.as_str(),
+            variants: vs,
+        });
+    }
+    let in_set: std::collections::HashSet<u32> = cands.iter().map(|c| c.def_local).collect();
+    // Fixpoint: drop enums with unsupported fields (or fields of
+    // dropped enums) until stable.
+    let mut supported: std::collections::HashSet<u32> = in_set.clone();
+    loop {
+        let mut changed = false;
+        for c in &cands {
+            if !supported.contains(&c.def_local) {
+                continue;
+            }
+            let ok = c.variants.iter().all(|(_, tys)| {
+                tys.iter().all(|t| match tcx.kind_of(*t) {
+                    TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::String => true,
+                    TyKind::Adt { def, .. } => supported.contains(&def.local),
+                    _ => false,
+                })
+            });
+            if !ok {
+                supported.remove(&c.def_local);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let kept: Vec<&Cand> = cands
+        .iter()
+        .filter(|c| supported.contains(&c.def_local))
+        .collect();
+    if kept.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    // Two-phase index assignment so recursive/mutual references
+    // resolve: indices are decided up front, shapes built after.
+    let base = native_shape_next_index();
+    let idx_of: std::collections::HashMap<u32, u32> = kept
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.def_local, base + u32::try_from(i).unwrap_or(0)))
+        .collect();
+    for c in &kept {
+        let tagged = !c.variants.is_empty() && c.variants.len() <= 4;
+        let variants: Vec<NativeVariantShape> = c
+            .variants
+            .iter()
+            .map(|(vname, tys)| NativeVariantShape {
+                name: intern_type_name(vname),
+                fields: tys
+                    .iter()
+                    .map(|t| match tcx.kind_of(*t) {
+                        TyKind::Int(_) => NativeFieldKind::I64,
+                        TyKind::Float(_) => NativeFieldKind::F64,
+                        TyKind::Bool => NativeFieldKind::Bool,
+                        TyKind::String => NativeFieldKind::Str,
+                        TyKind::Adt { def, .. } => NativeFieldKind::Enum(idx_of[&def.local]),
+                        _ => unreachable!("filtered by the supported fixpoint"),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let shape: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+            enum_name: intern_type_name(c.name),
+            index: idx_of[&c.def_local],
+            tagged,
+            variants,
+        }));
+        let got = register_native_shape(shape);
+        debug_assert_eq!(got, shape.index, "shape table index drift");
+    }
+    idx_of
 }

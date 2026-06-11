@@ -165,7 +165,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // An RC-managed local that is neither the return slot (0) nor a
     // parameter (1..=arity). `i > arity` excludes both.
     // Region-owned locals are excluded everywhere: their values are freed
-    // wholesale at `region_pop`, so emitting a retain/release would touch
+    // wholesale at `arena_pop`, so emitting a retain/release would touch
     // freed memory after the pop.
     let is_rc = |i: usize| {
         i > arity && i < n_locals && tcx.is_rc_managed(body.locals[i].ty) && !body.locals[i].region
@@ -202,11 +202,14 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 .collect()
         };
         match tcx.kind_of(ty) {
-            TyKind::Adt { def, .. }
-                if def.local != u32::MAX
-                    && def.local != u32::MAX - 1
-                    && !tcx.is_inline_enum_ty(ty) =>
-            {
+            // The whole sentinel range is excluded, not just
+            // Result/Option: `http::Response` (u32::MAX - 5) lowers as
+            // an OPAQUE one-slot runtime handle and the heap-blob
+            // sentinels (DirInfo/Output/ResponseStream) as one-slot
+            // pointers — per-field stack accounting over their
+            // DECLARED field lists reads and releases past the 1-slot
+            // alloca, clobbering adjacent stack memory.
+            TyKind::Adt { def, .. } if def.local < u32::MAX - 16 && !tcx.is_inline_enum_ty(ty) => {
                 tcx.struct_field_tys(*def).map(collect).unwrap_or_default()
             }
             // Tuples deferred: they entangle with container element ownership
@@ -278,6 +281,43 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // nested-RC fields whose release is balanced by the copy retain, so moving
     // it would double-free (the `from_json -> Config` path).
     let mut extraction_results = vec![false; n_locals];
+    // Locals whose every whole-local assignment is a CONSTANT (the
+    // tagged-null unit-variant representation, null-outs): such values
+    // are immortal-by-construction — retaining/releasing them is a
+    // guaranteed runtime no-op, so skip emitting the calls at all.
+    let mut saw_const_assign = vec![false; n_locals];
+    let mut saw_other_assign = vec![false; n_locals];
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                && place.projection.is_empty()
+                && (place.local.0 as usize) < n_locals
+            {
+                // Only INTEGER constants qualify: the tagged-null
+                // unit-variant representation and null-outs. A string
+                // literal is a real heap-shaped value whose holders
+                // retain it — eliding those desynchronizes the
+                // accounting.
+                if matches!(rvalue, Rvalue::Use(Operand::Const(ConstValue::Int(_)))) {
+                    saw_const_assign[place.local.0 as usize] = true;
+                } else {
+                    saw_other_assign[place.local.0 as usize] = true;
+                }
+            }
+        }
+        if let Terminator::Call { destination, .. } = &block.terminator
+            && destination.projection.is_empty()
+            && (destination.local.0 as usize) < n_locals
+        {
+            saw_other_assign[destination.local.0 as usize] = true;
+        }
+    }
+    // Parameters and the return slot receive their values from the
+    // caller — never const-only, regardless of body-local assignments.
+    let const_init_only: Vec<bool> = (0..n_locals)
+        .map(|i| i > body.arity as usize && saw_const_assign[i] && !saw_other_assign[i])
+        .collect();
+
     // Locals stored into a heap aggregate (`gos_store` value argument). The
     // store gives the aggregate a reference; the copy that fed the store is
     // therefore load-bearing (extract -> retain -> store keeps one, the binding
@@ -424,6 +464,16 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         retain_sites.push((block_idx, stmt_idx, l, 1));
                     }
                 }
+                // `dest = gos_enum_tag(src, disc)` is an IDENTITY alias of
+                // the same allocation (the tag bits live in the pointer):
+                // ownership-wise it is `dest = Copy(src)` — retain the
+                // source (move elision transfers instead when this is its
+                // only read).
+                Rvalue::CallIntrinsic { name, args } if *name == "gos_enum_tag" => {
+                    if let Some(l) = args.first().and_then(&rc_operand) {
+                        retain_sites.push((block_idx, stmt_idx, l, 1));
+                    }
+                }
                 // Wrapping an RC value into a `Result` (`Ok(v)` / `Err(v)`).
                 // The Result carries the reference out (it flows into the
                 // return or is unwrapped by `?`), so the payload is
@@ -521,9 +571,19 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     continue;
                 }
                 match rvalue {
-                    Rvalue::CallIntrinsic { name, .. } if *name == "gos_rc_alloc" => {
+                    Rvalue::CallIntrinsic { name, .. }
+                        if *name == "gos_rc_alloc" || *name == "gos_rc_alloc_tagged" =>
+                    {
                         owned[i] = true;
                     }
+                    // A `String` payload moved out of a consumed by-value
+                    // `Result`/`Option`/inline enum (`match o { Some(s) => … }`)
+                    // and used INLINE (not copied into an owning binding). The
+                    // frame owns it and must release it; the enum value itself
+                    // frees nothing. When the extraction is copied into a
+                    // binding (`let x = to_json()?`), that binding owns it (the
+                    // `Use(Copy)` arm below) — so this arm excludes
+                    // `copy_sourced` to avoid double-freeing the autoderive path.
                     // A `String` payload moved out of a consumed by-value
                     // `Result`/`Option`/inline enum (`match o { Some(s) => … }`)
                     // and used INLINE (not copied into an owning binding). The
@@ -553,6 +613,22 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         if p.projection.is_empty()
                             && (p.local.0 as usize) < n_locals
                             && tcx.is_rc_managed(body.locals[p.local.0 as usize].ty) =>
+                    {
+                        owned[i] = true;
+                    }
+                    // Identity tag of an RC enum pointer: same ownership
+                    // shape as `Copy`.
+                    Rvalue::CallIntrinsic { name, args }
+                        if *name == "gos_enum_tag"
+                            && matches!(
+                                args.first(),
+                                Some(Operand::Copy(p))
+                                    if p.projection.is_empty()
+                                        && (p.local.0 as usize) < n_locals
+                                        && tcx.is_rc_managed(
+                                            body.locals[p.local.0 as usize].ty
+                                        )
+                            ) =>
                     {
                         owned[i] = true;
                     }
@@ -665,9 +741,13 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                             if let Some(op) = args.get(2) {
                                 bump(&mut total_reads, op);
                             }
-                        } else if *name != "gos_load" {
-                            // `gos_load` only accesses its object/offset;
-                            // every other intrinsic consumes its args.
+                        } else if *name == "gos_enum_set_disc" {
+                            // Writes the discriminant byte through the
+                            // pointer; aliases nothing.
+                        } else if *name != "gos_load" && *name != "gos_enum_disc" {
+                            // `gos_load` / `gos_enum_disc` only access
+                            // their object; every other intrinsic
+                            // consumes its args.
                             for op in args {
                                 bump(&mut total_reads, op);
                             }
@@ -713,6 +793,9 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // to the new owner; no `+1`).
     retain_sites.retain(|(_, _, l, _)| !moved[l.0 as usize]);
     terminator_retains.retain(|(_, l)| !moved[l.0 as usize]);
+    // Drop retains of immortal-by-construction constants.
+    retain_sites.retain(|(_, _, l, _)| !const_init_only[l.0 as usize]);
+    terminator_retains.retain(|(_, l)| !const_init_only[l.0 as usize]);
 
     // Releasable owners: RC locals (not parameter / return slot) that are
     // owned here and not moved out. Each surviving new reference was
@@ -748,6 +831,14 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     Rvalue::Use(Operand::Copy(pp)) if pp.projection.is_empty() => {
                         mark(pp.local, &mut rf_changed);
                     }
+                    // Identity tag: the source IS the returned allocation.
+                    Rvalue::CallIntrinsic { name, args } if *name == "gos_enum_tag" => {
+                        if let Some(Operand::Copy(pp)) = args.first()
+                            && pp.projection.is_empty()
+                        {
+                            mark(pp.local, &mut rf_changed);
+                        }
+                    }
                     Rvalue::Aggregate { operands, .. } => {
                         for op in operands {
                             if let Operand::Copy(pp) = op
@@ -767,6 +858,40 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         .map(|i| Local(u32::try_from(i).unwrap_or(0)))
         .collect();
 
+    // Aggregate locals whose every whole-local assignment is a
+    // `gos_rt_result_payload` extraction are BORROWS: the source
+    // Result owns the payload's fields, the extraction never retained
+    // them, so it must not release them at death either.
+    let mut extraction_seed = vec![false; n_locals];
+    {
+        let mut non_extraction = vec![false; n_locals];
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                    && place.projection.is_empty()
+                    && (place.local.0 as usize) < n_locals
+                {
+                    if matches!(
+                        rvalue,
+                        Rvalue::CallIntrinsic { name, .. } if *name == "gos_rt_result_payload"
+                    ) {
+                        extraction_seed[place.local.0 as usize] = true;
+                    } else {
+                        non_extraction[place.local.0 as usize] = true;
+                    }
+                }
+            }
+            if let Terminator::Call { destination, .. } = &block.terminator
+                && destination.projection.is_empty()
+                && (destination.local.0 as usize) < n_locals
+            {
+                non_extraction[destination.local.0 as usize] = true;
+            }
+        }
+        for i in 0..n_locals {
+            extraction_seed[i] = extraction_seed[i] && !non_extraction[i];
+        }
+    }
     // Field-extract `X = Copy(Y.field)` of an RC field: X holds a fresh
     // reference to the field value, so retain it. Added after move-elision
     // filtering so it always fires — Y still owns its own copy of the field
@@ -793,7 +918,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // carrying RC fields that need per-field retain (on copy) + release (on
     // drop), since the stack-slot aggregate itself has no heap teardown.
     let agg_locals: Vec<(usize, Vec<(u32, bool)>)> = ((arity + 1)..n_locals)
-        .filter(|&i| !body.locals[i].region)
+        .filter(|&i| !body.locals[i].region && !extraction_seed[i])
         .filter_map(|i| {
             let fields = agg_rc_fields(body.locals[i].ty);
             if fields.is_empty() {
@@ -1178,6 +1303,1018 @@ fn rc_call_stmt(
             },
         },
         span,
+    }
+}
+
+/// Deterministic reclamation for escaped value-aggregate heap copies.
+///
+/// The LLVM backend heap-copies a multi-slot struct that flows into a
+/// `Some(..)`/`Ok(..)`/`Err(..)` payload (`gos_rt_rc_alloc_copy`, an RC
+/// blob in the copy-blob provenance set). This pass gives every holder
+/// of such a payload pointer exactly one share:
+///
+/// - an option-typed local (`{disc, payload}` by value) is a holder: it
+///   retains after every initialisation except the `gos_rt_result_new`
+///   mint itself and call destinations (the callee's return-copy mints
+///   the caller's share), and releases before reassignment and at
+///   return;
+/// - a guarded slot of a stack aggregate is a holder: the aggregate
+///   retains its children after every whole-local initialisation
+///   (construction operands keep their own shares) and releases them
+///   before reassignment, before a call-destination overwrite, and at
+///   return;
+/// - an option field store (`s.next = o`, directly or through a
+///   reference) releases the slot's previous payload and retains the
+///   new one in place;
+/// - entry blocks zero the guarded slots and option locals so the first
+///   release never reads stack garbage.
+///
+/// Every retain/release the runtime performs is gated on the copy-blob
+/// provenance set, so pointers produced by anything other than
+/// `gos_rt_rc_alloc_copy` (map gets, borrows, the Cranelift tier's
+/// construction-allocated aggregates) are never touched: a missed entry
+/// can only leak, never corrupt.
+pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    use gossamer_types::TyKind;
+    let n_locals = body.locals.len();
+    if n_locals == 0 {
+        return;
+    }
+    let arity = body.arity as usize;
+
+    // A guarded meta symbol with at least one (gate, disc, payload) entry.
+    let walk_meta = |ty: gossamer_types::Ty| -> Option<String> {
+        let sym = tcx.aggr_copy_meta(ty)?;
+        let blob = tcx.rc_meta(sym)?;
+        if blob.len() >= 2 && blob[1] > 0 {
+            Some(sym.to_string())
+        } else {
+            None
+        }
+    };
+    let guarded_locals: Vec<(Local, String)> = ((arity + 1)..n_locals)
+        .filter(|&i| !body.locals[i].region)
+        .filter_map(|i| {
+            walk_meta(body.locals[i].ty).map(|sym| (Local(u32::try_from(i).unwrap_or(0)), sym))
+        })
+        .collect();
+    // The return slot participates in retains only: a return-copy mints
+    // the caller's share (released by the caller), but the slot itself
+    // is never released here.
+    let retain_meta_of = |l: Local| -> Option<String> {
+        let i = l.0 as usize;
+        if i >= n_locals || body.locals[i].region || (1..=arity).contains(&i) {
+            return None;
+        }
+        walk_meta(body.locals[i].ty)
+    };
+
+    // By-value Option/Result locals whose payload type registered a
+    // copy-blob meta on either side.
+    let is_guarded_option = |ty: gossamer_types::Ty| -> bool {
+        match tcx.kind_of(ty) {
+            TyKind::Adt { def, substs } if def.local == u32::MAX || def.local == u32::MAX - 1 => {
+                substs
+                    .types()
+                    .iter()
+                    .take(2)
+                    .any(|p| tcx.aggr_copy_meta(*p).is_some())
+            }
+            _ => false,
+        }
+    };
+    let option_holder = |l: Local| -> bool {
+        let i = l.0 as usize;
+        i > arity && i < n_locals && !body.locals[i].region && is_guarded_option(body.locals[i].ty)
+    };
+    // `result_new` destinations whose payload type carries a copy-blob
+    // meta are guarded option holders even when the typer left the
+    // destination's type unresolved (`Ok(S { .. })` through a `Var`
+    // temp): without the classification, the temp's sweep release is
+    // never emitted and the payload blob leaves the function one count
+    // high — pinned in the collector buffer, one leak per call.
+    let mut mint_holders = vec![false; n_locals];
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                && place.projection.is_empty()
+                && (place.local.0 as usize) < n_locals
+                && let Rvalue::CallIntrinsic { name, args } = rvalue
+                && (*name == "gos_rt_result_new" || *name == "gos_rt_result_new_f64")
+                && let Some(Operand::Copy(pp)) = args.get(1)
+                && pp.projection.is_empty()
+                && (pp.local.0 as usize) < n_locals
+                && tcx
+                    .aggr_copy_meta(body.locals[pp.local.0 as usize].ty)
+                    .is_some()
+            {
+                mint_holders[place.local.0 as usize] = true;
+            }
+        }
+    }
+    let option_holders: Vec<Local> = ((arity + 1)..n_locals)
+        .filter(|&i| {
+            !body.locals[i].region && (is_guarded_option(body.locals[i].ty) || mint_holders[i])
+        })
+        .map(|i| Local(u32::try_from(i).unwrap_or(0)))
+        .collect();
+
+    // A field store whose base resolves (through references) to a type
+    // with a guarded meta, assigning an option-typed value: the slot's
+    // old payload is released and the new one retained in place.
+    let peel_ref = |mut ty: gossamer_types::Ty| -> gossamer_types::Ty {
+        while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        ty
+    };
+    let is_option_field_store = |place: &Place, rvalue: &Rvalue| -> bool {
+        if place.projection.is_empty()
+            || !place
+                .projection
+                .iter()
+                .all(|p| matches!(p, crate::ir::Projection::Field(_)))
+        {
+            return false;
+        }
+        let i = place.local.0 as usize;
+        if i >= n_locals {
+            return false;
+        }
+        if walk_meta(peel_ref(body.locals[i].ty)).is_none() {
+            return false;
+        }
+        match rvalue {
+            Rvalue::Use(Operand::Copy(src)) if src.projection.is_empty() => {
+                option_holder(src.local) || is_guarded_option(body.locals[src.local.0 as usize].ty)
+            }
+            Rvalue::Use(_) | Rvalue::CallIntrinsic { .. } => {
+                // Conservatively treat any other store into the slot as
+                // an option write when the destination field could hold
+                // one; release/retain on a non-member payload no-op.
+                true
+            }
+            _ => false,
+        }
+    };
+
+    let mut gaps: Vec<Vec<Vec<Statement>>> = body
+        .blocks
+        .iter()
+        .map(|b| vec![Vec::new(); b.stmts.len() + 1])
+        .collect();
+    let mut next_unit = body.locals.len();
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+    let mut extra_locals = 0usize;
+    let call_stmt = |name: &'static str,
+                     args: Vec<Operand>,
+                     span: gossamer_lex::Span,
+                     next_unit: &mut usize,
+                     extra: &mut usize|
+     -> Statement {
+        let dest = Local(u32::try_from(*next_unit).expect("local overflow"));
+        *next_unit += 1;
+        *extra += 1;
+        Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(dest),
+                rvalue: Rvalue::CallIntrinsic { name, args },
+            },
+            span,
+        }
+    };
+    let walk_args = |l: Local, sym: &str| -> Vec<Operand> {
+        vec![
+            Operand::Copy(Place::local(l)),
+            Operand::Const(ConstValue::Str(sym.to_string())),
+        ]
+    };
+
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let len = block.stmts.len();
+        let span = block.span;
+        for (si, stmt) in block.stmts.iter().enumerate() {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if place.projection.is_empty() {
+                // Whole-local (re)initialisation of a guarded aggregate:
+                // release the previous children, retain the new ones.
+                if let Some((_, sym)) = guarded_locals.iter().find(|(l, _)| *l == place.local) {
+                    gaps[bi][si].push(call_stmt(
+                        "gos_rt_aggr_release_children",
+                        walk_args(place.local, sym),
+                        span,
+                        &mut next_unit,
+                        &mut extra_locals,
+                    ));
+                }
+                if let Some(sym) = retain_meta_of(place.local)
+                    && !matches!(rvalue, Rvalue::Use(Operand::Const(_)))
+                {
+                    gaps[bi][si + 1].push(call_stmt(
+                        "gos_rt_aggr_retain_children",
+                        walk_args(place.local, &sym),
+                        span,
+                        &mut next_unit,
+                        &mut extra_locals,
+                    ));
+                }
+                // Whole-local (re)initialisation of an option holder.
+                if option_holder(place.local) || place.local == Local::RETURN {
+                    let holder_ty_ok = if place.local == Local::RETURN {
+                        is_guarded_option(body.locals[0].ty)
+                    } else {
+                        true
+                    };
+                    if holder_ty_ok {
+                        if option_holder(place.local) {
+                            gaps[bi][si].push(call_stmt(
+                                "gos_rt_option_slot_release",
+                                vec![Operand::Copy(Place::local(place.local))],
+                                span,
+                                &mut next_unit,
+                                &mut extra_locals,
+                            ));
+                        }
+                        let is_mint = matches!(
+                            rvalue,
+                            Rvalue::CallIntrinsic { name, .. }
+                                if *name == "gos_rt_result_new"
+                                    || *name == "gos_rt_result_new_f64"
+                        );
+                        let is_const = matches!(rvalue, Rvalue::Use(Operand::Const(_)));
+                        if !is_mint && !is_const {
+                            gaps[bi][si + 1].push(call_stmt(
+                                "gos_rt_option_slot_retain",
+                                vec![Operand::Copy(Place::local(place.local))],
+                                span,
+                                &mut next_unit,
+                                &mut extra_locals,
+                            ));
+                        }
+                    }
+                }
+            } else if is_option_field_store(place, rvalue) {
+                // Overwriting an owning option slot in place: release the
+                // old payload, store, retain the new one.
+                gaps[bi][si].push(call_stmt(
+                    "gos_rt_option_slot_release",
+                    vec![Operand::Copy(place.clone())],
+                    span,
+                    &mut next_unit,
+                    &mut extra_locals,
+                ));
+                gaps[bi][si + 1].push(call_stmt(
+                    "gos_rt_option_slot_retain",
+                    vec![Operand::Copy(place.clone())],
+                    span,
+                    &mut next_unit,
+                    &mut extra_locals,
+                ));
+            }
+        }
+        // A call destination is minted by the callee: release the old
+        // value, never retain the new one.
+        if let Terminator::Call { destination, .. } = &block.terminator
+            && destination.projection.is_empty()
+        {
+            if let Some((_, sym)) = guarded_locals.iter().find(|(l, _)| *l == destination.local) {
+                gaps[bi][len].push(call_stmt(
+                    "gos_rt_aggr_release_children",
+                    walk_args(destination.local, sym),
+                    span,
+                    &mut next_unit,
+                    &mut extra_locals,
+                ));
+            }
+            if option_holder(destination.local) {
+                gaps[bi][len].push(call_stmt(
+                    "gos_rt_option_slot_release",
+                    vec![Operand::Copy(Place::local(destination.local))],
+                    span,
+                    &mut next_unit,
+                    &mut extra_locals,
+                ));
+            }
+        }
+        if matches!(block.terminator, Terminator::Return) {
+            for (l, sym) in &guarded_locals {
+                gaps[bi][len].push(call_stmt(
+                    "gos_rt_aggr_release_children",
+                    walk_args(*l, sym),
+                    span,
+                    &mut next_unit,
+                    &mut extra_locals,
+                ));
+            }
+            for l in &option_holders {
+                gaps[bi][len].push(call_stmt(
+                    "gos_rt_option_slot_release",
+                    vec![Operand::Copy(Place::local(*l))],
+                    span,
+                    &mut next_unit,
+                    &mut extra_locals,
+                ));
+            }
+        }
+    }
+
+    if extra_locals == 0 && guarded_locals.is_empty() && option_holders.is_empty() {
+        return;
+    }
+
+    // Entry-block zeroing: guarded slots via the runtime walk, option
+    // holders via a plain zero store (both {disc, payload} words).
+    let mut entry_inits: Vec<Statement> = Vec::new();
+    if let Some(first) = body.blocks.first() {
+        let span = first.span;
+        for (l, sym) in &guarded_locals {
+            entry_inits.push(call_stmt(
+                "gos_rt_aggr_zero_guarded",
+                walk_args(*l, sym),
+                span,
+                &mut next_unit,
+                &mut extra_locals,
+            ));
+        }
+        for l in &option_holders {
+            entry_inits.push(Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(*l),
+                    rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                },
+                span,
+            });
+        }
+    }
+
+    for _ in 0..extra_locals {
+        body.locals.push(LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+    }
+
+    let n_blocks = body.blocks.len();
+    for bi in 0..n_blocks {
+        let orig: Vec<Statement> = std::mem::take(&mut body.blocks[bi].stmts);
+        let block_gaps = std::mem::take(&mut gaps[bi]);
+        let mut new_stmts: Vec<Statement> = Vec::with_capacity(orig.len() + 4);
+        if bi == 0 {
+            new_stmts.append(&mut entry_inits);
+        }
+        let mut orig_iter = orig.into_iter();
+        for g in 0..block_gaps.len() {
+            new_stmts.extend(block_gaps[g].iter().cloned());
+            if let Some(stmt) = orig_iter.next() {
+                new_stmts.push(stmt);
+            }
+        }
+        body.blocks[bi].stmts = new_stmts;
+    }
+}
+
+/// Tags vecs whose element type carries a guarded copy-blob meta, right
+/// after their construction, so the runtime retains each pushed
+/// element's copy-blob children and releases them when the vec dies
+/// (`gos_rt_vec_set_elem_meta` -> push/free/clone/slice handling).
+/// Type-driven on the construction destination, so it covers literals,
+/// `Vec::new`, `with_capacity`, and array->Vec coercions uniformly.
+pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    use gossamer_types::TyKind;
+    let n_locals = body.locals.len();
+    let elem_meta_of = |l: Local| -> Option<String> {
+        let i = l.0 as usize;
+        if i >= n_locals {
+            return None;
+        }
+        let elem = match tcx.kind_of(body.locals[i].ty) {
+            TyKind::Vec(e) | TyKind::Slice(e) => *e,
+            _ => return None,
+        };
+        let sym = tcx.aggr_copy_meta(elem)?;
+        let blob = tcx.rc_meta(sym)?;
+        if blob.len() >= 2 && blob[1] > 0 {
+            Some(sym.to_string())
+        } else {
+            None
+        }
+    };
+    let map_value_blob = |l: Local| -> bool {
+        let i = l.0 as usize;
+        if i >= n_locals {
+            return false;
+        }
+        let TyKind::HashMap { value, .. } = tcx.kind_of(body.locals[i].ty) else {
+            return false;
+        };
+        tcx.aggr_copy_meta(*value).is_some()
+    };
+    let is_vec_ctor = |name: &str| -> bool {
+        matches!(
+            name,
+            "Vec::new"
+                | "gos_rt_vec_new"
+                | "gos_rt_vec_new_typed"
+                | "gos_rt_vec_with_capacity"
+                | "gos_rt_vec_with_capacity_typed"
+                | "gos_rt_vec_from_arr"
+                | "gos_rt_nested_arr_to_vec"
+        )
+    };
+    let is_map_ctor = |name: &str| -> bool {
+        matches!(
+            name,
+            "HashMap::new" | "gos_rt_map_new" | "gos_rt_map_new_with_capacity"
+        )
+    };
+
+    // (block, stmt-gap, dest local, meta) for statement ctors; block-head
+    // inserts at the call target for terminator ctors.
+    let mut stmt_inserts: Vec<(usize, usize, Local, String)> = Vec::new();
+    let mut head_inserts: Vec<(usize, Local, String)> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        for (si, stmt) in block.stmts.iter().enumerate() {
+            if let StatementKind::Assign {
+                place,
+                rvalue: Rvalue::CallIntrinsic { name, .. },
+            } = &stmt.kind
+                && place.projection.is_empty()
+            {
+                if is_vec_ctor(name)
+                    && let Some(sym) = elem_meta_of(place.local)
+                {
+                    stmt_inserts.push((bi, si + 1, place.local, sym));
+                }
+                if is_map_ctor(name) && map_value_blob(place.local) {
+                    stmt_inserts.push((bi, si + 1, place.local, String::new()));
+                }
+            }
+        }
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            destination,
+            target: Some(t),
+            ..
+        } = &block.terminator
+            && destination.projection.is_empty()
+        {
+            if is_vec_ctor(name)
+                && let Some(sym) = elem_meta_of(destination.local)
+            {
+                head_inserts.push((t.0 as usize, destination.local, sym));
+            }
+            if is_map_ctor(name) && map_value_blob(destination.local) {
+                head_inserts.push((t.0 as usize, destination.local, String::new()));
+            }
+        }
+    }
+    if stmt_inserts.is_empty() && head_inserts.is_empty() {
+        return;
+    }
+
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+    let mut next_unit = body.locals.len();
+    let mk = |l: Local, sym: &str, span: gossamer_lex::Span, next_unit: &mut usize| -> Statement {
+        let dest = Local(u32::try_from(*next_unit).expect("local overflow"));
+        *next_unit += 1;
+        // An empty symbol marks a map tag (boolean, no meta arg); a
+        // non-empty one is a vec element meta.
+        let rvalue = if sym.is_empty() {
+            Rvalue::CallIntrinsic {
+                name: "gos_rt_map_set_blob_values",
+                args: vec![Operand::Copy(Place::local(l))],
+            }
+        } else {
+            Rvalue::CallIntrinsic {
+                name: "gos_rt_vec_set_elem_meta",
+                args: vec![
+                    Operand::Copy(Place::local(l)),
+                    Operand::Const(ConstValue::Str(sym.to_string())),
+                ],
+            }
+        };
+        Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(dest),
+                rvalue,
+            },
+            span,
+        }
+    };
+
+    for (bi, l, sym) in &head_inserts {
+        let span = body.blocks[*bi].span;
+        let stmt = mk(*l, sym, span, &mut next_unit);
+        body.blocks[*bi].stmts.insert(0, stmt);
+        // Shift any statement-gap inserts in the same block.
+        for ins in &mut stmt_inserts {
+            if ins.0 == *bi {
+                ins.1 += 1;
+            }
+        }
+    }
+    // Insert in descending gap order so earlier indices stay valid.
+    let mut by_block: Vec<(usize, usize, Local, String)> = stmt_inserts;
+    by_block.sort_by_key(|ins| std::cmp::Reverse((ins.0, ins.1)));
+    for (bi, gap, l, sym) in by_block {
+        let span = body.blocks[bi].span;
+        let stmt = mk(l, &sym, span, &mut next_unit);
+        body.blocks[bi].stmts.insert(gap, stmt);
+    }
+    for _ in body.locals.len()..next_unit {
+        body.locals.push(LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+    }
+}
+
+/// Releases owned heap values at their last use instead of at function
+/// return, so peak RSS tracks the live set rather than the frame's
+/// lifetime (a function that builds a large tree, prints a summary, and
+/// then loops for seconds was holding the tree the whole time).
+///
+/// The pass piggybacks on the ownership judgments the earlier passes
+/// already encoded in the IR: a local is a candidate exactly when a
+/// return block carries a release for it (`gos_rt_rc_release` /
+/// `gos_rt_rc_weak_release` from `insert_rc_releases`,
+/// `gos_rt_aggr_release_children` / `gos_rt_option_slot_release` from
+/// `insert_aggr_copy_drops`). For each candidate it finds the blocks
+/// from whose exit no further *real* mention of the local is reachable
+/// (accounting intrinsics and constant stores don't count), inserts the
+/// matching release right after the last mention — or at the head of
+/// each successor when the last mention is the terminator — and nulls
+/// the local out. The return-block releases stay in place as a null-safe
+/// backstop, so a path this analysis misses leaks nothing and a path it
+/// covers cannot double-release.
+///
+/// Locals that appear in an `Rvalue::Ref` are pinned (released at
+/// return only): the borrow's pointer value could outlive the last
+/// direct mention.
+/// One pending early release: insert after statement `usize` for `Local`,
+/// via the named release intrinsic with an optional meta symbol.
+type PendingRelease = (usize, Local, &'static str, Option<String>);
+
+pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    // Locals whose by-value Result/Option payload is extracted with
+    // `gos_rt_result_payload` anywhere in the body — their slot
+    // releases must stay at the return sweep (see the candidate match
+    // below).
+    let extracted_from: std::collections::HashSet<u32> = body
+        .blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .filter_map(|stmt| {
+            let StatementKind::Assign { rvalue, .. } = &stmt.kind else {
+                return None;
+            };
+            let Rvalue::CallIntrinsic { name, args } = rvalue else {
+                return None;
+            };
+            if *name != "gos_rt_result_payload" && *name != "gos_rt_result_payload_f64" {
+                return None;
+            }
+            match args.first() {
+                Some(Operand::Copy(p)) if p.projection.is_empty() => Some(p.local.0),
+                _ => None,
+            }
+        })
+        .collect();
+
+    let n_locals = body.locals.len();
+    let n_blocks = body.blocks.len();
+    if n_locals == 0 || n_blocks == 0 {
+        return;
+    }
+
+    // RELEASE-side accounting only. A retain READS its argument (it
+    // hands a fresh share to a holder that was just initialised from
+    // this local), so retains MUST count as mentions: inserting the
+    // early release+null between a store and its follow-up retain made
+    // the retain see null — the new holder never got its share and the
+    // node freed while still referenced.
+    let accounting = |name: &str| -> bool {
+        matches!(
+            name,
+            "gos_rt_rc_release"
+                | "gos_rt_rc_weak_release"
+                | "gos_rt_aggr_release_children"
+                | "gos_rt_aggr_zero_guarded"
+                | "gos_rt_option_slot_release"
+        )
+    };
+
+    // Candidates: (local, release-intrinsic, optional meta symbol),
+    // harvested from release calls sitting in Return blocks.
+    let mut candidates: Vec<(Local, &'static str, Option<String>)> = Vec::new();
+    let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for block in &body.blocks {
+        if !matches!(block.terminator, Terminator::Return) {
+            continue;
+        }
+        for stmt in &block.stmts {
+            let StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, args },
+                ..
+            } = &stmt.kind
+            else {
+                continue;
+            };
+            let Some(Operand::Copy(p)) = args.first() else {
+                continue;
+            };
+            if !p.projection.is_empty() {
+                continue;
+            }
+            let release: &'static str = match *name {
+                "gos_rt_rc_release" => "gos_rt_rc_release",
+                "gos_rt_rc_weak_release" => "gos_rt_rc_weak_release",
+                "gos_rt_aggr_release_children" => "gos_rt_aggr_release_children",
+                // Early-relocating an option-slot release is unsound
+                // when the result's payload is EXTRACTED somewhere in
+                // the body: the extraction BORROWS the payload blob's
+                // children (shared field pointers, no retains), and
+                // that borrow's lifetime is invisible to the mention
+                // analysis — the relocated release (typically right at
+                // the extraction) frees the blob under the borrower.
+                // Results that are never extracted-from keep early
+                // placement (Option-chain workloads rely on it to keep
+                // RAM flat).
+                "gos_rt_option_slot_release" if !extracted_from.contains(&p.local.0) => {
+                    "gos_rt_option_slot_release"
+                }
+                _ => continue,
+            };
+            if !seen.insert(p.local.0) {
+                continue;
+            }
+            let meta = if release == "gos_rt_aggr_release_children" {
+                match args.get(1) {
+                    Some(Operand::Const(ConstValue::Str(sym))) => Some(sym.clone()),
+                    _ => continue,
+                }
+            } else {
+                None
+            };
+            candidates.push((p.local, release, meta));
+        }
+    }
+    if candidates.is_empty() {
+        return;
+    }
+
+    // Weak references make drop timing observable: a `Weak` created from
+    // a local in this frame must keep observing it alive until the frame
+    // ends, exactly as the VM does. When the body creates any weak
+    // reference, the RC locals keep their at-return placement; guarded
+    // aggregates and option holders cannot be downgraded and stay
+    // eligible.
+    let has_downgrade = body.blocks.iter().any(|b| {
+        b.stmts.iter().any(|st| {
+            matches!(
+                &st.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name, .. },
+                    ..
+                } if *name == "gos_rt_rc_downgrade"
+            )
+        }) || matches!(
+            &b.terminator,
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(n)),
+                ..
+            } if n == "gos_rt_rc_downgrade" || n == "downgrade"
+        )
+    });
+    if has_downgrade {
+        candidates.retain(|(_, release, _)| {
+            *release != "gos_rt_rc_release" && *release != "gos_rt_rc_weak_release"
+        });
+        if candidates.is_empty() {
+            return;
+        }
+    }
+
+    // Real mentions per block, and the Ref pin. A mention is any
+    // appearance of the bare local in a non-accounting statement or in
+    // a terminator. Constant stores (the zero-inits) don't count.
+    let mut pinned: Vec<bool> = vec![false; n_locals];
+    let mut mention_stmt: Vec<Vec<Option<usize>>> = vec![vec![None; n_locals]; n_blocks];
+    let mut mention_term: Vec<Vec<bool>> = vec![vec![false; n_locals]; n_blocks];
+    {
+        let mark = |l: Local,
+                    bi: usize,
+                    si: Option<usize>,
+                    mention_stmt: &mut Vec<Vec<Option<usize>>>,
+                    mention_term: &mut Vec<Vec<bool>>| {
+            let i = l.0 as usize;
+            if i >= n_locals {
+                return;
+            }
+            match si {
+                Some(si) => mention_stmt[bi][i] = Some(si),
+                None => mention_term[bi][i] = true,
+            }
+        };
+        let locals_in_operand = |op: &Operand, out: &mut Vec<Local>| {
+            if let Operand::Copy(p) = op {
+                out.push(p.local);
+            }
+        };
+        for (bi, block) in body.blocks.iter().enumerate() {
+            for (si, stmt) in block.stmts.iter().enumerate() {
+                let (place, rvalue) = match &stmt.kind {
+                    StatementKind::Assign { place, rvalue } => (place, rvalue),
+                    StatementKind::StorageLive(_)
+                    | StatementKind::StorageDead(_)
+                    | StatementKind::Nop => {
+                        // Storage markers / no-ops, not value uses.
+                        continue;
+                    }
+                    StatementKind::SetDiscriminant { place, .. } => {
+                        mark(
+                            place.local,
+                            bi,
+                            Some(si),
+                            &mut mention_stmt,
+                            &mut mention_term,
+                        );
+                        continue;
+                    }
+                    StatementKind::GcWriteBarrier { place, value } => {
+                        mark(
+                            place.local,
+                            bi,
+                            Some(si),
+                            &mut mention_stmt,
+                            &mut mention_term,
+                        );
+                        if let Operand::Copy(p) = value {
+                            mark(p.local, bi, Some(si), &mut mention_stmt, &mut mention_term);
+                        }
+                        continue;
+                    }
+                };
+                let mut ls: Vec<Local> = Vec::new();
+                match rvalue {
+                    Rvalue::CallIntrinsic { name, args } if accounting(name) => {
+                        // Accounting calls are not program uses.
+                        let _ = args;
+                    }
+                    Rvalue::Use(Operand::Const(_)) => {
+                        // Constant (re)initialisation — the zero-init
+                        // pattern; not a use of the heap value.
+                    }
+                    Rvalue::Ref { place: rp, .. } => {
+                        pinned[rp.local.0 as usize] = true;
+                        ls.push(rp.local);
+                        ls.push(place.local);
+                    }
+                    Rvalue::Use(op) => {
+                        locals_in_operand(op, &mut ls);
+                        ls.push(place.local);
+                    }
+                    Rvalue::BinaryOp { lhs, rhs, .. } => {
+                        locals_in_operand(lhs, &mut ls);
+                        locals_in_operand(rhs, &mut ls);
+                        ls.push(place.local);
+                    }
+                    Rvalue::UnaryOp { operand, .. } => {
+                        locals_in_operand(operand, &mut ls);
+                        ls.push(place.local);
+                    }
+                    Rvalue::CallIntrinsic { args, .. } => {
+                        for a in args {
+                            locals_in_operand(a, &mut ls);
+                        }
+                        ls.push(place.local);
+                    }
+                    Rvalue::Aggregate { operands, .. } => {
+                        // An aggregate literal (fixed array, tuple) copies
+                        // heap POINTERS out of its operands without
+                        // retaining them — the aggregate borrows the
+                        // operand locals' shares. Releasing an operand at
+                        // its last textual mention would free a node the
+                        // aggregate still references, so pin operands to
+                        // the return-site release.
+                        for a in operands {
+                            locals_in_operand(a, &mut ls);
+                            if let Operand::Copy(p) = a {
+                                pinned[p.local.0 as usize] = true;
+                            }
+                        }
+                        ls.push(place.local);
+                    }
+                    Rvalue::Repeat { value, .. } => {
+                        locals_in_operand(value, &mut ls);
+                        ls.push(place.local);
+                    }
+                    _ => {
+                        // Unmodelled rvalue shapes: pin everything they
+                        // could mention by pinning the destination and
+                        // bailing on precision for this statement.
+                        ls.push(place.local);
+                    }
+                }
+                for l in ls {
+                    mark(l, bi, Some(si), &mut mention_stmt, &mut mention_term);
+                }
+            }
+            let mut ls: Vec<Local> = Vec::new();
+            match &block.terminator {
+                Terminator::Call {
+                    args, destination, ..
+                } => {
+                    for a in args {
+                        locals_in_operand(a, &mut ls);
+                    }
+                    ls.push(destination.local);
+                }
+                Terminator::SwitchInt { discriminant, .. } => {
+                    locals_in_operand(discriminant, &mut ls);
+                }
+                Terminator::Assert { cond, .. } => {
+                    locals_in_operand(cond, &mut ls);
+                }
+                Terminator::Drop { place, .. } => {
+                    ls.push(place.local);
+                }
+                _ => {}
+            }
+            for l in ls {
+                mark(l, bi, None, &mut mention_stmt, &mut mention_term);
+            }
+        }
+    }
+
+    // Successor map.
+    let succs: Vec<Vec<usize>> = body
+        .blocks
+        .iter()
+        .map(|b| match &b.terminator {
+            Terminator::Goto { target } => vec![target.0 as usize],
+            Terminator::SwitchInt { arms, default, .. } => {
+                let mut v: Vec<usize> = arms.iter().map(|(_, t)| t.0 as usize).collect();
+                v.push(default.0 as usize);
+                v
+            }
+            Terminator::Call { target, .. } => target.iter().map(|t| t.0 as usize).collect(),
+            Terminator::Assert { target, .. } => vec![target.0 as usize],
+            Terminator::Drop { target, .. } => vec![target.0 as usize],
+            _ => Vec::new(),
+        })
+        .collect();
+
+    // Per candidate: blocks from whose EXIT a mention is reachable.
+    // Fixpoint over the reversed edges.
+    let mut inserts_after_stmt: Vec<Vec<PendingRelease>> = vec![Vec::new(); n_blocks];
+    let mut inserts_at_head: Vec<Vec<(Local, &'static str, Option<String>)>> =
+        vec![Vec::new(); n_blocks];
+    for (l, release, meta) in &candidates {
+        let li = l.0 as usize;
+        if li >= n_locals || pinned[li] {
+            continue;
+        }
+        let mentions: Vec<bool> = (0..n_blocks)
+            .map(|bi| mention_stmt[bi][li].is_some() || mention_term[bi][li])
+            .collect();
+        let mut reach: Vec<bool> = vec![false; n_blocks];
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for bi in 0..n_blocks {
+                if reach[bi] {
+                    continue;
+                }
+                let r = succs[bi].iter().any(|&s| mentions[s] || reach[s]);
+                if r {
+                    reach[bi] = true;
+                    changed = true;
+                }
+            }
+        }
+        for bi in 0..n_blocks {
+            if !mentions[bi] || reach[bi] {
+                continue;
+            }
+            if matches!(body.blocks[bi].terminator, Terminator::Return) {
+                // The backstop already covers this block.
+                continue;
+            }
+            if mention_term[bi][li] {
+                for &s in &succs[bi] {
+                    inserts_at_head[s].push((*l, release, meta.clone()));
+                }
+            } else if let Some(si) = mention_stmt[bi][li] {
+                inserts_after_stmt[bi].push((si, *l, release, meta.clone()));
+            }
+        }
+    }
+
+    let total: usize = inserts_after_stmt.iter().map(Vec::len).sum::<usize>()
+        + inserts_at_head.iter().map(Vec::len).sum::<usize>();
+    if total == 0 {
+        return;
+    }
+
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+    let mut next_unit = body.locals.len();
+    let release_stmts = |l: Local,
+                         release: &'static str,
+                         meta: &Option<String>,
+                         span: gossamer_lex::Span,
+                         next_unit: &mut usize|
+     -> Vec<Statement> {
+        let dest = Local(u32::try_from(*next_unit).expect("local overflow"));
+        *next_unit += 1;
+        let mut args = vec![Operand::Copy(Place::local(l))];
+        if let Some(sym) = meta {
+            args.push(Operand::Const(ConstValue::Str(sym.clone())));
+        }
+        let mut v = vec![Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(dest),
+                rvalue: Rvalue::CallIntrinsic {
+                    name: release,
+                    args,
+                },
+            },
+            span,
+        }];
+        // Null out so the at-return backstop (and any
+        // release-before-reassign) reads an empty value. Guarded
+        // aggregates zero their option slots through the meta walk;
+        // scalar holders zero the whole slot.
+        if release == "gos_rt_aggr_release_children" {
+            let dest2 = Local(u32::try_from(*next_unit).expect("local overflow"));
+            *next_unit += 1;
+            v.push(Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(dest2),
+                    rvalue: Rvalue::CallIntrinsic {
+                        name: "gos_rt_aggr_zero_guarded",
+                        args: vec![
+                            Operand::Copy(Place::local(l)),
+                            Operand::Const(ConstValue::Str(meta.clone().unwrap_or_default())),
+                        ],
+                    },
+                },
+                span,
+            });
+        } else {
+            v.push(Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(l),
+                    rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                },
+                span,
+            });
+        }
+        v
+    };
+
+    let mut new_unit_locals = 0usize;
+    for bi in 0..n_blocks {
+        let head = std::mem::take(&mut inserts_at_head[bi]);
+        let mut after = std::mem::take(&mut inserts_after_stmt[bi]);
+        if head.is_empty() && after.is_empty() {
+            continue;
+        }
+        after.sort_by_key(|(si, ..)| *si);
+        let span = body.blocks[bi].span;
+        let orig: Vec<Statement> = std::mem::take(&mut body.blocks[bi].stmts);
+        let mut new_stmts: Vec<Statement> =
+            Vec::with_capacity(orig.len() + 2 * (head.len() + after.len()));
+        for (l, release, meta) in &head {
+            let before = next_unit;
+            new_stmts.extend(release_stmts(*l, release, meta, span, &mut next_unit));
+            new_unit_locals += next_unit - before;
+        }
+        for (si, stmt) in orig.into_iter().enumerate() {
+            new_stmts.push(stmt);
+            for (asi, l, release, meta) in &after {
+                if *asi == si {
+                    let before = next_unit;
+                    new_stmts.extend(release_stmts(*l, release, meta, span, &mut next_unit));
+                    new_unit_locals += next_unit - before;
+                }
+            }
+        }
+        body.blocks[bi].stmts = new_stmts;
+    }
+    for _ in 0..new_unit_locals {
+        body.locals.push(LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
     }
 }
 
@@ -2149,5 +3286,610 @@ pub(crate) fn block_successors(t: &Terminator) -> Vec<BlockId> {
         Terminator::Call { target, .. } => target.iter().copied().collect(),
         Terminator::Assert { target, .. } | Terminator::Drop { target, .. } => vec![*target],
         Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => Vec::new(),
+    }
+}
+
+/// Hoists loop-carried release-before-reassign pairs to the value's
+/// last mention in the previous iteration.
+///
+/// `insert_rc_releases` anchors the release of a reassigned local's
+/// OLD value to the reassignment itself. In the ubiquitous loop shape
+///
+/// ```text
+/// loop { tree = build(d); use(&tree) }
+/// ```
+///
+/// the reassignment sits AFTER the next value has been built, so the
+/// old and new structures coexist — for binary-trees-style workloads
+/// that doubles transient RSS. This pass walks back from each
+/// `release(x); x = Copy(tmp)` pair through the unique-predecessor
+/// chain to x's last mention, and inserts `release(x); x = null`
+/// right after it. The original release stays as a null-safe
+/// backstop (releasing null is a no-op), so a missed hoist can only
+/// keep the old timing — never double-free.
+pub(crate) fn hoist_loop_carried_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    let n_locals = body.locals.len();
+    let n_blocks = body.blocks.len();
+    if n_blocks == 0 {
+        return;
+    }
+    let is_rc = |l: Local| -> bool {
+        let i = l.0 as usize;
+        i < n_locals && tcx.is_rc_managed(body.locals[i].ty) && !body.locals[i].region
+    };
+    // Predecessor map (multi-pred blocks stop the backward walk).
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n_blocks];
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let mut add = |t: &BlockId| preds[t.0 as usize].push(bi);
+        match &block.terminator {
+            Terminator::Goto { target } => add(target),
+            Terminator::SwitchInt { arms, default, .. } => {
+                for (_, t) in arms {
+                    add(t);
+                }
+                add(default);
+            }
+            Terminator::Call {
+                target: Some(t), ..
+            } => add(t),
+            Terminator::Assert { target, .. } | Terminator::Drop { target, .. } => add(target),
+            _ => {}
+        }
+    }
+
+    // The release-side accounting names whose args are not value READS.
+    let accounting_release = |name: &str| -> bool {
+        matches!(
+            name,
+            "gos_rt_rc_release"
+                | "gos_rt_rc_weak_release"
+                | "gos_rt_aggr_release_children"
+                | "gos_rt_aggr_zero_guarded"
+                | "gos_rt_option_slot_release"
+        )
+    };
+    // True when the statement READS local x (writes excepted; the
+    // backstop release of x itself excepted).
+    let stmt_mentions = |stmt: &Statement, x: Local| -> bool {
+        let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+            return false;
+        };
+        if !place.projection.is_empty() && place.local == x {
+            return true;
+        }
+        let in_op = |op: &Operand| matches!(op, Operand::Copy(p) if p.local == x);
+        match rvalue {
+            Rvalue::Use(op) => in_op(op),
+            Rvalue::BinaryOp { lhs, rhs, .. } => in_op(lhs) || in_op(rhs),
+            Rvalue::UnaryOp { operand, .. } | Rvalue::Cast { operand, .. } => in_op(operand),
+            Rvalue::Aggregate { operands, .. } => operands.iter().any(in_op),
+            Rvalue::Repeat { value, .. } => in_op(value),
+            Rvalue::Ref { place: rp, .. } => rp.local == x,
+            Rvalue::Len(p) => p.local == x,
+            Rvalue::CallIntrinsic { name, args } => {
+                if accounting_release(name) {
+                    false
+                } else {
+                    args.iter().any(in_op)
+                }
+            }
+        }
+    };
+    let stmt_writes = |stmt: &Statement, x: Local| -> bool {
+        matches!(&stmt.kind, StatementKind::Assign { place, .. }
+            if place.projection.is_empty() && place.local == x)
+    };
+    let term_mentions = |t: &Terminator, x: Local| -> bool {
+        let in_op = |op: &Operand| matches!(op, Operand::Copy(p) if p.local == x);
+        match t {
+            Terminator::SwitchInt { discriminant, .. } => in_op(discriminant),
+            Terminator::Call {
+                callee,
+                args,
+                destination,
+                ..
+            } => {
+                in_op(callee)
+                    || args.iter().any(in_op)
+                    || (!destination.projection.is_empty() && destination.local == x)
+            }
+            Terminator::Assert { cond, .. } => in_op(cond),
+            _ => false,
+        }
+    };
+    let term_writes = |t: &Terminator, x: Local| -> bool {
+        matches!(t, Terminator::Call { destination, .. }
+            if destination.projection.is_empty() && destination.local == x)
+    };
+
+    // Collect the hoists: (target block, insert-after stmt index or
+    // None for "after terminator-mention is unsupported"), the local.
+    struct Hoist {
+        at_block: usize,
+        after_stmt: usize,
+        local: Local,
+    }
+    let mut hoists: Vec<Hoist> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        for si in 0..block.stmts.len().saturating_sub(1) {
+            // Pattern: release(x) immediately followed by x = Copy(_).
+            let StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, args },
+                ..
+            } = &block.stmts[si].kind
+            else {
+                continue;
+            };
+            if *name != "gos_rt_rc_release" {
+                continue;
+            }
+            let Some(Operand::Copy(xp)) = args.first() else {
+                continue;
+            };
+            if !xp.projection.is_empty() {
+                continue;
+            }
+            let x = xp.local;
+            if !is_rc(x) {
+                continue;
+            }
+            let reassign = matches!(&block.stmts[si + 1].kind,
+                StatementKind::Assign { place, rvalue }
+                    if place.projection.is_empty()
+                        && place.local == x
+                        && matches!(rvalue, Rvalue::Use(Operand::Copy(_))));
+            if !reassign {
+                continue;
+            }
+            // Walk backward to x's last mention, through unique-pred
+            // edges, without crossing a write to x or another release
+            // of x (an existing earlier release means this one is
+            // already a backstop).
+            let mut cur = bi;
+            let mut start = si; // exclusive upper bound within cur
+            let mut found: Option<(usize, usize)> = None;
+            let mut steps = 0;
+            'walk: loop {
+                let blk = &body.blocks[cur];
+                for sj in (0..start).rev() {
+                    let st = &blk.stmts[sj];
+                    if let StatementKind::Assign {
+                        rvalue: Rvalue::CallIntrinsic { name, args },
+                        ..
+                    } = &st.kind
+                        && *name == "gos_rt_rc_release"
+                        && matches!(args.first(), Some(Operand::Copy(p)) if p.local == x)
+                    {
+                        // Already released earlier on this path.
+                        break 'walk;
+                    }
+                    if stmt_writes(st, x) {
+                        break 'walk;
+                    }
+                    if stmt_mentions(st, x) {
+                        found = Some((cur, sj));
+                        break 'walk;
+                    }
+                }
+                steps += 1;
+                if steps > 64 {
+                    break;
+                }
+                // At a join (e.g. a loop head: entry edge + back edge),
+                // follow the back edge — the highest-numbered
+                // predecessor, i.e. the loop body's bottom. This is
+                // sound because the original release stays in place as
+                // a null-safe backstop: paths that bypass the hoisted
+                // release (the loop-entry edge) release the old value
+                // exactly where they always did, and every block on
+                // the walked segment has been verified mention-free in
+                // full, so no path through it can read the nulled
+                // local.
+                let Some(&p) = preds[cur].iter().max() else {
+                    break;
+                };
+                if p == cur {
+                    break;
+                }
+                let pterm = &body.blocks[p].terminator;
+                if term_writes(pterm, x) {
+                    break;
+                }
+                if term_mentions(pterm, x) {
+                    // Terminator-position mention (e.g. a call arg):
+                    // inserting after a terminator means a successor
+                    // head, and `cur`'s head IS that point — but only
+                    // when the mention is the unique pred's terminator
+                    // and x is not its destination. Insert at the head
+                    // of `cur`.
+                    found = Some((cur, usize::MAX));
+                    break;
+                }
+                cur = p;
+                start = body.blocks[p].stmts.len();
+            }
+            let Some((mb, ms)) = found else {
+                continue;
+            };
+            // Hoisting to the immediate predecessor position of the
+            // original release is a no-op; skip. (`usize::MAX` is the
+            // head-of-block sentinel for terminator mentions — always
+            // a real hoist, and `+ 1` on it would overflow.)
+            if mb == bi && ms != usize::MAX && ms + 1 >= si {
+                continue;
+            }
+            hoists.push(Hoist {
+                at_block: mb,
+                after_stmt: ms,
+                local: x,
+            });
+        }
+    }
+    if hoists.is_empty() {
+        return;
+    }
+
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+    let mut next_local = body.locals.len();
+    // Descending insertion order keeps earlier indices valid.
+    hoists.sort_by_key(|h| std::cmp::Reverse((h.at_block, h.after_stmt)));
+    for h in hoists {
+        let span = body.blocks[h.at_block].span;
+        let rel_dest = Local(u32::try_from(next_local).expect("local overflow"));
+        next_local += 1;
+        let release = Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(rel_dest),
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "gos_rt_rc_release",
+                    args: vec![Operand::Copy(Place::local(h.local))],
+                },
+            },
+            span,
+        };
+        let null_out = Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(h.local),
+                rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            },
+            span,
+        };
+        let at = if h.after_stmt == usize::MAX {
+            0
+        } else {
+            h.after_stmt + 1
+        };
+        body.blocks[h.at_block].stmts.insert(at, null_out);
+        body.blocks[h.at_block].stmts.insert(at, release);
+    }
+    for _ in body.locals.len()..next_local {
+        body.locals.push(LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+    }
+}
+
+/// Frees provably single-owner `json::Value` handle locals.
+///
+/// `gos_rt_json_parse` / `gos_rt_json_get` mint one heap handle per
+/// call (a `Box<GosJson>` holding an `Arc` share of the parsed tree);
+/// nothing reclaimed them, so every parse in a loop leaked the whole
+/// document. A local qualifies when every whole-local write is a call
+/// destination or a null/zero init, and its value never escapes: it
+/// may only be read as an argument to `gos_rt_json_*` runtime entries
+/// (which borrow). Qualifying locals get `gos_rt_json_free` before
+/// each re-initialising call and at every return. Aliased, stored,
+/// returned, or user-call-passed handles keep today's (leaking)
+/// behaviour — a leak is recoverable, a dangling handle is not.
+pub(crate) fn insert_json_frees(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    use gossamer_types::TyKind;
+    let n_locals = body.locals.len();
+    let arity = body.arity as usize;
+    let mut candidate = vec![false; n_locals];
+    let mut any = false;
+    for i in (arity + 1)..n_locals {
+        if matches!(tcx.kind_of(body.locals[i].ty), TyKind::JsonValue) && !body.locals[i].region {
+            candidate[i] = true;
+            any = true;
+        }
+    }
+    if !any {
+        return;
+    }
+    let is_json_rt = |name: &str| name.starts_with("gos_rt_json_");
+    // Whole-local handle moves (`v = Copy(tmp)` with both sides
+    // JSON-typed): ownership transfers when the move is the source's
+    // ONLY value read and its only such move — the destination owns
+    // the handle, the source is never freed. Pre-scan to identify
+    // them so the escape check below can treat the move as allowed.
+    let jv: Vec<bool> = (0..n_locals)
+        .map(|i| matches!(tcx.kind_of(body.locals[i].ty), TyKind::JsonValue))
+        .collect();
+    let mut value_reads = vec![0usize; n_locals];
+    let mut move_edges: Vec<(usize, usize, usize, usize)> = Vec::new(); // (src, dest, bi, si)
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let mut count_op = |op: &Operand| {
+            if let Operand::Copy(p) = op
+                && p.projection.is_empty()
+                && (p.local.0 as usize) < n_locals
+            {
+                value_reads[p.local.0 as usize] += 1;
+            }
+        };
+        for (si, stmt) in block.stmts.iter().enumerate() {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            match rvalue {
+                Rvalue::Use(Operand::Copy(src)) => {
+                    if place.projection.is_empty()
+                        && src.projection.is_empty()
+                        && (place.local.0 as usize) < n_locals
+                        && (src.local.0 as usize) < n_locals
+                        && jv[place.local.0 as usize]
+                        && jv[src.local.0 as usize]
+                    {
+                        move_edges.push((src.local.0 as usize, place.local.0 as usize, bi, si));
+                    } else {
+                        count_op(&Operand::Copy(src.clone()));
+                    }
+                }
+                Rvalue::CallIntrinsic { name, args } if is_json_rt(name) => {
+                    // Borrowing json-runtime args are not value reads.
+                    let _ = args;
+                }
+                Rvalue::CallIntrinsic { args, .. } => {
+                    for a in args {
+                        count_op(a);
+                    }
+                }
+                Rvalue::BinaryOp { lhs, rhs, .. } => {
+                    count_op(lhs);
+                    count_op(rhs);
+                }
+                Rvalue::UnaryOp { operand, .. } | Rvalue::Cast { operand, .. } => count_op(operand),
+                Rvalue::Aggregate { operands, .. } => {
+                    for a in operands {
+                        count_op(a);
+                    }
+                }
+                Rvalue::Repeat { value, .. } => count_op(value),
+                Rvalue::Ref { .. } | Rvalue::Len(_) => {}
+                Rvalue::Use(_) => {}
+            }
+        }
+        if let Terminator::Call { callee, args, .. } = &block.terminator {
+            let allowed = matches!(callee, Operand::Const(ConstValue::Str(n)) if is_json_rt(n));
+            if !allowed {
+                for a in args {
+                    count_op(a);
+                }
+            }
+        }
+    }
+    // A source moves cleanly when it has exactly one outgoing move and
+    // no other value reads.
+    let mut moved_from = vec![false; n_locals];
+    let mut move_inits: Vec<(usize, usize, usize)> = Vec::new(); // (dest, bi, si)
+    {
+        let mut out_moves = vec![0usize; n_locals];
+        for &(src, _, _, _) in &move_edges {
+            out_moves[src] += 1;
+        }
+        for &(src, dest, bi, si) in &move_edges {
+            if out_moves[src] == 1 && value_reads[src] == 0 {
+                moved_from[src] = true;
+                move_inits.push((dest, bi, si));
+            }
+        }
+    }
+    fn check_op(op: &Operand, allowed: bool, c: &mut [bool]) {
+        if let Operand::Copy(p) = op
+            && (p.local.0 as usize) < c.len()
+            && c[p.local.0 as usize]
+            && !allowed
+        {
+            c[p.local.0 as usize] = false;
+        }
+    }
+    // Init sites per local: (block, stmt-or-terminator marker).
+    let mut init_sites: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n_locals];
+    for (bi, block) in body.blocks.iter().enumerate() {
+        for (si, stmt) in block.stmts.iter().enumerate() {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            // Reads: any appearance as a Copy operand outside a
+            // json-runtime call argument escapes the handle.
+            match rvalue {
+                Rvalue::CallIntrinsic { name, args } => {
+                    let allowed = is_json_rt(name);
+                    for a in args {
+                        check_op(a, allowed, &mut candidate);
+                    }
+                }
+                Rvalue::Use(op) => {
+                    let clean_move = matches!(
+                        op,
+                        Operand::Copy(p)
+                            if p.projection.is_empty()
+                                && (p.local.0 as usize) < n_locals
+                                && moved_from[p.local.0 as usize]
+                                && place.projection.is_empty()
+                                && (place.local.0 as usize) < n_locals
+                                && jv[place.local.0 as usize]
+                    );
+                    check_op(op, clean_move, &mut candidate);
+                }
+                Rvalue::BinaryOp { lhs, rhs, .. } => {
+                    check_op(lhs, false, &mut candidate);
+                    check_op(rhs, false, &mut candidate);
+                }
+                Rvalue::UnaryOp { operand, .. } | Rvalue::Cast { operand, .. } => {
+                    check_op(operand, false, &mut candidate);
+                }
+                Rvalue::Aggregate { operands, .. } => {
+                    for a in operands {
+                        check_op(a, false, &mut candidate);
+                    }
+                }
+                Rvalue::Repeat { value, .. } => check_op(value, false, &mut candidate),
+                Rvalue::Ref { place: rp, .. } => {
+                    if candidate.get(rp.local.0 as usize).copied().unwrap_or(false) {
+                        candidate[rp.local.0 as usize] = false;
+                    }
+                }
+                Rvalue::Len(_) => {}
+            }
+            // Writes to the candidate itself.
+            if place.projection.is_empty() && (place.local.0 as usize) < n_locals {
+                let i = place.local.0 as usize;
+                if candidate[i] {
+                    match rvalue {
+                        Rvalue::CallIntrinsic { .. } => init_sites[i].push((bi, si)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(_))) => {}
+                        Rvalue::Use(Operand::Copy(src))
+                            if src.projection.is_empty()
+                                && (src.local.0 as usize) < n_locals
+                                && moved_from[src.local.0 as usize] =>
+                        {
+                            init_sites[i].push((bi, si));
+                        }
+                        _ => candidate[i] = false,
+                    }
+                }
+            } else if !place.projection.is_empty()
+                && (place.local.0 as usize) < n_locals
+                && candidate[place.local.0 as usize]
+            {
+                candidate[place.local.0 as usize] = false;
+            }
+        }
+        match &block.terminator {
+            Terminator::Call {
+                callee,
+                args,
+                destination,
+                ..
+            } => {
+                let callee_name = match callee {
+                    Operand::Const(ConstValue::Str(n)) => Some(n.as_str()),
+                    _ => None,
+                };
+                let allowed = callee_name.is_some_and(is_json_rt);
+                for a in args {
+                    if let Operand::Copy(p) = a
+                        && (p.local.0 as usize) < n_locals
+                        && candidate[p.local.0 as usize]
+                        && !allowed
+                    {
+                        candidate[p.local.0 as usize] = false;
+                    }
+                }
+                if destination.projection.is_empty()
+                    && (destination.local.0 as usize) < n_locals
+                    && candidate[destination.local.0 as usize]
+                {
+                    init_sites[destination.local.0 as usize].push((bi, usize::MAX));
+                }
+            }
+            Terminator::SwitchInt { discriminant, .. } => {
+                if let Operand::Copy(p) = discriminant
+                    && (p.local.0 as usize) < n_locals
+                    && candidate[p.local.0 as usize]
+                {
+                    candidate[p.local.0 as usize] = false;
+                }
+            }
+            _ => {}
+        }
+    }
+    let qualified: Vec<usize> = (0..n_locals)
+        .filter(|&i| candidate[i] && !moved_from[i])
+        .collect();
+    if qualified.is_empty() {
+        return;
+    }
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+    let mut next_local = body.locals.len();
+    let free_stmt = |l: usize, span: gossamer_lex::Span, next: &mut usize| -> Statement {
+        let dest = Local(u32::try_from(*next).expect("local overflow"));
+        *next += 1;
+        Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(dest),
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "gos_rt_json_free",
+                    args: vec![Operand::Copy(Place::local(Local(
+                        u32::try_from(l).unwrap_or(0),
+                    )))],
+                },
+            },
+            span,
+        }
+    };
+    // Per-block gap lists: stmt-index -> stmts to insert before it,
+    // plus an end-of-block list for Return frees.
+    let nb = body.blocks.len();
+    let mut pre_gaps: Vec<Vec<(usize, Statement)>> = vec![Vec::new(); nb];
+    let mut end_gaps: Vec<Vec<Statement>> = vec![Vec::new(); nb];
+    for &l in &qualified {
+        // Free the previous value before each re-initialising call
+        // (first execution frees the zero init, which is null-safe).
+        for &(bi, si) in &init_sites[l] {
+            let span = body.blocks[bi].span;
+            if si == usize::MAX {
+                end_gaps[bi].push(free_stmt(l, span, &mut next_local));
+            } else {
+                pre_gaps[bi].push((si, free_stmt(l, span, &mut next_local)));
+            }
+        }
+    }
+    for (bi, block) in body.blocks.iter().enumerate() {
+        if matches!(block.terminator, Terminator::Return) {
+            let span = block.span;
+            for &l in &qualified {
+                end_gaps[bi].push(free_stmt(l, span, &mut next_local));
+            }
+        }
+    }
+    for bi in (0..nb).rev() {
+        pre_gaps[bi].sort_by_key(|(si, _)| std::cmp::Reverse(*si));
+        let drained: Vec<(usize, Statement)> = std::mem::take(&mut pre_gaps[bi]);
+        for (si, stmt) in drained {
+            body.blocks[bi].stmts.insert(si, stmt);
+        }
+        for stmt in std::mem::take(&mut end_gaps[bi]) {
+            body.blocks[bi].stmts.push(stmt);
+        }
+    }
+    // The pre-init frees below read the local's previous value; only
+    // some locals get the MIR zero-init, so make it explicit for every
+    // qualified local (free of null is a no-op).
+    if !body.blocks.is_empty() {
+        let span = body.blocks[0].span;
+        for (k, &l) in qualified.iter().enumerate() {
+            body.blocks[0].stmts.insert(
+                k,
+                Statement {
+                    kind: StatementKind::Assign {
+                        place: Place::local(Local(u32::try_from(l).unwrap_or(0))),
+                        rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    },
+                    span,
+                },
+            );
+        }
+    }
+    for _ in body.locals.len()..next_local {
+        body.locals.push(LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
     }
 }

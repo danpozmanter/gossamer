@@ -15,7 +15,8 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::alloc::{Layout, alloc, alloc_zeroed, dealloc};
+#[cfg(tsan)]
+use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------
@@ -50,26 +51,29 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// exact header size is thus a runtime-private detail.
 #[repr(C)]
 pub struct RcHeader {
-    /// Strong reference count. Starts at 1 on allocation. `u32` (≥4 billion
-    /// live refs is unreachable) to keep the header at 16 bytes — every heap
-    /// object pays this, so a node `Node(i64, Box, Box)` is 16 + 24 = 40
-    /// bytes instead of 48.
+    /// Strong reference count (low 28 bits) plus the collector flag bits.
+    /// Starts at 1 on allocation.
     pub strong: u32,
     /// Weak reference count (saturating). The allocation outlives `strong ==
     /// 0` whenever this is non-zero, so a `Weak` can probe liveness without
-    /// reading freed memory. `u16` is ample (65535 simultaneous weak handles
-    /// to one object) and keeps the header at 16 bytes.
-    pub weak: u16,
-    /// Allocation size in [`SIZE_UNIT`]-byte units (header + payload),
-    /// recovered at deallocation since the release site is type-erased.
-    /// [`SIZE_OVERSIZED`] is a sentinel meaning "real byte size lives in the
-    /// oversized side table" (only blocks larger than ~1 MiB, effectively
-    /// never for ADTs). Storing units rather than raw bytes frees 16 bits
-    /// for the weak count without growing the header.
-    pub size_u: u16,
-    /// Child-layout descriptor blob for recursive release. Null for leaf
-    /// objects with no RC-pointer children. See the blob format below.
-    pub meta: *const i64,
+    /// reading freed memory. `u8`: an object observed by 255 simultaneous
+    /// weak handles saturates and its allocation is never reclaimed — a
+    /// leak, never a corruption — which frees the byte the enum
+    /// discriminant now occupies.
+    pub weak: u8,
+    /// Enum discriminant. Lives in the header (codegen reads/writes the
+    /// byte at `payload - 3`) so the payload holds only the variant's
+    /// fields: a `Node(i64, Box, Box)` is 8 + 24 = 32 bytes and a
+    /// two-pointer `Node(Box, Box)` is 8 + 16 = 24. Enums are capped at
+    /// 256 variants by the type checker. Zero (and unread) for
+    /// non-enum RC objects.
+    pub disc: u8,
+    /// Interned id of the child-layout descriptor blob (see
+    /// `meta_intern` / `meta_of`); 0 for leaf objects with no
+    /// RC-pointer children. The allocation size is not recorded at all —
+    /// blocks are freed with `mi_free`, which needs only the base
+    /// pointer.
+    pub meta_id: u16,
 }
 
 /// 8-byte alignment is hard-coded across the runtime ABI; all payload
@@ -80,10 +84,10 @@ pub const RC_ALIGN: usize = 8;
 /// begins this many bytes after the allocation base.
 pub const RC_HEADER_SIZE: usize = std::mem::size_of::<RcHeader>();
 
-// The header must stay 16 bytes: every heap object pays it, so growth is a
-// direct per-object RAM regression. The hybrid weak/cycle fields are packed
-// into the existing 16 bytes (see the field docs), never added on top.
-const _: () = assert!(RC_HEADER_SIZE == 16, "RcHeader must remain 16 bytes");
+// The header must stay 8 bytes: every heap object pays it, so growth is a
+// direct per-object RAM regression. The weak/cycle/meta fields are packed
+// into the existing 8 bytes (see the field docs), never added on top.
+const _: () = assert!(RC_HEADER_SIZE == 8, "RcHeader must remain 8 bytes");
 
 // ---------------------------------------------------------------
 // Type-meta blob format (a flat, self-describing `[i64]`).
@@ -112,17 +116,52 @@ const _: () = assert!(RC_HEADER_SIZE == 16, "RcHeader must remain 16 bytes");
 // `Enum` and `Struct` carry child layouts today; the heap builtins
 // (string/vec/map/closure) are wired in a later phase.
 pub use gossamer_abi::rc::{
-    RC_KIND_CLOSURE, RC_KIND_ENUM, RC_KIND_MAP, RC_KIND_STRING, RC_KIND_STRUCT, RC_KIND_VEC,
+    RC_KIND_CLOSURE, RC_KIND_ENUM, RC_KIND_MAP, RC_KIND_STRING, RC_KIND_STRUCT,
+    RC_KIND_STRUCT_GUARDED, RC_KIND_VEC,
 };
 
-/// Count of live RC objects (allocated minus freed). Diagnostic only —
-/// a single relaxed counter, negligible against allocation cost — used
-/// by tests and available for future leak reporting.
+/// Count of live RC objects (allocated minus freed). Two relaxed atomic
+/// RMWs per object lifecycle are measurable on tree workloads (~134M
+/// increments for a binary-trees run), so production counting is gated:
+/// always on in this crate's test build (the unit tests assert on it),
+/// otherwise only when `GOS_RC_DEBUG` is set (the flag that also prints
+/// `RC_LIVE_AT_EXIT`).
 static RC_LIVE: AtomicUsize = AtomicUsize::new(0);
 
-/// Number of RC-managed objects currently alive. Test/diagnostic hook.
+#[cfg(not(test))]
+static RC_LIVE_ENABLED: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var_os("GOS_RC_DEBUG").is_some());
+
+#[inline]
+fn rc_live_enabled() -> bool {
+    #[cfg(test)]
+    {
+        true
+    }
+    #[cfg(not(test))]
+    {
+        *RC_LIVE_ENABLED
+    }
+}
+
+/// Number of RC-managed objects currently alive. Diagnostic hook;
+/// meaningful only when counting is enabled (tests / `GOS_RC_DEBUG`).
 pub fn rc_live_count() -> usize {
     RC_LIVE.load(Ordering::Relaxed)
+}
+
+#[inline]
+fn rc_live_inc() {
+    if rc_live_enabled() {
+        RC_LIVE.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[inline]
+fn rc_live_dec() {
+    if rc_live_enabled() {
+        RC_LIVE.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 // ---------------------------------------------------------------
@@ -148,6 +187,13 @@ pub fn rc_live_count() -> usize {
 
 /// Low 28 bits of `strong`: the actual strong reference count.
 const STRONG_COUNT_MASK: u32 = 0x0FFF_FFFF;
+
+/// Pinned strong count for process-immortal objects (unit-variant
+/// singletons). Retain and release skip the count entirely: inside an
+/// arena the balancing releases never run (bulk free, no walk), so a
+/// counted singleton would grow monotonically and overflow the 28-bit
+/// field into the collector flag bits on big workloads.
+const STRONG_IMMORTAL: u32 = STRONG_COUNT_MASK;
 /// Bit 31: the object sits in the cycle-collector candidate buffer.
 const BUFFERED_BIT: u32 = 1 << 31;
 /// Bits 28-29: trial-deletion color.
@@ -182,7 +228,14 @@ unsafe fn strong_count(h: *const RcHeader) -> u32 {
 /// Overwrite the count portion of `strong`, preserving the flag bits.
 #[inline]
 unsafe fn set_strong_count(h: *mut RcHeader, count: u32) {
-    let flags = unsafe { (*h).strong } & !STRONG_COUNT_MASK;
+    let cur = unsafe { (*h).strong };
+    // Immortal pin (unit-variant singletons): the count is never
+    // mutated — not by retain/release, not by the cycle collector's
+    // trial deletion, not by the release walk's child decrements.
+    if cur & STRONG_COUNT_MASK == STRONG_IMMORTAL {
+        return;
+    }
+    let flags = cur & !STRONG_COUNT_MASK;
     unsafe { (*h).strong = flags | (count & STRONG_COUNT_MASK) };
 }
 
@@ -296,64 +349,145 @@ unsafe fn possible_root(payload: *mut u8) {
 // returns surplus blocks to the OS so a one-time large burst cannot pin
 // memory forever.
 
-/// Granularity of a size class, in bytes. Allocations round up to the next
-/// multiple; same-class blocks are interchangeable.
-const CLASS_STEP: usize = 16;
-
-/// Byte granularity the header's `size_u` counts in. Every allocation is
-/// rounded up to this so the rounded byte size divides evenly into units.
-const SIZE_UNIT: usize = CLASS_STEP;
-
-/// `size_u` sentinel: the block is larger than `(u16::MAX - 1) * SIZE_UNIT`
-/// (~1 MiB) and its real byte size is recorded in the oversized side table.
-/// Only reachable for pathologically large single allocations.
-const SIZE_OVERSIZED: u16 = u16::MAX;
-
-/// Byte size of oversized (`> ~1 MiB`) blocks, keyed by base address. These
-/// bypass the size-class allocator entirely; the map exists only to recover
-/// the `Layout` at deallocation, never for liveness or roots. Effectively
-/// always empty for ADT workloads.
-static OVERSIZED: parking_lot::Mutex<Vec<(usize, usize)>> = parking_lot::Mutex::new(Vec::new());
-
-fn oversized_register(base: *mut u8, total: usize) {
-    OVERSIZED.lock().push((base as usize, total));
-}
-
-/// Remove and return the recorded byte size for an oversized `base`.
-fn oversized_take(base: *mut u8) -> usize {
-    let key = base as usize;
-    let mut map = OVERSIZED.lock();
-    if let Some(i) = map.iter().position(|&(k, _)| k == key) {
-        map.swap_remove(i).1
-    } else {
-        0
-    }
-}
-
-/// Number of size classes. Class `c` covers `c * CLASS_STEP` bytes; the
-/// largest pooled block is `NUM_CLASSES * CLASS_STEP` (1 KiB). Larger
-/// allocations bypass the pool and use the global allocator directly.
-const NUM_CLASSES: usize = 64;
-
 /// Rounds `total` bytes to its size class. Returns `(rounded_bytes,
 /// Some(class_index))` when poolable, or `(rounded, None)` for oversized
 /// allocations that bypass the pool. The rounded byte size equals
 /// `units * SIZE_UNIT`.
+/// Allocate `total` zeroed bytes for an RC block. Calls mimalloc's plain
+/// `mi_zalloc` directly instead of going through the Rust global-allocator
+/// facade: the facade routes every allocation through
+/// `mi_zalloc_aligned(size, align)`, and mimalloc v3's aligned entry pads
+/// the request by 8-16 bytes — a 48-byte RC node then occupies a 64-byte
+/// block, a flat ~25% RAM tax on every RC object. Plain `mi_zalloc`
+/// returns exactly the requested bin and guarantees 16-byte alignment,
+/// which covers `RC_ALIGN`. Under ThreadSanitizer the global allocator is
+/// the system one, so the facade is kept (mixing would free across
+/// allocators).
 #[inline]
-fn size_class(total: usize) -> (usize, Option<usize>) {
-    let rounded = total.div_ceil(CLASS_STEP) * CLASS_STEP;
-    (rounded, class_of_units(rounded / CLASS_STEP))
+fn rc_block_alloc_zeroed(total: usize) -> *mut u8 {
+    #[cfg(not(tsan))]
+    {
+        unsafe { libmimalloc_sys::mi_zalloc(total).cast() }
+    }
+    #[cfg(tsan)]
+    {
+        let Ok(layout) = Layout::from_size_align(total, RC_ALIGN) else {
+            return std::ptr::null_mut();
+        };
+        let base = unsafe { alloc_zeroed(layout) };
+        if !base.is_null() {
+            tsan_sizes().lock().insert(base as usize, total);
+        }
+        base
+    }
 }
 
-/// The pool class for a block of `units` size-units, or `None` when the
-/// block is too large (or too small) to recycle.
+/// Like [`rc_block_alloc_zeroed`] without the zero fill, for callers
+/// that provably write every byte.
 #[inline]
-fn class_of_units(units: usize) -> Option<usize> {
-    if (1..NUM_CLASSES).contains(&units) {
-        Some(units)
-    } else {
-        None
+fn rc_block_alloc_unzeroed(total: usize) -> *mut u8 {
+    #[cfg(not(tsan))]
+    {
+        unsafe { libmimalloc_sys::mi_malloc(total).cast() }
     }
+    #[cfg(tsan)]
+    {
+        rc_block_alloc_zeroed(total)
+    }
+}
+
+/// Free an RC block allocated by [`rc_block_alloc_zeroed`].
+#[inline]
+unsafe fn rc_block_free(base: *mut u8) {
+    #[cfg(not(tsan))]
+    {
+        unsafe { libmimalloc_sys::mi_free(base.cast()) };
+    }
+    #[cfg(tsan)]
+    {
+        // The system allocator needs the original layout back; recover
+        // the size from the tsan-only side map populated at allocation.
+        let total = tsan_sizes()
+            .lock()
+            .remove(&(base as usize))
+            .unwrap_or(RC_HEADER_SIZE);
+        if let Ok(layout) = Layout::from_size_align(total, RC_ALIGN) {
+            unsafe { dealloc(base, layout) };
+        }
+    }
+}
+
+/// Byte sizes of live RC blocks, ThreadSanitizer builds only (the
+/// system allocator's `dealloc` needs the original layout; production
+/// builds free through `mi_free`, which doesn't).
+#[cfg(tsan)]
+fn tsan_sizes() -> &'static parking_lot::Mutex<std::collections::HashMap<usize, usize>> {
+    static SIZES: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<usize, usize>>> =
+        std::sync::OnceLock::new();
+    SIZES.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
+}
+
+// ---------------------------------------------------------------
+// Meta interning: blob pointer <-> u16 id.
+// ---------------------------------------------------------------
+//
+// Metas are per-TYPE module constants — a program has a handful of
+// distinct ones — so the header stores a 16-bit id instead of the
+// 8-byte pointer. Reads (`meta_of`, on every release walk) are a single
+// relaxed load from an append-only table; writes intern through a map
+// with a per-thread single-entry memo, which hits ~always because
+// allocation sites repeat the same type.
+
+const META_TABLE_CAP: usize = 1 << 16;
+
+/// Append-only id -> blob-pointer table. Slot 0 is permanently null.
+static META_TABLE: [std::sync::atomic::AtomicUsize; META_TABLE_CAP] =
+    [const { std::sync::atomic::AtomicUsize::new(0) }; META_TABLE_CAP];
+
+static META_IDS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<usize, u16>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+static META_NEXT: AtomicUsize = AtomicUsize::new(1);
+
+thread_local! {
+    /// Last (pointer, id) pair interned on this thread.
+    static META_MEMO: std::cell::Cell<(usize, u16)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+fn meta_intern(meta: *const i64) -> u16 {
+    if meta.is_null() {
+        return 0;
+    }
+    let key = meta as usize;
+    let memo = META_MEMO.with(std::cell::Cell::get);
+    if memo.0 == key {
+        return memo.1;
+    }
+    let mut ids = META_IDS.lock();
+    let id = if let Some(&id) = ids.get(&key) {
+        id
+    } else {
+        let next = META_NEXT.fetch_add(1, Ordering::Relaxed);
+        if next >= META_TABLE_CAP {
+            // Table exhausted (65535 distinct metas): treat the object as
+            // a leaf. Its children are never released — a leak, never a
+            // corruption — and no realistic program has this many ADTs.
+            return 0;
+        }
+        let id = next as u16;
+        META_TABLE[next].store(key, Ordering::Release);
+        ids.insert(key, id);
+        id
+    };
+    drop(ids);
+    META_MEMO.with(|m| m.set((key, id)));
+    id
+}
+
+/// The child-layout blob for a header, or null for leaves.
+#[inline]
+unsafe fn meta_of(h: *const RcHeader) -> *const i64 {
+    let id = unsafe { (*h).meta_id } as usize;
+    META_TABLE[id].load(Ordering::Acquire) as *const i64
 }
 
 #[inline]
@@ -368,7 +502,7 @@ unsafe fn header_ptr(payload: *mut u8) -> *mut RcHeader {
 // A region is a bump allocator on a stack of large slabs. While a region
 // is active, `gos_rt_rc_alloc` allocates from it and tags the object with
 // `REGION_BIT`; retain/release on such objects are no-ops, and the whole
-// region is freed in O(slabs) at `gos_rt_region_pop` — never a per-node
+// region is freed in O(slabs) at `gos_rt_arena_pop` — never a per-node
 // teardown walk. The compiler guarantees no region object outlives the
 // pop (region-block results are RC-free and region values cannot be
 // assigned to outer bindings), so the bulk free is sound.
@@ -376,6 +510,191 @@ unsafe fn header_ptr(payload: *mut u8) -> *mut RcHeader {
 /// Default slab size; one `mmap`-backed glibc allocation amortised over
 /// many node allocations. A single oversized object gets its own slab.
 const REGION_SLAB_BYTES: usize = 1 << 20;
+
+// ---------------------------------------------------------------
+// Region arena: one reserved virtual range for every region slab.
+// ---------------------------------------------------------------
+//
+// Region objects can be HEADERLESS (16-byte tree nodes), so the
+// accounting entries cannot read a header bit to decide "no-op".
+// Instead every region slab is carved out of a single reserved
+// virtual range, and `in_region(ptr)` is a subtract + compare against
+// a cached global — no memory access into the object. If the reserve
+// fails (exotic environment), regions disable themselves
+// (`gos_rt_arena_push` no-ops) and everything stays reference
+// counted with headers — slower, never unsound.
+
+/// Virtual reservation size. Address space only; pages are committed
+/// slab-by-slab as regions actually allocate.
+const REGION_ARENA_BYTES: usize = 1 << 36;
+
+/// Base address of the reserved range. 0 = not yet initialised;
+/// `usize::MAX` = reservation failed (regions disabled).
+static REGION_ARENA_BASE: AtomicUsize = AtomicUsize::new(0);
+/// Bump offset of the next never-used slab within the reserve.
+static REGION_ARENA_NEXT: AtomicUsize = AtomicUsize::new(0);
+/// Decommitted standard-size slabs available for re-commit, as arena
+/// offsets. (Thread-local `FREE_SLABS` recycling keeps slabs
+/// committed; this list holds overflow beyond `FREE_SLAB_CAP`.)
+static REGION_ARENA_FREE: parking_lot::Mutex<Vec<usize>> = parking_lot::Mutex::new(Vec::new());
+
+/// True when `ptr` points into region-arena memory. Two ALU ops plus
+/// one cached global load; correct before initialisation (base 0 makes
+/// the subtraction wrap far beyond the range) and after a failed
+/// reserve (`usize::MAX` likewise).
+#[inline]
+pub(crate) fn in_region_arena(ptr: *const u8) -> bool {
+    let base = REGION_ARENA_BASE.load(Ordering::Relaxed);
+    (ptr as usize).wrapping_sub(base) < REGION_ARENA_BYTES
+}
+
+/// Strip a tagged-repr enum's discriminant bits (pointer bits 1-2)
+/// from an RC pointer. String bodies are deliberately ODD pointers and
+/// pass through untouched; every other heap pointer is 8-aligned, so
+/// the mask is a no-op for untagged values.
+#[inline]
+pub(crate) fn untag_rc(p: *mut u8) -> *mut u8 {
+    if p as usize & 1 == 0 {
+        (p as usize & !7) as *mut u8
+    } else {
+        p
+    }
+}
+
+/// Reserve the arena on first use. Returns the base, or `usize::MAX`
+/// when virtual reservation is unavailable.
+fn region_arena_base() -> usize {
+    let cur = REGION_ARENA_BASE.load(Ordering::Acquire);
+    if cur != 0 {
+        return cur;
+    }
+    let reserved = arena_reserve(REGION_ARENA_BYTES);
+    let val = if reserved.is_null() {
+        usize::MAX
+    } else {
+        reserved as usize
+    };
+    match REGION_ARENA_BASE.compare_exchange(0, val, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => val,
+        Err(winner) => {
+            // Lost the race; release our reservation.
+            if !reserved.is_null() {
+                arena_release(reserved, REGION_ARENA_BYTES);
+            }
+            winner
+        }
+    }
+}
+
+#[cfg(unix)]
+fn arena_reserve(len: usize) -> *mut u8 {
+    // SAFETY: anonymous PROT_NONE reservation; no file, no aliasing.
+    let p = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            -1,
+            0,
+        )
+    };
+    if p == libc::MAP_FAILED {
+        std::ptr::null_mut()
+    } else {
+        p.cast()
+    }
+}
+
+#[cfg(unix)]
+fn arena_release(p: *mut u8, len: usize) {
+    // SAFETY: releasing exactly the mapping created in arena_reserve.
+    unsafe { libc::munmap(p.cast(), len) };
+}
+
+#[cfg(unix)]
+fn arena_commit(p: *mut u8, len: usize) -> bool {
+    // SAFETY: p..p+len lies inside our reservation.
+    unsafe { libc::mprotect(p.cast(), len, libc::PROT_READ | libc::PROT_WRITE) == 0 }
+}
+
+#[cfg(unix)]
+fn arena_decommit(p: *mut u8, len: usize) {
+    // Return the physical pages; keep the address range reserved.
+    // SAFETY: range lies inside our reservation.
+    unsafe {
+        libc::madvise(p.cast(), len, libc::MADV_DONTNEED);
+    }
+}
+
+#[cfg(windows)]
+fn arena_reserve(len: usize) -> *mut u8 {
+    use windows_sys::Win32::System::Memory::{MEM_RESERVE, PAGE_NOACCESS, VirtualAlloc};
+    // SAFETY: plain reservation, no aliasing.
+    unsafe { VirtualAlloc(std::ptr::null(), len, MEM_RESERVE, PAGE_NOACCESS).cast() }
+}
+
+#[cfg(windows)]
+fn arena_release(p: *mut u8, _len: usize) {
+    use windows_sys::Win32::System::Memory::{MEM_RELEASE, VirtualFree};
+    // SAFETY: releasing exactly the reservation from arena_reserve.
+    unsafe { VirtualFree(p.cast(), 0, MEM_RELEASE) };
+}
+
+#[cfg(windows)]
+fn arena_commit(p: *mut u8, len: usize) -> bool {
+    use windows_sys::Win32::System::Memory::{MEM_COMMIT, PAGE_READWRITE, VirtualAlloc};
+    // SAFETY: committing pages inside our reservation.
+    !unsafe { VirtualAlloc(p.cast(), len, MEM_COMMIT, PAGE_READWRITE) }.is_null()
+}
+
+#[cfg(windows)]
+fn arena_decommit(p: *mut u8, len: usize) {
+    use windows_sys::Win32::System::Memory::{MEM_DECOMMIT, VirtualFree};
+    // SAFETY: decommitting pages inside our reservation.
+    unsafe { VirtualFree(p.cast(), len, MEM_DECOMMIT) };
+}
+
+/// Carve (or re-commit) a slab of `slab_size` bytes from the arena.
+/// Null when the arena is unavailable or exhausted — callers fall back
+/// to headered global allocation (sound, just unoptimised).
+fn arena_acquire(slab_size: usize) -> *mut u8 {
+    let base = region_arena_base();
+    if base == usize::MAX {
+        return std::ptr::null_mut();
+    }
+    if slab_size == REGION_SLAB_BYTES {
+        if let Some(off) = REGION_ARENA_FREE.lock().pop() {
+            let p = (base + off) as *mut u8;
+            if arena_commit(p, slab_size) {
+                return p;
+            }
+            return std::ptr::null_mut();
+        }
+    }
+    let rounded = (slab_size + 0xFFF) & !0xFFF;
+    let off = REGION_ARENA_NEXT.fetch_add(rounded, Ordering::Relaxed);
+    if off + rounded > REGION_ARENA_BYTES {
+        return std::ptr::null_mut();
+    }
+    let p = (base + off) as *mut u8;
+    if arena_commit(p, rounded) {
+        p
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+/// Decommit a no-longer-needed standard slab and remember its offset
+/// for re-commit. Oversized slabs are decommitted and their address
+/// range retired (rare; bounded by peak oversized use).
+fn arena_retire(p: *mut u8, slab_size: usize) {
+    let base = REGION_ARENA_BASE.load(Ordering::Relaxed);
+    arena_decommit(p, slab_size);
+    if slab_size == REGION_SLAB_BYTES {
+        REGION_ARENA_FREE.lock().push(p as usize - base);
+    }
+}
 
 struct RegionSlabs {
     /// `(base, layout_size)` for each slab, freed at pop.
@@ -411,7 +730,7 @@ impl BumpState {
 /// Max recycled standard-size slabs kept per thread. Auto-regions on a
 /// fine-grained loop (millions of tiny iterations) push/pop a region every
 /// iteration; recycling the backing slab through this pool turns each
-/// `region_push` into a bump-pointer reset instead of a 1 MiB `mmap`.
+/// `arena_push` into a bump-pointer reset instead of a 1 MiB `mmap`.
 const FREE_SLAB_CAP: usize = 64;
 
 thread_local! {
@@ -420,7 +739,7 @@ thread_local! {
     static REGIONS: std::cell::RefCell<Vec<RegionSlabs>> =
         const { std::cell::RefCell::new(Vec::new()) };
     /// Pool of freed standard-size (`REGION_SLAB_BYTES`) slabs, reused by the
-    /// next `region_push` instead of re-`mmap`ing. Bounded by `FREE_SLAB_CAP`.
+    /// next `arena_push` instead of re-`mmap`ing. Bounded by `FREE_SLAB_CAP`.
     static FREE_SLABS: std::cell::RefCell<Vec<*mut u8>> =
         const { std::cell::RefCell::new(Vec::new()) };
     /// Nesting depth of active regions. `> 0` ⇒ a region is open; checked once
@@ -444,11 +763,11 @@ fn acquire_slab(slab_size: usize) -> *mut u8 {
             return s;
         }
     }
-    match Layout::from_size_align(slab_size, RC_ALIGN) {
-        // SAFETY: validated non-zero layout; bytes are zeroed per-allocation.
-        Ok(layout) => unsafe { alloc(layout) },
-        Err(_) => std::ptr::null_mut(),
-    }
+    // Slabs come exclusively from the reserved arena so `in_region_arena`
+    // can identify region memory without touching the object. Null
+    // (arena unavailable/exhausted) makes the region allocation fail and
+    // the caller fall back to headered global allocation.
+    arena_acquire(slab_size)
 }
 
 #[inline]
@@ -466,7 +785,7 @@ pub fn region_is_active() -> bool {
 
 /// Public: bump `n` zeroed, `RC_ALIGN`-aligned bytes from the active region,
 /// or null if no region is active. The bytes are freed wholesale at
-/// `region_pop` — callers must NOT individually free them.
+/// `arena_pop` — callers must NOT individually free them.
 #[must_use]
 pub fn region_alloc_bytes(n: usize) -> *mut u8 {
     if n == 0 || !region_active() {
@@ -483,6 +802,17 @@ pub fn region_alloc_bytes(n: usize) -> *mut u8 {
 /// Vec/String backing bytes (which are not `RC_LIVE`-counted). Returns null
 /// only on allocation failure. Caller guarantees a region is active.
 fn region_alloc_inner(total: usize, count_obj: bool) -> *mut u8 {
+    region_alloc_inner_impl(total, count_obj, true)
+}
+
+/// Like [`region_alloc_inner`] but lets fully-initializing callers skip
+/// the zero fill (a tagged-repr enum constructor stores every payload
+/// slot, so pre-zeroing doubles its write traffic for nothing).
+fn region_alloc_inner_unzeroed(total: usize, count_obj: bool) -> *mut u8 {
+    region_alloc_inner_impl(total, count_obj, false)
+}
+
+fn region_alloc_inner_impl(total: usize, count_obj: bool, zero: bool) -> *mut u8 {
     let need = (total + RC_ALIGN - 1) & !(RC_ALIGN - 1);
     // Hot path: bump within the innermost region's current slab — no RefCell,
     // no Vec walk, just a compare and an add on a thread-local cache.
@@ -509,8 +839,11 @@ fn region_alloc_inner(total: usize, count_obj: bool) -> *mut u8 {
         ptr
     };
     // Zero the handed-out bytes: slabs may be recycled or freshly (un-zeroed)
-    // allocated, and codegen relies on every allocation starting zeroed.
-    unsafe { std::ptr::write_bytes(ptr, 0, need) };
+    // allocated, and codegen relies on every allocation starting zeroed —
+    // except for callers that provably overwrite every byte.
+    if zero {
+        unsafe { std::ptr::write_bytes(ptr, 0, need) };
+    }
     if count_obj {
         BUMP_OBJS.with(|o| o.set(o.get() + 1));
     }
@@ -547,9 +880,15 @@ fn region_alloc(total: usize) -> *mut u8 {
 }
 
 /// Open a new arena region. Allocations until the matching
-/// [`gos_rt_region_pop`] are bump-allocated and freed wholesale.
+/// [`gos_rt_arena_pop`] are bump-allocated and freed wholesale.
 #[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_region_push() {
+pub extern "C" fn gos_rt_arena_push() {
+    if region_arena_base() == usize::MAX {
+        // Virtual reservation unavailable: regions disable themselves and
+        // every allocation stays reference counted (headered). The matching
+        // pop no-ops via the empty REGIONS stack.
+        return;
+    }
     // Suspend the current innermost region's live bump into its `RegionSlabs`
     // entry, then open a fresh region with an empty bump.
     let saved = BUMP.with(std::cell::Cell::get);
@@ -574,12 +913,14 @@ pub extern "C" fn gos_rt_region_push() {
 /// per-object teardown walk runs — the escape analysis guarantees nothing in
 /// the region is referenced after pop.
 #[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_region_pop() {
+pub extern "C" fn gos_rt_arena_pop() {
     let pending_objs = BUMP_OBJS.with(|o| o.replace(0));
     let restored = REGIONS.with(|r| {
         let mut regions = r.borrow_mut();
         let region = regions.pop()?;
-        RC_LIVE.fetch_sub(region.objs + pending_objs, Ordering::Relaxed);
+        if rc_live_enabled() {
+            RC_LIVE.fetch_sub(region.objs + pending_objs, Ordering::Relaxed);
+        }
         for (base, size) in region.slabs {
             // Recycle standard-size slabs into the thread-local pool (up to the
             // cap) so the next region reuses them without an mmap.
@@ -597,10 +938,7 @@ pub extern "C" fn gos_rt_region_pop() {
                     continue;
                 }
             }
-            if let Ok(layout) = Layout::from_size_align(size, RC_ALIGN) {
-                // SAFETY: `base` came from `acquire_slab` with this layout.
-                unsafe { dealloc(base, layout) };
-            }
+            arena_retire(base, size);
         }
         // Resume the parent region's suspended bump (empty if none remains).
         Some(regions.last().map_or(BumpState::EMPTY, |top| top.saved))
@@ -621,52 +959,69 @@ pub extern "C" fn gos_rt_region_pop() {
 // never unwind, and the only allocator failure paths (`alloc_zeroed`
 // returning null, `Vec` growth) `abort` rather than unwind. Keeping them
 // bare is what makes RC-managed code fast.
+/// Allocate a TAGGED-repr enum node (discriminant in pointer bits, no
+/// header byte consulted at match time). Inside an active region the
+/// node is completely HEADERLESS — `size` payload bytes, bump-allocated,
+/// bulk-freed at pop, identified by the arena range check (never by a
+/// header) — a two-pointer tree node costs exactly 16 bytes. Outside a
+/// region this is a normal reference-counted allocation (the header
+/// carries counts; the disc bits still live in the pointer).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_alloc_tagged(size: u64, meta: *const i64) -> *mut u8 {
+    if region_active() {
+        let p = region_alloc_inner_unzeroed(size as usize, false);
+        if !p.is_null() {
+            return p;
+        }
+        // Arena unavailable: fall through to the headered global path.
+    }
+    // Tagged-enum constructors store every payload slot, so the global
+    // path also skips the payload memset (the header is written field
+    // by field below).
+    let total = (size as usize).saturating_add(RC_HEADER_SIZE);
+    let in_region = false;
+    let _ = in_region;
+    let base = rc_block_alloc_unzeroed(total);
+    if base.is_null() {
+        return unsafe { gos_rt_rc_alloc(size, meta) };
+    }
+    let h = base as *mut RcHeader;
+    unsafe {
+        (*h).strong = 1;
+        (*h).weak = 0;
+        (*h).disc = 0;
+        (*h).meta_id = meta_intern(meta);
+    }
+    rc_live_inc();
+    unsafe { base.add(RC_HEADER_SIZE) }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_alloc(size: u64, meta: *const i64) -> *mut u8 {
-    let raw = (size as usize).saturating_add(RC_HEADER_SIZE);
-    let (total, class) = size_class(raw);
+    // Exact-size request: mimalloc's bins serve it without padding and
+    // `mi_free` recovers everything from the pointer, so neither a size
+    // field nor class rounding is needed.
+    let total = (size as usize).saturating_add(RC_HEADER_SIZE);
     // Inside a `region { … }` the object is bump-allocated and freed
     // wholesale at pop — tag it so retain/release stay no-ops and the
     // teardown walk never touches it.
     let in_region = region_active();
-    // The system allocator (glibc tcache / equivalent) is the RC node
-    // allocator: a measured A/B against a custom thread-local slab AND the
-    // earlier recycling pool both showed zero speed/RAM benefit — per-node
-    // alloc/free is not the bottleneck. The wins come from regions (bulk-free
-    // whole iterations) and inlining, not from swapping the allocator.
-    let _ = class;
     let base = if in_region {
         region_alloc(total)
     } else {
-        let Ok(layout) = Layout::from_size_align(total, RC_ALIGN) else {
-            return std::ptr::null_mut();
-        };
-        unsafe { alloc_zeroed(layout) }
+        rc_block_alloc_zeroed(total)
     };
     if base.is_null() {
         return std::ptr::null_mut();
     }
     let h = base as *mut RcHeader;
-    let units = total / SIZE_UNIT;
     unsafe {
         (*h).strong = if in_region { 1 | REGION_BIT } else { 1 };
         (*h).weak = 0;
-        // Store the rounded size in units so release recovers the exact
-        // byte size (and pool class). Pathologically large blocks store a
-        // sentinel and record their byte size in the side table. Region
-        // objects are freed by slab, so they never consult `size_u`, but
-        // recording it keeps the header uniform.
-        if units < SIZE_OVERSIZED as usize {
-            (*h).size_u = units as u16;
-        } else {
-            (*h).size_u = SIZE_OVERSIZED;
-            if !in_region {
-                oversized_register(base, total);
-            }
-        }
-        (*h).meta = meta;
+        (*h).disc = 0;
+        (*h).meta_id = meta_intern(meta);
     }
-    RC_LIVE.fetch_add(1, Ordering::Relaxed);
+    rc_live_inc();
     unsafe { base.add(RC_HEADER_SIZE) }
 }
 
@@ -687,39 +1042,41 @@ pub extern "C" fn gos_rt_enum_unit(tag: i64) -> *mut u8 {
 
     // Global (non-region) allocation of a tag-only RC node, pinned at strong=1.
     let alloc_global = |tag: i64| -> *mut u8 {
-        let total = size_class(8usize.saturating_add(RC_HEADER_SIZE)).0;
-        let Ok(layout) = Layout::from_size_align(total, RC_ALIGN) else {
-            return std::ptr::null_mut();
-        };
-        let base = unsafe { alloc_zeroed(layout) };
+        let total = 8usize.saturating_add(RC_HEADER_SIZE);
+        let base = rc_block_alloc_zeroed(total);
         if base.is_null() {
             return std::ptr::null_mut();
         }
-        let units = total / SIZE_UNIT;
         unsafe {
             let h = base as *mut RcHeader;
-            (*h).strong = 1;
+            (*h).strong = STRONG_IMMORTAL;
             (*h).weak = 0;
-            (*h).size_u = if units < SIZE_OVERSIZED as usize {
-                units as u16
-            } else {
-                SIZE_OVERSIZED
-            };
-            (*h).meta = std::ptr::null();
+            // Unit-variant singleton: the discriminant lives in the
+            // header byte the compiled match reads. The 8-byte payload
+            // stays zeroed spare space.
+            (*h).disc = u8::try_from(tag).unwrap_or(0);
+            (*h).meta_id = 0;
             let payload = base.add(RC_HEADER_SIZE);
-            (payload as *mut i64).write(tag);
-            RC_LIVE.fetch_add(1, Ordering::Relaxed);
+            rc_live_inc();
             payload
         }
     };
 
     if !(0..N as i64).contains(&tag) {
         // Out-of-range discriminant: fall back to a fresh global node.
+        // Uncached, so the caller's single ownership reclaims it.
         return alloc_global(tag);
     }
+    // Every return hands the caller an OWNED share (+1): the drop pass
+    // treats the destination local as owned (release at death) exactly
+    // like any other constructor result, and a bare `let x = Enum::Unit`
+    // binding must not strip the cache's pin when it dies. The cache
+    // insert itself holds the initial strong=1 pin, so the singleton's
+    // count never reaches zero.
     let slot = &SINGLETONS[tag as usize];
     let existing = slot.load(Ordering::Acquire);
     if !existing.is_null() {
+        unsafe { gos_rt_rc_retain(existing) };
         return existing;
     }
     let fresh = alloc_global(tag);
@@ -732,10 +1089,14 @@ pub extern "C" fn gos_rt_enum_unit(tag: i64) -> *mut u8 {
         Ordering::AcqRel,
         Ordering::Acquire,
     ) {
-        Ok(_) => fresh,
+        Ok(_) => {
+            unsafe { gos_rt_rc_retain(fresh) };
+            fresh
+        }
         Err(winner) => {
             // Lost the race — drop the redundant node, share the winner's.
             unsafe { gos_rt_rc_release(fresh) };
+            unsafe { gos_rt_rc_retain(winner) };
             winner
         }
     }
@@ -744,6 +1105,12 @@ pub extern "C" fn gos_rt_enum_unit(tag: i64) -> *mut u8 {
 /// Increment the strong count of an RC object. Null-safe.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_retain(payload: *mut u8) {
+    let payload = untag_rc(payload);
+    // Region-arena objects are bulk-freed at pop and may be HEADERLESS:
+    // never touch their memory from the accounting paths.
+    if in_region_arena(payload) {
+        return;
+    }
     if payload.is_null() {
         return;
     }
@@ -756,6 +1123,11 @@ pub unsafe extern "C" fn gos_rt_rc_retain(payload: *mut u8) {
     // their count is meaningless, so retain is a no-op (and must not run
     // the mask below, which would clobber REGION_BIT).
     if unsafe { is_region(h) } {
+        return;
+    }
+    // Process-immortal objects (unit-variant singletons) are never
+    // counted: their balancing releases may legitimately never run.
+    if unsafe { strong_count(h) } == STRONG_IMMORTAL {
         return;
     }
     // Bump the count in the low 28 bits, leaving the collector flag bits
@@ -774,6 +1146,12 @@ pub unsafe extern "C" fn gos_rt_rc_retain(payload: *mut u8) {
 /// block (unless a weak ref still observes it). Null-safe.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_release(payload: *mut u8) {
+    let payload = untag_rc(payload);
+    // Region-arena objects are bulk-freed at pop and may be HEADERLESS:
+    // never touch their memory from the accounting paths.
+    if in_region_arena(payload) {
+        return;
+    }
     unsafe { rc_release_impl(payload) };
 }
 
@@ -782,10 +1160,19 @@ pub unsafe extern "C" fn gos_rt_rc_release(payload: *mut u8) {
 /// touch the strong count. Null-safe (returns null).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_downgrade(payload: *mut u8) -> *mut u8 {
-    if payload.is_null() {
+    // Preserve the caller's pointer bit-for-bit (a tagged-repr enum's
+    // disc lives in it; the weak round-trip must hand it back). Mask
+    // only for header access.
+    let base = untag_rc(payload);
+    // Region-arena objects are bulk-freed at pop and may be HEADERLESS:
+    // never touch their memory from the accounting paths.
+    if in_region_arena(base) {
         return std::ptr::null_mut();
     }
-    let h = unsafe { header_ptr(payload) };
+    if base.is_null() {
+        return std::ptr::null_mut();
+    }
+    let h = unsafe { header_ptr(base) };
     unsafe { (*h).weak = (*h).weak.saturating_add(1) };
     payload
 }
@@ -793,6 +1180,12 @@ pub unsafe extern "C" fn gos_rt_rc_downgrade(payload: *mut u8) -> *mut u8 {
 /// Increment the weak count (copying a `Weak`). Null-safe.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_weak_retain(payload: *mut u8) {
+    let payload = untag_rc(payload);
+    // Region-arena objects are bulk-freed at pop and may be HEADERLESS:
+    // never touch their memory from the accounting paths.
+    if in_region_arena(payload) {
+        return;
+    }
     if payload.is_null() {
         return;
     }
@@ -804,6 +1197,12 @@ pub unsafe extern "C" fn gos_rt_rc_weak_retain(payload: *mut u8) {
 /// free the (already payload-destroyed) allocation. Null-safe.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_weak_release(payload: *mut u8) {
+    let payload = untag_rc(payload);
+    // Region-arena objects are bulk-freed at pop and may be HEADERLESS:
+    // never touch their memory from the accounting paths.
+    if in_region_arena(payload) {
+        return;
+    }
     if payload.is_null() {
         return;
     }
@@ -820,10 +1219,16 @@ pub unsafe extern "C" fn gos_rt_rc_weak_release(payload: *mut u8) {
 /// payload; otherwise return null (the `None` shape). Null-safe.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_weak_upgrade(payload: *mut u8) -> *mut u8 {
-    if payload.is_null() {
+    // Hand back the caller's pointer verbatim (tag bits included);
+    // mask only for header access.
+    let base = untag_rc(payload);
+    if in_region_arena(base) {
         return std::ptr::null_mut();
     }
-    let h = unsafe { header_ptr(payload) };
+    if base.is_null() {
+        return std::ptr::null_mut();
+    }
+    let h = unsafe { header_ptr(base) };
     let count = unsafe { strong_count(h) };
     if count == 0 {
         return std::ptr::null_mut();
@@ -849,10 +1254,13 @@ pub unsafe extern "C" fn gos_rt_rc_weak_upgrade(payload: *mut u8) -> *mut u8 {
 /// synchronous match/if-let idiom. Null-safe (returns `None`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_weak_upgrade_opt(payload: *mut u8) -> i128 {
-    let alive = if payload.is_null() {
+    // Mask tag bits for the header probe; the Some payload keeps the
+    // caller's pointer (and its disc tag) verbatim.
+    let base = untag_rc(payload);
+    let alive = if base.is_null() || in_region_arena(base) {
         false
     } else {
-        let h = unsafe { header_ptr(payload) };
+        let h = unsafe { header_ptr(base) };
         (unsafe { strong_count(h) }) > 0
     };
     if alive {
@@ -893,6 +1301,10 @@ unsafe fn rc_release_impl(root: *mut u8) {
         return;
     }
     let count = unsafe { strong_count(h) };
+    if count == STRONG_IMMORTAL {
+        // Process-immortal singleton: never counted, never reclaimed.
+        return;
+    }
     let next = count.saturating_sub(1);
     unsafe { set_strong_count(h, next) };
     if next != 0 {
@@ -901,7 +1313,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
         return;
     }
     unsafe { set_color(h, COLOR_BLACK) };
-    let meta = unsafe { (*h).meta };
+    let meta = unsafe { meta_of(h) };
     // Leaf fast path: a childless object (no RC-pointer children, the
     // overwhelming common case — every enum payload-free variant, every
     // leaf node) is reclaimed directly. This avoids touching the worklist
@@ -917,7 +1329,20 @@ unsafe fn rc_release_impl(root: *mut u8) {
     RELEASE_WORKLIST.with(|cell| {
         let mut worklist = cell.borrow_mut();
         worklist.clear();
-        unsafe { collect_children(root, meta, &mut worklist) };
+        // Single fused pass over the meta: string-tagged children free
+        // through the tag-checking string path, RC children join the
+        // release worklist. (Two separate walks here doubled the
+        // per-free meta traversal on every internal node.)
+        unsafe {
+            visit_children_raw(root, |c| {
+                if crate::c_abi::string::is_gos_string(c.cast()) {
+                    crate::c_abi::string::gos_rt_str_free(c.cast());
+                } else {
+                    worklist.push(c);
+                }
+            });
+        }
+        let _ = meta;
         unsafe { try_reclaim(root) };
         while let Some(payload) = worklist.pop() {
             if payload.is_null() {
@@ -932,11 +1357,26 @@ unsafe fn rc_release_impl(root: *mut u8) {
                 continue;
             }
             unsafe { set_color(h, COLOR_BLACK) };
-            let meta = unsafe { (*h).meta };
-            unsafe { collect_children(payload, meta, &mut worklist) };
+            unsafe {
+                visit_children_raw_buffered(payload, &mut worklist);
+            }
             unsafe { try_reclaim(payload) };
         }
     });
+}
+
+/// Fused child dispatch for the worklist loop: strings are freed
+/// immediately, RC children are appended to `worklist`.
+unsafe fn visit_children_raw_buffered(payload: *mut u8, worklist: &mut Vec<*mut u8>) {
+    unsafe {
+        visit_children_raw(payload, |c| {
+            if crate::c_abi::string::is_gos_string(c.cast()) {
+                crate::c_abi::string::gos_rt_str_free(c.cast());
+            } else {
+                worklist.push(c);
+            }
+        });
+    }
 }
 
 thread_local! {
@@ -953,19 +1393,42 @@ thread_local! {
 /// collector's trial-deletion, and the GC mark — one edge map, three
 /// consumers.
 unsafe fn visit_rc_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
-    let meta = unsafe { (*header_ptr(payload)).meta };
+    // Type metas list every heap child a node owns, and an enum or
+    // struct can own a *String* child — whose allocation carries the
+    // string tag header, not an `RcHeader`. Feeding one to the count /
+    // color machinery reads garbage, so the RC-graph walk yields only
+    // RC-headered children; the release path reclaims string children
+    // through [`visit_string_children`].
+    unsafe {
+        visit_children_raw(payload, |child| {
+            if !crate::c_abi::string::is_gos_string(child.cast()) {
+                f(child);
+            }
+        });
+    }
+}
+
+unsafe fn visit_children_raw(payload: *mut u8, mut raw_f: impl FnMut(*mut u8)) {
+    // Child words may carry tagged-repr enum pointers; consumers work
+    // on payload bases (strings stay odd and untouched).
+    let mut f = |c: *mut u8| raw_f(untag_rc(c));
+    let meta = unsafe { meta_of(header_ptr(payload)) };
     if meta.is_null() {
         return;
     }
     let kind = unsafe { *meta };
     let variant_count = unsafe { *meta.add(1) };
+    if kind == RC_KIND_STRUCT_GUARDED {
+        unsafe { visit_guarded_children(payload, meta, f) };
+        return;
+    }
     // Only Enum and Struct carry child layouts today. String / Vec / Map
     // / Closure layouts are wired in a later phase and never reach here.
     if kind != RC_KIND_ENUM && kind != RC_KIND_STRUCT {
         return;
     }
     let target_disc = if kind == RC_KIND_ENUM {
-        unsafe { *(payload as *const i64) }
+        i64::from(unsafe { (*header_ptr(payload)).disc })
     } else {
         0
     };
@@ -989,30 +1452,206 @@ unsafe fn visit_rc_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
     }
 }
 
-/// Read `payload`'s RC-pointer children and push them onto `worklist` for
-/// release. Must be called before the block is freed.
-unsafe fn collect_children(payload: *mut u8, _meta: *const i64, worklist: &mut Vec<*mut u8>) {
-    unsafe { visit_rc_children(payload, |child| worklist.push(child)) };
-}
-
 /// Free an RC block's underlying allocation. Called when the block is no
 /// longer observed by any strong *or* weak reference. The payload's children
 /// must already have been released (at the strong→0 transition). The byte
 /// size is recovered from the header's `size_u` (or the oversized side table).
 unsafe fn free_block(payload: *mut u8) {
     let h = unsafe { header_ptr(payload) };
-    let units = unsafe { (*h).size_u };
+    // Copy-blobs leave the provenance set exactly here, so a reused
+    // address can never inherit membership. One meta-word compare for
+    // every other RC object.
+    let meta = unsafe { meta_of(h) };
+    if !meta.is_null() && unsafe { *meta } == RC_KIND_STRUCT_GUARDED {
+        copy_blob_remove(payload);
+    }
     let base = h as *mut u8;
-    let total = if units == SIZE_OVERSIZED {
-        oversized_take(base)
-    } else {
-        units as usize * SIZE_UNIT
-    };
-    RC_LIVE.fetch_sub(1, Ordering::Relaxed);
-    // Straight back to the system allocator — see `gos_rt_rc_alloc` for why a
-    // custom slab/pool is not used (measured net-neutral).
-    if let Ok(layout) = Layout::from_size_align(total, RC_ALIGN) {
-        unsafe { dealloc(base, layout) };
+    rc_live_dec();
+    // Straight back to mimalloc — see `gos_rt_rc_alloc` for why a custom
+    // slab/pool is not used (measured net-neutral), and
+    // `rc_block_alloc_zeroed` for why the call is direct.
+    unsafe { rc_block_free(base) };
+}
+
+// ---------------------------------------------------------------
+// Escaped value-aggregate copy-blobs (deterministic reclamation).
+// ---------------------------------------------------------------
+//
+// When a multi-slot struct value flows into a `Some(..)`/`Ok(..)` payload
+// on the LLVM tier, the backend makes a heap copy of its flat slots.
+// Those copies are single-owner value snapshots; `gos_rt_rc_alloc_copy`
+// puts them under reference counting with an `RC_KIND_STRUCT_GUARDED`
+// meta so the MIR drop pass can release them deterministically when the
+// owning aggregate slot dies.
+//
+// The provenance set below is the soundness backstop: a guarded payload
+// word can also hold pointers this system did NOT allocate (a map-get
+// result, an interior borrow, the Cranelift tier's construction-allocated
+// aggregates). Every guarded retain/release first checks membership and
+// leaves foreign pointers untouched — an unknown pointer can be leaked,
+// never corrupted. Entries are removed exactly at `free_block`, so a
+// reused address can never inherit stale membership.
+static COPY_BLOBS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<usize>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashSet::new()));
+
+fn copy_blob_register(p: *mut u8) {
+    COPY_BLOBS.lock().insert(p as usize);
+}
+
+fn copy_blob_contains(p: *mut u8) -> bool {
+    COPY_BLOBS.lock().contains(&(p as usize))
+}
+
+fn copy_blob_remove(p: *mut u8) {
+    COPY_BLOBS.lock().remove(&(p as usize));
+}
+
+/// Walk the `(disc_word, payload_word)` pairs of an `RC_KIND_STRUCT_GUARDED`
+/// meta over the aggregate slots at `base`, calling `f` for each child that
+/// is live (negative disc word, or the disc word reads 0), non-null, and a
+/// registered copy-blob. `base` may be a heap payload or a stack slot — the
+/// walk only reads the flat words the meta names.
+unsafe fn visit_guarded_children(base: *mut u8, meta: *const i64, mut f: impl FnMut(*mut u8)) {
+    let entry_count = unsafe { *meta.add(1) };
+    for i in 0..entry_count.max(0) {
+        let gate = unsafe { *meta.add(2 + (i as usize) * 3) };
+        let disc_word = unsafe { *meta.add(3 + (i as usize) * 3) };
+        let payload_word = unsafe { *meta.add(4 + (i as usize) * 3) };
+        // `gate` is the discriminant value under which the payload word
+        // holds a copy-blob pointer (0 = Ok/Some side, 1 = Err side);
+        // negative means unconditional (both sides are blobs).
+        if gate >= 0 {
+            let disc = unsafe { *(base.add(disc_word as usize * 8) as *const i64) };
+            if disc != gate {
+                continue;
+            }
+        }
+        let child = unsafe { *(base.add(payload_word as usize * 8) as *const *mut u8) };
+        if !child.is_null() && copy_blob_contains(child) {
+            f(child);
+        }
+    }
+}
+
+/// Allocate an RC copy-blob, memcpy `size` bytes from `src`, retain the
+/// guarded children the copy now shares with its source, and register the
+/// blob in the provenance set. Inside a `region` block the bytes are
+/// bump-allocated and freed wholesale at pop, so the blob is neither
+/// registered nor are its children retained (region objects never run the
+/// per-node teardown walk).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_alloc_copy(
+    size: u64,
+    meta: *const i64,
+    src: *const u8,
+) -> *mut u8 {
+    let in_region = region_active();
+    let payload = unsafe { gos_rt_rc_alloc(size, if in_region { std::ptr::null() } else { meta }) };
+    if payload.is_null() || src.is_null() {
+        return payload;
+    }
+    unsafe { std::ptr::copy_nonoverlapping(src, payload, size as usize) };
+    if in_region {
+        return payload;
+    }
+    unsafe {
+        visit_guarded_children(payload, meta, |child| {
+            gos_rt_rc_retain(child);
+        });
+    }
+    copy_blob_register(payload);
+    payload
+}
+
+/// Release the guarded children held in the aggregate slots at `base`
+/// (a stack aggregate dying or being overwritten). Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_aggr_release_children(base: *mut u8, meta: *const i64) {
+    if base.is_null() || meta.is_null() {
+        return;
+    }
+    unsafe {
+        visit_guarded_children(base, meta, |child| {
+            gos_rt_rc_release(child);
+        });
+    }
+}
+
+/// Retain the guarded children held in the aggregate slots at `base`
+/// (a stack aggregate that was just whole-copied). Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_aggr_retain_children(base: *mut u8, meta: *const i64) {
+    if base.is_null() || meta.is_null() {
+        return;
+    }
+    unsafe {
+        visit_guarded_children(base, meta, |child| {
+            gos_rt_rc_retain(child);
+        });
+    }
+}
+
+/// Zero the `(disc, payload)` word pairs a guarded meta names within the
+/// aggregate slots at `base`. Entry-block initialisation: without it the
+/// first release-before-reassignment walk would read stack garbage, and a
+/// garbage word that happens to equal a live copy-blob address would be
+/// spuriously released. Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_aggr_zero_guarded(base: *mut u8, meta: *const i64) {
+    if base.is_null() || meta.is_null() {
+        return;
+    }
+    let entry_count = unsafe { *meta.add(1) };
+    for i in 0..entry_count.max(0) {
+        let gate = unsafe { *meta.add(2 + (i as usize) * 3) };
+        let disc_word = unsafe { *meta.add(3 + (i as usize) * 3) };
+        let payload_word = unsafe { *meta.add(4 + (i as usize) * 3) };
+        if gate >= 0 && disc_word >= 0 {
+            // Write a discriminant that fails every gate (no entry gates
+            // on a negative disc), so an accidental read of the
+            // not-yet-assigned field never sees a live payload. For the
+            // Option/Result encoding -1 is no valid variant; the real
+            // first assignment overwrites it.
+            unsafe { *(base.add(disc_word as usize * 8) as *mut i64) = -1 };
+        }
+        unsafe { *(base.add(payload_word as usize * 8) as *mut i64) = 0 };
+    }
+}
+
+/// Release the payload of the by-value `{disc, payload}` Option/Result at
+/// `slot` when it is a registered copy-blob. Companion to
+/// [`gos_rt_option_slot_retain`]; used when an option holder dies, is
+/// overwritten, or an owning field slot is replaced. Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_option_slot_release(slot: *const i64) {
+    if slot.is_null() {
+        return;
+    }
+    let payload = unsafe { *(slot.add(1) as *const *mut u8) };
+    if !payload.is_null() && copy_blob_contains(payload) {
+        unsafe { gos_rt_rc_release(payload) };
+        // Null the payload word so a second release of the same slot
+        // (consumption-site release + the unconditional return-sweep)
+        // is a no-op instead of a double-free — the same null-out
+        // discipline the local-release pass uses. The address may be
+        // reused and re-registered in the provenance set, so "the set
+        // no longer contains it" is not a safe second-release guard.
+        unsafe { *slot.add(1).cast_mut() = 0 };
+    }
+}
+
+/// Retain the payload of the by-value `{disc, payload}` Option/Result at
+/// `slot` when the discriminant reads 0 (`Some`/`Ok`) and the payload is a
+/// registered copy-blob. Used when an aliased option value is stored into
+/// an owning aggregate slot. Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_option_slot_retain(slot: *const i64) {
+    if slot.is_null() {
+        return;
+    }
+    let payload = unsafe { *(slot.add(1) as *const *mut u8) };
+    if !payload.is_null() && copy_blob_contains(payload) {
+        unsafe { gos_rt_rc_retain(payload) };
     }
 }
 
@@ -1186,12 +1825,12 @@ mod tests {
         COUNT_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Allocate via the runtime entry and write a discriminant into the
-    /// payload's first word.
+    /// Allocate via the runtime entry and write the discriminant into
+    /// the header byte (mirroring `gos_enum_set_disc`).
     unsafe fn alloc_with_disc(payload_words: usize, disc: i64, meta: *const i64) -> *mut u8 {
         let p = unsafe { gos_rt_rc_alloc((payload_words * 8) as u64, meta) };
         assert!(!p.is_null());
-        unsafe { *(p as *mut i64) = disc };
+        unsafe { (*header_ptr(p)).disc = u8::try_from(disc).unwrap_or(0) };
         p
     }
 
@@ -1320,7 +1959,7 @@ mod tests {
         let base = rc_live_count();
         let meta = node_meta();
         unsafe {
-            gos_rt_region_push();
+            gos_rt_arena_push();
             assert!(region_active());
             let mut ptrs = Vec::new();
             for _ in 0..1000 {
@@ -1340,7 +1979,7 @@ mod tests {
                 base + 1000,
                 "region objects not freed early"
             );
-            gos_rt_region_pop();
+            gos_rt_arena_pop();
             assert!(!region_active());
         }
         assert_eq!(rc_live_count(), base, "pop frees the whole region");
@@ -1353,7 +1992,7 @@ mod tests {
         let base = rc_live_count();
         let meta = node_meta();
         unsafe {
-            gos_rt_region_push();
+            gos_rt_arena_push();
             // Build a parent that owns a child entirely inside the region.
             let child = gos_rt_rc_alloc(16, meta.as_ptr());
             let parent = gos_rt_rc_alloc(16, meta.as_ptr());
@@ -1365,7 +2004,7 @@ mod tests {
             assert_eq!(rc_live_count(), base + 2, "region release must not free");
             let buffered = ROOTS.with(|r| r.borrow().len());
             assert_eq!(buffered, 0, "region objects never enter the cycle buffer");
-            gos_rt_region_pop();
+            gos_rt_arena_pop();
         }
         assert_eq!(
             rc_live_count(),
@@ -1379,12 +2018,12 @@ mod tests {
         let _g = count_guard();
         let base = rc_live_count();
         unsafe {
-            gos_rt_region_push();
+            gos_rt_arena_push();
             // Larger than the default slab — must still allocate, on its own slab.
             let big = gos_rt_rc_alloc((REGION_SLAB_BYTES as u64) * 2, std::ptr::null());
             assert!(!big.is_null());
             assert!(is_region(header_ptr(big)));
-            gos_rt_region_pop();
+            gos_rt_arena_pop();
         }
         assert_eq!(rc_live_count(), base);
     }
@@ -1552,9 +2191,9 @@ mod tests {
         unsafe {
             let l0 = alloc_with_disc(1, 0, meta.as_ptr());
             let l1 = alloc_with_disc(1, 0, meta.as_ptr());
-            let node = alloc_with_disc(3, 1, meta.as_ptr());
-            set_child(node, 1, l0);
-            set_child(node, 2, l1);
+            let node = alloc_with_disc(2, 1, meta.as_ptr());
+            set_child(node, 0, l0);
+            set_child(node, 1, l1);
             gos_rt_rc_downgrade(node);
             assert_eq!(rc_live_count(), base + 3);
             // Last strong release frees the two children immediately; the
@@ -1577,13 +2216,14 @@ mod tests {
     }
 
     #[test]
-    fn oversized_block_round_trips_through_side_table() {
+    fn oversized_block_round_trips() {
         let _g = count_guard();
         let base = rc_live_count();
         unsafe {
-            // Payload large enough to exceed the u16 size-unit range, forcing
-            // the oversized side-table path.
-            let big = (u16::MAX as u64) * CLASS_STEP as u64 + 4096;
+            // A multi-MiB payload: no size is recorded anywhere any more
+            // (mi_free recovers the block from the pointer), so this pins
+            // that large blocks still alloc, retain state, and free.
+            let big = (u16::MAX as u64) * 16 + 4096;
             let p = gos_rt_rc_alloc(big, std::ptr::null());
             assert!(!p.is_null());
             assert_eq!(strong_of(p), 1);
@@ -1652,8 +2292,8 @@ mod tests {
             0,
             /* Node */ 1,
             2,
+            0,
             1,
-            2,
         ]
     }
 
@@ -1665,9 +2305,9 @@ mod tests {
         unsafe {
             let l0 = alloc_with_disc(1, 0, meta.as_ptr());
             let l1 = alloc_with_disc(1, 0, meta.as_ptr());
-            let node = alloc_with_disc(3, 1, meta.as_ptr());
-            set_child(node, 1, l0);
-            set_child(node, 2, l1);
+            let node = alloc_with_disc(2, 1, meta.as_ptr());
+            set_child(node, 0, l0);
+            set_child(node, 1, l1);
             assert_eq!(rc_live_count(), base + 3);
             gos_rt_rc_release(node);
         }
@@ -1682,9 +2322,9 @@ mod tests {
         unsafe {
             let shared = alloc_with_disc(1, 0, meta.as_ptr());
             let l1 = alloc_with_disc(1, 0, meta.as_ptr());
-            let node = alloc_with_disc(3, 1, meta.as_ptr());
-            set_child(node, 1, shared);
-            set_child(node, 2, l1);
+            let node = alloc_with_disc(2, 1, meta.as_ptr());
+            set_child(node, 0, shared);
+            set_child(node, 1, l1);
             // A second owner of `shared`.
             gos_rt_rc_retain(shared);
             assert_eq!(strong_of(shared), 2);

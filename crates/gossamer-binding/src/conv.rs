@@ -34,6 +34,7 @@ fn type_err<T>(expected: &str, found: &Value) -> RuntimeResult<T> {
 
 fn describe(v: &Value) -> &'static str {
     match v {
+        Value::NativeEnum(o) => o.shape.enum_name,
         Value::Unit => "()",
         Value::Bool(_) => "bool",
         Value::Int(_) => "i64",
@@ -229,8 +230,8 @@ impl<T: FromGos> FromGos for Option<T> {
 impl<T: ToGos> ToGos for Option<T> {
     fn to_gos(self) -> Value {
         match self {
-            None => Value::variant("None", Arc::new(Vec::new())),
-            Some(t) => Value::variant("Some", Arc::new(vec![t.to_gos()])),
+            None => Value::variant("None", Vec::new()),
+            Some(t) => Value::variant("Some", vec![t.to_gos()]),
         }
     }
 }
@@ -258,8 +259,8 @@ impl<T: FromGos, E: FromGos> FromGos for Result<T, E> {
 impl<T: ToGos, E: ToGos> ToGos for Result<T, E> {
     fn to_gos(self) -> Value {
         match self {
-            Ok(t) => Value::variant("Ok", Arc::new(vec![t.to_gos()])),
-            Err(e) => Value::variant("Err", Arc::new(vec![e.to_gos()])),
+            Ok(t) => Value::variant("Ok", vec![t.to_gos()]),
+            Err(e) => Value::variant("Err", vec![e.to_gos()]),
         }
     }
 }
@@ -700,6 +701,7 @@ impl ToGos for DynValue {
 
 fn value_to_dyn(value: &Value) -> DynValue {
     match value {
+        Value::NativeEnum(o) => value_to_dyn(&gossamer_interp::native_enum_to_variant(o)),
         Value::Unit | Value::Void | Value::Weak(_) => DynValue::Nil,
         Value::Bool(b) => DynValue::Bool(*b),
         Value::Int(i) => DynValue::Int(*i),
@@ -786,7 +788,7 @@ fn dyn_to_value(d: DynValue) -> Value {
             let fields: Vec<Value> = payload.into_iter().map(dyn_to_value).collect();
             // We need a `&'static str` for the variant name slot;
             // intern it through a process-global string pool.
-            Value::variant(intern_arm_name(&name), Arc::new(fields))
+            Value::variant(intern_arm_name(&name), fields)
         }
     }
 }

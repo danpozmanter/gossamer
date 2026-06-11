@@ -1104,6 +1104,11 @@ pub struct FnChunk {
     pub i64_consts: Vec<i64>,
     /// Global names referenced by `LoadGlobal`.
     pub globals: Vec<String>,
+    /// INTERNED variant/struct names referenced by `VariantIs` /
+    /// `StructIs` (`name_idx` indexes here, not `consts`). Both sides
+    /// of the shape test come from `intern_type_name`, so the run
+    /// loop compares one pointer instead of string content.
+    pub shape_names: Vec<&'static str>,
     /// HIR expressions kept alongside the bytecode for
     /// `Op::EvalDeferred` — expression kinds the VM compiler
     /// doesn't yet native-lower. Indexed by `EvalDeferred::expr_idx`.

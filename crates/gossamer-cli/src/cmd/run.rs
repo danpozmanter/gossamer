@@ -67,6 +67,17 @@ fn run(file: &PathBuf, _mode: RunMode, forwarded: &[String]) -> Result<()> {
                 }
                 rendered
             };
+            if gossamer_interp::is_panic_error(&err) {
+                // A user hook replaces the default report; either way a
+                // main-goroutine panic exits with the pinned code 101
+                // (Rust parity — scripts depend on it).
+                let hooked = vm.invoke_panic_hook(&gossamer_interp::panic_message(&err));
+                if !hooked {
+                    eprintln!("error: runtime error: {err}{trace}");
+                }
+                gossamer_interp::flush_runtime_stdout();
+                std::process::exit(101);
+            }
             Err(anyhow!("runtime error: {err}{trace}"))
         }
     }

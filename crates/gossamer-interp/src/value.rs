@@ -81,6 +81,11 @@ pub enum Value {
     Variant(Arc<VariantInner>),
     /// Struct-shaped aggregate.
     Struct(Arc<StructInner>),
+    /// Native (compiled-representation) enum value handed across the
+    /// JIT boundary as a raw pointer. Structural access goes through
+    /// the carried shape; drop of the last clone releases the
+    /// reference through the runtime.
+    NativeEnum(Arc<NativeEnumOwner>),
     /// User-defined callable.
     Closure(Arc<Closure>),
     /// Built-in intrinsic callable.
@@ -265,8 +270,10 @@ pub struct FloatArrayInner {
 pub struct VariantInner {
     /// Variant name (interned, see `intern_type_name`).
     pub name: &'static str,
-    /// Positional fields.
-    pub fields: Arc<Vec<Value>>,
+    /// Positional fields, stored inline: a variant value is ONE heap
+    /// allocation plus its field buffer (was three — outer Arc, inner
+    /// `Arc<Vec>`, buffer). Sharing still goes through the outer Arc.
+    pub fields: Vec<Value>,
 }
 
 /// Boxed payload of [`Value::Struct`].
@@ -274,8 +281,9 @@ pub struct VariantInner {
 pub struct StructInner {
     /// Struct name (interned, see `intern_type_name`).
     pub name: &'static str,
-    /// Field name/value pairs in declaration order.
-    pub fields: Arc<Vec<(Ident, Value)>>,
+    /// Field name/value pairs in declaration order, stored inline
+    /// (one allocation plus the buffer; sharing via the outer Arc).
+    pub fields: Vec<(Ident, Value)>,
 }
 
 /// Boxed payload of [`Value::Builtin`]. Builtins are constructed
@@ -637,9 +645,12 @@ impl Value {
 
     /// Constructs a [`Value::Variant`] from owned name + shared
     /// field list. Hides the `Arc::new(VariantInner { … })`
-    /// boilerplate at every constructor site.
+    /// boilerplate at every constructor site. (Unit variants are NOT
+    /// interned through a global table here: chunk constant pools
+    /// already share them per chunk, and a global map's lock is
+    /// measurable contention across per-connection VM threads.)
     #[must_use]
-    pub fn variant(name: impl AsRef<str>, fields: Arc<Vec<Value>>) -> Self {
+    pub fn variant(name: impl AsRef<str>, fields: Vec<Value>) -> Self {
         Self::Variant(Arc::new(VariantInner {
             name: intern_type_name(name.as_ref()),
             fields,
@@ -647,7 +658,7 @@ impl Value {
     }
     /// Constructs a [`Value::Struct`].
     #[must_use]
-    pub fn struct_(name: impl AsRef<str>, fields: Arc<Vec<(Ident, Value)>>) -> Self {
+    pub fn struct_(name: impl AsRef<str>, fields: Vec<(Ident, Value)>) -> Self {
         Self::Struct(Arc::new(StructInner {
             name: intern_type_name(name.as_ref()),
             fields,
@@ -888,7 +899,10 @@ impl Value {
                     Value::Float(inner.data[base + j]),
                 ));
             }
-            out.push(Value::struct_(inner.name, Arc::new(fields)));
+            out.push(Value::struct_(
+                inner.name,
+                Arc::unwrap_or_clone(Arc::new(fields)),
+            ));
         }
         Value::Array(Arc::new(out))
     }
@@ -912,6 +926,7 @@ impl Value {
     #[must_use]
     pub fn to_raw(&self) -> GossamerValue {
         match self {
+            Self::NativeEnum(o) => native_enum_to_variant(o).to_raw(),
             Self::Unit => from_singleton(SINGLETON_UNIT),
             Self::Bool(false) => from_singleton(SINGLETON_FALSE),
             Self::Bool(true) => from_singleton(SINGLETON_TRUE),
@@ -969,17 +984,11 @@ impl Value {
                 from_heap_handle(id)
             }
             Self::Variant(inner) => {
-                let id = register_heap(RegistryEntry::Variant {
-                    name: inner.name,
-                    fields: Arc::clone(&inner.fields),
-                });
+                let id = register_heap(RegistryEntry::Variant(Arc::clone(inner)));
                 from_heap_handle(id)
             }
             Self::Struct(inner) => {
-                let id = register_heap(RegistryEntry::Struct {
-                    name: inner.name,
-                    fields: Arc::clone(&inner.fields),
-                });
+                let id = register_heap(RegistryEntry::Struct(Arc::clone(inner)));
                 from_heap_handle(id)
             }
             Self::Closure(c) => {
@@ -1043,8 +1052,8 @@ impl Value {
                     Some(RegistryEntry::String(s)) => Self::String(SmolStr::from_arc(s)),
                     Some(RegistryEntry::Tuple(t)) => Self::Tuple(t),
                     Some(RegistryEntry::Array(a)) => Self::Array(a),
-                    Some(RegistryEntry::Variant { name, fields }) => Self::variant(name, fields),
-                    Some(RegistryEntry::Struct { name, fields }) => Self::struct_(name, fields),
+                    Some(RegistryEntry::Variant(inner)) => Self::Variant(inner),
+                    Some(RegistryEntry::Struct(inner)) => Self::Struct(inner),
                     Some(RegistryEntry::Closure(c)) => Self::Closure(c),
                     Some(RegistryEntry::Channel(ch)) => Self::Channel(ch),
                     None => Self::Void,
@@ -1061,6 +1070,7 @@ impl fmt::Display for Value {
         // helpers so the interpreter and the native backend produce
         // byte-identical text. the parity plan.
         match self {
+            Self::NativeEnum(o) => fmt::Display::fmt(&native_enum_to_variant(o), out),
             Self::Unit => out.write_str(gossamer_runtime::builtins::format_unit()),
             Self::Bool(b) => out.write_str(gossamer_runtime::builtins::format_bool(*b)),
             Self::Int(i) => out.write_str(&gossamer_runtime::builtins::format_int(*i)),
@@ -1298,19 +1308,9 @@ enum RegistryEntry {
     /// Array / Vec aggregate.
     Array(Arc<Vec<Value>>),
     /// Enum variant or tuple-struct constructor payload.
-    Variant {
-        /// Variant name (interned).
-        name: &'static str,
-        /// Positional fields.
-        fields: Arc<Vec<Value>>,
-    },
+    Variant(Arc<VariantInner>),
     /// Struct-shaped aggregate.
-    Struct {
-        /// Struct name (interned).
-        name: &'static str,
-        /// Field name/value pairs in declaration order.
-        fields: Arc<Vec<(Ident, Value)>>,
-    },
+    Struct(Arc<StructInner>),
     /// User-defined callable.
     Closure(Arc<Closure>),
     /// Concurrent channel endpoint.
@@ -1401,4 +1401,184 @@ mod size_assertions {
         let n = std::mem::size_of::<Value>();
         eprintln!("Value size: {n} bytes");
     }
+}
+
+// ---------------------------------------------------------------
+// Native enum handles (JIT interop).
+// ---------------------------------------------------------------
+
+/// Field classification for one positional payload slot of a native
+/// enum variant, used to convert raw payload words into [`Value`]s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeFieldKind {
+    /// 64-bit integer (all integer widths occupy one slot).
+    I64,
+    /// 64-bit float (stored as raw bits in the slot).
+    F64,
+    /// Boolean (non-zero slot = true).
+    Bool,
+    /// Heap string (slot is a tagged c-string body pointer).
+    Str,
+    /// Another supported heap enum; index into the program's shape
+    /// table.
+    Enum(u32),
+}
+
+/// One variant of a native enum shape.
+#[derive(Debug)]
+pub struct NativeVariantShape {
+    /// Variant name (interned, pointer-comparable with `VariantIs`).
+    pub name: &'static str,
+    /// Positional field kinds.
+    pub fields: Vec<NativeFieldKind>,
+}
+
+/// Layout description of a heap enum whose values may cross the JIT
+/// boundary as raw native pointers. Built once per program load from
+/// the HIR and leaked (`&'static`) so handles can carry it without a
+/// table lookup.
+#[derive(Debug)]
+pub struct NativeEnumShape {
+    /// Enum name (diagnostics).
+    pub enum_name: &'static str,
+    /// Index of this shape in the program's shape table.
+    pub index: u32,
+    /// True when the discriminant lives in pointer bits 1-2 (at most
+    /// 4 variants); false = header byte at `payload - 3`.
+    pub tagged: bool,
+    /// Variants in declaration order.
+    pub variants: Vec<NativeVariantShape>,
+}
+
+/// Owning handle for a native (compiled-representation) enum value
+/// produced by a JIT-compiled body. Holds one strong reference;
+/// dropping the last clone releases it through the runtime.
+#[derive(Debug)]
+pub struct NativeEnumOwner {
+    /// Tagged native pointer (compiled-tier representation).
+    pub ptr: usize,
+    /// Layout for VM-side structural access.
+    pub shape: &'static NativeEnumShape,
+}
+
+impl Drop for NativeEnumOwner {
+    fn drop(&mut self) {
+        // SAFETY: `ptr` is an owned reference to a runtime-managed
+        // enum value (or a tagged-null unit variant, which the release
+        // entry treats as null).
+        unsafe {
+            gossamer_runtime::c_abi::gos_rt_rc_release(self.ptr as *mut u8);
+        }
+    }
+}
+
+/// Process-global table of registered native enum shapes. Append-only
+/// across program loads (REPL re-loads append; indices from older
+/// loads stay valid because shapes are leaked).
+static NATIVE_SHAPES: std::sync::LazyLock<parking_lot::RwLock<Vec<&'static NativeEnumShape>>> =
+    std::sync::LazyLock::new(|| parking_lot::RwLock::new(Vec::new()));
+
+/// Registers a shape and returns its global index.
+pub fn register_native_shape(shape: &'static NativeEnumShape) -> u32 {
+    let mut t = NATIVE_SHAPES.write();
+    t.push(shape);
+    u32::try_from(t.len() - 1).unwrap_or(0)
+}
+
+/// Reserves the next `n` shape indices (for two-phase recursive
+/// construction) and returns the base index.
+#[must_use]
+pub fn native_shape_next_index() -> u32 {
+    u32::try_from(NATIVE_SHAPES.read().len()).unwrap_or(0)
+}
+
+/// Looks up a registered shape by global index.
+#[must_use]
+pub fn native_shape(idx: u32) -> Option<&'static NativeEnumShape> {
+    NATIVE_SHAPES.read().get(idx as usize).copied()
+}
+
+/// The discriminant of a native enum pointer under `shape`.
+#[must_use]
+pub fn native_enum_disc(ptr: usize, shape: &NativeEnumShape) -> usize {
+    if shape.tagged {
+        (ptr >> 1) & 3
+    } else {
+        // SAFETY: header-repr values carry the disc byte at payload-3
+        // by the compiled-tier layout contract.
+        unsafe { *((ptr - 3) as *const u8) as usize }
+    }
+}
+
+/// Reads positional field `idx` of a native enum value and converts
+/// it to a [`Value`] per the variant's field kind. Returns
+/// `Value::Unit` for out-of-range access (mirrors `VariantField`).
+#[must_use]
+pub fn native_enum_field(owner: &NativeEnumOwner, idx: usize) -> Value {
+    let disc = native_enum_disc(owner.ptr, owner.shape);
+    let Some(variant) = owner.shape.variants.get(disc) else {
+        return Value::Unit;
+    };
+    let Some(kind) = variant.fields.get(idx) else {
+        return Value::Unit;
+    };
+    let base = owner.ptr & !7;
+    if base == 0 {
+        return Value::Unit;
+    }
+    // SAFETY: payload slot reads inside an allocation sized for the
+    // variant's field count (compiled-tier layout contract).
+    let word = unsafe { *((base + idx * 8) as *const i64) };
+    match kind {
+        NativeFieldKind::I64 => Value::Int(word),
+        NativeFieldKind::F64 => Value::Float(f64::from_bits(word as u64)),
+        NativeFieldKind::Bool => Value::Bool(word != 0),
+        NativeFieldKind::Str => {
+            if word == 0 {
+                Value::String(SmolStr::default())
+            } else {
+                // SAFETY: string payload slots hold NUL-terminated
+                // tagged c-string bodies.
+                let c = unsafe { std::ffi::CStr::from_ptr(word as *const std::os::raw::c_char) };
+                Value::String(SmolStr::from(c.to_string_lossy().as_ref()))
+            }
+        }
+        NativeFieldKind::Enum(sidx) => {
+            let Some(shape) = native_shape(*sidx) else {
+                return Value::Unit;
+            };
+            // The VM takes its own reference to the child.
+            // SAFETY: retain of a live runtime-managed value (or a
+            // tagged-null, which the entry treats as null).
+            unsafe {
+                gossamer_runtime::c_abi::gos_rt_rc_retain(word as usize as *mut u8);
+            }
+            Value::NativeEnum(Arc::new(NativeEnumOwner {
+                ptr: word as usize,
+                shape,
+            }))
+        }
+    }
+}
+
+/// Deep-converts a native enum value into the boxed
+/// [`Value::Variant`] representation — the safety valve for paths
+/// that need structural `Value`s (FFI bridging, fallback equality).
+#[must_use]
+pub fn native_enum_to_variant(owner: &NativeEnumOwner) -> Value {
+    let disc = native_enum_disc(owner.ptr, owner.shape);
+    let Some(variant) = owner.shape.variants.get(disc) else {
+        return Value::Unit;
+    };
+    let fields: Vec<Value> = (0..variant.fields.len())
+        .map(|i| {
+            let v = native_enum_field(owner, i);
+            if let Value::NativeEnum(child) = &v {
+                native_enum_to_variant(child)
+            } else {
+                v
+            }
+        })
+        .collect();
+    Value::variant(variant.name, fields)
 }

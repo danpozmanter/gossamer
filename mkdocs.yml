@@ -42,6 +42,7 @@ nav:
   - Writing libraries: libraries.md
   - Standard library:
       - Overview: stdlib.md
+      - Prelude (no imports): prelude.md
       - Method support: method_support.md
       - Coverage matrix: stdlib_coverage.md
   - Toolchain:

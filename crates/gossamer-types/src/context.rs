@@ -29,6 +29,12 @@ pub struct TyCtxt {
     /// flat `[i64]` child-layout format the runtime's `gos_rt_rc_release`
     /// walks (see `gossamer-runtime` `c_abi::rc`).
     rc_metas: HashMap<String, Vec<i64>>,
+    /// Guarded copy-blob meta symbol per aggregate type, for struct /
+    /// tuple values whose escaped heap copies are reference counted
+    /// (`RC_KIND_STRUCT_GUARDED`). Populated by MIR lowering; consulted
+    /// by the LLVM backend at the heap-copy site and by the drop pass
+    /// when emitting guarded retain/release walks for stack aggregates.
+    aggr_copy_metas: HashMap<Ty, String>,
     /// Interned self-types of every heap-allocated (RC-managed) user
     /// enum. Populated by MIR lowering from the enum index; consulted by
     /// the drop pass to recognise locals holding RC pointers that need a
@@ -240,6 +246,20 @@ impl TyCtxt {
     /// a pure function of the type, so duplicates are identical).
     pub fn register_rc_meta(&mut self, symbol: impl Into<String>, blob: Vec<i64>) {
         self.rc_metas.entry(symbol.into()).or_insert(blob);
+    }
+
+    /// Records the guarded copy-blob meta symbol for an aggregate type
+    /// (idempotent). The blob itself goes through [`Self::register_rc_meta`].
+    pub fn register_aggr_copy_meta(&mut self, ty: Ty, symbol: impl Into<String>) {
+        self.aggr_copy_metas
+            .entry(ty)
+            .or_insert_with(|| symbol.into());
+    }
+
+    /// The guarded copy-blob meta symbol for `ty`, when registered.
+    #[must_use]
+    pub fn aggr_copy_meta(&self, ty: Ty) -> Option<&str> {
+        self.aggr_copy_metas.get(&ty).map(String::as_str)
     }
 
     /// Returns the RC type-meta blob registered under `symbol`, if any.

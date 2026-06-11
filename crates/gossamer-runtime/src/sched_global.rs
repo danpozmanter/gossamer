@@ -147,11 +147,37 @@ fn poller_loop() {
 /// from `gos_rt_exit` so in-flight I/O drains cleanly instead of
 /// being interrupted mid-syscall by `std::process::exit`. Idempotent.
 pub fn request_shutdown() {
-    let g = globals();
+    // The observable flag is a bare process global: setting it must
+    // not depend on (or boot) the runtime — `gos_rt_exit` runs on the
+    // exit path of every program and booting a worker pool there just
+    // to flag it down cost ~150 ms per short-lived process.
+    SHUTDOWN_REQUESTED.store(true, Ordering::Release);
+    // Only an already-booted runtime has a poller to wake.
+    let Some(g) = GLOBALS.get() else { return };
     g.poller_shutdown.store(true, Ordering::Release);
     // Wake the poller so it doesn't sit on a 1ms tick before
     // observing the flag.
     let _ = g.poller_interrupt.wake();
+}
+
+/// Process-wide shutdown flag, independent of runtime boot state so
+/// `request_shutdown` / `is_shutdown_requested` keep their contract
+/// for programs that never started the scheduler.
+static SHUTDOWN_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Blocks until every goroutine spawned via `go` has finished, bounded
+/// at five seconds so a permanently blocked goroutine cannot wedge
+/// process exit. No-op — and crucially, does not boot the runtime —
+/// when nothing ever started the scheduler: a program with no
+/// concurrency has nothing to drain, and booting a worker pool on the
+/// exit path just to observe it idle cost ~150 ms per process.
+pub fn drain_goroutines_for_exit() {
+    if let Some(g) = GLOBALS.get() {
+        let _ = g
+            .scheduler
+            .wait_quiescent(std::time::Duration::from_secs(5));
+    }
 }
 
 /// True if [`request_shutdown`] has been called. Long-running
@@ -160,7 +186,7 @@ pub fn request_shutdown() {
 /// mid-iteration.
 #[must_use]
 pub fn is_shutdown_requested() -> bool {
-    globals().poller_shutdown.load(Ordering::Acquire)
+    SHUTDOWN_REQUESTED.load(Ordering::Acquire)
 }
 
 /// Wakes the netpoller thread early so it re-enters `poll()` with

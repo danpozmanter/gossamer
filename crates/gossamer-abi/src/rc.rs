@@ -39,3 +39,13 @@ pub const RC_KIND_VEC: i64 = 3;
 pub const RC_KIND_MAP: i64 = 4;
 /// `meta[0]` kind: closure environment (wired in a later phase).
 pub const RC_KIND_CLOSURE: i64 = 5;
+
+/// Guarded struct layout for escaped value-aggregate heap copies. Entries
+/// are `(disc_word, payload_word)` pairs instead of bare offsets: the
+/// child at `payload_word` is live only when the word at `disc_word`
+/// reads 0 (the `Some`/`Ok` discriminant) — or unconditionally when
+/// `disc_word` is negative. Every child pointer is additionally checked
+/// against the copy-blob provenance set before retain/release, so a
+/// payload that came from a non-RC producer (map get, borrow, the
+/// Cranelift tier's construction-allocated aggregates) is left alone.
+pub const RC_KIND_STRUCT_GUARDED: i64 = 6;

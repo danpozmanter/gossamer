@@ -1151,15 +1151,18 @@ impl<'a> Builder<'a> {
             // these arms route the language-level calls to them.
             "time::sleep" => ("gos_rt_sleep_ms", self.tcx.unit()),
             "runtime::collect_cycles" => ("gos_rt_collect_cycles", self.tcx.unit()),
-            "runtime::region_push" => {
+            // Bare `fn(String)` only: the hook is a raw code pointer the
+            // runtime calls with the rendered message.
+            "runtime::set_panic_hook" => ("gos_rt_set_panic_hook", self.tcx.unit()),
+            "runtime::arena_push" => {
                 // Locals created after this point (until the matching pop)
                 // are region-owned; the drop pass skips their release.
                 self.region_depth += 1;
-                ("gos_rt_region_push", self.tcx.unit())
+                ("gos_rt_arena_push", self.tcx.unit())
             }
-            "runtime::region_pop" => {
+            "runtime::arena_pop" => {
                 self.region_depth = self.region_depth.saturating_sub(1);
-                ("gos_rt_region_pop", self.tcx.unit())
+                ("gos_rt_arena_pop", self.tcx.unit())
             }
             "time::now" | "time::unix_ms" => (
                 "gos_rt_time_now_ms",

@@ -1221,6 +1221,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_json_display as *const u8,
         ),
         (
+            "gos_rt_json_free",
+            crate::c_abi::gos_rt_json_free as *const u8,
+        ),
+        (
             "gos_rt_json_get",
             crate::c_abi::gos_rt_json_get as *const u8,
         ),
@@ -2095,6 +2099,46 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_rc_alloc as *const u8,
         ),
         (
+            "gos_rt_rc_alloc_copy",
+            crate::c_abi::rc::gos_rt_rc_alloc_copy as *const u8,
+        ),
+        (
+            "gos_rt_aggr_release_children",
+            crate::c_abi::rc::gos_rt_aggr_release_children as *const u8,
+        ),
+        (
+            "gos_rt_aggr_retain_children",
+            crate::c_abi::rc::gos_rt_aggr_retain_children as *const u8,
+        ),
+        (
+            "gos_rt_option_slot_retain",
+            crate::c_abi::rc::gos_rt_option_slot_retain as *const u8,
+        ),
+        (
+            "gos_rt_option_slot_release",
+            crate::c_abi::rc::gos_rt_option_slot_release as *const u8,
+        ),
+        (
+            "gos_rt_vec_set_elem_meta",
+            crate::c_abi::vec::gos_rt_vec_set_elem_meta as *const u8,
+        ),
+        (
+            "gos_rt_map_set_blob_values",
+            crate::c_abi::map::gos_rt_map_set_blob_values as *const u8,
+        ),
+        (
+            "gos_rt_set_panic_hook",
+            crate::c_abi::panic::gos_rt_set_panic_hook as *const u8,
+        ),
+        (
+            "gos_rt_rc_alloc_tagged",
+            crate::c_abi::rc::gos_rt_rc_alloc_tagged as *const u8,
+        ),
+        (
+            "gos_rt_aggr_zero_guarded",
+            crate::c_abi::rc::gos_rt_aggr_zero_guarded as *const u8,
+        ),
+        (
             "gos_rt_rc_downgrade",
             crate::c_abi::gos_rt_rc_downgrade as *const u8,
         ),
@@ -2163,12 +2207,12 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_regex_split as *const u8,
         ),
         (
-            "gos_rt_region_pop",
-            crate::c_abi::gos_rt_region_pop as *const u8,
+            "gos_rt_arena_pop",
+            crate::c_abi::gos_rt_arena_pop as *const u8,
         ),
         (
-            "gos_rt_region_push",
-            crate::c_abi::gos_rt_region_push as *const u8,
+            "gos_rt_arena_push",
+            crate::c_abi::gos_rt_arena_push as *const u8,
         ),
         (
             "gos_rt_result_dbg",

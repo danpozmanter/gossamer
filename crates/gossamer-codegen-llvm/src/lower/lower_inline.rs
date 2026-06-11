@@ -302,6 +302,57 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// True when `op` is a Vec/Slice whose element provably occupies an
+    /// 8-byte stride in every construction path: word-width ints and
+    /// `f64` (`elem_bytes_of` maps them to 8, and every runtime
+    /// constructor that returns such a vec passes 8). Byte buffers
+    /// (`Vec<u8>` from `fs::read` / `crypto::rand_bytes` / HTTP
+    /// `raw_bytes`) are stride 1 and bools/chars may predate the
+    /// 8-byte clamp, so anything narrower keeps the header-driven
+    /// element-size load.
+    pub(crate) fn vec_operand_has_word_elem(&self, op: &Operand) -> bool {
+        let Operand::Copy(pl) = op else {
+            return false;
+        };
+        let mut ty = self.place_leaf_ty(pl);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(ty) {
+            ty = *inner;
+        }
+        let elem = match self.tcx.kind(ty) {
+            Some(TyKind::Vec(e) | TyKind::Slice(e)) => *e,
+            _ => return false,
+        };
+        matches!(
+            self.tcx.kind(elem),
+            Some(
+                TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize)
+                    | TyKind::Float(FloatTy::F64)
+                    | TyKind::Vec(_)
+                    | TyKind::Slice(_)
+            )
+        )
+    }
+
+    /// True when `op` is a Vec/Slice whose element is itself a
+    /// Vec/Slice — an 8-byte heap-pointer slot. Indexing one returns
+    /// the borrowed inner-vec pointer, a plain word load with no
+    /// retain or copy, so the inline get applies even though the
+    /// destination is `ptr`-typed.
+    pub(crate) fn vec_operand_elem_is_vec(&self, op: &Operand) -> bool {
+        let Operand::Copy(pl) = op else {
+            return false;
+        };
+        let mut ty = self.place_leaf_ty(pl);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(ty) {
+            ty = *inner;
+        }
+        let elem = match self.tcx.kind(ty) {
+            Some(TyKind::Vec(e) | TyKind::Slice(e)) => *e,
+            _ => return false,
+        };
+        matches!(self.tcx.kind(elem), Some(TyKind::Vec(_) | TyKind::Slice(_)))
+    }
+
     /// Inline fast path for `gos_rt_vec_get_i64(vec, idx) -> i64`. Replicates
     /// the runtime helper exactly (null vec / out-of-range idx → 0; else load
     /// the i64 at `ptr + idx*elem_bytes`). Inlining removes a per-element FFI
@@ -314,6 +365,7 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
+        let word_elem = self.vec_operand_has_word_elem(&args[0]);
         let vec_ptr = self.vec_operand_ptr(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
         // The inline bounds check and address math operate on i64; widen a
@@ -344,16 +396,28 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
         writeln!(self.out, "  br i1 {bad}, label %{dflt}, label %{load}").unwrap();
         writeln!(self.out, "{load}:").unwrap();
-        let eb_addr = self.fresh();
-        writeln!(
-            self.out,
-            "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
-        )
-        .unwrap();
-        let eb32 = self.fresh();
-        writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
-        let eb = self.fresh();
-        writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
+        // Word-stride elements skip the header `elem_bytes` load: the
+        // index scales by a constant 8 that folds into the address
+        // mode, instead of a dependent load + mul on every access.
+        let off = if word_elem {
+            let off = self.fresh();
+            writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
+            off
+        } else {
+            let eb_addr = self.fresh();
+            writeln!(
+                self.out,
+                "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
+            )
+            .unwrap();
+            let eb32 = self.fresh();
+            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+            let eb = self.fresh();
+            writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
+            let off = self.fresh();
+            writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
+            off
+        };
         let dptr_addr = self.fresh();
         writeln!(
             self.out,
@@ -362,8 +426,6 @@ impl<'a> Lowerer<'a> {
         .unwrap();
         let dptr = self.fresh();
         writeln!(self.out, "  {dptr} = load ptr, ptr {dptr_addr}").unwrap();
-        let off = self.fresh();
-        writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
         let ea = self.fresh();
         writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
         let loaded = self.fresh();
@@ -391,6 +453,7 @@ impl<'a> Lowerer<'a> {
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
+        let word_elem = self.vec_operand_has_word_elem(&args[0]);
         let vec_ptr = self.vec_operand_ptr(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
         // The inline bounds check and address math operate on i64; widen a
@@ -421,16 +484,28 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
         writeln!(self.out, "  br i1 {bad}, label %{cont}, label %{store_b}").unwrap();
         writeln!(self.out, "{store_b}:").unwrap();
-        let eb_addr = self.fresh();
-        writeln!(
-            self.out,
-            "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
-        )
-        .unwrap();
-        let eb32 = self.fresh();
-        writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
-        let eb = self.fresh();
-        writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
+        // Word-stride elements skip the header `elem_bytes` load: the
+        // index scales by a constant 8 that folds into the address
+        // mode, instead of a dependent load + mul on every access.
+        let off = if word_elem {
+            let off = self.fresh();
+            writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
+            off
+        } else {
+            let eb_addr = self.fresh();
+            writeln!(
+                self.out,
+                "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
+            )
+            .unwrap();
+            let eb32 = self.fresh();
+            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+            let eb = self.fresh();
+            writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
+            let off = self.fresh();
+            writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
+            off
+        };
         let dptr_addr = self.fresh();
         writeln!(
             self.out,
@@ -439,8 +514,6 @@ impl<'a> Lowerer<'a> {
         .unwrap();
         let dptr = self.fresh();
         writeln!(self.out, "  {dptr} = load ptr, ptr {dptr_addr}").unwrap();
-        let off = self.fresh();
-        writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
         let ea = self.fresh();
         writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
         writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
@@ -531,8 +604,27 @@ impl<'a> Lowerer<'a> {
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
         let v = self.lower_operand(arg)?;
+        // Null-guarded: the runtime returns 0 for a null vec (the
+        // empty representation), so the inline load must too.
+        let s_id = self.next_ssa;
+        self.next_ssa += 1;
+        let (ll, lz, lc) = (
+            format!("vl_l_{s_id}"),
+            format!("vl_z_{s_id}"),
+            format!("vl_c_{s_id}"),
+        );
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {v}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{lz}, label %{ll}").unwrap();
+        writeln!(self.out, "{ll}:").unwrap();
+        let n = self.fresh();
+        writeln!(self.out, "  {n} = load i64, ptr {v}").unwrap();
+        writeln!(self.out, "  br label %{lc}").unwrap();
+        writeln!(self.out, "{lz}:").unwrap();
+        writeln!(self.out, "  br label %{lc}").unwrap();
+        writeln!(self.out, "{lc}:").unwrap();
         let tmp = self.fresh();
-        writeln!(self.out, "  {tmp} = load i64, ptr {v}").unwrap();
+        writeln!(self.out, "  {tmp} = phi i64 [ {n}, %{ll} ], [ 0, %{lz} ]").unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let slot = local_slot(destination.local);
             writeln!(self.out, "  store i64 {tmp}, ptr {slot}").unwrap();
@@ -867,12 +959,78 @@ impl<'a> Lowerer<'a> {
             }
             _ => val_v,
         };
+        // Inline no-grow fast path: when the vec is non-null, has spare
+        // capacity, and uses the 8-byte element stride every compiled
+        // construction path produces, a push is one store plus a len
+        // increment. The runtime call remains the slow path for growth,
+        // null vecs, and narrow-stride vecs built by runtime helpers
+        // (byte buffers). The runtime push is itself a plain
+        // `memcpy + len += 1` — RC retains happen at the push site via
+        // the drop pass — so the two paths are semantically identical.
         declare_rt(&mut self.runtime_refs, "gos_rt_vec_push_i64");
+        let s_id = self.next_ssa;
+        self.next_ssa += 1;
+        let (chk, fast, slow, cont) = (
+            format!("vp_chk_{s_id}"),
+            format!("vp_fast_{s_id}"),
+            format!("vp_slow_{s_id}"),
+            format!("vp_cont_{s_id}"),
+        );
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{slow}, label %{chk}").unwrap();
+        writeln!(self.out, "{chk}:").unwrap();
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}").unwrap();
+        let cap_addr = self.fresh();
+        writeln!(
+            self.out,
+            "  {cap_addr} = getelementptr i8, ptr {vec_ptr}, i64 8"
+        )
+        .unwrap();
+        let cap = self.fresh();
+        writeln!(self.out, "  {cap} = load i64, ptr {cap_addr}").unwrap();
+        let full = self.fresh();
+        writeln!(self.out, "  {full} = icmp sge i64 {len}, {cap}").unwrap();
+        let eb_addr = self.fresh();
+        writeln!(
+            self.out,
+            "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
+        )
+        .unwrap();
+        let eb32 = self.fresh();
+        writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+        let not8 = self.fresh();
+        writeln!(self.out, "  {not8} = icmp ne i32 {eb32}, 8").unwrap();
+        let bail = self.fresh();
+        writeln!(self.out, "  {bail} = or i1 {full}, {not8}").unwrap();
+        writeln!(self.out, "  br i1 {bail}, label %{slow}, label %{fast}").unwrap();
+        writeln!(self.out, "{fast}:").unwrap();
+        let dptr_addr = self.fresh();
+        writeln!(
+            self.out,
+            "  {dptr_addr} = getelementptr i8, ptr {vec_ptr}, i64 24"
+        )
+        .unwrap();
+        let dptr = self.fresh();
+        writeln!(self.out, "  {dptr} = load ptr, ptr {dptr_addr}").unwrap();
+        let off = self.fresh();
+        writeln!(self.out, "  {off} = mul i64 {len}, 8").unwrap();
+        let ea = self.fresh();
+        writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
+        writeln!(self.out, "  store i64 {val_i64}, ptr {ea}").unwrap();
+        let len1 = self.fresh();
+        writeln!(self.out, "  {len1} = add i64 {len}, 1").unwrap();
+        writeln!(self.out, "  store i64 {len1}, ptr {vec_ptr}").unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{slow}:").unwrap();
         writeln!(
             self.out,
             "  call void @gos_rt_vec_push_i64(ptr {vec_ptr}, i64 {val_i64})"
         )
         .unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{cont}:").unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
             let dslot = local_slot(destination.local);

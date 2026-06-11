@@ -140,13 +140,13 @@ pub(crate) fn make_cell(set_id: u64, flag_name: &str, default: Value) -> Value {
     });
     Value::struct_(
         "__Cell",
-        Arc::new(vec![
+        vec![
             (Ident::new("__set_id"), Value::Int(set_id as i64)),
             (
                 Ident::new("__flag_name"),
                 Value::String(SmolStr::from(flag_name.to_string())),
             ),
-        ]),
+        ],
     )
 }
 
@@ -478,10 +478,7 @@ fn install_variant_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Ok", builtin("Ok", builtin_variant_one::<'O'>)));
     globals.push(("Err", builtin("Err", builtin_variant_one::<'E'>)));
     globals.push(("Some", builtin("Some", builtin_variant_one::<'S'>)));
-    globals.push((
-        "None",
-        Value::variant("None", crate::value::empty_value_arc()),
-    ));
+    globals.push(("None", Value::variant("None", Vec::new())));
 }
 
 // Pure registration list — splitting it would just split the
@@ -552,8 +549,9 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "runtime",
         &[
             ("collect_cycles", builtin_runtime_collect_cycles),
-            ("region_push", builtin_runtime_region_noop),
-            ("region_pop", builtin_runtime_region_noop),
+            ("arena_push", builtin_runtime_region_noop),
+            ("arena_pop", builtin_runtime_region_noop),
+            ("set_panic_hook", builtin_runtime_set_panic_hook),
         ],
         globals,
     );
@@ -849,18 +847,9 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
 }
 
 fn install_flag_builtins(globals: &mut Vec<(&'static str, Value)>) {
-    globals.push((
-        "flag::Value::Int",
-        Value::variant("Int", crate::value::empty_value_arc()),
-    ));
-    globals.push((
-        "flag::Value::Str",
-        Value::variant("Str", crate::value::empty_value_arc()),
-    ));
-    globals.push((
-        "flag::Value::Bool",
-        Value::variant("Bool", crate::value::empty_value_arc()),
-    ));
+    globals.push(("flag::Value::Int", Value::variant("Int", Vec::new())));
+    globals.push(("flag::Value::Str", Value::variant("Str", Vec::new())));
+    globals.push(("flag::Value::Bool", Value::variant("Bool", Vec::new())));
     globals.push(("flag::parse", builtin("flag::parse", builtin_flag_parse)));
     globals.push((
         "FlagMap::get",
@@ -953,7 +942,7 @@ fn install_flag_builtins(globals: &mut Vec<(&'static str, Value)>) {
 fn flag_spec(kind: &str, long: &str, default: Value, help: &str, short: Option<char>) -> Value {
     Value::struct_(
         "FlagSpec",
-        Arc::new(vec![
+        vec![
             (
                 Ident::new("kind"),
                 Value::String(SmolStr::from(kind.to_string())),
@@ -974,7 +963,7 @@ fn flag_spec(kind: &str, long: &str, default: Value, help: &str, short: Option<c
                     None => Value::Unit,
                 },
             ),
-        ]),
+        ],
     )
 }
 
@@ -1127,13 +1116,16 @@ fn builtin_flag_define(args: &[Value]) -> RuntimeResult<Value> {
     ));
     let set_value = Value::struct_(
         "Set",
-        Arc::new(vec![(
+        vec![(
             Ident::new("__id"),
             Value::Int(i64::try_from(set_id).unwrap_or(0)),
-        )]),
+        )],
     );
     let _ = crate::flag_set_builtins::builtin_flag_set_parse(&[set_value, args_array]);
-    Ok(Value::struct_("Flags", Arc::new(fields)))
+    Ok(Value::struct_(
+        "Flags",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
 }
 
 #[allow(
@@ -1345,7 +1337,7 @@ fn native_variant_map_err(
         && !inner.fields.is_empty()
     {
         let mapped = dispatch.call_value(&transform, vec![inner.fields[0].clone()])?;
-        return Ok(Value::variant("Err", Arc::new(vec![mapped])));
+        return Ok(Value::variant("Err", vec![mapped]));
     }
     Ok(receiver)
 }
@@ -1355,14 +1347,14 @@ fn errors_struct(message: String, cause: Value) -> Value {
         (Ident::new("message"), Value::String(SmolStr::from(message))),
         (Ident::new("cause"), cause),
     ];
-    Value::struct_("errors::Error", Arc::new(fields))
+    Value::struct_("errors::Error", Arc::unwrap_or_clone(Arc::new(fields)))
 }
 
 fn errors_message_of(v: &Value) -> Option<String> {
     if let Value::Struct(inner) = v
         && inner.name == "errors::Error"
     {
-        for (name, value) in inner.fields.iter() {
+        for (name, value) in &inner.fields {
             if name.name == "message"
                 && let Value::String(s) = value
             {
@@ -1377,7 +1369,7 @@ fn errors_cause_of(v: &Value) -> Option<Value> {
     if let Value::Struct(inner) = v
         && inner.name == "errors::Error"
     {
-        for (name, value) in inner.fields.iter() {
+        for (name, value) in &inner.fields {
             if name.name == "cause" {
                 return Some(value.clone());
             }
@@ -1392,7 +1384,7 @@ fn builtin_errors_new(args: &[Value]) -> RuntimeResult<Value> {
         Some(other) => format!("{other:?}"),
         None => String::new(),
     };
-    Ok(errors_struct(msg, Value::variant("None", Arc::new(vec![]))))
+    Ok(errors_struct(msg, Value::variant("None", vec![])))
 }
 
 /// Canonical `Into<errors::Error>` conversion. Routes through
@@ -1405,20 +1397,17 @@ fn builtin_errors_new(args: &[Value]) -> RuntimeResult<Value> {
 /// anything else.
 fn builtin_errors_from(args: &[Value]) -> RuntimeResult<Value> {
     let Some(value) = args.first() else {
-        return Ok(errors_struct(
-            String::new(),
-            Value::variant("None", Arc::new(vec![])),
-        ));
+        return Ok(errors_struct(String::new(), Value::variant("None", vec![])));
     };
     match value {
         Value::Struct(inner) if inner.name == "errors::Error" => Ok(value.clone()),
         Value::String(s) => Ok(errors_struct(
             s.as_str().to_string(),
-            Value::variant("None", Arc::new(vec![])),
+            Value::variant("None", vec![]),
         )),
         other => Ok(errors_struct(
             format!("{other:?}"),
-            Value::variant("None", Arc::new(vec![])),
+            Value::variant("None", vec![]),
         )),
     }
 }
@@ -1430,11 +1419,11 @@ fn builtin_errors_join(args: &[Value]) -> RuntimeResult<Value> {
     };
     let messages: Vec<String> = errs.iter().filter_map(errors_message_of).collect();
     if messages.is_empty() {
-        return Ok(Value::variant("None", Arc::new(vec![])));
+        return Ok(Value::variant("None", vec![]));
     }
     let combined = messages.join("; ");
-    let err = errors_struct(combined, Value::variant("None", Arc::new(vec![])));
-    Ok(Value::variant("Some", Arc::new(vec![err])))
+    let err = errors_struct(combined, Value::variant("None", vec![]));
+    Ok(Value::variant("Some", vec![err]))
 }
 
 fn builtin_errors_wrap(args: &[Value]) -> RuntimeResult<Value> {
@@ -1444,7 +1433,7 @@ fn builtin_errors_wrap(args: &[Value]) -> RuntimeResult<Value> {
         Some(other) => format!("{other:?}"),
         None => String::new(),
     };
-    let cause_some = Value::variant("Some", Arc::new(vec![cause]));
+    let cause_some = Value::variant("Some", vec![cause]);
     Ok(errors_struct(msg, cause_some))
 }
 
@@ -1457,7 +1446,7 @@ fn builtin_errors_message(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_errors_cause(args: &[Value]) -> RuntimeResult<Value> {
     let receiver = args.first().cloned().unwrap_or(Value::Unit);
-    Ok(errors_cause_of(&receiver).unwrap_or_else(|| Value::variant("None", Arc::new(vec![]))))
+    Ok(errors_cause_of(&receiver).unwrap_or_else(|| Value::variant("None", vec![])))
 }
 
 fn errors_chain_contains(err: &Value, needle: &str) -> bool {
@@ -1502,22 +1491,22 @@ fn builtin_str_parse_result(args: &[Value]) -> RuntimeResult<Value> {
         _ => {
             return Ok(Value::variant(
                 "Err",
-                Arc::new(vec![errors_struct(
+                vec![errors_struct(
                     "parse: not a string".to_string(),
-                    Value::variant("None", Arc::new(vec![])),
-                )]),
+                    Value::variant("None", vec![]),
+                )],
             ));
         }
     };
     if let Ok(n) = s.trim().parse::<i64>() {
-        return Ok(Value::variant("Ok", Arc::new(vec![Value::Int(n)])));
+        return Ok(Value::variant("Ok", vec![Value::Int(n)]));
     }
     let msg = format!(
         "unexpected byte 0x{:x} at 1:1",
         s.as_bytes().first().copied().unwrap_or(0)
     );
-    let err = errors_struct(msg, Value::variant("None", Arc::new(vec![])));
-    Ok(Value::variant("Err", Arc::new(vec![err])))
+    let err = errors_struct(msg, Value::variant("None", vec![]));
+    Ok(Value::variant("Err", vec![err]))
 }
 
 // Pure registration list — splitting it would obscure the
@@ -1824,7 +1813,7 @@ fn builtin_variant_one<const TAG: char>(args: &[Value]) -> RuntimeResult<Value> 
         _ => "Variant",
     };
     let payload = args.first().cloned().unwrap_or(Value::Unit);
-    Ok(Value::variant(name, Arc::new(vec![payload])))
+    Ok(Value::variant(name, vec![payload]))
 }
 
 fn builtin_field<const TAG: char>(args: &[Value]) -> RuntimeResult<Value> {
@@ -1835,7 +1824,7 @@ fn builtin_field<const TAG: char>(args: &[Value]) -> RuntimeResult<Value> {
     };
     match args.first() {
         Some(Value::Struct(inner)) => {
-            for (ident, value) in inner.fields.iter() {
+            for (ident, value) in &inner.fields {
                 if ident.name == field_name {
                     return Ok(value.clone());
                 }
@@ -2035,14 +2024,14 @@ fn builtin_print(args: &[Value]) -> RuntimeResult<Value> {
 fn stream_of(fd: i64) -> Value {
     Value::struct_(
         "Stream",
-        Arc::new(vec![(gossamer_ast::Ident::new("fd"), Value::Int(fd))]),
+        vec![(gossamer_ast::Ident::new("fd"), Value::Int(fd))],
     )
 }
 
 fn stream_fd(value: &Value) -> i64 {
     match value {
         Value::Struct(inner) if inner.name == "Stream" => {
-            for (f_name, f_val) in inner.fields.iter() {
+            for (f_name, f_val) in &inner.fields {
                 if f_name.name == "fd" {
                     if let Value::Int(n) = f_val {
                         return *n;
@@ -2330,7 +2319,10 @@ fn builtin_http2_config_default(_args: &[Value]) -> RuntimeResult<Value> {
             Value::Int(i64::from(c.max_header_list_size)),
         ),
     ];
-    Ok(Value::struct_("Config", Arc::new(fields)))
+    Ok(Value::struct_(
+        "Config",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
 }
 
 fn response_struct(status: i64, body: String, content_type: &str) -> Value {
@@ -2342,7 +2334,7 @@ fn response_struct(status: i64, body: String, content_type: &str) -> Value {
             Value::String(SmolStr::from(content_type.to_string())),
         ),
     ];
-    Value::struct_("Response", Arc::new(fields))
+    Value::struct_("Response", Arc::unwrap_or_clone(Arc::new(fields)))
 }
 
 pub(crate) fn value_to_int(value: &Value) -> Option<i64> {
@@ -2456,7 +2448,7 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
     });
 
     match result {
-        Ok(()) => Ok(Value::variant("Ok", Arc::new(vec![Value::Unit]))),
+        Ok(()) => Ok(Value::variant("Ok", vec![Value::Unit])),
         Err(err) => Err(RuntimeError::Panic(format!("http::serve: {err}"))),
     }
 }
@@ -2577,7 +2569,7 @@ fn native_http2_bind_and_run_h2c(
         }
     }
 
-    Ok(Value::variant("Ok", Arc::new(vec![Value::Unit])))
+    Ok(Value::variant("Ok", vec![Value::Unit]))
 }
 
 fn request_to_value(request: &http_std::Request) -> Value {
@@ -2623,7 +2615,7 @@ fn request_to_value(request: &http_std::Request) -> Value {
         (Ident::new("headers"), Value::Array(Arc::new(headers))),
         (Ident::new("body"), Value::String(body_text.into())),
     ];
-    Value::struct_("Request", Arc::new(fields))
+    Value::struct_("Request", Arc::unwrap_or_clone(Arc::new(fields)))
 }
 
 fn value_to_response(value: &Value) -> Option<http_std::Response> {
@@ -2635,7 +2627,7 @@ fn value_to_response(value: &Value) -> Option<http_std::Response> {
     let mut status: u16 = 200;
     let mut body: Vec<u8> = Vec::new();
     let mut content_type = "text/plain; charset=utf-8".to_string();
-    for (ident, v) in fields.iter() {
+    for (ident, v) in fields {
         match ident.name.as_str() {
             "status" => {
                 status = match v {
@@ -2715,25 +2707,22 @@ pub(crate) fn as_str(value: &Value) -> Option<&str> {
 
 /// Builds a `Result::Ok(value)` Gossamer variant.
 pub(crate) fn ok_variant(value: Value) -> Value {
-    Value::variant("Ok", Arc::new(vec![value]))
+    Value::variant("Ok", vec![value])
 }
 
 /// Builds a `Result::Err(message)` Gossamer variant carrying a string.
 pub(crate) fn err_variant(message: impl Into<String>) -> Value {
-    Value::variant(
-        "Err",
-        Arc::new(vec![errors_struct(message.into(), Value::Unit)]),
-    )
+    Value::variant("Err", vec![errors_struct(message.into(), Value::Unit)])
 }
 
 /// Builds a `Option::Some(value)` Gossamer variant.
 pub(crate) fn some_variant(value: Value) -> Value {
-    Value::variant("Some", Arc::new(vec![value]))
+    Value::variant("Some", vec![value])
 }
 
 /// Builds a `Option::None` Gossamer variant.
 pub(crate) fn none_variant() -> Value {
-    Value::variant("None", crate::value::empty_value_arc())
+    Value::variant("None", Vec::new())
 }
 
 fn builtin_os_args(_args: &[Value]) -> RuntimeResult<Value> {
@@ -3046,12 +3035,12 @@ fn builtin_os_list_dir(args: &[Value]) -> RuntimeResult<Value> {
             });
         let entry_struct = Value::struct_(
             "DirEntry",
-            Arc::new(vec![
+            vec![
                 (Ident::new("name"), Value::String(SmolStr::from(name))),
                 (Ident::new("kind"), Value::String(SmolStr::from(kind))),
                 (Ident::new("size"), Value::Int(size)),
                 (Ident::new("mtime"), Value::String(SmolStr::from(mtime))),
-            ]),
+            ],
         );
         entries.push(entry_struct);
     }
@@ -3092,11 +3081,19 @@ fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
 /// `Arc`, so reclamation timing is not observable in program output; this is
 /// a no-op that keeps the call available across all tiers (the compiled
 /// tiers run the real trial-deletion collector).
+/// `runtime::set_panic_hook(f)`. Stores the function value; the panic
+/// report paths invoke it with the rendered message instead of the
+/// default report. Mirrors the compiled tier's `gos_rt_set_panic_hook`.
+fn builtin_runtime_set_panic_hook(args: &[Value]) -> RuntimeResult<Value> {
+    crate::set_panic_hook_value(args.first().cloned());
+    Ok(Value::Unit)
+}
+
 fn builtin_runtime_collect_cycles(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
-/// `runtime::region_push()` / `runtime::region_pop()`. Arena regions are a
+/// `runtime::arena_push()` / `runtime::arena_pop()`. Arena regions are a
 /// compiled-tier allocation optimization (bump-allocate, free wholesale).
 /// The interpreter models heap values with `Arc` and reclaims them by
 /// refcount, so a region is a semantic no-op here — the block runs
@@ -3164,7 +3161,10 @@ fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
                 (Ident::new("stderr"), Value::String(SmolStr::from(stderr))),
                 (Ident::new("code"), Value::Int(code)),
             ];
-            Ok(ok_variant(Value::struct_("ExecOutput", Arc::new(fields))))
+            Ok(ok_variant(Value::struct_(
+                "ExecOutput",
+                Arc::unwrap_or_clone(Arc::new(fields)),
+            )))
         }
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
@@ -3309,7 +3309,10 @@ fn builtin_exec_pipeline_run(args: &[Value]) -> RuntimeResult<Value> {
                 (Ident::new("stderr"), Value::String(SmolStr::from(stderr))),
                 (Ident::new("code"), Value::Int(code)),
             ];
-            Ok(ok_variant(Value::struct_("ExecOutput", Arc::new(fields))))
+            Ok(ok_variant(Value::struct_(
+                "ExecOutput",
+                Arc::unwrap_or_clone(Arc::new(fields)),
+            )))
         }
         Err(e) => Ok(err_variant(e)),
     }
@@ -3485,7 +3488,10 @@ fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
             (Ident::new("size"), Value::Int(size)),
             (Ident::new("modified_ms"), Value::Int(modified_ms)),
         ];
-        items.push(Value::struct_("DirInfo", Arc::new(fields)));
+        items.push(Value::struct_(
+            "DirInfo",
+            Arc::unwrap_or_clone(Arc::new(fields)),
+        ));
     }
     Ok(ok_variant(Value::Array(Arc::new(items))))
 }
@@ -3630,7 +3636,7 @@ fn json_escape_str(value: &str) -> String {
 fn builtin_os_stdin(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_(
         "StdinStream",
-        crate::value::empty_struct_fields(),
+        Arc::unwrap_or_clone(crate::value::empty_struct_fields()),
     ))
 }
 
@@ -3693,7 +3699,10 @@ fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
     );
     let state_map = Value::Map(Arc::new(parking_lot::Mutex::new(state)));
     let fields: Vec<(Ident, Value)> = vec![(Ident::new("__state"), state_map)];
-    Ok(Value::struct_("Scanner", Arc::new(fields)))
+    Ok(Value::struct_(
+        "Scanner",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
 }
 
 /// Extracts the mutable state Map from a Scanner struct.
@@ -3702,7 +3711,7 @@ fn scanner_state(
 ) -> Option<Arc<parking_lot::Mutex<rustc_hash::FxHashMap<MapKey, Value>>>> {
     if let Some(Value::Struct(inner)) = args.first() {
         if inner.name == "Scanner" {
-            for (name, val) in inner.fields.iter() {
+            for (name, val) in &inner.fields {
                 if name.name == "__state" {
                     if let Value::Map(m) = val {
                         return Some(Arc::clone(m));
@@ -3834,7 +3843,7 @@ fn builtin_json_get(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(none_variant());
     };
     if let Value::Struct(inner) = receiver {
-        for (field_name, value) in &**inner.fields {
+        for (field_name, value) in &inner.fields {
             if field_name.name.as_str() == key {
                 return Ok(some_variant(value.clone()));
             }
@@ -3873,7 +3882,7 @@ fn builtin_json_at(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_json_keys(args: &[Value]) -> RuntimeResult<Value> {
     if let Some(Value::Struct(inner)) = args.first() {
         let mut out: Vec<Value> = Vec::new();
-        for (name, _) in &**inner.fields {
+        for (name, _) in &inner.fields {
             out.push(Value::String(SmolStr::from(name.name.as_str())));
         }
         return Ok(some_variant(Value::Array(Arc::new(out))));
@@ -4081,7 +4090,10 @@ fn coerce_json_to_named_struct(value: &json_std::Value, type_name: &str) -> Resu
             coerce_json_to_kind(child, kind).map_err(|m| format!("field `{field_name}`: {m}"))?;
         fields.push((Ident::new(field_name.as_str()), coerced));
     }
-    Ok(Value::struct_(type_name, Arc::new(fields)))
+    Ok(Value::struct_(
+        type_name,
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
 }
 
 fn coerce_json_to_kind(value: &json_std::Value, kind: &JsonSchemaKind) -> Result<Value, String> {
@@ -4202,13 +4214,14 @@ fn json_value_to_gossamer(value: &json_std::Value) -> Value {
                 .iter()
                 .map(|(k, v)| (Ident::new(k), json_value_to_gossamer(v)))
                 .collect();
-            Value::struct_("Object", Arc::new(fields))
+            Value::struct_("Object", Arc::unwrap_or_clone(Arc::new(fields)))
         }
     }
 }
 
 fn gossamer_to_json_value(value: &Value) -> json_std::Value {
     match value {
+        Value::NativeEnum(o) => gossamer_to_json_value(&crate::value::native_enum_to_variant(o)),
         Value::Unit | Value::Void | Value::Weak(_) => json_std::Value::Null,
         Value::Bool(b) => json_std::Value::Bool(*b),
         Value::Int(n) => json_std::Value::Number(*n as f64),
@@ -4220,7 +4233,7 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
         }
         Value::Struct(inner) => {
             let mut map = std::collections::BTreeMap::new();
-            for (ident, v) in inner.fields.iter() {
+            for (ident, v) in &inner.fields {
                 map.insert(ident.name.clone(), gossamer_to_json_value(v));
             }
             json_std::Value::Object(map)
@@ -4402,20 +4415,17 @@ fn array_as_values(recv: &Value) -> Option<Vec<Value>> {
 
 fn builtin_first(args: &[Value]) -> RuntimeResult<Value> {
     match args.first().and_then(array_as_values) {
-        Some(items) if !items.is_empty() => {
-            Ok(Value::variant("Some", Arc::new(vec![items[0].clone()])))
-        }
-        _ => Ok(Value::variant("None", Arc::new(vec![]))),
+        Some(items) if !items.is_empty() => Ok(Value::variant("Some", vec![items[0].clone()])),
+        _ => Ok(Value::variant("None", vec![])),
     }
 }
 
 fn builtin_last(args: &[Value]) -> RuntimeResult<Value> {
     match args.first().and_then(array_as_values) {
-        Some(items) if !items.is_empty() => Ok(Value::variant(
-            "Some",
-            Arc::new(vec![items[items.len() - 1].clone()]),
-        )),
-        _ => Ok(Value::variant("None", Arc::new(vec![]))),
+        Some(items) if !items.is_empty() => {
+            Ok(Value::variant("Some", vec![items[items.len() - 1].clone()]))
+        }
+        _ => Ok(Value::variant("None", vec![])),
     }
 }
 
@@ -4431,20 +4441,17 @@ fn builtin_reversed(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_index_of(args: &[Value]) -> RuntimeResult<Value> {
     let (Some(recv), Some(needle)) = (args.first(), args.get(1)) else {
-        return Ok(Value::variant("None", Arc::new(vec![])));
+        return Ok(Value::variant("None", vec![]));
     };
     if let Some(items) = array_as_values(recv) {
         if let Some(idx) = items
             .iter()
             .position(|e| values_equal_for_assertion(e, needle))
         {
-            return Ok(Value::variant(
-                "Some",
-                Arc::new(vec![Value::Int(idx as i64)]),
-            ));
+            return Ok(Value::variant("Some", vec![Value::Int(idx as i64)]));
         }
     }
-    Ok(Value::variant("None", Arc::new(vec![])))
+    Ok(Value::variant("None", vec![]))
 }
 
 fn builtin_count_of(args: &[Value]) -> RuntimeResult<Value> {
@@ -4588,10 +4595,7 @@ pub(crate) fn builtin_str_or_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
 fn slice_err(msg: String) -> Value {
     Value::variant(
         "Err",
-        Arc::new(vec![errors_struct(
-            msg,
-            Value::variant("None", Arc::new(vec![])),
-        )]),
+        vec![errors_struct(msg, Value::variant("None", vec![]))],
     )
 }
 
@@ -5397,8 +5401,8 @@ fn builtin_downgrade(args: &[Value]) -> RuntimeResult<Value> {
 
 /// `w.upgrade()` — `Some(value)` while the referent is alive, else `None`.
 fn builtin_upgrade(args: &[Value]) -> RuntimeResult<Value> {
-    let some = |v: Value| Value::variant("Some", Arc::new(vec![v]));
-    let none = Value::variant("None", Arc::new(vec![]));
+    let some = |v: Value| Value::variant("Some", vec![v]);
+    let none = Value::variant("None", vec![]);
     match args.first() {
         Some(Value::Weak(w)) => Ok(w.upgrade().map_or(none, some)),
         // A non-weak receiver can reach here only through an untyped
@@ -5415,8 +5419,8 @@ fn builtin_upgrade(args: &[Value]) -> RuntimeResult<Value> {
 /// covers user code that calls `.next()` once outside a
 /// for-loop, and standalone `xs.iter().next()` shapes.
 fn builtin_next(args: &[Value]) -> RuntimeResult<Value> {
-    let none = Value::variant("None", Arc::new(vec![]));
-    let some = |v: Value| Value::variant("Some", Arc::new(vec![v]));
+    let none = Value::variant("None", vec![]);
+    let some = |v: Value| Value::variant("Some", vec![v]);
     match args.first() {
         Some(Value::Array(items)) => {
             if let Some(first) = items.first() {
@@ -5506,7 +5510,10 @@ fn builtin_json_value_null(_args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_json_value_object(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Array(parts)) = args.first() else {
-        return Ok(Value::struct_("json::Object", Arc::new(Vec::new())));
+        return Ok(Value::struct_(
+            "json::Object",
+            Arc::unwrap_or_clone(Arc::new(Vec::new())),
+        ));
     };
     let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(parts.len());
     for entry in parts.iter() {
@@ -5520,7 +5527,10 @@ fn builtin_json_value_object(args: &[Value]) -> RuntimeResult<Value> {
         };
         fields.push((Ident::new(key), pair[1].clone()));
     }
-    Ok(Value::struct_("json::Object", Arc::new(fields)))
+    Ok(Value::struct_(
+        "json::Object",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
 }
 
 /// `json::set(obj, key, value) -> json::Value` — append or
@@ -5543,7 +5553,7 @@ fn builtin_json_set(args: &[Value]) -> RuntimeResult<Value> {
     if inner.name != "json::Object" {
         return Ok(receiver);
     }
-    let mut fields: Vec<(Ident, Value)> = inner.fields.iter().cloned().collect();
+    let mut fields: Vec<(Ident, Value)> = inner.fields.clone();
     if let Some(slot) = fields
         .iter_mut()
         .find(|(name, _)| name.name.as_str() == key)
@@ -5552,7 +5562,10 @@ fn builtin_json_set(args: &[Value]) -> RuntimeResult<Value> {
     } else {
         fields.push((Ident::new(key), value));
     }
-    Ok(Value::struct_("json::Object", Arc::new(fields)))
+    Ok(Value::struct_(
+        "json::Object",
+        Arc::unwrap_or_clone(Arc::new(fields)),
+    ))
 }
 
 fn builtin_variant_unwrap(args: &[Value]) -> RuntimeResult<Value> {
@@ -5662,12 +5675,9 @@ fn builtin_variant_ok_or(args: &[Value]) -> RuntimeResult<Value> {
         Value::Variant(inner)
             if (inner.name == "Ok" || inner.name == "Some") && !inner.fields.is_empty() =>
         {
-            Ok(Value::variant(
-                "Ok",
-                Arc::new(vec![inner.fields[0].clone()]),
-            ))
+            Ok(Value::variant("Ok", vec![inner.fields[0].clone()]))
         }
-        _ => Ok(Value::variant("Err", Arc::new(vec![new_err]))),
+        _ => Ok(Value::variant("Err", vec![new_err])),
     }
 }
 
@@ -5679,7 +5689,7 @@ fn native_variant_map(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
             if (inner.name == "Some" || inner.name == "Ok") && !inner.fields.is_empty() =>
         {
             let mapped = invoke_callable(dispatch, &transform, vec![inner.fields[0].clone()])?;
-            Ok(Value::variant(inner.name, Arc::new(vec![mapped])))
+            Ok(Value::variant(inner.name, vec![mapped]))
         }
         other => Ok(other.clone()),
     }
@@ -5772,14 +5782,14 @@ fn builtin_channel_join(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Channel(channel)) = args.first() else {
         return Ok(Value::variant(
             "Err",
-            std::sync::Arc::new(vec![Value::String("join on a non-handle value".into())]),
+            vec![Value::String("join on a non-handle value".into())],
         ));
     };
     match channel.recv() {
         Some(outcome) => Ok(outcome),
         None => Ok(Value::variant(
             "Err",
-            std::sync::Arc::new(vec![Value::String("join: handle channel closed".into())]),
+            vec![Value::String("join: handle channel closed".into())],
         )),
     }
 }
@@ -5966,7 +5976,7 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
                 .collect()
         }
     });
-    Ok(Value::struct_(name, Arc::new(fields)))
+    Ok(Value::struct_(name, Arc::unwrap_or_clone(Arc::new(fields))))
 }
 
 fn builtin_channel_new(_args: &[Value]) -> RuntimeResult<Value> {
@@ -6141,7 +6151,10 @@ fn builtin_flag_parse(args: &[Value]) -> RuntimeResult<Value> {
         Ident::new("__positional"),
         Value::Array(Arc::new(positional)),
     ));
-    Ok(Value::struct_("FlagMap", Arc::new(map_fields)))
+    Ok(Value::struct_(
+        "FlagMap",
+        Arc::unwrap_or_clone(Arc::new(map_fields)),
+    ))
 }
 
 fn extract_flag_decls(values: &[Value]) -> Vec<FlagDeclEntry> {
@@ -6183,15 +6196,14 @@ fn flag_parse_value(default: &Value, raw: &str) -> Value {
     match default {
         Value::Variant(inner) if inner.name == "Int" => {
             let n = raw.parse::<i64>().unwrap_or(0);
-            Value::variant("Int", Arc::new(vec![Value::Int(n)]))
+            Value::variant("Int", vec![Value::Int(n)])
         }
-        Value::Variant(inner) if inner.name == "Str" => Value::variant(
-            "Str",
-            Arc::new(vec![Value::String(SmolStr::from(raw.to_string()))]),
-        ),
+        Value::Variant(inner) if inner.name == "Str" => {
+            Value::variant("Str", vec![Value::String(SmolStr::from(raw.to_string()))])
+        }
         Value::Variant(inner) if inner.name == "Bool" => {
             let b = matches!(raw, "true" | "1" | "yes" | "on");
-            Value::variant("Bool", Arc::new(vec![Value::Bool(b)]))
+            Value::variant("Bool", vec![Value::Bool(b)])
         }
         _ => Value::String(SmolStr::from(raw.to_string())),
     }
@@ -6291,7 +6303,7 @@ fn wg_lookup(handle: i64) -> Option<Arc<WaitGroupCell>> {
 fn struct_handle(v: &Value, expected: &str) -> Option<i64> {
     match v {
         Value::Struct(inner) if inner.name == expected => {
-            for (ident, val) in inner.fields.iter() {
+            for (ident, val) in &inner.fields {
                 if ident.name == "__handle" {
                     if let Value::Int(n) = val {
                         return Some(*n);
@@ -6305,10 +6317,7 @@ fn struct_handle(v: &Value, expected: &str) -> Option<i64> {
 }
 
 fn make_handle_struct(name: &str, handle: i64) -> Value {
-    Value::struct_(
-        name,
-        Arc::new(vec![(Ident::new("__handle"), Value::Int(handle))]),
-    )
+    Value::struct_(name, vec![(Ident::new("__handle"), Value::Int(handle))])
 }
 
 fn arg_int(args: &[Value], idx: usize) -> Option<i64> {

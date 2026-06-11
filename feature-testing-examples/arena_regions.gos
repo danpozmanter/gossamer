@@ -1,4 +1,4 @@
-// Arena regions: `runtime::region_push()` .. `runtime::region_pop()`
+// Arena regions: `runtime::arena_push()` .. `runtime::arena_pop()`
 // bump-allocate everything created in between and free it wholesale at the
 // pop, with no per-node RC teardown. Regions are a memory/throughput
 // optimization that is a semantic NO-OP: the output is identical with or
@@ -44,11 +44,11 @@ fn main() {
     while round < 6 {
         // Each iteration builds and discards a whole tree inside a region;
         // only the i64 accumulations escape.
-        runtime::region_push()
+        runtime::arena_push()
         let t = build(8, round + 1)
         total_sum += sum(&t)
         total_count += count(&t)
-        runtime::region_pop()
+        runtime::arena_pop()
         round += 1
     }
     println!("sum={} count={}", total_sum, total_count)

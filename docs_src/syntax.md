@@ -156,6 +156,24 @@ fn load(path: String) -> Result<String, io::Error> {
 `?` propagates the `Err` variant. Wrap with
 `std::errors::wrap(err, "while loading config")` for context.
 
+## Arenas
+
+```gossamer
+arena {
+    let tree = build_tree(16)
+    total += check(&tree)
+}
+```
+
+Everything allocated inside an `arena { }` block is bump-allocated
+and freed wholesale when the block exits — on every exit path,
+including early `return` and `?`. Allocation becomes a pointer bump;
+reclamation is O(slabs) with no per-object teardown; small-enum nodes
+drop their runtime header entirely (a two-pointer tree node is exactly
+16 bytes). The contract: nothing allocated inside the block may be
+referenced after it exits. See the
+[memory model](memory.md#arenas-arena) for the full semantics.
+
 ## Concurrency
 
 ```gossamer

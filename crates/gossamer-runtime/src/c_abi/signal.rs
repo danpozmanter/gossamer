@@ -527,6 +527,14 @@ pub unsafe extern "C" fn gos_rt_vec_slice(v: *const GosVec, lo: i64, hi: i64) ->
         let hi = hi.max(lo).min(len);
         let count = hi - lo;
         let out = unsafe { gos_rt_vec_with_capacity(elem_bytes, count) };
+        // Propagate the guarded-aggregate tag before the pushes so each
+        // copied element retains its copy-blob children.
+        if !out.is_null() && src.elem_kind == crate::c_abi::vec::vec_elem_kind::AGGR_GUARDED {
+            let meta = crate::c_abi::vec::vec_elem_meta(v);
+            if !meta.is_null() {
+                unsafe { crate::c_abi::vec::gos_rt_vec_set_elem_meta(out, meta) };
+            }
+        }
         if !out.is_null() && count > 0 {
             for i in 0..count {
                 unsafe {

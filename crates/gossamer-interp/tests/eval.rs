@@ -148,16 +148,9 @@ fn describe(x: Option<i64>) -> String {
     let some = call_and_return(
         source,
         "describe",
-        vec![Value::variant(
-            "Some",
-            std::sync::Arc::new(vec![Value::Int(5)]),
-        )],
+        vec![Value::variant("Some", vec![Value::Int(5)])],
     );
-    let none = call_and_return(
-        source,
-        "describe",
-        vec![Value::variant("None", std::sync::Arc::new(Vec::new()))],
-    );
+    let none = call_and_return(source, "describe", vec![Value::variant("None", Vec::new())]);
     assert!(matches!(some, Value::String(ref s) if s.contains('5')));
     assert!(matches!(none, Value::String(ref s) if s.as_str() == "missing"));
 }
@@ -425,10 +418,7 @@ fn describe(s: Shape) -> String {
     let circle = call_and_return(
         source,
         "describe",
-        vec![Value::variant(
-            "Circle",
-            std::sync::Arc::new(vec![Value::Float(1.5)]),
-        )],
+        vec![Value::variant("Circle", vec![Value::Float(1.5)])],
     );
     assert!(matches!(circle, Value::String(ref s) if s.contains("circle") && s.contains("1.5")));
 }
@@ -596,10 +586,10 @@ fn manhattan(p: Point) -> i64 {
 "#;
     let p = Value::struct_(
         "Point",
-        std::sync::Arc::new(vec![
+        vec![
             (gossamer_ast::Ident::new("x"), Value::Int(3)),
             (gossamer_ast::Ident::new("y"), Value::Int(4)),
-        ]),
+        ],
     );
     let result = call_and_return(source, "manhattan", vec![p]);
     assert!(matches!(result, Value::Int(7)));
@@ -618,12 +608,12 @@ fn width_only(r: Rect) -> i64 {
 "#;
     let r = Value::struct_(
         "Rect",
-        std::sync::Arc::new(vec![
+        vec![
             (gossamer_ast::Ident::new("x"), Value::Int(0)),
             (gossamer_ast::Ident::new("y"), Value::Int(0)),
             (gossamer_ast::Ident::new("w"), Value::Int(100)),
             (gossamer_ast::Ident::new("h"), Value::Int(50)),
-        ]),
+        ],
     );
     let result = call_and_return(source, "width_only", vec![r]);
     assert!(matches!(result, Value::Int(100)));
@@ -644,9 +634,7 @@ fn run(s: String) -> Result<i64, String> {
     let result = call_and_return(
         source,
         "run",
-        vec![Value::String(SmolStr::from(std::sync::Arc::new(
-            "42".to_string(),
-        )))],
+        vec![Value::String(SmolStr::from("42".to_string()))],
     );
     assert!(
         matches!(&result, Value::Variant(inner) if inner.name == "Ok" && matches!(inner.fields.first(), Some(Value::Int(43))))

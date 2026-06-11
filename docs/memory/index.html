@@ -69,7 +69,13 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#and-mut">&amp; and &amp;mut</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#the-garbage-collector">The garbage collector</a>
+    <li class="toctree-l2"><a class="reference internal" href="#how-reclamation-works">How reclamation works</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#arenas-arena">Arenas: arena { }</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#the-contract">The contract</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#goroutine-stacks">Goroutine stacks</a>
     </li>
@@ -87,6 +93,8 @@
               <p class="caption"><span class="caption-text">Standard library</span></p>
               <ul>
                   <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../prelude/">Prelude (no imports)</a>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
                   </li>
@@ -171,18 +179,24 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="memory-model">Memory model<a class="headerlink" href="#memory-model" title="Permanent link">&para;</a></h1>
-<p>Gossamer is garbage-collected. There is no borrow checker, no
-lifetime annotations, and no manual ownership transfer. <code>&amp;</code> and
-<code>&amp;mut</code> still exist — but they express <em>aliasing intent</em>, not
-ownership.</p>
+<p>Gossamer is garbage-collected from the programmer's point of view:
+there is no borrow checker, no lifetime annotations, and no manual
+ownership transfer. <code>&amp;</code> and <code>&amp;mut</code> exist — but they express <em>aliasing
+intent</em>, not ownership.</p>
+<p>Under the hood the compiled tiers use <strong>deterministic reference
+counting</strong> with a cycle collector, not a tracing collector: most
+values are reclaimed at the moment their last reference dies, RAM
+stays flat and predictable, and there are no pause times. The
+<code>arena { }</code> block (below) layers bulk allocation on top for
+short-lived object graphs.</p>
 <h2 id="values-vs-references">Values vs references<a class="headerlink" href="#values-vs-references" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Value-semantic types</strong> are copied on assignment and passed
   by value: <code>bool</code>, <code>char</code>, <code>i8</code>..<code>i128</code>, <code>u8</code>..<code>u128</code>,
   <code>isize</code>/<code>usize</code>, <code>f32</code>/<code>f64</code>.</li>
 <li><strong>Reference-semantic types</strong> share their backing storage when
-  cloned. The GC reclaims the backing when no root references it.
-  This includes <code>String</code>, <code>Vec&lt;T&gt;</code>, <code>[T]</code>, <code>struct</code>, <code>enum</code>,
+  copied; the runtime reclaims the backing when the last reference
+  dies. This includes <code>String</code>, <code>Vec&lt;T&gt;</code>, <code>[T]</code>, <code>struct</code>, <code>enum</code>,
   closures.</li>
 </ul>
 <h2 id="and-mut"><code>&amp;</code> and <code>&amp;mut</code><a class="headerlink" href="#and-mut" title="Permanent link">&para;</a></h2>
@@ -195,43 +209,97 @@ ownership.</p>
 </ul>
 <p>These are <em>correctness</em> rules, not lifetime proofs. You never
 write <code>'a</code>.</p>
-<h2 id="the-garbage-collector">The garbage collector<a class="headerlink" href="#the-garbage-collector" title="Permanent link">&para;</a></h2>
-<p>Phase-14 GC is a stop-the-world mark-sweep. Upcoming phases
-layer on:</p>
+<h2 id="how-reclamation-works">How reclamation works<a class="headerlink" href="#how-reclamation-works" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Concurrent marking</strong> — <code>Heap::concurrent_start</code> +
-  <code>concurrent_step</code> lets the mutator run while the grey-set is
-  drained incrementally.</li>
-<li><strong>Pause histogram</strong> — <code>GcStats.{last_pause_nanos,
-  total_pause_nanos, max_pause_nanos}</code> are populated on every
-  <code>Heap::collect</code> call. See
-  <code>gos bench</code> for
-  reference numbers.</li>
-<li><strong>Weak references</strong> — <code>gossamer_gc::weak::WeakTable</code> lets code
-  observe an allocation without rooting it.</li>
-<li><strong>Finalisers</strong> — <code>FinalizerSet::register(handle, callback)</code>
-  runs a cleanup closure when the target is swept. Use for OS
-  handles (files, sockets, listeners).</li>
+<li><strong>Reference counting, compiler-inserted.</strong> The MIR lowering inserts
+  balanced retain/release pairs; a liveness pass releases owned values
+  at their <em>last use</em> rather than at function exit, so a large
+  structure does not pin memory while unrelated code runs.</li>
+<li><strong>Cycle collector.</strong> Reference cycles (<code>a.next = Some(b);
+  b.next = Some(a)</code>) are reclaimed by a Bacon–Rajan style cycle
+  collector that runs on demand (<code>runtime::collect_cycles()</code>) and from
+  allocation pressure. Acyclic data never pays for it.</li>
+<li><strong>Weak references.</strong> <code>Weak&lt;T&gt;</code> observes a value without keeping it
+  alive; <code>w.upgrade()</code> returns <code>Option&lt;T&gt;</code> and answers <code>None</code> once the
+  referent has been reclaimed.</li>
+<li><strong>Compact representation.</strong> A heap enum node carries an 8-byte
+  runtime header. Enums with at most 4 variants store their
+  discriminant in pointer tag bits, so a two-pointer tree node costs
+  24 bytes — and only 16 inside an arena.</li>
 </ul>
+<h2 id="arenas-arena">Arenas: <code>arena { }</code><a class="headerlink" href="#arenas-arena" title="Permanent link">&para;</a></h2>
+<p>An <code>arena</code> block bump-allocates everything created while it runs and
+frees the whole lot at once when the block exits:</p>
+<pre><code class="language-gossamer">fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i &lt; 1000 {
+        arena {
+            let tree = build_tree(16)
+            total += check(&amp;tree)
+        }
+        i += 1
+    }
+    println!(&quot;{}&quot;, total)
+}
+</code></pre>
+<p>Semantics:</p>
+<ul>
+<li><strong>Allocation is a pointer bump</strong> — a compare and an add, roughly an
+  order of magnitude cheaper than a general heap allocation.</li>
+<li><strong>Reclamation is wholesale</strong> — the arena's slabs are released in
+  O(slabs) when the block exits, with no per-object teardown walk. The
+  exit is exact on every path: early <code>return</code>, <code>?</code>, <code>break</code>, and
+  normal fall-through all release the arena (the block desugars to a
+  <code>defer</code>).</li>
+<li><strong>Headerless nodes.</strong> Enum nodes of tagged-repr types (at most 4
+  variants) allocated inside an arena carry <strong>no header at all</strong>: a
+  <code>Node(Box&lt;Tree&gt;, Box&lt;Tree&gt;)</code> is exactly 16 bytes.</li>
+<li><strong>Arenas nest.</strong> An inner <code>arena { }</code> frees at its own close brace;
+  the outer arena is unaffected. Slabs from finished arenas are
+  recycled, so an arena per loop iteration costs a bump-pointer reset,
+  not an <code>mmap</code>.</li>
+<li><strong>Retain/release become no-ops</strong> for arena values — the accounting
+  entries recognize arena memory with a two-instruction range check.</li>
+</ul>
+<h3 id="the-contract">The contract<a class="headerlink" href="#the-contract" title="Permanent link">&para;</a></h3>
+<p>Nothing allocated inside an <code>arena { }</code> may be referenced after the
+block exits. The block is statement-position only and yields unit, so
+the obvious escape (the block's value) cannot happen, and a tail
+expression inside it is deliberately discarded. The remaining ways to
+leak a pointer out are yours to avoid:</p>
+<ul>
+<li>assigning an arena value to a binding declared <strong>outside</strong> the block,</li>
+<li>pushing arena values into a container that outlives the block,</li>
+<li>sending arena values down a channel,</li>
+<li>capturing them in a closure or goroutine that outruns the block.</li>
+</ul>
+<p>Use an arena when the block is <em>pure computation over data that dies
+together</em> — build, traverse, summarize, exit. If a value must survive,
+let the block compute a scalar/string summary, or build the surviving
+value before (outside) the arena.</p>
+<p>Two deliberate edge-case rules: <code>Weak</code> references to arena values
+upgrade to <code>None</code> (the referent is not individually tracked), and a
+panic that unwinds out of a goroutine mid-arena abandons the arena's
+slabs to the goroutine's teardown rather than corrupting them.</p>
+<p><code>runtime::arena_push()</code> / <code>runtime::arena_pop()</code> remain available as
+the low-level primitive when block structure does not fit; the block
+form is the idiom because it cannot be left unbalanced.</p>
 <h2 id="goroutine-stacks">Goroutine stacks<a class="headerlink" href="#goroutine-stacks" title="Permanent link">&para;</a></h2>
-<p>Each <code>go expr</code> launches a goroutine with its own stack (fixed-
-size for the moment — growable stacks land with the Stream E.4
-scheduler rewrite). Captures are reference-counted into the GC
-heap exactly as regular struct fields would be.</p>
+<p>Each <code>go expr</code> launches a goroutine with its own stack. Captures are
+reference-counted exactly as regular struct fields would be.</p>
 <h2 id="when-to-reach-for-rcrefcellt-like-patterns">When to reach for <code>Rc&lt;RefCell&lt;T&gt;&gt;</code>-like patterns<a class="headerlink" href="#when-to-reach-for-rcrefcellt-like-patterns" title="Permanent link">&para;</a></h2>
-<p>You generally don't. The GC rescues most single-threaded
-aliasing. If you need to mutate through a shared handle, hold a
-<code>struct</code> inside a <code>Mutex&lt;T&gt;</code> (from <code>std::sync</code>) and lock around
-every mutation.</p>
+<p>You generally don't. Shared aliasing works directly. If you need to
+mutate through a shared handle across goroutines, hold the value in a
+<code>Mutex&lt;T&gt;</code> (from <code>std::sync</code>) and lock around every mutation.</p>
 <h2 id="stack-vs-heap-the-pragmatic-answer">Stack vs heap — the pragmatic answer<a class="headerlink" href="#stack-vs-heap-the-pragmatic-answer" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Small value types live on the stack or inline inside their
   aggregate.</li>
-<li>Aggregates (<code>String</code>, <code>Vec&lt;T&gt;</code>, structs, closures) live on the
-  GC heap. There is no syntactic <code>Box&lt;T&gt;</code>.</li>
-<li>An <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-mir/src/escape.rs">escape analysis</a> pass (Stream E.6) has landed in
-  MIR and can demote short-lived allocations to the stack once
-  the codegen picks them up.</li>
+<li>Aggregates (<code>String</code>, <code>Vec&lt;T&gt;</code>, structs, enums, closures) live on
+  the heap, reference-counted; <code>Box&lt;T&gt;</code> / <code>Rc&lt;T&gt;</code> / <code>Arc&lt;T&gt;</code> spellings
+  are accepted and transparent.</li>
+<li>Short-lived object graphs belong in an <code>arena { }</code>.</li>
 </ul>
               
             </div>

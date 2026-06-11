@@ -75,6 +75,7 @@ impl Resolver {
     }
 
     fn register_use_simple(&mut self, use_decl: &UseDecl) {
+        self.reject_non_canonical_std_path(use_decl);
         let name = use_decl.alias.as_ref().map_or_else(
             || tail_name(&use_decl.target),
             |alias| Some(alias.name.clone()),
@@ -83,6 +84,44 @@ impl Resolver {
             return;
         };
         self.define_import(&name, use_decl.id, use_decl.span);
+    }
+
+    /// Validates `use std::...` module paths against the canonical
+    /// module table: every module has exactly one path, and importing
+    /// a path that names no module (an alias spelling, a typo) is an
+    /// error here instead of a late member-lookup failure. A path
+    /// whose parent is a valid module is accepted without checking
+    /// the tail — item imports (`use std::sync::channel`) name items
+    /// the resolver's table does not enumerate.
+    fn reject_non_canonical_std_path(&mut self, use_decl: &UseDecl) {
+        let gossamer_ast::UseTarget::Module(p) = &use_decl.target else {
+            return;
+        };
+        if p.segments.len() < 2 || p.segments[0].name != "std" {
+            return;
+        }
+        let rest: Vec<&str> = p.segments[1..].iter().map(|s| s.name.as_str()).collect();
+        let joined = rest.join("::");
+        let table = crate::stdlib_exports::STDLIB_MODULE_PATHS;
+        let is_module_or_namespace = |path: &str| -> bool {
+            table.binary_search(&path).is_ok()
+                || table.iter().any(|m| {
+                    m.len() > path.len() && m.starts_with(path) && m.as_bytes()[path.len()] == b':'
+                })
+        };
+        if is_module_or_namespace(&joined) {
+            return;
+        }
+        if rest.len() >= 2 {
+            let parent = rest[..rest.len() - 1].join("::");
+            if is_module_or_namespace(&parent) {
+                return;
+            }
+        }
+        self.emit(
+            ResolveError::UnknownModulePath { path: joined },
+            use_decl.span,
+        );
     }
 
     fn register_use_list(&mut self, use_decl: &UseDecl, list: &[UseListEntry]) {

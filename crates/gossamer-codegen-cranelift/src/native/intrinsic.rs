@@ -281,6 +281,11 @@ impl IntrinsicContext {
         }
         let mut description = DataDescription::new();
         description.define(bytes.into_boxed_slice());
+        // The blob is read as i64 words by the runtime; the JIT data
+        // allocator packs objects byte-tight, so without an explicit
+        // alignment the words land on odd addresses (a hard fault
+        // under debug's strict-alignment checks).
+        description.set_align(8);
         // Same Mach-O `-dead_strip` retain requirement as the string
         // pool: the RC type-meta blob is referenced via section-
         // relative relocations only.

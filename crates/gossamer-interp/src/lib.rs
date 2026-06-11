@@ -154,6 +154,42 @@ pub use external_natives::{
 };
 pub use interp::{Interpreter, join_outstanding_goroutines};
 pub use value::{
-    Channel, Closure, RuntimeError, RuntimeResult, SmolStr, Value, registry_stats_for_test,
+    Channel, Closure, NativeEnumOwner, NativeEnumShape, RuntimeError, RuntimeResult, SmolStr,
+    Value, native_enum_to_variant, registry_stats_for_test,
 };
 pub use vm::Vm;
+
+/// Process-wide panic hook value registered by
+/// `runtime::set_panic_hook` on the interpreter tier. The report
+/// paths invoke it with the rendered message instead of the default
+/// report.
+static PANIC_HOOK_VALUE: std::sync::LazyLock<parking_lot::Mutex<Option<value::Value>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
+
+/// Store (or clear) the interpreter-tier panic hook.
+pub fn set_panic_hook_value(v: Option<value::Value>) {
+    *PANIC_HOOK_VALUE.lock() = v;
+}
+
+/// Current interpreter-tier panic hook, if any.
+#[must_use]
+pub fn panic_hook_value() -> Option<value::Value> {
+    PANIC_HOOK_VALUE.lock().clone()
+}
+
+/// The bare panic message of a runtime error: strips the
+/// `error[GX0005]: panic: ` prefix so hooks see the same text on
+/// every tier.
+#[must_use]
+pub fn panic_message(err: &value::RuntimeError) -> String {
+    let rendered = err.to_string();
+    rendered
+        .strip_prefix("error[GX0005]: panic: ")
+        .map_or(rendered.clone(), ToString::to_string)
+}
+
+/// True when a runtime error is a user panic (GX0005).
+#[must_use]
+pub fn is_panic_error(err: &value::RuntimeError) -> bool {
+    err.to_string().starts_with("error[GX0005]")
+}

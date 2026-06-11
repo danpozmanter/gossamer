@@ -91,6 +91,14 @@ pub(crate) fn invoke(jit: &JitFn, args: &[Value]) -> Dispatch {
             // shared registry for aggregate variants — the JIT body
             // sees the same handle that bytecode-VM aggregates use.
             JitKind::Value => Slot::I(value.to_raw() as i64),
+            // Native enum: the handle's tagged pointer crosses
+            // directly (the JIT body uses the compiled-tier
+            // representation). A boxed `Value::Variant` of the same
+            // type falls back to bytecode rather than deep-converting.
+            JitKind::EnumPtr(shape_idx) => match value {
+                Value::NativeEnum(h) if h.shape.index == *shape_idx => Slot::I(h.ptr as i64),
+                _ => return Dispatch::Fallback,
+            },
         };
         slots[i] = slot;
     }
@@ -106,11 +114,35 @@ pub(crate) fn invoke(jit: &JitFn, args: &[Value]) -> Dispatch {
     // `Fallback`; the bytecode path then runs and surfaces the panic
     // through the usual Rust unwind path.
     let n = jit.params.len();
+    let ret_kind = match jit.returns {
+        // The stub returns the raw pointer in an integer register;
+        // `invoke` re-wraps it below.
+        JitKind::EnumPtr(_) => JitKind::I64,
+        other => other,
+    };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-        dispatch(jit.ptr, &jit.params, &slots[..n], jit.returns)
+        dispatch(jit.ptr, &jit.params, &slots[..n], ret_kind)
     }));
     match outcome {
-        Ok(Some(value)) => Dispatch::Ok(value),
+        Ok(Some(value)) => {
+            if let JitKind::EnumPtr(shape_idx) = jit.returns {
+                let Value::Int(raw) = value else {
+                    return Dispatch::Fallback;
+                };
+                let Some(shape) = crate::value::native_shape(shape_idx) else {
+                    return Dispatch::Fallback;
+                };
+                // Ownership transfers with the return: the handle owns
+                // the reference and releases it on last drop.
+                return Dispatch::Ok(Value::NativeEnum(std::sync::Arc::new(
+                    crate::value::NativeEnumOwner {
+                        ptr: raw as usize,
+                        shape,
+                    },
+                )));
+            }
+            Dispatch::Ok(value)
+        }
         Ok(None) => Dispatch::Fallback,
         Err(_) => {
             eprintln!(
@@ -178,6 +210,8 @@ macro_rules! call_through {
                 let raw = f($($a),*) as u64;
                 Some(Value::from_raw(raw))
             }
+            // Canonicalized to I64 before dispatch; never reaches a stub.
+            JitKind::EnumPtr(_) => unreachable!("EnumPtr returns are canonicalized to I64"),
         }
     }};
 }
@@ -459,6 +493,7 @@ unsafe fn dispatch(
                 let raw = f() as u64;
                 Some(Value::from_raw(raw))
             }
+            JitKind::EnumPtr(_) => unreachable!("EnumPtr returns are canonicalized to I64"),
         },
         (1, 0b0) => unsafe { call_1i(ptr, slots, ret) },
         (1, 0b1) => unsafe { call_1f(ptr, slots, ret) },

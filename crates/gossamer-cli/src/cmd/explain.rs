@@ -66,6 +66,12 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
             "A `use` declaration imported the same name twice. Drop the\n\
                      duplicate or rename one of the imports with `use ... as ...`."
         }
+        "GR0005" => {
+            "The `use` names a `std::` module path that does not exist.\n\
+                     Every module has exactly one canonical path (e.g. JSON\n\
+                     lives at `std::encoding::json`); check `gos doc` or the\n\
+                     stdlib reference for the module's path."
+        }
         "GT0001" => {
             "The type checker could not reconcile two types it expected to\n\
                      match. The primary label shows the location of the mismatch;\n\

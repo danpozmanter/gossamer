@@ -1,0 +1,47 @@
+enum Tree {
+    Node(Box<Tree>, Box<Tree>),
+    Nil,
+}
+
+fn build(depth: i64) -> Tree {
+    if depth > 0 {
+        Tree::Node(build(depth - 1), build(depth - 1))
+    } else {
+        Tree::Node(Tree::Nil, Tree::Nil)
+    }
+}
+
+fn check(t: &Tree) -> i64 {
+    match t {
+        Tree::Node(l, r) => 1 + check(l) + check(r),
+        Tree::Nil => 0,
+    }
+}
+
+fn early(n: i64) -> i64 {
+    arena {
+        let t = build(8)
+        if check(&t) > 100 {
+            return n * 2
+        }
+    }
+    n
+}
+
+fn nested() -> i64 {
+    let mut total = 0
+    arena {
+        let outer = build(10)
+        total += check(&outer)
+        arena {
+            let inner = build(6)
+            total += check(&inner)
+        }
+        total += check(&outer)
+    }
+    total
+}
+
+fn main() {
+    println!("{} {}", early(21), nested())
+}

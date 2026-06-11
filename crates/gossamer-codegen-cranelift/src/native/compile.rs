@@ -541,6 +541,13 @@ pub(crate) fn lower_program_full(
                     define_shape_thunk(module, &mut intrinsics, &s)?;
                 }
             } else {
+                // RC child-layout meta symbols (`gos_rc_meta_*`) must be
+                // interned as DATA before the parallel phase: the enum
+                // constructor lowering resolves them via intern_rc_meta,
+                // which would otherwise declare_data mid-parallel.
+                if let Some(blob) = tcx.rc_meta(&s) {
+                    intrinsics.intern_rc_meta(module, &s, blob)?;
+                }
                 intrinsics.intern_string(module, &s)?;
             }
         }

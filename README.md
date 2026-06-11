@@ -29,6 +29,11 @@ A language that balances developer experience, execution efficiency, and safety.
 | Interpreted / scripting mode |  |  | ✓ | ✓ | ✓ |
 | Interactive REPL |  |  | ✓ | ✓ | ✓ |
 
+Plus `arena { }` blocks, inspired by Zig: everything allocated inside
+the block is bump-allocated and freed wholesale when the block exits —
+pointer-bump allocation, O(slabs) reclamation, and headerless 16-byte
+nodes for small enums. See the
+[memory model](https://danpozmanter.github.io/gossamer/memory/) chapter.
 
 ## Details
 

@@ -793,21 +793,23 @@ impl<'a> Builder<'a> {
                 let acc = self.fresh(bool_ty);
                 if let Some(idx) = variant_idx {
                     let scrut_for_cmp = if scrut_is_payload_enum {
-                        let zero_off = self.fresh(i64_ty);
-                        self.emit_assign(
-                            Place::local(zero_off),
-                            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-                            span,
-                        );
                         let disc_load = self.fresh(i64_ty);
+                        // Tagged repr (<= 4 variants): disc in pointer
+                        // bits 1-2; header repr: disc byte at payload-3.
+                        let disc_intrinsic = if self
+                            .enums
+                            .lookup(std::slice::from_ref(name))
+                            .is_some_and(|(en, _)| self.enum_repr_tagged(&en))
+                        {
+                            "gos_enum_disc_tag"
+                        } else {
+                            "gos_enum_disc"
+                        };
                         self.emit_assign(
                             Place::local(disc_load),
                             Rvalue::CallIntrinsic {
-                                name: "gos_load",
-                                args: vec![
-                                    Operand::Copy(Place::local(scrutinee)),
-                                    Operand::Copy(Place::local(zero_off)),
-                                ],
+                                name: disc_intrinsic,
+                                args: vec![Operand::Copy(Place::local(scrutinee))],
                             },
                             span,
                         );
@@ -881,19 +883,20 @@ impl<'a> Builder<'a> {
                             // scrutinee is a pointer to a heap
                             // aggregate `[disc, p0, p1, …]`.
                             // Load this field from offset
-                            // (field_idx + 1) * 8.
+                            // field_idx * 8 (the discriminant lives in
+                            // the RC header byte, not the payload).
                             let off_local = self.fresh(i64_ty);
                             self.emit_assign(
                                 Place::local(off_local),
                                 Rvalue::Use(Operand::Const(ConstValue::Int(
-                                    (i128::from(field_idx) + 1) * 8,
+                                    i128::from(field_idx) * 8,
                                 ))),
                                 span,
                             );
                             self.emit_assign(
                                 Place::local(elem),
                                 Rvalue::CallIntrinsic {
-                                    name: "gos_load",
+                                    name: "gos_enum_load",
                                     args: vec![
                                         Operand::Copy(Place::local(scrutinee)),
                                         Operand::Copy(Place::local(off_local)),
@@ -998,21 +1001,23 @@ impl<'a> Builder<'a> {
                         );
                         disc_load
                     } else if any_variant_has_payload || !fields.is_empty() {
-                        let zero_off = self.fresh(i64_ty);
-                        self.emit_assign(
-                            Place::local(zero_off),
-                            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-                            span,
-                        );
                         let disc_load = self.fresh(i64_ty);
+                        // Tagged repr (<= 4 variants): disc in pointer
+                        // bits 1-2; header repr: disc byte at payload-3.
+                        let disc_intrinsic = if self
+                            .enums
+                            .lookup(std::slice::from_ref(name))
+                            .is_some_and(|(en, _)| self.enum_repr_tagged(&en))
+                        {
+                            "gos_enum_disc_tag"
+                        } else {
+                            "gos_enum_disc"
+                        };
                         self.emit_assign(
                             Place::local(disc_load),
                             Rvalue::CallIntrinsic {
-                                name: "gos_load",
-                                args: vec![
-                                    Operand::Copy(Place::local(scrutinee)),
-                                    Operand::Copy(Place::local(zero_off)),
-                                ],
+                                name: disc_intrinsic,
+                                args: vec![Operand::Copy(Place::local(scrutinee))],
                             },
                             span,
                         );
@@ -1087,9 +1092,7 @@ impl<'a> Builder<'a> {
                                 let off_local = self.fresh(i64_ty);
                                 self.emit_assign(
                                     Place::local(off_local),
-                                    Rvalue::Use(Operand::Const(ConstValue::Int(
-                                        ((i + 1) * 8) as i128,
-                                    ))),
+                                    Rvalue::Use(Operand::Const(ConstValue::Int((i * 8) as i128))),
                                     span,
                                 );
                                 // Use the declared variant field type (e.g. f64) so
@@ -1117,7 +1120,7 @@ impl<'a> Builder<'a> {
                                 self.emit_assign(
                                     Place::local(payload_local),
                                     Rvalue::CallIntrinsic {
-                                        name: "gos_load",
+                                        name: "gos_enum_load",
                                         args: vec![
                                             Operand::Copy(Place::local(scrutinee)),
                                             Operand::Copy(Place::local(off_local)),
@@ -1161,16 +1164,14 @@ impl<'a> Builder<'a> {
                                 let off_local = self.fresh(i64_ty);
                                 self.emit_assign(
                                     Place::local(off_local),
-                                    Rvalue::Use(Operand::Const(ConstValue::Int(
-                                        ((i + 1) * 8) as i128,
-                                    ))),
+                                    Rvalue::Use(Operand::Const(ConstValue::Int((i * 8) as i128))),
                                     span,
                                 );
                                 let field_local = self.fresh(i64_ty);
                                 self.emit_assign(
                                     Place::local(field_local),
                                     Rvalue::CallIntrinsic {
-                                        name: "gos_load",
+                                        name: "gos_enum_load",
                                         args: vec![
                                             Operand::Copy(Place::local(scrutinee)),
                                             Operand::Copy(Place::local(off_local)),
@@ -1607,7 +1608,7 @@ impl<'a> Builder<'a> {
         // before lowering so `region_depth` flags the body's locals.
         let regioned = self.loop_body_region_eligible(body);
         if regioned {
-            self.emit_region_call("gos_rt_region_push", span);
+            self.emit_region_call("gos_rt_arena_push", span);
             self.region_depth += 1;
         }
         // `break` jumps to `exit`; `continue` jumps back to the
@@ -1626,7 +1627,7 @@ impl<'a> Builder<'a> {
             // Eligibility guarantees no early exit, so `current` is the
             // body's fall-through; pop the region before the back-edge.
             if self.current.is_some() {
-                self.emit_region_call("gos_rt_region_pop", span);
+                self.emit_region_call("gos_rt_arena_pop", span);
             }
         }
         self.terminate(Terminator::Goto { target: header });
@@ -1663,7 +1664,7 @@ impl<'a> Builder<'a> {
     }
 
     /// Emits a zero-argument unit-returning call to a runtime region helper
-    /// (`gos_rt_region_push` / `gos_rt_region_pop`) and continues lowering
+    /// (`gos_rt_arena_push` / `gos_rt_arena_pop`) and continues lowering
     /// in a fresh block.
     pub(crate) fn emit_region_call(&mut self, sym: &str, span: Span) {
         let unit = self.tcx.unit();

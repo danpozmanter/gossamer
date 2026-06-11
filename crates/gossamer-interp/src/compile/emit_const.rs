@@ -47,6 +47,22 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    /// Index of an INTERNED shape name in `shape_names` (the
+    /// `VariantIs` / `StructIs` operand table), deduplicated by
+    /// pointer identity.
+    pub(crate) fn shape_name_idx(&mut self, name: &str) -> ConstIdx {
+        let interned = crate::value::intern_type_name(name);
+        if let Some(pos) = self
+            .shape_names
+            .iter()
+            .position(|n| std::ptr::eq(*n, interned))
+        {
+            return ConstIdx::try_from(pos).unwrap_or(0);
+        }
+        self.shape_names.push(interned);
+        ConstIdx::try_from(self.shape_names.len() - 1).unwrap_or(0)
+    }
+
     pub(crate) fn const_idx(&mut self, key: ConstKey, value: Value) -> ConstIdx {
         if let Some(idx) = self.const_cache.get(&key) {
             return *idx;

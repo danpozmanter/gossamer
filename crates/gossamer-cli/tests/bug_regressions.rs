@@ -1388,7 +1388,7 @@ fn json_render_adt_text_branch_does_not_free_uninit_pairs_vec() {
     // __GI___libc_free.  The fix: emit the free immediately in the JSON
     // arm and re-assign pairs_vec to 0 so the global drop pass skips it.
     let src = r#"
-use std::json
+use std::encoding::json
 
 struct Info { num: i64, label: String }
 

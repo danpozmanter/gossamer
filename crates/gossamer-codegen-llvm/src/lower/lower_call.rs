@@ -420,6 +420,16 @@ impl<'a> Lowerer<'a> {
             self.lower_vec_len_inline(&args[0], destination, target)?;
             return Ok(());
         }
+        // `.len()` on a Vec/Slice that routed through the generic
+        // `gos_rt_len` dispatcher: same null-guarded header load, but
+        // only when the static element type pins the receiver as a
+        // real word-stride GosVec — never `Vec<String>`, whose
+        // `env::args()` sentinel pointer keeps its length in
+        // `ARGS_LEN` rather than at `*p`.
+        if name == "gos_rt_len" && args.len() == 1 && self.vec_operand_has_word_elem(&args[0]) {
+            self.lower_vec_len_inline(&args[0], destination, target)?;
+            return Ok(());
+        }
         // `s.split(c)` where `c` is a char: the runtime takes `sep: *const c_char`
         // (a C string pointer), but MIR emits the char code as `i32`. Convert
         // via `gos_rt_char_to_str` first, mirroring the Cranelift backend.
@@ -471,7 +481,13 @@ impl<'a> Lowerer<'a> {
         // route the body to cranelift just for these calls.
         if matches!(
             name.as_str(),
-            "gos_load" | "gos_store" | "gos_alloc" | "gos_rc_alloc" | "gos_fn_addr"
+            "gos_load"
+                | "gos_store"
+                | "gos_alloc"
+                | "gos_rc_alloc"
+                | "gos_fn_addr"
+                | "gos_enum_disc"
+                | "gos_enum_set_disc"
         ) {
             self.lower_raw_intrinsic(&name, args, destination, target)?;
             return Ok(());
@@ -501,7 +517,8 @@ impl<'a> Lowerer<'a> {
         // handles) keeps the runtime call.
         if name == "gos_rt_vec_get_i64"
             && args.len() == 2
-            && is_primitive_int_llvm(&render_ty(self.tcx, self.body.local_ty(destination.local)))
+            && (is_primitive_int_llvm(&render_ty(self.tcx, self.body.local_ty(destination.local)))
+                || self.vec_operand_elem_is_vec(&args[0]))
         {
             self.lower_vec_get_i64_inline(args, destination, target)?;
             return Ok(());
@@ -828,6 +845,153 @@ impl<'a> Lowerer<'a> {
         let dest_ty_mir = self.body.local_ty(destination.local);
         let dest_ty = render_ty(self.tcx, dest_ty_mir);
         match name {
+            "gos_enum_load" => {
+                // gos_enum_load(ptr, off) -> i64 at (ptr & !7) + off.
+                // Enum payload read: the mask strips a tagged repr's disc
+                // bits and is a no-op for aligned header-repr pointers.
+                if args.len() < 2 {
+                    return Err(BuildError::Unsupported("gos_enum_load arity"));
+                }
+                let pv = self.lower_operand(&args[0])?;
+                let p_ty = self.operand_llvm_ty(&args[0]);
+                let p64 = self.coerce_llvm_value(&pv, &p_ty, "i64");
+                let off_v = self.lower_operand(&args[1])?;
+                let off_ty = self.operand_llvm_ty(&args[1]);
+                let off64 = self.coerce_llvm_value(&off_v, &off_ty, "i64");
+                let m = self.fresh();
+                writeln!(self.out, "  {m} = and i64 {p64}, -8").unwrap();
+                // Unit variants of tagged enums are TAGGED NULLS (base
+                // zero, no object): a payload load on one yields 0
+                // instead of dereferencing address zero. Perfectly
+                // predicted on payload-bearing values.
+                let is_null = self.fresh();
+                writeln!(self.out, "  {is_null} = icmp eq i64 {m}, 0").unwrap();
+                let entry_l = self.fresh_label("enum_load_entry");
+                let load_l = self.fresh_label("enum_load");
+                let done_l = self.fresh_label("enum_load_done");
+                writeln!(self.out, "  br label %{entry_l}").unwrap();
+                writeln!(self.out, "{entry_l}:").unwrap();
+                writeln!(
+                    self.out,
+                    "  br i1 {is_null}, label %{done_l}, label %{load_l}"
+                )
+                .unwrap();
+                writeln!(self.out, "{load_l}:").unwrap();
+                let mp = self.fresh();
+                writeln!(self.out, "  {mp} = inttoptr i64 {m} to ptr").unwrap();
+                let addr = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {addr} = getelementptr i8, ptr {mp}, i64 {off64}"
+                )
+                .unwrap();
+                let lv = self.fresh();
+                writeln!(self.out, "  {lv} = load i64, ptr {addr}").unwrap();
+                writeln!(self.out, "  br label %{done_l}").unwrap();
+                writeln!(self.out, "{done_l}:").unwrap();
+                let v = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {v} = phi i64 [ 0, %{entry_l} ], [ {lv}, %{load_l} ]"
+                )
+                .unwrap();
+                // Bit-preserving recovery, exactly as `gos_load`: float
+                // payloads were stored as raw bits and must bitcast back.
+                let coerced = if dest_ty == "double" || dest_ty == "float" {
+                    let tmp = self.fresh();
+                    writeln!(self.out, "  {tmp} = bitcast i64 {v} to {dest_ty}").unwrap();
+                    tmp
+                } else {
+                    self.coerce_llvm_value(&v, "i64", &dest_ty)
+                };
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            "gos_enum_tag" => {
+                // gos_enum_tag(ptr, disc) -> ptr | (disc << 1). Tagged-repr
+                // enums (<= 4 variants) carry the discriminant in pointer
+                // bits 1-2; bit 0 stays 0 (odd pointers are string bodies).
+                if args.len() < 2 {
+                    return Err(BuildError::Unsupported("gos_enum_tag arity"));
+                }
+                let pv = self.lower_operand(&args[0])?;
+                let p_ty = self.operand_llvm_ty(&args[0]);
+                let p64 = self.coerce_llvm_value(&pv, &p_ty, "i64");
+                let d = self.lower_operand(&args[1])?;
+                let d_ty = self.operand_llvm_ty(&args[1]);
+                let d64 = self.coerce_llvm_value(&d, &d_ty, "i64");
+                let sh = self.fresh();
+                writeln!(self.out, "  {sh} = shl i64 {d64}, 1").unwrap();
+                let or = self.fresh();
+                writeln!(self.out, "  {or} = or i64 {p64}, {sh}").unwrap();
+                let coerced = self.coerce_llvm_value(&or, "i64", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            "gos_enum_disc_tag" => {
+                // gos_enum_disc_tag(ptr) -> (ptr >> 1) & 3.
+                if args.is_empty() {
+                    return Err(BuildError::Unsupported("gos_enum_disc_tag arity"));
+                }
+                let pv = self.lower_operand(&args[0])?;
+                let p_ty = self.operand_llvm_ty(&args[0]);
+                let p64 = self.coerce_llvm_value(&pv, &p_ty, "i64");
+                let sh = self.fresh();
+                writeln!(self.out, "  {sh} = lshr i64 {p64}, 1").unwrap();
+                let m = self.fresh();
+                writeln!(self.out, "  {m} = and i64 {sh}, 3").unwrap();
+                let coerced = self.coerce_llvm_value(&m, "i64", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            "gos_enum_untag" => {
+                // gos_enum_untag(ptr) -> ptr & !7 (payload base).
+                if args.is_empty() {
+                    return Err(BuildError::Unsupported("gos_enum_untag arity"));
+                }
+                let pv = self.lower_operand(&args[0])?;
+                let p_ty = self.operand_llvm_ty(&args[0]);
+                let p64 = self.coerce_llvm_value(&pv, &p_ty, "i64");
+                let m = self.fresh();
+                writeln!(self.out, "  {m} = and i64 {p64}, -8").unwrap();
+                let coerced = self.coerce_llvm_value(&m, "i64", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            "gos_enum_disc" => {
+                // gos_enum_disc(payload_ptr) -> i64. The discriminant is
+                // the byte at payload-3 (inside the RC header: strong u32,
+                // weak u8, disc u8, meta_id u16).
+                if args.is_empty() {
+                    return Err(BuildError::Unsupported("gos_enum_disc arity"));
+                }
+                let p = self.lower_raw_ptr_arg(&args[0])?;
+                let addr = self.fresh();
+                writeln!(self.out, "  {addr} = getelementptr i8, ptr {p}, i64 -3").unwrap();
+                let b = self.fresh();
+                writeln!(self.out, "  {b} = load i8, ptr {addr}").unwrap();
+                let v = self.fresh();
+                writeln!(self.out, "  {v} = zext i8 {b} to i64").unwrap();
+                let coerced = self.coerce_llvm_value(&v, "i64", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            "gos_enum_set_disc" => {
+                // gos_enum_set_disc(payload_ptr, disc_i64): store the low
+                // byte of the discriminant at payload-3.
+                if args.len() < 2 {
+                    return Err(BuildError::Unsupported("gos_enum_set_disc arity"));
+                }
+                let p = self.lower_raw_ptr_arg(&args[0])?;
+                let d = self.lower_operand(&args[1])?;
+                let d_ty = self.operand_llvm_ty(&args[1]);
+                let d64 = self.coerce_llvm_value(&d, &d_ty, "i64");
+                let b = self.fresh();
+                writeln!(self.out, "  {b} = trunc i64 {d64} to i8").unwrap();
+                let addr = self.fresh();
+                writeln!(self.out, "  {addr} = getelementptr i8, ptr {p}, i64 -3").unwrap();
+                writeln!(self.out, "  store i8 {b}, ptr {addr}").unwrap();
+            }
             "gos_load" => {
                 // gos_load(ptr_i64, offset_i64) -> i64
                 if args.len() < 2 {
@@ -967,7 +1131,7 @@ impl<'a> Lowerer<'a> {
                 let slot = local_slot(destination.local);
                 writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
             }
-            "gos_rc_alloc" => {
+            "gos_rc_alloc" | "gos_rc_alloc_tagged" => {
                 // gos_rc_alloc(size_i64, meta_symbol) -> ptr to a
                 // reference-counted heap object (strong count 1). The
                 // second arg is a const-string naming the module-global
@@ -993,11 +1157,16 @@ impl<'a> Lowerer<'a> {
                     }
                     _ => "null".to_string(),
                 };
-                declare_rt(&mut self.runtime_refs, "gos_rt_rc_alloc");
+                let rt_name = if name == "gos_rc_alloc_tagged" {
+                    "gos_rt_rc_alloc_tagged"
+                } else {
+                    "gos_rt_rc_alloc"
+                };
+                declare_rt(&mut self.runtime_refs, rt_name);
                 let tmp = self.fresh();
                 writeln!(
                     self.out,
-                    "  {tmp} = call ptr @gos_rt_rc_alloc(i64 {size_v}, ptr {meta_ptr})"
+                    "  {tmp} = call ptr @{rt_name}(i64 {size_v}, ptr {meta_ptr})"
                 )
                 .unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);

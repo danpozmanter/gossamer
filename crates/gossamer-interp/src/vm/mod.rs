@@ -131,6 +131,9 @@ pub struct Vm {
     /// compile without reflowing HIR → MIR. `None` when the JIT
     /// is disabled (`gos run --no-jit` / `GOS_JIT=0`).
     pub(crate) mir_bodies: Option<Arc<Vec<Body>>>,
+    /// DefId.local -> native shape index for heap enums whose values
+    /// may cross the JIT boundary as raw pointers.
+    pub(crate) enum_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
     /// Snapshot of the type context as it stood when MIR was
     /// lowered. Cranelift's `compile_to_jit` only needs `&TyCtxt`.
     /// `Arc` so spawned goroutines reuse the parent's snapshot
@@ -755,7 +758,10 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
                     Value::Float(fa_inner.data[base_idx + j]),
                 ));
             }
-            Ok(Value::struct_(fa_inner.name, Arc::new(fields)))
+            Ok(Value::struct_(
+                fa_inner.name,
+                Arc::unwrap_or_clone(Arc::new(fields)),
+            ))
         }
         Value::String(s) => Ok(Value::Int(i64::from(s.as_bytes()[i]))),
         Value::IntArray(data) => Ok(Value::Int(data[i])),
@@ -1225,6 +1231,11 @@ fn values_equal(a: &Value, b: &Value) -> bool {
                     .zip(vb.fields.iter())
                     .all(|(x, y)| values_equal(x, y))
         }
+        // Native enum handles compare structurally through the boxed
+        // representation (rare fallback; derived `==` routes through
+        // match dispatch instead).
+        (Value::NativeEnum(a), _) => values_equal(&crate::value::native_enum_to_variant(a), b_ref),
+        (_, Value::NativeEnum(b)) => values_equal(a_ref, &crate::value::native_enum_to_variant(b)),
         _ => false,
     }
 }
@@ -1241,7 +1252,7 @@ pub(crate) fn auto_deref_cell(v: &Value) -> Option<Value> {
     }
     let mut set_id: u64 = 0;
     let mut flag_name = String::new();
-    for (ident, val) in inner.fields.iter() {
+    for (ident, val) in &inner.fields {
         if ident.name == "__set_id"
             && let Value::Int(n) = val
         {
@@ -1283,7 +1294,7 @@ fn field_set(receiver: &mut Value, name: &str, new_value: Value) -> RuntimeResul
         )));
     };
     let struct_inner = Arc::make_mut(struct_arc);
-    let slots = Arc::make_mut(&mut struct_inner.fields);
+    let slots = &mut struct_inner.fields;
     for (ident, slot) in slots.iter_mut() {
         if ident.name == name {
             *slot = new_value;
@@ -1313,6 +1324,7 @@ mod tests {
             f64_consts: Vec::new(),
             i64_consts: Vec::new(),
             globals: Vec::new(),
+            shape_names: Vec::new(),
             deferred_exprs: Vec::new(),
             deferred_envs: Vec::new(),
             deferred_env_regs: Vec::new(),

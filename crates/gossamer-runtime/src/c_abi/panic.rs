@@ -53,6 +53,52 @@ pub(crate) fn take_last_goroutine_panic() -> Option<String> {
 // `extern "C"` declares the function nounwind, so that unwind would
 // trip the nounwind contract and abort whenever a cleanup frame sits
 // between the panic and its catch.
+use gossamer_coro::GosPanic;
+
+/// User panic hook installed via `runtime::set_panic_hook`: a bare
+/// `fn(String)` code pointer called with the rendered message instead
+/// of the default `error[GX0005]` report. Zero = unset.
+static USER_PANIC_HOOK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Registers a non-capturing `fn(String)` as the process panic hook.
+/// Null clears it. The hook replaces the default stderr report for
+/// both main-goroutine and isolated-goroutine panics; fatality and
+/// isolation semantics are unchanged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_panic_hook(f: *const u8) {
+    USER_PANIC_HOOK.store(f as usize, std::sync::atomic::Ordering::Release);
+}
+
+/// Invoke the user hook with `text`. Returns false when no hook is set.
+pub(crate) fn call_user_panic_hook(text: &str) -> bool {
+    let f = USER_PANIC_HOOK.load(std::sync::atomic::Ordering::Acquire);
+    if f == 0 {
+        return false;
+    }
+    let c = std::ffi::CString::new(text).unwrap_or_default();
+    // SAFETY: the pointer was registered by compiled code as a
+    // non-capturing `fn(String)`; the ABI is one c-string argument.
+    let hook: extern "C" fn(*const c_char) = unsafe { std::mem::transmute(f as *const u8) };
+    hook(c.as_ptr());
+    true
+}
+
+/// Install the process Rust panic hook that silences
+/// Gossamer-originated panics (their report is printed by
+/// `gos_rt_panic` before the unwind starts). Idempotent.
+pub(crate) fn install_silent_gos_hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if info.payload().downcast_ref::<GosPanic>().is_some() {
+                return;
+            }
+            prev(info);
+        }));
+    });
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     let text = if msg.is_null() {
@@ -60,25 +106,28 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     } else {
         unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
     };
-    // Match the unified diagnostic-code prefix the VM /
-    // tree-walker use so both execution modes tag panics with
-    // `error[GX0005]` — keeps user-visible stderr identical
-    // whether `gos run` took the native path or fell back.
-    eprintln!("error[GX0005]: panic: {text}");
-    // Inline the active goroutine's call stack so the operator
-    // can locate the failing frame without a separate SIGQUIT
-    // round-trip. Empty when no frame info has been published
-    // (e.g. a fall-back tier without stack-push hooks).
-    let trace = crate::sigquit::render_active_panic_trace();
-    if trace.is_empty() {
-        // Compiled tier keeps no per-call shadow stack — recover the
-        // call chain by unwinding the real machine stack.
-        let native = crate::sigquit::render_native_panic_trace();
-        if !native.is_empty() {
-            eprint!("{native}");
+    install_silent_gos_hook();
+    if !call_user_panic_hook(&text) {
+        // Match the unified diagnostic-code prefix the VM /
+        // tree-walker use so both execution modes tag panics with
+        // `error[GX0005]` — keeps user-visible stderr identical
+        // whether `gos run` took the native path or fell back.
+        eprintln!("error[GX0005]: panic: {text}");
+        // Inline the active goroutine's call stack so the operator
+        // can locate the failing frame without a separate SIGQUIT
+        // round-trip. Empty when no frame info has been published
+        // (e.g. a fall-back tier without stack-push hooks).
+        let trace = crate::sigquit::render_active_panic_trace();
+        if trace.is_empty() {
+            // Compiled tier keeps no per-call shadow stack — recover the
+            // call chain by unwinding the real machine stack.
+            let native = crate::sigquit::render_native_panic_trace();
+            if !native.is_empty() {
+                eprint!("{native}");
+            }
+        } else {
+            eprint!("{trace}");
         }
-    } else {
-        eprint!("{trace}");
     }
     // per-goroutine panic isolation. If the
     // panic originates inside a spawned goroutine, raise a Rust
@@ -92,16 +141,16 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
         // deliver `Err(message)` from its unwinding Drop-guard before
         // the coroutine wrapper catches and isolates this panic.
         set_last_goroutine_panic(&text);
-        std::panic::panic_any(text);
+        std::panic::panic_any(GosPanic(text));
     }
-    // Fatal main-goroutine panic. Flush the runtime's line-buffered stdout
-    // before aborting — exactly as `gos_rt_exit` does — so any output emitted
-    // before the panic survives; `std::process::abort` otherwise skips the
-    // atexit/stdio flush and the buffered bytes are lost.
+    // Fatal main-goroutine panic: flush buffered stdout (a plain
+    // `abort` would drop it) and exit with the pinned panic code 101,
+    // matching Rust — scripts can rely on it, and no core is dumped
+    // for an ordinary user panic.
     unsafe {
         gos_rt_flush_stdout();
     }
-    std::process::abort();
+    std::process::exit(101);
 }
 
 /// Pushes a call-stack frame on entry to a Gossamer function.

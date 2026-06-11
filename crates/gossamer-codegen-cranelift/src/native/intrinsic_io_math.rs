@@ -821,7 +821,242 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        "gos_rc_alloc" => {
+        "gos_rt_aggr_release_children"
+        | "gos_rt_aggr_retain_children"
+        | "gos_rt_aggr_zero_guarded"
+        | "gos_rt_option_slot_retain"
+        | "gos_rt_option_slot_release"
+        | "gos_rt_vec_set_elem_meta"
+        | "gos_rt_map_set_blob_values" => {
+            // Guarded copy-blob accounting is emitted by the LLVM
+            // lowering, which compiles every body of both build profiles
+            // (debug is LLVM at -O0); this backend only sees the rare
+            // bodies that fall back when the LLVM lowerer rejects a
+            // construct. Such a body heap-allocates its aggregates at
+            // construction instead of copying them into provenance-set
+            // blobs, so these walks would only ever no-op — escaped
+            // aggregates inside a fallback body degrade to a bounded
+            // leak (never a corruption: every release is set-gated).
+            Ok(true)
+        }
+        "gos_rt_rc_release"
+        | "gos_rt_rc_retain"
+        | "gos_rt_rc_weak_release"
+        | "gos_rt_rc_weak_retain" => {
+            // Drop-pass accounting: one pointer argument, no result.
+            let p = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let static_name: &'static str = match name {
+                "gos_rt_rc_release" => "gos_rt_rc_release",
+                "gos_rt_rc_retain" => "gos_rt_rc_retain",
+                "gos_rt_rc_weak_release" => "gos_rt_rc_weak_release",
+                _ => "gos_rt_rc_weak_retain",
+            };
+            let f = intrinsics.extern_fn(module, static_name, &[types::I64], &[])?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            builder.ins().call(fref, &[p]);
+            Ok(true)
+        }
+        "gos_rt_rc_downgrade" => {
+            // Returns the (possibly tagged) weak referent pointer.
+            let p = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let f = intrinsics.extern_fn(
+                module,
+                "gos_rt_rc_downgrade",
+                &[types::I64],
+                &[types::I64],
+            )?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &[p]);
+            let v = builder.inst_results(call)[0];
+            if !destination.projection.is_empty() {
+                bail!("native codegen: gos_rt_rc_downgrade destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
+            Ok(true)
+        }
+        "gos_enum_load" => {
+            // Load i64 at ((ptr & !7) + off) — enum payload read; mask is
+            // a no-op for header-repr (aligned) pointers.
+            let p = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let off = match args.get(1) {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let base = builder.ins().band_imm(p, -8);
+            // Tagged-null unit variants (base zero) yield 0 instead of
+            // dereferencing address zero.
+            let load_b = builder.create_block();
+            let done_b = builder.create_block();
+            builder.append_block_param(done_b, types::I64);
+            let zero = builder.ins().iconst(types::I64, 0);
+            builder
+                .ins()
+                .brif(base, load_b, &[], done_b, &[zero.into()]);
+            builder.switch_to_block(load_b);
+            builder.seal_block(load_b);
+            let addr = builder.ins().iadd(base, off);
+            let lv = builder.ins().load(
+                types::I64,
+                cranelift_codegen::ir::MemFlags::trusted(),
+                addr,
+                0,
+            );
+            builder.ins().jump(done_b, &[lv.into()]);
+            builder.switch_to_block(done_b);
+            builder.seal_block(done_b);
+            let v = builder.block_params(done_b)[0];
+            if !destination.projection.is_empty() {
+                bail!("native codegen: gos_enum_load destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
+            Ok(true)
+        }
+        "gos_enum_tag" => {
+            // ptr | (disc << 1) — tagged-repr enum constructor finish.
+            let p = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let d = match args.get(1) {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let sh = builder.ins().ishl_imm(d, 1);
+            let v = builder.ins().bor(p, sh);
+            if !destination.projection.is_empty() {
+                bail!("native codegen: gos_enum_tag destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
+            Ok(true)
+        }
+        "gos_enum_disc_tag" => {
+            // (ptr >> 1) & 3.
+            let p = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let sh = builder.ins().ushr_imm(p, 1);
+            let v = builder.ins().band_imm(sh, 3);
+            if !destination.projection.is_empty() {
+                bail!("native codegen: gos_enum_disc_tag destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
+            Ok(true)
+        }
+        "gos_enum_untag" => {
+            // ptr & !7 — payload base of a tagged enum pointer.
+            let p = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let v = builder.ins().band_imm(p, -8);
+            if !destination.projection.is_empty() {
+                bail!("native codegen: gos_enum_untag destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                v,
+            );
+            Ok(true)
+        }
+        "gos_enum_disc" => {
+            // Discriminant byte at payload-3 (inside the RC header).
+            let p = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let b = builder.ins().uload8(
+                types::I64,
+                cranelift_codegen::ir::MemFlags::trusted(),
+                p,
+                -3,
+            );
+            if !destination.projection.is_empty() {
+                bail!("native codegen: gos_enum_disc destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                b,
+            );
+            Ok(true)
+        }
+        "gos_enum_set_disc" => {
+            // Store the low discriminant byte at payload-3.
+            let p = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let d = match args.get(1) {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            builder
+                .ins()
+                .istore8(cranelift_codegen::ir::MemFlags::trusted(), d, p, -3);
+            Ok(true)
+        }
+        "gos_rc_alloc" | "gos_rc_alloc_tagged" => {
             // Reference-counted allocator: `gos_rc_alloc(size, meta)`
             // -> ptr with strong count 1. `size` is the payload byte
             // count; `meta` names the module-global child-layout blob
@@ -848,12 +1083,13 @@ pub(super) fn lower_intrinsic_call_io_math(
                 }
                 _ => builder.ins().iconst(ptr_ty, 0),
             };
-            let rc_alloc = intrinsics.extern_fn(
-                module,
-                "gos_rt_rc_alloc",
-                &[types::I64, ptr_ty],
-                &[ptr_ty],
-            )?;
+            let rt_name = if name == "gos_rc_alloc_tagged" {
+                "gos_rt_rc_alloc_tagged"
+            } else {
+                "gos_rt_rc_alloc"
+            };
+            let rc_alloc =
+                intrinsics.extern_fn(module, rt_name, &[types::I64, ptr_ty], &[ptr_ty])?;
             let rc_alloc_ref = module.declare_func_in_func(rc_alloc, builder.func);
             let call_inst = builder.ins().call(rc_alloc_ref, &[size_i64, meta_val]);
             let raw_ptr = builder.inst_results(call_inst)[0];

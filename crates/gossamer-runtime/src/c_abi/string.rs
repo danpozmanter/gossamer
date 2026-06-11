@@ -65,7 +65,7 @@ const STR_STATIC_TAG: u8 = 0xA8;
 /// Tag for growable strings whose backing bytes live in an arena region.
 /// Same `[cap][len][tag][content][NUL]` layout as `STR_BUILDER_TAG` (so
 /// length reads and in-place append work identically), but the bytes are
-/// freed wholesale at `region_pop`, so `gos_rt_str_free` skips them.
+/// freed wholesale at `arena_pop`, so `gos_rt_str_free` skips them.
 const STR_REGION_TAG: u8 = 0xAA;
 
 /// O(1) byte length for strings carrying a length header (builder + static
@@ -123,7 +123,7 @@ fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
             off += p.len();
         }
         // NUL already zero. Region-allocated strings are bulk-freed at
-        // `region_pop` and intentionally skipped by `gos_rt_str_free`, so they
+        // `arena_pop` and intentionally skipped by `gos_rt_str_free`, so they
         // never `str_dec`. Counting them in the per-string leak ledger would
         // report a false positive (the memory is reclaimed wholesale at pop);
         // only individually-managed (`STR_BUILDER`) strings are tracked.
@@ -163,7 +163,7 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
         let tag_ptr = unsafe { s.cast::<u8>().sub(1) };
         let tag = unsafe { *tag_ptr };
         if tag == STR_REGION_TAG {
-            // Region-allocated: freed wholesale at region_pop, never here.
+            // Region-allocated: freed wholesale at arena_pop, never here.
             return;
         }
         if tag == STR_ALLOC_TAG {
@@ -315,14 +315,30 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
             std::mem::forget(buf);
             p
         };
-        Box::into_raw(Box::new(GosVec {
+        let out = Box::into_raw(Box::new(GosVec {
             len: s.len,
             cap: s.len,
             elem_bytes: s.elem_bytes,
             elem_kind: s.elem_kind,
             _reserved: [0; 3],
             ptr: SyncRawPtr::new(data),
-        }))
+        }));
+        // A clone of a guarded-aggregate vec shares every element's
+        // copy-blob children with the source; register the same meta and
+        // give the clone its own shares.
+        if s.elem_kind == crate::c_abi::vec::vec_elem_kind::AGGR_GUARDED {
+            let meta = crate::c_abi::vec::vec_elem_meta(src);
+            if !meta.is_null() {
+                unsafe { crate::c_abi::vec::gos_rt_vec_set_elem_meta(out, meta) };
+                let stride = s.elem_bytes as usize;
+                for i in 0..s.len.max(0) as usize {
+                    unsafe {
+                        crate::c_abi::rc::gos_rt_aggr_retain_children(data.add(i * stride), meta);
+                    }
+                }
+            }
+        }
+        out
     })
 }
 

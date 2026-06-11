@@ -29,6 +29,33 @@ impl Vm {
             .collect()
     }
 
+    /// Public entry for invoking a function VALUE (not a name): used by
+    /// the CLI runner to deliver the main-goroutine panic message to a
+    /// `runtime::set_panic_hook` hook.
+    pub fn apply_value(&self, callee: Value, args: Vec<Value>) -> RuntimeResult<Value> {
+        self.apply(Global::Value(callee), args)
+    }
+
+    /// Deliver a panic message to the registered hook, if any. The
+    /// stored hook may be a function value or (bytecode tier) the bare
+    /// function NAME — resolve through globals in that case. Returns
+    /// false when no hook is set or the call failed (caller prints the
+    /// default report).
+    pub fn invoke_panic_hook(&self, msg: &str) -> bool {
+        let Some(hook) = crate::panic_hook_value() else {
+            return false;
+        };
+        let arg = Value::String(SmolStr::from(msg));
+        let resolved = match &hook {
+            Value::String(name) => match self.lookup_global(name.as_str()) {
+                Some(g) => g,
+                None => return false,
+            },
+            other => Global::Value(other.clone()),
+        };
+        self.apply(resolved, vec![arg]).is_ok()
+    }
+
     pub(crate) fn apply(&self, global: Global, args: Vec<Value>) -> RuntimeResult<Value> {
         match global {
             Global::Fn(chunk) => {
@@ -96,6 +123,9 @@ impl Vm {
                 if let Some(jit) = jit_opt {
                     match jit_call::invoke(&jit, &args) {
                         jit_call::Dispatch::Ok(value) => {
+                            if jit_call::jit_trace() {
+                                eprintln!("jit: native hit {}", jit.name);
+                            }
                             self.call_depth.set(self.call_depth.get().saturating_sub(1));
                             return Ok(value);
                         }
@@ -125,9 +155,10 @@ impl Vm {
                     .walker
                     .borrow_mut()
                     .invoke_callable_value(Value::Closure(closure), args),
-                Value::Variant(inner) if inner.fields.is_empty() => {
-                    Ok(Value::variant(inner.name, std::sync::Arc::new(args)))
-                }
+                Value::Variant(inner) if inner.fields.is_empty() => Ok(Value::variant(
+                    inner.name,
+                    Arc::unwrap_or_clone(std::sync::Arc::new(args)),
+                )),
                 _ => Err(RuntimeError::Type(
                     "global is not callable at this call site".to_string(),
                 )),
@@ -147,6 +178,7 @@ impl Vm {
         let globals = Arc::clone(&self.globals);
         let mir_bodies = self.mir_bodies.clone();
         let tcx_snapshot = self.tcx_snapshot.clone();
+        let enum_shape_defs = self.enum_shape_defs.clone();
         crate::interp::pool().spawn(Box::new(move || {
             // Per-worker `Vm`, lazily built on first task. Reused
             // across every subsequent goroutine landing on this
@@ -163,11 +195,18 @@ impl Vm {
                 let vm_cell = cell.get_or_init(|| std::cell::RefCell::new(None));
                 let mut slot = vm_cell.borrow_mut();
                 if slot.is_none() {
-                    *slot = Some(Vm::with_globals(globals, mir_bodies, tcx_snapshot));
+                    *slot = Some(Vm::with_globals(
+                        globals,
+                        mir_bodies,
+                        tcx_snapshot,
+                        enum_shape_defs,
+                    ));
                 }
                 let vm = slot.as_mut().expect("THREAD_VM init");
                 if let Err(err) = vm.dispatch_call(&callee, args) {
-                    eprintln!("goroutine panic (isolated): {err}");
+                    if !vm.invoke_panic_hook(&crate::panic_message(&err)) {
+                        eprintln!("goroutine panic (isolated): {err}");
+                    }
                 }
                 // Trim per-task buffers back toward steady-state so
                 // bursty goroutine workloads do not leave every worker

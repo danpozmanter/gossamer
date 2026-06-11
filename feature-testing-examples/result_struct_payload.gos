@@ -1,0 +1,59 @@
+// Exercises by-value Result<Struct, E> payload ownership: a struct
+// deserialized inside a helper, extracted with `?`, rewrapped into the
+// outgoing Ok, consumed by match in the caller, passed by value, and
+// field-read after the source Result died. The payload blob and its
+// string children must survive exactly as long as their holders — a
+// premature slot release (or a stack-aggregate field walk over an
+// opaque one-slot handle) crashes a tier and breaks parity.
+
+use std::errors
+
+struct Comic {
+    month: String,
+    num: i64,
+    link: String,
+    year: String,
+    news: String,
+    title: String,
+}
+
+fn parse(idx: i64) -> Result<Comic, errors::Error> {
+    let body = format!(
+        "{{\"month\":\"5\",\"num\":{},\"link\":\"\",\"year\":\"2006\",\"news\":\"\",\"title\":\"Family Circus\"}}",
+        idx
+    )
+    let c = from_json::<Comic>(&body)?
+    Ok(c)
+}
+
+fn parse_inline(idx: i64) -> Result<Comic, errors::Error> {
+    let body = format!(
+        "{{\"month\":\"6\",\"num\":{},\"link\":\"l\",\"year\":\"2007\",\"news\":\"n\",\"title\":\"Barrel\"}}",
+        idx
+    )
+    Ok(from_json::<Comic>(&body)?)
+}
+
+fn show(c: Comic) -> i64 {
+    c.title.len() + c.num
+}
+
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 300 {
+        match parse(i) {
+            Err(e) => println!("error: {}", e.message()),
+            Ok(c) => {
+                total += show(c)
+                total += c.year.len()
+            }
+        }
+        match parse_inline(i) {
+            Err(e) => println!("error: {}", e.message()),
+            Ok(c) => total += show(c),
+        }
+        i += 1
+    }
+    println!("total = {}", total)
+}

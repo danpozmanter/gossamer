@@ -173,7 +173,7 @@ pub(crate) fn builtin_time_instant_now(_args: &[Value]) -> RuntimeResult<Value> 
     let ms = i64::try_from(monotonic_base().elapsed().as_millis()).unwrap_or(i64::MAX);
     Ok(Value::struct_(
         "time::Instant",
-        Arc::new(vec![(Ident::new("__ms"), Value::Int(ms))]),
+        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__ms"), Value::Int(ms))])),
     ))
 }
 
@@ -267,13 +267,13 @@ pub(crate) fn next_net_id() -> i64 {
 pub(crate) fn handle_struct(name: &'static str, id: i64) -> Value {
     Value::struct_(
         name,
-        Arc::new(vec![(Ident::new("__handle"), Value::Int(id))]),
+        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__handle"), Value::Int(id))])),
     )
 }
 
 pub(crate) fn handle_id(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
-        for (ident, v) in inner.fields.iter() {
+        for (ident, v) in &inner.fields {
             if ident.name == "__handle" {
                 if let Value::Int(n) = v {
                     return Some(*n);

@@ -49,19 +49,31 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// callers under `#![forbid(unsafe_code)]` (the `gos` `main`) can invoke
 /// it. No-op under `ThreadSanitizer`, where the system allocator is used.
 ///
-/// `15` is mimalloc's `mi_option_purge_delay`. The `libmimalloc-sys`
-/// binding exposes only a curated subset of the option enum that omits
-/// this one, so it is pinned by value and guarded against a future
-/// mimalloc enum shift by the `allocator_tests` unit test below, which
-/// asserts index 15 still defaults to the 1000 ms purge delay.
+/// Also disables mimalloc's transparent-huge-page request. By default
+/// mimalloc `madvise(MADV_HUGEPAGE)`s its arena memory, so on Linux with
+/// THP in `madvise` mode the kernel backs even a tiny live set with
+/// 2 MiB pages — a process whose heap fits in tens of KiB stays several
+/// MiB resident — and mimalloc widens its minimal purge size to 2 MiB to
+/// match, which defeats the prompt purge above. Disabling it costs no
+/// measurable wall-clock on our workloads and keeps RSS proportional to
+/// the live set.
+///
+/// `15` and `43` are mimalloc's `mi_option_purge_delay` and
+/// `mi_option_allow_thp`. The `libmimalloc-sys` binding exposes only a
+/// curated subset of the option enum that omits these, so they are
+/// pinned by value and guarded against a future mimalloc enum shift by
+/// the `allocator_tests` unit tests below, which assert each index still
+/// reports its documented default.
 pub fn init_process_allocator() {
     #[cfg(not(tsan))]
     {
         const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
+        const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
         // SAFETY: `mi_option_set` is thread-safe and valid any time after
         // the allocator initialised, which it has by the time `main` runs.
         unsafe {
             libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, 0);
+            libmimalloc_sys::mi_option_set(MI_OPTION_ALLOW_THP, 0);
         }
     }
 }
@@ -101,27 +113,39 @@ pub use value::{
 
 #[cfg(all(test, not(tsan)))]
 mod allocator_tests {
-    /// Guards the `mi_option_purge_delay` enum index (15) that
-    /// [`super::init_process_allocator`] pins by value, since the
-    /// `libmimalloc-sys` binding doesn't name it. mimalloc's purge-delay
-    /// default is 1000 ms; if a mimalloc bump shifts the enum so index 15
-    /// names a different option, this default check fails loudly — the
-    /// signal to re-verify the index for the new version. Also confirms
-    /// the setter actually drives it to 0 (return-pages-promptly).
+    /// Guards the `mi_option_purge_delay` (15) and `mi_option_allow_thp`
+    /// (43) enum indices that [`super::init_process_allocator`] pins by
+    /// value, since the `libmimalloc-sys` binding doesn't name them. The
+    /// documented defaults are 1000 ms and 1 (Android, the one platform
+    /// defaulting `allow_thp` to 0, is not a target); if a mimalloc bump
+    /// shifts the enum so either index names a different option, its
+    /// default check fails loudly — the signal to re-verify the indices
+    /// for the new version. Single test because the defaults must be read
+    /// before any test calls the init; option state is process-global.
     #[test]
-    fn purge_delay_index_is_pinned_and_settable() {
+    fn allocator_option_indices_are_pinned_and_settable() {
         const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
+        const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
         // SAFETY: option get/set are thread-safe; the global allocator is
         // mimalloc in a non-tsan build, so it is initialised here.
-        let default = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) };
+        let purge_default = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) };
         assert_eq!(
-            default, 1000,
-            "mimalloc option 15 default is {default}, expected the 1000 ms \
+            purge_default, 1000,
+            "mimalloc option 15 default is {purge_default}, expected the 1000 ms \
              purge_delay default — the enum likely shifted; re-verify the \
              mi_option_purge_delay index for the current mimalloc version",
         );
+        let thp_default = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_ALLOW_THP) };
+        assert_eq!(
+            thp_default, 1,
+            "mimalloc option 43 default is {thp_default}, expected the allow_thp \
+             default of 1 — the enum likely shifted; re-verify the \
+             mi_option_allow_thp index for the current mimalloc version",
+        );
         super::init_process_allocator();
-        let after = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) };
-        assert_eq!(after, 0, "init_process_allocator must set purge_delay to 0");
+        let purge = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) };
+        assert_eq!(purge, 0, "init_process_allocator must set purge_delay to 0");
+        let thp = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_ALLOW_THP) };
+        assert_eq!(thp, 0, "init_process_allocator must set allow_thp to 0");
     }
 }

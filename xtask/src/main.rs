@@ -400,6 +400,15 @@ fn render_stdlib_page(modules: &[StdModule]) -> String {
     )
     .unwrap();
     writeln!(out).unwrap();
+    writeln!(
+        out,
+        "Names available without any import — the print macros, \
+         `min`/`max`/`clamp`, `spawn`, assertions, and the synthesized \
+         `from_json::<T>` family — are listed on the \
+         [Prelude page](prelude.md)."
+    )
+    .unwrap();
+    writeln!(out).unwrap();
     writeln!(out, "## Modules").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "| Module | Items | Summary |").unwrap();

@@ -1,0 +1,70 @@
+use std::errors
+
+struct Node { val: i64, next: Option<Box<Node>> }
+struct Big { a: i64, b: i64 }
+
+// Overwrite of Some: the old chain must be released, not leaked,
+// and the overwrite must not corrupt.
+fn case_overwrite() -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        let first = Node { val: 1, next: None }
+        let mut a = Node { val: i, next: Some(first) }
+        let second = Node { val: 2, next: None }
+        a.next = Some(second)
+        if let Some(n) = &a.next {
+            total += n.val
+        }
+        i += 1
+    }
+    total
+}
+
+// Alias read out of a field, then overwrite: the alias holds its own
+// share, so reading it after the overwrite stays valid.
+fn case_alias_after_overwrite() -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        let first = Node { val: 7, next: None }
+        let mut a = Node { val: i, next: Some(first) }
+        let saved = a.next
+        let second = Node { val: 9, next: None }
+        a.next = Some(second)
+        if let Some(s) = &saved {
+            total += s.val
+        }
+        if let Some(n) = &a.next {
+            total += n.val
+        }
+        i += 1
+    }
+    total
+}
+
+// Err-side multi-slot payload: the error copy is reclaimed too.
+fn fail_with(v: i64) -> Result<i64, Big> {
+    if v >= 0 {
+        Err(Big { a: v, b: v + 1 })
+    } else {
+        Ok(v)
+    }
+}
+
+fn case_err_side() -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        match fail_with(i) {
+            Ok(v) => total += v,
+            Err(e) => total += e.b,
+        }
+        i += 1
+    }
+    total
+}
+
+fn main() {
+    println!("{} {} {}", case_overwrite(), case_alias_after_overwrite(), case_err_side())
+}

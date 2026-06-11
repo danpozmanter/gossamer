@@ -9,6 +9,8 @@ overwritten on the next regeneration.
 
 The manifest itself lives at [`crates/gossamer-std/src/manifest.rs`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/manifest.rs).
 
+Names available without any import — the print macros, `min`/`max`/`clamp`, `spawn`, assertions, and the synthesized `from_json::<T>` family — are listed on the [Prelude page](prelude.md).
+
 ## Modules
 
 | Module | Items | Summary |

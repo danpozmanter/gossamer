@@ -168,6 +168,7 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
     let f_consts_len = chunk.f64_consts.len();
     let i_consts_len = chunk.i64_consts.len();
     let globals_len = chunk.globals.len();
+    let shape_names_len = chunk.shape_names.len();
     let deferred_len = chunk.deferred_exprs.len();
     let wide_len = chunk.wide_ops.len();
 
@@ -939,7 +940,12 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
             } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, src)?;
-                check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
+                check_pool(
+                    op_idx,
+                    u32::from(name_idx),
+                    shape_names_len,
+                    PoolKind::Consts,
+                )?;
             }
             Op::VariantField { dst, src, .. } => {
                 check_v(op_idx, dst)?;
@@ -948,7 +954,12 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
             Op::StructIs { dst, src, name_idx } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, src)?;
-                check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
+                check_pool(
+                    op_idx,
+                    u32::from(name_idx),
+                    shape_names_len,
+                    PoolKind::Consts,
+                )?;
             }
         }
     }
@@ -1045,6 +1056,7 @@ mod tests {
             f64_consts: vec![0.0],
             i64_consts: vec![0],
             globals: vec!["g".to_string()],
+            shape_names: vec!["TestVariant"],
             deferred_exprs: Vec::new(),
             deferred_envs: Vec::new(),
             deferred_env_regs: Vec::new(),

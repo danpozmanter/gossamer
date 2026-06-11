@@ -197,10 +197,40 @@ impl<'a> Lowerer<'a> {
             if let Rvalue::CallIntrinsic { name, args } = rvalue
                 && matches!(
                     *name,
-                    "gos_load" | "gos_store" | "gos_alloc" | "gos_rc_alloc" | "gos_fn_addr"
+                    "gos_load"
+                        | "gos_store"
+                        | "gos_alloc"
+                        | "gos_rc_alloc"
+                        | "gos_rc_alloc_tagged"
+                        | "gos_fn_addr"
+                        | "gos_enum_disc"
+                        | "gos_enum_set_disc"
+                        | "gos_enum_tag"
+                        | "gos_enum_disc_tag"
+                        | "gos_enum_untag"
+                        | "gos_enum_load"
                 )
             {
                 return self.lower_raw_intrinsic(name, args, place, None);
+            }
+            // Guarded copy-blob walks from the aggregate drop pass:
+            // arg0 is passed by SLOT ADDRESS (the walk reads the
+            // aggregate's flat words in place) and arg1 names the
+            // module-global meta blob — the generic runtime-call path
+            // would lower both wrongly (value load; string constant).
+            if let Rvalue::CallIntrinsic { name, args } = rvalue
+                && matches!(
+                    *name,
+                    "gos_rt_aggr_release_children"
+                        | "gos_rt_aggr_retain_children"
+                        | "gos_rt_aggr_zero_guarded"
+                        | "gos_rt_option_slot_retain"
+                        | "gos_rt_option_slot_release"
+                        | "gos_rt_vec_set_elem_meta"
+                        | "gos_rt_map_set_blob_values"
+                )
+            {
+                return self.lower_guarded_walk_intrinsic(name, args);
             }
             // Drop-style intrinsic calls (`gos_rt_map_free`,
             // `gos_rt_vec_free`, etc.) emitted by the MIR cleanup
@@ -238,7 +268,18 @@ impl<'a> Lowerer<'a> {
             Rvalue::CallIntrinsic { name, args }
                 if matches!(
                     *name,
-                    "gos_load" | "gos_store" | "gos_alloc" | "gos_rc_alloc" | "gos_fn_addr"
+                    "gos_load"
+                        | "gos_store"
+                        | "gos_alloc"
+                        | "gos_rc_alloc"
+                        | "gos_rc_alloc_tagged"
+                        | "gos_fn_addr"
+                        | "gos_enum_disc"
+                        | "gos_enum_set_disc"
+                        | "gos_enum_tag"
+                        | "gos_enum_disc_tag"
+                        | "gos_enum_untag"
+                        | "gos_enum_load"
                 ) =>
             {
                 return self.lower_raw_intrinsic(name, args, place, None);

@@ -38,6 +38,15 @@ use rustc_hash::FxHashMap;
 pub struct GosMap {
     len_cache: i64,
     storage: parking_lot::Mutex<MapStorage>,
+    /// Values are RC copy-blobs (`gos_rt_rc_alloc_copy` results): the
+    /// map owns one share per stored value. Inserts release the
+    /// overwritten value, removals and `gos_rt_map_free` release the
+    /// stored ones, and the `_opt` getters retain before handing the
+    /// pointer out (the receiving option holder releases it). Set by
+    /// `gos_rt_map_set_blob_values` right after construction when the
+    /// declared value type is a guarded aggregate; appended last so
+    /// existing field offsets are unchanged.
+    blob_values: std::sync::atomic::AtomicBool,
 }
 
 enum MapStorage {
@@ -67,6 +76,7 @@ pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mu
         Box::into_raw(Box::new(GosMap {
             len_cache: 0,
             storage: parking_lot::Mutex::new(MapStorage::Empty),
+            blob_values: std::sync::atomic::AtomicBool::new(false),
         }))
     })
 }
@@ -96,6 +106,7 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
         Box::into_raw(Box::new(GosMap {
             len_cache: 0,
             storage: parking_lot::Mutex::new(storage),
+            blob_values: std::sync::atomic::AtomicBool::new(false),
         }))
     })
 }
@@ -270,8 +281,17 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_i64(m: *mut GosMap, key: i64, val
         let MapStorage::I64I64(inner) = &mut *storage else {
             return;
         };
-        if inner.insert(key, val).is_none() {
+        let prev = inner.insert(key, val);
+        if prev.is_none() {
             map.len_cache += 1;
+        }
+        if map_has_blob_values(map)
+            && let Some(old) = prev
+            && old != val
+        {
+            // Overwriting a copy-blob value: the map's share of the old
+            // one is released (set-gated in the RC layer).
+            unsafe { release_blob_value(old) };
         }
     });
 }
@@ -336,8 +356,15 @@ pub unsafe extern "C" fn gos_rt_map_insert_skey(
         let MapStorage::SkeyVal(inner) = &mut *storage else {
             return;
         };
-        if inner.insert(k.into_boxed_slice(), val).is_none() {
+        let prev = inner.insert(k.into_boxed_slice(), val);
+        if prev.is_none() {
             map.len_cache += 1;
+        }
+        if map_has_blob_values(map)
+            && let Some(old) = prev
+            && old != val
+        {
+            unsafe { release_blob_value(old) };
         }
     });
 }
@@ -364,6 +391,11 @@ pub unsafe extern "C" fn gos_rt_map_get_skey_opt(
             MapStorage::SkeyVal(inner) => inner.get(k.as_slice()).copied(),
             _ => None,
         };
+        if let Some(v) = payload
+            && map_has_blob_values(map)
+        {
+            unsafe { retain_blob_value(v) };
+        }
         match payload {
             Some(v) => unsafe { gos_rt_result_new(0, v) },
             None => none,
@@ -455,7 +487,14 @@ pub unsafe extern "C" fn gos_rt_map_get_i64_opt(m: *const GosMap, key: i64) -> i
             _ => None,
         };
         match payload {
-            Some(v) => unsafe { gos_rt_result_new(0, v) },
+            Some(v) => {
+                // Blob values: the caller's option holder receives (and
+                // later releases) its own share; the map keeps its own.
+                if map_has_blob_values(map) {
+                    unsafe { retain_blob_value(v) };
+                }
+                unsafe { gos_rt_result_new(0, v) }
+            }
             None => unsafe { gos_rt_result_new(1, 0) },
         }
     })
@@ -485,8 +524,17 @@ pub unsafe extern "C" fn gos_rt_map_remove_i64(m: *mut GosMap, key: i64) -> bool
         }
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
+        let blob_values = map_has_blob_values(map);
         let removed = match &mut *storage {
-            MapStorage::I64I64(inner) => inner.remove(&key).is_some(),
+            MapStorage::I64I64(inner) => match inner.remove(&key) {
+                Some(old) => {
+                    if blob_values {
+                        unsafe { release_blob_value(old) };
+                    }
+                    true
+                }
+                None => false,
+            },
             MapStorage::I64Str(inner) => inner.remove(&key).is_some(),
             _ => false,
         };
@@ -878,6 +926,38 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
 /// pointers) here would `Box::from_raw` the wrong shape and run
 /// `Mutex::drop` over garbage. Use [`gos_rt_binding_map_free`] for
 /// the binding-shaped aggregate instead.
+/// Marks `m` as holding RC copy-blob values. Emitted by the MIR
+/// lowering right after constructing a map whose declared value type is
+/// a guarded aggregate. Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_set_blob_values(m: *mut GosMap) {
+    if m.is_null() {
+        return;
+    }
+    unsafe { &*m }
+        .blob_values
+        .store(true, std::sync::atomic::Ordering::Release);
+}
+
+fn map_has_blob_values(m: &GosMap) -> bool {
+    m.blob_values.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Release one stored blob value word (set-gated inside the RC layer
+/// via the copy-blob provenance set membership of the pointer).
+unsafe fn release_blob_value(word: i64) {
+    if word != 0 {
+        unsafe { crate::c_abi::rc::gos_rt_rc_release(word as usize as *mut u8) };
+    }
+}
+
+/// Retain one stored blob value word before handing it out.
+unsafe fn retain_blob_value(word: i64) {
+    if word != 0 {
+        unsafe { crate::c_abi::rc::gos_rt_rc_retain(word as usize as *mut u8) };
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
     ffi_entry!((), {
@@ -885,7 +965,25 @@ pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
             return;
         }
         crate::c_abi::ledger::map_dec();
-        drop(unsafe { Box::from_raw(m) });
+        let boxed = unsafe { Box::from_raw(m) };
+        if map_has_blob_values(&boxed) {
+            let storage = boxed.storage.lock();
+            match &*storage {
+                MapStorage::I64I64(inner) => {
+                    for &v in inner.values() {
+                        unsafe { release_blob_value(v) };
+                    }
+                }
+                MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
+                    for &v in inner.values() {
+                        unsafe { release_blob_value(v) };
+                    }
+                }
+                _ => {}
+            }
+            drop(storage);
+        }
+        drop(boxed);
     });
 }
 
@@ -944,7 +1042,7 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
             return;
         }
         // Region-allocated vecs (header + buffer in arena slabs) are freed
-        // wholesale at `region_pop` — never individually. Touching them here
+        // wholesale at `arena_pop` — never individually. Touching them here
         // via `Box::from_raw` / `Vec::from_raw_parts` would corrupt the
         // global allocator (the memory isn't its).
         if crate::c_abi::vec::vec_is_region(unsafe { &*v }) {
@@ -958,6 +1056,7 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
             return;
         }
         crate::c_abi::ledger::vec_dec();
+        crate::c_abi::vec::vec_elem_meta_remove(v);
         let boxed = unsafe { Box::from_raw(v) };
         if !boxed.ptr.is_null() && boxed.cap > 0 {
             // Deep-free pointer-bearing element payloads BEFORE
@@ -965,6 +1064,12 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
             // first `len` slots — slots between `len` and `cap` were
             // never written and contain the zero-init produced by
             // `vec![0u8; bytes]` at construction time.
+            // Guarded aggregate elements: release each element's
+            // copy-blob children (set-gated in the walk) before the
+            // buffer goes away.
+            if boxed.elem_kind == vec_elem_kind::AGGR_GUARDED {
+                unsafe { crate::c_abi::vec::vec_release_guarded_elements(&boxed) };
+            }
             if boxed.elem_kind != vec_elem_kind::PRIMITIVE && boxed.elem_bytes as usize == 8 {
                 let count = boxed.len.max(0) as usize;
                 // SAFETY: ptr is non-null + cap > 0 (checked above);
