@@ -658,6 +658,32 @@ fn arena_decommit(p: *mut u8, len: usize) {
 /// Carve (or re-commit) a slab of `slab_size` bytes from the arena.
 /// Null when the arena is unavailable or exhausted — callers fall back
 /// to headered global allocation (sound, just unoptimised).
+/// Host page size, queried once. Slab offsets inside the reserved
+/// arena must be page-multiples or `mprotect` / `VirtualAlloc`
+/// rejects the commit — and the size is NOT universally 4 KiB
+/// (macOS arm64 and some aarch64 Linux kernels use 16 KiB or 64 KiB
+/// pages).
+fn os_page_size() -> usize {
+    static PAGE: AtomicUsize = AtomicUsize::new(0);
+    let cached = PAGE.load(Ordering::Relaxed);
+    if cached != 0 {
+        return cached;
+    }
+    #[cfg(unix)]
+    // SAFETY: sysconf is async-signal-safe and has no preconditions.
+    let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
+    #[cfg(windows)]
+    let size = {
+        use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+        let mut info: SYSTEM_INFO = unsafe { std::mem::zeroed() };
+        // SAFETY: GetSystemInfo fills the struct; no preconditions.
+        unsafe { GetSystemInfo(&mut info) };
+        (info.dwPageSize as usize).max(4096)
+    };
+    PAGE.store(size, Ordering::Relaxed);
+    size
+}
+
 fn arena_acquire(slab_size: usize) -> *mut u8 {
     let base = region_arena_base();
     if base == usize::MAX {
@@ -672,7 +698,8 @@ fn arena_acquire(slab_size: usize) -> *mut u8 {
             return std::ptr::null_mut();
         }
     }
-    let rounded = (slab_size + 0xFFF) & !0xFFF;
+    let page_mask = os_page_size() - 1;
+    let rounded = (slab_size + page_mask) & !page_mask;
     let off = REGION_ARENA_NEXT.fetch_add(rounded, Ordering::Relaxed);
     if off + rounded > REGION_ARENA_BYTES {
         return std::ptr::null_mut();
