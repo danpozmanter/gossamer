@@ -499,3 +499,129 @@ pub const MATH_BIG: StdModule = StdModule {
         },
     ],
 };
+
+/// `std::option` — data-last combinators that thread through `|>`.
+pub const OPTION: StdModule = StdModule {
+    path: "std::option",
+    summary: "Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc.",
+    items: &[
+        StdItem {
+            name: "and_then",
+            kind: StdItemKind::Function,
+            doc: "Chains a fallible step: Some(v) -> f(v), None stays None.",
+        },
+        StdItem {
+            name: "default",
+            kind: StdItemKind::Function,
+            doc: "Unwraps with a fallback value for None.",
+        },
+        StdItem {
+            name: "default_with",
+            kind: StdItemKind::Function,
+            doc: "Unwraps with a lazily computed fallback for None.",
+        },
+        StdItem {
+            name: "filter",
+            kind: StdItemKind::Function,
+            doc: "Keeps Some(v) only when the predicate holds.",
+        },
+        StdItem {
+            name: "flatten",
+            kind: StdItemKind::Function,
+            doc: "Collapses Option<Option<T>> one level.",
+        },
+        StdItem {
+            name: "is_none",
+            kind: StdItemKind::Function,
+            doc: "True for None.",
+        },
+        StdItem {
+            name: "is_some",
+            kind: StdItemKind::Function,
+            doc: "True for Some.",
+        },
+        StdItem {
+            name: "iter",
+            kind: StdItemKind::Function,
+            doc: "Zero-or-one element sequence view.",
+        },
+        StdItem {
+            name: "map",
+            kind: StdItemKind::Function,
+            doc: "Transforms the Some payload, None stays None.",
+        },
+        StdItem {
+            name: "or",
+            kind: StdItemKind::Function,
+            doc: "First Some of self and the alternative.",
+        },
+        StdItem {
+            name: "or_else",
+            kind: StdItemKind::Function,
+            doc: "First Some of self and a lazily built alternative.",
+        },
+        StdItem {
+            name: "zip",
+            kind: StdItemKind::Function,
+            doc: "Pairs two Somes into Some((a, b)).",
+        },
+    ],
+};
+
+/// `std::result` — data-last combinators that thread through `|>`.
+pub const RESULT: StdModule = StdModule {
+    path: "std::result",
+    summary: "Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc.",
+    items: &[
+        StdItem {
+            name: "and_then",
+            kind: StdItemKind::Function,
+            doc: "Chains a fallible step on the Ok payload.",
+        },
+        StdItem {
+            name: "default",
+            kind: StdItemKind::Function,
+            doc: "Unwraps Ok with a fallback value for Err.",
+        },
+        StdItem {
+            name: "default_with",
+            kind: StdItemKind::Function,
+            doc: "Consumes the result, handling Err with a callback.",
+        },
+        StdItem {
+            name: "err",
+            kind: StdItemKind::Function,
+            doc: "Err payload as an Option.",
+        },
+        StdItem {
+            name: "is_err",
+            kind: StdItemKind::Function,
+            doc: "True for Err.",
+        },
+        StdItem {
+            name: "is_ok",
+            kind: StdItemKind::Function,
+            doc: "True for Ok.",
+        },
+        StdItem {
+            name: "map",
+            kind: StdItemKind::Function,
+            doc: "Transforms the Ok payload, Err passes through.",
+        },
+        StdItem {
+            name: "map_err",
+            kind: StdItemKind::Function,
+            doc: "Transforms the Err payload, Ok passes through.",
+        },
+        StdItem {
+            name: "ok",
+            kind: StdItemKind::Function,
+            doc: "Ok payload as an Option.",
+        },
+        StdItem {
+            name: "or_else",
+            kind: StdItemKind::Function,
+            doc: "Recovers from Err with a fallback computation.",
+        },
+    ],
+};

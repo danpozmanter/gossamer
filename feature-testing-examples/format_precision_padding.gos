@@ -24,7 +24,7 @@ fn right_pad(s: String, width: i64, fill: String) -> String {
 
 fn format_table_row(label: String, value: f64, decimals: i64) -> String {
     // Right-align label in 12 chars, then value with requested decimals
-    let padded = right_pad(label, 12, " ".to_string())
+    let padded = right_pad(label, 12, " ")
     if decimals == 0 {
         format!("{}: {}", padded, value as i64)
     } else if decimals == 1 {
@@ -58,16 +58,16 @@ fn main() {
     println!("tiny 9dp: {:.9}", tiny)
 
     // Manual padding
-    let lp = left_pad("42".to_string(), 6, "0".to_string())
+    let lp = left_pad("42", 6, "0")
     println!("left-pad 42 to 6: {}", lp)
 
-    let rp = right_pad("hi".to_string(), 8, ".".to_string())
+    let rp = right_pad("hi", 8, ".")
     println!("right-pad hi to 8: {}", rp)
 
     // Table formatting
-    println!("{}", format_table_row("pi".to_string(), pi, 4))
-    println!("{}", format_table_row("e".to_string(), e, 4))
-    println!("{}", format_table_row("sqrt2".to_string(), 1.41421356, 4))
+    println!("{}", format_table_row("pi", pi, 4))
+    println!("{}", format_table_row("e", e, 4))
+    println!("{}", format_table_row("sqrt2", 1.41421356, 4))
 }
 
 #[cfg(test)]
@@ -77,24 +77,24 @@ mod tests {
     #[test]
     fn float_two_decimal_places() {
         let s = format!("{:.2}", 3.14159)
-        testing::check_eq(&s, &"3.14".to_string(), "2dp")
+        testing::check_eq(&s, &"3.14", "2dp")
     }
 
     #[test]
     fn float_zero_decimal_places() {
         let s = format!("{:.0}", 2.9)
-        testing::check_eq(&s, &"3".to_string(), "0dp rounds up")
+        testing::check_eq(&s, &"3", "0dp rounds up")
     }
 
     #[test]
     fn left_pad_shorter_string() {
-        let s = super::left_pad("7".to_string(), 3, "0".to_string())
-        testing::check_eq(&s, &"007".to_string(), "zero-pad 7")
+        let s = super::left_pad("7", 3, "0")
+        testing::check_eq(&s, &"007", "zero-pad 7")
     }
 
     #[test]
     fn right_pad_already_long() {
-        let s = super::right_pad("hello".to_string(), 3, ".".to_string())
-        testing::check_eq(&s, &"hello".to_string(), "no padding needed")
+        let s = super::right_pad("hello", 3, ".")
+        testing::check_eq(&s, &"hello", "no padding needed")
     }
 }

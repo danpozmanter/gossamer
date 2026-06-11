@@ -17,7 +17,7 @@ fn write_and_read(path: String, content: String) -> Result<String, String> {
 }
 
 fn main() {
-    let path = temp_path("lifecycle.txt".to_string())
+    let path = temp_path("lifecycle.txt")
 
     // Create
     match fs::write(path, "line one\nline two\nline three\n") {
@@ -56,7 +56,7 @@ fn main() {
     println!("exists after remove: {}", fs::exists(path))
 
     // Directory creation and removal
-    let dir = temp_path("lifecycle_dir".to_string())
+    let dir = temp_path("lifecycle_dir")
     match fs::create_dir_all(dir) {
         Ok(_) => println!("dir created"),
         Err(e) => println!("mkdir error: {}", e)
@@ -106,7 +106,7 @@ mod tests {
         let _ = fs::write(path, "first")
         let _ = fs::write(path, "second")
         match fs::read_to_string(path) {
-            Ok(s) => testing::check_eq(&s, &"second".to_string(), "overwritten"),
+            Ok(s) => testing::check_eq(&s, &"second", "overwritten"),
             Err(e) => testing::check(false, e),
         }
         let _ = fs::remove_file(path)

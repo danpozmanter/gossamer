@@ -44,7 +44,7 @@ fn main() {
     println!("first={}, last={}", first, last)
 
     // While let with tuple Option
-    let mut cursor: Option<(i64, String)> = Some((1, "start".to_string()))
+    let mut cursor: Option<(i64, String)> = Some((1, "start"))
     while let Some((n, msg)) = cursor {
         println!("cursor: {} {}", n, msg)
         cursor = if n < 3 { Some((n + 1, format!("step {}", n + 1))) } else { None }

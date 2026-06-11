@@ -68,8 +68,8 @@ mod tests {
     fn split_produces_correct_parts() {
         let parts = "a,b,c".split(",")
         testing::check_eq(&parts.len(), &3, "split len")
-        testing::check_eq(&parts[0], &"a".to_string(), "parts[0]")
-        testing::check_eq(&parts[2], &"c".to_string(), "parts[2]")
+        testing::check_eq(&parts[0], &"a", "parts[0]")
+        testing::check_eq(&parts[2], &"c", "parts[2]")
     }
 
     #[test]
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn trim_strips_whitespace() {
         let s = "  hello  ".trim()
-        testing::check_eq(&s, &"hello".to_string(), "trimmed")
+        testing::check_eq(&s, &"hello", "trimmed")
     }
 
     #[test]

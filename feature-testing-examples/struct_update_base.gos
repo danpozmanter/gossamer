@@ -10,7 +10,7 @@ struct Config {
 
 fn default_config() -> Config {
     Config {
-        host: "localhost".to_string(),
+        host: "localhost",
         port: 8080,
         verbose: false,
         retries: 3,
@@ -24,7 +24,7 @@ fn main() {
     println!("port = {}", custom.port)
     println!("verbose = {}", custom.verbose)
     println!("retries = {}", custom.retries)
-    let extra = Config { host: "example.com".to_string(), ..custom }
+    let extra = Config { host: "example.com", ..custom }
     println!("host2 = {}", extra.host)
     println!("port2 = {}", extra.port)
     println!("verbose2 = {}", extra.verbose)

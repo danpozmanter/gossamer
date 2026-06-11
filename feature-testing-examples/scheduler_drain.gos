@@ -19,8 +19,8 @@ fn main() {
     let mut total = 0
     let mut count = 0
     while let Some(v) = rx.recv() {
-        total = total + v
-        count = count + 1
+        total += v
+        count += 1
     }
     println!("count = {}", count)
     println!("total = {}", total)

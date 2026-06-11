@@ -42,7 +42,7 @@ fn main() {
         j += 1
     }
     let mut total: i64 = 0
-    for t in kept.iter() {
+    for t in kept {
         total += count(t)
     }
 

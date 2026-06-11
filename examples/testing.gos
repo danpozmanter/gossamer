@@ -54,7 +54,7 @@ mod tests {
         let expected = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
         for i in 0..10 {
             let got = super::fibonacci(i)
-            let want = expected[i as usize]
+            let want = expected[i]
             testing::check_eq(&got, &want, &format!("fib({i})"))
         }
     }

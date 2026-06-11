@@ -8,11 +8,11 @@
 //     and is then killed and reaped via `exec::kill` + the same
 //     wait_timeout call returning <= 0 on the second pass.
 
-use std::exec
+use std::os::exec
 
 fn main() {
     let empty: [String] = [].to_vec()
-    match exec::spawn(&"/usr/bin/true".to_string(), &empty) {
+    match exec::spawn(&"/usr/bin/true", &empty) {
         Ok(pid) => {
             let code = exec::wait_timeout(pid, 5000)
             if code == 0 {
@@ -25,7 +25,7 @@ fn main() {
     }
 
     let sleep_args: [String] = ["30"].to_vec()
-    match exec::spawn(&"/bin/sleep".to_string(), &sleep_args) {
+    match exec::spawn(&"/bin/sleep", &sleep_args) {
         Ok(pid) => {
             let r = exec::wait_timeout(pid, 200)
             if r == -1 {

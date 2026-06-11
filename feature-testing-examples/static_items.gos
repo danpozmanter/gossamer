@@ -21,7 +21,7 @@ fn greet(name: &str) -> String {
 fn retry_count() -> i64 {
     let mut n = 0
     while should_retry(n) {
-        n = n + 1
+        n += 1
     }
     n
 }

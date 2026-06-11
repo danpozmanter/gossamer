@@ -1513,6 +1513,21 @@ impl<'a> TypeChecker<'a> {
             }
             BinaryOp::PipeGt => self.pipe_result_ty(lhs_ty, lhs.span, rhs, rhs_ty),
             _ => {
+                // String concatenation accepts a borrowed RHS:
+                // `"hello, " + &name` (the documented spelling). Peel
+                // the reference before unifying so the expression
+                // stays `String` instead of failing `String != &T`.
+                if op == BinaryOp::Add {
+                    let l = self.infer.resolve(self.tcx, lhs_ty);
+                    if matches!(self.tcx.kind_of(l), TyKind::String) {
+                        let r = self.infer.resolve(self.tcx, rhs_ty);
+                        if let TyKind::Ref { inner, .. } = self.tcx.kind_of(r) {
+                            let inner = *inner;
+                            self.unify(lhs_ty, inner, span);
+                            return lhs_ty;
+                        }
+                    }
+                }
                 self.unify(lhs_ty, rhs_ty, span);
                 lhs_ty
             }

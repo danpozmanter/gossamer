@@ -25,15 +25,15 @@ fn describe(shape: &Shape) -> String {
         Shape::Rect { w, h, fill: Color::Blue } => format!("blue rect {}x{}", w, h),
         Shape::Triangle { base, height } if *base == *height => format!("iso triangle b=h={}", base),
         Shape::Triangle { base, height } => format!("triangle {}x{}", base, height),
-        Shape::Point => "point".to_string(),
+        Shape::Point => "point",
     }
 }
 
 fn classify_color(c: &Color) -> String {
     if let Color::Red = c {
-        "warm".to_string()
+        "warm"
     } else {
-        "cool".to_string()
+        "cool"
     }
 }
 
@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn describe_point() {
         let s = super::Shape::Point
-        testing::check_eq(&super::describe(&s), &"point".to_string(), "point")
+        testing::check_eq(&super::describe(&s), &"point", "point")
     }
 
     #[test]

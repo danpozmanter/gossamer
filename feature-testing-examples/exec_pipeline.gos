@@ -9,7 +9,7 @@
 // `builtin_exec_pipeline_run` function (interp tier); the
 // expected stdout must match across the three.
 
-use std::exec
+use std::os::exec
 
 fn main() {
     let cmds: [String] = ["printf hello", "tr a-z A-Z"].to_vec()

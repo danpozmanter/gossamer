@@ -16,7 +16,7 @@ fn main() {
     println("phase 1 — work")
     let mut total: i64 = 0
     for i in 0..100_000 {
-        total = total + i
+        total += i
     }
     println!("  ran tight loop, sum = {}", total)
 

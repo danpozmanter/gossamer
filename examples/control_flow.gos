@@ -85,7 +85,7 @@ fn main() {
         Shape::Rect { w: 2.0, h: 4.0 },
         Shape::Line,
     ]
-    for s in shapes.iter() {
+    for s in shapes {
         println!("area={}", area(s))
     }
 

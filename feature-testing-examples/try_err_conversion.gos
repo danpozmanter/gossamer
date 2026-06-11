@@ -9,7 +9,7 @@ use std::errors
 
 fn inner(n: i64) -> Result<i64, String> {
     if n <= 0 {
-        Err("non-positive input".to_string())
+        Err("non-positive input")
     } else {
         Ok(n * 2)
     }

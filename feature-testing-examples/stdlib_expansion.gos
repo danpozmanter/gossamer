@@ -37,17 +37,17 @@ fn main() {
     }
 
     // ---- strings::* free fns ----
-    let parts: Vec<String> = vec!["a".to_string(), "b".to_string(), "c".to_string()]
-    println!("join = {}", strings::join(&parts, &"-".to_string()))
-    match strings::rfind(&"foo/bar/baz".to_string(), &"/".to_string()) {
+    let parts: Vec<String> = vec!["a", "b", "c"]
+    println!("join = {}", strings::join(&parts, &"-"))
+    match strings::rfind(&"foo/bar/baz", &"/") {
         Some(i) => println!("rfind = {}", i),
         None => println!("rfind = none"),
     }
 
     // ---- path::* free fns ----
-    println!("path::base = {}", path::base(&"a/b/c.gos".to_string()))
-    println!("path::dir = {}", path::dir(&"a/b/c.gos".to_string()))
-    match path::ext(&"a/b/c.gos".to_string()) {
+    println!("path::base = {}", path::base(&"a/b/c.gos"))
+    println!("path::dir = {}", path::dir(&"a/b/c.gos"))
+    match path::ext(&"a/b/c.gos") {
         Some(e) => println!("path::ext = {}", e),
         None => println!("path::ext = none"),
     }
@@ -91,11 +91,11 @@ fn main() {
     }
 
     // ---- Vec<String>.contains ----
-    let langs: Vec<String> = vec!["text".to_string(), "json".to_string()]
-    if langs.contains(&"json".to_string()) {
+    let langs: Vec<String> = vec!["text", "json"]
+    if langs.contains(&"json") {
         println!("langs has json")
     }
-    if !langs.contains(&"yaml".to_string()) {
+    if !langs.contains(&"yaml") {
         println!("langs no yaml")
     }
 

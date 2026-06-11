@@ -16,7 +16,7 @@ struct ServerConfig {
 }
 
 fn main() -> Result<(), errors::Error> {
-    let yaml_text = "name: gossamer\nport: 8080\ndebug: true\n".to_string()
+    let yaml_text = "name: gossamer\nport: 8080\ndebug: true\n"
     let cfg = from_yaml::<ServerConfig>(&yaml_text)?
     println!("parsed name={} port={} debug={}", cfg.name, cfg.port, cfg.debug)
 

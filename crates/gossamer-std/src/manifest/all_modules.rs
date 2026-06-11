@@ -136,6 +136,8 @@ pub const ALL_MODULES: &[StdModule] = &[
     // P0 gap-fill: utf16, iter.
     UTF16,
     ITER,
+    OPTION,
+    RESULT,
     // 0.4.0 — HTTP/2 folded into HTTP per the Go model;
     // extended HTTP surface, archives, big-int, FNV, XML, base32 /
     // ascii85, insecure crypto, cipher modes.

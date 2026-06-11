@@ -5,7 +5,7 @@
 static mut COUNTER: i64 = 0
 
 fn bump() {
-    COUNTER = COUNTER + 1
+    COUNTER += 1
 }
 
 fn read() -> i64 {

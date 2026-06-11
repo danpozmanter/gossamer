@@ -106,7 +106,7 @@ mod tests {
             Err(e) => { testing::check(false, e); return }
         }
         let r = regex::replace_all(p, "a  b   c", "_")
-        testing::check_eq(&r, &"a_b_c".to_string(), "compressed spaces")
+        testing::check_eq(&r, &"a_b_c", "compressed spaces")
     }
 
     #[test]

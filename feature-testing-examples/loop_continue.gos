@@ -6,11 +6,11 @@ fn sum_odds_while(limit: i64) -> i64 {
     let mut sum = 0
     let mut i = 0
     while i < limit {
-        i = i + 1
+        i += 1
         if i % 2 == 0 {
             continue
         }
-        sum = sum + i
+        sum += i
     }
     sum
 }
@@ -21,7 +21,7 @@ fn count_non_multiples_of_three(n: i64) -> i64 {
         if i % 3 == 0 {
             continue
         }
-        count = count + 1
+        count += 1
     }
     count
 }
@@ -32,7 +32,7 @@ fn sum_skipping(limit: i64, skip_a: i64, skip_b: i64) -> i64 {
         if i == skip_a || i == skip_b {
             continue
         }
-        total = total + i
+        total += i
     }
     total
 }
@@ -41,11 +41,11 @@ fn count_evens_while(limit: i64) -> i64 {
     let mut evens: i64 = 0
     let mut i = 0
     while i < limit {
-        i = i + 1
+        i += 1
         if i % 2 != 0 {
             continue
         }
-        evens = evens + 1
+        evens += 1
     }
     evens
 }
@@ -68,7 +68,7 @@ fn main() {
         if i % 4 == 0 {
             continue
         }
-        acc = acc + i
+        acc += i
     }
     println!("sum skip mult4 = {}", acc)
 }
@@ -108,7 +108,7 @@ mod tests {
             if i % 4 == 0 {
                 continue
             }
-            acc = acc + i
+            acc += i
         }
         testing::check_eq(&acc, &33, "1+2+3+5+6+7+9 == 33, skip 0,4,8")
     }

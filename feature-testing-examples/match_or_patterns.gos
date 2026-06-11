@@ -20,10 +20,10 @@ fn card_value(r: &Rank) -> i64 {
 
 fn classify_int(n: i64) -> String {
     match n {
-        0 | 1 => "tiny".to_string(),
-        2 | 3 | 5 | 7 => "small-prime".to_string(),
-        _ if n < 0 => "negative".to_string(),
-        _ => "other".to_string(),
+        0 | 1 => "tiny",
+        2 | 3 | 5 | 7 => "small-prime",
+        _ if n < 0 => "negative",
+        _ => "other",
     }
 }
 
@@ -77,11 +77,11 @@ mod tests {
 
     #[test]
     fn or_pattern_classify() {
-        testing::check_eq(&super::classify_int(0), &"tiny".to_string(), "0 is tiny")
-        testing::check_eq(&super::classify_int(1), &"tiny".to_string(), "1 is tiny")
-        testing::check_eq(&super::classify_int(3), &"small-prime".to_string(), "3 is small-prime")
-        testing::check_eq(&super::classify_int(4), &"other".to_string(), "4 is other")
-        testing::check_eq(&super::classify_int(-5), &"negative".to_string(), "-5 is negative")
+        testing::check_eq(&super::classify_int(0), &"tiny", "0 is tiny")
+        testing::check_eq(&super::classify_int(1), &"tiny", "1 is tiny")
+        testing::check_eq(&super::classify_int(3), &"small-prime", "3 is small-prime")
+        testing::check_eq(&super::classify_int(4), &"other", "4 is other")
+        testing::check_eq(&super::classify_int(-5), &"negative", "-5 is negative")
     }
 
     #[test]

@@ -31,24 +31,24 @@ fn scope_guard(resource: String, work: Fn() -> i64) -> i64 {
 fn main() {
     // LIFO ordering via explicit stack
     let mut actions: [Fn() -> String] = []
-    actions.push(make_cleanup("first".to_string()))
-    actions.push(make_cleanup("second".to_string()))
-    actions.push(make_cleanup("third".to_string()))
+    actions.push(make_cleanup("first"))
+    actions.push(make_cleanup("second"))
+    actions.push(make_cleanup("third"))
     let order = run_with_cleanup(actions)
     println!("order[0] = {}", order[0])
     println!("order[1] = {}", order[1])
     println!("order[2] = {}", order[2])
 
     // scope_guard: acquire before work, release after
-    let result = scope_guard("file".to_string(), || {
+    let result = scope_guard("file", || {
         println!("working with file")
         42
     })
     println!("work result = {}", result)
 
     // Nested scope guards (inner releases before outer)
-    let outer = scope_guard("db_connection".to_string(), || {
-        scope_guard("db_transaction".to_string(), || {
+    let outer = scope_guard("db_connection", || {
+        scope_guard("db_transaction", || {
             println!("executing query")
             100
         })
@@ -57,9 +57,9 @@ fn main() {
 
     // Manual cleanup stack: push registrations, pop on exit
     let mut cleanup_log: [String] = []
-    cleanup_log.push("opened file A".to_string())
-    cleanup_log.push("opened file B".to_string())
-    cleanup_log.push("opened socket".to_string())
+    cleanup_log.push("opened file A")
+    cleanup_log.push("opened file B")
+    cleanup_log.push("opened socket")
 
     // Cleanup in reverse order
     let n = cleanup_log.len() as i64
@@ -77,18 +77,18 @@ mod tests {
     #[test]
     fn lifo_order() {
         let mut actions: [Fn() -> String] = []
-        actions.push(super::make_cleanup("a".to_string()))
-        actions.push(super::make_cleanup("b".to_string()))
-        actions.push(super::make_cleanup("c".to_string()))
+        actions.push(super::make_cleanup("a"))
+        actions.push(super::make_cleanup("b"))
+        actions.push(super::make_cleanup("c"))
         let result = super::run_with_cleanup(actions)
-        testing::check_eq(&result[0], &"cleanup: c".to_string(), "c last in, first out")
-        testing::check_eq(&result[1], &"cleanup: b".to_string(), "b second")
-        testing::check_eq(&result[2], &"cleanup: a".to_string(), "a first in, last out")
+        testing::check_eq(&result[0], &"cleanup: c", "c last in, first out")
+        testing::check_eq(&result[1], &"cleanup: b", "b second")
+        testing::check_eq(&result[2], &"cleanup: a", "a first in, last out")
     }
 
     #[test]
     fn scope_guard_returns_work_value() {
-        let r = super::scope_guard("test_resource".to_string(), || 99)
+        let r = super::scope_guard("test_resource", || 99)
         testing::check_eq(&r, &99, "scope_guard passes through work result")
     }
 

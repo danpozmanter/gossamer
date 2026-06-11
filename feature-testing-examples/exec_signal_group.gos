@@ -6,11 +6,11 @@
 // shows the pid is no longer reapable (-2) after the OS cleans it
 // up.
 
-use std::exec
+use std::os::exec
 
 fn main() {
     let args: [String] = ["30"].to_vec()
-    match exec::spawn(&"/bin/sleep".to_string(), &args) {
+    match exec::spawn(&"/bin/sleep", &args) {
         Ok(pid) => {
             if pid > 0 { println!("spawned") }
             let killed = exec::signal(pid, 15)
@@ -25,7 +25,7 @@ fn main() {
     // owns descendants; we kill the group and expect a non-zero
     // wait result within the grace window.
     let group_args: [String] = ["-c", "sleep 30 & wait"].to_vec()
-    match exec::spawn(&"/bin/sh".to_string(), &group_args) {
+    match exec::spawn(&"/bin/sh", &group_args) {
         Ok(pid) => {
             if pid > 0 { println!("group-spawned") }
             let killed = exec::kill_group(pid)

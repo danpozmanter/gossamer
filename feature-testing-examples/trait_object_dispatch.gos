@@ -24,7 +24,7 @@ impl Shape for Rectangle {
         2.0 * (self.width + self.height)
     }
     fn name(&self) -> String {
-        "Rectangle".to_string()
+        "Rectangle"
     }
 }
 
@@ -40,7 +40,7 @@ impl Shape for Circle {
         2.0 * 3.14159265 * self.radius
     }
     fn name(&self) -> String {
-        "Circle".to_string()
+        "Circle"
     }
 }
 
@@ -61,7 +61,7 @@ impl Shape for Triangle {
         self.a + self.b + self.c
     }
     fn name(&self) -> String {
-        "Triangle".to_string()
+        "Triangle"
     }
 }
 

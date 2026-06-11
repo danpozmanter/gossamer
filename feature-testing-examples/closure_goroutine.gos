@@ -12,14 +12,14 @@ fn main() {
         let mut i = 0
         while i < count {
             tx.send(base + i)
-            i = i + 1
+            i += 1
         }
         tx.close()
     }()
 
     let mut total = 0
     while let Some(v) = rx.recv() {
-        total = total + 1
+        total += 1
         println!("got: {}", v)
     }
     println!("total = {}", total)

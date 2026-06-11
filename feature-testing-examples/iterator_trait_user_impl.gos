@@ -29,7 +29,7 @@ fn main() {
     let mut c = Counter { next_value: 0, end: 5 }
     let mut sum = 0
     for n in c {
-        sum = sum + n
+        sum += n
     }
     println!("sum 0..5 = {}", sum)
 }

@@ -3,12 +3,12 @@
 // combinations to catch ownership and allocation mismatches.
 
 fn main() {
-    let a = "hello".to_string()
-    let b = "world".to_string()
+    let a = "hello"
+    let b = "world"
     let c = a + ", " + &b
     println!("plus chain: {}", c)
 
-    let mut acc = "".to_string()
+    let mut acc = ""
     for word in ["the", "quick", "brown", "fox"] {
         if acc.len() > 0 {
             acc += " "
@@ -29,7 +29,7 @@ fn main() {
     println!("{}", greeting)
 
     // Repeated mutation
-    let mut line = "".to_string()
+    let mut line = ""
     line += "start"
     line += " -> "
     line += "middle"
@@ -50,36 +50,36 @@ mod tests {
 
     #[test]
     fn plus_concat() {
-        let a = "hello".to_string()
-        let b = "world".to_string()
+        let a = "hello"
+        let b = "world"
         let c = a + ", " + &b
-        testing::check_eq(&c, &"hello, world".to_string(), "plus concat")
+        testing::check_eq(&c, &"hello, world", "plus concat")
     }
 
     #[test]
     fn format_numbers() {
         let s = format!("{} {} {}", 1, 2, 3)
-        testing::check_eq(&s, &"1 2 3".to_string(), "format numbers")
+        testing::check_eq(&s, &"1 2 3", "format numbers")
     }
 
     #[test]
     fn accumulate_words() {
-        let mut acc = "".to_string()
+        let mut acc = ""
         for w in ["a", "b", "c"] {
             if acc.len() > 0 {
                 acc += " "
             }
             acc += w
         }
-        testing::check_eq(&acc, &"a b c".to_string(), "accumulated words")
+        testing::check_eq(&acc, &"a b c", "accumulated words")
     }
 
     #[test]
     fn mut_append_chain() {
-        let mut s = "".to_string()
+        let mut s = ""
         s += "x"
         s += "-"
         s += "y"
-        testing::check_eq(&s, &"x-y".to_string(), "mut append chain")
+        testing::check_eq(&s, &"x-y", "mut append chain")
     }
 }

@@ -3,7 +3,7 @@
 // to verify automatic unwrapping and early-return semantics.
 
 fn parse_positive(s: String) -> Result<i64, String> {
-    let n = s.parse::<i64>().ok_or("not a number".to_string())?
+    let n = s.parse::<i64>().ok_or("not a number")?
     if n <= 0 {
         Err(format!("{} is not positive", n))
     } else {
@@ -27,38 +27,38 @@ fn sum_positives(inputs: [String]) -> Result<i64, String> {
 
 fn main() {
     // Happy path
-    match double_positive("21".to_string()) {
+    match double_positive("21") {
         Ok(v) => println!("double(21) = {}", v),
         Err(e) => println!("error: {}", e),
     }
 
     // Not a number
-    match double_positive("abc".to_string()) {
+    match double_positive("abc") {
         Ok(v) => println!("unexpected {}", v),
         Err(e) => println!("not a number: {}", e),
     }
 
     // Non-positive
-    match double_positive("-5".to_string()) {
+    match double_positive("-5") {
         Ok(v) => println!("unexpected {}", v),
         Err(e) => println!("non-positive: {}", e),
     }
 
     // Zero
-    match parse_positive("0".to_string()) {
+    match parse_positive("0") {
         Ok(v) => println!("unexpected {}", v),
         Err(e) => println!("zero rejected: {}", e),
     }
 
     // Sum success
-    let words: [String] = ["1".to_string(), "2".to_string(), "3".to_string()]
+    let words: [String] = ["1", "2", "3"]
     match sum_positives(words) {
         Ok(s) => println!("sum = {}", s),
         Err(e) => println!("sum error: {}", e),
     }
 
     // Sum with bad element
-    let bad: [String] = ["1".to_string(), "bad".to_string(), "3".to_string()]
+    let bad: [String] = ["1", "bad", "3"]
     match sum_positives(bad) {
         Ok(s) => println!("unexpected sum {}", s),
         Err(e) => println!("sum stopped at: {}", e),
@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn parse_positive_ok() {
-        let r = super::parse_positive("42".to_string())
+        let r = super::parse_positive("42")
         match r {
             Ok(v) => testing::check_eq(&v, &42, "parse_positive 42"),
             Err(e) => testing::check(false, e),
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn parse_positive_rejects_zero() {
-        let r = super::parse_positive("0".to_string())
+        let r = super::parse_positive("0")
         match r {
             Ok(_) => testing::check(false, "expected error for 0"),
             Err(_) => testing::check(true, "zero rejected"),
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn question_mark_short_circuits() {
-        let r = super::sum_positives(["1".to_string(), "-1".to_string(), "2".to_string()])
+        let r = super::sum_positives(["1", "-1", "2"])
         match r {
             Ok(_) => testing::check(false, "expected early exit"),
             Err(_) => testing::check(true, "short-circuited on -1"),

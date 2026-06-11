@@ -19,7 +19,7 @@ fn parse_positive(s: String) -> Result<i64, String> {
 
 fn divide_checked(a: i64, b: i64) -> Result<i64, String> {
     if b == 0 {
-        Err("division by zero".to_string())
+        Err("division by zero")
     } else {
         Ok(a / b)
     }
@@ -43,7 +43,7 @@ fn run_with_recovery(inputs: [[String]]) -> [String] {
                     Err(e) => results.push(format!("err:{}", e)),
                 }
             }
-            Err(_) => results.push("err:bad divisor".to_string()),
+            Err(_) => results.push("err:bad divisor"),
         }
     }
     results
@@ -51,35 +51,35 @@ fn run_with_recovery(inputs: [[String]]) -> [String] {
 
 fn main() {
     // Happy path
-    match pipeline("50".to_string(), 5) {
+    match pipeline("50", 5) {
         Ok(v) => println!("pipeline ok: {}", v),
         Err(e) => println!("pipeline err: {}", e),
     }
 
     // Parse failure
-    match pipeline("abc".to_string(), 5) {
+    match pipeline("abc", 5) {
         Ok(v) => println!("unexpected ok: {}", v),
         Err(e) => println!("parse failure caught: {}", e.starts_with("parse error")),
     }
 
     // Domain failure
-    match pipeline("-10".to_string(), 5) {
+    match pipeline("-10", 5) {
         Ok(v) => println!("unexpected ok: {}", v),
         Err(e) => println!("domain failure caught: {}", e.contains("positive")),
     }
 
     // Division by zero
-    match pipeline("100".to_string(), 0) {
+    match pipeline("100", 0) {
         Ok(v) => println!("unexpected ok: {}", v),
         Err(e) => println!("div zero caught: {}", e.contains("zero")),
     }
 
     // Batch with recovery
     let pairs = [
-        ["50".to_string(), "5".to_string()],
-        ["abc".to_string(), "2".to_string()],
-        ["100".to_string(), "0".to_string()],
-        ["20".to_string(), "4".to_string()],
+        ["50", "5"],
+        ["abc", "2"],
+        ["100", "0"],
+        ["20", "4"],
     ]
     let results = run_with_recovery(pairs)
     for r in results {
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn pipeline_success() {
-        match super::pipeline("40".to_string(), 4) {
+        match super::pipeline("40", 4) {
             Ok(v) => testing::check_eq(&v, &20, "40/4*2=20"),
             Err(e) => testing::check(false, e),
         }
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn pipeline_parse_error() {
-        match super::pipeline("xyz".to_string(), 1) {
+        match super::pipeline("xyz", 1) {
             Ok(_) => testing::check(false, "expected error"),
             Err(e) => testing::check(e.contains("parse"), "parse error message"),
         }
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn pipeline_domain_error() {
-        match super::pipeline("-5".to_string(), 1) {
+        match super::pipeline("-5", 1) {
             Ok(_) => testing::check(false, "expected error"),
             Err(e) => testing::check(e.contains("positive"), "domain error message"),
         }
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn pipeline_div_zero() {
-        match super::pipeline("10".to_string(), 0) {
+        match super::pipeline("10", 0) {
             Ok(_) => testing::check(false, "expected error"),
             Err(e) => testing::check(e.contains("zero"), "div zero message"),
         }

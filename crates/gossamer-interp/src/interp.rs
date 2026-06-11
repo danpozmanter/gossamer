@@ -2287,6 +2287,17 @@ fn bind_pattern(env: &mut Env, pattern: &HirPat, value: Value) -> RuntimeResult<
 }
 
 fn match_pattern(env: &mut Env, pattern: &HirPat, value: &Value) -> bool {
+    // Native enum handles (JIT-produced) match through their boxed
+    // view; without this they silently fall through every arm.
+    if let Value::NativeEnum(owner) = value
+        && !matches!(
+            &pattern.kind,
+            HirPatKind::Wildcard | HirPatKind::Rest | HirPatKind::Binding { .. }
+        )
+    {
+        let boxed = crate::value::native_enum_to_variant(owner);
+        return match_pattern(env, pattern, &boxed);
+    }
     match &pattern.kind {
         HirPatKind::Wildcard | HirPatKind::Rest => true,
         HirPatKind::Binding { name, .. } => {

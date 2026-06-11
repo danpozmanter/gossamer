@@ -82,7 +82,7 @@ mod tests {
             Err(e) => { testing::check(false, e); return }
         }
         match json::as_str(json::get(obj, "hello").unwrap()) {
-            Some(s) => testing::check_eq(&s, &"world".to_string(), "get hello"),
+            Some(s) => testing::check_eq(&s, &"world", "get hello"),
             None => testing::check(false, "expected string value"),
         }
     }

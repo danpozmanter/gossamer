@@ -19,7 +19,7 @@ fn main() {
     println!("zip size: {} bytes", bytes.len())
 
     let entries = archive::zip::read(&bytes).unwrap()
-    for entry in entries.iter() {
+    for entry in entries {
         println!("- {}: {} bytes", entry.name, entry.data.len())
     }
 }

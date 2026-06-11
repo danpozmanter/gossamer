@@ -2,7 +2,7 @@
 // Use exec::run to spawn subprocesses, capture stdout/stderr,
 // and check exit codes — the one-shot subprocess pattern.
 
-use std::exec
+use std::os::exec
 
 fn run_cmd(prog: String, args: [String]) -> Result<String, String> {
     match exec::run(prog, args) {
@@ -35,10 +35,10 @@ fn main() {
     }
 
     // true exits 0, false exits 1
-    let true_code = run_and_check_code("true".to_string(), [])
+    let true_code = run_and_check_code("true", [])
     println!("true exit code = {}", true_code)
 
-    let false_code = run_and_check_code("false".to_string(), [])
+    let false_code = run_and_check_code("false", [])
     println!("false exit code = {}", false_code)
 
     // printf for controlled output
@@ -54,7 +54,7 @@ fn main() {
     }
 
     // Chained: run_cmd helper
-    match run_cmd("echo".to_string(), ["world".to_string()]) {
+    match run_cmd("echo", ["world"]) {
         Ok(s) => println!("run_cmd result: '{}'", s),
         Err(e) => println!("run_cmd error: {}", e)
     }
@@ -62,7 +62,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::exec
+    use std::os::exec
     use std::testing
 
     #[test]

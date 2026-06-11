@@ -19,7 +19,7 @@ struct Mixed {
 }
 
 fn main() -> Result<(), errors::Error> {
-    let text = "{\"a\":-1,\"b\":300,\"c\":255,\"d\":9000000000,\"e\":1.5,\"f\":true,\"g\":\"hi\"}".to_string()
+    let text = "{\"a\":-1,\"b\":300,\"c\":255,\"d\":9000000000,\"e\":1.5,\"f\":true,\"g\":\"hi\"}"
     let m = from_json::<Mixed>(&text)?
     println!("a={} b={} c={} d={} e={} f={} g={}", m.a, m.b, m.c, m.d, m.e, m.f, m.g)
 

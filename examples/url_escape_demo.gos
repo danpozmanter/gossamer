@@ -5,7 +5,7 @@
  * and preserves `/ : @`. Decoding reverses each variant.
  */
 
-use std::url
+use std::net::url
 
 fn main() {
     let q = url::query_escape("hello world & friends")
