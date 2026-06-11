@@ -10,15 +10,18 @@ context assumed.
 
 ## 1. What Gossamer is
 
-A garbage-collected, goroutine-powered, fast-compiling systems
-language. Syntax is Rust-flavoured without lifetimes or a borrow
-checker. Runtime is Go-shaped: goroutines, channels, GC. Source
-files end in `.gos`. The toolchain binary is `gos`. Every project
-ships a `project.toml` manifest.
+A goroutine-powered, fast-compiling systems language with
+automatic memory management (deterministic reference counting
+plus `arena { }` regions — no borrow checker, no lifetimes, no
+tracing-GC pauses). Syntax is Rust-flavoured. Runtime is
+Go-shaped: goroutines, channels. Source files end in `.gos`. The
+toolchain binary is `gos`. Every project ships a `project.toml`
+manifest.
 
-Status: pre-1.0.0. Surface is stable enough to write against;
-runtime and native codegen are partially wired — see "current
-gaps" at the bottom.
+Status: pre-1.0.0 (currently 0.12.0). The surface is stable to
+write against, and features ship across all three tiers (bytecode
+VM, in-process JIT, LLVM AOT) — see "current gaps" at the bottom
+for the few remaining rough edges.
 
 ## 2. Idioms at a glance
 
@@ -52,8 +55,11 @@ Prefer these shapes when writing Gossamer:
   for `Copy` types and a borrow for the rest; the explicit
   `.iter()` + deref is legacy noise.
 - **Bare integer indices — no `as usize` cast.**
-  `arr[i]` works for `i: i64`. The runtime widens / bounds-checks
-  for you. `arr[i as usize]` is a Rust habit that doesn't apply.
+  `arr[i]` works for `i: i64`. The runtime widens for you;
+  `arr[i as usize]` is a Rust habit that doesn't apply. An index
+  outside `[0, len)` yields the element type's zero value rather
+  than panicking — identical on every tier — so guard with `len()`
+  when absence must be distinguished from zero.
 - **`Vec::swap` over the manual three-line dance.**
   `arr.swap(i, j)` mutates in place across every tier. Three-line
   `let t = arr[i]; arr[i] = arr[j]; arr[j] = t` is only justified
@@ -64,10 +70,25 @@ Prefer these shapes when writing Gossamer:
   `m.insert("apple", m.get_or("apple", 0) + 1)`. `m.or_insert(k, default)`
   for the get-or-fill pattern.
 - **Recursive enums with `Box<T>`.** `enum List { Cons(i64, Box<List>), Nil }`
-  works directly — `Box`, `Arc`, and `Rc` are transparent in a
-  GC'd language, and the spelling matches Rust exactly. The
+  works directly — `Box`, `Arc`, and `Rc` are transparent under
+  automatic memory management, and the spelling matches Rust. The
   bare `enum List { Cons(i64, List), Nil }` form works too;
   every variant payload is heap-shared.
+- **`#[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]` on
+  structs and enums.** Synthesized as real Gossamer source, so
+  `==`, `.clone()`, `Type::default()`, and `{:?}` work identically
+  on every tier. Enums derive when variants are all tuple or unit
+  shaped; `#[default]` picks the `Default` variant. Don't hand-roll
+  field-wise `eq` / `clone` methods.
+- **`defer expr` for cleanup.** Runs when control leaves the
+  enclosing `{ }` block — fall-through, `return`, `break`,
+  `continue` — in LIFO order (Swift/Zig style). A `defer` in a
+  loop body runs each iteration. Reach for it over manual
+  cleanup-before-every-return.
+- **`let PAT = expr else { … }` for refutable-let-or-diverge.**
+  `let Some(v) = m.get(&k) else { return default }` binds or
+  diverges; the else block must `return` / `break` / `continue` /
+  `panic!`.
 - **Left-to-right dataflow with `|>`.** Chain calls with the
   forward-pipe operator instead of nesting.
 - **Plain functions for free-standing logic.** Reach for
@@ -119,7 +140,7 @@ let label = match shape {
 // The caller's binding stays `let`, not `let mut`:
 fn sum(xs: &[i64]) -> i64 {
     let mut acc = 0
-    for n in xs.iter() { acc += *n }
+    for n in xs { acc += n }
     acc
 }
 
@@ -226,7 +247,7 @@ impl Area for Shape {
 // hands back a fresh value. The caller binds it immutably.
 fn sum(xs: &[i64]) -> i64 {
     let mut acc = 0
-    for n in xs.iter() { acc = acc + *n }
+    for n in xs { acc += n }
     acc
 }
 
@@ -254,17 +275,25 @@ fn main() {
 - **Imports.** `use std::iter` for a single import; group with
   braces for several from the same module — `use std::{iter,
   os, strings}`. No trailing `;`. Alias an entry with
-  `use std::collections::{HashMap as Map}`.
+  `use std::collections::{HashMap as Map}`. Module paths are
+  validated against the canonical std manifest (`GR0005`):
+  alias spellings like `std::json` (for `std::encoding::json`)
+  or `std::url` (for `std::net::url`) are hard errors — always
+  spell the full canonical path.
 - **Expressions-as-statements.** `if`, `match`, `loop`, and
   block expressions all yield values.
 - **Bindings.** `let name = expr`, `let mut name = expr`,
   `let Point { x, y } = p` (destructure), `let (a, b) = pair`.
 - **References.** `&x` read-shared, `&mut x` exclusive write.
-  Aliasing intent only; the GC owns memory. **No lifetimes,
+  Aliasing intent only; the runtime owns memory. **No lifetimes,
   no borrow checker.**
 - **Types.** `bool`, `char`, `i8..i128`, `u8..u128`, `isize`,
   `usize`, `f32`, `f64`, `String`, `[T]`, `(A, B)`,
   `Option<T>`, `Result<T, E>`, `&T`, `&mut T`, user types.
+  Nested generics parse (`Vec<Vec<T>>`,
+  `HashMap<String, Vec<i64>>` — the `>>` closes both levels).
+- **`defer expr`** — runs the expression when control leaves the
+  enclosing block by any path, LIFO order, on every tier.
 - **Integer literals** are bare by default: `1`, `255`, `0`.
   Inference picks the type from the binding, the call site, or
   the return type. Suffix only when no contextual hint exists
@@ -285,6 +314,9 @@ fn main() {
   `while let PAT = SCRUTINEE { … }` to `loop { match SCRUTINEE
   { PAT => …, _ => break } }`. No new behavior, just shorter
   reading.
+- **`let PAT = expr else { … }`** — refutable-let-or-diverge;
+  the else block must diverge (`return` / `break` / `continue` /
+  `panic!`). Desugars to a `match`, so it runs on every tier.
 
 ## 6. Formatted output (the only macros)
 
@@ -342,6 +374,11 @@ fn load_config(path: &String) -> Result<String, errors::Error> {
 - `errors::chain(err)` — iterate the cause chain.
 - `errors::join([err, err])` — combine several into one.
 
+`?` also propagates `Option<T>` inside an `Option`-returning
+function (`let v = m.get(&k)?`), and a Result `?` auto-converts
+the error through `From` — `fallible_b()?` typechecks in a
+function returning `Result<_, A>` when `A: From<B>`.
+
 Idiomatic shape — fallible work returns `Result`, piped
 through `result::map` for the ok-path and
 `result::default_with` to handle the error in-line:
@@ -388,36 +425,35 @@ match h.join() {
 }
 ```
 
-Typed channels via `std::sync::channel()`. `select { }` multiplexes
-receives and sends:
+Typed channels via `std::sync::channel()`. `recv()` blocks until a
+value arrives or every sender is gone; `close()` ends the stream,
+so `while let Some(v) = rx.recv()` is the canonical drain — no
+sleeps needed, identical under `gos run` and `gos build`:
 
 ```gossamer
 use std::sync::channel
-use std::time
+
+fn produce(tx: Sender<i64>) {
+    tx.send(1)
+    tx.send(2)
+    tx.send(3)
+    tx.close()
+}
 
 fn main() {
-    let pair = channel()
-    let tx = pair.0
-    let rx = pair.1
-
-    go tx.send(10)
-    go tx.send(20)
-    go tx.send(30)
-
-    time::sleep(50)
-
+    let (tx, rx) = channel()
+    go produce(tx)
     let mut total = 0
-    loop {
-        match rx.recv() {
-            Some(v) => total = total + v,
-            None => break,
-        }
+    while let Some(v) = rx.recv() {
+        total += v
     }
     println!("total: {}", total)
 }
 ```
 
-`select { }` multiplexes:
+`select { }` multiplexes receives and sends; arms are polled in
+source order and the goroutine parks until one is ready (or a
+`default` arm fires):
 
 ```gossamer
 select {
@@ -432,15 +468,13 @@ select {
 - `go` takes a full expression — usually a function or method
   call. Closures work (`go || { ... }()`) but a named helper
   is easier to read and test.
-- The current scheduler is cooperative and early-stage. Don't
-  assume blocking semantics; pair producers and consumers
-  with a short `time::sleep` or a `select { default => … }`
-  arm when you need to drain deterministically.
+- Close the channel from the producer when the stream ends;
+  consumers drain with `while let Some(v) = rx.recv()`.
 
 ## 8a. Closures and higher-order fns
 
 Lambdas use `|param: T| body`. Captures from the enclosing scope
-work as you'd expect (GC-managed, no `move` keyword).
+work as you'd expect (runtime-managed, no `move` keyword).
 
 For higher-order parameters, distinguish two callable types:
 
@@ -464,8 +498,8 @@ fn main() {
 ```
 
 Single trait variant — no `FnMut` / `FnOnce` distinction (the
-borrow-style split Rust draws is unnecessary in a fully GC'd
-world). `FnMut` / `FnOnce` parse but lower to the same
+borrow-style split Rust draws is unnecessary with runtime-managed
+memory). `FnMut` / `FnOnce` parse but lower to the same
 `Fn(_)` shape.
 
 ## 8b. Iterators
@@ -521,7 +555,7 @@ free until the terminal materialises a result.
 - `(A, B, …)` — tuple. Field access via `.0`, `.1`, …, or
   destructure inline: `let (a, b) = pair`,
   `for (k, v) in m.iter()`.
-- `struct Foo { x, y }` / `struct Pair(A, B)` — GC-managed
+- `struct Foo { x, y }` / `struct Pair(A, B)` — runtime-managed
   value types.
 - `enum E { A, B(Payload) }` — sum types, pattern-matched
   exhaustively. Recursive payloads work directly:
@@ -535,6 +569,16 @@ free until the terminal materialises a result.
   `m.inc(k)` / `m.inc(k, by)` (counter-style increment),
   `m.or_insert(k, default)` (get-or-fill),
   `m.iter()` (yields `[(K, V)]` for direct destructuring).
+  Structs and tuples work as `HashMap` / `HashSet` keys — keyed
+  by value on every tier (two equal-valued keys at different
+  allocations share a slot). Flat structs, `String`-field
+  structs, nested structs, and tuples all qualify.
+- Collection literals coerce to `Vec<T>` / `[T]` wherever the
+  expected type calls for one — a `let` annotation, a
+  `-> Vec<T>` return, a Vec-typed field or argument. `[a, b]`
+  and `[v; N]` both participate; `if` / `match` branches of
+  differing literal lengths join to `Vec<T>`.
+- Enums are capped at 256 variants (`GT0012`).
 
 ## 10. The `gos` toolchain
 
@@ -545,8 +589,8 @@ Bare `gos` drops into the REPL.
 |---------|---------|
 | `gos check FILE` | Parse + resolve + typecheck + exhaustiveness. |
 | `gos run FILE` | Register-based bytecode VM. The walker is gone as a user-facing mode; if the VM hits an HIR shape it doesn't lower yet, it falls back internally — never user-selectable. |
-| `gos build FILE` | Native build via LLVM (`opt -O0 \| llc -O0`) + system linker. |
-| `gos build --release FILE` | Native build via LLVM (`opt -O3 \| llc -O3 -mcpu=native`) + system linker. |
+| `gos build FILE` | Native build via LLVM (no `opt` pre-pass, `llc -O0`) + system linker. Fast compile, unoptimised code. |
+| `gos build --release FILE` | Full LLVM pipeline (`opt -O3 \| llc -O3`), static-musl on Linux. Strict lowering is the default: any MIR shape the LLVM backend can't lower is a hard build failure (`--allow-llvm-fallback` opts out). `--target TRIPLE` cross-compiles; `-g` embeds DWARF. |
 | `gos test PATH` | Discover and run `#[test]` functions. `--coverage <path>` (lcov), `--parallel N` / `--serial`, `--format junit`, `--tier-parity --report=status`. |
 | `gos bench PATH` | Discover and time `#[bench]` functions. |
 | `gos fmt [--check] FILE` | Rewrite canonically. |
@@ -603,7 +647,12 @@ executed by `gos test`. Mark non-runnable fences as
   `create_dir`, `create_dir_all`, `remove_file`, `remove_dir`,
   `remove_dir_all`, `remove_all`, `copy`, `rename`, `exists`,
   `is_file`, `is_dir`, `is_symlink`, `file_size`, `metadata`,
-  `canonicalize`, `glob`, `eval_symlinks`.
+  `canonicalize`, `glob`, `eval_symlinks`. **0.9.0 additions:**
+  `fs::watch::Watcher` (file-change notification), `mmap_read` /
+  `mmap_write`, `lock_exclusive` / `lock_shared`,
+  `write_atomic` (temp-file + rename), `hard_link`,
+  `set_permissions_mode`, `chown`, `fs::TempDir` (RAII temp
+  directory), `fs::temp_file(prefix)`.
 - `std::path` — pure path manipulation (no I/O):
   `join`, `split`, `base`, `dir`, `ext`, `clean`,
   `is_absolute`, `has_prefix`, `matches`. `path::native` for
@@ -745,6 +794,30 @@ executed by `gos test`. Mark non-runnable fences as
   converters that mirror `toml::to_json` / `from_json`. The
   auto-derived `from_yaml::<T>` / `to_yaml::<T>` functions on every
   user struct compose these with the JSON pair.
+- `std::database::sql` (**0.9.0**, experimental) — driver-pluggable
+  SQL access modelled on Go's `database/sql`. No driver ships in
+  the box: a Rust crate implements the `Driver` trait
+  (`gossamer_runtime::sql` re-exported as
+  `gossamer_std::database::sql`) and calls `register` at startup,
+  typically via the `[rust-bindings]` mechanism. Surface:
+  `open(driver, url) -> Result<Conn, Error>`; `Conn` with
+  `prepare`, `execute(sql, &[Value])`, `query`, `execute_many`,
+  `begin` / `begin_with(IsolationLevel)`, `ping`,
+  `set_busy_timeout(ms)`, `interrupt`, and context-aware
+  `execute_ctx` / `query_ctx` (cancel via `std::context`); `Tx`
+  with `commit` / `rollback` / `execute` / `savepoint` /
+  `release_savepoint` / `rollback_to_savepoint`;
+  `Rows::next_row() -> Option<Row>` + `columns()`; `Row` typed
+  getters (`get_i64`, `get_f64`, `get_bool`, `get_text`,
+  `get_blob`, `get_opt_*`, `is_null`); `Value`
+  (Null / Bool / Int / Float / Text / Blob) with positional `$N`
+  binding; `Pool` / `PoolConfig` / `PooledConn` — bounded pool
+  with idle-timeout recycling, `acquire_timeout` →
+  `Error::PoolExhausted`, per-connection statement cache;
+  `migrate::up(&mut conn, dir)` — forward-only
+  `<version>_<slug>.sql` migrations, one transaction each,
+  advisory-locked against concurrent runners; `query::Select` —
+  fluent SELECT builder rendering `(sql, params)`.
 - `std::sync` — `Mutex`, `RwLock`, atomics, `channel`, `Once`,
   `WaitGroup` (`new`, `add`, `done`, `wait`), and `Map` (a
   concurrent string-keyed string-value map; `set`/`get`/`delete`/
@@ -786,16 +859,34 @@ executed by `gos test`. Mark non-runnable fences as
 - `std::jwt` (**0.8.0**) — RFC 7519 sign + verify for HS256/384/512,
   ES256, and EdDSA: `Alg`, `Header`, `Claims`, `VerifyOpts`,
   `sign_hs` / `verify_hs`, `sign_es256` / `verify_es256`,
-  `sign_eddsa` / `verify_eddsa`.
+  `sign_eddsa` / `verify_eddsa`. **0.9.0:** RS256/384/512 verify
+  (RSA PKCS#1 v1.5 via `ring`).
+- `std::metrics` (**0.9.0**) — Prometheus-compatible `Counter`,
+  `Gauge`, `Histogram` + `Registry`; renders the text-exposition
+  format.
+- `std::trace` (**0.9.0**) — W3C trace-context distributed tracing
+  (`TraceId`, `SpanId`, `SpanContext`, `Span`, `Tracer`) with an
+  OTLP JSON exporter.
+- `std::compress::{gzip, flate, zlib, zstd}` — byte-in/byte-out
+  encoders/decoders (zstd levels 1–22, default 3).
+- `std::http_h3` (**0.9.0**) — HTTP/3 server + client (RFC 9114)
+  mirroring the `std::http` / `std::http_h2` synchronous surface.
 - `std::lifecycle` (**0.8.0**) — graceful-shutdown hooks, signal
   handling, sd_notify.
 - `std::validate` (**0.8.0**) — `Validate` trait plus `FieldError`
   / `Errors` for form-style field validation.
 - `std::slog` — structured logging.
 - `std::runtime` — scheduler + memory knobs: `collect_cycles()`,
-  `arena_push()` / `arena_pop()` (prefer the `arena {}` block).
+  `arena_push()` / `arena_pop()` (prefer the `arena {}` block),
+  `set_panic_hook(f: fn(String))` — replaces the default panic
+  report on every tier. A panic on the main goroutine exits 101
+  (Rust parity); an unobserved `go` panic prints one clean
+  `error[GX0005]` line and only ends that goroutine.
 - `std::testing` — `check`, `check_eq`, `Runner`, `check_ok`.
-- `std::regex` — wraps the Rust `regex` crate.
+- `std::regex` — wraps the Rust `regex` crate. Named groups
+  (**0.9.0**): `capture_names(pat)`, `captures_named(pat, hay)` /
+  `captures_named_all` return `HashMap<String, String>` for
+  `(?P<name>…)` patterns.
 
 Reality check: many modules exist in the manifest with
 partial implementations. Trust examples in the repo; write
@@ -903,18 +994,17 @@ match per (method, path), exact match by default with
   `std::bytes::Builder` or a `mut String` with `+=`.
 - Method dispatch is name-global in places. Qualified path
   calls (`Point::origin()`) always work; method-style may
-  collide across types until the resolver tightens.
-- The scheduler is cooperative and unbuffered today.
-  Channels work under `gos run`; `gos build` for programs
-  that create channels is not yet wired — it will bail with
-  a clear message. `go` spawn by itself builds natively.
-- `env::args()` can return empty under some codegen paths —
-  prefer `std::flag` with explicit defaults.
-- `arr.sort_by(|a, b| …)` works in the bytecode VM. The
-  cranelift JIT auto-skips bodies that call it (the
-  closure-callback ABI isn't wired through native code yet)
-  and the body runs on the bytecode VM instead, so sort
-  behaviour is correct everywhere — just not JIT-fast.
+  collide across types until the resolver tightens. Concrete
+  trap: once any struct carries `#[derive(Clone)]`, calling
+  `.clone()` on a *`String`* receiver can dispatch to the
+  struct's derived clone under `gos run` (a `GX0001` "field
+  access on non-struct" runtime error); the compiled tiers
+  resolve it correctly. Strings are values — bind or borrow
+  instead of cloning, and keep user method names from
+  shadowing built-in ones.
+- `#[derive(...)]` does not yet cover enums with
+  struct-payload variants (`Rect { w, h }`); tuple and unit
+  variants derive fine.
 
 ## 16. Style rules
 
