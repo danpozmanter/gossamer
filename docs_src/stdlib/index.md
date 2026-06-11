@@ -87,6 +87,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::net`](net.md) | TCP/UDP networking primitives. |
 | [`std::net::netip`](net_netip.md) | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](net_url.md) | URL parsing, rendering, and query escaping. |
+| [`std::option`](option.md) | Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc. |
 | [`std::os`](os.md) | Operating-system identity and deprecated re-exports of env/process/fs. |
 | [`std::os::exec`](os_exec.md) | Spawn / wait for child processes (Go's os/exec shape). |
 | [`std::os::signal`](os_signal.md) | POSIX-style signal subscription (Go's os/signal shape). |
@@ -96,6 +97,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::path::native`](path_native.md) | Native-separator wrappers over `std::path` (backslash on Windows). |
 | [`std::process`](process.md) | Spawn child processes, exit the current process (Rust std::process shape). |
 | [`std::regex`](regex.md) | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
+| [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc. |
 | [`std::runtime`](runtime.md) | Goroutine / GC / scheduler introspection and tuning. |
 | [`std::slog`](slog.md) | Structured, levelled logging. |
 | [`std::sort`](sort.md) | Slice sorting and binary search. |
