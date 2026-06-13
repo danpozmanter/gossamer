@@ -303,19 +303,10 @@ pub unsafe extern "C" fn gos_rt_stream_read_to_string(stream: *const GosStream) 
 pub unsafe extern "C" fn gos_rt_println() {
     ffi_entry!((), {
         unsafe { write_stdout(b"\n") };
-        // Line-flush so interactive output appears promptly.
-        // Batched programs (fasta et al.) fill the buffer and flush
-        // in 64 KiB chunks, which is dramatically cheaper than per-
-        // write syscalls.
-        let _guard = StdoutGuard::acquire();
-        let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
-        let len_ptr = GOS_RT_STDOUT_LEN.0.get();
-        let len = unsafe { *len_ptr };
-        if len >= STDOUT_BUF_SIZE / 2 {
-            unsafe {
-                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), len));
-                *len_ptr = 0;
-            }
-        }
+        // Flush on every newline — matches Rust's LineWriter<StdoutRaw> contract
+        // so that `println!` output appears immediately, as it does in Go and
+        // on the JVM. Programs that need high-throughput output should use
+        // stream write methods directly rather than `println!`.
+        unsafe { gos_rt_flush_stdout() };
     });
 }

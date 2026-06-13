@@ -313,7 +313,7 @@ impl<'a> Lowerer<'a> {
                 // slot and pass its address, matching the runtime's ABI. On
                 // SysV (Linux/macOS) `i128` is register-passed identically by
                 // llc and rustc, so this branch is skipped there.
-                if cfg!(windows) && want_ty == "i128" {
+                if crate::emit::target_is_windows() && want_ty == "i128" {
                     let v = if a_ty == "i128" {
                         a_v.clone()
                     } else {
@@ -353,7 +353,7 @@ impl<'a> Lowerer<'a> {
             decl_args = registry_param_llvm
                 .iter()
                 .map(|t| {
-                    if cfg!(windows) && t == "i128" {
+                    if crate::emit::target_is_windows() && t == "i128" {
                         "ptr".to_string()
                     } else {
                         t.clone()
@@ -383,8 +383,10 @@ impl<'a> Lowerer<'a> {
         // declare + call the runtime symbol as `<16 x i8>` to match rustc,
         // then `bitcast` the result back to the `i128` the rest of the body
         // expects. Skipped on SysV, where bare `i128` already agrees.
-        let win_fat_ret =
-            super::misc::needs_win64_fat_ret(cfg!(windows), registry_ret_llvm.as_deref());
+        let win_fat_ret = super::misc::needs_win64_fat_ret(
+            crate::emit::target_is_windows(),
+            registry_ret_llvm.as_deref(),
+        );
         // The logical return type the surrounding code consumes (always the
         // registry/MIR type); `decl_ret` below is the *wire* type used for the
         // declaration and call instruction.

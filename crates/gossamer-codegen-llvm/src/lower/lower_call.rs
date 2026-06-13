@@ -1208,8 +1208,22 @@ impl<'a> Lowerer<'a> {
                 if fname.starts_with("gos_rt_") && gossamer_abi::lookup(fname).is_some() {
                     declare_rt(&mut self.runtime_refs, fname);
                 }
+                // Win64: a handler invoked by the rustc-compiled runtime
+                // through `extern "C" fn(..) -> i128` must return the
+                // 2-word `i128` in a vector register (xmm0), but `@fname`
+                // (a gossamer `ret i128`) returns it in the GP-register
+                // pair. Take the address of the synthesized `<16 x i8>`
+                // C-ABI return thunk (`name$cabi`) instead so the runtime
+                // reads the discriminant/payload from the register it
+                // expects. `cabi_handlers` is empty off Windows, so this
+                // is a no-op there and for non-handler fn-addresses.
+                let sym = if self.cabi_handlers.contains_key(fname.as_str()) {
+                    format!("{fname}$cabi")
+                } else {
+                    fname.clone()
+                };
                 let tmp = self.fresh();
-                writeln!(self.out, "  {tmp} = bitcast ptr @\"{fname}\" to ptr").unwrap();
+                writeln!(self.out, "  {tmp} = bitcast ptr @\"{sym}\" to ptr").unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
                 let slot = local_slot(destination.local);
                 writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();

@@ -635,7 +635,7 @@ impl<'a> Lowerer<'a> {
     /// Every site that hands an `i128` to a runtime helper MUST route through
     /// this so the call instruction matches the declaration on Windows.
     pub(crate) fn fat_i128_call_arg(&mut self, val: &str) -> String {
-        if cfg!(windows) {
+        if crate::emit::target_is_windows() {
             let slot = self.fresh();
             writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
             writeln!(self.out, "  store i128 {val}, ptr {slot}, align 16").unwrap();

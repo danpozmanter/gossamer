@@ -20,180 +20,125 @@ manifest.
 
 Status: pre-1.0.0 (currently 0.13.0). The surface is stable to
 write against, and features ship across all three tiers (bytecode
-VM, in-process JIT, LLVM AOT) — see "current gaps" at the bottom
-for the few remaining rough edges.
+VM, in-process JIT, LLVM AOT) — see "current gaps" at the bottom.
 
 ## 2. Idioms at a glance
 
 Write **clear, low-complexity, concise code.** Names earn their
 length; helpers earn their existence. If a line reads cleanly the
-first time through, leave it alone — don't dress it up.
+first time through, leave it alone.
 
-Prefer these shapes when writing Gossamer:
-
-- **Default to immutable.** `let x = …` is the first reach;
-  `let mut x = …` is a deliberate exception only when the
-  binding genuinely changes after construction. Build new
-  values with expressions (`if`, `match`, `loop … break v`,
-  iterator-style folds) before reaching for an accumulator
-  pattern. Functions return the new value; callers shadow.
-- **Compound-assign accumulators.** Use `+= -= *= /= %= &= |= ^= <<= >>=`.
-  Never write `x = x + 1`; write `x += 1`. The compound forms
-  parse, lower, and run on every tier — the longhand is a code
-  smell that doubles the line length of every accumulator.
+- **Default to immutable.** `let x = …` first; `let mut` only when
+  a binding genuinely changes after construction. Build new values
+  with expressions (`if`, `match`, `loop … break v`, folds) and
+  return them; callers shadow.
+- **Compound-assign accumulators.** `+= -= *= /= %= &= |= ^= <<= >>=`.
+  Write `x += 1`, never `x = x + 1`.
 - **`if let` / `while let` for `Option` and single-variant matches.**
-  `if let Some(n) = m.get(&k) { use(n) }` (one line) instead of
-  `match m.get(&k) { Some(n) => use(n), None => () }` (four
-  lines). `while let Some(v) = rx.recv()` is the canonical
-  channel-drain shape.
-- **Tuple destructuring at every binding site.**
-  `let (a, b) = pair`, `for (k, v) in m.iter()`,
-  `let (tx, rx) = channel()`. Skip the `pair.0` / `pair.1`
-  reach-through.
-- **`for x in xs` over collections — no `.iter()`, no `*x`.**
-  `for n in [1, 2, 3] { sum += n }`. The binding is the value
-  for `Copy` types and a borrow for the rest; the explicit
-  `.iter()` + deref is legacy noise.
-- **Bare integer indices — no `as usize` cast.**
-  `arr[i]` works for `i: i64`. The runtime widens for you;
-  `arr[i as usize]` is a Rust habit that doesn't apply. An index
-  outside `[0, len)` yields the element type's zero value rather
-  than panicking — identical on every tier — so guard with `len()`
-  when absence must be distinguished from zero.
-- **`Vec::swap` over the manual three-line dance.**
-  `arr.swap(i, j)` mutates in place across every tier. Three-line
-  `let t = arr[i]; arr[i] = arr[j]; arr[j] = t` is only justified
-  in the hottest swap loops where the JIT-compiled register
-  layout matters more than readability.
-- **`m.inc(k)` / `m.inc(k, by)` for counter idioms.**
-  `m.inc("apple")` (one call, one lock acquire) instead of
-  `m.insert("apple", m.get_or("apple", 0) + 1)`. `m.or_insert(k, default)`
-  for the get-or-fill pattern.
-- **Recursive enums with `Box<T>`.** `enum List { Cons(i64, Box<List>), Nil }`
-  works directly — `Box`, `Arc`, and `Rc` are transparent under
-  automatic memory management, and the spelling matches Rust. The
-  bare `enum List { Cons(i64, List), Nil }` form works too;
-  every variant payload is heap-shared.
-- **`#[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]` on
-  structs and enums.** Synthesized as real Gossamer source, so
-  `==`, `.clone()`, `Type::default()`, and `{:?}` work identically
-  on every tier. Enums derive when variants are all tuple or unit
-  shaped; `#[default]` picks the `Default` variant. Don't hand-roll
-  field-wise `eq` / `clone` methods.
+  `if let Some(n) = m.get(&k) { use(n) }`. `while let Some(v) =
+  rx.recv()` is the canonical channel drain.
+- **Tuple destructuring at every binding site.** `let (a, b) =
+  pair`, `for (k, v) in m.iter()`, `let (tx, rx) = channel()`.
+- **`for x in xs` over collections — no `.iter()`, no `*x`.** The
+  binding is the value for `Copy` types, a borrow otherwise.
+- **Bare integer indices — no `as usize`.** `arr[i]` works for
+  `i: i64`. An index outside `[0, len)` yields the element type's
+  zero value rather than panicking (identical on every tier) — so
+  guard with `len()` when absence must differ from zero.
+- **`arr.swap(i, j)`** over the manual three-line temp dance.
+- **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
+  default)` for get-or-fill.
+- **Recursive enums work directly.** `enum List { Cons(i64,
+  Box<List>), Nil }`. `Box` / `Arc` / `Rc` are transparent — every
+  variant payload is heap-shared; the bare `Cons(i64, List)` form
+  works too.
+- **`#[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]`** on
+  structs and enums — synthesized as real source, so `==`,
+  `.clone()`, `Type::default()`, `{:?}` work on every tier. Enums
+  derive when variants are all tuple/unit; `#[default]` picks the
+  `Default` variant. Don't hand-roll field-wise eq/clone.
 - **`defer expr` for cleanup.** Runs when control leaves the
-  enclosing `{ }` block — fall-through, `return`, `break`,
-  `continue` — in LIFO order (Swift/Zig style). A `defer` in a
-  loop body runs each iteration. Reach for it over manual
-  cleanup-before-every-return.
-- **`let PAT = expr else { … }` for refutable-let-or-diverge.**
-  `let Some(v) = m.get(&k) else { return default }` binds or
-  diverges; the else block must `return` / `break` / `continue` /
-  `panic!`.
-- **Left-to-right dataflow with `|>`.** Chain calls with the
-  forward-pipe operator instead of nesting.
-- **Plain functions for free-standing logic.** Reach for
-  `impl` only when state is genuinely tied to a type.
+  enclosing `{ }` block by any path (fall-through, `return`,
+  `break`, `continue`), LIFO order. In a loop body it runs each
+  iteration.
+- **`let PAT = expr else { … }`** for refutable-let-or-diverge; the
+  else block must `return` / `break` / `continue` / `panic!`.
+- **Left-to-right dataflow with `|>`.** Chain instead of nesting.
+- **Plain functions for free-standing logic;** reach for `impl`
+  only when state is genuinely tied to a type.
 - **`Result<T, E>` + `?` for fallibility.** Panic only for
   invariant violations.
-- **Exhaustive `match`.** Leave no `_ =>` arm unless every
-  unmatched case genuinely means the same thing.
-- **Goroutines + channels for async work.** Share by
-  communicating; reach for `sync::Mutex` only when
-  shared-memory is the simpler model.
-- **`arena { ... }` for object graphs that die together.** Everything
-  allocated inside the block is bump-allocated and freed wholesale at
-  the block's exit (every exit path). Small-enum nodes drop their
-  header (16-byte tree nodes); allocation is a pointer bump. Contract:
-  nothing allocated inside may be referenced after the block — compute
-  scalar/string summaries inside, keep survivors outside. Statement
-  position only; arenas nest.
-- **Bare numeric literals — always.** Write `0`, `200`, `1.5`,
-  not `0i64`, `200i64`, `1.5f64`. Inference picks the type from
-  the binding, the call site, or the return type, so the suffix
-  is redundant in every well-typed program. Suffix only when the
-  literal stands alone with *no* contextual hint at all
-  (rare: top-level constants whose type cannot be inferred from
-  the right-hand side). The same rule applies to `usize` —
-  `arr[0]`, not `arr[0usize]`.
+- **Exhaustive `match`.** No `_ =>` unless every unmatched case
+  genuinely means the same thing.
+- **Goroutines + channels for async work.** Share by communicating;
+  reach for `sync::Mutex` only when shared memory is simpler.
+- **`arena { ... }` for object graphs that die together.**
+  Everything allocated inside is bump-allocated and freed wholesale
+  at every exit path. Contract: nothing allocated inside may be
+  referenced after the block — compute scalar/string summaries
+  inside, keep survivors outside. Statement position only; nests.
+- **Bare numeric literals — always.** `0`, `200`, `1.5`, not
+  `0i64` / `1.5f64`. Inference picks the type from binding, call
+  site, or return type. Suffix only when a literal stands alone
+  with no contextual hint. Same for indices: `arr[0]`.
 - **String literals are already `String`.** Don't write
-  `"foo".to_string()` — the literal is the owned value. `&"foo"`
-  borrows it where a `&String` / `&str` parameter is expected.
-- **Macros only for formatted output.** `println!`,
-  `format!`, `print!`, `eprintln!`, `eprint!`, `panic!` are
-  the six macro entries — no others exist.
+  `"foo".to_string()`. `&"foo"` borrows where `&String` / `&str`
+  is expected.
+- **Macros only for formatted output.** `println!`, `format!`,
+  `print!`, `eprintln!`, `eprint!`, `panic!` — no others exist.
 
 ### Immutability default — concrete examples
 
-Reach for `let mut` only when none of these shapes work.
-
 ```gossamer
-// `if` / `match` are expressions — bind their result instead
-// of mutating after the fact:
+// `if` / `match` are expressions — bind their result.
 let label = if n < 0 { "negative" } else { "non-negative" }
 let label = match shape {
     Shape::Circle(_) => "round",
     Shape::Rect { .. } => "boxy",
 }
 
-// For accumulator work, push the mutation into a small helper
-// that returns the final value. Use `+=`, never `acc = acc + x`.
-// The caller's binding stays `let`, not `let mut`:
+// Push accumulator mutation into a small helper that returns the
+// final value; the caller's binding stays `let`.
 fn sum(xs: &[i64]) -> i64 {
     let mut acc = 0
     for n in xs { acc += n }
     acc
 }
-
 let total = sum(&xs)               // immutable at the call site
 ```
 
-Heuristics: a `let mut` lives near a single update site (a
-loop, a builder pattern, an in-place sort), inside a small
-function whose return value is the new state. If the binding
-is written from many places, the function probably wants to
-be broken into smaller pieces that each return a fresh value.
+A `let mut` lives near a single update site (a loop, a builder, an
+in-place sort) inside a small function that returns the new state.
+If a binding is written from many places, break the function up.
 
 ### `if let` / `while let` — when to reach for them
 
 ```gossamer
-// One-shot Option lookup — `if let` collapses a 4-line match.
-if let Some(score) = scores.get(&name) {
+if let Some(score) = scores.get(&name) {     // collapses a 4-line match
     println!("{name}: {score}")
 }
-
-// Drain a channel until the producer hangs up.
-while let Some(value) = rx.recv() {
-    handle(value)
-}
-
-// Walk a linked-list / cause chain until the option exhausts.
-let mut cursor = err.cause()
+while let Some(value) = rx.recv() { handle(value) }   // drain a channel
+let mut cursor = err.cause()                          // walk a cause chain
 while let Some(inner) = cursor {
     println!("  caused by: {}", inner.message())
     cursor = inner.cause()
 }
-
-// Pattern-matching a single enum variant in flow.
-if let Tree::Node(value, _, _) = node {
-    println!("node = {value}")
-}
+if let Tree::Node(value, _, _) = node { println!("node = {value}") }
 ```
 
-Avoid `if let` when you genuinely need to handle every variant
-— that's `match` with a guard, not `if let` with an `else`.
+Use `match` (not `if let … else`) when you genuinely need every
+variant.
 
 ## 3. The `|>` forward-pipe operator
 
-Prefer `|>` over nested calls whenever a value flows through
-two or more transformations.
+Prefer `|>` whenever a value flows through two or more transforms.
 
 - `x |> f` desugars to `f(x)`.
-- `x |> f(a, b)` desugars to `f(a, b, x)` — the piped value
-  lands in the **last positional slot**.
-- `x |> recv.m(a)` becomes `recv.m(a, x)` — methods compose
-  the same way.
-- `|>` is left-associative with very low precedence, so
-  `a |> f |> g` reads as `g(f(a))` without parentheses.
+- `x |> f(a, b)` desugars to `f(a, b, x)` — piped value lands in the
+  **last positional slot**.
+- `x |> recv.m(a)` becomes `recv.m(a, x)`.
+- Left-associative, very low precedence: `a |> f |> g` reads as
+  `g(f(a))` without parens.
 
 ```gossamer
 fn double(x: i64) -> i64 { x * 2 }
@@ -202,22 +147,13 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
     if x < lo { lo } else if x > hi { hi } else { x }
 }
 
-// Preferred — reads top-down.
-let n = 3 |> double |> add(10) |> clamp(0, 100)
-
-// Discouraged — the same meaning, but the eye has to unwind.
-let same = clamp(0, 100, add(10, double(3)))
+let n = 3 |> double |> add(10) |> clamp(0, 100)   // reads top-down
 ```
 
-When a step is a closure, write it inline — `|>` still threads
-the value into the last slot:
+A closure step threads the value into the last slot too:
 
 ```gossamer
-let result = input
-    |> parse_header
-    |> validate
-    |> |row| { row.body }
-    |> write_out
+let result = input |> parse_header |> validate |> |row| { row.body } |> write_out
 ```
 
 ## 4. Cheat sheet
@@ -243,8 +179,6 @@ impl Area for Shape {
     }
 }
 
-// Idiomatic: small helper that owns the accumulator and
-// hands back a fresh value. The caller binds it immutably.
 fn sum(xs: &[i64]) -> i64 {
     let mut acc = 0
     for n in xs { acc += n }
@@ -259,76 +193,55 @@ fn main() {
 
 ## 5. Grammar essentials
 
-- **Comments**: `//` single-line and `/* ... */` block are
-  the only two forms — block comments do **not** nest, and
-  there is no separate `///` / `//!` doc-comment syntax. A
-  run of `//` lines immediately above an item (no blank line
-  between) is its documentation; `gos doc` renders these and
-  `gos test` runs fenced code inside them.
-- **Semicolons** are optional at statement boundaries; one
-  statement per line. A newline followed by a leading `&`,
-  `*`, or `-` always starts a new statement (so `let s = expr\n&s
-  |> ...` parses as two statements, not `expr & s`). For
-  legitimate multi-line continuation of those three operators,
-  put the operator at the end of the previous line
-  (`let x = a -\n  b`) or parenthesize the expression.
-- **Imports.** `use std::iter` for a single import; group with
-  braces for several from the same module — `use std::{iter,
-  os, strings}`. No trailing `;`. Alias an entry with
-  `use std::collections::{HashMap as Map}`. Module paths are
-  validated against the canonical std manifest (`GR0005`):
-  alias spellings like `std::json` (for `std::encoding::json`)
-  or `std::url` (for `std::net::url`) are hard errors — always
-  spell the full canonical path.
-- **Expressions-as-statements.** `if`, `match`, `loop`, and
-  block expressions all yield values.
-- **Bindings.** `let name = expr`, `let mut name = expr`,
-  `let Point { x, y } = p` (destructure), `let (a, b) = pair`.
-- **References.** `&x` read-shared, `&mut x` exclusive write.
-  Aliasing intent only; the runtime owns memory. **No lifetimes,
-  no borrow checker.**
+- **Comments**: `//` line and `/* ... */` block are the only forms
+  — block comments do **not** nest; there is no `///` / `//!`. A run
+  of `//` lines immediately above an item (no blank line) is its
+  documentation; `gos doc` renders these and `gos test` runs fenced
+  code inside them.
+- **Semicolons** are optional; one statement per line. A newline
+  followed by a leading `&`, `*`, or `-` starts a new statement, so
+  for multi-line continuation put the operator at the end of the
+  previous line (`let x = a -\n  b`) or parenthesize.
+- **Imports.** `use std::iter`; group with braces — `use std::{iter,
+  os, strings}`. No trailing `;`. Alias with `use
+  std::collections::{HashMap as Map}`. Paths validate against the
+  canonical std manifest (`GR0005`): always spell the full path
+  (`std::encoding::json`, not `std::json`).
+- **Expressions-as-statements.** `if`, `match`, `loop`, and blocks
+  all yield values.
+- **Bindings.** `let name = expr`, `let mut name = expr`, `let
+  Point { x, y } = p`, `let (a, b) = pair`.
+- **References.** `&x` read-shared, `&mut x` exclusive write —
+  aliasing intent only; the runtime owns memory. **No lifetimes, no
+  borrow checker.**
 - **Types.** `bool`, `char`, `i8..i64`, `u8..u64`, `isize`,
-  `usize`, `f32`, `f64`, `String`, `[T]`, `(A, B)`,
-  `Option<T>`, `Result<T, E>`, `&T`, `&mut T`, user types.
-  `i128` / `u128` are rejected (`GT0014`) — no tier has a
-  128-bit runtime representation; split into two 64-bit halves.
-  Nested generics parse (`Vec<Vec<T>>`,
-  `HashMap<String, Vec<i64>>` — the `>>` closes both levels).
-- **`defer expr`** — runs the expression when control leaves the
-  enclosing block by any path, LIFO order, on every tier.
-- **Integer literals** are bare by default: `1`, `255`, `0`.
-  Inference picks the type from the binding, the call site, or
-  the return type. Suffix only when no contextual hint exists
-  (e.g. `1i32` standing alone in an expression with no other
-  width signal). Unsuffixed literals default to `i64`.
+  `usize`, `f32`, `f64`, `String`, `[T]`, `(A, B)`, `Option<T>`,
+  `Result<T, E>`, `&T`, `&mut T`, user types. `i128` / `u128` are
+  rejected (`GT0014`) — no tier has a 128-bit representation. Nested
+  generics parse (`Vec<Vec<T>>`, `HashMap<String, Vec<i64>>`).
+- **`defer expr`** — runs on block exit by any path, LIFO, every tier.
+- **Integer literals** are bare; inference picks the type, default
+  `i64`. Suffix only with no contextual hint.
 - **Casts.** `x as i32` — whitelist-checked (numeric ↔ numeric,
-  `bool` / `char` → integer, `u8` → `char`, same-type no-op).
-  Integer → narrow integer masks at the declared width
-  (`300 as u8 == 44`); float → int truncates toward zero and
-  saturates at i64 width with no narrow mask
-  (`300.7 as u8 == 300`, NaN → 0) — identical on every tier.
-  Every other `as` shape is a hard error (GT0005);
-  `as i128` / `as u128` reject with `GT0014`.
-- **Patterns.** Wildcard `_`, literals, `name`, `mut name`,
-  `Variant(…)`, `Struct { … }`, tuples `(a, b)`, ranges
-  `1..=5`, or-patterns `a | b`, `@`-bindings `x @ 1..=3`,
-  rest `..`. Guards: `Some(n) if n > 0 => …`. Patterns appear
-  in `let`, `for`, function parameters, `match`, `if let`,
-  and `while let`.
-- **`if let` / `while let`** — sugar for the
-  refutable-pattern-or-skip cases. `if let PAT = SCRUTINEE { … }
-  else { … }` desugars to `match SCRUTINEE { PAT => …, _ => … }`;
-  `while let PAT = SCRUTINEE { … }` to `loop { match SCRUTINEE
-  { PAT => …, _ => break } }`. No new behavior, just shorter
-  reading.
-- **`let PAT = expr else { … }`** — refutable-let-or-diverge;
-  the else block must diverge (`return` / `break` / `continue` /
-  `panic!`). Desugars to a `match`, so it runs on every tier.
+  `bool`/`char` → int, `u8` → `char`, same-type no-op). Int → narrow
+  int masks at width (`300 as u8 == 44`); float → int truncates
+  toward zero, saturates at i64 width, no narrow mask (`300.7 as u8
+  == 300`, NaN → 0). Other `as` shapes are GT0005; `as i128/u128` is
+  GT0014.
+- **Patterns.** `_`, literals, `name`, `mut name`, `Variant(…)`,
+  `Struct { … }`, tuples `(a, b)`, ranges `1..=5`, or-patterns
+  `a | b`, `@`-bindings `x @ 1..=3`, rest `..`. Guards: `Some(n) if
+  n > 0 => …`. Used in `let`, `for`, params, `match`, `if let`,
+  `while let`.
+- **`if let` / `while let`** desugar to `match` — shorter reading,
+  no new behavior.
+- **`let PAT = expr else { … }`** — the else block must diverge
+  (`return` / `break` / `continue` / `panic!`).
 
 ## 6. Formatted output (the only macros)
 
-Gossamer has exactly six macros, all format-shaped. Every other
-`name!(…)` is a parse error.
+Exactly six macros, all format-shaped. Every other `name!(…)` is a
+parse error.
 
 | Macro | Returns | Destination |
 |-------|---------|-------------|
@@ -339,27 +252,20 @@ Gossamer has exactly six macros, all format-shaped. Every other
 | `eprint!("…", a, b)` | `()` | stderr, no newline |
 | `panic!("…", a, b)` | `!` | unwinds with the rendered message |
 
-Each macro supports Rust-style `{}` placeholders and
-named-capture via `{ident}` for bindings in scope:
+Rust-style `{}` placeholders plus named-capture `{ident}` for
+bindings in scope:
 
 ```gossamer
 let name = "jane"
 println!("hello, {name}!")
 println!("value: {} / {}", answer, total)
-```
-
-The six macros lower to one allocation through the internal
-`__concat` builtin. For building a single `String` piece-by-
-piece, `+` concatenates without a separator:
-
-```gossamer
-let greeting = "hello, " + &name
+let greeting = "hello, " + &name      // `+` concatenates, no separator
 ```
 
 ## 7. Error handling
 
-Fallible functions return `Result<T, E>`. Propagate with `?` and
-build / wrap / inspect errors through `std::errors`:
+Fallible functions return `Result<T, E>`. Propagate with `?`; build
+/ wrap / inspect through `std::errors`:
 
 ```gossamer
 use std::errors
@@ -371,29 +277,24 @@ fn load_config(path: &String) -> Result<String, errors::Error> {
 }
 ```
 
-- `errors::new(msg)` — build a free-standing error.
-- `errors::newf(fmt, args…)` (0.7.0) — format-shaped error
-  constructor, e.g. `errors::newf("status {}", code)`. Same
-  `{}` placeholder rules as `format!`. Saves the surrounding
-  `format!(...)` wrap on the dominant call shape.
+- `errors::new(msg)` — free-standing error.
+- `errors::newf(fmt, args…)` — format-shaped constructor, e.g.
+  `errors::newf("status {}", code)`.
 - `errors::wrap(cause, msg)` — add a higher-level message.
-- `errors::is(err, needle)` — walk the cause chain.
-- `errors::chain(err)` — iterate the cause chain.
-- `errors::join([err, err])` — combine several into one.
+- `errors::is(err, needle)` / `errors::chain(err)` — walk/iterate
+  the cause chain.
+- `errors::join([err, err])` — combine several.
 
-Rendering a wrapped error with `{}` prints the colon-joined
-cause chain (`outer: mid: root`) on every tier; a joined error
-renders its parts separated by `"; "`. `.message()` stays the
-top message only.
+Rendering a wrapped error with `{}` prints the colon-joined chain
+(`outer: mid: root`); a joined error joins parts with `"; "`.
+`.message()` is the top message only.
 
 `?` also propagates `Option<T>` inside an `Option`-returning
-function (`let v = m.get(&k)?`), and a Result `?` auto-converts
-the error through `From` — `fallible_b()?` typechecks in a
-function returning `Result<_, A>` when `A: From<B>`.
+function, and Result `?` auto-converts the error through `From`.
 
-Idiomatic shape — fallible work returns `Result`, piped
-through `result::map` for the ok-path and
-`result::default_with` to handle the error in-line:
+Idiomatic shape — fallible work returns `Result`, piped through
+`result::map` for the ok-path and `result::default_with` to handle
+the error in-line:
 
 ```gossamer
 use std::{env, errors, fs, iter, result}
@@ -407,27 +308,22 @@ fn main() {
 }
 ```
 
-`result::map(fn, r)` transforms `Ok(v)` via `fn`, leaving
-`Err` untouched. `result::default_with(fn, r)` calls `fn`
-on the error and returns `()`, consuming the result — the
-data-last argument order lets both thread through `|>`.
-`?` also works anywhere (including inside macro arguments
-like `print!("{}", expr?)`) for sequential `let`-binding
-style when that is clearer.
+`result::map(fn, r)` transforms `Ok(v)`, leaving `Err` untouched;
+`result::default_with(fn, r)` handles the error and returns `()`.
+Data-last argument order threads both through `|>`. `?` also works
+inside macro arguments (`print!("{}", expr?)`).
 
 Panics are goroutine-scoped: a panic in a spawned goroutine ends
-only that goroutine — the scheduler keeps running and the process
-exits cleanly — while a panic on the main goroutine is fatal, as
-in Rust. Reserve them for invariant violations, not recoverable
-failure.
+only that goroutine — the scheduler keeps running — while a panic on
+the main goroutine is fatal, as in Rust. Reserve for invariant
+violations.
 
 ## 8. Concurrency
 
-Goroutines via `go expr` (fire-and-forget). When you need the
-result, `spawn(f)` runs `f` on a goroutine and returns a
-`JoinHandle<T>`; `handle.join()` blocks for `Result<T, String>` —
-`Ok(value)` on a normal return, or `Err(message)` if the goroutine
-panicked. Closures may capture their environment.
+`go expr` is fire-and-forget. When you need the result, `spawn(f)`
+runs `f` on a goroutine and returns a `JoinHandle<T>`;
+`handle.join()` blocks for `Result<T, String>` — `Ok(value)` or
+`Err(message)` on panic. Closures capture their environment.
 
 ```gossamer
 let h = spawn(|| compute())
@@ -438,17 +334,15 @@ match h.join() {
 ```
 
 Typed channels via `std::sync::channel()`. `recv()` blocks until a
-value arrives or every sender is gone; `close()` ends the stream,
-so `while let Some(v) = rx.recv()` is the canonical drain — no
-sleeps needed, identical under `gos run` and `gos build`:
+value arrives or every sender is gone; `close()` ends the stream, so
+`while let Some(v) = rx.recv()` is the canonical drain — no sleeps,
+identical under `gos run` and `gos build`:
 
 ```gossamer
 use std::sync::channel
 
 fn produce(tx: Sender<i64>) {
-    tx.send(1)
-    tx.send(2)
-    tx.send(3)
+    tx.send(1); tx.send(2); tx.send(3)
     tx.close()
 }
 
@@ -456,16 +350,13 @@ fn main() {
     let (tx, rx) = channel()
     go produce(tx)
     let mut total = 0
-    while let Some(v) = rx.recv() {
-        total += v
-    }
+    while let Some(v) = rx.recv() { total += v }
     println!("total: {}", total)
 }
 ```
 
-`select { }` multiplexes receives and sends; arms are polled in
-source order and the goroutine parks until one is ready (or a
-`default` arm fires):
+`select { }` multiplexes receives/sends; arms poll in source order,
+the goroutine parks until one is ready (or a `default` arm fires):
 
 ```gossamer
 select {
@@ -475,26 +366,20 @@ select {
 }
 ```
 
-- Prefer channels for coordination; reach for `sync::Mutex`
-  only when shared-memory updates are the simpler shape.
-- `go` takes a full expression — usually a function or method
-  call. Closures work (`go || { ... }()`) but a named helper
-  is easier to read and test.
-- Close the channel from the producer when the stream ends;
-  consumers drain with `while let Some(v) = rx.recv()`.
+Prefer channels for coordination; `sync::Mutex` only when
+shared-memory updates are simpler. Close the channel from the
+producer when the stream ends.
 
 ## 8a. Closures and higher-order fns
 
-Lambdas use `|param: T| body`. Captures from the enclosing scope
-work as you'd expect (runtime-managed, no `move` keyword).
+Lambdas: `|param: T| body`. Captures work as expected
+(runtime-managed, no `move`). Two callable types:
 
-For higher-order parameters, distinguish two callable types:
-
-- `fn(args) -> ret` — raw code pointer, accepts only non-capturing
-  items (bare functions, lifted lambdas with no captures).
-- `Fn(args) -> ret` — callable trait, accepts both bare items
-  and capturing closures. Fat pointer (env + code) under the
-  hood; the conversion is implicit at the call site.
+- `fn(args) -> ret` — raw code pointer; accepts only non-capturing
+  items.
+- `Fn(args) -> ret` — callable trait; accepts bare items and
+  capturing closures (fat pointer; implicit conversion at the call
+  site).
 
 ```gossamer
 fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
@@ -503,127 +388,99 @@ fn main() {
     let scale = 10
     let scaled = |y: i64| scale * y     // captures `scale`
     println!("{}", apply(scaled, 5))    // 50
-
     fn add_one(y: i64) -> i64 { y + 1 }
     println!("{}", apply(add_one, 41))  // 42 — bare fn coerces
 }
 ```
 
-Single trait variant — no `FnMut` / `FnOnce` distinction (the
-borrow-style split Rust draws is unnecessary with runtime-managed
-memory). `FnMut` / `FnOnce` parse but lower to the same
-`Fn(_)` shape.
+Single trait variant — no `FnMut` / `FnOnce` distinction (they parse
+but lower to the same `Fn(_)` shape).
 
 ## 8b. Iterators
 
-User code can declare its own iterator-shaped trait and let
-`for x in ...` drive it. The for-loop desugars to
-`{ let mut __iter = expr; loop { match (&mut __iter).next() {
-Some(x) => body, None => break } } }` — any type that provides
-`fn next(&mut self) -> Option<T>` is iterable.
+Any type with `fn next(&mut self) -> Option<T>` is iterable; `for x
+in ...` desugars to `{ let mut __iter = expr; loop { match (&mut
+__iter).next() { Some(x) => body, None => break } } }`.
 
 ```gossamer
 struct Counter { next_value: i64, end: i64 }
-
-trait Iterator {
-    fn next(&mut self) -> Option<i64>
-}
-
+trait Iterator { fn next(&mut self) -> Option<i64> }
 impl Iterator for Counter {
     fn next(&mut self) -> Option<i64> {
         if self.next_value < self.end {
             let v = self.next_value
             self.next_value = self.next_value + 1
             Some(v)
-        } else {
-            None
-        }
+        } else { None }
     }
-}
-
-fn main() {
-    let mut c = Counter { next_value: 0, end: 5 }
-    let mut sum = 0
-    for n in c { sum = sum + n }
-    println!("sum 0..5 = {}", sum)  // sum 0..5 = 10
 }
 ```
 
-`std::iter::*` also exposes a lazy `Lazy` adapter wrapping
-any Rust `Iterator`, with `map` / `filter` / `take` / `skip`
-/ `step_by` adapters and `to_vec` / `sum` / `min` / `max` /
-`count` / `any` / `all` terminals — chains stay allocation-
-free until the terminal materialises a result.
+`std::iter` also exposes a lazy `Lazy` adapter over any Rust
+`Iterator`: `map` / `filter` / `take` / `skip` / `step_by` adapters,
+`to_vec` / `sum` / `min` / `max` / `count` / `any` / `all`
+terminals — allocation-free until the terminal.
 
 ## 9. Data structures
 
-- `[T]` — growable array. Literal: `[1, 2, 3]`. Iterate with
-  `for x in xs { … }` (no `.iter()`, no `*x`). Mutate in place
-  with `xs.push(v)`, `xs.pop()`, `xs.swap(i, j)`, `xs.sort()`,
-  `xs.sort_by(|a, b| …)`.
-- `[T; N]` — fixed-size array. Literal: `[v; N]` (repeat) or
-  `[a, b, c]` (annotated `[T; 3]`). Stack-allocatable, no
-  growth — pick when the size is a compile-time constant.
-- `(A, B, …)` — tuple. Field access via `.0`, `.1`, …, or
-  destructure inline: `let (a, b) = pair`,
-  `for (k, v) in m.iter()`.
+- `[T]` — growable array. `[1, 2, 3]`; `for x in xs`; mutate with
+  `push`, `pop`, `swap(i, j)`, `sort()`, `sort_by(|a, b| …)`.
+- `[T; N]` — fixed-size. `[v; N]` (repeat) or `[a, b, c]`.
+  Stack-allocatable; pick when the size is a compile-time constant.
+- `(A, B, …)` — tuple. `.0`, `.1`, … or destructure inline.
 - `struct Foo { x, y }` / `struct Pair(A, B)` — runtime-managed
   value types.
-- `enum E { A, B(Payload) }` — sum types, pattern-matched
-  exhaustively. Recursive payloads work directly:
-  `enum List { Cons(i64, Box<List>), Nil }`. `Box<T>` /
-  `Arc<T>` / `Rc<T>` are transparent — every variant payload
-  is heap-shared regardless of the spelling.
-- `Option<T>` — `Some(T)` / `None`. Read with `if let`.
-- `Result<T, E>` — `Ok(T)` / `Err(E)`. Propagate with `?`.
-- `std::collections::{Vec, HashMap, HashSet, BTreeMap}` — the
-  richer containers. `HashMap` extras worth knowing:
-  `m.inc(k)` / `m.inc(k, by)` (counter-style increment),
-  `m.or_insert(k, default)` (get-or-fill),
-  `m.iter()` (yields `[(K, V)]` for direct destructuring).
-  Structs and tuples work as `HashMap` / `HashSet` keys — keyed
-  by value on every tier (two equal-valued keys at different
-  allocations share a slot). Flat structs, `String`-field
-  structs, nested structs, and tuples all qualify.
+- `enum E { A, B(Payload) }` — sum types, matched exhaustively.
+  Recursive payloads work directly; `Box`/`Arc`/`Rc` transparent.
+- `Option<T>` — `Some` / `None`, read with `if let`. `Result<T, E>`
+  — `Ok` / `Err`, propagate with `?`.
+- `std::collections::{Vec, HashMap, HashSet, BTreeMap}` — the richer
+  containers. `HashMap`: `m.inc(k)` / `m.inc(k, by)`, `m.or_insert(k,
+  default)`, `m.iter()` (yields `[(K, V)]`), `keys()` / `values()`,
+  `HashMap::pop(m, k) -> Option<V>`. Structs and tuples work as
+  keys, keyed by value on every tier.
+- `Vec` methods: `contains(&v)`, `index_of(&v) -> Option<i64>`,
+  `count_of(&v)`, `first()` / `last() -> Option<T>`, `reversed()`
+  (non-mutating; `reverse()` is in-place), `xs.slice(start, end) ->
+  Result<Vec<T>, errors::Error>` (out-of-range → Err). The
+  Result-returning `Vec::insert(xs, i, v)` / `Vec::remove(xs, i)` are
+  qualified free functions; method-call `xs.insert/remove` keep
+  silent in-place semantics.
 - Collection literals coerce to `Vec<T>` / `[T]` wherever the
-  expected type calls for one — a `let` annotation, a
-  `-> Vec<T>` return, a Vec-typed field or argument. `[a, b]`
-  and `[v; N]` both participate; `if` / `match` branches of
-  differing literal lengths join to `Vec<T>`.
-- Enums are capped at 256 variants (`GT0012`).
+  expected type calls for one (let annotation, return, field, arg);
+  `if`/`match` branches of differing lengths join to `Vec<T>`.
+- Enums cap at 256 variants (`GT0012`).
 
 ## 10. The `gos` toolchain
 
-Every subcommand takes a `.gos` file or a project directory.
-Bare `gos` drops into the REPL. Inside a project, `gos run` /
-`gos build` with no path resolve the entry themselves:
-`src/main.gos`, `main.gos`, the manifest-id-named source
-(`<id-tail>.gos`), then a sole `.gos` candidate.
+Every subcommand takes a `.gos` file or a project dir. Bare `gos`
+opens the REPL. In a project, `gos run` / `gos build` with no path
+resolve the entry themselves (`src/main.gos`, `main.gos`, the
+manifest-id-named source, then a sole `.gos` candidate).
 
 | Command | Purpose |
 |---------|---------|
 | `gos check FILE` | Parse + resolve + typecheck + exhaustiveness. |
-| `gos run FILE` | Register-based bytecode VM. The walker is gone as a user-facing mode; if the VM hits an HIR shape it doesn't lower yet, it falls back internally — never user-selectable. |
-| `gos build FILE` | Native build via LLVM (no `opt` pre-pass, `llc -O0`) + system linker. Fast compile, unoptimised code. |
-| `gos build --release FILE` | Full LLVM pipeline (`opt -O3 \| llc -O3`), static-musl on Linux. Strict lowering is the default: any MIR shape the LLVM backend can't lower is a hard build failure (`--allow-llvm-fallback` opts out). `--target TRIPLE` cross-compiles; `-g` embeds DWARF. |
-| `gos test PATH` | Discover and run `#[test]` functions. `--coverage <path>` (lcov), `--parallel N` / `--serial`, `--format junit`, `--tier-parity --report=status`. |
-| `gos bench PATH` | Discover and time `#[bench]` functions. |
-| `gos fmt [--check] FILE` | Faithful token-stream formatter: comments, macros, and authored line structure preserved verbatim; spacing and indentation normalised; idempotent, with a no-destruction self-check that refuses to write output whose token stream differs from the input's. |
-| `gos doc FILE` | Print item listing + doc comments. |
-| `gos lint [--deny-warnings] PATH` | Run the lint suite. |
+| `gos run FILE` | Register-based bytecode VM (with in-process JIT). |
+| `gos build FILE` | Native build via LLVM (`llc -O0`) + system linker. Fast compile, unoptimised. |
+| `gos build --release FILE` | Full LLVM pipeline (`opt -O3 \| llc -O3`), static-musl on Linux. Strict lowering by default (`--allow-llvm-fallback` opts out). `--target TRIPLE` cross-compiles; `-g` embeds DWARF. |
+| `gos test PATH` | Run `#[test]` functions. `--coverage <path>` (lcov), `--parallel N` / `--serial`, `--format junit`, `--tier-parity`. |
+| `gos bench PATH` | Time `#[bench]` functions. |
+| `gos fmt [--check] FILE` | Token-stream formatter; idempotent, comment/macro/line-structure preserving. |
+| `gos doc FILE` | Item listing + doc comments. |
+| `gos lint [--deny-warnings] PATH` | Lint suite. |
 | `gos explain CODE` | Long-form rationale for a diagnostic code. |
 | `gos watch --command CMD PATH` | Re-run on file change. |
-| `gos clean [--vendor] [--dry-run]` | Remove build artifacts (`target/`), the per-project `.gos-cache` IR-object cache, and the frontend cache; `--vendor` also drops `vendor/`. |
+| `gos clean [--vendor] [--dry-run]` | Remove `target/`, caches; `--vendor` drops `vendor/`. |
 | `gos new ID --path DIR` | Scaffold a project. |
-| `gos add SPEC` / `remove ID` / `tidy` / `fetch` / `vendor` | Package manager. |
-| `gos publish` / `yank` / `login` / `logout` / `owner` | Registry workflow (0.8.0). Credentials in `~/.config/gossamer/credentials.toml`, Ed25519-signed tarballs, `tarball_sha256` pinned in the lockfile. |
-| `gos feature-status` | List or `--check` the feature-status registry. `--status shipped\|experimental\|planned\|removed`, `--format table\|json\|markdown`. |
+| `gos add SPEC` / `remove` / `tidy` / `fetch` / `vendor` | Package manager. |
+| `gos publish` / `yank` / `login` / `logout` / `owner` | Registry workflow (Ed25519-signed tarballs, sha256 pinned in the lockfile). |
+| `gos feature-status` | List/`--check` the feature-status registry. |
 
 ## 11. Writing tests
 
-Unit tests live inside the file they cover, under
-`#[cfg(test)] mod tests { … }`. Integration tests live under
-`tests/` in a project.
+Unit tests live in the file they cover under `#[cfg(test)] mod tests
+{ … }`. Integration tests live under `tests/`.
 
 ```gossamer
 pub fn add(a: i64, b: i64) -> i64 { a + b }
@@ -638,311 +495,172 @@ mod tests {
 }
 ```
 
-Doc-tests: fenced code inside a `//` doc-comment block (a
-run of `//` lines directly above an item) is compiled and
-executed by `gos test`. Mark non-runnable fences as
-` ```text `.
+Doc-tests: fenced code inside a `//` doc-comment block is compiled
+and run by `gos test`. Mark non-runnable fences ` ```text `.
 
 ## 12. Standard library surface
 
+Tight index of the common surface. Many modules are large; trust
+repo examples and write a small test when unsure.
+
 - `std::fmt` — `Display`, `Debug`.
 - `std::io` — `Read`, `Write`, buffered wrappers, `stdin` / `stdout`.
-- `std::env` — process environment and CLI args:
-  `args`, `program_name`, `var`, `set_var`, `unset_var`,
-  `current_dir`, `set_current_dir`, `home_dir`, `temp_dir`.
-- `std::process` — child processes and exit:
-  `Command`, `Output`, `Stdio`, `Child`, `ExitStatus`,
-  `run`, `spawn`, `kill`, `exit`, `id`, `abort`. **0.8.0**:
-  `Pipeline` for stdout→stdin chaining (`pipeline_run`),
-  `Signal` enum, `signal(pid, sig)`, `kill_group(pgid, sig)`,
-  `wait_timeout(child, ms)` — all wired through the compiled
-  tier via `gos_rt_exec_*` shims (POSIX-only).
-- `std::fs` — filesystem (Rust-style):
-  `read`, `read_to_string`, `write`, `read_dir`, `walk_dir`,
-  `create_dir`, `create_dir_all`, `remove_file`, `remove_dir`,
-  `remove_dir_all`, `remove_all`, `copy`, `rename`, `exists`,
-  `is_file`, `is_dir`, `is_symlink`, `file_size`, `metadata`,
-  `canonicalize`, `glob`, `eval_symlinks`. **0.9.0 additions:**
-  `fs::watch::Watcher` (file-change notification), `mmap_read` /
-  `mmap_write`, `lock_exclusive` / `lock_shared`,
-  `write_atomic` (temp-file + rename), `hard_link`,
-  `set_permissions_mode`, `chown`, `fs::TempDir` (RAII temp
-  directory), `fs::temp_file(prefix)`.
-- `std::path` — pure path manipulation (no I/O):
-  `join`, `split`, `base`, `dir`, `ext`, `clean`,
-  `is_absolute`, `has_prefix`, `matches`. `path::native` for
-  backslash-style paths on Windows.
-- `std::os` — OS identity + deprecated re-exports of env/process/fs
-  for one release: `family()`, `arch()`.
-- `std::strings` — `split`, `splitn`, `split_whitespace`, `trim`,
-  `trim_start`, `trim_end`, `contains`, `find`, `rfind`,
-  `replace`, `replacen`, `to_lower`, `to_upper`, `starts_with`,
-  `ends_with`, `repeat`, `lines`, `join`, `strip_prefix`,
-  `strip_suffix`, `pad_left`, `pad_right`. **0.7.0 additions**
-  (also available as `String` methods on a String receiver):
-  `split_once(sep) -> Option<(String, String)>`,
-  `rsplit_once(sep) -> Option<(String, String)>`,
-  `count(needle) -> i64`, `strip_chars(cutset)` / `lstrip_chars` /
-  `rstrip_chars`, `zfill(width)`, `center(width, pad_char)`, and
-  `slice(start, end) -> Result<String, errors::Error>` — the
-  non-panicking byte-range slice. Use `String::slice(s, a, b)?` to
-  propagate. `s.byte_at(i) -> i64` returns the UTF-8 byte at index `i`
-  (0 if out of range), the constant-time primitive for byte-level
-  scanners/parsers.
-- `std::strconv` — `parse_int`, `parse_i64`, `parse_u64`,
-  `parse_float`, `parse_f64`, `parse_bool`, `format_int`,
-  `format_i64`, `format_float`, `format_f64`, `itoa`, `atoi`.
-- `std::path` — `parent`, `file_name`, `stem`, `ext`,
-  `is_absolute`, `normalize` (in addition to `join` / `walk`).
-- `std::utf8` — `count_runes`, `rune_count`, `rune_count_in_string`,
-  `rune_len`, `is_valid`, `valid_rune`, `valid_string`,
-  `full_rune` / `full_rune_in_string`, `rune_start`,
-  `decode_rune` / `decode_last_rune` / `decode_first` (and
-  the `_in_string` variants), `encode_rune` / `append_rune`.
-- `std::unicode` — **full Unicode 16 surface** (0.8.0). General-category
-  predicates: `is_letter`, `is_digit` (Nd), `is_number` (Nd|Nl|No),
-  `is_space` (Z* + ASCII whitespace), `is_upper` / `is_lower` /
-  `is_title`, `is_punct` (P*), `is_symbol` (S*), `is_mark` (M*),
-  `is_print`, `is_graphic`, `is_control`, `is_assigned`,
-  `combining_class`. Casing: `to_upper` / `to_lower` / `to_title` /
-  `simple_fold` for single runes; `to_upper_str` / `to_lower_str` /
-  `fold_case` for whole strings (handles ß → SS, Σ → σ, etc.).
-  Normalization: `nfc`, `nfd`, `nfkc`, `nfkd`, plus `is_nfc` /
-  `is_nfd` / `is_nfkc` / `is_nfkd`. Segmentation (UAX #29):
-  `graphemes(s) -> Vec<String>`, `grapheme_count(s) -> i64`,
-  `words(s)` / `word_bounds(s)` / `word_count(s)`,
-  `sentences(s)` / `sentence_count(s)`. All entries work on
-  every tier (VM / Cranelift / LLVM) via `gos_rt_unicode_*`
-  C-ABI shims backed by the `unicode-properties`,
-  `unicode-normalization`, and `unicode-segmentation` crates.
-  **Identifier rules** also follow Unicode: `let café = 1`,
-  `let π = 3.14`, `let 名前 = "x"` all parse via UAX #31
-  `XID_Start` / `XID_Continue` (matches Rust 2024).
-- `std::collections` — `Vec`, `HashMap`, `HashSet` (real set
-  with `insert`, `remove`, `contains`, `len`, `is_empty`,
-  `clear`, `to_vec`, `iter`), `BTreeMap`. **0.7.0 Vec method
-  additions:** `contains(&v) -> bool` (also works on `[T]` /
-  `[T; N]`), `index_of(&v) -> Option<i64>`,
-  `count_of(&v) -> i64`, `first() -> Option<T>`,
-  `last() -> Option<T>`, `reversed() -> Vec<T>` (non-mutating;
-  pair with the existing `reverse()` for in-place). The safe
-  Result-returning sub-range slicer is
-  `xs.slice(start, end) -> Result<Vec<T>, errors::Error>` —
-  inverted or out-of-range bounds return Err rather than
-  panicking. The Result-returning mutation entries
-  `Vec::insert(xs, i, v) -> Result<Vec<T>, errors::Error>` and
-  `Vec::remove(xs, i) -> Result<T, errors::Error>` are exposed
-  as qualified free functions; the legacy `xs.insert(i, v)` /
-  `xs.remove(i)` method-call shape keeps its silent
-  in-place semantics. **0.7.0 HashMap additions:** `keys()` and
-  `values()` return `Vec<K>` / `Vec<V>` directly;
-  `HashMap::pop(m, k) -> Option<V>` removes and returns the
-  previous value Python-style.
+- `std::env` — `args`, `program_name`, `var`, `set_var`,
+  `unset_var`, `current_dir`, `set_current_dir`, `home_dir`,
+  `temp_dir`.
+- `std::process` — `Command`, `Output`, `Stdio`, `Child`,
+  `ExitStatus`, `run`, `spawn`, `kill`, `exit`, `id`, `abort`,
+  `Pipeline` (`pipeline_run`), `Signal`, `signal`, `kill_group`,
+  `wait_timeout` (POSIX-only).
+- `std::fs` — `read`, `read_to_string`, `write`, `read_dir`,
+  `walk_dir`, `create_dir(_all)`, `remove_file/dir(_all)`,
+  `remove_all`, `copy`, `rename`, `exists`, `is_file/dir/symlink`,
+  `file_size`, `metadata`, `canonicalize`, `glob`, `eval_symlinks`,
+  `mmap_read/write`, `lock_exclusive/shared`, `write_atomic`,
+  `hard_link`, `set_permissions_mode`, `chown`, `TempDir`,
+  `temp_file(prefix)`, `fs::watch::Watcher`.
+- `std::path` — pure manipulation (no I/O): `join`, `split`, `base`,
+  `dir`, `ext`, `clean`, `is_absolute`, `has_prefix`, `matches`,
+  `parent`, `file_name`, `stem`, `normalize`. `path::native` for
+  Windows-style paths.
+- `std::os` — `family()`, `arch()`; `write_file(path, &Vec<u8>)`
+  (binary-safe) and `read_file(path) -> Result<Vec<u8>, _>` /
+  `read_file_to_string`.
+- `std::strings` — `split`, `splitn`, `split_whitespace`, `trim(_start/_end)`,
+  `contains`, `find`, `rfind`, `replace`, `replacen`, `to_lower/upper`,
+  `starts_with`, `ends_with`, `repeat`, `lines`, `join`,
+  `strip_prefix/suffix`, `pad_left/right`. Also as `String` methods:
+  `split_once(sep) -> Option<(String, String)>`, `rsplit_once`,
+  `count(needle)`, `strip_chars`/`lstrip_chars`/`rstrip_chars`,
+  `zfill(w)`, `center(w, c)`, `slice(a, b) -> Result<String, _>`,
+  `byte_at(i) -> i64`.
+- `std::strconv` — `parse_int/i64/u64/float/f64/bool`,
+  `format_int/i64/float/f64`, `itoa`, `atoi`.
+- `std::utf8` — `count_runes`, `rune_count(_in_string)`, `rune_len`,
+  `is_valid`, `valid_rune/string`, `full_rune(_in_string)`,
+  `rune_start`, `decode_rune/last_rune/first` (+ `_in_string`),
+  `encode_rune`, `append_rune`.
+- `std::unicode` — full Unicode 16: general-category predicates
+  (`is_letter/digit/number/space/upper/lower/title/punct/symbol/mark/print/graphic/control/assigned`,
+  `combining_class`); casing (`to_upper/lower/title`, `simple_fold`,
+  `to_upper_str/lower_str`, `fold_case`); normalization
+  (`nfc/nfd/nfkc/nfkd`, `is_nf*`); segmentation
+  (`graphemes`, `grapheme_count`, `words`, `word_bounds/count`,
+  `sentences`, `sentence_count`). Identifiers follow UAX #31, so
+  `let café = 1`, `let π = 3.14` parse.
+- `std::collections` — `Vec`, `HashMap`, `HashSet` (real set:
+  `insert`, `remove`, `contains`, `len`, `is_empty`, `clear`,
+  `to_vec`, `iter`), `BTreeMap`. (Vec/HashMap method extras under §9.)
 - `std::net` — `TcpListener::{bind, accept, local_addr, close}`,
   `TcpStream::{connect, read, read_to_string, write, close}`,
   `UdpSocket::{bind, send_to, recv_from, local_addr, close}`,
-  `net::resolve` / `net::lookup` for DNS.
-- `std::net::url` — URL parse + render + escape.
+  `resolve` / `lookup` (DNS). `std::net::url` — parse + render +
+  escape.
 - `std::http` — `Method`, `StatusCode`, `Headers`, `Request`,
-  `Response`, `Handler`, `serve` (returns `Result<(), Error>` on
-  every tier — a bind failure is the caller's `Err`). One client
-  engine on every tier (**0.13.0**): all verbs native with
-  identical transport-error strings under `gos run` and
-  `gos build`. Client surface:
-  `Client { get, post, put, options, delete, head, request,
-  request_bytes, stream }`
-  plus free wrappers `http::get(url, headers)`,
-  `http::post(url, body, content_type)`,
-  `http::put(url, body, content_type)`,
-  `http::options(url, headers)`,
-  `http::delete(url, body, headers)`, `http::head(url, headers)`,
-  `http::request(method, url, body, headers)`,
-  `http::request_bytes(method, url, body: [u8], headers)`, and
-  `http::stream(method, url, body, headers) -> ResponseStream`
-  whose `next_line()` reads SSE / chunked bodies one line at a
-  time and `next_chunk(max) -> Option<[u8]>` reads raw byte
-  frames. Configured clients:
-  `http::Client::builder().max_redirects(n).timeout_ms(ms)
-  .build()` then `client.request` / `client.request_bytes`;
-  `max_redirects(0)` returns the raw 3xx with its `Location`
-  header intact (the proxy-correct mode). The client `Response`
-  carries `status`, `body`, `raw_bytes`, `content_type`,
-  `location`, and `headers: [(String, String)]` (lowercase
-  names, wire order, duplicates preserved). Server side:
-  `Request.headers` and `Request.raw_body` (`[u8]`) are
-  populated, `r.path` strips the query string (`r.query` keeps
-  it); handlers return `Result<Response, Error>` or a bare
-  `http::Response`, built via the constructors
-  (`Response::text` / `Response::json`) or as a plain struct
-  literal; `Response::with_header(k, v)` chains
-  (replace-then-push, case-insensitive) with precedence explicit
-  header > constructor content type > `text/plain`; and
-  `Response::stream(status, content_type, upstream)` streams a
-  `ResponseStream` to the client in chunked frames with no
-  full-body buffering — the proxy-passthrough shape. Request
-  bodies are capped at 1 MiB by default (413 beyond it). All
-  method-string entry points accept
-  `"GET"`/`"POST"`/`"PUT"`/`"DELETE"`/`"PATCH"`/`"HEAD"`/`"OPTIONS"`
-  case-insensitively; unknown methods return `Err(transport)`.
-- `std::http` server stack (**0.8.0**):
-  - `http::cookie` — RFC 6265 `Cookie` / `CookieBuilder`,
-    `SameSite`, `parse_cookie_header`, `parse_set_cookie`.
-  - `http::csrf` — double-submit cookie + Origin/Referer check:
-    `issue_token`, `verify_token`, `extract_token`,
-    `origin_allowed`, `check`, `attach_cookie`, `RouteAuth`.
-  - `http::form` — `application/x-www-form-urlencoded` parse +
-    build.
-  - `http::multipart` — streaming RFC 7578 with `parse_boundary`,
-    `parse_bytes`, `parse<R: Read>`, `Part`, `PartData`, `Form`.
-  - `http::query` — typed `Query` wrapper over URL query strings.
-  - `http::session` — signed-cookie sessions: `SessionConfig`,
-    `Session`, `SessionStore` trait, `SignedCookieStore`,
-    `with_session`.
-  - `http::state` — `AppState` typemap + `State<T>(Arc<T>)` DI
-    for handlers.
-  - `http::health` — `Probe` trait + `Health` aggregator,
-    `always_ok` / `always_fail` / `tcp_probe`.
-  - `http::middleware` — `body_limit`, `timeout`, `hsts`,
-    `security_headers`, `cache_control`, `etag`, `bearer_auth`,
-    `rate_limit`, `compress_gzip`, `safe_defaults`, plus the
-    existing `logger`, `recoverer`, `request_id`, `cors`,
-    `basic_auth`.
-  - HTTP/2 server push + trailers: `PushOptions`, `PushStream`,
-    `ResponseWriter::push_promise`, `ResponseWriter::write_trailers`,
-    `Request::trailers`.
+  `Response`, `Handler`, `serve` (returns `Result<(), Error>`; a
+  bind failure is the caller's `Err`). One client engine on every
+  tier. Client surface: `Client { get, post, put, options, delete,
+  head, request, request_bytes, stream }` plus free wrappers
+  `http::get(url, headers)`, `post(url, body, ct)`, `put`,
+  `options`, `delete`, `head`, `request(method, url, body, headers)`,
+  `request_bytes(method, url, body: [u8], headers)`, and
+  `stream(method, url, body, headers) -> ResponseStream` whose
+  `next_line()` reads SSE/chunked bodies line-by-line and
+  `next_chunk(max) -> Option<[u8]>` reads byte frames. Configured:
+  `Client::builder().max_redirects(n).timeout_ms(ms).build()`;
+  `max_redirects(0)` returns the raw 3xx with `Location` intact. The
+  client `Response` carries `status`, `body`, `raw_bytes`,
+  `content_type`, `location`, `headers: [(String, String)]`. Server
+  side: `Request.headers` and `Request.raw_body` (`[u8]`) populated,
+  `r.path` strips the query (`r.query` keeps it); handlers return
+  `Result<Response, Error>` or a bare `http::Response`, built via
+  `Response::text` / `Response::json` or a plain struct literal;
+  `Response::with_header(k, v)` chains (replace-then-push,
+  case-insensitive); `Response::stream(status, ct, upstream)` streams
+  a `ResponseStream` in chunked frames (proxy passthrough). Bodies
+  cap at 1 MiB (413 beyond). Method strings are case-insensitive;
+  unknown methods → `Err(transport)`.
+- `std::http` server stack: `http::cookie` (RFC 6265), `csrf`
+  (double-submit + Origin/Referer), `form`
+  (`x-www-form-urlencoded`), `multipart` (RFC 7578 streaming),
+  `query` (typed query wrapper), `session` (signed-cookie),
+  `state` (`AppState` typemap + `State<T>` DI), `health` (`Probe` +
+  `Health`), `middleware` (`body_limit`, `timeout`, `hsts`,
+  `security_headers`, `cache_control`, `etag`, `bearer_auth`,
+  `rate_limit`, `compress_gzip`, `safe_defaults`, `logger`,
+  `recoverer`, `request_id`, `cors`, `basic_auth`); HTTP/2 push +
+  trailers. `std::http_h3` — HTTP/3 server + client (RFC 9114).
 - `std::encoding::{json, base64, hex, binary}`. Every user struct
-  gets a pair of generic serializer free functions, called with a
-  turbofish type argument:
-  `from_json::<Type>(text) -> Result<Type, errors::Error>` and
-  `to_json::<Type>(value) -> Result<String, errors::Error>`. This is
-  the single spelling — there are no `Type::from_json` methods. The
-  decoder checks each field against its declared type and rejects
-  type mismatches and missing required fields with path-qualified
-  errors. Nested structs, `[T]` / `Vec<T>` / `[T; N]` / tuples /
-  `Option<T>` / `HashMap<String, V>` walk recursively; a
-  `json::Value` field passes through untouched.
-  `let user: User = from_json::<User>(&text)?` is the canonical
-  shape. The dynamic `json::parse` / `json::decode` /
-  `json::render` surface stays available for documents whose shape
-  isn't known at compile time (`json::as_i64` / `as_f64` / `as_str`
-  return `Option<T>`). The same synth also emits
-  `from_yaml::<T>` / `to_yaml::<T>` (piggybacks on `to_json` +
-  `yaml::from_json`) so `from_yaml::<Config>(&text)?` works against
-  the same struct definition. Narrow integer fields
-  (`i8`/`i16`/`i32`/`u8`/`u16`/`u32`) are accepted and round-trip
-  through the `as <width>` cast at the JSON boundary.
-- `std::encoding::yaml` — YAML 1.2 parse/encode plus
-  `yaml::to_json(text)` / `yaml::from_json(text)` text-shape
-  converters that mirror `toml::to_json` / `from_json`. The
-  auto-derived `from_yaml::<T>` / `to_yaml::<T>` functions on every
-  user struct compose these with the JSON pair.
-- `std::database::sql` (**0.9.0**, full Gossamer surface on every
-  tier since **0.13.0**) — driver-pluggable SQL access modelled on
-  Go's `database/sql`. No driver ships in the box: a Rust crate
-  implements the `Driver` trait (`gossamer_runtime::sql`) and calls
-  `register` at startup, typically via `[rust-bindings]` (e.g.
-  pgooseql for PostgreSQL: TLS, streaming rows, COPY,
-  LISTEN/NOTIFY, NUMERIC/temporal/UUID/JSON/array decoding).
-  Surface: `open(driver, url) -> Result<Conn, Error>`; `Conn` with
-  `execute(sql, &[Value])`, `query`, `query_each(sql, params, f)`
-  (leak-proof: drains + closes internally),
-  `prepare(sql) -> Stmt` (`execute` / `query` / `close`),
-  `begin` / `begin_with(IsolationLevel)`,
-  `copy_in(sql, &[u8])` / `copy_out(sql) -> [u8]`,
-  `listen` / `unlisten` / `poll_notification(timeout_ms) ->
-  Option<Notification { channel, payload, process_id }>`, `ping`,
-  `set_busy_timeout(ms)`, `interrupt`, `close`; `Tx` with `commit`
-  / `rollback` / `execute(sql)` / `execute_params(sql, &[Value])`
-  / `query(sql, &[Value])` / savepoints; `Rows::next_row() ->
-  Option<Row>` (cursor semantics: advancing frees the previous
-  Row; end-of-set frees the cursor; `defer rows.close()` for early
-  exits — idempotent), `columns()`; `Row` typed getters
-  (`get_i64`, `get_f64`, `get_bool`, `get_text`, `get_blob`,
+  gets generic serializer free functions called with a turbofish:
+  `from_json::<Type>(text) -> Result<Type, _>` and
+  `to_json::<Type>(value) -> Result<String, _>` (the single
+  spelling — no `Type::from_json` methods). The decoder validates
+  each field against its declared type with path-qualified errors;
+  nested structs, `[T]`/`Vec<T>`/`[T; N]`/tuples/`Option<T>`/
+  `HashMap<String, V>` walk recursively; a `json::Value` field
+  passes through. `let user: User = from_json::<User>(&text)?` is
+  canonical. Dynamic `json::parse` / `decode` / `render` +
+  `json::as_i64/f64/str -> Option<T>` stay available for
+  unknown-shape documents. Narrow int fields round-trip via `as`.
+- `std::encoding::yaml` — YAML 1.2 parse/encode + `yaml::to_json` /
+  `from_json` text converters; auto-derived `from_yaml::<T>` /
+  `to_yaml::<T>` on every struct compose these with the JSON pair.
+  Also `encoding::toml` (`toml::to_json` / `from_json`).
+- `std::database::sql` — driver-pluggable SQL modelled on Go's
+  `database/sql` (no driver in the box; a Rust crate implements the
+  `Driver` trait via `[rust-bindings]`). `open(driver, url) ->
+  Result<Conn, _>`; `Conn`: `execute(sql, &[Value])`, `query`,
+  `query_each(sql, params, f)` (leak-proof), `prepare(sql) -> Stmt`,
+  `begin` / `begin_with(IsolationLevel)`, `copy_in`/`copy_out`,
+  `listen`/`unlisten`/`poll_notification`, `ping`,
+  `set_busy_timeout`, `interrupt`, `close`; `Tx`: `commit`,
+  `rollback`, `execute(_params)`, `query`, savepoints; `Rows::next_row()
+  -> Option<Row>` (cursor semantics; `defer rows.close()` for early
+  exits), `columns()`; `Row` getters (`get_i64/f64/bool/text/blob`,
   `get_opt_*`, `is_null`, `width`); `Value`
-  (Null / Bool / Int / Float / Text / Blob) with positional `$N`
-  binding; `Pool::open(driver, url, max)` /
-  `Pool::open_with(driver, url, min, max, acquire_ms, idle_ms,
-  lifetime_ms)` with `pool.acquire() -> Conn` (close returns it),
-  `live` / `idle` / `close_idle`;
-  `migrate::up(&mut conn, dir) -> i64` — forward-only
-  `<version>_<slug>.sql` migrations, one transaction each;
-  `Select` — fluent builder:
-  `sql::Select::new(t).columns(&[..]).where_eq(col, v)
-  .order_by(col, asc).limit(n)` then `render()` / `params()`.
-  Abandoned cursors are swept by `conn.close()`.
+  (Null/Bool/Int/Float/Text/Blob) with positional `$N` binding;
+  `Pool::open(_with)` + `acquire`/`live`/`idle`/`close_idle`;
+  `migrate::up(&mut conn, dir) -> i64` (forward-only
+  `<version>_<slug>.sql`); `Select` fluent builder (`new(t).columns(&[..])
+  .where_eq(col, v).order_by(col, asc).limit(n)` → `render()` /
+  `params()`).
 - `std::sync` — `Mutex`, `RwLock`, atomics, `channel`, `Once`,
-  `WaitGroup` (`new`, `add`, `done`, `wait`), and `Map` (a
-  concurrent string-keyed string-value map; `set`/`get`/`delete`/
-  `len`/`contains`/`keys`). For non-string payloads, wrap a
-  `HashMap` in `Mutex` directly — `sync::Map` is the optimized
-  shape for caches and feature-flag tables.
-- `std::os::write_file(path, &Vec<u8>)` preserves binary bytes
-  (images, gzip, embedded NULs); the c-string-shaped string
-  overload still works for text writes. `std::os::read_file(path)`
-  returns `Result<Vec<u8>, errors::Error>` — pair with
-  `os::read_file_to_string` for UTF-8 text.
-- `std::http::Response.raw_bytes` exposes the response body as
-  `Vec<u8>` for binary downloads (counterpart to the
-  UTF-8-lossy `.body` field).
-- `std::time` — `Instant::{now, elapsed_ms}`, `Duration::{from_millis,
-  from_secs, from_micros, as_millis, as_secs, as_micros}`,
-  `sleep`, `now`, `now_nanos`, `monotonic_ms`, `monotonic_nanos`,
-  `since_ms`, `format_rfc3339`, `parse_rfc3339`.
+  `WaitGroup` (`new`/`add`/`done`/`wait`), `Map` (concurrent
+  string→string: `set`/`get`/`delete`/`len`/`contains`/`keys`). For
+  non-string payloads wrap a `HashMap` in `Mutex`.
+- `std::time` — `Instant::{now, elapsed_ms}`, `Duration::{from_millis/secs/micros,
+  as_millis/secs/micros}`, `sleep`, `now`, `now_nanos`,
+  `monotonic_ms/nanos`, `since_ms`, `format_rfc3339`, `parse_rfc3339`.
 - `std::context` — cancellation, deadlines, `Context::background()`.
 - `std::bytes` / `std::bufio` — binary buffers and buffered IO.
-- `std::errors` — wrap / chain / join.
-- `std::flag` — CLI flag parser. **0.7.0:** `flag::Cell<T>`
-  auto-derefs at every value-context expression on all three
-  tiers (VM, cranelift, LLVM): binary comparisons (`flags.output
-  == "text"`), function-call arguments (`get_comic(flags.number)`),
-  conditional positions (`if flags.verbose { … }`), typed-i64 /
-  f64 register unboxes. The explicit `*flags.output` still works
-  if the user wants the resolved value as a local binding.
-- **Scalar `min` / `max` / `clamp`** (0.7.0) — bare prelude
-  functions, no import needed. `min(3, 7) == 3`,
-  `clamp(15, 0, 10) == 10`. The Vec-shaped `min(xs)` /
-  `max(xs)` fallback returns `Option<T>` for callers already
-  on the collection form.
-- `std::sort` / `std::utf8` / `std::path` / `std::fs`.
-- `std::math::rand` — deterministic RNG.
-- `std::crypto::{rand, sha256, hmac, subtle}` — narrow, audited.
-  **0.8.0**: `crypto::password` — Argon2id facade (`hash`,
-  `verify`, `needs_rehash`) producing PHC strings.
-- `std::jwt` (**0.8.0**) — RFC 7519 sign + verify for HS256/384/512,
-  ES256, and EdDSA: `Alg`, `Header`, `Claims`, `VerifyOpts`,
-  `sign_hs` / `verify_hs`, `sign_es256` / `verify_es256`,
-  `sign_eddsa` / `verify_eddsa`. **0.9.0:** RS256/384/512 verify
-  (RSA PKCS#1 v1.5 via `ring`).
-- `std::metrics` (**0.9.0**) — Prometheus-compatible `Counter`,
-  `Gauge`, `Histogram` + `Registry`; renders the text-exposition
-  format.
-- `std::trace` (**0.9.0**) — W3C trace-context distributed tracing
-  (`TraceId`, `SpanId`, `SpanContext`, `Span`, `Tracer`) with an
-  OTLP JSON exporter.
+- `std::flag` — CLI flag parser; `flag::Cell<T>` auto-derefs at
+  every value-context (comparisons, call args, `if`), explicit
+  `*cell` still works.
+- **Scalar `min` / `max` / `clamp`** — bare prelude functions, no
+  import. `min(3, 7) == 3`, `clamp(15, 0, 10) == 10`. Vec-shaped
+  `min(xs)` / `max(xs)` return `Option<T>`.
+- `std::sort`, `std::math::rand` (deterministic RNG).
+- `std::crypto::{rand, sha256, hmac, subtle}` — narrow, audited;
+  `crypto::password` — Argon2id (`hash`, `verify`, `needs_rehash`,
+  PHC strings).
+- `std::jwt` — RFC 7519 sign/verify HS256/384/512, ES256, EdDSA,
+  RS256/384/512 (verify): `sign_hs`/`verify_hs`,
+  `sign_es256`/`verify_es256`, `sign_eddsa`/`verify_eddsa`.
+- `std::metrics` — Prometheus `Counter`/`Gauge`/`Histogram` +
+  `Registry`. `std::trace` — W3C trace-context + OTLP JSON exporter.
 - `std::compress::{gzip, flate, zlib, zstd}` — byte-in/byte-out
-  encoders/decoders (zstd levels 1–22, default 3).
-- `std::http_h3` (**0.9.0**) — HTTP/3 server + client (RFC 9114)
-  mirroring the `std::http` / `std::http_h2` synchronous surface.
-- `std::lifecycle` (**0.8.0**) — graceful-shutdown hooks, signal
-  handling, sd_notify.
-- `std::validate` (**0.8.0**) — `Validate` trait plus `FieldError`
-  / `Errors` for form-style field validation.
-- `std::slog` — structured logging.
-- `std::runtime` — scheduler + memory knobs: `collect_cycles()`,
-  `arena_push()` / `arena_pop()` (prefer the `arena {}` block),
-  `set_panic_hook(f: fn(String))` — replaces the default panic
-  report on every tier. A panic on the main goroutine exits 101
-  (Rust parity); an unobserved `go` panic prints one clean
-  `error[GX0005]` line and only ends that goroutine.
+  (zstd 1–22, default 3).
+- `std::lifecycle` — graceful shutdown, signals, sd_notify.
+  `std::validate` — `Validate` trait + `FieldError` / `Errors`.
+  `std::slog` — structured logging.
+- `std::runtime` — `collect_cycles()`, `arena_push/pop` (prefer the
+  `arena {}` block), `set_panic_hook(f: fn(String))`. Main-goroutine
+  panic exits 101; an unobserved `go` panic prints one `error[GX0005]`
+  line and ends only that goroutine.
 - `std::testing` — `check`, `check_eq`, `Runner`, `check_ok`.
-- `std::regex` — wraps the Rust `regex` crate. Named groups
-  (**0.9.0**): `capture_names(pat)`, `captures_named(pat, hay)` /
-  `captures_named_all` return `HashMap<String, String>` for
-  `(?P<name>…)` patterns.
-
-Reality check: many modules exist in the manifest with
-partial implementations. Trust examples in the repo; write
-a small test when unsure.
+- `std::regex` — wraps the Rust `regex` crate; named groups via
+  `capture_names(pat)`, `captures_named(pat, hay)` /
+  `captures_named_all` → `HashMap<String, String>`.
 
 ## 13. Project layout
 
@@ -956,8 +674,6 @@ src/
 tests/             # integration tests
 ```
 
-`project.toml`:
-
 ```toml
 [project]
 id      = "example.com/widget"
@@ -969,36 +685,12 @@ license = "Apache-2.0"
 "example.org/lib" = "1.2.3"
 ```
 
-## 14. Worked examples
+## 14. Worked example — HTTP server with method + path routing
 
-### CLI flags
-
-```gossamer
-use std::env
-use std::flag
-
-fn main() -> Result<(), flag::Error> {
-    let mut fs = flag::Set::new("myapp")
-    let port = fs.uint("port", 8080, "listen port")
-    let verbose = fs.bool("verbose", false, "chatty output")
-    let _ = fs.parse(env::args())?
-
-    // 0.7.0: flag cells auto-deref at value contexts —
-    // `verbose` and `port` work bare in `if`, comparisons,
-    // and function-call args without the leading `*`.
-    if verbose {
-        println!("starting on port {}", port)
-    }
-    Ok(())
-}
-```
-
-### HTTP server with method + path routing
-
-A real service routes per (method, path) and keeps each handler
-a one-job free function. Lift dispatch into one `App::serve`
-that matches and forwards — never inline the response shape in
-the dispatcher. The full pattern is in `examples/web_server.gos`.
+Route per (method, path); keep each handler a one-job free
+function. Lift dispatch into one `App::serve` that matches and
+forwards — never inline the response shape in the dispatcher. Full
+pattern in `examples/web_server.gos`.
 
 ```gossamer
 use std::http
@@ -1006,11 +698,9 @@ use std::http
 fn health(_r: http::Request) -> Result<http::Response, http::Error> {
     Ok(http::Response::text(200, "ok"))
 }
-
 fn list_users(_r: http::Request) -> Result<http::Response, http::Error> {
     Ok(http::Response::json(200, "[{\"id\":1,\"name\":\"ada\"}]"))
 }
-
 fn create_user(r: http::Request) -> Result<http::Response, http::Error> {
     Ok(http::Response::json(201, format!("{{\"body\":\"{}\"}}", r.body)))
 }
@@ -1035,103 +725,78 @@ fn main() -> Result<(), http::Error> {
 }
 ```
 
-Mirrors Go's `http.ServeMux` ergonomics: handlers are free
-functions with the standard signature, the dispatcher is one
-match per (method, path), exact match by default with
-`path.starts_with` giving prefix routes when you need them.
+Mirrors Go's `http.ServeMux`: free-function handlers, one match per
+(method, path), `path.starts_with` for prefix routes.
+
+CLI flags, for contrast:
+
+```gossamer
+use std::{env, flag}
+
+fn main() -> Result<(), flag::Error> {
+    let mut fs = flag::Set::new("myapp")
+    let port = fs.uint("port", 8080, "listen port")
+    let verbose = fs.bool("verbose", false, "chatty output")
+    let _ = fs.parse(env::args())?
+    if verbose { println!("starting on port {}", port) }   // cells auto-deref
+    Ok(())
+}
+```
 
 ## 15. Current gaps (pre-1.0.0)
 
 - `+` on `String` copies; for heavy assembly use
   `std::bytes::Builder` or a `mut String` with `+=`.
-- Method dispatch is name-global in places. Qualified path
-  calls (`Point::origin()`) always work; method-style may
-  collide across types until the resolver tightens. Concrete
-  trap: once any struct carries `#[derive(Clone)]`, calling
-  `.clone()` on a *`String`* receiver can dispatch to the
-  struct's derived clone under `gos run` (a `GX0001` "field
-  access on non-struct" runtime error); the compiled tiers
-  resolve it correctly. Strings are values — bind or borrow
-  instead of cloning, and keep user method names from
-  shadowing built-in ones.
-- `#[derive(...)]` does not yet cover enums with
-  struct-payload variants (`Rect { w, h }`); tuple and unit
-  variants derive fine.
-- `u64` values above 2^63 alias i64 semantics: every ≤64-bit
-  integer runs signed-i64 arithmetic and comparison at runtime,
-  and the unsigned display fires only for explicit `as u64` /
-  `as usize` cast results — so a huge `u64` compares and divides
-  as its negative two's-complement alias.
+- Method dispatch is name-global in places. Qualified path calls
+  (`Point::origin()`) always work; method-style may collide across
+  types. Trap: once any struct carries `#[derive(Clone)]`, calling
+  `.clone()` on a *`String`* receiver can dispatch to the struct's
+  derived clone under `gos run` (a `GX0001` runtime error); compiled
+  tiers resolve it. Strings are values — bind or borrow instead of
+  cloning, and don't shadow built-in method names.
+- `#[derive(...)]` does not yet cover enums with struct-payload
+  variants (`Rect { w, h }`); tuple and unit variants derive fine.
+- `u64` above 2^63 aliases i64 semantics: every ≤64-bit integer runs
+  signed-i64 arithmetic; unsigned display fires only for explicit
+  `as u64` / `as usize` results.
 
-## 16. Style rules
+## 16. Style checklist
 
-- **Default to immutable bindings.** `let` first, `let mut`
-  only when a single named accumulator is the clearest shape.
-  Express transformations with `if` / `match` / `fold` /
-  `map` / `collect`; mutate locally and return the final
-  value rather than threading mutation through callers.
-- **Compound assignment everywhere.** `x += 1`, never `x = x + 1`.
-  Same for `-= *= /= %= &= |= ^= <<= >>=`.
-- **`if let` / `while let` for refutable patterns.** Reach for
-  `match` only when you need every variant; otherwise the
-  one-line `if let Some(n) = …` form is strictly better.
-- **Tuple destructuring at the binding.** `let (a, b) = pair`,
-  `for (k, v) in m.iter()`, `let (tx, rx) = channel()` — no
-  `pair.0` / `pair.1` reach-through unless the tuple is
-  threaded somewhere else first.
-- **`for x in xs` over `for x in xs.iter()`.** No `.iter()`,
-  no `*x`. The binding is the value (`Copy`) or a borrow
-  (others).
-- **No `as usize` on indices.** `arr[i]` works for `i: i64`.
-- **Use the helpers.** `arr.swap(i, j)`, `m.inc(k)`,
-  `m.or_insert(k, default)` — never the longhand.
-- **Clear, low-complexity, concise.** Plain reads beat clever
-  ones. If a helper, type, or comment doesn't earn its space,
-  drop it.
-- **No emojis.** Source, comments, commits, docs — all plain.
-- **No TODO / FIXME** committed; open an issue.
-- **Doc every `pub` item** with a single-line `//` directly
-  above it (no blank line between); don't narrate
-  self-evident code. Gossamer has no `///` / `//!` form.
-- **Pipe aggressively** — if a value flows through more
-  than one call, use `|>`.
-- **`iter::*` over hand-rolled `for` loops for transformations.**
-  `xs |> iter::for_each(handle)` instead of
-  `for x in xs { handle(x) }` when the body is a single call.
-  `let total = xs |> iter::sum_by(|n| n*n)` instead of
-  `let mut total=0; for n in xs { total += n*n }`. The
-  combinators (`map`, `filter`, `filter_map`, `fold`, `reduce`,
-  `for_each`, `find`, `group_by`, `partition`, …) live as free
-  functions in `std::iter` with data-last argument order so they
-  thread through `|>`. Keep `for` for side-effects with
-  complex state, early-return shapes, or `break`/`continue`
-  flows.
-- **`option::*` / `result::*` for in-pipeline chaining.**
-  `parse(s) |> result::map(render) |> result::default("")`
-  instead of a `match` with two arms when each arm is an
-  extract-or-default. `?` is still the right tool for
-  short-circuit propagation; the combinators are for transforming
-  values mid-chain.
-- **Free functions in `std::iter`, not methods on collections.**
-  `Vec<T>` / `HashMap` / `HashSet` do not carry `.map` /
-  `.filter` / `.fold` methods. The mutating helpers
-  (`xs.push`, `xs.sort`, `m.inc`, `m.or_insert`) stay as
-  methods because they operate by side-effect on the receiver.
-- **One statement per line;** omit semicolons.
-- **Derive `Debug`, `Clone`, `PartialEq`** when cheap and
-  meaningful; derive `Default` for zero-valued types.
+(The idioms in §2 are the rules; this is the quick scan.)
+
+- `let` first, `let mut` only for a single named accumulator.
+- Compound assignment everywhere (`x += 1`).
+- `if let` / `while let` for refutable patterns; `match` only when
+  you need every variant.
+- Tuple-destructure at the binding; no `pair.0` reach-through.
+- `for x in xs`, not `xs.iter()`; no `as usize` on indices.
+- Use the helpers: `arr.swap`, `m.inc`, `m.or_insert`.
+- Pipe (`|>`) when a value flows through more than one call.
+- `iter::*` over hand-rolled `for` for transformations
+  (`xs |> iter::for_each(handle)`, `xs |> iter::sum_by(|n| n*n)`);
+  keep `for` for complex state / early-return / `break`/`continue`.
+  The combinators (`map`, `filter`, `filter_map`, `fold`, `reduce`,
+  `find`, `group_by`, `partition`, …) are free functions in
+  `std::iter`, data-last. Collections carry no `.map`/`.filter`/
+  `.fold` — only mutating methods (`push`, `sort`, `inc`,
+  `or_insert`).
+- `option::*` / `result::*` for in-pipeline chaining; `?` for
+  short-circuit propagation.
+- One statement per line; omit semicolons. No emojis. No committed
+  TODO/FIXME (open an issue). Doc every `pub` item with a single
+  `//` line directly above it.
+- Derive `Debug`, `Clone`, `PartialEq` when cheap; `Default` for
+  zero-valued types.
 
 ## 17. Where to read more
 
-- Language spec: `SPEC.md` (repo root).
-- Project style guide: `GUIDELINES.md` (repo root).
-- Rendered docs: `docs_src/` (source) → `site/` (built).
+- Language spec: `SPEC.md`. Style guide: `GUIDELINES.md`.
+- Rendered docs: `docs_src/` → `site/`.
 - Examples: `examples/` — start with `hello_world.gos`,
   `function_piping.gos`, `go_spawn.gos`, `concurrency.gos`.
 
 ## 18. When in doubt
 
 Run it. `gos check` gives rustc-class diagnostics with source
-excerpts and did-you-mean suggestions. `gos explain <CODE>`
-expands any diagnostic code. The toolchain is your first
-debugger.
+excerpts and did-you-mean suggestions; `gos explain <CODE>` expands
+any diagnostic code. The toolchain is your first debugger.

@@ -88,6 +88,7 @@ impl<'a> Lowerer<'a> {
             current_block: None,
             preempt_seq: 0,
             capture_summary: gossamer_mir::CaptureSummary::default(),
+            cabi_handlers: std::collections::BTreeMap::new(),
         }
     }
 

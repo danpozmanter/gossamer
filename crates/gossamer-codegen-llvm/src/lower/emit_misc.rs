@@ -460,7 +460,7 @@ impl<'a> Lowerer<'a> {
                 // and pass its address; the registry declaration renders the
                 // param as `ptr` to match. No-op on SysV. (Mirrors
                 // `lower_runtime_call_intrinsic`.)
-                if cfg!(windows) && want_ty == "i128" {
+                if crate::emit::target_is_windows() && want_ty == "i128" {
                     let v = if a_ty == "i128" {
                         a_v.clone()
                     } else {
@@ -591,8 +591,10 @@ impl<'a> Lowerer<'a> {
             // for `gos_rt_*` shims, never a user function's bare-`i128` return
             // (which is `define i128`/`ret i128` in this same module). No-op on
             // SysV.
-            let win_fat_ret =
-                super::misc::needs_win64_fat_ret(cfg!(windows), registry_ret.as_deref());
+            let win_fat_ret = super::misc::needs_win64_fat_ret(
+                crate::emit::target_is_windows(),
+                registry_ret.as_deref(),
+            );
             let wire_ret_ty = if win_fat_ret {
                 "<16 x i8>"
             } else {

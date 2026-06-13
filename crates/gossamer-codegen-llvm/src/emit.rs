@@ -387,6 +387,13 @@ fn render_chunk_module(
     let mut chunk_fallback_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut main_idx: Option<usize> = None;
 
+    // Win64 handler-return ABI bridge: user functions whose address is
+    // handed to a runtime server-start shim are called by the rustc
+    // runtime through `extern "C" fn(..) -> i128` (xmm0 return), so their
+    // `gos_fn_addr` must point at a `<16 x i8>` return thunk. Empty off
+    // Windows — the GP-register-pair `i128` already agrees there.
+    let cabi_handlers = collect_cabi_handlers(ctx.all_bodies);
+
     for &idx in chunk_indices {
         let body = &ctx.all_bodies[idx];
         if body.name == "main" {
@@ -398,6 +405,7 @@ fn render_chunk_module(
         lowerer.param_tys_by_name.clone_from(ctx.param_tys_by_name);
         lowerer.strings = string_pool.clone();
         lowerer.capture_summary = ctx.capture_summary.clone();
+        lowerer.cabi_handlers.clone_from(&cabi_handlers);
 
         match lowerer.lower() {
             Ok(text) => {
@@ -509,6 +517,16 @@ fn render_chunk_module(
             out.push_str(&thunk);
             writeln!(out).unwrap();
         }
+    }
+
+    // Win64 handler-return thunks (`name$cabi`) — `linkonce_odr` so the
+    // linker keeps one copy; `opt` strips any chunk where the address was
+    // never taken. The thunk calls the real handler (GP-register-pair
+    // `i128`) and re-returns the value as `<16 x i8>` so the rustc runtime
+    // reads it from xmm0. Empty (no iterations) off Windows.
+    for (name, arity) in &cabi_handlers {
+        out.push_str(&render_cabi_handler_thunk(name, *arity));
+        writeln!(out).unwrap();
     }
 
     // C `@main` shim lives in the chunk that owns `main`. Emitted whether
@@ -1360,6 +1378,101 @@ fn collect_thunk_names_in_body(body: &Body, out: &mut std::collections::BTreeSet
     }
 }
 
+/// Collects the user functions whose address is handed to a runtime
+/// server-start shim (`gos_rt_http_serve` / `gos_rt_http2_bind_and_run_h2c`),
+/// mapped to their parameter arity. The rustc-compiled runtime invokes
+/// each through `extern "C" fn(..) -> i128`, whose Win64 ABI returns the
+/// 2-word `i128` in xmm0 — but a gossamer `define i128`/`ret i128` returns
+/// it in the GP-register pair. Each collected function therefore needs a
+/// `<16 x i8>` return thunk taken in place of its raw address. Returns an
+/// empty map off Windows, where both sides already agree on the GP pair.
+fn collect_cabi_handlers(all_bodies: &[Body]) -> std::collections::BTreeMap<String, usize> {
+    use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind, Terminator};
+    let mut handlers = std::collections::BTreeMap::new();
+    if !target_is_windows() {
+        return handlers;
+    }
+    let arity_of = |name: &str| -> usize {
+        all_bodies
+            .iter()
+            .find(|b| b.name == name)
+            .map_or(2, |b| b.arity as usize)
+    };
+    for body in all_bodies {
+        for block in &body.blocks {
+            let Terminator::Call { callee, args, .. } = &block.terminator else {
+                continue;
+            };
+            let Operand::Const(ConstValue::Str(sym)) = callee else {
+                continue;
+            };
+            // The handler fn-address is the third argument of the
+            // server-start shims: `(addr, handler_env, fn_addr)`.
+            if sym.as_str() != "gos_rt_http_serve"
+                && sym.as_str() != "gos_rt_http2_bind_and_run_h2c"
+            {
+                continue;
+            }
+            let Some(Operand::Copy(addr_place)) = args.get(2) else {
+                continue;
+            };
+            let target = addr_place.local;
+            // Find the `gos_fn_addr("name")` statement that defines the
+            // fn-address local within this body. The lowering assigns it
+            // directly, with no intervening copies.
+            for b2 in &body.blocks {
+                for stmt in &b2.stmts {
+                    let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                        continue;
+                    };
+                    if place.local != target {
+                        continue;
+                    }
+                    let Rvalue::CallIntrinsic { name, args: ia } = rvalue else {
+                        continue;
+                    };
+                    if *name != "gos_fn_addr" {
+                        continue;
+                    }
+                    if let Some(Operand::Const(ConstValue::Str(hname))) = ia.first()
+                        && !hname.starts_with("gos_rt_")
+                    {
+                        let arity = arity_of(hname);
+                        handlers.insert(hname.clone(), arity);
+                    }
+                }
+            }
+        }
+    }
+    handlers
+}
+
+/// Renders the Win64 handler-return thunk `define <16 x i8> @"name$cabi"`
+/// — it forwards every (pointer) argument to the real handler `@"name"`
+/// (which returns the 2-word `i128` in the GP-register pair) and re-emits
+/// the value as `<16 x i8>` so the rustc runtime reads it from xmm0.
+/// `linkonce_odr` so the linker keeps a single copy across chunks.
+fn render_cabi_handler_thunk(name: &str, arity: usize) -> String {
+    let params: Vec<String> = (0..arity).map(|i| format!("ptr %a{i}")).collect();
+    let call_args: Vec<String> = (0..arity).map(|i| format!("ptr %a{i}")).collect();
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "define linkonce_odr <16 x i8> @\"{name}$cabi\"({}) {{",
+        params.join(", ")
+    );
+    writeln!(out, "entry:").unwrap();
+    let _ = writeln!(
+        out,
+        "  %r = call i128 @\"{name}\"({})",
+        call_args.join(", ")
+    );
+    writeln!(out, "  %v = bitcast i128 %r to <16 x i8>").unwrap();
+    writeln!(out, "  ret <16 x i8> %v").unwrap();
+    writeln!(out, "}}").unwrap();
+    out
+}
+
 /// Synthesises an LLVM `define` for a per-shape callable thunk
 /// named `__fn_thunk_<inputs>_<ret>`. The thunk loads the real
 /// fn pointer from `env+8` and forwards the typed arguments
@@ -2014,6 +2127,19 @@ fn host_triple() -> String {
         _ => "unknown-linux-gnu",
     };
     format!("{arch}-{os}")
+}
+
+/// True when the build target is `x86_64-pc-windows-*`, driving the
+/// Win64 i128 (Fat-aggregate) calling-convention adjustments at the
+/// `gos_rt_*` C-ABI boundary. Derived from the resolved target triple
+/// ([`host_triple`], which honours `TARGET`) rather than `cfg!(windows)`
+/// so a Linux-hosted cross-build to a Windows triple emits the Win64
+/// marshalling instead of the host's SysV shape — the two disagree on
+/// how `extern "C"` returns/passes a 2-word `i128` (xmm `<16 x i8>` vs
+/// a GP-register pair), and keying off the host silently miscompiled
+/// every cross-target build.
+pub(crate) fn target_is_windows() -> bool {
+    host_triple().contains("windows")
 }
 
 #[cfg(test)]

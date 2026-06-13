@@ -147,6 +147,15 @@ pub(crate) struct Lowerer<'a> {
     /// per-block drops for owning bindings whose only outbound use
     /// is a non-capturing user fn.
     pub(crate) capture_summary: gossamer_mir::CaptureSummary,
+    /// User functions whose address is handed to a runtime callback
+    /// (`http::serve` / `http::serve_h2c`) and so are invoked by the
+    /// rustc-compiled runtime through the `extern "C" fn(..) -> i128`
+    /// ABI. On Win64 that ABI returns the 2-word `i128` in a vector
+    /// register (xmm0), but a gossamer `define i128`/`ret i128` returns
+    /// it in the GP-register pair — so `gos_fn_addr` on these names is
+    /// redirected to a `<16 x i8>` C-ABI return thunk (`name$cabi`).
+    /// Maps the handler name to its parameter arity. Empty off Windows.
+    pub(crate) cabi_handlers: std::collections::BTreeMap<String, usize>,
 }
 
 /// Module-scoped string intern pool.
