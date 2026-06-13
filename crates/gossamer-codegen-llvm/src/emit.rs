@@ -519,13 +519,25 @@ fn render_chunk_module(
         }
     }
 
-    // Win64 handler-return thunks (`name$cabi`) — `linkonce_odr` so the
-    // linker keeps one copy; `opt` strips any chunk where the address was
-    // never taken. The thunk calls the real handler (GP-register-pair
-    // `i128`) and re-returns the value as `<16 x i8>` so the rustc runtime
-    // reads it from xmm0. Empty (no iterations) off Windows.
+    // Win64 handler-return thunks (`name$cabi`): emitted as a plain `define`
+    // in the one chunk that owns the handler body, and as an extern `declare`
+    // in every other chunk. Emitting `linkonce_odr` in every chunk would work
+    // on ELF (which deduplicates `linkonce_odr` implicitly), but lld-link
+    // (COFF/PE, Windows) requires an explicit COMDAT section for dedup and
+    // treats bare `linkonce_odr` as a duplicate strong symbol error.
+    // Empty (no iterations) off Windows.
     for (name, arity) in &cabi_handlers {
-        out.push_str(&render_cabi_handler_thunk(name, *arity));
+        let handler_idx = ctx.all_bodies.iter().position(|b| b.name == *name);
+        let owns_handler = handler_idx.is_some_and(|i| chunk_set.contains(&i));
+        if owns_handler {
+            out.push_str(&render_cabi_handler_thunk(name, *arity));
+        } else {
+            let param_list = (0..*arity)
+                .map(|_| "ptr".to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(out, "declare <16 x i8> @\"{name}$cabi\"({param_list})").unwrap();
+        }
         writeln!(out).unwrap();
     }
 
@@ -1451,14 +1463,14 @@ fn collect_cabi_handlers(all_bodies: &[Body]) -> std::collections::BTreeMap<Stri
 /// — it forwards every (pointer) argument to the real handler `@"name"`
 /// (which returns the 2-word `i128` in the GP-register pair) and re-emits
 /// the value as `<16 x i8>` so the rustc runtime reads it from xmm0.
-/// `linkonce_odr` so the linker keeps a single copy across chunks.
+/// Emitted in exactly the one chunk that owns the handler body (never duplicated).
 fn render_cabi_handler_thunk(name: &str, arity: usize) -> String {
     let params: Vec<String> = (0..arity).map(|i| format!("ptr %a{i}")).collect();
     let call_args: Vec<String> = (0..arity).map(|i| format!("ptr %a{i}")).collect();
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "define linkonce_odr <16 x i8> @\"{name}$cabi\"({}) {{",
+        "define <16 x i8> @\"{name}$cabi\"({}) {{",
         params.join(", ")
     );
     writeln!(out, "entry:").unwrap();
@@ -2232,5 +2244,44 @@ mod host_triple_tests {
             "host_triple {triple:?} does not start with arch {arch:?}",
             arch = std::env::consts::ARCH,
         );
+    }
+}
+
+#[cfg(test)]
+mod cabi_thunk_tests {
+    use super::render_cabi_handler_thunk;
+
+    /// `render_cabi_handler_thunk` must emit a plain `define`, not
+    /// `define linkonce_odr`. On ELF, `linkonce_odr` deduplicates across
+    /// translation units implicitly, but lld-link (Windows COFF) requires an
+    /// explicit COMDAT section for dedup and treats bare `linkonce_odr` as a
+    /// duplicate strong symbol when the same thunk appears in multiple chunks.
+    /// The fix emits the thunk once (in the chunk that owns the handler body),
+    /// so `linkonce_odr` is no longer needed — and no longer safe on COFF.
+    #[test]
+    fn cabi_thunk_uses_plain_define_not_linkonce_odr() {
+        let ir = render_cabi_handler_thunk("App::serve", 2);
+        assert!(
+            ir.contains("define <16 x i8>"),
+            "expected plain `define`, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("linkonce_odr"),
+            "must not use linkonce_odr (causes duplicate-symbol on Windows COFF lld-link):\n{ir}"
+        );
+    }
+
+    #[test]
+    fn cabi_thunk_calls_the_real_handler_and_bitcasts() {
+        let ir = render_cabi_handler_thunk("Proxy::serve", 2);
+        assert!(
+            ir.contains("call i128 @\"Proxy::serve\""),
+            "must call real handler"
+        );
+        assert!(
+            ir.contains("bitcast i128"),
+            "must bitcast i128 to <16 x i8>"
+        );
+        assert!(ir.contains("ret <16 x i8>"), "must return <16 x i8>");
     }
 }
