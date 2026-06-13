@@ -5,8 +5,10 @@
 //! flow through the returned `Vec<Value>` — they never appear
 //! inline in the SQL string, so the builder is safe against SQL
 //! injection on values. Identifiers (table name, column names,
-//! `ORDER BY` column) are concatenated verbatim; callers must
-//! validate them before passing in.
+//! `ORDER BY` column) are emitted verbatim when they are simple
+//! identifiers (`[A-Za-z_][A-Za-z0-9_]*`, optionally `schema.table`);
+//! anything else is quote-escaped into a single identifier, so an
+//! attacker-controlled column or table name cannot inject SQL.
 //!
 //! Placeholders use the `PostgreSQL` `$N` style. `SQLite` accepts
 //! both `?N` and `$N`, so the same rendered SQL works against
@@ -105,10 +107,11 @@ impl Select {
         if self.columns.is_empty() {
             sql.push('*');
         } else {
-            sql.push_str(&self.columns.join(", "));
+            let cols: Vec<String> = self.columns.iter().map(|c| render_ident(c)).collect();
+            sql.push_str(&cols.join(", "));
         }
         sql.push_str(" FROM ");
-        sql.push_str(&self.table);
+        sql.push_str(&render_ident(&self.table));
 
         let mut params = Vec::with_capacity(self.wheres.len());
         if !self.wheres.is_empty() {
@@ -117,7 +120,7 @@ impl Select {
                 if i > 0 {
                     sql.push_str(" AND ");
                 }
-                sql.push_str(col);
+                sql.push_str(&render_ident(col));
                 sql.push_str(" = $");
                 sql.push_str(&(i + 1).to_string());
                 params.push(value.clone());
@@ -130,7 +133,7 @@ impl Select {
                 if i > 0 {
                     sql.push_str(", ");
                 }
-                sql.push_str(col);
+                sql.push_str(&render_ident(col));
                 sql.push_str(if *asc { " ASC" } else { " DESC" });
             }
         }
@@ -148,6 +151,34 @@ impl Select {
     }
 }
 
+/// True for a plain SQL identifier — a `[A-Za-z_][A-Za-z0-9_]*` word,
+/// optionally one dotted qualifier (`schema.table` / `table.column`).
+fn is_simple_ident(ident: &str) -> bool {
+    let parts: Vec<&str> = ident.split('.').collect();
+    if parts.len() > 2 {
+        return false;
+    }
+    parts.iter().all(|part| {
+        let mut chars = part.chars();
+        matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+/// Renders an identifier safely: a simple identifier is emitted as-is;
+/// anything else is wrapped in double quotes with embedded quotes
+/// doubled (ANSI / `PostgreSQL` / `SQLite` quoting). A value carrying SQL
+/// syntax thus becomes a single quoted identifier the driver rejects
+/// rather than executable SQL — closing the identifier-injection path
+/// for a user-controlled column, table, or `ORDER BY` target.
+fn render_ident(ident: &str) -> String {
+    if is_simple_ident(ident) {
+        ident.to_string()
+    } else {
+        format!("\"{}\"", ident.replace('"', "\"\""))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,6 +191,47 @@ mod tests {
         let (sql, params) = Select::new("users").render();
         assert_eq!(sql, "SELECT * FROM users");
         assert!(params.is_empty());
+    }
+
+    #[test]
+    fn order_by_injection_is_quoted_not_executed() {
+        let (sql, _) = Select::new("users")
+            .order_by("id; DROP TABLE users--", true)
+            .render();
+        // The whole malicious string becomes one quoted identifier
+        // (wrapped in `"…"`), so no bare `;` or `DROP` escapes into
+        // executable position.
+        assert_eq!(
+            sql,
+            "SELECT * FROM users ORDER BY \"id; DROP TABLE users--\" ASC"
+        );
+    }
+
+    #[test]
+    fn malicious_table_and_column_are_quoted() {
+        let (sql, _) = Select::new("users; DROP TABLE users")
+            .columns(&["(SELECT password FROM users)"])
+            .render();
+        assert!(sql.contains("\"users; DROP TABLE users\""), "got {sql}");
+        assert!(
+            sql.contains("\"(SELECT password FROM users)\""),
+            "got {sql}"
+        );
+        assert!(!sql.contains("FROM users; DROP"), "got {sql}");
+    }
+
+    #[test]
+    fn embedded_quote_in_identifier_is_doubled() {
+        let (sql, _) = Select::new("a\"b").render();
+        assert_eq!(sql, "SELECT * FROM \"a\"\"b\"");
+    }
+
+    #[test]
+    fn simple_and_qualified_identifiers_render_verbatim() {
+        let (sql, _) = Select::new("public.users")
+            .columns(&["users.id", "name"])
+            .render();
+        assert_eq!(sql, "SELECT users.id, name FROM public.users");
     }
 
     #[test]

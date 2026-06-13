@@ -199,6 +199,19 @@ pub fn verify_bytes(
     key.verify(bytes, signature_bytes)
 }
 
+/// Verifies a hex-encoded ed25519 signature over `message` against a
+/// hex-encoded public key. Used by the package fetcher to authenticate
+/// a registry tarball before it is unpacked.
+pub fn verify_signature_hex(
+    public_key_hex: &str,
+    message: &[u8],
+    signature_hex: &str,
+) -> Result<(), SigningError> {
+    let key = VerifyingKey::from_hex(public_key_hex)?;
+    let signature = hex_decode(signature_hex.trim())?;
+    key.verify(message, &signature)
+}
+
 fn hex_decode(text: &str) -> Result<Vec<u8>, SigningError> {
     let bytes = text.as_bytes();
     if bytes.len() % 2 != 0 {

@@ -18,6 +18,14 @@ fn make_tar(name: &str, body: &[u8]) -> Vec<u8> {
     gossamer_pkg::tar::pack(&entries).expect("pack")
 }
 
+/// Signs `tar` with a fixed test key, returning `(signature_hex,
+/// public_key_hex)` for a registry catalogue entry.
+fn sign_tar(tar: &[u8]) -> (String, String) {
+    let key = gossamer_pkg::SigningKey::from_bytes([7u8; 32]);
+    let sig = gossamer_pkg::sign_bytes(&key, tar);
+    (gossamer_pkg::hex_encode(&sig), key.verifying_key().to_hex())
+}
+
 fn resolved_registry(id: &str, version: Version) -> Resolved {
     Resolved {
         id: ProjectId::parse(id).unwrap(),
@@ -141,6 +149,7 @@ fn yanked_registry_version_refuses_install_without_flag() {
     let mut transport = StaticTransport::new();
     transport.insert(url, tar_bytes.clone());
 
+    let (sig, pubkey) = sign_tar(&tar_bytes);
     let mut catalogue = VersionCatalogue::new();
     catalogue.add_entry(
         &id,
@@ -150,6 +159,8 @@ fn yanked_registry_version_refuses_install_without_flag() {
             download_url: Some(url.to_string()),
             tarball_sha256: Some(expected_sha.clone()),
             yank_reason: Some("security".to_string()),
+            signature: Some(sig),
+            public_key: Some(pubkey),
         },
     );
 
@@ -197,6 +208,7 @@ fn second_fetch_hits_disk_cache_and_skips_network() {
     {
         let mut transport = StaticTransport::new();
         transport.insert(url, tar_bytes.clone());
+        let (sig, pubkey) = sign_tar(&tar_bytes);
         let mut catalogue = VersionCatalogue::new();
         catalogue.add_entry(
             &id,
@@ -206,6 +218,8 @@ fn second_fetch_hits_disk_cache_and_skips_network() {
                 download_url: Some(url.to_string()),
                 tarball_sha256: Some(expected_sha.clone()),
                 yank_reason: None,
+                signature: Some(sig),
+                public_key: Some(pubkey),
             },
         );
         let live = Fetcher::with_transport(
@@ -304,11 +318,13 @@ fn lockfile_from_fetched_carries_sha256() {
     let fetched = gossamer_pkg::Fetched {
         resolved: resolved.clone(),
         source: source.clone(),
+        owner_pubkey: Some("abcd".to_string()),
     };
     let lock = Lockfile::from_fetched(&[fetched]);
     let expected = vec![LockedEntry {
         resolved,
         sha256: Some(source.digest),
+        owner_pubkey: Some("abcd".to_string()),
     }];
     assert_eq!(lock.entries, expected);
 }
@@ -464,4 +480,112 @@ fn http_transport_post_round_trips_against_local_server() {
         received.ends_with(r#"{"hello":"world"}"#),
         "got: {received}"
     );
+}
+
+/// Builds a fetcher serving `tar_bytes` at `url` for a registry entry
+/// carrying the given `signature` and `public_key`.
+fn signed_registry_fetcher(
+    id: &ProjectId,
+    url: &str,
+    tar_bytes: &[u8],
+    signature: Option<String>,
+    public_key: Option<String>,
+) -> Fetcher {
+    let mut transport = StaticTransport::new();
+    transport.insert(url, tar_bytes.to_vec());
+    let mut catalogue = VersionCatalogue::new();
+    catalogue.add_entry(
+        id,
+        CatalogueEntry {
+            version: Version::new(1, 0, 0),
+            yanked: false,
+            download_url: Some(url.to_string()),
+            tarball_sha256: Some(sha256::hex(tar_bytes)),
+            yank_reason: None,
+            signature,
+            public_key,
+        },
+    );
+    Fetcher::with_transport(
+        FetchOptions {
+            registry_url: "https://reg.test".to_string(),
+            ..FetchOptions::default()
+        },
+        Arc::new(transport) as Arc<dyn Transport>,
+    )
+    .with_catalogue(catalogue)
+}
+
+#[test]
+fn registry_fetch_accepts_a_valid_publisher_signature() {
+    let id = ProjectId::parse("example.com/signed").unwrap();
+    let url = "https://reg.test/v1/download/example.com/signed/1.0.0.tar";
+    let tar = make_tar("project.toml", b"[project]\nid = \"example.com/signed\"\n");
+    let (sig, pubkey) = sign_tar(&tar);
+    let fetcher = signed_registry_fetcher(&id, url, &tar, Some(sig), Some(pubkey.clone()));
+    let resolved = resolved_registry("example.com/signed", Version::new(1, 0, 0));
+    let mut cache = Cache::new();
+    let out = fetcher
+        .fetch_all(std::slice::from_ref(&resolved), &mut cache)
+        .expect("a validly-signed registry tarball must install");
+    assert_eq!(out[0].owner_pubkey.as_deref(), Some(pubkey.as_str()));
+}
+
+#[test]
+fn registry_fetch_rejects_an_unsigned_source() {
+    let id = ProjectId::parse("example.com/unsigned").unwrap();
+    let url = "https://reg.test/v1/download/example.com/unsigned/1.0.0.tar";
+    let tar = make_tar(
+        "project.toml",
+        b"[project]\nid = \"example.com/unsigned\"\n",
+    );
+    let fetcher = signed_registry_fetcher(&id, url, &tar, None, None);
+    let resolved = resolved_registry("example.com/unsigned", Version::new(1, 0, 0));
+    let mut cache = Cache::new();
+    let err = fetcher
+        .fetch_all(std::slice::from_ref(&resolved), &mut cache)
+        .unwrap_err();
+    assert!(matches!(err, CacheError::Unsigned(_)), "got {err:?}");
+}
+
+#[test]
+fn registry_fetch_rejects_a_bad_signature() {
+    let id = ProjectId::parse("example.com/badsig").unwrap();
+    let url = "https://reg.test/v1/download/example.com/badsig/1.0.0.tar";
+    let tar = make_tar("project.toml", b"[project]\nid = \"example.com/badsig\"\n");
+    // A correctly-shaped signature over different bytes will not verify.
+    let (_, pubkey) = sign_tar(&tar);
+    let (wrong_sig, _) = sign_tar(b"some other payload");
+    let fetcher = signed_registry_fetcher(&id, url, &tar, Some(wrong_sig), Some(pubkey));
+    let resolved = resolved_registry("example.com/badsig", Version::new(1, 0, 0));
+    let mut cache = Cache::new();
+    let err = fetcher
+        .fetch_all(std::slice::from_ref(&resolved), &mut cache)
+        .unwrap_err();
+    assert!(
+        matches!(err, CacheError::SignatureInvalid(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn registry_fetch_rejects_a_rotated_publisher_key() {
+    let id = ProjectId::parse("example.com/rotated").unwrap();
+    let url = "https://reg.test/v1/download/example.com/rotated/1.0.0.tar";
+    let tar = make_tar("project.toml", b"[project]\nid = \"example.com/rotated\"\n");
+    let (sig, pubkey) = sign_tar(&tar);
+    let fetcher = signed_registry_fetcher(&id, url, &tar, Some(sig), Some(pubkey));
+    // The lockfile pins a different key than the registry now advertises.
+    let other_key = gossamer_pkg::SigningKey::from_bytes([9u8; 32])
+        .verifying_key()
+        .to_hex();
+    let mut pins: BTreeMap<String, String> = BTreeMap::new();
+    pins.insert("example.com/rotated".to_string(), other_key);
+    let fetcher = fetcher.with_pinned_keys(pins);
+    let resolved = resolved_registry("example.com/rotated", Version::new(1, 0, 0));
+    let mut cache = Cache::new();
+    let err = fetcher
+        .fetch_all(std::slice::from_ref(&resolved), &mut cache)
+        .unwrap_err();
+    assert!(matches!(err, CacheError::KeyMismatch { .. }), "got {err:?}");
 }

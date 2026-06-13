@@ -190,6 +190,26 @@ pub unsafe extern "C" fn gos_rt_json_free(j: *mut GosJson) {
     drop(unsafe { Box::from_raw(j) });
 }
 
+/// Escapes `<`, `>`, `&`, U+2028, and U+2029 in serialized JSON as
+/// `\uXXXX`. These bytes never appear in JSON structural syntax — only
+/// inside string values — so a whole-document replace is safe. Mirrors
+/// the interpreter's `gossamer_std::json` encoder, keeping `json::encode`
+/// byte-identical across tiers and safe to embed inside an HTML
+/// `<script>` block.
+fn escape_json_for_html(s: String) -> String {
+    if !s.bytes().any(|b| matches!(b, b'<' | b'>' | b'&'))
+        && !s.contains('\u{2028}')
+        && !s.contains('\u{2029}')
+    {
+        return s;
+    }
+    s.replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
 /// `json::render(value) -> String`. Always returns a non-null
 /// C-string (empty on null input) into the GC arena.
 #[unsafe(no_mangle)]
@@ -198,7 +218,7 @@ pub unsafe extern "C" fn gos_rt_json_render(j: *const GosJson) -> *mut c_char {
         let Some(v) = (unsafe { json_borrow(j) }) else {
             return alloc_cstring(b"");
         };
-        let s = serde_json::to_string(v).unwrap_or_default();
+        let s = escape_json_for_html(serde_json::to_string(v).unwrap_or_default());
         alloc_cstring(s.as_bytes())
     })
 }

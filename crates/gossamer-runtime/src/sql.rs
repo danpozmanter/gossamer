@@ -283,18 +283,42 @@ pub trait TransactionImpl: Send {
     /// Creates a savepoint named `name` inside this transaction.
     /// Default implementation runs `SAVEPOINT name` as raw SQL.
     fn savepoint(&mut self, name: &str) -> Result<(), Error> {
-        self.execute(&format!("SAVEPOINT {name}"))?;
+        self.execute(&format!("SAVEPOINT {}", valid_savepoint_name(name)?))?;
         Ok(())
     }
     /// Releases (commits) a savepoint named `name`.
     fn release_savepoint(&mut self, name: &str) -> Result<(), Error> {
-        self.execute(&format!("RELEASE SAVEPOINT {name}"))?;
+        self.execute(&format!(
+            "RELEASE SAVEPOINT {}",
+            valid_savepoint_name(name)?
+        ))?;
         Ok(())
     }
     /// Rolls back to a savepoint named `name`.
     fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), Error> {
-        self.execute(&format!("ROLLBACK TO SAVEPOINT {name}"))?;
+        self.execute(&format!(
+            "ROLLBACK TO SAVEPOINT {}",
+            valid_savepoint_name(name)?
+        ))?;
         Ok(())
+    }
+}
+
+/// Validates a savepoint identifier (which cannot be a bound parameter)
+/// against `[A-Za-z_][A-Za-z0-9_]*`, returning it unchanged or an error.
+/// Rejects a user-derived name that would otherwise inject SQL into the
+/// interpolated `SAVEPOINT <name>` statement.
+fn valid_savepoint_name(name: &str) -> Result<&str, Error> {
+    let mut chars = name.chars();
+    let ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if ok {
+        Ok(name)
+    } else {
+        Err(Error::driver(
+            "sql",
+            format!("invalid savepoint name `{name}`: must be a simple identifier"),
+        ))
     }
 }
 
@@ -385,4 +409,23 @@ pub fn register_interrupt_callback(addr: usize, callback: Box<dyn Fn() + Send + 
 /// Removes the interrupt callback under `addr`.
 pub fn unregister_interrupt_callback(addr: usize) {
     INTERRUPT_REGISTRY.lock().remove(&addr);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_savepoint_name;
+
+    #[test]
+    fn savepoint_name_accepts_simple_identifiers() {
+        assert_eq!(valid_savepoint_name("sp1").unwrap(), "sp1");
+        assert_eq!(valid_savepoint_name("_outer_2").unwrap(), "_outer_2");
+    }
+
+    #[test]
+    fn savepoint_name_rejects_injection() {
+        assert!(valid_savepoint_name("sp1; DROP TABLE audit--").is_err());
+        assert!(valid_savepoint_name("1bad").is_err());
+        assert!(valid_savepoint_name("").is_err());
+        assert!(valid_savepoint_name("a b").is_err());
+    }
 }

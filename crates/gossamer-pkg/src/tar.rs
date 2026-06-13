@@ -50,6 +50,12 @@ pub enum TarError {
         "gzipped archive detected — .tar.gz support is a follow-up; decompress before calling [`unpack`]"
     )]
     Gzipped,
+    /// Entry name escapes the extraction directory: an absolute path,
+    /// a `..` component, or a Windows drive/UNC prefix. Rejected so an
+    /// archive cannot write outside the directory it is unpacked into
+    /// (the classic tar-slip / zip-slip traversal).
+    #[error("tar entry `{0}`: path escapes the extraction directory")]
+    UnsafePath(String),
 }
 
 const BLOCK: usize = 512;
@@ -82,8 +88,9 @@ pub fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, TarError> {
         }
         match flag {
             '0' | '\0' => {
+                let safe = safe_entry_name(&name).ok_or(TarError::UnsafePath(name.clone()))?;
                 let contents = bytes[offset..payload_end].to_vec();
-                out.insert(name, contents);
+                out.insert(safe, contents);
             }
             '5' => {
                 // POSIX directory. Skip the payload (always zero)
@@ -100,6 +107,38 @@ pub fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, TarError> {
         }
     }
     Ok(out)
+}
+
+/// Returns `name` unchanged if it is a safe relative path that stays
+/// within the extraction directory, or `None` if it escapes it.
+///
+/// Rejects absolute paths, any `..`/root/drive component, and Windows
+/// separators or drive/UNC prefixes (checked on the raw string because
+/// `std::path::Component` does not split on `\` under Unix). This is
+/// the single choke point: every consumer joins these names onto a
+/// base directory, so guarding here prevents tar-slip writes in all of
+/// them.
+fn safe_entry_name(name: &str) -> Option<String> {
+    use std::path::{Component, Path};
+    if name.is_empty() || name.contains('\\') || name.contains('\0') {
+        return None;
+    }
+    // A leading drive letter (`C:`) or UNC-ish prefix never belongs in
+    // a relative entry name.
+    if name.as_bytes().get(1) == Some(&b':') {
+        return None;
+    }
+    let path = Path::new(name);
+    if path.is_absolute() {
+        return None;
+    }
+    for component in path.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(name.to_string())
 }
 
 fn parse_name(header: &[u8]) -> String {
@@ -351,6 +390,37 @@ mod tests {
         let bytes = pack(&input).expect("pack");
         let back = unpack(&bytes).expect("unpack");
         assert_eq!(input, back);
+    }
+
+    #[test]
+    fn unpack_rejects_parent_dir_traversal() {
+        let tar = build_tar("../../../../home/victim/.bashrc", b"evil\n");
+        let err = unpack(&tar).unwrap_err();
+        assert!(matches!(err, TarError::UnsafePath(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn unpack_rejects_absolute_paths() {
+        let tar = build_tar("/etc/cron.d/x", b"evil\n");
+        let err = unpack(&tar).unwrap_err();
+        assert!(matches!(err, TarError::UnsafePath(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn unpack_rejects_backslash_separators() {
+        let tar = build_tar("..\\..\\win.ini", b"evil\n");
+        let err = unpack(&tar).unwrap_err();
+        assert!(matches!(err, TarError::UnsafePath(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn unpack_allows_curdir_prefixed_relative_paths() {
+        let tar = build_tar("./src/main.gos", b"ok\n");
+        let files = unpack(&tar).expect("unpack");
+        assert_eq!(
+            files.get("./src/main.gos").map(Vec::as_slice),
+            Some(b"ok\n" as &[u8])
+        );
     }
 
     #[test]

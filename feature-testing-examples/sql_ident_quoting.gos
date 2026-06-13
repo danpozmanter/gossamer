@@ -1,0 +1,13 @@
+// Tier-parity fixture: the SQL Select builder quote-escapes non-simple
+// identifiers identically on every tier, so a user-controlled column or
+// table name cannot inject SQL. Simple identifiers render verbatim.
+use std::database::sql
+
+fn main() {
+    let safe = sql::Select::new("players").columns(&["id", "name"]).order_by("id", true)
+    println!("{}", safe.render())
+    let evil = sql::Select::new("t").order_by("id; DROP TABLE t--", true)
+    println!("{}", evil.render())
+    let weird = sql::Select::new("a b").columns(&["c\"d"])
+    println!("{}", weird.render())
+}

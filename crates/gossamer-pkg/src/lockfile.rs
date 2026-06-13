@@ -73,6 +73,10 @@ pub struct LockedEntry {
     pub resolved: Resolved,
     /// SHA-256 of the cached source tree, hex. `None` for path sources.
     pub sha256: Option<String>,
+    /// Hex ed25519 publisher key that signed a registry source. Pinned
+    /// on first fetch; later fetches must present the same key. `None`
+    /// for non-registry sources.
+    pub owner_pubkey: Option<String>,
 }
 
 /// Parsed lockfile.
@@ -93,6 +97,7 @@ impl Lockfile {
             .map(|resolved| LockedEntry {
                 resolved,
                 sha256: None,
+                owner_pubkey: None,
             })
             .collect();
         entries.sort_by(|a, b| a.resolved.id.as_str().cmp(b.resolved.id.as_str()));
@@ -111,10 +116,26 @@ impl Lockfile {
                     ResolvedSource::Path(_) => None,
                     _ => Some(f.source.digest.clone()),
                 },
+                owner_pubkey: f.owner_pubkey.clone(),
             })
             .collect();
         entries.sort_by(|a, b| a.resolved.id.as_str().cmp(b.resolved.id.as_str()));
         Self { entries }
+    }
+
+    /// Returns the pinned publisher keys (project id → hex public key)
+    /// recorded in this lockfile, for the fetcher to enforce on the
+    /// next fetch.
+    #[must_use]
+    pub fn pinned_keys(&self) -> BTreeMap<String, String> {
+        self.entries
+            .iter()
+            .filter_map(|e| {
+                e.owner_pubkey
+                    .clone()
+                    .map(|k| (e.resolved.id.as_str().to_string(), k))
+            })
+            .collect()
     }
 
     /// Reads the lockfile from the canonical `<project_root>/project.lock`
@@ -178,6 +199,9 @@ impl Lockfile {
             }
             if let Some(d) = &entry.sha256 {
                 let _ = writeln!(out, "sha256 = \"{d}\"");
+            }
+            if let Some(k) = &entry.owner_pubkey {
+                let _ = writeln!(out, "owner_pubkey = \"{k}\"");
             }
             out.push('\n');
         }
@@ -344,8 +368,10 @@ fn table_to_locked(map: BTreeMap<String, String>) -> Result<LockedEntry, Lockfil
         ResolvedSource::Tarball { .. } => map.get("tree_sha256").cloned(),
         _ => map.get("sha256").cloned(),
     };
+    let owner_pubkey = map.get("owner_pubkey").cloned();
     Ok(LockedEntry {
         resolved: Resolved { id, pin },
         sha256: sha,
+        owner_pubkey,
     })
 }

@@ -538,14 +538,31 @@ static REGION_ARENA_NEXT: AtomicUsize = AtomicUsize::new(0);
 /// committed; this list holds overflow beyond `FREE_SLAB_CAP`.)
 static REGION_ARENA_FREE: parking_lot::Mutex<Vec<usize>> = parking_lot::Mutex::new(Vec::new());
 
-/// True when `ptr` points into region-arena memory. Two ALU ops plus
-/// one cached global load; correct before initialisation (base 0 makes
-/// the subtraction wrap far beyond the range) and after a failed
-/// reserve (`usize::MAX` likewise).
+/// True when `ptr` points into region-arena memory. One cached global
+/// load plus the pure [`addr_in_region_arena`] range test.
 #[inline]
 pub(crate) fn in_region_arena(ptr: *const u8) -> bool {
-    let base = REGION_ARENA_BASE.load(Ordering::Relaxed);
-    (ptr as usize).wrapping_sub(base) < REGION_ARENA_BYTES
+    addr_in_region_arena(ptr as usize, REGION_ARENA_BASE.load(Ordering::Relaxed))
+}
+
+/// Pure range test for [`in_region_arena`], split out so the sentinel
+/// handling is unit-testable without mutating the global base.
+///
+/// `base` carries two sentinels that are NOT live reservations: `0`
+/// (no arena reserved yet) and `usize::MAX` (reservation failed). In
+/// either state no pointer is region memory, so the range check must be
+/// skipped entirely. The check is only meaningful once `base` is a real
+/// reservation: with `base == 0` the subtraction is the identity, so the
+/// bare range test would classify every pointer below `REGION_ARENA_BYTES`
+/// (64 GiB) as in-region. That holds for the low heap addresses Windows
+/// hands out, which silently turned `gos_rt_rc_retain`/`release` into
+/// no-ops there — a use-after-free, since structural frees still ran.
+#[inline]
+fn addr_in_region_arena(addr: usize, base: usize) -> bool {
+    if base == 0 || base == usize::MAX {
+        return false;
+    }
+    addr.wrapping_sub(base) < REGION_ARENA_BYTES
 }
 
 /// Strip a tagged-repr enum's discriminant bits (pointer bits 1-2)
@@ -1843,6 +1860,32 @@ pub unsafe extern "C" fn gos_rt_collect_cycles() {
 mod tests {
     use super::*;
     use std::sync::{Mutex, PoisonError};
+
+    #[test]
+    fn region_arena_rejects_every_pointer_when_no_arena_reserved() {
+        // Regression: with the uninitialised base (0) the range test must
+        // report NO pointer as region memory — even ones below the 64 GiB
+        // reserve size. The old bare `wrapping_sub` classified every low
+        // heap pointer as in-region, which neutralised RC retain/release on
+        // platforms whose allocator hands out low addresses (Windows),
+        // producing use-after-free in any handler that retains a heap value.
+        assert!(!addr_in_region_arena(0x1000, 0));
+        assert!(!addr_in_region_arena(REGION_ARENA_BYTES - 1, 0));
+        assert!(!addr_in_region_arena(0xdead_beef, 0));
+        // Failed-reservation sentinel disables regions just the same.
+        assert!(!addr_in_region_arena(0x2000, usize::MAX));
+    }
+
+    #[test]
+    fn region_arena_matches_only_the_reserved_window() {
+        let base = 0x7000_0000_0000usize;
+        assert!(addr_in_region_arena(base, base));
+        assert!(addr_in_region_arena(base + REGION_ARENA_BYTES - 1, base));
+        assert!(!addr_in_region_arena(base - 1, base));
+        assert!(!addr_in_region_arena(base + REGION_ARENA_BYTES, base));
+        // A pointer below the reserve (the Windows-heap shape) is outside it.
+        assert!(!addr_in_region_arena(0x1_0000, base));
+    }
 
     // `RC_LIVE` is process-global; tests that assert exact live-count
     // deltas must not run concurrently with each other's allocations.

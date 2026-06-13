@@ -98,7 +98,7 @@ fn declare_rt(refs: &mut std::collections::BTreeSet<String>, name: &str) {
             "declare_rt: unknown runtime symbol {name:?} — add it to gossamer-abi/src/registry.rs"
         )
     });
-    refs.insert(entry.llvm_declare());
+    refs.insert(entry.llvm_declare_for(crate::emit::target_is_windows()));
 }
 
 /// Emits one function's LLVM IR text, including the required

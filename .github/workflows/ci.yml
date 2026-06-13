@@ -197,36 +197,23 @@ jobs:
       # `crates/gossamer-cli/build.rs` ensures the runtime
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
-      # Pass/fail gate: parallel, captured output. Captured (NOT
-      # `--nocapture`) on purpose — a `--nocapture` run of the whole
-      # workspace streams every test's output and grows large enough that
-      # GitHub truncates the log, hiding the very failures we need. With
-      # capture, an assert's message prints in a compact `failures:` block
-      # at the end. `RUST_BACKTRACE=1` symbolicates panics.
-      - name: Test
+      # Native build/run crates (`gos build` + `gos run`) run FIRST, serially,
+      # with live output and full diagnostics — ALWAYS, not only on failure.
+      # These crates fork llc/linkers and execute freshly-built native
+      # binaries, so a miscompile manifests as a test process killed by a
+      # signal (SIGSEGV/SIGBUS on Unix; an access violation that drops the
+      # whole runner on Windows). A parallel, captured run reports only
+      # "N targets failed" — the process dies before libtest names the test —
+      # and the previous design parked the live re-run behind `if: failure()`,
+      # which never executes when the crash takes the runner down with it.
+      # `--test-threads=1 --nocapture` makes the culprit test the last
+      # streamed line even in that case, and the dumped IR + preserved
+      # artifacts let an unreproducible platform crash be inspected offline.
+      # This is slower than a captured parallel run; that cost buys a failure
+      # log that always carries the detail, with no unreachable second step.
+      - name: Test native build/run crates (serial, live output)
         shell: bash
         env:
-          RUST_BACKTRACE: "1"
-        run: |
-          "$CARGO_BIN" test --workspace --no-fail-fast
-      # Only on failure: re-run the crates that drive native `gos build` /
-      # `gos run` serially with live output. `--test-threads=1` +
-      # `--nocapture` makes a test binary killed by a signal (SIGSEGV /
-      # SIGBUS — the shape a miscompiled native binary takes on a target)
-      # print the exact test it died on as the last line. A parallel,
-      # captured run can only report "N targets failed" with no per-test
-      # detail (the process dies before libtest can print), which is why
-      # the macOS native-build failures show nothing. This is where a
-      # platform-only crash, or a `gos build` link error, surfaces.
-      - name: Diagnose native build/run test failures
-        if: failure()
-        shell: bash
-        env:
-          # Preserve every native-build artifact and dump the LLVM IR so
-          # a crash on a platform we can't reproduce locally can be
-          # inspected offline (run the dumped `unit.ll` through
-          # `llc -mtriple=<target>`). GOS_LINK_VERBOSE echoes the exact
-          # linker line + libraries.
           RUST_BACKTRACE: "full"
           GOS_LLVM_DUMP: "1"
           GOS_LINK_VERBOSE: "1"
@@ -246,6 +233,20 @@ jobs:
           export TMP="${{ github.workspace }}/native-build-artifacts"
           "$CARGO_BIN" test -p gossamer-cli -p gossamer-codegen-cranelift \
             --no-fail-fast -- --test-threads=1 --nocapture
+      # The rest of the workspace: parallel + captured (compact). These
+      # crates don't fork native toolchains, so a captured parallel run is
+      # both faster and prints a tidy `failures:` block. Captured (NOT
+      # `--nocapture`) on purpose — a `--nocapture` run of the whole
+      # workspace streams enough that GitHub truncates the log. The native
+      # crates are excluded here; they ran in the step above.
+      - name: Test (rest of workspace)
+        shell: bash
+        env:
+          RUST_BACKTRACE: "1"
+        run: |
+          "$CARGO_BIN" test --workspace \
+            --exclude gossamer-cli --exclude gossamer-codegen-cranelift \
+            --no-fail-fast
       - name: Upload native build artifacts
         if: failure()
         uses: actions/upload-artifact@v4

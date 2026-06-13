@@ -53,6 +53,7 @@ pub fn parse(source: &str) -> Result<Template, Error> {
 enum Context {
     Body,
     Attr,
+    AttrUnquoted,
     Url,
     Js,
 }
@@ -66,6 +67,9 @@ fn detect_context(prefix: &str) -> Context {
     let mut quote: Option<u8> = None;
     let mut i = 0;
     let mut cursor_attr = String::new();
+    // True when the cursor sits in an unquoted attribute value (after
+    // `=` with no opening quote, until whitespace / `>` ends it).
+    let mut after_equals = false;
     while i < bytes.len() {
         let b = bytes[i];
         if let Some(q) = quote {
@@ -78,6 +82,7 @@ fn detect_context(prefix: &str) -> Context {
         if b == b'<' {
             in_tag = true;
             cursor_attr.clear();
+            after_equals = false;
             // Detect <script>.
             if bytes[i..].starts_with(b"<script") {
                 in_script += 1;
@@ -90,12 +95,14 @@ fn detect_context(prefix: &str) -> Context {
         if b == b'>' {
             in_tag = false;
             cursor_attr.clear();
+            after_equals = false;
             i += 1;
             continue;
         }
         if in_tag {
             if b == b'"' || b == b'\'' {
                 quote = Some(b);
+                after_equals = false;
                 if !cursor_attr.is_empty() {
                     last_attr_name = std::mem::take(&mut cursor_attr);
                 }
@@ -106,11 +113,13 @@ fn detect_context(prefix: &str) -> Context {
                 if !cursor_attr.is_empty() {
                     last_attr_name = std::mem::take(&mut cursor_attr);
                 }
+                after_equals = true;
                 i += 1;
                 continue;
             }
             if b.is_ascii_whitespace() {
                 cursor_attr.clear();
+                after_equals = false;
                 i += 1;
                 continue;
             }
@@ -121,15 +130,22 @@ fn detect_context(prefix: &str) -> Context {
     if in_script > 0 {
         return Context::Js;
     }
-    if quote.is_some() {
+    // Inside an attribute value, whether quoted (`quote.is_some()`) or
+    // unquoted (`after_equals` with no opening quote).
+    if quote.is_some() || (in_tag && after_equals) {
         let lower = last_attr_name.to_ascii_lowercase();
         if matches!(
             lower.as_str(),
             "href" | "src" | "action" | "formaction" | "cite" | "background"
         ) {
+            // URL escaping percent-encodes spaces and filters dangerous
+            // schemes, so it is safe in both quoted and unquoted slots.
             return Context::Url;
         }
-        return Context::Attr;
+        if quote.is_some() {
+            return Context::Attr;
+        }
+        return Context::AttrUnquoted;
     }
     Context::Body
 }
@@ -149,7 +165,81 @@ fn escape_html_text(s: &str) -> String {
     out
 }
 
+/// Escapes a value substituted into an unquoted attribute (`<a
+/// href=VALUE>`). Beyond the HTML specials, the bytes that *terminate*
+/// an unquoted value — whitespace, `` ` ``, `=` — are numeric-escaped
+/// so the value cannot end early and inject a new attribute (e.g.
+/// `onmouseover=...`).
+fn escape_attr_unquoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&#34;"),
+            '\'' => out.push_str("&#39;"),
+            '`' => out.push_str("&#96;"),
+            '=' => out.push_str("&#61;"),
+            ' ' => out.push_str("&#32;"),
+            '\t' => out.push_str("&#9;"),
+            '\n' => out.push_str("&#10;"),
+            '\r' => out.push_str("&#13;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Schemes allowed in a URL-attribute value. Anything else (notably
+/// `javascript:` and `data:`) is replaced with an inert placeholder.
+const SAFE_URL_SCHEMES: [&str; 5] = ["http", "https", "mailto", "tel", "ftp"];
+
+/// Extracts the URL scheme (the run before the first `:`) when the
+/// value actually has one — i.e. the `:` precedes any `/`, `?`, or `#`
+/// and the scheme is a valid `ALPHA *( ALPHA / DIGIT / "+" / "-" /
+/// "." )`. Returns `None` for relative URLs and fragments.
+fn url_scheme(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    if bytes.first().is_none_or(|b| !b.is_ascii_alphabetic()) {
+        return None;
+    }
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b':' => return Some(&s[..i]),
+            b'/' | b'?' | b'#' => return None,
+            c if c.is_ascii_alphanumeric() || c == b'+' || c == b'-' || c == b'.' => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// True when `s` carries a scheme outside [`SAFE_URL_SCHEMES`]. Tabs and
+/// newlines are stripped and leading controls/spaces skipped first,
+/// because browsers do the same before parsing the scheme — otherwise
+/// `java\tscript:` would slip through.
+fn has_unsafe_scheme(s: &str) -> bool {
+    let normalized: String = s
+        .chars()
+        .filter(|&c| c != '\t' && c != '\n' && c != '\r')
+        .collect();
+    let trimmed = normalized.trim_start_matches(|c: char| c.is_control() || c == ' ');
+    match url_scheme(trimmed) {
+        Some(scheme) => !SAFE_URL_SCHEMES
+            .iter()
+            .any(|allowed| scheme.eq_ignore_ascii_case(allowed)),
+        None => false,
+    }
+}
+
 fn escape_url(s: &str) -> String {
+    // A non-allowlisted scheme (javascript:, data:, vbscript:, …) is a
+    // script-execution vector in href/src, so it is neutralised wholesale
+    // rather than percent-encoded.
+    if has_unsafe_scheme(s) {
+        return "#".to_string();
+    }
     // RFC 3986 reserved + unreserved characters are kept; everything
     // else is %-encoded. Sufficient for href/src/action attribute
     // values that came from untrusted sources.
@@ -353,6 +443,7 @@ fn handle_action(
     } else {
         match context {
             Context::Body | Context::Attr => escape_html_text(&raw_text),
+            Context::AttrUnquoted => escape_attr_unquoted(&raw_text),
             Context::Url => escape_url(&raw_text),
             Context::Js => escape_js(&raw_text),
         }
@@ -388,6 +479,71 @@ mod tests {
         let data = map(&[("link", Value::String("/a b?c=d".into()))]);
         let out = render("<a href=\"{{ .link }}\">x</a>", &data).unwrap();
         assert!(out.contains("/a%20b?c=d"));
+    }
+
+    #[test]
+    fn url_attribute_blocks_javascript_scheme() {
+        let data = map(&[(
+            "link",
+            Value::String("javascript:alert(document.cookie)".into()),
+        )]);
+        let out = render("<a href=\"{{ .link }}\">x</a>", &data).unwrap();
+        assert!(!out.contains("javascript:"), "got {out}");
+        assert!(out.contains("href=\"#\""), "got {out}");
+    }
+
+    #[test]
+    fn url_attribute_blocks_obfuscated_javascript_scheme() {
+        // Browsers strip tabs/newlines before parsing the scheme.
+        let data = map(&[("link", Value::String("java\tscript:alert(1)".into()))]);
+        let out = render("<a href=\"{{ .link }}\">x</a>", &data).unwrap();
+        assert!(
+            !out.to_ascii_lowercase().contains("javascript"),
+            "got {out}"
+        );
+    }
+
+    #[test]
+    fn url_attribute_blocks_data_scheme() {
+        let data = map(&[(
+            "link",
+            Value::String("data:text/html,<script>alert(1)</script>".into()),
+        )]);
+        let out = render("<a href=\"{{ .link }}\">x</a>", &data).unwrap();
+        assert!(out.contains("href=\"#\""), "got {out}");
+    }
+
+    #[test]
+    fn url_attribute_allows_safe_schemes_and_relative() {
+        let data = map(&[("link", Value::String("https://example.com/p".into()))]);
+        let out = render("<a href=\"{{ .link }}\">x</a>", &data).unwrap();
+        assert!(out.contains("https://example.com/p"), "got {out}");
+        let data = map(&[("link", Value::String("/relative/path".into()))]);
+        let out = render("<a href=\"{{ .link }}\">x</a>", &data).unwrap();
+        assert!(out.contains("/relative/path"), "got {out}");
+    }
+
+    #[test]
+    fn unquoted_attribute_cannot_inject_a_new_attribute() {
+        let data = map(&[("x", Value::String("y onmouseover=alert(1)".into()))]);
+        let out = render("<a href={{ .x }}>x</a>", &data).unwrap();
+        // href is a URL attribute, so the space is percent-encoded and
+        // the payload stays inside the single href value — no raw space
+        // means no new attribute.
+        assert!(!out.contains(" onmouseover"), "raw space breaks out: {out}");
+        assert!(out.contains("y%20onmouseover"), "got {out}");
+    }
+
+    #[test]
+    fn unquoted_non_url_attribute_escapes_terminators() {
+        let data = map(&[("v", Value::String("y onmouseover=alert(1)".into()))]);
+        let out = render("<span data-x={{ .v }}>x</span>", &data).unwrap();
+        // The space and `=` are numeric-escaped, so no new attribute.
+        assert!(!out.contains(" onmouseover=alert(1)"), "got {out}");
+        assert!(
+            out.contains("&#32;"),
+            "space must be numeric-escaped: {out}"
+        );
     }
 
     #[test]

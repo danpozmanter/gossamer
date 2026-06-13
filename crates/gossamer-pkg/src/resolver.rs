@@ -41,6 +41,12 @@ pub struct CatalogueEntry {
     pub tarball_sha256: Option<String>,
     /// Optional yank reason for surfacing to users.
     pub yank_reason: Option<String>,
+    /// Hex-encoded ed25519 signature over the tarball bytes, as
+    /// advertised by the registry index. Required for a registry fetch
+    /// to be admitted.
+    pub signature: Option<String>,
+    /// Hex-encoded ed25519 public key of the publisher.
+    pub public_key: Option<String>,
 }
 
 /// Catalogue of every version known for a project. Tests inject a
@@ -69,6 +75,8 @@ impl VersionCatalogue {
                 download_url: None,
                 tarball_sha256: None,
                 yank_reason: None,
+                signature: None,
+                public_key: None,
             },
         );
     }
@@ -157,6 +165,8 @@ fn parse_index_json(
         let download_url = extract_string(object_text, "url");
         let tarball_sha256 = extract_string(object_text, "sha256");
         let yank_reason = extract_string(object_text, "yank_reason");
+        let signature = extract_string(object_text, "signature");
+        let public_key = extract_string(object_text, "public_key");
         catalogue.add_entry(
             id,
             CatalogueEntry {
@@ -165,6 +175,8 @@ fn parse_index_json(
                 download_url,
                 tarball_sha256,
                 yank_reason,
+                signature,
+                public_key,
             },
         );
         added = true;

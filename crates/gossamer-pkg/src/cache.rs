@@ -270,6 +270,26 @@ pub enum CacheError {
         /// Server-supplied reason or `"(no reason given)"`.
         reason: String,
     },
+    /// A registry source arrived without the ed25519 signature +
+    /// public key the registry is required to advertise. The tarball
+    /// is rejected before it is unpacked.
+    #[error("{0}: registry source is missing a publisher signature")]
+    Unsigned(String),
+    /// The publisher signature did not verify against the tarball
+    /// bytes. The tarball is rejected before it is unpacked.
+    #[error("{0}: publisher signature does not verify")]
+    SignatureInvalid(String),
+    /// The registry advertised a publisher key that differs from the
+    /// one pinned in the lockfile — a key rotation or substitution.
+    #[error("{id}: publisher key changed (pinned {pinned}, registry offered {offered})")]
+    KeyMismatch {
+        /// Project id.
+        id: String,
+        /// Key pinned in the lockfile.
+        pinned: String,
+        /// Key the registry index now advertises.
+        offered: String,
+    },
 }
 
 /// Resolved source tree fetched into the cache.
@@ -279,4 +299,9 @@ pub struct Fetched {
     pub resolved: Resolved,
     /// Cached source contents.
     pub source: CachedSource,
+    /// Hex-encoded publisher ed25519 public key that signed this
+    /// source, when it came from a registry. Recorded into the
+    /// lockfile so later fetches detect a key change. `None` for
+    /// path/git/inline-tarball sources.
+    pub owner_pubkey: Option<String>,
 }

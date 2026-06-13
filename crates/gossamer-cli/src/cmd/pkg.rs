@@ -20,8 +20,21 @@ use crate::paths::friendly_io_error;
 fn registry_transport() -> Arc<dyn gossamer_pkg::Transport> {
     match std::env::var("GOS_REGISTRY_TRANSPORT").as_deref() {
         Ok("static") => Arc::new(gossamer_pkg::StaticTransport::new()),
+        _ if insecure_registry_opt_in() => {
+            Arc::new(gossamer_pkg::HttpsTransport::new_mozilla_roots_insecure())
+        }
         _ => Arc::new(gossamer_pkg::HttpsTransport::new_mozilla_roots()),
     }
+}
+
+/// Whether the operator opted into plaintext registry traffic via
+/// `GOS_ALLOW_INSECURE_REGISTRY=1`. Loopback hosts are allowed without
+/// this; it only relaxes the https requirement for remote hosts.
+fn insecure_registry_opt_in() -> bool {
+    matches!(
+        std::env::var("GOS_ALLOW_INSECURE_REGISTRY").as_deref(),
+        Ok("1" | "true")
+    )
 }
 
 /// Returns the registry URL the CLI should consult. Honours the
@@ -364,14 +377,17 @@ pub(crate) fn fetch(manifest: Option<PathBuf>, offline: bool, update: bool) -> R
         ..gossamer_pkg::FetchOptions::default()
     };
     options.auth_token = credential_for(&options.registry_url);
-    let fetcher = build_fetcher(&m, options.clone())?;
+    let existing_lock = gossamer_pkg::Lockfile::load(&project_root)
+        .map_err(|e| anyhow!("loading lockfile: {e}"))?;
+    let pinned_keys = existing_lock
+        .as_ref()
+        .map(gossamer_pkg::Lockfile::pinned_keys)
+        .unwrap_or_default();
+    let fetcher = build_fetcher(&m, options.clone())?.with_pinned_keys(pinned_keys);
     let plan = gossamer_pkg::Resolver::new(fetcher.catalogue().clone())
         .resolve(&m)
         .map_err(|e| anyhow!("resolve failed: {e}"))?;
-    if !update
-        && let Some(existing) = gossamer_pkg::Lockfile::load(&project_root)
-            .map_err(|e| anyhow!("loading lockfile: {e}"))?
-    {
+    if !update && let Some(existing) = &existing_lock {
         existing
             .verify_against(&plan)
             .map_err(|e| anyhow!("lockfile check: {e}"))?;
@@ -395,6 +411,9 @@ pub(crate) fn fetch(manifest: Option<PathBuf>, offline: bool, update: bool) -> R
 /// build.
 pub(crate) fn vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
+    let project_root = path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let m = gossamer_pkg::Manifest::parse(&source)?;
     let mut options = gossamer_pkg::FetchOptions {
@@ -402,7 +421,11 @@ pub(crate) fn vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<
         ..gossamer_pkg::FetchOptions::default()
     };
     options.auth_token = credential_for(&options.registry_url);
-    let fetcher = build_fetcher(&m, options)?;
+    let pinned_keys = gossamer_pkg::Lockfile::load(&project_root)
+        .map_err(|e| anyhow!("loading lockfile: {e}"))?
+        .map(|l| l.pinned_keys())
+        .unwrap_or_default();
+    let fetcher = build_fetcher(&m, options)?.with_pinned_keys(pinned_keys);
     let plan = gossamer_pkg::Resolver::new(fetcher.catalogue().clone())
         .resolve(&m)
         .map_err(|e| anyhow!("resolve failed: {e}"))?;

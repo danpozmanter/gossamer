@@ -182,6 +182,21 @@ pub enum TypeError {
         /// Qualified std path as written, e.g. `strings::repeat`.
         path: String,
     },
+    /// `json::render` / `json::encode` was handed an enum value — most
+    /// often a `Result` from `json::parse(..)` that is missing its `?`,
+    /// or an `Option`. Enums have no JSON serialization; the VM
+    /// tolerated the misuse while the compiled tiers silently produced
+    /// an empty string, so the checker now rejects it uniformly.
+    #[error(
+        "`json::{op}` cannot serialize the enum type `{ty}`; unwrap it first \
+         (e.g. with `?` or `match`), or use `to_json::<T>` for a struct"
+    )]
+    JsonNotSerializable {
+        /// The `render` / `encode` function name as written.
+        op: String,
+        /// The rendered enum type, e.g. `Result<json::Value, errors::Error>`.
+        ty: String,
+    },
 }
 
 impl TypeError {
@@ -204,6 +219,7 @@ impl TypeError {
             Self::ClosureParamUninferred { .. } => "closure-param-uninferred",
             Self::Int128Unsupported { .. } => "int128-unsupported",
             Self::StdFnValueUnsupported { .. } => "std-fn-value-unsupported",
+            Self::JsonNotSerializable { .. } => "json-not-serializable",
         }
     }
 
@@ -226,6 +242,7 @@ impl TypeError {
             Self::ClosureParamUninferred { .. } => "GT0013",
             Self::Int128Unsupported { .. } => "GT0014",
             Self::StdFnValueUnsupported { .. } => "GT0015",
+            Self::JsonNotSerializable { .. } => "GT0016",
         }
     }
 }
@@ -389,6 +406,16 @@ impl TypeDiagnostic {
             TypeError::Int128Unsupported { ty } => out = int128_diagnostic(out, ty),
             TypeError::StdFnValueUnsupported { path } => {
                 out = std_fn_value_diagnostic(out, path);
+            }
+            TypeError::JsonNotSerializable { op, ty } => {
+                out = out
+                    .with_note(format!(
+                        "`{ty}` is an enum, which has no JSON representation"
+                    ))
+                    .with_help(format!(
+                        "unwrap the value before encoding — e.g. `let v = …?` then \
+                         `json::{op}(&v)` — or build a `json::Value`"
+                    ));
             }
         }
         out

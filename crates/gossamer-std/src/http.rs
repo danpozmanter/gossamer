@@ -1461,6 +1461,22 @@ pub mod server {
         }
     }
 
+    /// A header value is safe to write only if it carries no CR, LF, or
+    /// NUL — the bytes that would terminate the line and split the
+    /// response.
+    fn is_valid_header_value(value: &str) -> bool {
+        !value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
+    }
+
+    /// A header name is safe only if it is a non-empty token with no
+    /// CR/LF/NUL and no framing characters (`:`, space).
+    fn is_valid_header_name(name: &str) -> bool {
+        !name.is_empty()
+            && !name
+                .bytes()
+                .any(|b| b == b'\r' || b == b'\n' || b == 0 || b == b':' || b == b' ')
+    }
+
     fn write_response_generic<W: Write>(
         stream: &mut W,
         response: &mut Response,
@@ -1514,6 +1530,15 @@ pub mod server {
         // lowercased, and the compiled-tier writer normalizes the
         // same way, so both tiers emit byte-identical header names.
         for (name, value) in headers.iter() {
+            // Never emit a header whose name or value carries a CR, LF,
+            // or NUL: those bytes would split the response and let an
+            // attacker inject headers or a body (HTTP response
+            // splitting). A malformed header is dropped rather than
+            // written, so untrusted input reflected into a header or
+            // cookie cannot smuggle a new line onto the wire.
+            if !is_valid_header_name(name) || !is_valid_header_value(value) {
+                continue;
+            }
             out.push_str(name);
             out.push_str(": ");
             out.push_str(value);
@@ -1596,6 +1621,40 @@ pub mod server {
                 !text.contains("X-Mixed-Case") && !text.contains("Content-Type"),
                 "no canonical-cased names on the wire: {text}"
             );
+        }
+
+        #[test]
+        fn response_writer_drops_header_with_crlf_value() {
+            let mut response = Response::text(super::super::StatusCode(200), "ok");
+            // An app reflecting untrusted input into a header value.
+            response
+                .headers
+                .insert("x-echo", "ok\r\nSet-Cookie: pwned=1\r\nx-extra: y");
+            let mut wire: Vec<u8> = Vec::new();
+            write_response_generic(&mut wire, &mut response, Some("gossamer")).unwrap();
+            let text = String::from_utf8(wire).unwrap();
+            assert!(
+                !text.contains("Set-Cookie: pwned=1"),
+                "injected header must not reach the wire: {text}"
+            );
+            assert!(
+                !text.contains("x-echo"),
+                "the malformed header is dropped entirely: {text}"
+            );
+            // The well-formed part of the response is unaffected.
+            assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
+            assert!(text.contains("content-length: 2\r\n"));
+        }
+
+        #[test]
+        fn header_value_validator_rejects_control_bytes() {
+            assert!(is_valid_header_value("plain value"));
+            assert!(!is_valid_header_value("a\r\nb"));
+            assert!(!is_valid_header_value("a\nb"));
+            assert!(!is_valid_header_value("a\0b"));
+            assert!(is_valid_header_name("x-custom"));
+            assert!(!is_valid_header_name("bad: name"));
+            assert!(!is_valid_header_name("bad\r\n"));
         }
     }
 }

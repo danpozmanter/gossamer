@@ -981,6 +981,45 @@ fn __gos_sql_copy_vals(xs: &[__gos_sql_Value]) -> [__gos_sql_Value] {
     for x in xs { out.push(x) }
     out
 }
+fn __gos_sql_is_simple_ident(s: &String) -> bool {
+    let n = s.len()
+    if n == 0 { return false }
+    let mut i = 0
+    let mut dots = 0
+    let mut start = true
+    while i < n {
+        let b = s.byte_at(i)
+        if b == 46 {
+            if start { return false }
+            dots += 1
+            if dots > 1 { return false }
+            start = true
+            i += 1
+            continue
+        }
+        let alpha = (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+        if start {
+            if !alpha { return false }
+            start = false
+        } else {
+            if !(alpha || (b >= 48 && b <= 57)) { return false }
+        }
+        i += 1
+    }
+    if start { return false }
+    true
+}
+fn __gos_sql_quote_ident(ident: &String) -> String {
+    if __gos_sql_is_simple_ident(ident) {
+        return format!("{}", ident)
+    }
+    format!("\"{}\"", ident.replace("\"", "\"\""))
+}
+fn __gos_sql_quote_idents(xs: &[String]) -> [String] {
+    let mut out: [String] = []
+    for x in xs { out.push(__gos_sql_quote_ident(x)) }
+    out
+}
 impl __gos_sql_Select {
     fn columns(&self, cols: &[String]) -> __gos_sql_Select {
         let mut c = __gos_sql_copy_strs(&self.cols)
@@ -991,12 +1030,12 @@ impl __gos_sql_Select {
         let mut b = __gos_sql_copy_vals(&self.binds)
         b.push(v)
         let mut w = __gos_sql_copy_strs(&self.wheres)
-        w.push(format!("{} = ${}", column, b.len()))
+        w.push(format!("{} = ${}", __gos_sql_quote_ident(column), b.len()))
         __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: w, binds: b, order: self.order, lim: self.lim, off: self.off }
     }
     fn order_by(&self, column: &String, ascending: bool) -> __gos_sql_Select {
         let dir = if ascending { "ASC" } else { "DESC" }
-        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: format!("{} {}", column, dir), lim: self.lim, off: self.off }
+        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: format!("{} {}", __gos_sql_quote_ident(column), dir), lim: self.lim, off: self.off }
     }
     fn limit(&self, n: i64) -> __gos_sql_Select {
         __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: self.order, lim: n, off: self.off }
@@ -1008,8 +1047,8 @@ impl __gos_sql_Select {
         __gos_sql_copy_vals(&self.binds)
     }
     fn render(&self) -> String {
-        let cols = if self.cols.len() == 0 { "*" } else { __gos_sql_join(&self.cols, ", ") }
-        let mut out = format!("SELECT {} FROM {}", cols, self.table)
+        let cols = if self.cols.len() == 0 { "*" } else { __gos_sql_join(&__gos_sql_quote_idents(&self.cols), ", ") }
+        let mut out = format!("SELECT {} FROM {}", cols, __gos_sql_quote_ident(&self.table))
         if self.wheres.len() > 0 {
             out = format!("{} WHERE {}", out, __gos_sql_join(&self.wheres, " AND "))
         }

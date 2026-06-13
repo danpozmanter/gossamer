@@ -1514,6 +1514,40 @@ impl<'a> TypeChecker<'a> {
         None
     }
 
+    /// Rejects `json::render` / `json::encode` of an enum value
+    /// (`Result` / `Option` / user enum). The encoder is polymorphic
+    /// over `json::Value`, scalars, arrays, and structs, but an enum
+    /// has no JSON form and is almost always a `json::parse(..)` whose
+    /// `?` was forgotten. The VM tolerated the misuse (emitting the
+    /// `Ok` payload) while a native build silently emitted `""`, so the
+    /// checker rejects it uniformly with a `?`-pointing diagnostic.
+    fn reject_json_enum_arg(&mut self, op: &str, callee: &Expr, args: &[Expr], arg_tys: &[Ty]) {
+        let Some(&first_ty) = arg_tys.first() else {
+            return;
+        };
+        let mut peeled = self.infer.resolve(self.tcx, first_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(peeled).cloned() {
+            peeled = self.infer.resolve(self.tcx, inner);
+        }
+        let adt_def = match self.tcx.kind(peeled) {
+            Some(TyKind::Adt { def, .. }) => Some(*def),
+            _ => None,
+        };
+        if let Some(def) = adt_def
+            && self.tcx.struct_field_tys(def).is_none()
+        {
+            let span = args.first().map_or(callee.span, |a| a.span);
+            let ty = crate::printer::render_ty(self.tcx, peeled);
+            self.emit(
+                TypeError::JsonNotSerializable {
+                    op: op.to_string(),
+                    ty,
+                },
+                span,
+            );
+        }
+    }
+
     fn check_call_inner(
         &mut self,
         callee: &Expr,
@@ -1621,7 +1655,10 @@ impl<'a> TypeChecker<'a> {
                         let e = self.tcx.dyn_error_ty();
                         return self.result_adt_ty(j, e);
                     }
-                    "render" | "encode" => return self.tcx.string_ty(),
+                    "render" | "encode" => {
+                        self.reject_json_enum_arg(last, callee, args, arg_tys);
+                        return self.tcx.string_ty();
+                    }
                     "get" | "at" | "as_array" | "identity" => {
                         return self.tcx.json_value_ty();
                     }

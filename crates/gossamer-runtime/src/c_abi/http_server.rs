@@ -887,6 +887,22 @@ pub(crate) fn normalize_header_bag(headers: &mut Vec<(String, String)>) {
     headers.truncate(write);
 }
 
+/// A header value is safe to write only if it carries no CR, LF, or
+/// NUL — the bytes that would terminate the line and split the
+/// response. Mirrors the interpreter server's gate.
+fn is_valid_header_value(value: &str) -> bool {
+    !value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
+}
+
+/// A header name is safe only if it is a non-empty token with no
+/// CR/LF/NUL and no framing characters (`:`, space).
+fn is_valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name
+            .bytes()
+            .any(|b| b == b'\r' || b == b'\n' || b == 0 || b == b':' || b == b' ')
+}
+
 /// Writes `result`'s response payload (status + headers +
 /// body) into `out` as raw HTTP/1.1 bytes. Returns false if
 /// `result` doesn't carry a valid OK response.
@@ -927,6 +943,15 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
     let mut has_content_length = false;
     let mut has_content_type = false;
     for (k, v) in &response.headers {
+        // Never emit a header whose name or value carries a CR, LF, or
+        // NUL — those bytes would split the response and let an attacker
+        // inject headers or a body (HTTP response splitting). Drop the
+        // malformed header rather than write it, matching the interp
+        // server so untrusted input reflected into a header or cookie
+        // cannot smuggle a new line onto the wire.
+        if !is_valid_header_name(k) || !is_valid_header_value(v) {
+            continue;
+        }
         if k.eq_ignore_ascii_case("content-length") {
             has_content_length = true;
         }
@@ -994,6 +1019,10 @@ fn extract_stream_head_into(result: i128, out: &mut Vec<u8>) {
     out.extend_from_slice(b"\r\n");
     let mut has_content_type = false;
     for (k, v) in &response.headers {
+        // Drop CR/LF/NUL-bearing headers — see `extract_response_into`.
+        if !is_valid_header_name(k) || !is_valid_header_value(v) {
+            continue;
+        }
         if k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("transfer-encoding") {
             continue;
         }

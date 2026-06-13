@@ -44,7 +44,10 @@ pub use resolver::{
     resolve_transitive,
 };
 pub use scaffold::{render_initial_manifest, render_main_source};
-pub use signing::{SigningError, SigningKey, VerifyingKey, sign_bytes, verify_bytes};
+pub use signing::{
+    SigningError, SigningKey, VerifyingKey, hex_encode, sign_bytes, verify_bytes,
+    verify_signature_hex,
+};
 pub use transport::{
     HttpTransport, HttpsTransport, StaticTransport, Transport, TransportError, fetch_verified,
 };

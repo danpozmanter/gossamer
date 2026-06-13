@@ -73,6 +73,11 @@ pub struct Fetcher {
     options: FetchOptions,
     transport: Arc<dyn Transport>,
     catalogue: VersionCatalogue,
+    /// Publisher keys pinned from the lockfile (project id → hex
+    /// public key). A registry fetch whose advertised key differs from
+    /// a pin is rejected; an id with no pin is trusted on first use and
+    /// recorded into the lockfile afterwards.
+    pinned_keys: BTreeMap<String, String>,
 }
 
 impl std::fmt::Debug for Fetcher {
@@ -81,6 +86,7 @@ impl std::fmt::Debug for Fetcher {
             .field("options", &self.options)
             .field("transport", &"<dyn Transport>")
             .field("catalogue", &self.catalogue)
+            .field("pinned_keys", &self.pinned_keys)
             .finish()
     }
 }
@@ -99,6 +105,7 @@ impl Fetcher {
             options,
             transport: Arc::new(StaticTransport::new()),
             catalogue: VersionCatalogue::new(),
+            pinned_keys: BTreeMap::new(),
         }
     }
 
@@ -110,6 +117,7 @@ impl Fetcher {
             options,
             transport,
             catalogue: VersionCatalogue::new(),
+            pinned_keys: BTreeMap::new(),
         }
     }
 
@@ -118,6 +126,15 @@ impl Fetcher {
     #[must_use]
     pub fn with_catalogue(mut self, catalogue: VersionCatalogue) -> Self {
         self.catalogue = catalogue;
+        self
+    }
+
+    /// Pins publisher keys (project id → hex public key), normally
+    /// loaded from the existing lockfile. A registry fetch whose
+    /// advertised key differs from its pin is rejected.
+    #[must_use]
+    pub fn with_pinned_keys(mut self, pinned_keys: BTreeMap<String, String>) -> Self {
+        self.pinned_keys = pinned_keys;
         self
     }
 
@@ -159,12 +176,14 @@ impl Fetcher {
     }
 
     fn fetch_one(&self, resolved: &Resolved, cache: &mut Cache) -> Result<Fetched, CacheError> {
-        let source = match &resolved.pin {
-            ResolvedSource::Path(path) => fetch_path(resolved, Path::new(path))?,
-            ResolvedSource::Git { url, reference } => self.fetch_git(resolved, url, reference)?,
+        let (source, owner_pubkey) = match &resolved.pin {
+            ResolvedSource::Path(path) => (fetch_path(resolved, Path::new(path))?, None),
+            ResolvedSource::Git { url, reference } => {
+                (self.fetch_git(resolved, url, reference)?, None)
+            }
             ResolvedSource::Registry(version) => self.fetch_registry(resolved, *version)?,
             ResolvedSource::Tarball { url, sha256: hash } => {
-                self.fetch_tarball(resolved, url, hash)?
+                (self.fetch_tarball(resolved, url, hash, None)?, None)
             }
         };
         if self.options.offline && !cache.contains(&source.digest) {
@@ -177,14 +196,21 @@ impl Fetcher {
         Ok(Fetched {
             resolved: resolved.clone(),
             source,
+            owner_pubkey,
         })
     }
 
+    /// Downloads `url`, verifies its sha256, and — when `signature` is
+    /// supplied (registry sources) — authenticates the publisher
+    /// signature over the raw bytes before unpacking. Both checks run
+    /// before [`tar::unpack`], so a tampered or unsigned payload never
+    /// reaches the filesystem.
     fn fetch_tarball(
         &self,
         resolved: &Resolved,
         url: &str,
         expected_sha256: &str,
+        signature: Option<SignatureCheck<'_>>,
     ) -> Result<CachedSource, CacheError> {
         let bytes = self
             .transport
@@ -198,6 +224,9 @@ impl Fetcher {
                 found: actual,
             });
         }
+        if let Some(check) = signature {
+            check.verify(&resolved.id, &bytes)?;
+        }
         let files = tar::unpack(&bytes).map_err(|e| {
             CacheError::Unsupported(format!("{}: tarball unpack failed: {e}", resolved.id))
         })?;
@@ -208,7 +237,7 @@ impl Fetcher {
         &self,
         resolved: &Resolved,
         version: crate::version::Version,
-    ) -> Result<CachedSource, CacheError> {
+    ) -> Result<(CachedSource, Option<String>), CacheError> {
         let entry = self.catalogue.entry(&resolved.id, version).ok_or_else(|| {
             CacheError::Unsupported(format!(
                 "{}: registry catalogue has no entry for {version}; \
@@ -233,7 +262,22 @@ impl Fetcher {
                 resolved.id
             ))
         })?;
-        self.fetch_tarball(resolved, &url, &expected)
+        // Registry sources must be signed by the publisher. The
+        // signature is verified over the tarball bytes, and the
+        // advertised key is checked against any lockfile pin so a
+        // compromised registry cannot silently swap publishers.
+        let (signature, public_key) = match (&entry.signature, &entry.public_key) {
+            (Some(s), Some(k)) => (s.clone(), k.clone()),
+            _ => return Err(CacheError::Unsigned(resolved.id.as_str().to_string())),
+        };
+        let pinned = self.pinned_keys.get(resolved.id.as_str()).cloned();
+        let check = SignatureCheck {
+            signature_hex: &signature,
+            public_key_hex: &public_key,
+            pinned_key: pinned.as_deref(),
+        };
+        let source = self.fetch_tarball(resolved, &url, &expected, Some(check))?;
+        Ok((source, Some(public_key)))
     }
 
     fn fetch_git(
@@ -259,6 +303,35 @@ impl Fetcher {
             CacheError::Unsupported(format!("{}: tarball unpack failed: {e}", resolved.id))
         })?;
         Ok(CachedSource::build(resolved.id.clone(), files))
+    }
+}
+
+/// Publisher-signature inputs for a registry tarball.
+struct SignatureCheck<'a> {
+    /// Hex ed25519 signature over the tarball bytes.
+    signature_hex: &'a str,
+    /// Hex ed25519 public key the registry advertises.
+    public_key_hex: &'a str,
+    /// Key pinned in the lockfile, if this id has been fetched before.
+    pinned_key: Option<&'a str>,
+}
+
+impl SignatureCheck<'_> {
+    /// Rejects a key that disagrees with the lockfile pin, then
+    /// verifies the signature over `bytes`. Public keys are not secret,
+    /// so the pin comparison need not be constant-time.
+    fn verify(&self, id: &crate::id::ProjectId, bytes: &[u8]) -> Result<(), CacheError> {
+        if let Some(pin) = self.pinned_key
+            && pin != self.public_key_hex
+        {
+            return Err(CacheError::KeyMismatch {
+                id: id.as_str().to_string(),
+                pinned: pin.to_string(),
+                offered: self.public_key_hex.to_string(),
+            });
+        }
+        crate::signing::verify_signature_hex(self.public_key_hex, bytes, self.signature_hex)
+            .map_err(|_| CacheError::SignatureInvalid(id.as_str().to_string()))
     }
 }
 

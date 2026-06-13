@@ -85,6 +85,16 @@ The HTTP stack was the largest remaining VM-only / tier-divergent surface; it is
 - **`println!` flushes on every newline.** `gos_rt_println` now unconditionally flushes stdout after the newline (matching Rust's `LineWriter` contract), so native-program `println!` output appears immediately without a manual `io::stdout().flush()`. `print!` (no newline) keeps its unbuffered-until-newline behavior, as in Rust.
 - **SKILL.md trimmed** from ~50k to ~34k chars — stdlib surface compressed and style rules de-duplicated against the idioms section, with every syntax rule and API entry preserved.
 
+### Security
+
+- **Package tarball extraction rejects path traversal.** `tar::unpack` refuses entries with absolute or `..` paths (and Windows separators), so a malicious package can no longer write outside the cache through `gos add` / `fetch` / `vendor`.
+- **Registry tarballs are Ed25519-verified before extraction.** A registry source must carry a valid publisher signature over the tarball; the publisher key is pinned in `project.lock` on first fetch and a later key change is rejected, and an unsigned registry source is refused.
+- **Plaintext registry traffic no longer downgrades silently.** An `http://` registry or download URL is refused unless the host is loopback or `GOS_ALLOW_INSECURE_REGISTRY=1` is set.
+- **HTTP response-header injection is blocked on every tier.** The interpreter and native servers drop any handler-set header whose name or value contains CR / LF / NUL, closing response splitting through a reflected header or cookie value; the cookie encoder also drops CR / LF / `;` / `"` / `\`.
+- **The SQL `Select` builder quote-escapes identifiers on every tier.** A table / column / `ORDER BY` identifier that is not a plain identifier is emitted as a single quoted identifier rather than concatenated raw, so a user-controlled sort column cannot inject SQL; savepoint names are validated likewise.
+- **`json::encode` escapes `<`, `>`, `&`, U+2028, and U+2029** so a JSON string is safe to embed in an HTML `<script>` block; the escapes round-trip and are byte-identical across tiers.
+- **HTML auto-escape template hardened**: a `javascript:` / `data:` URL-attribute scheme is neutralized and unquoted-attribute values escape their terminators, closing two XSS vectors.
+
 ## 0.12.0 — Arenas, compact enums, panic ergonomics, predictable memory, deep optimizations.
 
 - **`arena { }` blocks (inspired by Zig).** Everything allocated in the block is bump-allocated and freed wholesale on every exit path (desugars to a block-scoped `defer`). Arenas nest, slabs recycle, and retain/release are no-ops for arena values via a range check against one reserved virtual range. Statement-position only; contract documented in the memory-model chapter. binary-trees with arenas: 0.36 s / 18 MB.

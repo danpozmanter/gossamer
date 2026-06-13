@@ -918,6 +918,16 @@ fn write_string(out: &mut String, text: &str) {
             '\r' => out.push_str("\\r"),
             '\u{0008}' => out.push_str("\\b"),
             '\u{000c}' => out.push_str("\\f"),
+            // Escape the bytes that would let a JSON string break out of
+            // a surrounding HTML `<script>` block (`</script>`) or be
+            // read as a line terminator by a JavaScript parser
+            // (U+2028/U+2029). All are valid JSON escapes that decode
+            // back to the original character, so round-trips are exact.
+            '<' => out.push_str("\\u003c"),
+            '>' => out.push_str("\\u003e"),
+            '&' => out.push_str("\\u0026"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
             c if (c as u32) < 0x20 => {
                 let _ = write!(out, "\\u{:04x}", c as u32);
             }
@@ -939,6 +949,34 @@ mod tests {
         let back = encode(&value);
         let again = parse(&back).unwrap();
         assert_eq!(value, again);
+    }
+
+    #[test]
+    fn encode_escapes_script_breakout_and_round_trips() {
+        let value = Value::String("</script><img src=x onerror=alert(1)>&".into());
+        let encoded = encode(&value);
+        // The script-terminating bytes are escaped, so the string is
+        // safe to embed inside an inline <script> block.
+        assert!(!encoded.contains('<'), "got {encoded}");
+        assert!(!encoded.contains('>'), "got {encoded}");
+        assert!(
+            !encoded.contains('&') || encoded.contains("\\u0026"),
+            "got {encoded}"
+        );
+        assert!(encoded.contains("\\u003c/script\\u003e"), "got {encoded}");
+        // The escapes decode back to the original string exactly.
+        assert_eq!(parse(&encoded).unwrap(), value);
+    }
+
+    #[test]
+    fn encode_escapes_js_line_terminators() {
+        let value = Value::String("a\u{2028}b\u{2029}c".into());
+        let encoded = encode(&value);
+        assert!(
+            encoded.contains("\\u2028") && encoded.contains("\\u2029"),
+            "got {encoded}"
+        );
+        assert_eq!(parse(&encoded).unwrap(), value);
     }
 
     #[test]

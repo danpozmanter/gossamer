@@ -121,7 +121,7 @@ impl Cookie {
     /// backslash-escaped.
     pub fn to_header_value(&self) -> String {
         let mut out = String::with_capacity(self.name.len() + self.value.len() + 8);
-        out.push_str(&self.name);
+        out.push_str(&sanitize_cookie_name(&self.name));
         out.push('=');
         out.push_str(&encode_value(&self.value));
 
@@ -309,35 +309,33 @@ pub fn parse_set_cookie(header: &str) -> Result<Cookie, Error> {
     Ok(cookie)
 }
 
-// Returns true when `b` is a valid cookie-octet per RFC 6265 §4.1.1
-// (US-ASCII printable, excluding CTLs, whitespace, DQUOTE, comma,
-// semicolon, and backslash).
-fn is_cookie_octet(b: u8) -> bool {
-    matches!(b,
-        0x21
-        | 0x23..=0x2B
-        | 0x2D..=0x3A
-        | 0x3C..=0x5B
-        | 0x5D..=0x7E
-    )
+// Renders `value` as a header-safe cookie value. Mirrors Go's
+// `net/http` sanitizeCookieValue: keep printable ASCII except `"`,
+// `;`, `\` and drop every other byte (CR, LF, NUL, DEL, high bytes),
+// then wrap in DQUOTE when the result contains a space or comma. The
+// dropped bytes are exactly those that would split the `Set-Cookie`
+// header or inject cookie attributes, so a value built from untrusted
+// input can never break out of its slot.
+fn encode_value(value: &str) -> String {
+    let sanitized: String = value
+        .bytes()
+        .filter(|&b| (0x20..=0x7e).contains(&b) && b != b'"' && b != b';' && b != b'\\')
+        .map(char::from)
+        .collect();
+    if sanitized.bytes().any(|b| b == b' ' || b == b',') {
+        format!("\"{sanitized}\"")
+    } else {
+        sanitized
+    }
 }
 
-// Renders `value` either verbatim or quoted+escaped, depending on
-// whether every byte is a legal cookie-octet.
-fn encode_value(value: &str) -> String {
-    if value.bytes().all(is_cookie_octet) {
-        return value.to_string();
-    }
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    for ch in value.chars() {
-        if ch == '"' || ch == '\\' {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out.push('"');
-    out
+// Strips CR, LF, and NUL from a cookie name so a name built from
+// untrusted input cannot inject a new header line. (A conformant name
+// is a token; this is the minimal split-prevention guard.)
+fn sanitize_cookie_name(name: &str) -> String {
+    name.chars()
+        .filter(|&c| c != '\r' && c != '\n' && c != '\0')
+        .collect()
 }
 
 // Strips a surrounding pair of `"` if present and unescapes the
@@ -434,12 +432,45 @@ mod tests {
     }
 
     #[test]
-    fn to_header_value_escapes_quote_and_backslash() {
+    fn to_header_value_drops_quote_and_backslash() {
+        // `"` and `\` are not valid cookie-octets and cannot be safely
+        // represented, so they are dropped (matching Go's net/http).
         let c = Cookie::new("k", "a\"b\\c");
         let header = c.to_header_value();
-        assert_eq!(header, "k=\"a\\\"b\\\\c\"");
-        let parsed = parse_set_cookie(&header).expect("parse succeeds");
-        assert_eq!(parsed.value, "a\"b\\c");
+        assert_eq!(header, "k=abc");
+    }
+
+    #[test]
+    fn to_header_value_strips_crlf_from_value() {
+        // An app setting a cookie from untrusted input must not be able
+        // to inject a second header line (HTTP response splitting). The
+        // CR/LF are dropped, so the payload stays a single header line.
+        let c = Cookie::new("lang", "en\r\nSet-Cookie: pwned=1");
+        let header = c.to_header_value();
+        assert!(
+            !header.contains('\r') && !header.contains('\n'),
+            "got {header:?}"
+        );
+        assert_eq!(header.lines().count(), 1, "must stay one line: {header:?}");
+    }
+
+    #[test]
+    fn to_header_value_drops_semicolon_to_block_attribute_injection() {
+        let c = Cookie::new("k", "v; Domain=evil.example; Path=/admin");
+        let header = c.to_header_value();
+        // No raw `;` survives, so a browser cannot split the value into
+        // attacker-chosen cookie attributes.
+        assert!(!header.contains(';'), "got {header:?}");
+    }
+
+    #[test]
+    fn to_header_value_strips_crlf_from_name() {
+        let c = Cookie::new("a\r\nSet-Cookie: x", "1");
+        let header = c.to_header_value();
+        assert!(
+            !header.contains('\r') && !header.contains('\n'),
+            "got {header:?}"
+        );
     }
 
     #[test]

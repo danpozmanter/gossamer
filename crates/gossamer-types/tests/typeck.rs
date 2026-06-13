@@ -689,6 +689,41 @@ fn tabled_std_fn_as_value_typechecks_clean() {
 }
 
 #[test]
+fn json_encode_of_an_enum_errors_with_gt0016() {
+    // The classic missing-`?`: `json::parse` returns a Result, so
+    // encoding it (instead of the unwrapped Value) is rejected.
+    let source = "use std::encoding::json\n\
+                  fn main() { let v = json::parse(\"{}\")\n\
+                  let _ = json::encode(&v) }\n";
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        diagnostics.iter().any(
+            |d| matches!(&d.error, TypeError::JsonNotSerializable { op, .. } if op == "encode")
+        ),
+        "expected JsonNotSerializable for json::encode of a Result, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn json_encode_of_value_scalar_and_struct_typechecks_clean() {
+    // json::Value, scalars, and structs are all valid encode inputs.
+    let source = "use std::encoding::json\n\
+                  struct P { x: i64 }\n\
+                  fn main() {\n\
+                  let _ = json::encode(&42)\n\
+                  let _ = json::encode(&P { x: 1 })\n\
+                  let v = json::parse(\"{}\").unwrap()\n\
+                  let _ = json::encode(&v) }\n";
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::JsonNotSerializable { .. })),
+        "valid json::encode inputs must not trip GT0016, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn std_fn_in_callee_position_stays_legal() {
     // Call and pipe-rhs positions are the normal stdlib call shapes;
     // GT0015 only fires on genuine value positions.

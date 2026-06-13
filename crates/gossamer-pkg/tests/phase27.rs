@@ -211,6 +211,7 @@ fn lockfile_round_trips_through_render() {
         .map(|resolved| LockedEntry {
             resolved,
             sha256: None,
+            owner_pubkey: None,
         })
         .collect();
     assert_eq!(reparsed.entries, expected);

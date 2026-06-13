@@ -30,6 +30,13 @@ pub enum TransportError {
     /// URL did not parse into a scheme+host+path triple we handle.
     #[error("bad url: {0}")]
     BadUrl(String),
+    /// A plaintext `http://` URL was used for a non-loopback host
+    /// without the insecure-registry opt-in. Refused so registry
+    /// traffic (index, downloads) is not silently downgraded off TLS.
+    #[error(
+        "refusing plaintext http for {0}: set GOS_ALLOW_INSECURE_REGISTRY=1 to allow an insecure registry"
+    )]
+    InsecureScheme(String),
     /// The HTTPS scheme was requested but the transport used cannot
     /// speak TLS.
     #[error("https not supported by transport")]
@@ -173,6 +180,10 @@ impl Transport for HttpTransport {
 /// Rustls-backed HTTPS transport, pinned to the Mozilla CA bundle.
 pub struct HttpsTransport {
     config: Arc<ClientConfig>,
+    /// When `true`, a plaintext `http://` URL to a non-loopback host is
+    /// allowed (the `--allow-insecure-registry` / env opt-in). Default
+    /// `false`: such URLs are refused rather than silently downgraded.
+    allow_insecure: bool,
 }
 
 impl HttpsTransport {
@@ -186,6 +197,18 @@ impl HttpsTransport {
     /// installs `ring` unconditionally.
     #[must_use]
     pub fn new_mozilla_roots() -> Self {
+        Self::new_mozilla_roots_with_insecure(false)
+    }
+
+    /// Like [`Self::new_mozilla_roots`] but permits plaintext `http://`
+    /// to non-loopback hosts. Use only for a trusted dev/internal
+    /// registry; production registries must be `https://`.
+    #[must_use]
+    pub fn new_mozilla_roots_insecure() -> Self {
+        Self::new_mozilla_roots_with_insecure(true)
+    }
+
+    fn new_mozilla_roots_with_insecure(allow_insecure: bool) -> Self {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let mut roots = RootCertStore::empty();
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -194,15 +217,36 @@ impl HttpsTransport {
             .with_no_client_auth();
         Self {
             config: Arc::new(config),
+            allow_insecure,
         }
     }
+
+    /// Whether a plaintext `http://` request to `host` is permitted:
+    /// loopback hosts are always safe (no off-host attacker), otherwise
+    /// only under the insecure opt-in.
+    fn http_allowed(&self, host: &str) -> bool {
+        self.allow_insecure || is_loopback_host(host)
+    }
+}
+
+/// Returns `true` for loopback hosts (`localhost`, `127.0.0.0/8`,
+/// `::1`), which cannot be intercepted by an off-host network attacker.
+fn is_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 impl Transport for HttpsTransport {
     fn get(&self, url: &str) -> Result<Vec<u8>, TransportError> {
         let parsed = parse_url(url)?;
         if parsed.scheme == "http" {
-            return HttpTransport.get(url);
+            if self.http_allowed(&parsed.host) {
+                return HttpTransport.get(url);
+            }
+            return Err(TransportError::InsecureScheme(url.to_string()));
         }
         if parsed.scheme != "https" {
             return Err(TransportError::BadUrl(url.to_string()));
@@ -231,7 +275,10 @@ impl Transport for HttpsTransport {
     ) -> Result<Vec<u8>, TransportError> {
         let parsed = parse_url(url)?;
         if parsed.scheme == "http" {
-            return HttpTransport.post(url, body, content_type, auth_token);
+            if self.http_allowed(&parsed.host) {
+                return HttpTransport.post(url, body, content_type, auth_token);
+            }
+            return Err(TransportError::InsecureScheme(url.to_string()));
         }
         if parsed.scheme != "https" {
             return Err(TransportError::BadUrl(url.to_string()));
@@ -482,5 +529,39 @@ mod tests {
     fn http_transport_rejects_https_url() {
         let err = HttpTransport.get("https://example.com").unwrap_err();
         assert!(matches!(err, TransportError::HttpsUnsupported));
+    }
+
+    #[test]
+    fn is_loopback_host_recognizes_local_addresses() {
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("LocalHost"));
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("127.5.6.7"));
+        assert!(is_loopback_host("::1"));
+        assert!(!is_loopback_host("registry.evil.test"));
+        assert!(!is_loopback_host("10.0.0.1"));
+    }
+
+    #[test]
+    fn https_transport_refuses_remote_http_by_default() {
+        // The scheme is rejected before any network connection.
+        let err = HttpsTransport::new_mozilla_roots()
+            .get("http://registry.evil.test/index.json")
+            .unwrap_err();
+        assert!(
+            matches!(err, TransportError::InsecureScheme(_)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn https_transport_http_policy_respects_loopback_and_opt_in() {
+        let secure = HttpsTransport::new_mozilla_roots();
+        assert!(!secure.http_allowed("registry.evil.test"));
+        assert!(secure.http_allowed("localhost"));
+        assert!(secure.http_allowed("127.0.0.1"));
+
+        let insecure = HttpsTransport::new_mozilla_roots_insecure();
+        assert!(insecure.http_allowed("registry.evil.test"));
     }
 }

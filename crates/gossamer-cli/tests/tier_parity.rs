@@ -227,6 +227,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/slice_param_coercion.gos"),
     spec("feature-testing-examples/enum_param_rc_repro.gos"),
     spec("feature-testing-examples/sql_driverless.gos"),
+    spec("feature-testing-examples/sql_ident_quoting.gos"),
     spec("feature-testing-examples/struct_copy_reclaim.gos"),
     spec("feature-testing-examples/struct_copy_followups.gos"),
     spec("feature-testing-examples/struct_container_reclaim.gos"),
