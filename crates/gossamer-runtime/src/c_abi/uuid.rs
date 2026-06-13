@@ -619,6 +619,18 @@ pub extern "C" fn gos_rt_option_default_i64(fallback: i64, opt: i128) -> i64 {
     }
 }
 
+/// `option::default(v, opt)` specialised for f64 payloads: the stored
+/// payload word is reinterpreted as its IEEE-754 bit pattern, and the
+/// fallback rides the float register directly.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_option_default_f64(fallback: f64, opt: i128) -> f64 {
+    if super::vec::gos_rt_result_disc(opt) != 0 {
+        fallback
+    } else {
+        f64::from_bits(super::vec::gos_rt_result_payload(opt) as u64)
+    }
+}
+
 /// `option::map(f, opt) -> Option<i64>`. Mirrors `iter::map` shape:
 /// `env[0]` holds the closure body fn-addr (i64), and the closure
 /// is called as `f(env, x) -> i64`. Returns a fresh `*mut GosResult`

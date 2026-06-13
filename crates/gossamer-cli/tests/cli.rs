@@ -3,6 +3,8 @@
 //! asserts behaviour for `parse`, `check`, `run`, `build`, plus
 //! cross-compilation via `--target`.
 
+mod common;
+
 use std::env;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -241,8 +243,10 @@ fn build_output_preserves_http_method_chain_through_send_and_field_access() {
             "use std::http\n\
              fn main() {{\n\
                  let url = \"http://{addr}/\".to_string()\n\
-                 let resp = http::Client::new().get(&url).send()\n\
-                 println(resp.status.to_string() + \":\" + resp.body)\n\
+                 match http::Client::new().get(&url).send() {{\n\
+                     Ok(resp) => println(resp.status.to_string() + \":\" + resp.body),\n\
+                     Err(e) => println(\"send failed: \" + e.message()),\n\
+                 }}\n\
              }}\n"
         ),
     )
@@ -268,6 +272,130 @@ fn build_output_preserves_http_method_chain_through_send_and_field_access() {
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout), "200:hello\n");
+    server.join().expect("join server");
+}
+
+/// Serves `count` HTTP requests on `listener`, echoing the `x-test`
+/// header and the request body back as `xt=<v> body=<b>` with a 201.
+fn serve_builder_echo(listener: &TcpListener, count: usize) {
+    for _ in 0..count {
+        let (mut stream, _) = listener.accept().expect("accept client");
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        let body_start = loop {
+            let n = stream.read(&mut chunk).expect("read request");
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+            assert!(n != 0, "connection closed before headers completed");
+        };
+        let lower = String::from_utf8_lossy(&buf[..body_start]).to_ascii_lowercase();
+        let content_len: usize = lower
+            .lines()
+            .find_map(|l| l.strip_prefix("content-length:").map(str::trim))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        while buf.len() < body_start + content_len {
+            let n = stream.read(&mut chunk).expect("read body");
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        let xt = lower
+            .lines()
+            .find_map(|l| l.strip_prefix("x-test:").map(str::trim))
+            .unwrap_or("<none>");
+        let body = String::from_utf8_lossy(&buf[body_start..]).into_owned();
+        let reply = format!("xt={xt} body={body}");
+        let resp = format!(
+            "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            reply.len(),
+            reply
+        );
+        stream.write_all(resp.as_bytes()).expect("write response");
+    }
+}
+
+/// Tier-parity sentinel for the chained client builder: the same
+/// source must produce byte-identical stdout under `gos run` (VM)
+/// and a `gos build` native binary, with the chained header + body
+/// honored and a transport failure surfacing as `Err` on both tiers.
+#[test]
+fn vm_and_native_client_builder_chain_outputs_match() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback server");
+    let addr = listener.local_addr().expect("loopback addr");
+    // One POST per tier (VM run + native run).
+    let server = std::thread::spawn(move || serve_builder_echo(&listener, 2));
+
+    let source = format!(
+        "use std::http\n\
+         fn main() {{\n\
+             let client = http::Client::new()\n\
+             let sent = client\n\
+                 .post(&\"http://{addr}/echo\")\n\
+                 .header(\"x-test\", \"parity\")\n\
+                 .body(\"ping\")\n\
+                 .send()\n\
+             match sent {{\n\
+                 Ok(r) => println!(\"post: {{}} {{}}\", r.status, r.body),\n\
+                 Err(e) => println!(\"post err: {{}}\", e),\n\
+             }}\n\
+             match client.get(&\"http://127.0.0.1:1/refused\").send() {{\n\
+                 Ok(r) => println!(\"refused ok: {{}}\", r.status),\n\
+                 Err(e) => println!(\"refused err: {{}}\", e),\n\
+             }}\n\
+         }}\n"
+    );
+    let dir = env::temp_dir().join(format!("gos-builder-parity-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source_path = dir.join("builder_parity.gos");
+    std::fs::write(&source_path, source).unwrap();
+
+    let vm = Command::new(gos_bin())
+        .arg("run")
+        .arg(&source_path)
+        .output()
+        .expect("spawn gos run");
+    assert!(
+        vm.status.success(),
+        "gos run failed: {}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+
+    let build = Command::new(gos_bin())
+        .arg("build")
+        .arg(&source_path)
+        .output()
+        .expect("spawn build");
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let binary = dir
+        .join("target")
+        .join("debug")
+        .join(format!("builder_parity{}", std::env::consts::EXE_SUFFIX));
+    let native = Command::new(&binary).output().expect("run built artifact");
+    assert!(
+        native.status.success(),
+        "native run failed: {}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+
+    let vm_out = String::from_utf8_lossy(&vm.stdout).into_owned();
+    let native_out = String::from_utf8_lossy(&native.stdout).into_owned();
+    assert_eq!(vm_out, native_out, "tier outputs diverge");
+    assert!(
+        vm_out.contains("post: 201 xt=parity body=ping"),
+        "chained header/body not honored: {vm_out}"
+    );
+    assert!(
+        vm_out.contains("refused err: http: transport:"),
+        "transport failure must surface as Err: {vm_out}"
+    );
     server.join().expect("join server");
 }
 
@@ -468,6 +596,8 @@ fn web_server_example_binds_and_serves_real_requests() {
     use std::thread;
     use std::time::Duration;
 
+    let _server_window = common::ServerPortLock::acquire();
+
     let probe = std::net::TcpListener::bind("127.0.0.1:8080");
     drop(probe.ok());
     // NOTE: the probe above may race with a concurrent test; treat
@@ -617,10 +747,9 @@ fn test_subcommand_reports_no_tests_when_absent() {
 }
 
 #[test]
-fn bench_subcommand_reports_ns_and_allocs_per_op() {
-    // No-op bench fn — exercises the `0 allocs/op` formatter and
-    // the calibration cap on a fn that never crosses the 50ms trial
-    // threshold.
+fn bench_subcommand_reports_ns_per_op() {
+    // No-op bench fn — exercises the formatter and the calibration
+    // cap on a fn that never crosses the 50ms trial threshold.
     let fixture = write_fixture(
         "benchharness_noop",
         "#[bench]\nfn bench_noop() { }\nfn main() { }\n",
@@ -639,10 +768,6 @@ fn bench_subcommand_reports_ns_and_allocs_per_op() {
     assert!(
         stdout.contains("ns/op"),
         "expected ns/op in stdout, got: {stdout}"
-    );
-    assert!(
-        stdout.contains("allocs/op"),
-        "expected allocs/op in stdout, got: {stdout}"
     );
     assert!(
         stdout.contains("bench_noop"),
@@ -679,7 +804,6 @@ fn main() { }
         .find(|l| l.contains("bench_add_two"))
         .unwrap_or_else(|| panic!("missing bench line in stdout: {stdout}"));
     assert!(line.contains("ns/op"));
-    assert!(line.contains("allocs/op"));
     let _ = std::fs::remove_file(&fixture);
 }
 
@@ -1033,6 +1157,22 @@ fn explain_prints_description_for_known_code() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("GP0001"));
     assert!(text.contains("parser"));
+}
+
+/// Every GT rejection code the checker gained this cycle has an
+/// `explain` entry — a refusal pointing at an unexplained code is
+/// a docs gap.
+#[test]
+fn explain_covers_checker_rejection_codes() {
+    for code in ["GT0013", "GT0014", "GT0015"] {
+        let out = Command::new(gos_bin())
+            .args(["explain", code])
+            .output()
+            .expect("spawn explain");
+        assert!(out.status.success(), "explain {code} failed");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains(code), "explain {code} output: {text}");
+    }
 }
 
 /// Stream H.6 — unknown codes produce a clear error.
@@ -1597,5 +1737,93 @@ fn main() {
     assert!(
         stdout.contains("ok"),
         "expected 'ok' in stdout; got: {stdout}"
+    );
+}
+
+#[test]
+fn bare_manifest_id_is_a_hard_error_for_project_commands() {
+    // A bare `id = "name"` used to silently disable `[rust-bindings]`
+    // resolution while `gos check` / `gos test` kept passing. A
+    // present-but-malformed manifest must fail loudly instead.
+    let dir = env::temp_dir().join(format!("gos-bare-id-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"bareid\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/main.gos"), "fn main() { println!(\"hi\") }\n").unwrap();
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .arg(".")
+        .current_dir(&dir)
+        .output()
+        .expect("spawn gos test");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !out.status.success(),
+        "bare manifest id must fail; stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("invalid domain segment") || stdout.contains("invalid domain segment"),
+        "diagnostic must explain the id grammar; stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn unbound_binding_module_call_fails_with_gx0002() {
+    // A declared-but-unresolved binding fn (`use brotli` with no
+    // engaged runner) must raise GX0002 when called — never silently
+    // return Unit (which let tests "pass" with zero real coverage)
+    // and never hijack an unrelated builtin sharing the tail name.
+    let dir = env::temp_dir().join(format!("gos-unbound-binding-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/unbound\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.gos"),
+        r#"use brotli
+use std::testing
+
+fn main() {
+    println!("unused")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn unbound_decode_is_loud() {
+        match brotli::decode([1, 2, 3]) {
+            Ok(_) => testing::check(false, "must not decode"),
+            Err(_) => testing::check(true, "error surfaced"),
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .arg(".")
+        .current_dir(&dir)
+        .output()
+        .expect("spawn gos test");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !out.status.success(),
+        "unbound binding call must fail the test run; stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("GX0002") && stdout.contains("brotli::decode"),
+        "failure must name the unresolved binding; stdout: {stdout}\nstderr: {stderr}"
     );
 }

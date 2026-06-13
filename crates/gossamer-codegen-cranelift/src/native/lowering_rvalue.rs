@@ -225,13 +225,7 @@ pub(super) fn lower_rvalue(
                 let call = builder.ins().call(fref, &[a64, b64]);
                 builder.inst_results(call)[0]
             } else {
-                // Operand signedness only matters for `Shr` today
-                // (the unsigned types use the same `iadd`/`isub`
-                // hardware ops as signed); pick the LHS as the
-                // canonical signedness source for the dispatch.
-                let unsigned_hint =
-                    matches!(op, BinOp::Shr) && operand_is_unsigned_int(body, tcx, lhs);
-                lower_binop(builder, *op, a, b, unsigned_hint)?
+                lower_binop(builder, *op, a, b)?
             }
         }
         Rvalue::UnaryOp { op, operand } => {
@@ -277,8 +271,35 @@ pub(super) fn lower_rvalue(
             let src_ty = builder.func.dfg.value_type(src_v);
             let dst_ty = cl_type_of(tcx, *target, module);
             match (src_ty, dst_ty) {
-                // No-op when source and destination types coincide.
-                (a, b) if a == b => src_v,
+                // Same cranelift type. Under the i64 runtime model a
+                // narrow declared target still masks: the cast is the
+                // language's single truncation point (VM parity:
+                // `300 as u8` == 44, `200 as i8` == -56). Reduce to
+                // the declared width and extend back by the target's
+                // signedness.
+                (a, b) if a == b => {
+                    let narrow = match tcx.kind_of(*target) {
+                        TyKind::Int(IntTy::I8 | IntTy::U8) => Some(types::I8),
+                        TyKind::Int(IntTy::I16 | IntTy::U16) => Some(types::I16),
+                        TyKind::Int(IntTy::I32 | IntTy::U32) => Some(types::I32),
+                        _ => None,
+                    };
+                    match narrow {
+                        Some(n) if a == types::I64 => {
+                            let reduced = builder.ins().ireduce(n, src_v);
+                            let unsigned = matches!(
+                                tcx.kind_of(*target),
+                                TyKind::Int(IntTy::U8 | IntTy::U16 | IntTy::U32)
+                            );
+                            if unsigned {
+                                builder.ins().uextend(types::I64, reduced)
+                            } else {
+                                builder.ins().sextend(types::I64, reduced)
+                            }
+                        }
+                        _ => src_v,
+                    }
+                }
                 // Integer → float (f32 / f64). Use signed
                 // conversion since Gossamer's primary integer is
                 // signed `i64`. Unsigned casts go through a same-
@@ -287,18 +308,41 @@ pub(super) fn lower_rvalue(
                 // Float → integer. Saturating conversion matches
                 // Rust's `as` (NaN → 0, ±Inf clamps to bounds).
                 (s, d) if s.is_float() && d.is_int() => builder.ins().fcvt_to_sint_sat(d, src_v),
+                // `u8 as char`: mask to the declared u8 width before
+                // narrowing into the char's i32 code-point slot —
+                // matches the VM's `cast_scalar` and the LLVM tier.
+                (s, d)
+                    if s.is_int() && d.is_int() && matches!(tcx.kind_of(*target), TyKind::Char) =>
+                {
+                    let masked = builder.ins().band_imm(src_v, 0xFF);
+                    if d.bits() < s.bits() {
+                        builder.ins().ireduce(d, masked)
+                    } else if d.bits() > s.bits() {
+                        builder.ins().uextend(d, masked)
+                    } else {
+                        masked
+                    }
+                }
                 // Integer width adjustments.
                 (s, d) if s.is_int() && d.is_int() => {
-                    if d.bits() > s.bits() {
-                        // Use zero-extension for unsigned source types (u8/u16/u32)
-                        // so that e.g. `255u8 as i32` yields 255, not -1.
+                    let converted = if d.bits() > s.bits() {
+                        // Use zero-extension for unsigned source types
+                        // (u8/u16/u32) so that e.g. `255u8 as i32`
+                        // yields 255, not -1. `bool` / `char` sources
+                        // (i1-style i8 / code-point i32) are likewise
+                        // non-negative and zero-extend.
                         let src_unsigned = if let Operand::Copy(place) = operand {
                             matches!(
                                 tcx.kind_of(body.local_ty(place.local)),
                                 TyKind::Int(IntTy::U8 | IntTy::U16 | IntTy::U32)
+                                    | TyKind::Bool
+                                    | TyKind::Char
                             )
                         } else {
-                            false
+                            matches!(
+                                operand,
+                                Operand::Const(ConstValue::Bool(_) | ConstValue::Char(_))
+                            )
                         };
                         if src_unsigned {
                             builder.ins().uextend(d, src_v)
@@ -309,6 +353,33 @@ pub(super) fn lower_rvalue(
                         builder.ins().ireduce(d, src_v)
                     } else {
                         src_v
+                    };
+                    // A narrow declared target still masks when the
+                    // source SSA type was not already i64 (`char as
+                    // u8`, `bool as i8`): reduce to the declared
+                    // width and extend back by its signedness. The
+                    // i64 → i64 narrow case is handled by the
+                    // same-type arm above and never reaches here.
+                    let narrow = match tcx.kind_of(*target) {
+                        TyKind::Int(IntTy::I8 | IntTy::U8) => Some(types::I8),
+                        TyKind::Int(IntTy::I16 | IntTy::U16) => Some(types::I16),
+                        TyKind::Int(IntTy::I32 | IntTy::U32) => Some(types::I32),
+                        _ => None,
+                    };
+                    match narrow {
+                        Some(n) if n.bits() < d.bits() => {
+                            let reduced = builder.ins().ireduce(n, converted);
+                            let unsigned = matches!(
+                                tcx.kind_of(*target),
+                                TyKind::Int(IntTy::U8 | IntTy::U16 | IntTy::U32)
+                            );
+                            if unsigned {
+                                builder.ins().uextend(d, reduced)
+                            } else {
+                                builder.ins().sextend(d, reduced)
+                            }
+                        }
+                        _ => converted,
                     }
                 }
                 // Float width adjustments (f32 ↔ f64).
@@ -435,7 +506,6 @@ pub(super) fn lower_rvalue(
             let size_val = builder.ins().iconst(types::I64, i64::from(size.max(8)));
             let alloc_call = builder.ins().call(alloc_ref, &[size_val]);
             let base = builder.inst_results(alloc_call)[0];
-            emit_root_push(module, builder, intrinsics, base)?;
             // Running destination offset (in bytes) for ADT/Tuple
             // aggregates so each prior nested struct's full slot
             // span shifts subsequent fields past its layout.
@@ -537,7 +607,6 @@ pub(super) fn lower_rvalue(
             let size_val = builder.ins().iconst(types::I64, i64::from(size.max(8)));
             let alloc_call = builder.ins().call(alloc_ref, &[size_val]);
             let base = builder.inst_results(alloc_call)[0];
-            emit_root_push(module, builder, intrinsics, base)?;
             // Threshold for switching from unrolled stores to a counted
             // loop. Unrolling beyond this generates O(count) Cranelift
             // instructions — for `[f64; 6000]` that inflates the JIT IR
@@ -835,7 +904,6 @@ pub(super) fn lower_binop(
     op: BinOp,
     a: ir::Value,
     b: ir::Value,
-    unsigned_hint: bool,
 ) -> Result<ir::Value> {
     let mut a_ty = value_type(a, builder);
     let mut b_ty = value_type(b, builder);
@@ -907,13 +975,10 @@ pub(super) fn lower_binop(
         BinOp::BitOr => builder.ins().bor(a, b),
         BinOp::BitXor => builder.ins().bxor(a, b),
         BinOp::Shl => builder.ins().ishl(a, b),
-        BinOp::Shr => {
-            if unsigned_hint {
-                builder.ins().ushr(a, b)
-            } else {
-                builder.ins().sshr(a, b)
-            }
-        }
+        // All ≤64-bit ints are signed-i64 runtime values, so `>>`
+        // is always the arithmetic shift (VM reference:
+        // `wrapping_shr` on `i64`).
+        BinOp::Shr => builder.ins().sshr(a, b),
         BinOp::Eq => compare_bool(builder, ir::condcodes::IntCC::Equal, a, b),
         BinOp::Ne => compare_bool(builder, ir::condcodes::IntCC::NotEqual, a, b),
         BinOp::Lt => compare_bool(builder, ir::condcodes::IntCC::SignedLessThan, a, b),

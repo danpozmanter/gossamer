@@ -248,6 +248,15 @@ pub(crate) fn native_option_iter(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
 ) -> RuntimeResult<Value> {
+    // Accessor form (`opt |> option::iter -> [T]`): zero- or
+    // one-element array, matching the checker's signature row and the
+    // compiled tiers' `gos_rt_option_iter`.
+    if args.len() == 1 {
+        let opt = args.first().unwrap_or(&Value::Unit);
+        let elems = some_payload(opt).map_or_else(Vec::new, |x| vec![x]);
+        return Ok(Value::Array(Arc::new(elems)));
+    }
+    // Legacy for-each form (`option::iter(f, opt)`).
     let f = args.first().cloned().unwrap_or(Value::Unit);
     let opt = args.get(1).unwrap_or(&Value::Unit);
     if let Some(x) = some_payload(opt) {

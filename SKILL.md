@@ -18,7 +18,7 @@ Go-shaped: goroutines, channels. Source files end in `.gos`. The
 toolchain binary is `gos`. Every project ships a `project.toml`
 manifest.
 
-Status: pre-1.0.0 (currently 0.12.0). The surface is stable to
+Status: pre-1.0.0 (currently 0.13.0). The surface is stable to
 write against, and features ship across all three tiers (bytecode
 VM, in-process JIT, LLVM AOT) — see "current gaps" at the bottom
 for the few remaining rough edges.
@@ -287,9 +287,11 @@ fn main() {
 - **References.** `&x` read-shared, `&mut x` exclusive write.
   Aliasing intent only; the runtime owns memory. **No lifetimes,
   no borrow checker.**
-- **Types.** `bool`, `char`, `i8..i128`, `u8..u128`, `isize`,
+- **Types.** `bool`, `char`, `i8..i64`, `u8..u64`, `isize`,
   `usize`, `f32`, `f64`, `String`, `[T]`, `(A, B)`,
   `Option<T>`, `Result<T, E>`, `&T`, `&mut T`, user types.
+  `i128` / `u128` are rejected (`GT0014`) — no tier has a
+  128-bit runtime representation; split into two 64-bit halves.
   Nested generics parse (`Vec<Vec<T>>`,
   `HashMap<String, Vec<i64>>` — the `>>` closes both levels).
 - **`defer expr`** — runs the expression when control leaves the
@@ -301,7 +303,12 @@ fn main() {
   width signal). Unsuffixed literals default to `i64`.
 - **Casts.** `x as i32` — whitelist-checked (numeric ↔ numeric,
   `bool` / `char` → integer, `u8` → `char`, same-type no-op).
-  Every other `as` shape is a hard error (GT0005).
+  Integer → narrow integer masks at the declared width
+  (`300 as u8 == 44`); float → int truncates toward zero and
+  saturates at i64 width with no narrow mask
+  (`300.7 as u8 == 300`, NaN → 0) — identical on every tier.
+  Every other `as` shape is a hard error (GT0005);
+  `as i128` / `as u128` reject with `GT0014`.
 - **Patterns.** Wildcard `_`, literals, `name`, `mut name`,
   `Variant(…)`, `Struct { … }`, tuples `(a, b)`, ranges
   `1..=5`, or-patterns `a | b`, `@`-bindings `x @ 1..=3`,
@@ -373,6 +380,11 @@ fn load_config(path: &String) -> Result<String, errors::Error> {
 - `errors::is(err, needle)` — walk the cause chain.
 - `errors::chain(err)` — iterate the cause chain.
 - `errors::join([err, err])` — combine several into one.
+
+Rendering a wrapped error with `{}` prints the colon-joined
+cause chain (`outer: mid: root`) on every tier; a joined error
+renders its parts separated by `"; "`. `.message()` stays the
+top message only.
 
 `?` also propagates `Option<T>` inside an `Option`-returning
 function (`let v = m.get(&k)?`), and a Result `?` auto-converts
@@ -583,7 +595,10 @@ free until the terminal materialises a result.
 ## 10. The `gos` toolchain
 
 Every subcommand takes a `.gos` file or a project directory.
-Bare `gos` drops into the REPL.
+Bare `gos` drops into the REPL. Inside a project, `gos run` /
+`gos build` with no path resolve the entry themselves:
+`src/main.gos`, `main.gos`, the manifest-id-named source
+(`<id-tail>.gos`), then a sole `.gos` candidate.
 
 | Command | Purpose |
 |---------|---------|
@@ -593,7 +608,7 @@ Bare `gos` drops into the REPL.
 | `gos build --release FILE` | Full LLVM pipeline (`opt -O3 \| llc -O3`), static-musl on Linux. Strict lowering is the default: any MIR shape the LLVM backend can't lower is a hard build failure (`--allow-llvm-fallback` opts out). `--target TRIPLE` cross-compiles; `-g` embeds DWARF. |
 | `gos test PATH` | Discover and run `#[test]` functions. `--coverage <path>` (lcov), `--parallel N` / `--serial`, `--format junit`, `--tier-parity --report=status`. |
 | `gos bench PATH` | Discover and time `#[bench]` functions. |
-| `gos fmt [--check] FILE` | Rewrite canonically. |
+| `gos fmt [--check] FILE` | Faithful token-stream formatter: comments, macros, and authored line structure preserved verbatim; spacing and indentation normalised; idempotent, with a no-destruction self-check that refuses to write output whose token stream differs from the input's. |
 | `gos doc FILE` | Print item listing + doc comments. |
 | `gos lint [--deny-warnings] PATH` | Run the lint suite. |
 | `gos explain CODE` | Long-form rationale for a diagnostic code. |
@@ -729,17 +744,44 @@ executed by `gos test`. Mark non-runnable fences as
   `net::resolve` / `net::lookup` for DNS.
 - `std::net::url` — URL parse + render + escape.
 - `std::http` — `Method`, `StatusCode`, `Headers`, `Request`,
-  `Response`, `Handler`, `serve`. Client surface:
-  `Client { get, post, put, options, delete, head, request, stream }`
+  `Response`, `Handler`, `serve` (returns `Result<(), Error>` on
+  every tier — a bind failure is the caller's `Err`). One client
+  engine on every tier (**0.13.0**): all verbs native with
+  identical transport-error strings under `gos run` and
+  `gos build`. Client surface:
+  `Client { get, post, put, options, delete, head, request,
+  request_bytes, stream }`
   plus free wrappers `http::get(url, headers)`,
   `http::post(url, body, content_type)`,
   `http::put(url, body, content_type)`,
   `http::options(url, headers)`,
   `http::delete(url, body, headers)`, `http::head(url, headers)`,
-  `http::request(method, url, body, headers)`, and
+  `http::request(method, url, body, headers)`,
+  `http::request_bytes(method, url, body: [u8], headers)`, and
   `http::stream(method, url, body, headers) -> ResponseStream`
   whose `next_line()` reads SSE / chunked bodies one line at a
-  time. All method-string entry points accept
+  time and `next_chunk(max) -> Option<[u8]>` reads raw byte
+  frames. Configured clients:
+  `http::Client::builder().max_redirects(n).timeout_ms(ms)
+  .build()` then `client.request` / `client.request_bytes`;
+  `max_redirects(0)` returns the raw 3xx with its `Location`
+  header intact (the proxy-correct mode). The client `Response`
+  carries `status`, `body`, `raw_bytes`, `content_type`,
+  `location`, and `headers: [(String, String)]` (lowercase
+  names, wire order, duplicates preserved). Server side:
+  `Request.headers` and `Request.raw_body` (`[u8]`) are
+  populated, `r.path` strips the query string (`r.query` keeps
+  it); handlers return `Result<Response, Error>` or a bare
+  `http::Response`, built via the constructors
+  (`Response::text` / `Response::json`) or as a plain struct
+  literal; `Response::with_header(k, v)` chains
+  (replace-then-push, case-insensitive) with precedence explicit
+  header > constructor content type > `text/plain`; and
+  `Response::stream(status, content_type, upstream)` streams a
+  `ResponseStream` to the client in chunked frames with no
+  full-body buffering — the proxy-passthrough shape. Request
+  bodies are capped at 1 MiB by default (413 beyond it). All
+  method-string entry points accept
   `"GET"`/`"POST"`/`"PUT"`/`"DELETE"`/`"PATCH"`/`"HEAD"`/`"OPTIONS"`
   case-insensitively; unknown methods return `Err(transport)`.
 - `std::http` server stack (**0.8.0**):
@@ -794,30 +836,40 @@ executed by `gos test`. Mark non-runnable fences as
   converters that mirror `toml::to_json` / `from_json`. The
   auto-derived `from_yaml::<T>` / `to_yaml::<T>` functions on every
   user struct compose these with the JSON pair.
-- `std::database::sql` (**0.9.0**, experimental) — driver-pluggable
-  SQL access modelled on Go's `database/sql`. No driver ships in
-  the box: a Rust crate implements the `Driver` trait
-  (`gossamer_runtime::sql` re-exported as
-  `gossamer_std::database::sql`) and calls `register` at startup,
-  typically via the `[rust-bindings]` mechanism. Surface:
-  `open(driver, url) -> Result<Conn, Error>`; `Conn` with
-  `prepare`, `execute(sql, &[Value])`, `query`, `execute_many`,
-  `begin` / `begin_with(IsolationLevel)`, `ping`,
-  `set_busy_timeout(ms)`, `interrupt`, and context-aware
-  `execute_ctx` / `query_ctx` (cancel via `std::context`); `Tx`
-  with `commit` / `rollback` / `execute` / `savepoint` /
-  `release_savepoint` / `rollback_to_savepoint`;
-  `Rows::next_row() -> Option<Row>` + `columns()`; `Row` typed
-  getters (`get_i64`, `get_f64`, `get_bool`, `get_text`,
-  `get_blob`, `get_opt_*`, `is_null`); `Value`
+- `std::database::sql` (**0.9.0**, full Gossamer surface on every
+  tier since **0.13.0**) — driver-pluggable SQL access modelled on
+  Go's `database/sql`. No driver ships in the box: a Rust crate
+  implements the `Driver` trait (`gossamer_runtime::sql`) and calls
+  `register` at startup, typically via `[rust-bindings]` (e.g.
+  pgooseql for PostgreSQL: TLS, streaming rows, COPY,
+  LISTEN/NOTIFY, NUMERIC/temporal/UUID/JSON/array decoding).
+  Surface: `open(driver, url) -> Result<Conn, Error>`; `Conn` with
+  `execute(sql, &[Value])`, `query`, `query_each(sql, params, f)`
+  (leak-proof: drains + closes internally),
+  `prepare(sql) -> Stmt` (`execute` / `query` / `close`),
+  `begin` / `begin_with(IsolationLevel)`,
+  `copy_in(sql, &[u8])` / `copy_out(sql) -> [u8]`,
+  `listen` / `unlisten` / `poll_notification(timeout_ms) ->
+  Option<Notification { channel, payload, process_id }>`, `ping`,
+  `set_busy_timeout(ms)`, `interrupt`, `close`; `Tx` with `commit`
+  / `rollback` / `execute(sql)` / `execute_params(sql, &[Value])`
+  / `query(sql, &[Value])` / savepoints; `Rows::next_row() ->
+  Option<Row>` (cursor semantics: advancing frees the previous
+  Row; end-of-set frees the cursor; `defer rows.close()` for early
+  exits — idempotent), `columns()`; `Row` typed getters
+  (`get_i64`, `get_f64`, `get_bool`, `get_text`, `get_blob`,
+  `get_opt_*`, `is_null`, `width`); `Value`
   (Null / Bool / Int / Float / Text / Blob) with positional `$N`
-  binding; `Pool` / `PoolConfig` / `PooledConn` — bounded pool
-  with idle-timeout recycling, `acquire_timeout` →
-  `Error::PoolExhausted`, per-connection statement cache;
-  `migrate::up(&mut conn, dir)` — forward-only
-  `<version>_<slug>.sql` migrations, one transaction each,
-  advisory-locked against concurrent runners; `query::Select` —
-  fluent SELECT builder rendering `(sql, params)`.
+  binding; `Pool::open(driver, url, max)` /
+  `Pool::open_with(driver, url, min, max, acquire_ms, idle_ms,
+  lifetime_ms)` with `pool.acquire() -> Conn` (close returns it),
+  `live` / `idle` / `close_idle`;
+  `migrate::up(&mut conn, dir) -> i64` — forward-only
+  `<version>_<slug>.sql` migrations, one transaction each;
+  `Select` — fluent builder:
+  `sql::Select::new(t).columns(&[..]).where_eq(col, v)
+  .order_by(col, asc).limit(n)` then `render()` / `params()`.
+  Abandoned cursors are swept by `conn.close()`.
 - `std::sync` — `Mutex`, `RwLock`, atomics, `channel`, `Once`,
   `WaitGroup` (`new`, `add`, `done`, `wait`), and `Map` (a
   concurrent string-keyed string-value map; `set`/`get`/`delete`/
@@ -1005,6 +1057,11 @@ match per (method, path), exact match by default with
 - `#[derive(...)]` does not yet cover enums with
   struct-payload variants (`Rect { w, h }`); tuple and unit
   variants derive fine.
+- `u64` values above 2^63 alias i64 semantics: every ≤64-bit
+  integer runs signed-i64 arithmetic and comparison at runtime,
+  and the unsigned display fires only for explicit `as u64` /
+  `as usize` cast results — so a huge `u64` compares and divides
+  as its negative two's-complement alias.
 
 ## 16. Style rules
 

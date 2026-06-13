@@ -3,9 +3,8 @@
 //! Every test here takes `.gos` source, runs it through the full
 //! frontend (parse → resolve → typecheck → HIR → MIR), and inspects
 //! the resulting [`Body`] to verify the IR faithfully represents the
-//! source semantics. Where a construct is not yet lowered (e.g.
-//! `GcWriteBarrier` emission, enum `SetDiscriminant`), the test
-//! documents the placeholder and the gap.
+//! source semantics. Where a construct is not yet lowered (e.g. enum
+//! `SetDiscriminant`), the test documents the placeholder and the gap.
 
 use gossamer_hir::lower_source_file;
 use gossamer_lex::SourceMap;
@@ -310,23 +309,6 @@ fn return_slot_is_assigned_before_return_terminator() {
     assert!(
         assigns_to_return,
         "return slot Local(0) must be assigned the result before Return"
-    );
-}
-
-#[test]
-fn gc_write_barrier_is_present_in_schema_for_heap_stores() {
-    // P0 audit: GcWriteBarrier exists in the StatementKind enum and
-    // is documented as mandatory for heap pointer stores. The lowerer
-    // does not yet emit it; this test asserts the variant exists so
-    // that future phases can mandate its emission without changing
-    // the schema.
-    let barrier = StatementKind::GcWriteBarrier {
-        place: Place::local(Local(1)),
-        value: Operand::Const(ConstValue::Int(0)),
-    };
-    assert!(
-        matches!(barrier, StatementKind::GcWriteBarrier { .. }),
-        "GcWriteBarrier must be a valid StatementKind for parity"
     );
 }
 

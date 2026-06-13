@@ -21,10 +21,16 @@ fn main() {
 ## Hello, Goroutines and Channels
 
 ```gossamer
+use std::sync::channel
+
+fn add(a: i64, b: i64) -> i64 { a + b }
+
 fn main() {
     let (tx, rx) = channel::<i64>()
     go fn() { tx.send(40 |> add(2)) }()
-    println("answer:", rx.recv())
+    if let Some(answer) = rx.recv() {
+        println!("answer: {}", answer)
+    }
 }
 ```
 

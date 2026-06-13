@@ -474,9 +474,15 @@ pub unsafe extern "C" fn gos_rt_json_keys_opt(j: *const GosJson) -> i128 {
         };
         match v {
             serde_json::Value::Object(map) => {
-                // 8-byte slots (cstring pointers) — same shape `[String]`
-                // values use elsewhere in the runtime.
-                let vec_ptr = unsafe { gos_rt_vec_new(8) };
+                // STRING-typed 8-byte slots (cstring pointers): the vec
+                // owns each fresh key string, so `gos_rt_vec_free`
+                // reclaims them even when a consumer loop breaks early.
+                let vec_ptr = unsafe {
+                    crate::c_abi::vec::gos_rt_vec_new_typed(
+                        8,
+                        crate::c_abi::vec::vec_elem_kind::STRING,
+                    )
+                };
                 for k in map.keys() {
                     let cs = alloc_cstring(k.as_bytes()) as i64;
                     unsafe {
@@ -760,4 +766,45 @@ pub unsafe extern "C" fn gos_rt_json_set(
         out.insert(key_str, new_val);
         GosJson::into_raw(serde_json::Value::Object(out))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Refcount word of an `alloc_cstring` builder-layout string:
+    /// `[rc:u32][cap:u32][len:u32][tag][content][NUL]`, body at +13.
+    unsafe fn str_rc(s: *const c_char) -> u32 {
+        let hdr = unsafe { s.cast::<u8>().sub(13) };
+        u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] })
+    }
+
+    #[test]
+    fn json_keys_vec_is_string_typed_and_deep_frees_unvisited_keys() {
+        let text = std::ffi::CString::new(r#"{"alpha":1,"beta":2}"#).unwrap();
+        let pr = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        assert_eq!(crate::c_abi::vec::gos_rt_result_disc(pr), 0);
+        let j = crate::c_abi::vec::gos_rt_result_payload(pr) as *mut GosJson;
+        let kr = unsafe { gos_rt_json_keys_opt(j) };
+        assert_eq!(crate::c_abi::vec::gos_rt_result_disc(kr), 0);
+        let v = crate::c_abi::vec::gos_rt_result_payload(kr) as *mut crate::c_abi::vec::GosVec;
+        let vec = unsafe { &*v };
+        assert_eq!(vec.len, 2);
+        assert_eq!(vec.elem_kind, crate::c_abi::vec::vec_elem_kind::STRING);
+        // Probe-share key 0, free the vec WITHOUT iterating (the
+        // early-break consumer shape): deep-free must release exactly
+        // the vec's share — rc 2 -> 1, not 2 (leak), not 0 (double free).
+        let k0 = unsafe { (vec.ptr.as_ptr() as *const *mut c_char).read_unaligned() };
+        unsafe { crate::c_abi::string::gos_rt_str_retain(k0) };
+        assert_eq!(unsafe { str_rc(k0) }, 2);
+        unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
+        assert_eq!(
+            unsafe { str_rc(k0) },
+            1,
+            "deep-free must release the vec's share once"
+        );
+        assert_eq!(unsafe { CStr::from_ptr(k0) }.to_str().unwrap(), "alpha");
+        unsafe { crate::c_abi::string::gos_rt_str_free(k0) };
+        unsafe { gos_rt_json_free(j) };
+    }
 }

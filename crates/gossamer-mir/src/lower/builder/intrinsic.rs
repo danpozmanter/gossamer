@@ -802,7 +802,9 @@ impl<'a> Builder<'a> {
                 let bool_ty = self.tcx.bool_ty();
                 let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(i64_ty);
+                // Bool-typed destination so `{}` renders true/false
+                // like the VM; the shim returns i64 0/1.
+                let dest = self.fresh(bool_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_iter_any_i64".to_string())),
@@ -820,7 +822,9 @@ impl<'a> Builder<'a> {
                 let bool_ty = self.tcx.bool_ty();
                 let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(i64_ty);
+                // Bool-typed destination so `{}` renders true/false
+                // like the VM; the shim returns i64 0/1.
+                let dest = self.fresh(bool_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_iter_all_i64".to_string())),
@@ -896,6 +900,42 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Destination type for `option::default` / `result::default`:
+    /// the call expression's HIR type when concrete, else the payload
+    /// type (`substs[0]`) recovered from the scrutinee's HIR or MIR
+    /// type, else i64. The call-expression type is often still an
+    /// inference Var here, and the dest must keep a heap payload's
+    /// real type so the drop / fmt machinery sees e.g. a String
+    /// rather than a raw i64.
+    fn unwrap_default_dest_ty(
+        &mut self,
+        expr_ty: Ty,
+        scrutinee_hir_ty: Ty,
+        scrutinee_local: Local,
+    ) -> Ty {
+        use gossamer_types::TyKind;
+        let concrete = |t: Ty| {
+            !matches!(
+                self.tcx.kind_of(t),
+                TyKind::Var(_) | TyKind::Error | TyKind::Never
+            )
+        };
+        if concrete(expr_ty) {
+            return expr_ty;
+        }
+        let sources = [scrutinee_hir_ty, self.locals[scrutinee_local.0 as usize].ty];
+        for src in sources {
+            if let TyKind::Adt { substs, .. } = self.tcx.kind_of(src) {
+                if let Some(payload) = substs.types().first().copied() {
+                    if concrete(payload) {
+                        return payload;
+                    }
+                }
+            }
+        }
+        self.tcx.int_ty(gossamer_types::IntTy::I64)
+    }
+
     pub(crate) fn try_lower_option_call(
         &mut self,
         joined: &str,
@@ -907,20 +947,25 @@ impl<'a> Builder<'a> {
         let i64_ty = self.tcx.int_ty(IntTy::I64);
         match (joined, args.len()) {
             ("option::is_some", 1) => {
-                self.lower_iter_simple_vec_i64("gos_rt_option_is_some", args, span)
+                self.lower_combinator_pred_call("gos_rt_option_is_some", args, span)
             }
             ("option::is_none", 1) => {
-                self.lower_iter_simple_vec_i64("gos_rt_option_is_none", args, span)
+                self.lower_combinator_pred_call("gos_rt_option_is_none", args, span)
             }
             ("option::default", 2) => {
                 let fallback = self.lower_expr(&args[0])?;
                 let opt = self.lower_expr(&args[1])?;
-                let dest = self.fresh(i64_ty);
+                let dest_ty = self.unwrap_default_dest_ty(ty, args[1].ty, opt);
+                let helper =
+                    if matches!(self.tcx.kind_of(dest_ty), gossamer_types::TyKind::Float(_)) {
+                        "gos_rt_option_default_f64"
+                    } else {
+                        "gos_rt_option_default_i64"
+                    };
+                let dest = self.fresh(dest_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(
-                        "gos_rt_option_default_i64".to_string(),
-                    )),
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(fallback)),
                         Operand::Copy(Place::local(opt)),
@@ -960,6 +1005,33 @@ impl<'a> Builder<'a> {
                 self.set_current(next);
                 Some(dest)
             }
+            // `result::default(v, res) -> T`. Data-last pipe: the
+            // fallback value is arg 0, the Result arg 1. Returns the
+            // `Ok` payload, or the fallback when the Result is `Err`.
+            ("result::default", 2) => {
+                let fallback = self.lower_expr(&args[0])?;
+                let res_local = self.lower_expr(&args[1])?;
+                let dest_ty = self.unwrap_default_dest_ty(ty, args[1].ty, res_local);
+                let helper =
+                    if matches!(self.tcx.kind_of(dest_ty), gossamer_types::TyKind::Float(_)) {
+                        "gos_rt_result_default_f64"
+                    } else {
+                        "gos_rt_result_default"
+                    };
+                let dest = self.fresh(dest_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(fallback)),
+                        Operand::Copy(Place::local(res_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
             // `result::default_with(f, res) -> T`. Data-last pipe: the
             // closure is arg 0, the Result arg 1. Returns the `Ok`
             // value, or the closure applied to the `Err` payload.
@@ -982,6 +1054,42 @@ impl<'a> Builder<'a> {
                     callee: Operand::Const(ConstValue::Str(
                         "gos_rt_result_default_with".to_string(),
                     )),
+                    args: vec![
+                        Operand::Copy(Place::local(res_local)),
+                        Operand::Copy(Place::local(closure_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                Some(dest)
+            }
+            // `result::map_err(f, res) -> Result<T, F>`. Data-last
+            // pipe: closure first, Result second. Routes through the
+            // same env-first shim the method form uses; Ok passes
+            // through unchanged.
+            ("result::map_err", 2) => {
+                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let res_local = self.lower_expr(&args[1])?;
+                let dest_ty = if matches!(
+                    self.tcx.kind_of(ty),
+                    gossamer_types::TyKind::Var(_)
+                        | gossamer_types::TyKind::Error
+                        | gossamer_types::TyKind::Never
+                ) {
+                    let err_ty = self.tcx.dyn_error_ty();
+                    let substs = gossamer_types::Substs::from_types([i64_ty, err_ty]);
+                    self.tcx.intern(gossamer_types::TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX),
+                        substs,
+                    })
+                } else {
+                    ty
+                };
+                let dest = self.fresh(dest_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_result_map_err".to_string())),
                     args: vec![
                         Operand::Copy(Place::local(res_local)),
                         Operand::Copy(Place::local(closure_local)),
@@ -1019,6 +1127,522 @@ impl<'a> Builder<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Lowers the closure-taking std combinators wired natively in the
+    /// Task-22 pass: `result::and_then`/`or_else`/`ok`/`err`/`is_ok`/
+    /// `is_err`, the remaining `option::*` family, and the newer
+    /// closure-taking `iter::*` entries. Free data-last call shapes
+    /// only; returns `None` for any other name so the generic call
+    /// path keeps running.
+    pub(crate) fn try_lower_combinator_call(
+        &mut self,
+        joined: &str,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::{IntTy, TyKind};
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        match (joined, args.len()) {
+            ("result::and_then" | "result::or_else", 2) => {
+                let out_ty = self.result_i64_error_adt_ty();
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], out_ty, span)?;
+                let res = self.lower_expr(&args[1])?;
+                let dest_ty = self.result_repr_ty(
+                    if matches!(
+                        self.tcx.kind_of(ty),
+                        TyKind::Var(_) | TyKind::Error | TyKind::Never
+                    ) {
+                        args[1].ty
+                    } else {
+                        ty
+                    },
+                );
+                let helper = if joined == "result::and_then" {
+                    "gos_rt_result_and_then"
+                } else {
+                    "gos_rt_result_or_else"
+                };
+                Some(self.emit_combinator_call(
+                    helper,
+                    vec![
+                        Operand::Copy(Place::local(res)),
+                        Operand::Copy(Place::local(closure)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("result::ok" | "result::err", 1) => {
+                let res = self.lower_expr(&args[0])?;
+                let slot = usize::from(joined == "result::err");
+                let payload = self.enum_payload_ty(args[0].ty, slot).unwrap_or(i64_ty);
+                let dest_ty = self.option_payload_adt_ty(payload);
+                let helper = if joined == "result::ok" {
+                    "gos_rt_result_to_opt_ok"
+                } else {
+                    "gos_rt_result_to_opt_err"
+                };
+                Some(self.emit_combinator_call(
+                    helper,
+                    vec![Operand::Copy(Place::local(res))],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("result::is_ok", 1) => {
+                self.lower_combinator_pred_call("gos_rt_result_is_ok", args, span)
+            }
+            ("result::is_err", 1) => {
+                self.lower_combinator_pred_call("gos_rt_result_is_err", args, span)
+            }
+            ("option::and_then" | "option::or_else", 2) => {
+                let payload = self.enum_payload_ty(args[1].ty, 0).unwrap_or(i64_ty);
+                let out_ty = self.option_payload_adt_ty(payload);
+                let inputs: &[Ty] = if joined == "option::and_then" {
+                    &[i64_ty]
+                } else {
+                    &[]
+                };
+                let closure = self.lower_iter_closure(&args[0], inputs, out_ty, span)?;
+                let opt = self.lower_expr(&args[1])?;
+                let helper = if joined == "option::and_then" {
+                    "gos_rt_option_and_then"
+                } else {
+                    "gos_rt_option_or_else"
+                };
+                Some(self.emit_combinator_call(
+                    helper,
+                    vec![
+                        Operand::Copy(Place::local(opt)),
+                        Operand::Copy(Place::local(closure)),
+                    ],
+                    out_ty,
+                    span,
+                ))
+            }
+            ("option::filter", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                let opt = self.lower_expr(&args[1])?;
+                let payload = self.enum_payload_ty(args[1].ty, 0).unwrap_or(i64_ty);
+                let dest_ty = self.option_payload_adt_ty(payload);
+                Some(self.emit_combinator_call(
+                    "gos_rt_option_filter",
+                    vec![
+                        Operand::Copy(Place::local(opt)),
+                        Operand::Copy(Place::local(closure)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("option::or", 2) => {
+                let alt = self.lower_expr(&args[0])?;
+                let opt = self.lower_expr(&args[1])?;
+                let payload = self.enum_payload_ty(args[1].ty, 0).unwrap_or(i64_ty);
+                let dest_ty = self.option_payload_adt_ty(payload);
+                Some(self.emit_combinator_call(
+                    "gos_rt_option_or",
+                    vec![
+                        Operand::Copy(Place::local(alt)),
+                        Operand::Copy(Place::local(opt)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("option::default_with", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[], i64_ty, span)?;
+                let opt = self.lower_expr(&args[1])?;
+                let dest_ty = self.unwrap_default_dest_ty(ty, args[1].ty, opt);
+                Some(self.emit_combinator_call(
+                    "gos_rt_option_default_with",
+                    vec![
+                        Operand::Copy(Place::local(opt)),
+                        Operand::Copy(Place::local(closure)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("option::zip", 2) => {
+                let first = self.lower_expr(&args[0])?;
+                let second = self.lower_expr(&args[1])?;
+                let a = self.enum_payload_ty(args[0].ty, 0).unwrap_or(i64_ty);
+                let b = self.enum_payload_ty(args[1].ty, 0).unwrap_or(i64_ty);
+                let pair = self.tcx.intern(TyKind::Tuple(vec![a, b]));
+                let dest_ty = self.option_payload_adt_ty(pair);
+                Some(self.emit_combinator_call(
+                    "gos_rt_option_zip",
+                    vec![
+                        Operand::Copy(Place::local(first)),
+                        Operand::Copy(Place::local(second)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("option::flatten", 1) => {
+                let opt = self.lower_expr(&args[0])?;
+                let inner = self.enum_payload_ty(args[0].ty, 0).unwrap_or(i64_ty);
+                let dest_ty = self.result_repr_ty(inner);
+                Some(self.emit_combinator_call(
+                    "gos_rt_option_flatten",
+                    vec![Operand::Copy(Place::local(opt))],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("option::iter", 1) => {
+                let opt = self.lower_expr(&args[0])?;
+                let payload = self.enum_payload_ty(args[0].ty, 0).unwrap_or(i64_ty);
+                let dest_ty = self.tcx.intern(TyKind::Vec(payload));
+                Some(self.emit_combinator_call(
+                    "gos_rt_option_iter",
+                    vec![Operand::Copy(Place::local(opt))],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::filter_map" | "iter::find_map", 2) => {
+                let opt_i64 = self.option_payload_adt_ty(i64_ty);
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], opt_i64, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let (helper, dest_ty) = if joined == "iter::filter_map" {
+                    let dest = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
+                        ty
+                    } else {
+                        self.tcx.intern(TyKind::Vec(i64_ty))
+                    };
+                    ("gos_rt_iter_filter_map_i64", dest)
+                } else {
+                    ("gos_rt_iter_find_map_i64", opt_i64)
+                };
+                Some(self.emit_combinator_call(
+                    helper,
+                    vec![
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::flat_map", 2) => {
+                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                // A callback returning a fixed-size array hands back a
+                // raw slot buffer with no GosVec header; route those
+                // through the arr-variant shim with the static length.
+                let arr_len = match self.callable_output_of(&args[0]) {
+                    Some(out) => match self.tcx.kind_of(out) {
+                        TyKind::Array { len, .. } => Some(*len),
+                        _ => None,
+                    },
+                    None => None,
+                };
+                let cb_out = match arr_len {
+                    Some(_) => self
+                        .callable_output_of(&args[0])
+                        .expect("arr_len derived from callable output"),
+                    None => vec_i64,
+                };
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], cb_out, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
+                    ty
+                } else {
+                    vec_i64
+                };
+                let mut call_args = vec![
+                    Operand::Copy(Place::local(closure)),
+                    Operand::Copy(Place::local(vec_local)),
+                ];
+                let helper = if let Some(len) = arr_len {
+                    let len_local = self.fresh(i64_ty);
+                    let len_i128 = i128::try_from(len).unwrap_or(0);
+                    self.emit_assign(
+                        Place::local(len_local),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(len_i128))),
+                        span,
+                    );
+                    call_args.push(Operand::Copy(Place::local(len_local)));
+                    "gos_rt_iter_flat_map_arr_i64"
+                } else {
+                    "gos_rt_iter_flat_map_i64"
+                };
+                Some(self.emit_combinator_call(helper, call_args, dest_ty, span))
+            }
+            ("iter::reduce", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty, i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest_ty = self.option_payload_adt_ty(i64_ty);
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_reduce_i64",
+                    vec![
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::scan", 3) => {
+                let init = self.lower_expr(&args[0])?;
+                let closure = self.lower_iter_closure(&args[1], &[i64_ty, i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[2])?;
+                let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Vec(i64_ty))
+                };
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_scan_i64",
+                    vec![
+                        Operand::Copy(Place::local(init)),
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::product_by", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_product_by_i64",
+                    vec![
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    i64_ty,
+                    span,
+                ))
+            }
+            ("iter::position", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest_ty = self.option_payload_adt_ty(i64_ty);
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_position_i64",
+                    vec![
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::take_while" | "iter::skip_while", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Vec(i64_ty))
+                };
+                let helper = if joined == "iter::take_while" {
+                    "gos_rt_iter_take_while_i64"
+                } else {
+                    "gos_rt_iter_skip_while_i64"
+                };
+                Some(self.emit_combinator_call(
+                    helper,
+                    vec![
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::partition", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Tuple(_)) {
+                    ty
+                } else {
+                    let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                    self.tcx.intern(TyKind::Tuple(vec![vec_i64, vec_i64]))
+                };
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_partition_i64",
+                    vec![
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::sort_by" | "iter::min_by" | "iter::max_by", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty, i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let (helper, dest_ty) = match joined {
+                    "iter::sort_by" => {
+                        let dest = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
+                            ty
+                        } else {
+                            self.tcx.intern(TyKind::Vec(i64_ty))
+                        };
+                        ("gos_rt_iter_sorted_by_i64", dest)
+                    }
+                    "iter::min_by" => {
+                        ("gos_rt_iter_min_by_i64", self.option_payload_adt_ty(i64_ty))
+                    }
+                    _ => ("gos_rt_iter_max_by_i64", self.option_payload_adt_ty(i64_ty)),
+                };
+                Some(self.emit_combinator_call(
+                    helper,
+                    vec![
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::sort_by_key" | "iter::min_by_key" | "iter::max_by_key", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let (helper, dest_ty) = match joined {
+                    "iter::sort_by_key" => {
+                        let dest = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
+                            ty
+                        } else {
+                            self.tcx.intern(TyKind::Vec(i64_ty))
+                        };
+                        ("gos_rt_iter_sorted_by_key_i64", dest)
+                    }
+                    "iter::min_by_key" => (
+                        "gos_rt_iter_min_by_key_i64",
+                        self.option_payload_adt_ty(i64_ty),
+                    ),
+                    _ => (
+                        "gos_rt_iter_max_by_key_i64",
+                        self.option_payload_adt_ty(i64_ty),
+                    ),
+                };
+                Some(self.emit_combinator_call(
+                    helper,
+                    vec![
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::group_by" | "iter::count_by", 2) => {
+                let closure = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let (helper, dest_ty) = if joined == "iter::group_by" {
+                    let dest = if matches!(self.tcx.kind_of(ty), TyKind::HashMap { .. }) {
+                        ty
+                    } else {
+                        let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                        self.tcx.intern(TyKind::HashMap {
+                            key: i64_ty,
+                            value: vec_i64,
+                        })
+                    };
+                    ("gos_rt_iter_group_by_i64", dest)
+                } else {
+                    let dest = if matches!(self.tcx.kind_of(ty), TyKind::HashMap { .. }) {
+                        ty
+                    } else {
+                        self.tcx.intern(TyKind::HashMap {
+                            key: i64_ty,
+                            value: i64_ty,
+                        })
+                    };
+                    ("gos_rt_iter_count_by_i64", dest)
+                };
+                Some(self.emit_combinator_call(
+                    helper,
+                    vec![
+                        Operand::Copy(Place::local(closure)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Declared output type of a callable-shaped argument expression
+    /// (`FnPtr` / `FnTrait` sig, or a lifted closure's registered
+    /// return type), or `None` when the shape is unknown.
+    fn callable_output_of(&self, arg: &HirExpr) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(arg.ty) {
+            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => Some(sig.output),
+            TyKind::FnDef { def, .. } => self.fn_returns.get(def).copied(),
+            _ => None,
+        }
+    }
+
+    /// `substs[idx]` of a Result/Option-shaped `ty`, ref-transparent;
+    /// `None` when the type is not a resolved enum Adt or the payload
+    /// slot is still an inference Var.
+    fn enum_payload_ty(&self, ty: Ty, idx: usize) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let mut resolved = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(resolved) {
+            resolved = *inner;
+        }
+        match self.tcx.kind_of(resolved) {
+            TyKind::Adt { def, substs } if def.local == u32::MAX || def.local == u32::MAX - 1 => {
+                let payload = substs.types().get(idx).copied()?;
+                if matches!(
+                    self.tcx.kind_of(payload),
+                    TyKind::Var(_) | TyKind::Error | TyKind::Never
+                ) {
+                    None
+                } else {
+                    Some(payload)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Emits a call to `helper` and returns the destination local.
+    fn emit_combinator_call(
+        &mut self,
+        helper: &str,
+        args: Vec<Operand>,
+        dest_ty: Ty,
+        span: Span,
+    ) -> Local {
+        let dest = self.fresh(dest_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args,
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        dest
+    }
+
+    /// Lowers a 1-arg Result/Option predicate (`is_ok` / `is_some` /
+    /// ...) with a bool-typed destination so `{}` prints true/false on
+    /// every tier.
+    fn lower_combinator_pred_call(
+        &mut self,
+        helper: &'static str,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        let v = self.lower_expr(&args[0])?;
+        let bool_ty = self.tcx.bool_ty();
+        Some(self.emit_combinator_call(helper, vec![Operand::Copy(Place::local(v))], bool_ty, span))
     }
 
     pub(crate) fn lower_iter_simple_vec_i64(

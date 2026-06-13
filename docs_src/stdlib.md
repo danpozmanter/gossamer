@@ -98,6 +98,7 @@ Names available without any import — the print macros, `min`/`max`/`clamp`, `s
 | [`std::net`](#stdnet) | 4 | TCP/UDP networking primitives. |
 | [`std::net::netip`](#stdnetnetip) | 11 | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](#stdneturl) | 3 | URL parsing, rendering, and query escaping. |
+| [`std::option`](#stdoption) | 12 | Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc. |
 | [`std::os`](#stdos) | 19 | Operating-system identity and deprecated re-exports of env/process/fs. |
 | [`std::os::exec`](#stdosexec) | 14 | Spawn / wait for child processes (Go's os/exec shape). |
 | [`std::os::signal`](#stdossignal) | 4 | POSIX-style signal subscription (Go's os/signal shape). |
@@ -107,7 +108,8 @@ Names available without any import — the print macros, `min`/`max`/`clamp`, `s
 | [`std::path::native`](#stdpathnative) | 5 | Native-separator wrappers over `std::path` (backslash on Windows). |
 | [`std::process`](#stdprocess) | 11 | Spawn child processes, exit the current process (Rust std::process shape). |
 | [`std::regex`](#stdregex) | 10 | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
-| [`std::runtime`](#stdruntime) | 4 | Goroutine / GC / scheduler introspection and tuning. |
+| [`std::result`](#stdresult) | 10 | Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc. |
+| [`std::runtime`](#stdruntime) | 3 | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](#stdslog) | 8 | Structured, levelled logging. |
 | [`std::sort`](#stdsort) | 3 | Slice sorting and binary search. |
 | [`std::strconv`](#stdstrconv) | 12 | Conversions between strings and primitive numeric types. |
@@ -464,14 +466,14 @@ Driver-pluggable SQL database access. No driver ships in the box; bring your own
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `Conn` | type | Open database connection. `prepare`, `execute`, `query`, `begin`, `begin_with`, `ping`, `execute_many`, `execute_ctx`, `query_ctx`, `interrupt`. |
+| `Conn` | type | Open database connection. `prepare`, `execute`, `query`, `query_each`, `begin`, `begin_with`, `ping`, `execute_many`, `execute_ctx`, `query_ctx`, `interrupt`, `close` (closing sweeps any cursors still open on the connection). |
 | `Error` | type | Driver error. `Error::driver(driver, msg)` builds one; `Error::PoolExhausted` and `Error::Cancelled` are variants. |
 | `IsolationLevel` | type | Default / ReadUncommitted / ReadCommitted / RepeatableRead / Serializable. Passed to `Conn::begin_with`. |
 | `Pool` | type | Connection pool. `new`, `fill`, `get` (blocks up to `acquire_timeout`), `len`. Cheap to clone. |
 | `PoolConfig` | type | Pool tuning: `min`, `max`, `idle_timeout`, `max_lifetime`, `acquire_timeout`, `statement_cache`. Fluent `with_*` builders. |
 | `PooledConn` | type | Connection checked out from a `Pool`; returned on drop. |
-| `Row` | type | Current row inside a `Rows` walk. Typed `get_i64`, `get_f64`, `get_bool`, `get_text`, `get_blob` plus `get_opt_*` and `is_null`. |
-| `Rows` | type | Result-set iterator. `next_row`, `columns`. |
+| `Row` | type | Current row inside a `Rows` walk; valid until the cursor advances or closes. Typed `get_i64`, `get_f64`, `get_bool`, `get_text`, `get_blob` plus `get_opt_*` and `is_null`. |
+| `Rows` | type | Result-set cursor. `next_row`, `columns`, `close` (idempotent). Advancing frees the previous Row; a full drain reclaims everything. For early exits, `defer rows.close()`. |
 | `Select` | type | Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, val).order_by(col, asc).limit(n).render() -> (sql, params)`. Emits Postgres-style `$N` placeholders. |
 | `Stmt` | type | Prepared statement. |
 | `Tx` | type | Active transaction. `commit`, `rollback`, `savepoint`, `release_savepoint`, `rollback_to_savepoint`, `execute`. |
@@ -1177,6 +1179,25 @@ URL parsing, rendering, and query escaping.
 | `query_escape` | fn | Percent-encodes a query parameter. |
 | `query_unescape` | fn | Inverse of `query_escape`. |
 
+## `std::option`
+
+Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `and_then` | fn | Chains a fallible step: Some(v) -> f(v), None stays None. |
+| `default` | fn | Unwraps with a fallback value for None. |
+| `default_with` | fn | Unwraps with a lazily computed fallback for None. |
+| `filter` | fn | Keeps Some(v) only when the predicate holds. |
+| `flatten` | fn | Collapses Option<Option<T>> one level. |
+| `is_none` | fn | True for None. |
+| `is_some` | fn | True for Some. |
+| `iter` | fn | Zero-or-one element sequence view. |
+| `map` | fn | Transforms the Some payload, None stays None. |
+| `or` | fn | First Some of self and the alternative. |
+| `or_else` | fn | First Some of self and a lazily built alternative. |
+| `zip` | fn | Pairs two Somes into Some((a, b)). |
+
 ## `std::os`
 
 Operating-system identity and deprecated re-exports of env/process/fs.
@@ -1317,14 +1338,30 @@ Compiled regular expressions (Rust `regex` crate syntax; no backreferences or lo
 | `replace_all` | fn | Replaces every non-overlapping match. |
 | `split` | fn | Splits the text on every pattern match. |
 
+## `std::result`
+
+Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `and_then` | fn | Chains a fallible step on the Ok payload. |
+| `default` | fn | Unwraps Ok with a fallback value for Err. |
+| `default_with` | fn | Consumes the result, handling Err with a callback. |
+| `err` | fn | Err payload as an Option. |
+| `is_err` | fn | True for Err. |
+| `is_ok` | fn | True for Ok. |
+| `map` | fn | Transforms the Ok payload, Err passes through. |
+| `map_err` | fn | Transforms the Err payload, Ok passes through. |
+| `ok` | fn | Ok payload as an Option. |
+| `or_else` | fn | Recovers from Err with a fallback computation. |
+
 ## `std::runtime`
 
-Goroutine / GC / scheduler introspection and tuning.
+Goroutine / scheduler introspection and tuning.
 
 | Item | Kind | Doc |
 |------|------|-----|
 | `max_procs` | fn | Returns the current goroutine concurrency cap. |
-| `mem_stats` | fn | Read-only snapshot of GC and allocation counters. |
 | `num_cpus` | fn | Logical CPU cores visible to the process. |
 | `set_max_procs` | fn | Sets the goroutine concurrency cap (GOMAXPROCS-equivalent). |
 

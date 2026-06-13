@@ -1075,6 +1075,8 @@ impl<'a> Builder<'a> {
                                 );
                                 let getter = if is_f64 {
                                     "gos_rt_result_payload_f64"
+                                } else if self.is_by_value_enum_ty(binding_ty) {
+                                    "gos_rt_result_payload_i128"
                                 } else {
                                     "gos_rt_result_payload"
                                 };
@@ -1302,6 +1304,8 @@ impl<'a> Builder<'a> {
                                 gossamer_types::TyKind::Float(_)
                             ) {
                                 "gos_rt_result_payload_f64"
+                            } else if self.is_by_value_enum_ty(payload_ty) {
+                                "gos_rt_result_payload_i128"
                             } else {
                                 "gos_rt_result_payload"
                             };
@@ -1442,6 +1446,8 @@ impl<'a> Builder<'a> {
                                 gossamer_types::TyKind::Float(_)
                             ) {
                                 "gos_rt_result_payload_f64"
+                            } else if self.is_by_value_enum_ty(payload_ty) {
+                                "gos_rt_result_payload_i128"
                             } else {
                                 "gos_rt_result_payload"
                             };
@@ -2067,6 +2073,33 @@ impl<'a> Builder<'a> {
                                 }
                                 _ => None,
                             };
+                        }
+                    }
+                }
+                if for_vec_elem.is_none() {
+                    // `for (name, value) in resp.headers` /
+                    // `r.headers` on an `http::Response` or
+                    // `http::Request` receiver. The field lowers to
+                    // `gos_rt_http_response_headers` /
+                    // `gos_rt_http_request_headers` (a Vec of 16-byte
+                    // `(String, String)` tuple slots), but the HIR type
+                    // of the projection is often an unresolved Var, so
+                    // pin the element type here — without this the loop
+                    // falls back to the single-slot i64 shape and the
+                    // tuple destructure has no slot address to read.
+                    if let HirExprKind::Field { receiver, name } = &for_loop.iter_expr.kind {
+                        if name.name == "headers" {
+                            let is_header_carrier = matches!(
+                                self.receiver_local_from_path(receiver)
+                                    .and_then(|l| self.local_runtime_kind.get(&l).copied()),
+                                Some("http::Response" | "http::Request")
+                            );
+                            if is_header_carrier {
+                                let s = self.tcx.string_ty();
+                                let tup =
+                                    self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                                for_vec_elem = Some(tup);
+                            }
                         }
                     }
                 }

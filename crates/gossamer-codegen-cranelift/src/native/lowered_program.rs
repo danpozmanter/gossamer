@@ -221,6 +221,8 @@ pub(super) fn shape_char_to_cl_type(c: char, _ptr_ty: ir::Type) -> Option<ir::Ty
         'f' => types::F64,
         'g' => types::F32,
         'u' => types::I64,
+        // 2-word packed Result/Option.
+        'r' => types::I128,
         _ => return None,
     })
 }

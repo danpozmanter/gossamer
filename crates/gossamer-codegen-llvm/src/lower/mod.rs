@@ -133,15 +133,12 @@ pub(crate) struct Lowerer<'a> {
     /// populated by the emitter before calling
     /// [`Lowerer::lower`].
     pub(crate) strings: std::rc::Rc<std::cell::RefCell<StringPool>>,
-    /// Tracks which MIR block we're currently lowering so the
-    /// safepoint emitter can place its `!dbg`-style comment in the
-    /// right place. Track 3 / §6.3 of the audit owns the actual
-    /// safepoint semantics; this slot is the bookkeeping the
-    /// codegen needs while that work threads through.
+    /// MIR block currently being lowered. Terminator lowering
+    /// compares jump targets against it to detect back-edges and
+    /// place the cooperative-preemption check.
     pub(crate) current_block: Option<u32>,
-    /// Monotonically-increasing counter for safepoint label
-    /// suffixes so the LLVM IR has unique block names per
-    /// preempt-check call site.
+    /// Monotonically-increasing counter for preempt-check label
+    /// suffixes so the LLVM IR has unique block names per call site.
     pub(crate) preempt_seq: u32,
     /// Inter-procedural capture summary. The emitter populates
     /// this once per module (via `build_capture_summary`) and the
@@ -150,16 +147,6 @@ pub(crate) struct Lowerer<'a> {
     /// per-block drops for owning bindings whose only outbound use
     /// is a non-capturing user fn.
     pub(crate) capture_summary: gossamer_mir::CaptureSummary,
-    /// Loop-header block ids (targets of back-edges). Currently
-    /// unused — back-edge safepoints are elided to let `opt -O3`
-    /// vectorise inner loops. Retained for the future inline-
-    /// safepoint pass.
-    pub(crate) loop_headers: std::collections::HashSet<u32>,
-    /// Whether the function-prologue safepoint + shadow-stack save
-    /// was actually emitted. Drives the matching restore at
-    /// `Terminator::Return` so we don't load an undefined frame
-    /// slot when the prologue elided itself.
-    pub(crate) gc_prologue_emitted: bool,
 }
 
 /// Module-scoped string intern pool.
@@ -313,7 +300,6 @@ fn llvm_vec_elem_kind_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -
 
 mod emit_aggregate;
 mod emit_misc;
-mod gc;
 mod misc;
 mod operand;
 mod rvalue;

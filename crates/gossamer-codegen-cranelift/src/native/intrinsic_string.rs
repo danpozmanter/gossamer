@@ -1575,45 +1575,9 @@ pub(super) fn lower_intrinsic_call_string(
             );
             Ok(true)
         }
-        // `v.pop()` — pops the last element through an 8-byte
-        // stack slot and returns it. Returns 0 when the vec is
-        // empty; callers that care about emptiness should check
-        // `.len()` first.
-        "gos_rt_vec_pop" => {
-            let pop_fn = intrinsics.extern_fn_by_name(module, "gos_rt_vec_pop")?;
-            let vec_p = match args.first() {
-                Some(a) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    a,
-                    Some(ptr_ty),
-                    intrinsics,
-                )?,
-                None => builder.ins().iconst(ptr_ty, 0),
-            };
-            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
-            let fref = module.declare_func_in_func(pop_fn, builder.func);
-            let _ = builder.ins().call(fref, &[vec_p, slot_addr]);
-            let loaded = builder
-                .ins()
-                .load(types::I64, MemFlags::trusted(), slot_addr, 0);
-            define_var_to(
-                builder,
-                locals,
-                &intrinsics.body_cl_types,
-                destination.local,
-                loaded,
-            );
-            Ok(true)
-        }
+        // `v.pop()` — `gos_rt_vec_pop_opt` returns the popped
+        // element as a packed Option and routes through the
+        // generic forwarding below (same shape as `v.first()`).
         // Generic forwarding for the new stdlib helpers added in
         // round 3 (errors / regex / fs / path / flag / bufio /
         // http / gzip / slog / testing). Each follows the same

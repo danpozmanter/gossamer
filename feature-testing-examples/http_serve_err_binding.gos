@@ -1,0 +1,33 @@
+// Cross-tier regression for the `http::serve` Result surface.
+// Matching the serve call and formatting the Err payload
+// (`println!("{}", e)`) historically broke LLVM lowering with
+// "sext void to i64" — the call lowered to a unit dest, so the Err
+// binding had no type. The serve expression is typed
+// `Result<(), errors::Error>` and a bind failure is the caller's
+// `Err` value on every tier: this program prints
+// `Error: http::serve: invalid socket address` and exits 0.
+//
+// No port is bound (the address never parses), so this fixture is
+// deterministic and runs in the regular SPECS matrix. The exact
+// text + exit code are additionally pinned by
+// `http_serve_err_binding_parity_across_tiers` in
+// crates/gossamer-cli/tests/tier_parity.rs.
+
+use std::http
+
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&self, _r: http::Request) -> http::Response {
+        http::Response::text(200, "ok")
+    }
+}
+
+fn main() {
+    println!("about to bind")
+    let result = http::serve("definitely-not-an-address", App { })
+    match result {
+        Ok(_) => println!("unexpected ok"),
+        Err(e) => println!("Error: {}", e),
+    }
+}

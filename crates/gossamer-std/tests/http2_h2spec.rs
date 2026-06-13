@@ -53,6 +53,8 @@ fn h2spec_generic_section_passes() {
                         h
                     },
                     body: b"ok".to_vec(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 }
             },
             h2::Config::default(),

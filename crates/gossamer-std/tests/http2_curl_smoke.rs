@@ -63,6 +63,8 @@ fn bounded_handler_responds_over_h2c() {
                         h
                     },
                     body: format!("h2: {} {}", req.method.as_str(), req.path).into_bytes(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 }
             },
             h2::Config::default(),

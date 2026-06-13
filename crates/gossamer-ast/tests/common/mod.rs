@@ -119,6 +119,7 @@ pub(crate) fn block_expr(stmts: Vec<Stmt>, tail: Option<Expr>) -> Expr {
         ExprKind::Block(Block {
             stmts,
             tail: tail.map(Box::new),
+            synthetic: false,
         }),
     )
 }

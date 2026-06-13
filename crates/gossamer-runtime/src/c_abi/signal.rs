@@ -469,8 +469,7 @@ pub unsafe extern "C" fn gos_rt_vec_get_i64(v: *const GosVec, idx: i64) -> i64 {
         if idx < 0 || idx >= vec.len {
             return 0;
         }
-        let p = unsafe { vec.ptr.add((idx as usize) * (vec.elem_bytes as usize)) };
-        unsafe { (p as *const i64).read_unaligned() }
+        unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) }
     })
 }
 
@@ -487,8 +486,7 @@ pub unsafe extern "C" fn gos_rt_vec_set_i64(v: *mut GosVec, idx: i64, value: i64
         if idx < 0 || idx >= vec.len {
             return;
         }
-        let p = unsafe { vec.ptr.add((idx as usize) * (vec.elem_bytes as usize)) };
-        unsafe { p.cast::<i64>().write_unaligned(value) };
+        unsafe { crate::c_abi::vec::vec_elem_store_i64(vec, idx, value) };
     });
 }
 
@@ -543,6 +541,10 @@ pub unsafe extern "C" fn gos_rt_vec_slice(v: *const GosVec, lo: i64, hi: i64) ->
                 }
             }
         }
+        // STRING / VEC / AGGR_OWNED elements: the slice now shares the
+        // copied slots' heap children with the source; re-tag and retain
+        // so both vecs' deep-frees are balanced.
+        unsafe { crate::c_abi::vec::vec_share_owned_elements(v, out) };
         out
     })
 }
@@ -562,8 +564,7 @@ pub unsafe extern "C" fn gos_rt_vec_first(v: *const GosVec) -> i128 {
         if vec.len <= 0 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let p = vec.ptr.cast::<i64>();
-        let value = unsafe { p.read_unaligned() };
+        let value = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, 0) };
         unsafe { gos_rt_result_new(0, value) }
     })
 }
@@ -580,9 +581,7 @@ pub unsafe extern "C" fn gos_rt_vec_last(v: *const GosVec) -> i128 {
         if vec.len <= 0 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let off = ((vec.len - 1) as usize) * (vec.elem_bytes as usize);
-        let p = unsafe { vec.ptr.add(off) };
-        let value = unsafe { (p as *const i64).read_unaligned() };
+        let value = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, vec.len - 1) };
         unsafe { gos_rt_result_new(0, value) }
     })
 }
@@ -607,6 +606,9 @@ pub unsafe extern "C" fn gos_rt_vec_reversed(v: *const GosVec) -> *mut GosVec {
                 unsafe { gos_rt_vec_push(out, src_ptr) };
             }
         }
+        // Same sharing contract as `gos_rt_vec_slice`: the reversed copy
+        // owns its own share of every element's heap children.
+        unsafe { crate::c_abi::vec::vec_share_owned_elements(v, out) };
         out
     })
 }
@@ -620,8 +622,7 @@ pub unsafe extern "C" fn gos_rt_vec_index_of_i64(v: *const GosVec, needle: i64) 
         }
         let vec = unsafe { &*v };
         for i in 0..vec.len {
-            let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let elem = unsafe { (p as *const i64).read_unaligned() };
+            let elem = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, i) };
             if elem == needle {
                 return unsafe { gos_rt_result_new(0, i) };
             }
@@ -659,8 +660,7 @@ pub unsafe extern "C" fn gos_rt_vec_count_of_i64(v: *const GosVec, needle: i64) 
         let vec = unsafe { &*v };
         let mut count: i64 = 0;
         for i in 0..vec.len {
-            let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let elem = unsafe { (p as *const i64).read_unaligned() };
+            let elem = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, i) };
             if elem == needle {
                 count += 1;
             }
@@ -697,8 +697,7 @@ pub unsafe extern "C" fn gos_rt_vec_contains_i64(v: *const GosVec, needle: i64) 
         }
         let vec = unsafe { &*v };
         for i in 0..vec.len {
-            let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let elem = unsafe { (p as *const i64).read_unaligned() };
+            let elem = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, i) };
             if elem == needle {
                 return 1;
             }
@@ -870,9 +869,27 @@ pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *const GosVec, idx: i64) -> i
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let src = unsafe { &*v };
-        let p = unsafe { src.ptr.add((idx as usize) * (src.elem_bytes as usize)) };
-        let removed = unsafe { (p as *const i64).read_unaligned() };
+        let removed = unsafe { crate::c_abi::vec::vec_elem_load_i64(src, idx) };
         unsafe { gos_rt_result_new(0, removed) }
+    })
+}
+
+/// `xs.pop() -> Option<T>` — removes the last element and returns it
+/// packed as the 2-word Option (disc 0 = Some, 1 = None), honoring
+/// the header's `elem_bytes` for the payload read.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_pop_opt(v: *mut GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        if v.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let vec = unsafe { &mut *v };
+        if vec.len <= 0 {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        vec.len -= 1;
+        let value = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, vec.len) };
+        unsafe { gos_rt_result_new(0, value) }
     })
 }
 

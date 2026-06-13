@@ -38,6 +38,21 @@ impl Vm {
             registers[i] = arg;
         }
         self.pool.borrow_mut().give_args(args);
+        // Write-back cell protocol for `&mut Vec<T>` / `&mut [T]`
+        // parameters: unwrap each incoming `MutCell` into its param
+        // register and remember the cell so every return path below
+        // publishes the final register value back to the caller.
+        let mut ref_cells: Vec<(usize, Arc<parking_lot::Mutex<Value>>)> = Vec::new();
+        if !chunk.mut_ref_params.is_empty() {
+            for &idx in &chunk.mut_ref_params {
+                let slot = idx as usize;
+                if let Value::MutCell(cell) = &registers[slot] {
+                    let cell = Arc::clone(cell);
+                    registers[slot] = cell.lock().clone();
+                    ref_cells.push((slot, cell));
+                }
+            }
+        }
         let mut pc: u32 = 0;
         let instrs: &[Op] = &chunk.instrs;
         let instr_count = instrs.len();
@@ -308,8 +323,14 @@ impl Vm {
                     };
                     registers[dst as usize] = result;
                 }
-                Op::Return { value } => return Ok(registers[value as usize].clone()),
-                Op::ReturnUnit => return Ok(Value::Unit),
+                Op::Return { value } => {
+                    publish_ref_cells(&ref_cells, registers);
+                    return Ok(registers[value as usize].clone());
+                }
+                Op::ReturnUnit => {
+                    publish_ref_cells(&ref_cells, registers);
+                    return Ok(Value::Unit);
+                }
                 Op::MethodCall {
                     dst,
                     receiver,
@@ -1091,6 +1112,7 @@ impl Vm {
                         // arm). Surface as the chunk's return so
                         // the caller sees a real unwind, not a
                         // value collapsed into the next register.
+                        publish_ref_cells(&ref_cells, registers);
                         return Ok(result);
                     }
                     registers[dst as usize] = result;
@@ -1996,6 +2018,27 @@ impl Vm {
                     registers[dst_v as usize] =
                         Value::Uint(*ints.get_unchecked(src_i as usize) as u64);
                 },
+                Op::CastScalar { dst, src, target } => {
+                    let v = &registers[src as usize];
+                    let Some(result) = crate::cast::cast_scalar(v, target) else {
+                        return Err(RuntimeError::Type(format!(
+                            "cannot cast value of kind `{v}` to {target:?}"
+                        )));
+                    };
+                    registers[dst as usize] = result;
+                }
+                Op::CellNew { dst, src } => {
+                    let inner = registers[src as usize].clone();
+                    registers[dst as usize] =
+                        Value::MutCell(Arc::new(parking_lot::Mutex::new(inner)));
+                }
+                Op::CellTake { dst, cell } => {
+                    let taken = match &registers[cell as usize] {
+                        Value::MutCell(c) => c.lock().clone(),
+                        other => other.clone(),
+                    };
+                    registers[dst as usize] = taken;
+                }
                 Op::BuildTuple { dst, first, count } => {
                     // Native counterpart to the deferred-walker
                     // path. Clones each value register into a
@@ -2395,5 +2438,16 @@ impl Vm {
                 }
             }
         }
+    }
+}
+
+/// Publishes the final values of `&mut Vec<T>` / `&mut [T]` parameter
+/// registers back into their caller-provided write-back cells. Runs
+/// on every successful return path of [`Vm::run`]; error unwinds skip
+/// it (the caller's aggregate keeps its pre-call value, matching the
+/// compiled tiers' no-partial-publish behaviour for panics).
+fn publish_ref_cells(cells: &[(usize, Arc<parking_lot::Mutex<Value>>)], registers: &[Value]) {
+    for (slot, cell) in cells {
+        *cell.lock() = registers[*slot].clone();
     }
 }

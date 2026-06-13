@@ -1,0 +1,59 @@
+// Regression gate for order-independent RC accounting (fixed in
+// 0.13.0). A tuple-variant enum passed BY VALUE into an impl method
+// and pushed into a vec there must be retained by the callee: the
+// caller releases its ctor temp after the call. Before the fix,
+// `register_rc_managed_ty` only fired at constructor-lowering sites,
+// so a body lowered before the enum's first constructor (source
+// order!) skipped every retain/release for that enum — the node was
+// freed while the returned struct's vec still referenced it, and the
+// churn loop's reuse turned the second element into garbage
+// ("int <huge>" instead of "text alice") on the compiled tiers.
+// Payload-bearing enum defs are now registered eagerly by the
+// typechecker, so RC accounting no longer depends on item order.
+//
+// Expected on every tier: int 95 / text alice / done
+enum V { Null, B(bool), I(i64), F(f64), T(String), L([u8]) }
+struct Sel { binds: [V] }
+
+fn copy_vals(xs: &[V]) -> [V] {
+    let mut out: [V] = []
+    for x in xs { out.push(x) }
+    out
+}
+
+impl Sel {
+    fn where_eq(&self, v: V) -> Sel {
+        let mut b = copy_vals(&self.binds)
+        b.push(v)
+        Sel { binds: b }
+    }
+    fn params(&self) -> [V] {
+        copy_vals(&self.binds)
+    }
+}
+
+fn churn() -> i64 {
+    let mut n = 0
+    for i in 0..2000 {
+        let s = format!("churn-{}", i)
+        n += s.len()
+    }
+    n
+}
+
+fn main() {
+    let sel = Sel { binds: [] }.where_eq(V::I(95)).where_eq(V::T("alice"))
+    let binds = sel.params()
+    let _ = churn()
+    for v in &binds {
+        match v {
+            V::Null => println!("null"),
+            V::B(_) => println!("bool"),
+            V::I(n) => println!("int {}", n),
+            V::F(_) => println!("float"),
+            V::T(s) => println!("text {}", s),
+            V::L(b) => println!("blob {}", b.len()),
+        }
+    }
+    println!("done")
+}

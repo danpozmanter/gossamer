@@ -355,10 +355,71 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         builtin("Response::json", builtin_http_response_json),
     ));
     globals.push((
+        "http::Response::stream",
+        builtin("http::Response::stream", builtin_http_response_stream),
+    ));
+    globals.push((
+        "Response::stream",
+        builtin("Response::stream", builtin_http_response_stream),
+    ));
+    globals.push((
+        "http::Response::with_header",
+        builtin(
+            "http::Response::with_header",
+            builtin_http_response_with_header,
+        ),
+    ));
+    globals.push((
+        "Response::with_header",
+        builtin("Response::with_header", builtin_http_response_with_header),
+    ));
+    globals.push((
         "http::Client::new",
         builtin(
             "http::Client::new",
             crate::http_client_builtins::builtin_http_client_new,
+        ),
+    ));
+    globals.push((
+        "http::Client::builder",
+        builtin(
+            "http::Client::builder",
+            crate::http_client_builtins::builtin_http_client_builder,
+        ),
+    ));
+    globals.push((
+        "ClientBuilder::max_redirects",
+        builtin(
+            "ClientBuilder::max_redirects",
+            crate::http_client_builtins::builtin_http_client_builder_max_redirects,
+        ),
+    ));
+    globals.push((
+        "ClientBuilder::timeout_ms",
+        builtin(
+            "ClientBuilder::timeout_ms",
+            crate::http_client_builtins::builtin_http_client_builder_timeout_ms,
+        ),
+    ));
+    globals.push((
+        "ClientBuilder::build",
+        builtin(
+            "ClientBuilder::build",
+            crate::http_client_builtins::builtin_http_client_builder_build,
+        ),
+    ));
+    globals.push((
+        "Client::request",
+        builtin(
+            "Client::request",
+            crate::http_client_builtins::builtin_http_client_request,
+        ),
+    ));
+    globals.push((
+        "Client::request_bytes",
+        builtin(
+            "Client::request_bytes",
+            crate::http_client_builtins::builtin_http_client_request_bytes,
         ),
     ));
     globals.push((
@@ -404,6 +465,20 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ),
     ));
     globals.push((
+        "Request::header",
+        builtin(
+            "Request::header",
+            crate::http_client_builtins::builtin_http_request_header,
+        ),
+    ));
+    globals.push((
+        "Request::body",
+        builtin(
+            "Request::body",
+            crate::http_client_builtins::builtin_http_request_body,
+        ),
+    ));
+    globals.push((
         "Request::send",
         builtin(
             "Request::send",
@@ -424,6 +499,13 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         builtin(
             "http::request",
             crate::http_client_builtins::builtin_http_request,
+        ),
+    ));
+    globals.push((
+        "http::request_bytes",
+        builtin(
+            "http::request_bytes",
+            crate::http_client_builtins::builtin_http_request_bytes,
         ),
     ));
     globals.push((
@@ -468,6 +550,13 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         builtin(
             "ResponseStream::next_line",
             crate::http_client_builtins::builtin_response_stream_next_line,
+        ),
+    ));
+    globals.push((
+        "ResponseStream::next_chunk",
+        builtin(
+            "ResponseStream::next_chunk",
+            crate::http_client_builtins::builtin_response_stream_next_chunk,
         ),
     ));
     globals.push(("path", builtin("path", builtin_field::<'p'>)));
@@ -2295,6 +2384,74 @@ fn builtin_http_response_json(args: &[Value]) -> RuntimeResult<Value> {
     Ok(response_struct(status, body, "application/json"))
 }
 
+/// `Response::stream(status, content_type, rs) -> Response` — wraps a
+/// live `ResponseStream` so the server drains it to the client as
+/// chunked frames (proxy passthrough). Construction CONSUMES the
+/// stream: the handle is moved out of the client registry, so a later
+/// `next_chunk` / `next_line` on the same `ResponseStream` yields
+/// `None`, and a second `Response::stream` over the same value serves
+/// an empty chunked body. Mirrors the compiled tier's
+/// `gos_rt_http_response_stream_new` exactly.
+fn builtin_http_response_stream(args: &[Value]) -> RuntimeResult<Value> {
+    let status = args.first().and_then(value_to_int).unwrap_or(200);
+    let content_type = args.get(1).map(render_one).unwrap_or_default();
+    let Some(handle) = args
+        .get(2)
+        .and_then(crate::http_client_builtins::response_stream_handle)
+    else {
+        return Err(RuntimeError::Type(
+            "Response::stream expects a ResponseStream as its third argument".to_string(),
+        ));
+    };
+    crate::http_client_builtins::stream_consume_for_response(handle);
+    let fields = vec![
+        (Ident::new("status"), Value::Int(status)),
+        (Ident::new("body"), Value::String(SmolStr::default())),
+        (
+            Ident::new("content_type"),
+            Value::String(SmolStr::from(content_type)),
+        ),
+        (Ident::new("__stream_handle"), Value::Int(handle)),
+    ];
+    Ok(Value::struct_("Response", fields))
+}
+
+/// `resp.with_header(name, value) -> Response` — chainable header
+/// attach. Replace-then-push, mirroring the compiled tier's
+/// `gos_rt_http_response_with_header`: any prior header with the
+/// same case-insensitive name is dropped, then the new pair is
+/// appended, so the last `with_header` for a name wins.
+fn builtin_http_response_with_header(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::Struct(inner)) = args.first() else {
+        return Err(RuntimeError::Type(
+            "Response::with_header expects a Response receiver".to_string(),
+        ));
+    };
+    let name = args.get(1).map(render_one).unwrap_or_default();
+    let value = args.get(2).map(render_one).unwrap_or_default();
+    let pair = Value::Tuple(Arc::new(vec![
+        Value::String(SmolStr::from(name.clone())),
+        Value::String(SmolStr::from(value)),
+    ]));
+    let mut fields = inner.fields.clone();
+    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| ident.name == "headers") {
+        let mut items = match slot {
+            Value::Array(existing) => existing.as_ref().clone(),
+            _ => Vec::new(),
+        };
+        items.retain(|item| {
+            !matches!(item, Value::Tuple(kv)
+                if matches!(kv.first(), Some(Value::String(k))
+                    if k.as_str().eq_ignore_ascii_case(&name)))
+        });
+        items.push(pair);
+        *slot = Value::Array(Arc::new(items));
+    } else {
+        fields.push((Ident::new("headers"), Value::Array(Arc::new(vec![pair]))));
+    }
+    Ok(Value::struct_(inner.name, fields))
+}
+
 fn builtin_http2_config_default(_args: &[Value]) -> RuntimeResult<Value> {
     let c = gossamer_std::http_h2::Config::default();
     let fields = vec![
@@ -2449,7 +2606,10 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
 
     match result {
         Ok(()) => Ok(Value::variant("Ok", vec![Value::Unit])),
-        Err(err) => Err(RuntimeError::Panic(format!("http::serve: {err}"))),
+        // `http::serve` is `Result<(), Error>` in Gossamer — a bind
+        // failure is an `Err` value for the caller's match, not a
+        // panic (native-tier parity).
+        Err(err) => Ok(err_variant(format!("http::serve: {err}"))),
     }
 }
 
@@ -2494,20 +2654,29 @@ fn native_http2_bind_and_run_h2c(
 
     let max_requests = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
 
-    let addr_for_server = addr.clone();
+    // Bind synchronously so a bind failure is the caller's `Err`
+    // value (native-tier parity), then hand the listener to the
+    // accept thread.
+    let listener = match std::net::TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => return Ok(err_variant(format!("http::serve_h2c: {e}"))),
+    };
+
     let shutdown_for_server = Arc::clone(&shutdown);
     let req_tx_for_server = req_tx.clone();
     std::thread::Builder::new()
         .name("gossamer-http2-accept".to_string())
         .spawn(move || {
-            let _ = gossamer_std::http_h2::bind_and_run_h2c(
-                &addr_for_server,
+            let _ = gossamer_std::http_h2::run_h2c(
+                listener,
                 move |req: http_std::Request| -> http_std::Response {
                     if shutdown_for_server.load(Ordering::Acquire) {
                         return http_std::Response {
                             status: http_std::StatusCode(503),
                             headers: http_std::Headers::new(),
                             body: b"shutting down".to_vec(),
+                            raw_header_pairs: Vec::new(),
+                            body_stream: None,
                         };
                     }
                     let (resp_tx, resp_rx) = mpsc::channel();
@@ -2516,6 +2685,8 @@ fn native_http2_bind_and_run_h2c(
                             status: http_std::StatusCode(500),
                             headers: http_std::Headers::new(),
                             body: b"dispatch channel closed".to_vec(),
+                            raw_header_pairs: Vec::new(),
+                            body_stream: None,
                         };
                     }
                     match resp_rx.recv_timeout(Duration::from_secs(30)) {
@@ -2524,6 +2695,8 @@ fn native_http2_bind_and_run_h2c(
                             status: http_std::StatusCode(504),
                             headers: http_std::Headers::new(),
                             body: b"handler timeout".to_vec(),
+                            raw_header_pairs: Vec::new(),
+                            body_stream: None,
                         },
                     }
                 },
@@ -2550,11 +2723,15 @@ fn native_http2_bind_and_run_h2c(
                         status: http_std::StatusCode(500),
                         headers: http_std::Headers::new(),
                         body: b"handler did not return http::Response".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
                     }),
                     Err(err) => http_std::Response {
                         status: http_std::StatusCode(500),
                         headers: http_std::Headers::new(),
                         body: format!("handler error: {err}").into_bytes(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
                     },
                 };
                 let _ = resp_tx.send(response);
@@ -2601,6 +2778,14 @@ fn request_to_value(request: &http_std::Request) -> Value {
         })
         .collect();
     let body_text = String::from_utf8_lossy(&request.body).into_owned();
+    // Binary-safe sibling of the UTF-8-lossy `body` field — one
+    // `Value::Int` per byte, matching the `resp.raw_bytes` and
+    // `os::read_file` byte-array shape.
+    let raw_body: Vec<Value> = request
+        .body
+        .iter()
+        .map(|b| Value::Int(i64::from(*b)))
+        .collect();
     let fields = vec![
         (
             Ident::new("method"),
@@ -2614,6 +2799,7 @@ fn request_to_value(request: &http_std::Request) -> Value {
         ),
         (Ident::new("headers"), Value::Array(Arc::new(headers))),
         (Ident::new("body"), Value::String(body_text.into())),
+        (Ident::new("raw_body"), Value::Array(Arc::new(raw_body))),
     ];
     Value::struct_("Request", Arc::unwrap_or_clone(Arc::new(fields)))
 }
@@ -2626,9 +2812,16 @@ fn value_to_response(value: &Value) -> Option<http_std::Response> {
     let fields = &struct_inner.fields;
     let mut status: u16 = 200;
     let mut body: Vec<u8> = Vec::new();
-    let mut content_type = "text/plain; charset=utf-8".to_string();
+    let mut content_type = String::new();
+    let mut header_pairs: Vec<(String, String)> = Vec::new();
+    let mut stream_handle: Option<i64> = None;
     for (ident, v) in fields {
         match ident.name.as_str() {
+            "__stream_handle" => {
+                if let Value::Int(h) = v {
+                    stream_handle = Some(*h);
+                }
+            }
             "status" => {
                 status = match v {
                     Value::Int(n) => u16::try_from(*n).unwrap_or(500),
@@ -2660,18 +2853,70 @@ fn value_to_response(value: &Value) -> Option<http_std::Response> {
                     content_type.push_str(s.as_str());
                 }
             }
+            "headers" => {
+                if let Value::Array(items) = v {
+                    for item in items.iter() {
+                        if let Value::Tuple(kv) = item
+                            && let (Some(Value::String(k)), Some(Value::String(val))) =
+                                (kv.first(), kv.get(1))
+                        {
+                            header_pairs.push((k.to_string(), val.to_string()));
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
+    // A `__stream_handle` field marks a `Response::stream` value:
+    // take the live stream out of the pending registry (one-shot —
+    // a second serve of the same handle drains nothing and answers
+    // an empty chunked body, matching the compiled tier).
+    let body_stream = stream_handle.map(|h| {
+        crate::http_client_builtins::stream_take_for_serve(h).map_or_else(
+            || http_std::BodyStream(Box::new(std::io::empty())),
+            |arc| http_std::BodyStream(Box::new(crate::http_client_builtins::StreamBody(arc))),
+        )
+    });
+    let streamed = body_stream.is_some();
     let mut response = http_std::Response {
         status: http_std::StatusCode(status),
         headers: http_std::Headers::new(),
         body,
+        body_stream,
+        raw_header_pairs: Vec::new(),
     };
-    response.headers.insert("content-type", &content_type);
-    response
-        .headers
-        .insert("content-length", &response.body.len().to_string());
+    // Handler-set headers go in first; `Headers::insert` keys by
+    // lowercased name, so a later same-name pair replaces the
+    // earlier one — matching the compiled tier's replace-then-push.
+    let mut has_content_type = false;
+    let mut has_content_length = false;
+    for (name, value) in &header_pairs {
+        if name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            has_content_length = true;
+        }
+        response.headers.insert(name, value);
+    }
+    // Precedence (mirrors the compiled tier's
+    // `extract_response_into`): explicit content-type header >
+    // `content_type` field > text/plain default.
+    if !has_content_type {
+        if content_type.is_empty() {
+            content_type.push_str("text/plain; charset=utf-8");
+        }
+        response.headers.insert("content-type", &content_type);
+    }
+    // Streamed responses are framed as Transfer-Encoding: chunked by
+    // the server writer; a Content-Length would violate RFC 7230
+    // §3.3.3, so it is only synthesized for buffered bodies.
+    if !has_content_length && !streamed {
+        response
+            .headers
+            .insert("content-length", &response.body.len().to_string());
+    }
     Some(response)
 }
 
@@ -3467,37 +3712,41 @@ fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
         Ok(es) => es,
         Err(e) => return Ok(err_variant(format!("{e}"))),
     };
-    let mut items: Vec<Value> = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let (size, modified_ms) = std::fs::metadata(&entry.path).map_or((0_i64, 0_i64), |m| {
-            let size = i64::try_from(m.len()).unwrap_or(i64::MAX);
-            let modified_ms = m
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
-            (size, modified_ms)
-        });
-        let path_str = entry.path.to_string_lossy().into_owned();
-        let fields = vec![
-            (Ident::new("name"), Value::String(SmolStr::from(entry.name))),
-            (Ident::new("path"), Value::String(SmolStr::from(path_str))),
-            (Ident::new("is_file"), Value::Bool(entry.is_file)),
-            (Ident::new("is_dir"), Value::Bool(entry.is_dir)),
-            (Ident::new("is_symlink"), Value::Bool(entry.is_symlink)),
-            (Ident::new("size"), Value::Int(size)),
-            (Ident::new("modified_ms"), Value::Int(modified_ms)),
-        ];
-        items.push(Value::struct_(
-            "DirInfo",
-            Arc::unwrap_or_clone(Arc::new(fields)),
-        ));
-    }
+    let items: Vec<Value> = entries.iter().map(dir_info_value).collect();
     Ok(ok_variant(Value::Array(Arc::new(items))))
 }
 
-/// `fs::walk_dir(root: String) -> Result<[String], String>`. Recursive
-/// walk; returns every descendant path as a flat array. The
+/// Builds the `DirInfo` struct value shared by `fs::list_dir` and
+/// `fs::walk_dir`; field order matches the compiled tier's blob.
+fn dir_info_value(entry: &fs_std::DirEntry) -> Value {
+    let (size, modified_ms) = std::fs::metadata(&entry.path).map_or((0_i64, 0_i64), |m| {
+        let size = i64::try_from(m.len()).unwrap_or(i64::MAX);
+        let modified_ms = m
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+        (size, modified_ms)
+    });
+    let path_str = entry.path.to_string_lossy().into_owned();
+    let fields = vec![
+        (
+            Ident::new("name"),
+            Value::String(SmolStr::from(entry.name.clone())),
+        ),
+        (Ident::new("path"), Value::String(SmolStr::from(path_str))),
+        (Ident::new("is_file"), Value::Bool(entry.is_file)),
+        (Ident::new("is_dir"), Value::Bool(entry.is_dir)),
+        (Ident::new("is_symlink"), Value::Bool(entry.is_symlink)),
+        (Ident::new("size"), Value::Int(size)),
+        (Ident::new("modified_ms"), Value::Int(modified_ms)),
+    ];
+    Value::struct_("DirInfo", Arc::unwrap_or_clone(Arc::new(fields)))
+}
+
+/// `fs::walk_dir(root: String) -> Result<[DirInfo], String>`. Recursive
+/// walk; returns every descendant entry with the same `DirInfo`
+/// shape as `fs::list_dir` (and as the compiled tiers). The
 /// gossamer-std API uses a visitor closure for streaming; this
 /// builtin materialises the list to keep the .gos call site
 /// simple. Aliased as `path::walk` for Go-shaped spelling.
@@ -3505,22 +3754,13 @@ fn builtin_fs_walk_dir(args: &[Value]) -> RuntimeResult<Value> {
     let Some(root) = args.first().and_then(as_str) else {
         return Ok(err_variant("fs::walk_dir: root argument must be a string"));
     };
-    let collected = std::cell::RefCell::new(Vec::<String>::new());
+    let collected = std::cell::RefCell::new(Vec::<Value>::new());
     let visit_result = fs_std::walk_dir(root, |entry| {
-        if let Some(p) = entry.path.to_str() {
-            collected.borrow_mut().push(p.to_string());
-        }
+        collected.borrow_mut().push(dir_info_value(entry));
         Ok(())
     });
     match visit_result {
-        Ok(()) => {
-            let items: Vec<Value> = collected
-                .into_inner()
-                .into_iter()
-                .map(|s| Value::String(SmolStr::from(s)))
-                .collect();
-            Ok(ok_variant(Value::Array(Arc::new(items))))
-        }
+        Ok(()) => Ok(ok_variant(Value::Array(Arc::new(collected.into_inner())))),
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
 }
@@ -4222,6 +4462,10 @@ fn json_value_to_gossamer(value: &json_std::Value) -> Value {
 fn gossamer_to_json_value(value: &Value) -> json_std::Value {
     match value {
         Value::NativeEnum(o) => gossamer_to_json_value(&crate::value::native_enum_to_variant(o)),
+        Value::MutCell(c) => {
+            let inner = c.lock().clone();
+            gossamer_to_json_value(&inner)
+        }
         Value::Unit | Value::Void | Value::Weak(_) => json_std::Value::Null,
         Value::Bool(b) => json_std::Value::Bool(*b),
         Value::Int(n) => json_std::Value::Number(*n as f64),
@@ -6943,36 +7187,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn absolute_redirect_keeps_absolute_target() {
-        assert_eq!(
-            crate::http_client_builtins::absolute_redirect("http://host/x", "https://elsewhere/y"),
-            "https://elsewhere/y"
-        );
-    }
-
-    #[test]
-    fn absolute_redirect_resolves_root_relative_location() {
-        assert_eq!(
-            crate::http_client_builtins::absolute_redirect(
-                "http://example.com/info.0.json",
-                "/info.1.json"
-            ),
-            "http://example.com/info.1.json"
-        );
-    }
-
-    #[test]
-    fn absolute_redirect_resolves_bare_relative_location() {
-        assert_eq!(
-            crate::http_client_builtins::absolute_redirect(
-                "http://example.com/info.0.json",
-                "info.1.json"
-            ),
-            "http://example.com/info.1.json"
-        );
-    }
-
-    #[test]
     fn builtin_split_returns_array_of_segments_for_string_receiver() {
         let args = vec![
             Value::String(SmolStr::from("a/b/c".to_string())),
@@ -7010,5 +7224,148 @@ mod tests {
             panic!("expected string");
         };
         assert_eq!(out.as_str(), "hello");
+    }
+
+    fn header_pair(name: &str, value: &str) -> Value {
+        Value::Tuple(Arc::new(vec![
+            Value::String(SmolStr::from(name.to_string())),
+            Value::String(SmolStr::from(value.to_string())),
+        ]))
+    }
+
+    fn response_value(content_type: Option<&str>, headers: Option<Vec<Value>>) -> Value {
+        let mut fields = vec![
+            (Ident::new("status"), Value::Int(200)),
+            (
+                Ident::new("body"),
+                Value::String(SmolStr::from("ok".to_string())),
+            ),
+        ];
+        if let Some(ct) = content_type {
+            fields.push((
+                Ident::new("content_type"),
+                Value::String(SmolStr::from(ct.to_string())),
+            ));
+        }
+        if let Some(items) = headers {
+            fields.push((Ident::new("headers"), Value::Array(Arc::new(items))));
+        }
+        Value::struct_("Response", fields)
+    }
+
+    #[test]
+    fn value_to_response_explicit_content_type_header_wins_over_field() {
+        let value = response_value(
+            Some("application/json"),
+            Some(vec![header_pair("Content-Type", "text/html")]),
+        );
+        let response = value_to_response(&value).expect("response");
+        assert_eq!(response.headers.get("content-type"), Some("text/html"));
+    }
+
+    #[test]
+    fn value_to_response_content_type_field_used_when_no_explicit_header() {
+        let value = response_value(
+            Some("application/json"),
+            Some(vec![header_pair("x-a", "1")]),
+        );
+        let response = value_to_response(&value).expect("response");
+        assert_eq!(
+            response.headers.get("content-type"),
+            Some("application/json")
+        );
+        assert_eq!(response.headers.get("x-a"), Some("1"));
+    }
+
+    #[test]
+    fn value_to_response_defaults_to_text_plain_when_neither_set() {
+        let value = response_value(None, None);
+        let response = value_to_response(&value).expect("response");
+        assert_eq!(
+            response.headers.get("content-type"),
+            Some("text/plain; charset=utf-8")
+        );
+        assert_eq!(response.headers.get("content-length"), Some("2"));
+    }
+
+    #[test]
+    fn value_to_response_honors_explicit_content_length_header() {
+        let value = response_value(None, Some(vec![header_pair("Content-Length", "99")]));
+        let response = value_to_response(&value).expect("response");
+        assert_eq!(response.headers.get("content-length"), Some("99"));
+    }
+
+    #[test]
+    fn with_header_replaces_same_name_case_insensitively_then_pushes() {
+        let r0 = response_value(None, None);
+        let r1 = builtin_http_response_with_header(&[
+            r0,
+            Value::String(SmolStr::from("x-a".to_string())),
+            Value::String(SmolStr::from("1".to_string())),
+        ])
+        .expect("with_header");
+        let r2 = builtin_http_response_with_header(&[
+            r1,
+            Value::String(SmolStr::from("X-A".to_string())),
+            Value::String(SmolStr::from("2".to_string())),
+        ])
+        .expect("with_header");
+        let Value::Struct(inner) = &r2 else {
+            panic!("expected struct");
+        };
+        let Some((_, Value::Array(items))) = inner
+            .fields
+            .iter()
+            .find(|(ident, _)| ident.name == "headers")
+        else {
+            panic!("expected headers array");
+        };
+        assert_eq!(items.len(), 1, "replace-then-push keeps one entry");
+        let Value::Tuple(kv) = &items[0] else {
+            panic!("expected tuple");
+        };
+        let (Some(Value::String(name)), Some(Value::String(value))) = (kv.first(), kv.get(1))
+        else {
+            panic!("expected string pair");
+        };
+        assert_eq!(name.as_str(), "X-A");
+        assert_eq!(value.as_str(), "2");
+    }
+
+    #[test]
+    fn with_header_chain_of_three_keeps_last_duplicate_and_distinct_names() {
+        let mut response = response_value(None, None);
+        for (name, value) in [("x-a", "1"), ("X-A", "2"), ("x-b", "3")] {
+            response = builtin_http_response_with_header(&[
+                response,
+                Value::String(SmolStr::from(name.to_string())),
+                Value::String(SmolStr::from(value.to_string())),
+            ])
+            .expect("with_header");
+        }
+        let rendered = value_to_response(&response).expect("response");
+        assert_eq!(rendered.headers.get("x-a"), Some("2"));
+        assert_eq!(rendered.headers.get("x-b"), Some("3"));
+        assert_eq!(
+            rendered.headers.get("content-type"),
+            Some("text/plain; charset=utf-8")
+        );
+    }
+
+    #[test]
+    fn errors_new_displays_message_only() {
+        let e = builtin_errors_new(&[Value::String(SmolStr::from("boom"))]).expect("new");
+        assert_eq!(format!("{e}"), "boom");
+    }
+
+    #[test]
+    fn wrapped_error_displays_colon_joined_chain() {
+        let root = builtin_errors_new(&[Value::String(SmolStr::from("root"))]).expect("new");
+        let mid = builtin_errors_wrap(&[root, Value::String(SmolStr::from("mid"))]).expect("wrap");
+        let outer =
+            builtin_errors_wrap(&[mid, Value::String(SmolStr::from("outer"))]).expect("wrap");
+        assert_eq!(format!("{outer}"), "outer: mid: root");
+        let msg = builtin_errors_message(&[outer]).expect("message");
+        assert_eq!(format!("{msg}"), "outer", "message() stays top-level-only");
     }
 }

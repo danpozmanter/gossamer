@@ -146,6 +146,42 @@ pub enum TypeError {
         /// Declared variant count.
         count: usize,
     },
+    /// A closure was passed to a std combinator whose signature the
+    /// checker has no row for, leaving the closure's parameter types
+    /// uninferrable. Without a concrete type the compiled tiers pin
+    /// the parameter to i64 and a String/Error payload formats as a
+    /// raw pointer, so this is a hard error instead of silent garbage.
+    #[error(
+        "cannot infer the parameter types of this closure passed to `{combinator}`; \
+         annotate the parameter (e.g. `|x: String| ...`) or bind the payload through a typed `match`"
+    )]
+    ClosureParamUninferred {
+        /// Qualified combinator path, e.g. `iter::map`.
+        combinator: String,
+    },
+    /// `i128` / `u128` appeared in a type position, a literal
+    /// suffix, or a cast target. The runtime's i64 value model has
+    /// no 128-bit representation on any tier, so the checker
+    /// rejects the types uniformly instead of letting the VM run
+    /// them at silent 64-bit width.
+    #[error("`{ty}` is not supported yet")]
+    Int128Unsupported {
+        /// Which of the two 128-bit spellings appeared.
+        ty: String,
+    },
+    /// A std free function was used as a first-class value
+    /// (`r.map_err(errors::new)`) but is not in the supported-set
+    /// table, so the compiled tiers have no symbol to take the
+    /// address of. Rejected uniformly on every tier rather than
+    /// letting the VM accept what a native build cannot link.
+    #[error(
+        "std function `{path}` cannot be passed as a value on compiled tiers; \
+         wrap it in a closure (e.g. `|x| {path}(x)`)"
+    )]
+    StdFnValueUnsupported {
+        /// Qualified std path as written, e.g. `strings::repeat`.
+        path: String,
+    },
 }
 
 impl TypeError {
@@ -165,6 +201,9 @@ impl TypeError {
             Self::InvalidEscape { .. } => "invalid-escape",
             Self::UnknownTraitBound { .. } => "unknown-trait-bound",
             Self::TooManyVariants { .. } => "too-many-variants",
+            Self::ClosureParamUninferred { .. } => "closure-param-uninferred",
+            Self::Int128Unsupported { .. } => "int128-unsupported",
+            Self::StdFnValueUnsupported { .. } => "std-fn-value-unsupported",
         }
     }
 
@@ -184,6 +223,9 @@ impl TypeError {
             Self::InvalidEscape { .. } => "GT0010",
             Self::UnknownTraitBound { .. } => "GT0011",
             Self::TooManyVariants { .. } => "GT0012",
+            Self::ClosureParamUninferred { .. } => "GT0013",
+            Self::Int128Unsupported { .. } => "GT0014",
+            Self::StdFnValueUnsupported { .. } => "GT0015",
         }
     }
 }
@@ -191,6 +233,20 @@ impl TypeError {
 /// Maps the most common `expected X, found Y` pairs to a one-line
 /// "did you mean" hint. Pure string compare on the rendered types
 /// — keeps the table small and avoids re-deriving structure here.
+/// Attaches the GT0014 help + note to an `Int128Unsupported`
+/// diagnostic. Split out of `to_diagnostic` to keep that match
+/// within the line-count lint budget.
+fn int128_diagnostic(
+    out: gossamer_diagnostics::Diagnostic,
+    ty: &str,
+) -> gossamer_diagnostics::Diagnostic {
+    out.with_help("use `i64` / `u64` or split the value into two 64-bit halves")
+        .with_note(format!(
+            "`{ty}` has no 128-bit runtime representation on any tier (VM, JIT, or \
+             compiled tier); the VM would otherwise run it at silent 64-bit width"
+        ))
+}
+
 fn mismatch_suggestion(expected: &str, found: &str) -> Option<String> {
     // String / &str
     if expected == "String" && found.ends_with("&str") {
@@ -327,7 +383,48 @@ impl TypeDiagnostic {
                     ))
                     .with_note("check for a typo or import the trait into scope");
             }
+            TypeError::ClosureParamUninferred { combinator } => {
+                out = closure_param_diagnostic(out, combinator);
+            }
+            TypeError::Int128Unsupported { ty } => out = int128_diagnostic(out, ty),
+            TypeError::StdFnValueUnsupported { path } => {
+                out = std_fn_value_diagnostic(out, path);
+            }
         }
         out
     }
+}
+
+/// Attaches the GT0013 help + note. Split out of `to_diagnostic` to
+/// keep that match within the line-count lint budget.
+fn closure_param_diagnostic(
+    out: gossamer_diagnostics::Diagnostic,
+    combinator: &str,
+) -> gossamer_diagnostics::Diagnostic {
+    out.with_help(
+        "annotate the closure parameter with its concrete type \
+         (e.g. `|x: String| ...`) or bind the payload through a typed `match`",
+    )
+    .with_note(format!(
+        "`{combinator}` has no signature row in the checker, so the closure's \
+         parameter type cannot be inferred; compiled tiers would otherwise read \
+         heap payloads as raw integers"
+    ))
+}
+
+/// Attaches the GT0015 help + note. Split out of `to_diagnostic` to
+/// keep that match within the line-count lint budget.
+fn std_fn_value_diagnostic(
+    out: gossamer_diagnostics::Diagnostic,
+    path: &str,
+) -> gossamer_diagnostics::Diagnostic {
+    out.with_help(format!(
+        "wrap the call in a closure: `|x| {path}(x)` works on every tier"
+    ))
+    .with_note(
+        "the VM models std functions as callable builtin values, but the compiled \
+         tiers need a concrete runtime symbol; only the tabled supported set \
+         (errors::new, strings::to_upper/.../trim, strconv::parse_int/...) can be \
+         passed directly",
+    )
 }

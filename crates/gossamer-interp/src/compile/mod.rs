@@ -106,6 +106,23 @@ pub(crate) struct TypedReg {
 /// resolve field-access offsets at compile time.
 pub(crate) type StructLayouts = std::collections::HashMap<gossamer_resolve::DefId, Vec<String>>;
 
+/// Returns `true` when `ty` is `&mut Vec<T>` / `&mut [T]` — the
+/// parameter / argument shape that rides the write-back cell
+/// protocol (`Op::CellNew` / `Op::CellTake` /
+/// `FnChunk::mut_ref_params`). Fixed `[T; N]` arrays are excluded:
+/// the compiled tiers copy them at the call boundary, so cell
+/// write-back there would *create* a divergence.
+pub(crate) fn is_mut_ref_vec(tcx: &TyCtxt, ty: Ty) -> bool {
+    let Some(TyKind::Ref {
+        mutability: gossamer_types::Mutbl::Mut,
+        inner,
+    }) = tcx.kind(ty)
+    else {
+        return false;
+    };
+    matches!(tcx.kind(*inner), Some(TyKind::Vec(_) | TyKind::Slice(_)))
+}
+
 /// Trivial-wrapper inlining table: for each user function
 /// whose body is `return intrinsic(param)` (a pattern common
 /// enough in library code that its call overhead shows up on
@@ -154,12 +171,18 @@ pub fn compile_fn(
             call_cache_count: 0,
             arith_cache_count: 0,
             field_cache_count: 0,
+            mut_ref_params: Vec::new(),
         });
     };
     let mut builder = FnBuilder::new(name, tcx, layouts, wrappers, consts);
     for param in &decl.params {
         let reg = builder.alloc_reg();
         builder.bind_param(&param.pattern, reg);
+        // `&mut Vec<T>` / `&mut [T]` parameters participate in the
+        // write-back cell protocol — see `FnChunk::mut_ref_params`.
+        if is_mut_ref_vec(tcx, param.ty) {
+            builder.mut_ref_params.push(reg);
+        }
         // Track typed-storage parameter shapes so callees can use
         // the same `IntArrayGetI64` / `FloatVecGetF64` fast paths
         // they would for a let-binding. The receiver invariant
@@ -281,6 +304,9 @@ pub(crate) struct FnBuilder<'tcx> {
     /// `arith_caches` slot. The `FnChunk` allocates the cache
     /// vector to this size at `finish` time. Tier C2.
     pub(crate) next_arith_cache_idx: u16,
+    /// Parameter registers declared `&mut Vec<T>` / `&mut [T]`;
+    /// copied into [`FnChunk::mut_ref_params`] at `finish` time.
+    pub(crate) mut_ref_params: Vec<Reg>,
 }
 
 #[derive(Debug, Default)]

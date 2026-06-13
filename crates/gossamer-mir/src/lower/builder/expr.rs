@@ -696,8 +696,16 @@ impl<'a> Builder<'a> {
             // so a later `let` binding + call can still dispatch
             // directly to the named function without treating
             // the local as a closure env pointer.
-            self.local_fn_name.insert(local, joined_name.clone());
-            Operand::Const(ConstValue::Str(joined_name))
+            //
+            // A tabled std fn used as a value (`errors::new` passed
+            // to `map_err`) is recorded under its runtime symbol —
+            // the eta-expansion target the compiled tiers can take
+            // the address of. The thunk machinery then forwards to
+            // the C-ABI shim exactly like a lifted bare closure.
+            let resolved_name = gossamer_types::std_fn_values::rt_symbol_for_std_fn(&joined_name)
+                .map_or(joined_name, str::to_string);
+            self.local_fn_name.insert(local, resolved_name.clone());
+            Operand::Const(ConstValue::Str(resolved_name))
         };
         self.emit_assign(Place::local(local), Rvalue::Use(operand), span);
         Some(local)

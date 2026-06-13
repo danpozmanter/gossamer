@@ -1416,6 +1416,8 @@ fn shape_char_to_llvm_ty(c: char) -> Option<&'static str> {
         'f' => "double",
         'g' => "float",
         'u' => "i64",
+        // 2-word packed Result/Option.
+        'r' => "i128",
         _ => return None,
     })
 }

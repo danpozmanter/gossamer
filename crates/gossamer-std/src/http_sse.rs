@@ -109,6 +109,8 @@ pub fn response_skeleton() -> Response {
         status: StatusCode(200),
         headers: event_stream_headers(),
         body: Vec::new(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 

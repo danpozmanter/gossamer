@@ -303,6 +303,8 @@ impl<'a> Builder<'a> {
             | "gos_rt_error_message"
             | "gos_rt_bufio_scanner_text"
             | "gos_rt_http_response_body"
+            | "gos_rt_http_response_content_type"
+            | "gos_rt_http_response_location"
             | "gos_rt_fs_read_to_string"
             | "gos_rt_path_join"
             | "gos_rt_http_request_path"
@@ -325,9 +327,14 @@ impl<'a> Builder<'a> {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 self.tcx.intern(gossamer_types::TyKind::Vec(i))
             }
-            "gos_rt_http_response_raw_bytes" => {
+            "gos_rt_http_response_raw_bytes" | "gos_rt_http_request_raw_body" => {
                 let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
                 self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty))
+            }
+            "gos_rt_http_response_headers" | "gos_rt_http_request_headers" => {
+                let s = self.tcx.string_ty();
+                let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                self.tcx.intern(gossamer_types::TyKind::Vec(tup))
             }
             "gos_rt_sync_map_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
             "gos_rt_sync_map_contains" => self.tcx.bool_ty(),
@@ -352,15 +359,26 @@ impl<'a> Builder<'a> {
             | "gos_rt_arr_len"
             | "gos_rt_len"
             | "gos_rt_map_len"
-            | "gos_rt_map_get_or_i64"
-            | "gos_rt_map_get_or_str_i64"
             | "gos_rt_map_get_i64"
             | "gos_rt_map_get_str_i64"
-            | "gos_rt_vec_pop"
             | "gos_rt_json_as_i64"
             | "gos_rt_json_len"
             | "gos_rt_http_response_status"
             | "gos_rt_parse_i64" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            // `m.get_or(k, default)` returns the stored value word.
+            // For Vec-valued maps (`iter::group_by` results) that word
+            // is a vec pointer — pin the dest to the value type so
+            // for-loops and indexing dispatch through the vec helpers
+            // instead of treating it as a scalar.
+            "gos_rt_map_get_or_i64" | "gos_rt_map_get_or_str_i64" => {
+                let value_ty = self.hash_map_kv_tys(receiver_ty).map(|(_, v)| v);
+                match value_ty.map(|v| self.tcx.kind_of(v).clone()) {
+                    Some(TyKind::Vec(_) | TyKind::Slice(_)) => {
+                        value_ty.expect("kind matched above")
+                    }
+                    _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                }
+            }
             // Both `chan.recv()` and `chan.try_recv()` return
             // `Option<T>` packed as `*mut GosResult { disc, payload }`.
             // The single-arg wrappers build the Option internally so
@@ -459,6 +477,7 @@ impl<'a> Builder<'a> {
             "gos_rt_str_rfind_opt"
             | "gos_rt_vec_first"
             | "gos_rt_vec_last"
+            | "gos_rt_vec_pop_opt"
             | "gos_rt_vec_index_of_i64"
             | "gos_rt_vec_index_of_str"
             | "gos_rt_map_pop_i64"
@@ -529,6 +548,27 @@ impl<'a> Builder<'a> {
                     def: gossamer_resolve::DefId::local(u32::MAX),
                     substs,
                 })
+            }
+            // `reversed()` copies the receiver — preserve its
+            // element type so byte-packed (`Vec<u8>`) receivers
+            // keep their stride-1 indexing downstream.
+            "gos_rt_vec_reversed"
+                if {
+                    let mut flat = receiver_ty;
+                    while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                        flat = *inner;
+                    }
+                    matches!(
+                        self.tcx.kind_of(flat),
+                        TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
+                    )
+                } =>
+            {
+                let mut flat = receiver_ty;
+                while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                    flat = *inner;
+                }
+                flat
             }
             "gos_rt_vec_reversed"
             | "gos_rt_bheap_push_i64"
@@ -665,6 +705,15 @@ impl<'a> Builder<'a> {
             // via the str c-pointer path) instead of an i64
             // (printed as a raw pointer numeral).
             "gos_rt_http_stream_next_line" => self.option_string_adt_ty(),
+            // `ResponseStream::next_chunk(max) -> Option<[u8]>`.
+            // Pin the dest so `while let Some(chunk) = ...` binds
+            // `chunk: Vec<u8>` and the payload extraction /
+            // per-iteration drop treat it as a byte vec.
+            "gos_rt_http_stream_next_chunk" => self.option_vec_u8_ty(),
+            // `Request::send() -> Result<Response, errors::Error>`
+            // — same packed-i128 Result shape and sentinel Ok
+            // payload as the `http::get` free call.
+            "gos_rt_http_request_send" => self.result_response_error_adt_ty(),
             // Pin the iterator to the receiver's vec type so
             // `.next()` dispatch can recover the element kind.
             "gos_rt_arr_iter" => {
@@ -714,13 +763,29 @@ impl<'a> Builder<'a> {
         // method calls + `?` propagation continue to dispatch
         // correctly on the result of the runtime helper.
         let dest_kind: Option<&'static str> = match sym {
-            "gos_rt_http_request_send" => Some("http::Response"),
             "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
-            "gos_rt_http_client_get" | "gos_rt_http_client_post" => Some("http::Request"),
+            "gos_rt_http_response_with_header" => Some("http::Response"),
+            "gos_rt_http_client_get"
+            | "gos_rt_http_client_post"
+            | "gos_rt_http_client_put"
+            | "gos_rt_http_client_options"
+            | "gos_rt_http_client_delete"
+            | "gos_rt_http_client_head" => Some("http::Request"),
             "gos_rt_arr_iter" => Some("vec::Iter"),
             _ => None,
         };
         if let Some(rk) = dest_kind {
+            self.local_runtime_kind.insert(dest, rk);
+        }
+        // Payload-extracting result helpers inherit the receiver's
+        // runtime kind: a Result-typed local is tagged with its Ok
+        // payload's kind (`regex::compile` dest → "regex::Pattern"),
+        // so `compile(..).unwrap().replace_all(..)` keeps dispatching
+        // on the pattern kind after the unwrap.
+        if dest_kind.is_none()
+            && matches!(sym, "gos_rt_result_unwrap" | "gos_rt_result_unwrap_or")
+            && let Some(rk) = self.local_runtime_kind.get(&receiver_local).copied()
+        {
             self.local_runtime_kind.insert(dest, rk);
         }
         let next = self.new_block(span);

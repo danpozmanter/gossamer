@@ -508,7 +508,7 @@ impl Parser<'_> {
 
     fn parse_index_suffix(&mut self, base: Expr) -> Expr {
         self.bump();
-        let index = self.parse_expr_no_assign();
+        let index = self.with_struct_literals_allowed(Self::parse_expr_no_assign);
         self.expect_punct(Punct::RBracket, "to close index expression");
         let end_span = self.last_span();
         let span = self.join(base.span, end_span);
@@ -524,19 +524,21 @@ impl Parser<'_> {
     }
 
     pub(crate) fn parse_call_args(&mut self) -> Vec<Expr> {
-        let mut args = Vec::new();
-        while !self.at_punct(Punct::RParen) && !self.at_eof() {
-            if self.at_punct(Punct::DotDot) || self.at_punct(Punct::DotDotDot) {
-                self.bump();
-                continue;
+        self.with_struct_literals_allowed(|p| {
+            let mut args = Vec::new();
+            while !p.at_punct(Punct::RParen) && !p.at_eof() {
+                if p.at_punct(Punct::DotDot) || p.at_punct(Punct::DotDotDot) {
+                    p.bump();
+                    continue;
+                }
+                args.push(p.parse_expr_no_assign());
+                if !p.eat_punct(Punct::Comma) {
+                    break;
+                }
             }
-            args.push(self.parse_expr_no_assign());
-            if !self.eat_punct(Punct::Comma) {
-                break;
-            }
-        }
-        self.expect_punct(Punct::RParen, "to close argument list");
-        args
+            p.expect_punct(Punct::RParen, "to close argument list");
+            args
+        })
     }
 
     fn parse_primary(&mut self) -> Expr {
@@ -627,25 +629,31 @@ impl Parser<'_> {
     }
 
     fn parse_paren_or_tuple(&mut self) -> ExprKind {
-        if self.eat_punct(Punct::RParen) {
-            return ExprKind::Literal(Literal::Unit);
-        }
-        let first = self.parse_expr();
-        if self.eat_punct(Punct::RParen) {
-            return first.kind;
-        }
-        let mut elements = vec![first];
-        while self.eat_punct(Punct::Comma) {
-            if self.at_punct(Punct::RParen) {
-                break;
+        self.with_struct_literals_allowed(|p| {
+            if p.eat_punct(Punct::RParen) {
+                return ExprKind::Literal(Literal::Unit);
             }
-            elements.push(self.parse_expr());
-        }
-        self.expect_punct(Punct::RParen, "to close tuple expression");
-        ExprKind::Tuple(elements)
+            let first = p.parse_expr();
+            if p.eat_punct(Punct::RParen) {
+                return first.kind;
+            }
+            let mut elements = vec![first];
+            while p.eat_punct(Punct::Comma) {
+                if p.at_punct(Punct::RParen) {
+                    break;
+                }
+                elements.push(p.parse_expr());
+            }
+            p.expect_punct(Punct::RParen, "to close tuple expression");
+            ExprKind::Tuple(elements)
+        })
     }
 
     fn parse_array_expr(&mut self) -> ExprKind {
+        self.with_struct_literals_allowed(Self::parse_array_expr_inner)
+    }
+
+    fn parse_array_expr_inner(&mut self) -> ExprKind {
         if self.eat_punct(Punct::RBracket) {
             return ExprKind::Array(ArrayExpr::List(Vec::new()));
         }
@@ -874,6 +882,7 @@ impl Parser<'_> {
         let loop_body_block = Block {
             stmts: Vec::new(),
             tail: Some(Box::new(match_expr)),
+            synthetic: true,
         };
         let loop_body = Expr::new(self.alloc_id(), body_span, ExprKind::Block(loop_body_block));
         ExprKind::Loop {
@@ -1127,6 +1136,10 @@ impl Parser<'_> {
 
     fn parse_struct_literal_tail(&mut self, path: PathExpr) -> ExprKind {
         self.bump();
+        self.with_struct_literals_allowed(|p| p.parse_struct_literal_fields(path))
+    }
+
+    fn parse_struct_literal_fields(&mut self, path: PathExpr) -> ExprKind {
         let mut fields = Vec::new();
         let mut base = None;
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
@@ -1420,6 +1433,10 @@ impl Parser<'_> {
 
     /// Parses a block body (`{ ... }`) after the opening brace has been consumed.
     pub(crate) fn parse_block_body(&mut self) -> Block {
+        self.with_struct_literals_allowed(Self::parse_block_body_inner)
+    }
+
+    fn parse_block_body_inner(&mut self) -> Block {
         let mut stmts = Vec::new();
         let mut tail: Option<Box<Expr>> = None;
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
@@ -1438,7 +1455,11 @@ impl Parser<'_> {
             stmts.push(stmt);
         }
         self.expect_punct(Punct::RBrace, "to close block");
-        Block { stmts, tail }
+        Block {
+            stmts,
+            tail,
+            synthetic: false,
+        }
     }
 
     fn try_parse_literal(&mut self) -> Option<Literal> {

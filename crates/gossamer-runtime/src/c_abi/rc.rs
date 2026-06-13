@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // allocation registry — lifetime is owned entirely by the strong
 // refcount in each object's header. This replaces the raw-pointer
 // tracing GC, which could not discover live roots precisely under
-// optimized LLVM (see 0100_GC.md §0).
+// optimized LLVM.
 //
 // retain = +1 strong; release = -1 strong, and at zero the object's
 // RC-pointer children are released (iteratively) and the payload is

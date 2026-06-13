@@ -19,6 +19,7 @@ mod error;
 mod exhaustiveness;
 mod infer;
 pub mod printer;
+pub mod std_fn_values;
 mod subst;
 mod table;
 mod trait_index;

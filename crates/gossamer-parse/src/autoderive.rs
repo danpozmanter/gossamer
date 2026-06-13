@@ -693,6 +693,9 @@ pub fn augment_source(source: &str) -> String {
     if source.contains("zip::") {
         stdlib_wrappers.push_str(ZIP_WRAPPERS);
     }
+    if source.contains("sql::") {
+        stdlib_wrappers.push_str(SQL_WRAPPERS);
+    }
     if synth_is_empty(&serde) && stdlib_wrappers.is_empty() && derives.is_empty() {
         return source.to_string();
     }
@@ -773,6 +776,387 @@ fn __gos_zip_read(data: &[u8]) -> Result<[__gos_zip_ZipEntry], errors::Error> {
 }
 ";
 
+/// Real-struct + wrapper source for `std::database::sql`. `Conn` /
+/// `Rows` / `Row` / `Tx` are real Gossamer structs holding an opaque
+/// `i64` handle; methods call scalar-shaped `__gos_sql_*_raw` leaf
+/// intrinsics (sentinel error convention, message via
+/// `__gos_sql_last_error_raw`), so the same code runs on every tier.
+const SQL_WRAPPERS: &str = r#"
+enum __gos_sql_Value { Null, Bool(bool), Int(i64), Float(f64), Text(String), Blob([u8]) }
+enum __gos_sql_IsolationLevel { Default, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable }
+struct __gos_sql_Conn { __handle: i64 }
+struct __gos_sql_Rows { __handle: i64 }
+struct __gos_sql_Row { __handle: i64 }
+struct __gos_sql_Tx { __handle: i64 }
+struct __gos_sql_Stmt { __handle: i64 }
+struct __gos_sql_Pool { __handle: i64 }
+struct __gos_sql_Notification { channel: String, payload: String, process_id: i64 }
+struct __gos_sql_Select { table: String, cols: [String], wheres: [String], binds: [__gos_sql_Value], order: String, lim: i64, off: i64 }
+fn __gos_sql_err() -> errors::Error {
+    errors::new(__gos_sql_last_error_raw())
+}
+fn __gos_sql_row_guard(k: i64) -> Result<(), errors::Error> {
+    if k == -2 { return Err(errors::new("sql: row is no longer valid (cursor advanced or rows closed)")) }
+    Ok(())
+}
+fn __gos_sql_open(name: &String, url: &String) -> Result<__gos_sql_Conn, errors::Error> {
+    let h = __gos_sql_open_raw(name, url)
+    if h < 0 { return Err(__gos_sql_err()) }
+    Ok(__gos_sql_Conn { __handle: h })
+}
+fn __gos_sql_drivers() -> [String] {
+    let joined = __gos_sql_drivers_raw()
+    if joined == "" { return [] }
+    joined.split(",")
+}
+fn __gos_sql_bind(params: &[__gos_sql_Value]) -> i64 {
+    let p = __gos_sql_params_new_raw()
+    for v in params {
+        match v {
+            __gos_sql_Value::Null => __gos_sql_params_push_null_raw(p),
+            __gos_sql_Value::Bool(b) => __gos_sql_params_push_bool_raw(p, if b { 1 } else { 0 }),
+            __gos_sql_Value::Int(n) => __gos_sql_params_push_int_raw(p, n),
+            __gos_sql_Value::Float(f) => __gos_sql_params_push_float_raw(p, f),
+            __gos_sql_Value::Text(s) => __gos_sql_params_push_text_raw(p, s),
+            __gos_sql_Value::Blob(b) => __gos_sql_params_push_blob_raw(p, b),
+        }
+    }
+    p
+}
+impl __gos_sql_Conn {
+    fn execute(&mut self, sql: &String, params: &[__gos_sql_Value]) -> Result<i64, errors::Error> {
+        let n = __gos_sql_conn_execute_raw(self.__handle, sql, __gos_sql_bind(params))
+        if n < 0 { return Err(__gos_sql_err()) }
+        Ok(n)
+    }
+    fn query(&mut self, sql: &String, params: &[__gos_sql_Value]) -> Result<__gos_sql_Rows, errors::Error> {
+        let h = __gos_sql_conn_query_raw(self.__handle, sql, __gos_sql_bind(params))
+        if h < 0 { return Err(__gos_sql_err()) }
+        Ok(__gos_sql_Rows { __handle: h })
+    }
+    fn query_each(&mut self, sql: &String, params: &[__gos_sql_Value], f: Fn(__gos_sql_Row)) -> Result<(), errors::Error> {
+        let h = __gos_sql_conn_query_raw(self.__handle, sql, __gos_sql_bind(params))
+        if h < 0 { return Err(__gos_sql_err()) }
+        let mut rows = __gos_sql_Rows { __handle: h }
+        defer rows.close()
+        loop {
+            let next = rows.next_row()?
+            let Some(row) = next else { break }
+            f(row)
+        }
+        Ok(())
+    }
+    fn begin(&mut self) -> Result<__gos_sql_Tx, errors::Error> {
+        let h = __gos_sql_conn_begin_raw(self.__handle)
+        if h < 0 { return Err(__gos_sql_err()) }
+        Ok(__gos_sql_Tx { __handle: h })
+    }
+    fn begin_with(&mut self, iso: __gos_sql_IsolationLevel) -> Result<__gos_sql_Tx, errors::Error> {
+        let code = match iso {
+            __gos_sql_IsolationLevel::Default => 0,
+            __gos_sql_IsolationLevel::ReadUncommitted => 1,
+            __gos_sql_IsolationLevel::ReadCommitted => 2,
+            __gos_sql_IsolationLevel::RepeatableRead => 3,
+            __gos_sql_IsolationLevel::Serializable => 4,
+        }
+        let h = __gos_sql_conn_begin_with_raw(self.__handle, code)
+        if h < 0 { return Err(__gos_sql_err()) }
+        Ok(__gos_sql_Tx { __handle: h })
+    }
+    fn ping(&mut self) -> Result<(), errors::Error> {
+        if __gos_sql_conn_ping_raw(self.__handle) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+    fn set_busy_timeout(&mut self, ms: i64) -> Result<(), errors::Error> {
+        if __gos_sql_conn_set_busy_timeout_raw(self.__handle, ms) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+    fn interrupt(&self) {
+        let _ = __gos_sql_conn_interrupt_raw(self.__handle)
+    }
+    fn prepare(&mut self, sql: &String) -> Result<__gos_sql_Stmt, errors::Error> {
+        let h = __gos_sql_conn_prepare_raw(self.__handle, sql)
+        if h < 0 { return Err(__gos_sql_err()) }
+        Ok(__gos_sql_Stmt { __handle: h })
+    }
+    fn copy_in(&mut self, sql: &String, data: &[u8]) -> Result<i64, errors::Error> {
+        let n = __gos_sql_conn_copy_in_raw(self.__handle, sql, data)
+        if n < 0 { return Err(__gos_sql_err()) }
+        Ok(n)
+    }
+    fn copy_out(&mut self, sql: &String) -> Result<[u8], errors::Error> {
+        if __gos_sql_conn_copy_out_run_raw(self.__handle, sql) < 0 { return Err(__gos_sql_err()) }
+        Ok(__gos_sql_conn_copy_out_take_raw(self.__handle))
+    }
+    fn listen(&mut self, channel: &String) -> Result<(), errors::Error> {
+        if __gos_sql_conn_listen_raw(self.__handle, channel) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+    fn unlisten(&mut self, channel: &String) -> Result<(), errors::Error> {
+        if __gos_sql_conn_unlisten_raw(self.__handle, channel) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+    fn poll_notification(&mut self, timeout_ms: i64) -> Result<Option<__gos_sql_Notification>, errors::Error> {
+        let s = __gos_sql_conn_poll_notification_raw(self.__handle, timeout_ms)
+        if s < 0 { return Err(__gos_sql_err()) }
+        if s == 0 { return Ok(None) }
+        Ok(Some(__gos_sql_Notification {
+            channel: __gos_sql_notification_channel_raw(self.__handle),
+            payload: __gos_sql_notification_payload_raw(self.__handle),
+            process_id: __gos_sql_notification_pid_raw(self.__handle),
+        }))
+    }
+    fn close(&mut self) -> Result<(), errors::Error> {
+        if __gos_sql_conn_close_raw(self.__handle) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+}
+impl __gos_sql_Stmt {
+    fn execute(&mut self, params: &[__gos_sql_Value]) -> Result<i64, errors::Error> {
+        let n = __gos_sql_stmt_execute_raw(self.__handle, __gos_sql_bind(params))
+        if n < 0 { return Err(__gos_sql_err()) }
+        Ok(n)
+    }
+    fn query(&mut self, params: &[__gos_sql_Value]) -> Result<__gos_sql_Rows, errors::Error> {
+        let h = __gos_sql_stmt_query_raw(self.__handle, __gos_sql_bind(params))
+        if h < 0 { return Err(__gos_sql_err()) }
+        Ok(__gos_sql_Rows { __handle: h })
+    }
+    fn close(&mut self) {
+        let _ = __gos_sql_stmt_close_raw(self.__handle)
+    }
+}
+impl __gos_sql_Pool {
+    fn acquire(&self) -> Result<__gos_sql_Conn, errors::Error> {
+        let h = __gos_sql_pool_get_raw(self.__handle)
+        if h < 0 { return Err(__gos_sql_err()) }
+        Ok(__gos_sql_Conn { __handle: h })
+    }
+    fn live(&self) -> i64 {
+        __gos_sql_pool_live_raw(self.__handle)
+    }
+    fn idle(&self) -> i64 {
+        __gos_sql_pool_idle_raw(self.__handle)
+    }
+    fn close_idle(&self) {
+        let _ = __gos_sql_pool_close_idle_raw(self.__handle)
+    }
+}
+fn __gos_sql_pool_open(driver: &String, url: &String, max: i64) -> Result<__gos_sql_Pool, errors::Error> {
+    __gos_sql_pool_open_with(driver, url, 0, max, 30000, 300000, 1800000)
+}
+fn __gos_sql_pool_open_with(driver: &String, url: &String, min: i64, max: i64, acquire_ms: i64, idle_ms: i64, lifetime_ms: i64) -> Result<__gos_sql_Pool, errors::Error> {
+    let h = __gos_sql_pool_new_raw(driver, url, min, max, acquire_ms, idle_ms, lifetime_ms)
+    if h < 0 { return Err(__gos_sql_err()) }
+    Ok(__gos_sql_Pool { __handle: h })
+}
+fn __gos_sql_migrate_up(db: &mut __gos_sql_Conn, dir: &String) -> Result<i64, errors::Error> {
+    let n = __gos_sql_migrate_up_raw(db.__handle, dir)
+    if n < 0 { return Err(__gos_sql_err()) }
+    Ok(n)
+}
+fn __gos_sql_join(parts: &[String], sep: String) -> String {
+    let mut out = ""
+    let mut first = true
+    for p in parts {
+        if first {
+            out = format!("{}", p)
+            first = false
+        } else {
+            out = format!("{}{}{}", out, sep, p)
+        }
+    }
+    out
+}
+fn __gos_sql_select_new(table: &String) -> __gos_sql_Select {
+    __gos_sql_Select { table: table.clone(), cols: [], wheres: [], binds: [], order: "", lim: -1, off: -1 }
+}
+fn __gos_sql_copy_strs(xs: &[String]) -> [String] {
+    let mut out: [String] = []
+    for x in xs { out.push(x) }
+    out
+}
+fn __gos_sql_copy_vals(xs: &[__gos_sql_Value]) -> [__gos_sql_Value] {
+    let mut out: [__gos_sql_Value] = []
+    for x in xs { out.push(x) }
+    out
+}
+impl __gos_sql_Select {
+    fn columns(&self, cols: &[String]) -> __gos_sql_Select {
+        let mut c = __gos_sql_copy_strs(&self.cols)
+        for x in cols { c.push(x) }
+        __gos_sql_Select { table: self.table, cols: c, wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: self.order, lim: self.lim, off: self.off }
+    }
+    fn where_eq(&self, column: &String, v: __gos_sql_Value) -> __gos_sql_Select {
+        let mut b = __gos_sql_copy_vals(&self.binds)
+        b.push(v)
+        let mut w = __gos_sql_copy_strs(&self.wheres)
+        w.push(format!("{} = ${}", column, b.len()))
+        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: w, binds: b, order: self.order, lim: self.lim, off: self.off }
+    }
+    fn order_by(&self, column: &String, ascending: bool) -> __gos_sql_Select {
+        let dir = if ascending { "ASC" } else { "DESC" }
+        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: format!("{} {}", column, dir), lim: self.lim, off: self.off }
+    }
+    fn limit(&self, n: i64) -> __gos_sql_Select {
+        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: self.order, lim: n, off: self.off }
+    }
+    fn offset(&self, n: i64) -> __gos_sql_Select {
+        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: self.order, lim: self.lim, off: n }
+    }
+    fn params(&self) -> [__gos_sql_Value] {
+        __gos_sql_copy_vals(&self.binds)
+    }
+    fn render(&self) -> String {
+        let cols = if self.cols.len() == 0 { "*" } else { __gos_sql_join(&self.cols, ", ") }
+        let mut out = format!("SELECT {} FROM {}", cols, self.table)
+        if self.wheres.len() > 0 {
+            out = format!("{} WHERE {}", out, __gos_sql_join(&self.wheres, " AND "))
+        }
+        if self.order != "" {
+            out = format!("{} ORDER BY {}", out, self.order)
+        }
+        if self.lim >= 0 {
+            out = format!("{} LIMIT {}", out, self.lim)
+        }
+        if self.off >= 0 {
+            out = format!("{} OFFSET {}", out, self.off)
+        }
+        out
+    }
+}
+impl __gos_sql_Rows {
+    fn next_row(&mut self) -> Result<Option<__gos_sql_Row>, errors::Error> {
+        let h = __gos_sql_rows_next_row_raw(self.__handle)
+        if h < 0 { return Err(__gos_sql_err()) }
+        if h == 0 { return Ok(None) }
+        Ok(Some(__gos_sql_Row { __handle: h }))
+    }
+    fn close(&mut self) -> Result<(), errors::Error> {
+        if __gos_sql_rows_close_raw(self.__handle) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+    fn columns(&self) -> [String] {
+        let joined = __gos_sql_rows_columns_raw(self.__handle)
+        if joined == "" { return [] }
+        joined.split(",")
+    }
+}
+impl __gos_sql_Row {
+    fn get_i64(&self, column: &String) -> Result<i64, errors::Error> {
+        let k = __gos_sql_row_kind_raw(self.__handle, column)
+        __gos_sql_row_guard(k)?
+        if k != 2 {
+            return Err(errors::newf("sql: column {} is not Int", column))
+        }
+        Ok(__gos_sql_row_get_i64_raw(self.__handle, column))
+    }
+    fn get_f64(&self, column: &String) -> Result<f64, errors::Error> {
+        let k = __gos_sql_row_kind_raw(self.__handle, column)
+        __gos_sql_row_guard(k)?
+        if k != 3 && k != 2 {
+            return Err(errors::newf("sql: column {} is not Float", column))
+        }
+        Ok(__gos_sql_row_get_f64_raw(self.__handle, column))
+    }
+    fn get_bool(&self, column: &String) -> Result<bool, errors::Error> {
+        let k = __gos_sql_row_kind_raw(self.__handle, column)
+        __gos_sql_row_guard(k)?
+        if k != 1 {
+            return Err(errors::newf("sql: column {} is not Bool", column))
+        }
+        Ok(__gos_sql_row_get_bool_raw(self.__handle, column) != 0)
+    }
+    fn get_text(&self, column: &String) -> Result<String, errors::Error> {
+        let k = __gos_sql_row_kind_raw(self.__handle, column)
+        __gos_sql_row_guard(k)?
+        if k != 4 {
+            return Err(errors::newf("sql: column {} is not Text", column))
+        }
+        Ok(__gos_sql_row_get_text_raw(self.__handle, column))
+    }
+    fn get_blob(&self, column: &String) -> Result<[u8], errors::Error> {
+        let k = __gos_sql_row_kind_raw(self.__handle, column)
+        __gos_sql_row_guard(k)?
+        if k != 5 {
+            return Err(errors::newf("sql: column {} is not Blob", column))
+        }
+        Ok(__gos_sql_row_get_blob_raw(self.__handle, column))
+    }
+    fn get_opt_i64(&self, column: &String) -> Result<Option<i64>, errors::Error> {
+        let k = __gos_sql_row_kind_raw(self.__handle, column)
+        __gos_sql_row_guard(k)?
+        if k == 0 { return Ok(None) }
+        if k != 2 { return Err(errors::newf("sql: column {} is not Int", column)) }
+        Ok(Some(__gos_sql_row_get_i64_raw(self.__handle, column)))
+    }
+    fn get_opt_f64(&self, column: &String) -> Result<Option<f64>, errors::Error> {
+        let k = __gos_sql_row_kind_raw(self.__handle, column)
+        __gos_sql_row_guard(k)?
+        if k == 0 { return Ok(None) }
+        if k != 3 && k != 2 { return Err(errors::newf("sql: column {} is not Float", column)) }
+        Ok(Some(__gos_sql_row_get_f64_raw(self.__handle, column)))
+    }
+    fn get_opt_bool(&self, column: &String) -> Result<Option<bool>, errors::Error> {
+        let k = __gos_sql_row_kind_raw(self.__handle, column)
+        __gos_sql_row_guard(k)?
+        if k == 0 { return Ok(None) }
+        if k != 1 { return Err(errors::newf("sql: column {} is not Bool", column)) }
+        Ok(Some(__gos_sql_row_get_bool_raw(self.__handle, column) != 0))
+    }
+    fn get_opt_text(&self, column: &String) -> Result<Option<String>, errors::Error> {
+        let k = __gos_sql_row_kind_raw(self.__handle, column)
+        __gos_sql_row_guard(k)?
+        if k == 0 { return Ok(None) }
+        if k != 4 { return Err(errors::newf("sql: column {} is not Text", column)) }
+        Ok(Some(__gos_sql_row_get_text_raw(self.__handle, column)))
+    }
+    fn is_null(&self, column: &String) -> bool {
+        __gos_sql_row_kind_raw(self.__handle, column) == 0
+    }
+    fn width(&self) -> i64 {
+        __gos_sql_row_width_raw(self.__handle)
+    }
+}
+impl __gos_sql_Tx {
+    fn commit(&mut self) -> Result<(), errors::Error> {
+        if __gos_sql_tx_commit_raw(self.__handle) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+    fn rollback(&mut self) -> Result<(), errors::Error> {
+        if __gos_sql_tx_rollback_raw(self.__handle) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+    fn execute(&mut self, sql: &String) -> Result<i64, errors::Error> {
+        let n = __gos_sql_tx_execute_raw(self.__handle, sql)
+        if n < 0 { return Err(__gos_sql_err()) }
+        Ok(n)
+    }
+    fn execute_params(&mut self, sql: &String, params: &[__gos_sql_Value]) -> Result<i64, errors::Error> {
+        let n = __gos_sql_tx_execute_params_raw(self.__handle, sql, __gos_sql_bind(params))
+        if n < 0 { return Err(__gos_sql_err()) }
+        Ok(n)
+    }
+    fn query(&mut self, sql: &String, params: &[__gos_sql_Value]) -> Result<__gos_sql_Rows, errors::Error> {
+        let h = __gos_sql_tx_query_params_raw(self.__handle, sql, __gos_sql_bind(params))
+        if h < 0 { return Err(__gos_sql_err()) }
+        Ok(__gos_sql_Rows { __handle: h })
+    }
+    fn savepoint(&mut self, name: &String) -> Result<(), errors::Error> {
+        if __gos_sql_tx_savepoint_raw(self.__handle, name) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+    fn release_savepoint(&mut self, name: &String) -> Result<(), errors::Error> {
+        if __gos_sql_tx_release_savepoint_raw(self.__handle, name) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+    fn rollback_to_savepoint(&mut self, name: &String) -> Result<(), errors::Error> {
+        if __gos_sql_tx_rollback_to_savepoint_raw(self.__handle, name) < 0 { return Err(__gos_sql_err()) }
+        Ok(())
+    }
+}
+"#;
+
 /// Convenience wrapper that augments `source` then parses the
 /// result against `file`. Returns the merged `SourceFile` and any
 /// parse diagnostics. Callers MUST have already added the augmented
@@ -804,6 +1188,21 @@ fn mangled_stdlib_name(parent: &str, item: &str) -> Option<&'static str> {
         ("tar", "TarEntry") => Some("__gos_tar_TarEntry"),
         ("zip", "read") => Some("__gos_zip_read"),
         ("zip", "ZipEntry") => Some("__gos_zip_ZipEntry"),
+        ("sql", "open") => Some("__gos_sql_open"),
+        ("sql", "drivers") => Some("__gos_sql_drivers"),
+        ("sql", "Conn") => Some("__gos_sql_Conn"),
+        ("sql", "Rows") => Some("__gos_sql_Rows"),
+        ("sql", "Row") => Some("__gos_sql_Row"),
+        ("sql", "Tx") => Some("__gos_sql_Tx"),
+        ("sql", "Value") => Some("__gos_sql_Value"),
+        ("sql", "IsolationLevel") => Some("__gos_sql_IsolationLevel"),
+        ("sql", "Stmt") => Some("__gos_sql_Stmt"),
+        ("sql", "Pool") => Some("__gos_sql_Pool"),
+        ("sql", "Notification") => Some("__gos_sql_Notification"),
+        ("sql", "Select") => Some("__gos_sql_Select"),
+        ("sql", "pool_open") => Some("__gos_sql_pool_open"),
+        ("sql", "pool_open_with") => Some("__gos_sql_pool_open_with"),
+        ("sql", "migrate_up") => Some("__gos_sql_migrate_up"),
         _ => None,
     }
 }
@@ -825,6 +1224,39 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
         if n < 2 {
             return;
         }
+        // Enum-variant paths: `sql::Value::Int(..)` /
+        // `sql::IsolationLevel::Serializable` collapse to the
+        // injected enum + variant, guarded on the `sql` segment so
+        // a user's own `Value::Int` is untouched.
+        if n >= 3 && path.segments[n - 3].name.name.as_str() == "sql" {
+            let enum_name = path.segments[n - 2].name.name.as_str();
+            if let Some(mangled) = match enum_name {
+                "Value" => Some("__gos_sql_Value"),
+                "IsolationLevel" => Some("__gos_sql_IsolationLevel"),
+                _ => None,
+            } {
+                let variant = std::mem::replace(
+                    &mut path.segments[n - 1],
+                    gossamer_ast::PathSegment::new(""),
+                );
+                path.segments = vec![gossamer_ast::PathSegment::new(mangled), variant];
+                return;
+            }
+            // Associated free functions: `sql::Select::new(..)`,
+            // `sql::Pool::open(..)`, `sql::migrate::up(..)` collapse
+            // to their injected free-fn wrappers.
+            let assoc = (enum_name, path.segments[n - 1].name.name.as_str());
+            if let Some(mangled) = match assoc {
+                ("Select", "new") => Some("__gos_sql_select_new"),
+                ("Pool", "open") => Some("__gos_sql_pool_open"),
+                ("Pool", "open_with") => Some("__gos_sql_pool_open_with"),
+                ("migrate", "up") => Some("__gos_sql_migrate_up"),
+                _ => None,
+            } {
+                path.segments = vec![gossamer_ast::PathSegment::new(mangled)];
+                return;
+            }
+        }
         if let Some(name) = mangled_stdlib_name(
             path.segments[n - 2].name.name.as_str(),
             path.segments[n - 1].name.name.as_str(),
@@ -838,6 +1270,17 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
     fn collapse_type(path: &mut gossamer_ast::ty::TypePath) {
         let n = path.segments.len();
         if n < 2 {
+            return;
+        }
+        // `sql::Error` is the standard error type at the language
+        // level — redirect to `errors::Error`.
+        if path.segments[n - 2].name.name.as_str() == "sql"
+            && path.segments[n - 1].name.name.as_str() == "Error"
+        {
+            path.segments = vec![
+                gossamer_ast::ty::TypePathSegment::new("errors"),
+                gossamer_ast::ty::TypePathSegment::new("Error"),
+            ];
             return;
         }
         if let Some(name) = mangled_stdlib_name(

@@ -158,27 +158,6 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
-            StatementKind::GcWriteBarrier { value, .. } => {
-                // Explicit GcWriteBarrier statements are emitted
-                // by the MIR layer for stores that the
-                // codegen-side lower_assign post-store sniffer
-                // wouldn't catch (runtime-helper internal writes
-                // exposed through MIR, aggregate-field writes
-                // that the per-field shape detection misses).
-                //
-                // The runtime's `gos_rt_write_barrier(u32)` takes
-                // a GcRef index — only i64-encoded values
-                // (the flat ABI's GcRef shape) reach this path.
-                // Pointer-typed runtime handles are tracked by
-                // the GC's allocation registry without a barrier.
-                let value_ty = self.operand_llvm_ty(value);
-                if value_ty == "i64" {
-                    let Ok(lowered) = self.lower_operand(value) else {
-                        return Ok(());
-                    };
-                    self.emit_write_barrier(&lowered);
-                }
-            }
         }
         Ok(())
     }
@@ -388,20 +367,6 @@ impl<'a> Lowerer<'a> {
         } else {
             writeln!(self.out, "  store {leaf_llvm} {value}, ptr {addr}").unwrap();
         }
-        // Write barrier: only when the value is an i64-encoded GC ref, not a
-        // raw machine pointer. All pointer-bearing MIR types (Vec, String,
-        // HashMap, Ref, …) render as `ptr` in LLVM IR — the runtime's
-        // gos_rt_write_barrier(u32) takes a GcRef index, not a machine
-        // address, so emitting `trunc i64 ptr to i32` is both invalid IR and
-        // semantically wrong. Skip the barrier for ptr-typed values; the GC
-        // tracks those through its allocation registry rather than write
-        // barriers.
-        if !place.projection.is_empty()
-            && leaf_llvm != "ptr"
-            && Self::is_pointer_local_ty(self.tcx, leaf_ty)
-        {
-            self.emit_write_barrier(&value);
-        }
         Ok(())
     }
 
@@ -416,12 +381,6 @@ impl<'a> Lowerer<'a> {
                 for entry in cleanup.at_return() {
                     self.emit_cleanup_call(entry);
                 }
-                // Raw-pointer tracing-GC shadow-stack restore. Pops
-                // every root pushed inside this body. For the
-                // aggregate-return path the heap copy below is
-                // pushed AFTER the restore so the entry persists
-                // into the caller's frame (matching Cranelift).
-                self.emit_gc_root_restore();
                 let ret_ty = self.body.local_ty(Local::RETURN);
                 let ret_llvm = render_ty(self.tcx, ret_ty);
                 if is_unit(self.tcx, ret_ty) {
@@ -448,9 +407,6 @@ impl<'a> Lowerer<'a> {
                             slot = local_slot(Local::RETURN)
                         )
                         .unwrap();
-                        // Push after the restore so the entry persists
-                        // into the caller's frame.
-                        self.emit_gc_root_push(&heap);
                         writeln!(self.out, "  ret ptr {heap}").unwrap();
                     } else {
                         // Handle-Adt (recursive enum, opaque sentinel
@@ -469,9 +425,6 @@ impl<'a> Lowerer<'a> {
                             slot = local_slot(Local::RETURN)
                         )
                         .unwrap();
-                        // Re-root into the caller's frame (the restore
-                        // above popped this body's roots).
-                        self.emit_gc_root_push(&tmp);
                         writeln!(self.out, "  ret ptr {tmp}").unwrap();
                     }
                 } else {

@@ -148,7 +148,7 @@ fi
 if [[ $run_cross -eq 1 ]]; then
     if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
         run_step "cargo check --target wasm32-unknown-unknown (wasm-portable crates)" \
-            cargo check -p gossamer-abi -p gossamer-binding-macros -p gossamer-gc \
+            cargo check -p gossamer-abi -p gossamer-binding-macros \
             --target wasm32-unknown-unknown
     else
         echo "cross-target check skipped (run \`rustup target add wasm32-unknown-unknown\` to enable)"
@@ -206,7 +206,6 @@ if [[ $run_sanitizers -eq 1 ]]; then
                 --lib \
                 -p gossamer-runtime \
                 -p gossamer-interp \
-                -p gossamer-gc \
                 -p gossamer-coro \
                 -p gossamer-mir \
                 -p gossamer-binding
@@ -221,8 +220,7 @@ if [[ $run_sanitizers -eq 1 ]]; then
                 --lib \
                 -p gossamer-runtime \
                 -p gossamer-sched \
-                -p gossamer-coro \
-                -p gossamer-gc
+                -p gossamer-coro
     fi
 fi
 

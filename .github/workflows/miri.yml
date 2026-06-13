@@ -49,7 +49,6 @@ jobs:
         # I/O glue). The fundamental memory-safety crates are
         # in-scope.
         crate:
-          - gossamer-gc
           - gossamer-mir
           - gossamer-types
           - gossamer-resolve

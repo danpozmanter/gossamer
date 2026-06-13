@@ -457,17 +457,45 @@ fn make_gos_vec<T: Copy>(elements: &[T]) -> *mut GosVec {
     }))
 }
 
+/// Length and element stride of a vec header. The runtime emits
+/// packed buffers for narrow element types (`elem_bytes` 1 / 2 / 4 —
+/// e.g. `resp.raw_bytes` arrives at stride 1); a zero `elem_bytes`
+/// from a legacy producer means word-width.
+fn vec_len_stride(header: &GosVec) -> (usize, usize) {
+    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    let stride = match header.elem_bytes {
+        0 => 8,
+        n => n as usize,
+    };
+    (len, stride)
+}
+
+/// Reads element `idx` as a zero-extended word, honoring the
+/// header's element stride. Mirrors the runtime's `vec_elem_load_i64`
+/// so packed vecs cross the binding ABI byte-exact instead of being
+/// read at a fixed 8-byte stride.
+unsafe fn vec_elem_word(header: &GosVec, idx: usize, stride: usize) -> i64 {
+    let p = unsafe { header.ptr.add(idx * stride) };
+    match stride {
+        1 => i64::from(unsafe { p.read() }),
+        2 => i64::from(unsafe { p.cast::<u16>().read_unaligned() }),
+        4 => i64::from(unsafe { p.cast::<u32>().read_unaligned() }),
+        _ => unsafe { p.cast::<i64>().read_unaligned() },
+    }
+}
+
 unsafe fn read_gos_vec_i64(p: *const GosVec) -> Vec<i64> {
     if p.is_null() {
         return Vec::new();
     }
     let header = unsafe { &*p };
-    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    let (len, stride) = vec_len_stride(header);
     if header.ptr.is_null() || len == 0 {
         return Vec::new();
     }
-    let slice = unsafe { std::slice::from_raw_parts(header.ptr.cast::<i64>(), len) };
-    slice.to_vec()
+    (0..len)
+        .map(|i| unsafe { vec_elem_word(header, i, stride) })
+        .collect()
 }
 
 unsafe fn read_gos_vec_f64(p: *const GosVec) -> Vec<f64> {
@@ -475,12 +503,19 @@ unsafe fn read_gos_vec_f64(p: *const GosVec) -> Vec<f64> {
         return Vec::new();
     }
     let header = unsafe { &*p };
-    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    let (len, stride) = vec_len_stride(header);
     if header.ptr.is_null() || len == 0 {
         return Vec::new();
     }
-    let slice = unsafe { std::slice::from_raw_parts(header.ptr.cast::<f64>(), len) };
-    slice.to_vec()
+    (0..len)
+        .map(|i| {
+            let p = unsafe { header.ptr.add(i * stride) };
+            match stride {
+                4 => f64::from(unsafe { p.cast::<f32>().read_unaligned() }),
+                _ => unsafe { p.cast::<f64>().read_unaligned() },
+            }
+        })
+        .collect()
 }
 
 unsafe fn read_gos_vec_strings(p: *const GosVec) -> Vec<String> {
@@ -488,14 +523,21 @@ unsafe fn read_gos_vec_strings(p: *const GosVec) -> Vec<String> {
         return Vec::new();
     }
     let header = unsafe { &*p };
-    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    let (len, stride) = vec_len_stride(header);
     if header.ptr.is_null() || len == 0 {
         return Vec::new();
     }
-    let slice = unsafe { std::slice::from_raw_parts(header.ptr.cast::<*const c_char>(), len) };
-    slice
-        .iter()
-        .map(|p| unsafe { String::from_input(*p) })
+    // String slots are pointers — no real producer packs them below
+    // word width. A sub-word stride is a corrupt header; reading the
+    // low bytes as a pointer would be UB, so bail to an empty vec.
+    if stride < 8 {
+        return Vec::new();
+    }
+    (0..len)
+        .map(|i| {
+            let ptr = unsafe { vec_elem_word(header, i, stride) } as usize as *const c_char;
+            unsafe { String::from_input(ptr) }
+        })
         .collect()
 }
 
@@ -504,12 +546,13 @@ unsafe fn read_gos_vec_bools(p: *const GosVec) -> Vec<bool> {
         return Vec::new();
     }
     let header = unsafe { &*p };
-    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    let (len, stride) = vec_len_stride(header);
     if header.ptr.is_null() || len == 0 {
         return Vec::new();
     }
-    let slice = unsafe { std::slice::from_raw_parts(header.ptr.cast::<u8>(), len) };
-    slice.iter().map(|b| *b != 0).collect()
+    (0..len)
+        .map(|i| unsafe { vec_elem_word(header, i, stride) } != 0)
+        .collect()
 }
 
 unsafe fn read_gos_vec_vec_i64(p: *const GosVec) -> Vec<Vec<i64>> {
@@ -517,14 +560,20 @@ unsafe fn read_gos_vec_vec_i64(p: *const GosVec) -> Vec<Vec<i64>> {
         return Vec::new();
     }
     let header = unsafe { &*p };
-    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    let (len, stride) = vec_len_stride(header);
     if header.ptr.is_null() || len == 0 {
         return Vec::new();
     }
-    let slice = unsafe { std::slice::from_raw_parts(header.ptr.cast::<*const GosVec>(), len) };
-    slice
-        .iter()
-        .map(|inner| unsafe { read_gos_vec_i64(*inner) })
+    // Inner-vec slots are pointers — same corrupt-header guard as
+    // `read_gos_vec_strings`.
+    if stride < 8 {
+        return Vec::new();
+    }
+    (0..len)
+        .map(|i| {
+            let inner = unsafe { vec_elem_word(header, i, stride) } as usize as *const GosVec;
+            unsafe { read_gos_vec_i64(inner) }
+        })
         .collect()
 }
 
@@ -1313,12 +1362,19 @@ unsafe fn read_gos_vec_u8(p: *const GosVec) -> Vec<u8> {
         return Vec::new();
     }
     let header = unsafe { &*p };
-    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    let (len, stride) = vec_len_stride(header);
     if header.ptr.is_null() || len == 0 {
         return Vec::new();
     }
-    let slice = unsafe { std::slice::from_raw_parts(header.ptr, len) };
-    slice.to_vec()
+    if stride == 1 {
+        let slice = unsafe { std::slice::from_raw_parts(header.ptr, len) };
+        return slice.to_vec();
+    }
+    // Word-width byte vecs (the canonical one-i64-slot-per-byte
+    // runtime shape) truncate each slot to its low byte.
+    (0..len)
+        .map(|i| unsafe { vec_elem_word(header, i, stride) } as u8)
+        .collect()
 }
 
 // --- Default impls for Output types ---------------------------------
@@ -2273,6 +2329,52 @@ mod tests {
         let raw = v.to_output();
         let back: Vec<i64> = unsafe { <Vec<i64> as BindingAbi>::from_input(raw) };
         assert_eq!(back, vec![1, 2, 3]);
+    }
+
+    /// Builds a leaked GosVec over a raw byte buffer with the given
+    /// element stride, mimicking the runtime's packed vec shapes.
+    fn packed_vec(bytes: &[u8], elem_bytes: u32, len: i64) -> *const GosVec {
+        let mut buf = bytes.to_vec();
+        let ptr = buf.as_mut_ptr();
+        std::mem::forget(buf);
+        Box::into_raw(Box::new(GosVec {
+            len,
+            cap: len,
+            elem_bytes,
+            ptr,
+        }))
+    }
+
+    #[test]
+    fn vec_i64_input_honors_packed_byte_stride() {
+        // The `resp.raw_bytes` shape: elem_bytes=1, one byte per
+        // element. A fixed 8-byte stride would read garbage here.
+        let raw = packed_vec(&[0x68, 0xFF, 0x00, 0x69], 1, 4);
+        let back: Vec<i64> = unsafe { <Vec<i64> as BindingAbi>::from_input(raw) };
+        assert_eq!(back, vec![0x68, 0xFF, 0x00, 0x69]);
+    }
+
+    #[test]
+    fn vec_i64_input_honors_half_and_word_strides() {
+        let half = packed_vec(&500u16.to_le_bytes(), 2, 1);
+        let back: Vec<i64> = unsafe { <Vec<i64> as BindingAbi>::from_input(half) };
+        assert_eq!(back, vec![500]);
+
+        let word = packed_vec(&70000u32.to_le_bytes(), 4, 1);
+        let back: Vec<i64> = unsafe { <Vec<i64> as BindingAbi>::from_input(word) };
+        assert_eq!(back, vec![70000]);
+    }
+
+    #[test]
+    fn vec_u8_input_truncates_word_width_slots() {
+        // Canonical runtime byte-vec shape: one i64 slot per byte.
+        let mut bytes = Vec::new();
+        for v in [0x68i64, 0xFF, 0x00] {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        let raw = packed_vec(&bytes, 8, 3);
+        let back = unsafe { read_gos_vec_u8(raw) };
+        assert_eq!(back, vec![0x68, 0xFF, 0x00]);
     }
 
     #[test]

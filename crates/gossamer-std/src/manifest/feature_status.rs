@@ -146,6 +146,10 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         "lang::static",
         "Module-level mutable or immutable static slot.",
     ),
+    lang(
+        "lang::mut_ref_params",
+        "`&mut Vec<T>` / `&mut [T]` parameters write through to the caller's storage on every tier.",
+    ),
     // Identifier rules — Unicode XID_Start / XID_Continue (UAX #31).
     lang(
         "lang::unicode_identifiers",
@@ -192,9 +196,50 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         status: Status::Experimental,
         doc: "Plain-text template engine — feature parity with html::template tracked together.",
     },
+    // -----------------------------------------------------------------
+    // Sub-module stdlib feature entries. Not manifest modules (the
+    // implicit-Shipped walk never synthesises them), so the 0.13.0
+    // HTTP tier-parity surface is registered explicitly.
+    // -----------------------------------------------------------------
+    shipped(
+        "std::http::client_request_native",
+        "`http::request` / `http::request_bytes` native on the compiled tiers through one ureq engine.",
+    ),
+    shipped(
+        "std::http::response_headers",
+        "Client `Response.headers` (lowercase, wire order) plus honored server response headers with chainable `with_header`.",
+    ),
+    shipped(
+        "std::http::redirect_policy",
+        "`Client::builder().max_redirects(n).timeout_ms(ms).build()`; `max_redirects(0)` returns the raw 3xx.",
+    ),
+    shipped(
+        "std::http::binary_bodies",
+        "`Response.raw_bytes` / `Request.raw_body` packed byte bodies, NUL-safe on every tier.",
+    ),
+    shipped(
+        "std::http::streaming_responses",
+        "`Response::stream` chunked server streaming plus `ResponseStream::next_chunk` client byte reads.",
+    ),
+    shipped(
+        "std::http::server_request_headers",
+        "Inbound `Request.headers` populated on every tier; `path` strips the query string.",
+    ),
+    // -----------------------------------------------------------------
+    // Tooling features. `tooling::*` mirrors the `lang::*` namespace
+    // convention for surface that is neither language nor stdlib.
+    // -----------------------------------------------------------------
+    shipped(
+        "tooling::faithful_fmt",
+        "Token-stream `gos fmt`: comments and macros preserved verbatim, idempotent, no-destruction self-check.",
+    ),
 ];
 
 const fn lang(path: &'static str, doc: &'static str) -> FeatureStatus {
+    shipped(path, doc)
+}
+
+const fn shipped(path: &'static str, doc: &'static str) -> FeatureStatus {
     FeatureStatus {
         path,
         status: Status::Shipped,

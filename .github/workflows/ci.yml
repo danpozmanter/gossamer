@@ -337,10 +337,10 @@ jobs:
         run: |
           case "${{ matrix.target }}" in
             aarch64-unknown-linux-gnu|riscv64gc-unknown-linux-gnu)
-              crates="gossamer-runtime gossamer-abi gossamer-binding gossamer-binding-macros gossamer-pkg gossamer-gc gossamer-sched"
+              crates="gossamer-runtime gossamer-abi gossamer-binding gossamer-binding-macros gossamer-pkg gossamer-sched"
               ;;
             wasm32-unknown-unknown|wasm32-wasip1)
-              crates="gossamer-abi gossamer-binding-macros gossamer-gc"
+              crates="gossamer-abi gossamer-binding-macros"
               ;;
             *)
               echo "unknown target: ${{ matrix.target }}" >&2

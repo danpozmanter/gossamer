@@ -297,6 +297,7 @@ mod tests {
             ExprKind::Block(Block {
                 stmts: vec![],
                 tail: Some(Box::new(int("0"))),
+                synthetic: false,
             }),
         );
         let fn_decl = FnDecl {

@@ -35,6 +35,8 @@ fn boot_h1() -> u16 {
                     status: StatusCode(200),
                     headers,
                     body: b"hello h1".to_vec(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 }
             },
         );
@@ -57,6 +59,8 @@ fn boot_h2() -> u16 {
                     status: StatusCode(200),
                     headers,
                     body: b"hello h2".to_vec(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 }
             },
             h2::Config::default(),

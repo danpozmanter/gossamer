@@ -119,6 +119,12 @@ pub struct Vm {
     /// entries into its own HashMap. Post-lazy: a refcount bump.
     pub(crate) prelude: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
     pub(crate) walker: RefCell<Interpreter>,
+    /// Snapshot of the loaded walker (user fn table included), taken
+    /// at the end of [`Vm::load`]. Goroutine pool workers seed their
+    /// bundled walker from this so Native builtins running off-main
+    /// (e.g. `http::serve` dispatching `App::serve`) resolve user
+    /// functions; a fresh `Interpreter::new()` walker has none.
+    pub(crate) walker_proto: Option<Arc<Interpreter>>,
     /// Frame pool: reused register-file storage handed out at
     /// `run()` entry and returned on exit. Eliminates the per-
     /// call `Vec<Value>` / `Vec<f64>` / `Vec<i64>` malloc storm
@@ -1331,6 +1337,7 @@ mod tests {
             call_cache_count: 0,
             arith_cache_count: 0,
             field_cache_count: 0,
+            mut_ref_params: Vec::new(),
         }
     }
 

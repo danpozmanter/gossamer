@@ -8,8 +8,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gossamer_ast::{
-    AssignOp, BinaryOp, Block, Expr, ExprKind, ImplItem, ItemKind, Literal, Mutability, PathExpr,
-    Pattern, PatternKind, SourceFile, Stmt, StmtKind, UnaryOp, UseDecl, UseListEntry, UseTarget,
+    AssignOp, BinaryOp, Block, Expr, ExprKind, ImplItem, Item, ItemKind, Literal, ModBody,
+    Mutability, PathExpr, Pattern, PatternKind, SourceFile, Stmt, StmtKind, UnaryOp, UseDecl,
+    UseListEntry, UseTarget,
 };
 use gossamer_lex::Span;
 
@@ -74,7 +75,11 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile) -> Vec<Finding> {
 }
 
 fn each_fn_body<'a>(sf: &'a SourceFile, mut visitor: impl FnMut(&'a Expr)) {
-    for item in &sf.items {
+    each_fn_body_in(&sf.items, &mut visitor);
+}
+
+fn each_fn_body_in<'a>(items: &'a [Item], visitor: &mut impl FnMut(&'a Expr)) {
+    for item in items {
         match &item.kind {
             ItemKind::Fn(decl) => {
                 if let Some(body) = &decl.body {
@@ -88,6 +93,15 @@ fn each_fn_body<'a>(sf: &'a SourceFile, mut visitor: impl FnMut(&'a Expr)) {
                             visitor(body);
                         }
                     }
+                }
+            }
+            // Inline `mod name { ... }` bodies (e.g. `mod tests`)
+            // carry functions too; skipping them hid their bodies from
+            // every lint and false-positived unused_import on `use`
+            // declarations referenced only inside the module.
+            ItemKind::Mod(decl) => {
+                if let ModBody::Inline(inner) = &decl.body {
+                    each_fn_body_in(inner, visitor);
                 }
             }
             _ => {}
@@ -341,15 +355,30 @@ fn block_reassigns(block: &Block, target: &str) -> bool {
         if found {
             return;
         }
-        if let ExprKind::Assign { place, .. } = &expr.kind {
-            if let ExprKind::Path(path) = &place.kind {
-                if path.segments.first().is_some_and(|s| s.name.name == target) {
-                    found = true;
-                }
-            }
+        // A method call on the binding (`xs.push(v)`,
+        // `flags.parse(args)`) or a `&mut` borrow may mutate it;
+        // counting them keeps the lint free of false positives on
+        // receiver-mutating APIs.
+        match &expr.kind {
+            ExprKind::Assign { place, .. } if path_is(place, target) => found = true,
+            ExprKind::MethodCall { receiver, .. } if path_is(receiver, target) => found = true,
+            ExprKind::Unary {
+                op: UnaryOp::RefMut,
+                operand,
+            } if path_is(operand, target) => found = true,
+            _ => {}
         }
     });
     found
+}
+
+/// `true` when `expr` is a bare path whose first segment is `target`.
+fn path_is(expr: &Expr, target: &str) -> bool {
+    if let ExprKind::Path(path) = &expr.kind {
+        path.segments.first().is_some_and(|s| s.name.name == target)
+    } else {
+        false
+    }
 }
 
 fn lint_unused_import(sf: &SourceFile) -> Vec<Finding> {
@@ -599,7 +628,10 @@ fn lint_empty_block(sf: &SourceFile) -> Vec<Finding> {
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
             if let ExprKind::Block(block) = &expr.kind {
-                if block.stmts.is_empty() && block.tail.is_none() {
+                // Parser-synthesized blocks (the implicit empty else
+                // arm of an else-less `if let`) have no source
+                // spelling — never the user's mistake.
+                if !block.synthetic && block.stmts.is_empty() && block.tail.is_none() {
                     out.push((
                         expr.span,
                         "empty block is almost always a mistake".to_string(),
@@ -1711,8 +1743,46 @@ fn humanize_int_literal(src: &str) -> String {
     format!("{forward}{suffix}")
 }
 
+/// Names introduced by `use` declarations — imported functions
+/// (stdlib or `[rust-bindings]`) have call-site-only lowerings, so
+/// value-position suggestions must leave them alone.
+fn imported_names(sf: &SourceFile) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for decl in &sf.uses {
+        let UseTarget::Module(path) = &decl.target else {
+            continue;
+        };
+        let Some(first) = path.segments.first() else {
+            continue;
+        };
+        names.insert(first.name.clone());
+        if let Some(list) = &decl.list {
+            for entry in list {
+                let name = entry
+                    .alias
+                    .as_ref()
+                    .map_or_else(|| entry.name.name.clone(), |a| a.name.clone());
+                names.insert(name);
+            }
+        } else {
+            let name = decl.alias.as_ref().map_or_else(
+                || {
+                    path.segments
+                        .last()
+                        .map(|s| s.name.clone())
+                        .unwrap_or_default()
+                },
+                |a| a.name.clone(),
+            );
+            names.insert(name);
+        }
+    }
+    names
+}
+
 fn lint_redundant_closure(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
+    let binding_names = imported_names(sf);
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
             let ExprKind::Closure {
@@ -1746,7 +1816,24 @@ fn lint_redundant_closure(sf: &SourceFile) -> Vec<Finding> {
                 .first()
                 .is_some_and(|s| s.name.name == param_name)
             {
-                let _ = callee;
+                // Only a locally defined function is guaranteed to be
+                // passable as a value on every tier. Qualified paths
+                // (`errors::new`) and use-imported names (which may be
+                // `[rust-bindings]` functions) have call-site-only
+                // lowerings, so the closure is load-bearing for them.
+                let ExprKind::Path(callee_path) = &callee.kind else {
+                    return;
+                };
+                if callee_path.segments.len() != 1 {
+                    return;
+                }
+                if callee_path
+                    .segments
+                    .first()
+                    .is_some_and(|s| binding_names.contains(&s.name.name))
+                {
+                    return;
+                }
                 out.push((
                     expr.span,
                     "closure `|x| f(x)` can be replaced with `f`".to_string(),

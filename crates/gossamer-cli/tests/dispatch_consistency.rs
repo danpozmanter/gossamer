@@ -387,6 +387,6 @@ fn tier_field_counts_are_plausible() {
     );
     assert!(
         ll >= 1,
-        "expected >=1 Llvm-tier entries, got {ll}; gos_rt_write_barrier should be Llvm"
+        "expected >=1 Llvm-tier entries, got {ll}; gos_rt_race_access should be Llvm"
     );
 }

@@ -57,6 +57,7 @@ impl<'a> Builder<'a> {
         struct_defs: &'a HashMap<gossamer_resolve::DefId, String>,
         enums: &'a EnumIndex,
         impl_methods: &'a HashMap<String, Option<Ty>>,
+        fn_ret_names: &'a HashMap<String, Ty>,
         fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
         fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
         consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
@@ -73,6 +74,7 @@ impl<'a> Builder<'a> {
             struct_defs,
             enums,
             impl_methods,
+            fn_ret_names,
             fn_returns,
             fn_inputs,
             consts,
@@ -235,6 +237,18 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Handler dispatch symbol for `fn_name`: the synthesized
+    /// `::__ok_wrap` thunk when the callable declares a bare
+    /// `http::Response` return (the HTTP runtime's C-ABI reads every
+    /// handler return as a packed Result i128), else `fn_name` itself.
+    pub(crate) fn handler_dispatch_symbol(&self, fn_name: String) -> String {
+        use crate::lower::helpers::{handler_ok_wrap_name, is_bare_response_ty};
+        match self.fn_ret_names.get(&fn_name) {
+            Some(ret) if is_bare_response_ty(self.tcx, *ret) => handler_ok_wrap_name(&fn_name),
+            _ => fn_name,
+        }
+    }
+
     pub(crate) fn router_bare_variant(symbol: &str) -> Option<&'static str> {
         match symbol {
             "gos_rt_router_get" => Some("gos_rt_router_get_fn"),
@@ -256,6 +270,7 @@ impl<'a> Builder<'a> {
     ) -> RouterHandlerAbi {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         if let Some(fn_name) = self.local_fn_name.get(&handler_local).cloned() {
+            let fn_name = self.handler_dispatch_symbol(fn_name);
             let fn_addr_local = self.fresh(i64_ty);
             self.emit_assign(
                 Place::local(fn_addr_local),
@@ -271,7 +286,7 @@ impl<'a> Builder<'a> {
         let handler_struct = self
             .struct_name_of(handler_ty)
             .unwrap_or_else(|| "Handler".to_string());
-        let serve_fn_name = format!("{handler_struct}::serve");
+        let serve_fn_name = self.handler_dispatch_symbol(format!("{handler_struct}::serve"));
         let fn_addr_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(fn_addr_local),
@@ -508,6 +523,45 @@ impl<'a> Builder<'a> {
         })
     }
 
+    pub(crate) fn option_vec_u8_ty(&mut self) -> Ty {
+        let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+        let v = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+        let substs = gossamer_types::Substs::from_types([v]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    /// Static MIR type of a field on an opaque runtime-kind struct
+    /// (`http::Request` / `http::Response` / `errors::Error`). The
+    /// checker leaves these fields as inference Vars (the structs are
+    /// checker-opaque; `Request` cannot be name-pinned because the
+    /// legacy client builder struct shares the name), so method
+    /// dispatch on a field expression must consult the same table the
+    /// `lower_field_access` accessors use or `.len()` on `r.query`
+    /// lands on the len-prefixed reader and dereferences a c-string.
+    pub(crate) fn runtime_field_static_ty(&mut self, kind: &str, field: &str) -> Option<Ty> {
+        let str_pair_vec = |b: &mut Self| {
+            let s = b.tcx.string_ty();
+            let tup = b.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+            b.tcx.intern(gossamer_types::TyKind::Vec(tup))
+        };
+        let u8_vec = |b: &mut Self| {
+            let u8_ty = b.tcx.int_ty(gossamer_types::IntTy::U8);
+            b.tcx.intern(gossamer_types::TyKind::Vec(u8_ty))
+        };
+        match (kind, field) {
+            ("http::Request", "method" | "path" | "query" | "body")
+            | ("http::Response", "body" | "content_type" | "location")
+            | ("errors::Error", "message") => Some(self.tcx.string_ty()),
+            ("http::Request" | "http::Response", "headers") => Some(str_pair_vec(self)),
+            ("http::Request", "raw_body") | ("http::Response", "raw_bytes") => Some(u8_vec(self)),
+            ("http::Response", "status") => Some(self.tcx.int_ty(gossamer_types::IntTy::I64)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn option_vec_string_ty(&mut self) -> Ty {
         let s = self.tcx.string_ty();
         let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
@@ -541,6 +595,23 @@ impl<'a> Builder<'a> {
         let substs = gossamer_types::Substs::from_types([f]);
         self.tcx.intern(gossamer_types::TyKind::Adt {
             def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    /// `Result<http::Response, errors::Error>` with the Ok payload
+    /// pinned to the sentinel Response Adt (`u32::MAX - 5`) so field
+    /// projections resolve via `stdlib_struct_shapes`. Same shape as
+    /// the `http::get` / `http::request` free-call destinations.
+    pub(crate) fn result_response_error_adt_ty(&mut self) -> Ty {
+        let resp = self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 5),
+            substs: gossamer_types::Substs::new(),
+        });
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([resp, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
             substs,
         })
     }
@@ -741,11 +812,30 @@ impl<'a> Builder<'a> {
             .and_then(|l| self.local_runtime_kind.get(&l).copied())
             .or_else(|| self.expr_runtime_kind(receiver))?;
         match (receiver_kind, name.name.as_str()) {
-            ("http::Client", "get" | "post") => Some("http::Request"),
+            ("http::Client", "get" | "post" | "put" | "options" | "delete" | "head") => {
+                Some("http::Request")
+            }
+            // Configured-policy request entry points yield the same
+            // packed Result<Response, errors::Error> as `.send()`.
+            ("http::Client", "request" | "request_bytes") => Some("http::SendResult"),
+            ("http::ClientBuilder", "max_redirects" | "timeout_ms") => Some("http::ClientBuilder"),
+            ("http::ClientBuilder", "build") => Some("http::Client"),
             ("http::Request", "header" | "body") => Some("http::Request"),
-            ("http::Request", "send") => Some("http::Response"),
+            // `.send()` yields `Result<Response, errors::Error>` —
+            // a dedicated tag so chained `.map_err(..)` / `.map(..)`
+            // route through the result helpers instead of the
+            // identity copy.
+            ("http::Request", "send") => Some("http::SendResult"),
             _ => None,
         }
+    }
+
+    /// True when `expr` is a chained `.send()` whose result is the
+    /// packed `Result<Response, errors::Error>` — the HIR type is an
+    /// inference Var there, so result-combinator dispatch consults
+    /// this structural probe as a fallback.
+    pub(crate) fn expr_is_send_result(&self, expr: &HirExpr) -> bool {
+        self.expr_runtime_kind(expr) == Some("http::SendResult")
     }
 
     pub(crate) fn is_result_or_option_adt(&self, ty: Ty) -> bool {
@@ -760,6 +850,19 @@ impl<'a> Builder<'a> {
                 _ => return false,
             }
         }
+    }
+
+    /// True when `ty` lowers to the 2-word by-value enum
+    /// representation (sentinel Result/Option Adt or an inline user
+    /// enum). Payloads of this shape are heap-copied at
+    /// `gos_rt_result_new` and must be extracted through
+    /// `gos_rt_result_payload_i128`, not the scalar extractor.
+    pub(crate) fn is_by_value_enum_ty(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        matches!(
+            self.tcx.kind_of(ty),
+            TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
+        ) || self.tcx.is_inline_enum_ty(ty)
     }
 
     pub(crate) fn adt_generic_at(&self, ty: Ty, idx: usize) -> Option<Ty> {

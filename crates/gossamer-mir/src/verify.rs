@@ -23,9 +23,8 @@
 use std::collections::HashMap;
 
 use gossamer_resolve::DefId;
-use gossamer_types::{TyCtxt, TyKind};
+use gossamer_types::{Ty, TyCtxt, TyKind};
 
-use crate::gc_barrier::ty_is_pointer;
 use crate::ir::{
     AggregateKind, BasicBlock, BlockId, Body, ConstValue, Local, Operand, Place, Projection,
     Rvalue, StatementKind, Terminator, UnOp,
@@ -281,10 +280,6 @@ fn check_statement(
         }
         StatementKind::SetDiscriminant { place, .. } => {
             check_place(body, block, place, n_locals, errors);
-        }
-        StatementKind::GcWriteBarrier { place, value } => {
-            check_place(body, block, place, n_locals, errors);
-            check_operand(body, block, value, n_locals, errors);
         }
         StatementKind::Nop => {}
     }
@@ -732,4 +727,36 @@ fn place_leaf_ty(
         }
     }
     Some(ty)
+}
+
+/// `true` if a runtime value of `ty` is an owning heap reference —
+/// the only shapes a `Terminator::Drop` may legally target.
+fn ty_is_pointer(tcx: &TyCtxt, ty: Ty) -> bool {
+    match tcx.kind_of(ty) {
+        TyKind::String
+        | TyKind::Ref { .. }
+        | TyKind::Slice(_)
+        | TyKind::Vec(_)
+        | TyKind::HashMap { .. }
+        | TyKind::Sender(_)
+        | TyKind::Receiver(_)
+        | TyKind::JoinHandle(_)
+        | TyKind::JsonValue
+        | TyKind::DynError
+        | TyKind::Closure { .. }
+        | TyKind::FnTrait(_)
+        | TyKind::Dyn(_) => true,
+        TyKind::Tuple(elems) => elems.iter().any(|t| ty_is_pointer(tcx, *t)),
+        TyKind::Array { elem, .. } => ty_is_pointer(tcx, *elem),
+        TyKind::Adt { def, .. } => {
+            // Sentinel Adts (Result / Option with u32::MAX / MAX-1
+            // DefIds) are heap pointers themselves.
+            if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                return true;
+            }
+            tcx.struct_field_tys(*def)
+                .is_some_and(|tys| tys.iter().any(|t| ty_is_pointer(tcx, *t)))
+        }
+        _ => false,
+    }
 }

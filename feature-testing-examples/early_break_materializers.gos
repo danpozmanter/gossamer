@@ -1,0 +1,108 @@
+// Cross-tier regression for early-`break` consumption of
+// string-bearing materializer vecs: regex::find_all (24-byte tuple
+// slots), regex::split (Vec<String>), regex::captures_all (rows of
+// Option<String>), strings::split, and HashMap keys() snapshots.
+// On the compiled tiers these vecs now carry the AGGR_OWNED /
+// STRING element kinds so `gos_rt_vec_free` deep-frees the slots a
+// loop never reached — this fixture locks that the new free path
+// neither crashes nor double-frees while output stays identical on
+// every tier.
+
+use std::regex
+use std::strings
+use std::collections::HashMap
+
+fn first_hit() -> String {
+    let re = match regex::compile("ab+") {
+        Ok(p) => p,
+        Err(e) => {
+            println!("compile error: {}", e)
+            return ""
+        }
+    }
+    let mut found = ""
+    for hit in regex::find_all(re, "xabby_ab_abbb_ab") {
+        found = hit.2
+        break
+    }
+    found
+}
+
+fn first_piece() -> String {
+    let re = match regex::compile(",") {
+        Ok(p) => p,
+        Err(e) => {
+            println!("compile error: {}", e)
+            return ""
+        }
+    }
+    let mut piece = ""
+    for p in regex::split(re, "alpha,beta,gamma,delta") {
+        piece = p
+        break
+    }
+    piece
+}
+
+fn first_full_match() -> String {
+    let re = match regex::compile("(a)(b)?") {
+        Ok(p) => p,
+        Err(e) => {
+            println!("compile error: {}", e)
+            return ""
+        }
+    }
+    let mut out = ""
+    for row in regex::captures_all(re, "a ab a ab") {
+        if let Some(m) = row[0] {
+            out = m
+        }
+        break
+    }
+    out
+}
+
+fn first_split_field() -> String {
+    let mut field = ""
+    for part in strings::split("k1:k2:k3:k4", ":") {
+        field = part
+        break
+    }
+    field
+}
+
+fn key_count_after_break() -> i64 {
+    let mut m: HashMap<String, i64> = HashMap::new()
+    m.insert("one", 1)
+    m.insert("two", 2)
+    m.insert("three", 3)
+    let mut seen = 0
+    for _k in m.keys() {
+        seen += 1
+        break
+    }
+    seen
+}
+
+fn main() {
+    println!("find_all first: {}", first_hit())
+    println!("split first: {}", first_piece())
+    println!("captures_all first: {}", first_full_match())
+    println!("strings split first: {}", first_split_field())
+    println!("keys seen after break: {}", key_count_after_break())
+    // Full-iteration pass over a fresh materializer right after the
+    // early breaks above: the frees from the broken loops must not
+    // have corrupted the allocator.
+    let re = match regex::compile("[0-9]+") {
+        Ok(p) => p,
+        Err(e) => {
+            println!("compile error: {}", e)
+            return
+        }
+    }
+    let mut total = 0
+    for hit in regex::find_all(re, "7 and 22 and 333") {
+        total += hit.1 - hit.0
+    }
+    println!("digit span total: {}", total)
+}

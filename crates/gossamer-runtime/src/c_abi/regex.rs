@@ -32,6 +32,29 @@ pub struct GosRegex {
     inner: ::regex::Regex,
 }
 
+/// Slot layout of `gos_rt_regex_find_all` elements: 24-byte
+/// `(start i64, end i64, text String)` tuples — the owned match text
+/// lives at word 2, unconditionally.
+static FIND_ALL_SLOT_CHILDREN: [crate::c_abi::vec::VecSlotChild; 1] =
+    [crate::c_abi::vec::VecSlotChild {
+        gate: -1,
+        disc_word: 0,
+        word: 2,
+        kind: crate::c_abi::vec::vec_elem_kind::STRING,
+    }];
+
+/// Slot layout of the capture-group vecs (`gos_rt_regex_captures` /
+/// `gos_rt_regex_captures_all` inner rows): 16-byte by-value
+/// `Option<String>` slots — the owned group text at word 1 is live
+/// only when the discriminant word 0 reads `0` (Some).
+static CAPTURE_SLOT_CHILDREN: [crate::c_abi::vec::VecSlotChild; 1] =
+    [crate::c_abi::vec::VecSlotChild {
+        gate: 0,
+        disc_word: 0,
+        word: 1,
+        kind: crate::c_abi::vec::vec_elem_kind::STRING,
+    }];
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_regex_compile(pat: *const c_char) -> *mut GosRegex {
     ffi_entry!(std::ptr::null_mut(), {
@@ -42,6 +65,32 @@ pub unsafe extern "C" fn gos_rt_regex_compile(pat: *const c_char) -> *mut GosReg
         match ::regex::Regex::new(s) {
             Ok(re) => Box::into_raw(Box::new(GosRegex { inner: re })),
             Err(_) => std::ptr::null_mut(),
+        }
+    })
+}
+
+/// `regex::compile(pattern) -> Result<Pattern, String>`. Ok payload
+/// is the `*mut GosRegex` handle; Err payload is the diagnostic
+/// string, formatted identically to the VM tier's
+/// `regex_std::RegexError::InvalidPattern` so all tiers print the
+/// same message.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_regex_compile_result(pat: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if pat.is_null() {
+            let msg = alloc_cstring(b"regex: invalid pattern ``: null pattern");
+            return gos_rt_result_new(1, msg as i64);
+        }
+        let s = unsafe { CStr::from_ptr(pat).to_str() }.unwrap_or("");
+        match ::regex::Regex::new(s) {
+            Ok(re) => {
+                let handle = Box::into_raw(Box::new(GosRegex { inner: re }));
+                gos_rt_result_new(0, handle as i64)
+            }
+            Err(e) => {
+                let msg = format!("regex: invalid pattern `{s}`: {e}");
+                gos_rt_result_new(1, alloc_cstring(msg.as_bytes()) as i64)
+            }
         }
     })
 }
@@ -129,6 +178,10 @@ pub unsafe extern "C" fn gos_rt_regex_captures(re: *const GosRegex, text: *const
                     };
                     unsafe { gos_rt_vec_push(inner, std::ptr::addr_of!(opt).cast::<u8>()) };
                 }
+                // Tagged after the pushes: the vec owns the fresh group
+                // strings, so `gos_rt_vec_free` reclaims them even when
+                // the consumer never iterates every slot.
+                crate::c_abi::vec::vec_set_slot_children(inner, &CAPTURE_SLOT_CHILDREN);
                 gos_rt_result_new(0, inner as i64)
             }
         }
@@ -170,6 +223,10 @@ pub unsafe extern "C" fn gos_rt_regex_find_all(
                 gos_rt_vec_push(vec, std::ptr::addr_of!(entry).cast::<u8>());
             }
         }
+        // Tagged after the pushes: the vec owns the fresh match-text
+        // strings; `gos_rt_vec_free` reclaims unvisited slots (the
+        // early-`break` path) instead of leaking them.
+        crate::c_abi::vec::vec_set_slot_children(vec, &FIND_ALL_SLOT_CHILDREN);
         vec
     })
 }
@@ -223,7 +280,12 @@ pub unsafe extern "C" fn gos_rt_regex_split(
     text: *const c_char,
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let vec = unsafe { gos_rt_vec_new(8) };
+        // STRING-typed so `gos_rt_vec_free` deep-frees each owned piece
+        // (consumer loops borrow the slot strings; see the unicode
+        // `alloc_string_vec` template).
+        let vec = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::STRING)
+        };
         if re.is_null() || text.is_null() {
             return vec;
         }
@@ -250,7 +312,11 @@ pub unsafe extern "C" fn gos_rt_regex_captures_all(
     text: *const c_char,
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let outer = unsafe { gos_rt_vec_new(8) };
+        // VEC-typed outer: freeing it recursively frees each inner row,
+        // whose own slot meta then reclaims the Some-group strings.
+        let outer = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::VEC)
+        };
         if re.is_null() || text.is_null() {
             return outer;
         }
@@ -269,6 +335,7 @@ pub unsafe extern "C" fn gos_rt_regex_captures_all(
                     gos_rt_vec_push(inner, std::ptr::addr_of!(opt).cast::<u8>());
                 }
             }
+            crate::c_abi::vec::vec_set_slot_children(inner, &CAPTURE_SLOT_CHILDREN);
             let inner_val = inner as i64;
             unsafe {
                 gos_rt_vec_push(outer, std::ptr::addr_of!(inner_val).cast::<u8>());

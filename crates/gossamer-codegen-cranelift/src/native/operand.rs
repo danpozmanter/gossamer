@@ -234,7 +234,19 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                 TyKind::Bool => PrintKind::Bool,
                 TyKind::Char => PrintKind::Char,
                 TyKind::Int(int_ty) => {
-                    if int_ty_is_unsigned(*int_ty) {
+                    // Every ≤64-bit int lives as a signed i64 at
+                    // runtime and prints signed — the VM renders
+                    // `0u64 - 1` as `-1`. The one exception the VM
+                    // makes is display provenance: an explicit
+                    // `as u64`/`as usize` cast result becomes
+                    // `Value::Uint` and prints unsigned. Mirror that
+                    // statically: a local prints unsigned only when
+                    // all its writers are such casts. u128 keeps the
+                    // unsigned printer outright.
+                    let uint_provenance = matches!(int_ty, IntTy::U64 | IntTy::Usize)
+                        && place.projection.is_empty()
+                        && gossamer_mir::local_is_uint_cast(body, tcx, place.local);
+                    if uint_provenance || matches!(int_ty, IntTy::U128) {
                         PrintKind::Uint
                     } else {
                         PrintKind::Int
@@ -344,17 +356,6 @@ pub(super) fn operand_is_string(tcx: &TyCtxt, body: &Body, operand: &Operand) ->
         _ => {}
     }
     false
-}
-
-pub(super) fn operand_is_unsigned_int(body: &Body, tcx: &TyCtxt, op: &Operand) -> bool {
-    let Operand::Copy(p) = op else { return false };
-    if !p.projection.is_empty() {
-        return false;
-    }
-    matches!(
-        tcx.kind_of(body.local_ty(p.local)),
-        TyKind::Int(int_ty) if !int_ty.is_signed()
-    )
 }
 
 pub(super) fn operand_is_char(body: &Body, tcx: &TyCtxt, op: &Operand) -> bool {

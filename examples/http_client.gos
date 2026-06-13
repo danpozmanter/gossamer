@@ -6,8 +6,8 @@
  * start that server, then run this client against it.
  *
  * Run:
- *     /* terminal 1 */ gos run examples/web_server.gos
- *     /* terminal 2 */ gos run examples/http_client.gos
+ *     (terminal 1) gos run examples/web_server.gos
+ *     (terminal 2) gos run examples/http_client.gos
  */
 
 use std::errors

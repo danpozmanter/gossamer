@@ -32,6 +32,8 @@ fn single_h2c_request_completes_quickly() {
                         h
                     },
                     body: b"hi".to_vec(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 }
             },
             h2::Config::default(),

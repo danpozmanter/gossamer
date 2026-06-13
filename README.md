@@ -63,6 +63,8 @@ left-to-right. `x |> f(a, b)` desugars to
 plain functions:
 
 ```gossamer
+use std::{iter, strings}
+
 fn double(x: i64) -> i64 { x * 2 }
 fn add(a: i64, b: i64) -> i64 { a + b }
 fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
@@ -72,26 +74,31 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 fn main() {
     // 3 -> double -> add 10 -> clamp to [0, 100]
     let n = 3 |> double |> add(10) |> clamp(0, 100)
-    println("arithmetic:", n)
+    println!("arithmetic: {}", n)
 
-    // Methods pipe the same way.
+    // Free functions pipe the same way.
     let words = "  Hello  World  "
-        |> str::trim
-        |> str::to_lowercase
-        |> str::split(" ")
+        |> strings::to_lower
+        |> strings::split_whitespace
         |> iter::count
 
-    println("words:", words)
+    println!("words: {}", words)
 }
 ```
 
-A goroutine + channel sketch:
+A goroutine + channel example:
 
 ```gossamer
+use std::sync::channel
+
+fn add(a: i64, b: i64) -> i64 { a + b }
+
 fn main() {
     let (tx, rx) = channel::<i64>()
     go fn() { tx.send(40 |> add(2)) }()
-    println("answer:", rx.recv())
+    if let Some(answer) = rx.recv() {
+        println!("answer: {}", answer)
+    }
 }
 ```
 
@@ -99,6 +106,8 @@ Or spawn a goroutine and join its result — `Ok(value)`, or `Err(message)`
 if it panicked:
 
 ```gossamer
+fn add(a: i64, b: i64) -> i64 { a + b }
+
 fn main() {
     let h = spawn(|| 40 |> add(2))
     match h.join() {
@@ -149,24 +158,30 @@ Other targets compile but the goroutine scheduler will refuse to
 start. Cross-compiling to the supported targets is wired up in
 `gos build --target <triple>`.
 
+## Editor Support
+
+Support for various editors (VS Code, Neovim, etc) [here](https://github.com/danpozmanter/gossamer-editor-support) - syntax and LSP support.
+   
+[Lite Anvil](https://github.com/danpozmanter/lite-anvil) supports Gossamer as a first class language (syntax & LSP).
+
 ## Status and Rough Roadmap
 
 Examples all run via interpretation, compile in debug or release mode.
 
 There are gaps to fill in the standard library, bugs and optimizations to find via real world usage.
 
-This project is very early. Right now performance, resource usage, functionality, and productivity
+This project is still early but starting to find it's sea legs. Right now performance, resource usage, functionality, and productivity
 all feel very promising. But do not trust this yet.
 
 My main goals are:
 
 * Making Gossamer reliable enough to run real production code, and trust.
 
-* Optimizing Gossamer to be Go-grade or better for performance and resource usage.
+* Optimizing Gossamer to be Go-grade or better for performance and resource usage. (This feels close!)
 
 * Building a reliable standard library to reduce the need to reach for third party libraries (using Golang as the gold standard, with small changes that feel right).
 
-* Writing some ecosystem libraries for key functionality (gRPC, Postgres, etc) that shouldn't be in the standard library, but are necessary for real work.
+* Writing some ecosystem libraries for key functionality (gRPC, Postgres, etc) that shouldn't be in the standard library, but are necessary for real work. (Very early).
 
 * Ensuring the developer experience fits the broad goals I have for a language that can replace or reduce my use of Go, Rust, Python, and F#.
 

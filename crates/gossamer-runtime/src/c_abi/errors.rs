@@ -112,3 +112,62 @@ pub unsafe extern "C" fn gos_rt_error_message(err: *const GosError) -> *mut c_ch
         alloc_cstring(&bytes)
     })
 }
+
+/// Display (`{}`) rendering of an `errors::Error`: the Go-style
+/// colon-joined cause chain (`"outer: mid: root"`). `.message()`
+/// stays top-level-only via [`gos_rt_error_message`] — this entry
+/// is for the format-macro lowering of `{}` on an error value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_display(err: *const GosError) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut text: Vec<u8> = Vec::new();
+        let mut cur = err;
+        let mut first = true;
+        while !cur.is_null() {
+            if !first {
+                text.extend_from_slice(b": ");
+            }
+            first = false;
+            let m = unsafe { (*cur).message };
+            if !m.is_null() {
+                text.extend_from_slice(unsafe { CStr::from_ptr(m.as_ptr()).to_bytes() });
+            }
+            cur = unsafe { (*cur).cause.as_ptr() };
+        }
+        alloc_cstring(&text)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render(f: unsafe extern "C" fn(*const GosError) -> *mut c_char, e: *mut GosError) -> String {
+        let p = unsafe { f(e) };
+        let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
+        unsafe { crate::c_abi::string::gos_rt_str_free(p) };
+        s
+    }
+
+    #[test]
+    fn error_new_displays_message_only() {
+        let e = unsafe { gos_rt_error_new(c"boom".as_ptr()) };
+        assert_eq!(render(gos_rt_error_display, e), "boom");
+        assert_eq!(render(gos_rt_error_message, e), "boom");
+    }
+
+    #[test]
+    fn wrap_two_deep_displays_colon_joined_chain() {
+        let root = unsafe { gos_rt_error_new(c"root".as_ptr()) };
+        let mid = unsafe { gos_rt_error_wrap(root, c"mid".as_ptr()) };
+        let outer = unsafe { gos_rt_error_wrap(mid, c"outer".as_ptr()) };
+        assert_eq!(render(gos_rt_error_display, outer), "outer: mid: root");
+    }
+
+    #[test]
+    fn wrap_keeps_message_top_level_only() {
+        let root = unsafe { gos_rt_error_new(c"root".as_ptr()) };
+        let outer = unsafe { gos_rt_error_wrap(root, c"outer".as_ptr()) };
+        assert_eq!(render(gos_rt_error_message, outer), "outer");
+    }
+}

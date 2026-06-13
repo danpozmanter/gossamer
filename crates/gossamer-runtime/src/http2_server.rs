@@ -46,24 +46,21 @@ use crate::c_abi::{GosHttpRequest, drop_handler_result, extract_response_into, g
 use crate::sched::{Gid, Interest, ParkReason};
 use crate::sched_global;
 
-/// Boots the h2c server. Each accepted TCP connection is wrapped
-/// in an `AsyncTcpStream` and driven by a goroutine that calls
-/// `h2::server::handshake` + an accept loop. Per-stream handler
-/// dispatch happens inside child goroutines so a slow handler
-/// doesn't block other streams on the same connection.
-pub fn serve_h2c_with_handler(addr: &str, env_addr: usize, fn_addr: usize) {
-    let listener = match std::net::TcpListener::bind(addr) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("gos_rt_http2_bind_and_run_h2c: bind {addr} failed: {e}");
-            std::process::exit(1);
-        }
-    };
+/// Boots the h2c server. Binds `addr` — a bind failure propagates
+/// as `Err` so the C-ABI shim can hand the caller's
+/// `Result<(), http::Error>` match an `Err` value (interp parity).
+/// Each accepted TCP connection is wrapped in an `AsyncTcpStream`
+/// and driven by a goroutine that calls `h2::server::handshake` +
+/// an accept loop. Per-stream handler dispatch happens inside
+/// child goroutines so a slow handler doesn't block other streams
+/// on the same connection.
+pub fn serve_h2c_with_handler(addr: &str, env_addr: usize, fn_addr: usize) -> std::io::Result<()> {
+    let listener = std::net::TcpListener::bind(addr)?;
     let _ = listener.set_nonblocking(false);
     loop {
         let (sock, _peer) = match listener.accept() {
             Ok(p) => p,
-            Err(_) => break,
+            Err(_) => break Ok(()),
         };
         let _ = sock.set_nodelay(true);
         sched_global::spawn(Box::new(move || {

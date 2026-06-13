@@ -241,6 +241,8 @@ newlines unconditionally.
 
 - Signed ints: `i8`, `i16`, `i32`, `i64`, `i128`, `isize`.
 - Unsigned ints: `u8`, `u16`, `u32`, `u64`, `u128`, `usize`.
+  (`i128` / `u128` are reserved spellings, rejected with `GT0014` —
+  see the conformance note below.)
 - Floats: `f32`, `f64`.
 - `bool` (1 byte).
 - `char` — a 32-bit Unicode scalar value (not a surrogate).
@@ -248,33 +250,59 @@ newlines unconditionally.
 - `!` — the never type (uninhabited; result type of `panic!`, `return`,
   infinite loops).
 
-**Integer overflow semantics.** The `+`, `-`, `*`, `<<`, `>>` operators
-on integer types:
+**The i64 runtime model.** Every integer type of 64 bits or less
+(`i8`–`i64`, `u8`–`u64`, `isize`, `usize`) is represented at runtime
+as a 64-bit signed value, on every tier. Arithmetic, comparison,
+division, remainder, and shifts all run at 64-bit signed width; the
+declared narrow or unsigned width is observable only at an explicit
+`as` cast, which truncates to the declared width and then extends by
+the target's signedness (`300 as u8 == 44`, `200 as i8 == -56`).
+Consequences of the model:
 
-- Panic on overflow in debug builds (`gos build` without `--release`).
-- Wrap modulo 2<sup>N</sup> in release builds (`gos build --release`).
+- Arithmetic between narrow values does not wrap at the declared
+  width: `200u8 + 200u8 == 400`. Wrap-at-width is opt-in via a cast
+  (`(200u8 + 200u8) as u8 == 144`).
+- `u64`/`usize` values at or beyond 2<sup>63</sup> are not
+  representable distinctly — they alias the i64 two's-complement
+  range, so `0u64 - 1` computes, compares, divides, and prints as
+  `-1`, and `(0u64 - 1) as f64 == -1.0`. (Display provenance is the
+  one exception: a value produced directly by an explicit `as u64` /
+  `as usize` cast renders unsigned, so `(0 - 1) as u64` prints
+  `18446744073709551615`.)
+- `+`, `-`, `*` wrap two's-complement at 64-bit width.
+- `<<` and `>>` mask the shift amount to the low 6 bits
+  (`1 << 70 == 1 << 6`); `>>` is the arithmetic (sign-propagating)
+  shift.
+- Float → int casts saturate at i64 width with no narrow mask
+  (`300.7 as u8 == 300`, `1e20 as i64 == i64::MAX`, NaN → 0).
 
 > **Conformance (0.5.0)** `status: not-in-0.5.0` for debug-mode
-> overflow panic. The Cranelift backend does not emit overflow traps
-> in debug builds, and `gos run`'s bytecode VM inherits Rust's
-> release-build wrap behaviour for arithmetic. The release-mode wrap
-> contract holds. The method forms `checked_add`, `wrapping_add`,
-> `saturating_add`, `overflowing_add` and friends are available for
-> explicit control and are the portable form today.
+> overflow panic. No tier emits overflow traps; arithmetic wraps at
+> 64-bit width in every build mode. The method forms `checked_add`,
+> `wrapping_add`, `saturating_add`, `overflowing_add` and friends are
+> available for explicit control and are the portable form today.
 >
-> **Conformance (0.5.0)** `status: not-in-0.5.0` for `i128` and
-> `u128` on the compiled tier. The interpreter accepts these types,
-> but `gos build` (both Cranelift and LLVM) refuses any function
-> whose locals contain `i128`/`u128` with a runtime-level error. A
-> 0.5.0 program using these types must restrict itself to `gos run`.
+> **Conformance** `i128` and `u128` are not yet supported on any
+> tier. The checker rejects every spelling of these types at the
+> declaration site with a compile-time error (`GT0014`), so `gos
+> run`, the JIT, and `gos build` all fail identically — there is no
+> interpreter-only acceptance and no silent 64-bit narrowing.
 
-Silent wrap is never the default in any build mode — the release
-behaviour is explicit two's-complement wrap, not "undefined."
+Silent surprise is never part of the contract — the behaviour is
+explicit two's-complement arithmetic at 64-bit width, not
+"undefined."
 
 **No implicit numeric widening.** All numeric conversions — widening or
 narrowing — require an explicit `as` cast. `let bigger: i64 = small_i32`
 is a type error; write `let bigger = small_i32 as i64`. This prevents
 silent truncation, silent sign changes, and surprise precision loss.
+
+**The `as` whitelist.** `as` is whitelist-checked (`GT0005`). The
+permitted shapes are: numeric ↔ numeric (any integer or float type on
+either side, `f32` sources included; float → int truncates toward zero
+and saturates as above), `bool` → integer, `char` → integer, `u8` →
+`char`, and same-type no-ops. Every other `as` shape is a compile-time
+error.
 
 ### 3.2 Strings
 
@@ -347,7 +375,8 @@ type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
 - `&mut T` — an **exclusive GC reference**. Required to mutate through a
   reference. Cannot coexist with any other reference (shared or
   exclusive) to the same value within a function body. Cannot appear as
-  a struct field. Cannot cross a `go` or channel boundary.
+  a struct field. Does not carry write-through across a `go` or channel
+  boundary (see the parameter-semantics paragraph below).
 - `*const T`, `*mut T` — raw pointers. Only constructible and usable
   inside `unsafe` blocks. Used for FFI.
 
@@ -356,6 +385,23 @@ already guarantees liveness. They are access-mode markers used by a
 scope-local check (§7.5) to prevent simultaneous mutation and reading
 of the same value. No lifetime parameters exist at any level of the
 language.
+
+**`&mut` parameter semantics.** A `&mut Vec<T>` / `&mut [T]` parameter
+writes through to the caller's storage on every tier: element writes,
+growth via `push` (a visible reallocation included), `swap`, forwarding
+the reference into a nested call, early-return paths, a struct field as
+the argument place, and writes from a closure taking the parameter are
+all visible in the caller's binding after the call returns. Fixed-size
+`[T; N]` arguments are copied at the call boundary — a fixed array
+passed where a `&mut [T]` / `&mut Vec<T>` parameter is expected mutates
+the copy, and write-through for fixed arrays is not part of the
+contract. Passing the same place twice as `&mut` in a single call
+(`f(&mut v, &mut v)`) is a violation of the §7.5 discipline; where the
+check cannot see the aliasing, the resulting write order is
+unspecified. A `&mut` argument in a `go` expression does not extend
+write-through across the goroutine boundary: `go f(&mut v)` hands the
+spawned call a copy, and programs must not rely on the goroutine's
+writes being visible in the caller.
 
 ### 3.5 Function types
 
@@ -1161,9 +1207,9 @@ of the ecosystem to whoever runs it.
 
 ### 7.1 Allocation
 
-All heap-allocated values are managed by the garbage collector. Values
-that do not escape their defining function may be stack-allocated
-(escape analysis). The escape rules are:
+All heap-allocated values are managed automatically by the runtime.
+Values that do not escape their defining function may be
+stack-allocated (escape analysis). The escape rules are:
 
 1. Any value whose address is taken (`&x`) and passed across a call
    boundary escapes.
@@ -1172,39 +1218,43 @@ that do not escape their defining function may be stack-allocated
 4. Any value captured by a closure that is stored or passed beyond the
    creating scope escapes.
 
-### 7.2 Garbage collection
+### 7.2 Automatic memory management
 
-> **Conformance (0.5.0)** `status: scaffolded`. `gossamer-gc` exposes
-> `concurrent_start` / `concurrent_step(budget)` / `concurrent_finish`
-> plus Dijkstra and Yuasa write-barrier helpers; **the codegen does
-> not yet emit barrier calls at heap stores**, so the concurrent path
-> is unsafe to enable. The 0.5.0 default collector is stop-the-world
-> mark-sweep. Wiring the barrier emission and switching the default
-> to concurrent is tracked in `~/dev/contexts/gos/0.5.0_plan.md` as
-> item GC.
+> **Conformance (0.5.0)** `status: implemented`. Shipped in 0.12.0:
+> deterministic reference counting for heap enums and runtime
+> containers, drop-pass reclamation for value aggregates, weak
+> references, an on-demand cycle collector
+> (`runtime::collect_cycles()`), and `arena { }` regions — on every
+> tier. The earlier tri-colour tracing collector is removed; there
+> is no pacer, no write barrier, and no GC pause.
 
-The GC target is a concurrent, tri-color, non-generational mark-sweep
-collector with a Dijkstra-style insertion write barrier during the mark
-phase. Collection is triggered by a heap-growth pacer identical in shape
-to Go's: `GC_trigger = live_after_last_gc * (1 + GOGC/100)` with a
-default `GOGC` of 100.
+Memory is reclaimed deterministically, without a tracing collector:
 
-Stop-the-world is limited to:
+- **Reference counting.** Recursive heap enums and runtime
+  containers carry an intrusive header (`[RcHeader | payload]`).
+  Codegen emits balanced retain/release pairs; when the strong
+  count reaches zero the value's reference-counted children are
+  released iteratively and the payload is freed. Semantics match
+  the interpreter tier's shared-ownership model.
+- **Weak references.** A weak reference does not contribute to the
+  strong count; upgrading after the payload is destroyed yields
+  `None` (Swift-ARC model).
+- **Cycle collection.** Reference cycles are reclaimed on demand by
+  `runtime::collect_cycles()` (Bacon–Rajan trial deletion). No
+  background collector runs.
+- **Value aggregates.** Structs, tuples, and arrays are
+  heap-allocated at construction and freed by the compile-time drop
+  pass at scope exit. An aggregate that escapes the drop pass's
+  analysis (e.g. stored through an opaque chain) is leaked until
+  process exit rather than unsoundly collected.
+- **Arenas.** `arena { }` bump-allocates everything constructed
+  inside the block and frees it wholesale at every exit path
+  (§4.4). Nothing allocated inside may be referenced after the
+  block.
 
-- STW at start of mark (to install write barriers and scan roots).
-- STW at end of mark (for termination marking).
-
-Mutator work during mark includes:
-
-- Write barrier recording of reference stores (shaded greying).
-- Cooperative assist when the mutator is allocating faster than the
-  concurrent collector can keep up.
-
-Safe points are inserted by the compiler at:
-
-- Every function prologue.
-- Every loop back-edge.
-- Every call site.
+Safe points, pacers, and collection-triggered pauses do not exist;
+allocation cost is a pointer bump (arena) or one `malloc`/refcount
+(heap values).
 
 ### 7.3 Zero values
 

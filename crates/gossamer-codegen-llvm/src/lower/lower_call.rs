@@ -799,6 +799,25 @@ impl<'a> Lowerer<'a> {
                 // Case 2: aggregate param → pass alloca address so
                 // the callee's memcpy copies the right bytes.
                 return Ok((local_slot(place.local), "ptr".to_string()));
+            } else if is_aggregate(self.tcx, want)
+                && slot_count(self.tcx, want).is_none_or(|n| n == 1)
+                && matches!(
+                    self.tcx.kind(local_ty),
+                    Some(TyKind::Var(_) | TyKind::Error) | None
+                )
+            {
+                // Case 2b: the callee declares a one-slot aggregate
+                // param (a tagged-pointer enum), but inference left
+                // this call site's arg local untyped — common for
+                // method-call argument temporaries. The callee
+                // memcpys 8 bytes from the arg address, so pass the
+                // slot address; passing the loaded tagged-pointer
+                // VALUE instead made the callee dereference the tag
+                // bits (read garbage or fault). Bounded to one slot
+                // (`slot_count` of a tagged heap enum is `None`; its
+                // storage is one word) so an under-sized scalar slot
+                // can never be overread.
+                return Ok((local_slot(place.local), "ptr".to_string()));
             }
         }
         let v = self.lower_operand(op)?;

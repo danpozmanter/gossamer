@@ -36,8 +36,16 @@ fn byte_vec(bytes: &[u8]) -> *mut GosVec {
     v
 }
 
+// STRING-typed: the vec owns each element, so `gos_rt_vec_free`
+// deep-frees them.
 fn str_vec(items: &[String]) -> *mut GosVec {
-    let v = unsafe { gos_rt_vec_with_capacity(8, items.len() as i64) };
+    let v = unsafe {
+        crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+            8,
+            items.len() as i64,
+            crate::c_abi::vec::vec_elem_kind::STRING,
+        )
+    };
     for s in items {
         let pv = alloc_cstring(s.as_bytes()) as i64;
         unsafe { gos_rt_vec_push(v, std::ptr::addr_of!(pv).cast::<u8>()) };

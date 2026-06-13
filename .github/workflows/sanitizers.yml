@@ -86,7 +86,6 @@ jobs:
             --lib \
             -p gossamer-runtime \
             -p gossamer-interp \
-            -p gossamer-gc \
             -p gossamer-coro \
             -p gossamer-mir \
             -p gossamer-binding
@@ -122,5 +121,4 @@ jobs:
             --lib \
             -p gossamer-runtime \
             -p gossamer-sched \
-            -p gossamer-coro \
-            -p gossamer-gc
+            -p gossamer-coro

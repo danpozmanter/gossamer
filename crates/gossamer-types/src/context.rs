@@ -41,6 +41,15 @@ pub struct TyCtxt {
     /// `gos_rt_rc_release` at end of life. Membership must stay
     /// conservative — see `rc_enum_tys` in the MIR enum index.
     rc_managed_tys: std::collections::HashSet<Ty>,
+    /// `DefId.local`s of payload-bearing user enums, registered
+    /// eagerly by the typechecker's enum collection. Heap-enum
+    /// values of these defs are reference counted regardless of
+    /// which interned `Adt` handle a body uses — the per-handle
+    /// `rc_managed_tys` registration only happens at constructor
+    /// lowering, which made RC accounting depend on item order (a
+    /// body lowered before the enum's first constructor skipped
+    /// every retain/release for it).
+    rc_managed_enum_defs: std::collections::HashSet<u32>,
     /// `DefId.local` of user enums whose every variant has at most one
     /// field that fits in a single 8-byte slot. Such enums use the 2-word
     /// by-value `i128` [disc, payload] representation (no heap node);
@@ -281,6 +290,16 @@ impl TyCtxt {
         self.rc_managed_tys.insert(ty);
     }
 
+    /// Registers a payload-bearing user enum (by `DefId.local`) as
+    /// reference counted. Called eagerly during typechecking so RC
+    /// accounting never depends on which body lowers first.
+    /// All-unit enums must NOT be registered — they lower as bare
+    /// `i64` discriminants and releasing one would treat the
+    /// integer as a pointer.
+    pub fn register_rc_managed_enum_def(&mut self, def_local: u32) {
+        self.rc_managed_enum_defs.insert(def_local);
+    }
+
     /// Registers a user enum (by `DefId.local`) as inline-able — its values
     /// are the 2-word by-value `i128` representation.
     pub fn register_inline_enum_def(&mut self, def_local: u32) {
@@ -321,6 +340,16 @@ impl TyCtxt {
             return true;
         }
         if self.rc_managed_tys.contains(&ty) {
+            return true;
+        }
+        // Payload-bearing user enums are heap nodes (tagged-pointer
+        // or header-disc) on the compiled tiers; recognise every
+        // instantiation by def, not by interned handle. Inline
+        // (2-word by-value) enums already returned false above.
+        if matches!(
+            self.kind(ty),
+            Some(TyKind::Adt { def, .. }) if self.rc_managed_enum_defs.contains(&def.local)
+        ) {
             return true;
         }
         // `Weak<T>` (sentinel def `u32::MAX - 6`) is a weak-counted

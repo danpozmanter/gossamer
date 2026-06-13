@@ -51,6 +51,9 @@ fn describe(v: &Value) -> &'static str {
         Value::Weak(_) => "weak",
         Value::Void => "void",
         Value::Uint(_) => "u64",
+        // &mut-param writeback cell; never escapes the call protocol,
+        // so reaching a binding boundary means describing its payload.
+        Value::MutCell(_) => "mut-ref cell",
     }
 }
 
@@ -702,6 +705,8 @@ impl ToGos for DynValue {
 fn value_to_dyn(value: &Value) -> DynValue {
     match value {
         Value::NativeEnum(o) => value_to_dyn(&gossamer_interp::native_enum_to_variant(o)),
+        // &mut-param writeback cell; convert through its current payload.
+        Value::MutCell(cell) => value_to_dyn(&cell.lock().clone()),
         Value::Unit | Value::Void | Value::Weak(_) => DynValue::Nil,
         Value::Bool(b) => DynValue::Bool(*b),
         Value::Int(i) => DynValue::Int(*i),

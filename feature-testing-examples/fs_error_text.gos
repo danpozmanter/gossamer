@@ -1,0 +1,28 @@
+// Cross-tier regression for fs error message text. The interp tier
+// classifies OS errors through `IoError::from_std` ("not found: {path}",
+// "permission denied: {path}", "io: {path}: {err}"); the native
+// `gos_rt_*_result` shims must produce the same text instead of the
+// raw `std::io::Error` display ("No such file or directory (os error
+// 2)"). Deterministic: only never-existing paths are touched.
+
+use std::fs
+use std::os
+
+fn main() {
+    match fs::write("/nonexistent-dir-gosfixture/file.txt", "hi") {
+        Ok(_) => println!("write ok"),
+        Err(e) => println!("write err: {}", e),
+    }
+    match os::read_file(&"/nonexistent-file-gosfixture") {
+        Ok(_) => println!("read ok"),
+        Err(e) => println!("read err: {}", e),
+    }
+    match fs::remove_file("/nonexistent-file-gosfixture") {
+        Ok(_) => println!("remove ok"),
+        Err(e) => println!("remove err: {}", e),
+    }
+    match fs::canonicalize("/nonexistent-file-gosfixture") {
+        Ok(_) => println!("canonicalize ok"),
+        Err(e) => println!("canonicalize err: {}", e),
+    }
+}

@@ -73,6 +73,11 @@ pub enum BindingRunnerError {
     /// I/O error while preparing the cache.
     #[error("cache i/o error: {0}")]
     Io(#[from] io::Error),
+    /// The project manifest is malformed (e.g. a bare `[project] id`).
+    /// A present-but-invalid manifest is a hard error, never a silent
+    /// "no bindings".
+    #[error("manifest error: {0}")]
+    Manifest(String),
     /// Template rendering failed (unexpected — rendering is total).
     #[error("template render failed: {0}")]
     Render(String),
@@ -228,6 +233,7 @@ impl BindingRunner {
             &cargo_toml,
             &dir.join("target"),
             self.profile,
+            None,
             "--bin",
             "gos-runner",
             "<runner>",
@@ -273,6 +279,7 @@ impl BindingRunner {
             &cargo_toml,
             &dir.join("target"),
             self.profile,
+            None,
             "--bin",
             "gos-sigs-dump",
             "<sigs>",
@@ -386,6 +393,10 @@ pub struct StaticBindingsLib {
     pub gossamer_root: PathBuf,
     /// Cargo profile.
     pub profile: Profile,
+    /// Cross-compilation target triple passed to cargo (`--target`),
+    /// e.g. `x86_64-unknown-linux-musl` for the static-musl release
+    /// link. `None` builds for the host.
+    pub cargo_target: Option<String>,
     /// Project id for cosmetic comments.
     pub project_id: String,
 }
@@ -430,6 +441,7 @@ impl StaticBindingsLib {
             bindings,
             gossamer_root: gossamer_root.to_path_buf(),
             profile,
+            cargo_target: None,
             project_id: manifest.project.id.as_str().to_string(),
         }))
     }
@@ -440,11 +452,22 @@ impl StaticBindingsLib {
     /// `lib<name>.a` on every platform *except* Windows MSVC, where
     /// it lands as `<name>.lib`. The lib name in the staticlib
     /// `Cargo.toml` is `gos_static_bindings`.
+    /// Sets the cargo `--target` triple for the staticlib build.
+    #[must_use]
+    pub fn with_cargo_target(mut self, target: Option<String>) -> Self {
+        self.cargo_target = target;
+        self
+    }
+
+    /// Path the staticlib lands at after `ensure_built`, accounting
+    /// for the optional cargo `--target` subdirectory.
     #[must_use]
     pub fn archive_path(&self) -> PathBuf {
-        self.workdir
-            .join("target")
-            .join(self.profile.dir())
+        let mut dir = self.workdir.join("target");
+        if let Some(t) = &self.cargo_target {
+            dir = dir.join(t);
+        }
+        dir.join(self.profile.dir())
             .join(staticlib_archive_filename())
     }
 
@@ -476,11 +499,16 @@ impl StaticBindingsLib {
             &cargo_toml,
             &self.workdir.join("target"),
             self.profile,
+            self.cargo_target.as_deref(),
             "--lib",
             "",
             "<staticlib>",
         )?;
-        write_stamp(&stamp, &self.fingerprint_hex, self.profile, "staticlib")?;
+        let kind = match &self.cargo_target {
+            Some(t) => format!("staticlib:{t}"),
+            None => "staticlib".to_string(),
+        };
+        write_stamp(&stamp, &self.fingerprint_hex, self.profile, &kind)?;
         Ok(archive)
     }
 
@@ -491,9 +519,13 @@ impl StaticBindingsLib {
         let Ok(stamp_text) = fs::read_to_string(stamp) else {
             return Ok(false);
         };
+        let kind = match &self.cargo_target {
+            Some(t) => format!("staticlib:{t}"),
+            None => "staticlib".to_string(),
+        };
         if !stamp_text.contains(&self.fingerprint_hex)
             || !stamp_text.contains(self.profile.dir())
-            || !stamp_text.contains("staticlib")
+            || !stamp_text.contains(&kind)
         {
             return Ok(false);
         }
@@ -889,6 +921,7 @@ fn run_cargo_build(
     manifest_path: &Path,
     target_dir: &Path,
     profile: Profile,
+    cargo_target: Option<&str>,
     kind_flag: &str,
     kind_value: &str,
     crate_label: &str,
@@ -898,6 +931,9 @@ fn run_cargo_build(
     cmd.arg("build");
     if matches!(profile, Profile::Release) {
         cmd.arg("--release");
+    }
+    if let Some(t) = cargo_target {
+        cmd.arg("--target").arg(t);
     }
     cmd.arg("--manifest-path").arg(manifest_path);
     if kind_value.is_empty() {

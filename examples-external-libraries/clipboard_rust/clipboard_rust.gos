@@ -1,0 +1,55 @@
+/*
+ * Clipboard round-trip through a Rust binding.
+ *
+ * Prints whatever text is currently on the system clipboard, then
+ * replaces it with the CLI arguments joined into one line. The
+ * clipboard access lives in the sibling `cliplib/` Rust crate,
+ * which wraps the published `arboard` crate and is wired in via
+ * `[rust-bindings]` in project.toml.
+ *
+ * Run from this directory (the manifest is found via the cwd):
+ *
+ *   gos run clipboard_rust.gos -- this is cool
+ *
+ * The first run inside a fresh checkout takes a while because
+ * Cargo builds the binding runner; later runs reuse the cache.
+ */
+
+use clipboard::get_text
+use clipboard::set_text
+use std::env
+use std::strings
+
+// Previous clipboard text, a placeholder when the clipboard is
+// empty, or an error report (stderr) when no clipboard exists at
+// all — e.g. on Linux with no display server and no clipboard
+// utility (xsel, xclip, wl-clipboard, termux-clipboard) installed.
+fn read_previous() -> String {
+    match get_text() {
+        Ok(text) => {
+            if text == "" {
+                "(clipboard is empty)"
+            } else {
+                text
+            }
+        },
+        Err(e) => {
+            eprintln!("{e}")
+            "(clipboard unavailable)"
+        },
+    }
+}
+
+fn main() {
+    let previous = read_previous()
+
+    let words = env::args()
+    if words.len() > 0 {
+        let message = strings::join(words, " ")
+        if let Err(e) = set_text(message) {
+            eprintln!("{e}")
+        }
+    }
+
+    println!("{}", previous)
+}

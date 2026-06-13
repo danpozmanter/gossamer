@@ -71,7 +71,7 @@ use super::*;
 
 pub const RUNTIME: StdModule = StdModule {
     path: "std::runtime",
-    summary: "Goroutine / GC / scheduler introspection and tuning.",
+    summary: "Goroutine / scheduler introspection and tuning.",
     items: &[
         StdItem {
             name: "max_procs",
@@ -87,11 +87,6 @@ pub const RUNTIME: StdModule = StdModule {
             name: "num_cpus",
             kind: StdItemKind::Function,
             doc: "Logical CPU cores visible to the process.",
-        },
-        StdItem {
-            name: "mem_stats",
-            kind: StdItemKind::Function,
-            doc: "Read-only snapshot of GC and allocation counters.",
         },
     ],
 };
@@ -133,7 +128,7 @@ pub const ERRORS: StdModule = StdModule {
         StdItem {
             name: "join",
             kind: StdItemKind::Function,
-            doc: "Joins a list of errors into a single piped error.",
+            doc: "Joins a list of errors into one; messages are joined with \"; \" (None for an empty list).",
         },
     ],
 };

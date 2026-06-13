@@ -58,33 +58,28 @@ Struct values are `Rc<Vec<(Ident, Value)>>`. Field assignment runs
 through a copy-on-write helper that allocates a fresh `Rc` so alias
 bindings never observe each other's mutations.
 
-## Garbage collector
+## Memory management
 
-`gossamer-gc` is the tri-colour concurrent mark-sweep collector with
-generational write-barriers and weak references. Compiled programs
-emit a `gos_rt_write_barrier` call before every projected heap-pointer
-store via the MIR `insert_gc_barriers` pass — both the Cranelift and
-LLVM backends share the same emission semantics, so collector
-invariants are tier-agnostic.
+Compiled programs manage memory deterministically — there is no
+tracing collector and no pause:
 
-The collector runs in two modes:
-
-- **Concurrent (default).** Mark work is interleaved with mutator
-  allocation: each `gos_rt_gc_alloc_rooted` call drives one
-  `STEP_BUDGET = 32` chunk of marking when a cycle is active and
-  starts a fresh cycle when allocation pressure crosses the heap
-  threshold (`GOSSAMER_GC_TARGET` env var overrides the default).
-- **Stop-the-world.** Set `GOSSAMER_GC_MODE=stw` to disable the
-  allocation-driven incremental drive. The heap still grows on
-  allocation and explicit `gos_rt_gc_concurrent_*` calls still
-  run STW; this is the comparison mode used to diagnose collector
-  bugs.
+- **Reference counting** (`gossamer-runtime::c_abi::rc`). Recursive
+  heap enums and runtime containers carry an intrusive
+  `[RcHeader | payload]` header. Codegen emits balanced
+  retain/release pairs; a strong count hitting zero releases the
+  value's reference-counted children iteratively and frees the
+  payload. Weak references follow the Swift-ARC model.
+- **Cycle collection.** `runtime::collect_cycles()` runs an
+  on-demand Bacon–Rajan trial-deletion pass over suspected cycle
+  roots, on every tier.
+- **Aggregate reclamation.** Structs / tuples / arrays are
+  heap-allocated via `gos_rt_aggr_alloc` (plain zeroed malloc) and
+  freed by the MIR drop pass via `gos_rt_aggr_free` at scope exit.
+- **Arenas.** `arena { }` blocks bump-allocate and free wholesale
+  at every block exit.
 
 The tree-walker piggy-backs on Rust's `Rc` / `Arc` for object
-lifetime; concurrent collection is a property of the compiled tier
-and the bytecode VM. The `gc_mode_parity` CI test verifies every
-allocation-heavy example produces identical stdout under both
-modes.
+lifetime, which is the semantic oracle the compiled tiers match.
 
 ## Scheduler
 

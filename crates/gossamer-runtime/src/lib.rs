@@ -82,7 +82,6 @@ pub mod builtins;
 pub mod c_abi;
 pub mod coverage;
 pub mod ffi;
-pub mod gc;
 pub mod http2_server;
 pub mod layout;
 pub mod preempt;
@@ -94,6 +93,8 @@ pub mod sched;
 pub mod sched_global;
 pub mod sigquit;
 pub mod sql;
+pub mod sql_migrate;
+pub mod sql_pool;
 pub mod stack_guard;
 pub mod value;
 

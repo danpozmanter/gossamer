@@ -182,12 +182,62 @@ pub const HTTP: StdModule = StdModule {
         StdItem {
             name: "serve",
             kind: StdItemKind::Function,
-            doc: "Convenience: bind and serve an HTTP handler.",
+            doc: "Convenience: bind and serve an HTTP handler. `Result<(), Error>` — a bind failure is an Err value.",
         },
         StdItem {
             name: "Client",
             kind: StdItemKind::Type,
-            doc: "HTTP client capable of GET/POST/PUT/DELETE.",
+            doc: "HTTP client; configure redirects and timeout via `Client::builder()`.",
+        },
+        StdItem {
+            name: "ResponseStream",
+            kind: StdItemKind::Type,
+            doc: "Streaming response body from `http::stream`; `next_line` / `next_chunk`, consumed by `Response::stream`.",
+        },
+        StdItem {
+            name: "request",
+            kind: StdItemKind::Function,
+            doc: "One-shot request with a string body: `(method, url, body, headers) -> Result<Response, Error>`.",
+        },
+        StdItem {
+            name: "request_bytes",
+            kind: StdItemKind::Function,
+            doc: "One-shot request with a byte body: `(method, url, body: [u8], headers) -> Result<Response, Error>`.",
+        },
+        StdItem {
+            name: "stream",
+            kind: StdItemKind::Function,
+            doc: "One-shot request read incrementally: `(method, url, body, headers) -> Result<ResponseStream, Error>`.",
+        },
+        StdItem {
+            name: "get",
+            kind: StdItemKind::Function,
+            doc: "One-shot GET: `(url, headers) -> Result<Response, Error>`.",
+        },
+        StdItem {
+            name: "post",
+            kind: StdItemKind::Function,
+            doc: "One-shot POST: `(url, body, content_type) -> Result<Response, Error>`.",
+        },
+        StdItem {
+            name: "put",
+            kind: StdItemKind::Function,
+            doc: "One-shot PUT: `(url, body, content_type) -> Result<Response, Error>`.",
+        },
+        StdItem {
+            name: "delete",
+            kind: StdItemKind::Function,
+            doc: "One-shot DELETE: `(url, body, headers) -> Result<Response, Error>`.",
+        },
+        StdItem {
+            name: "head",
+            kind: StdItemKind::Function,
+            doc: "One-shot HEAD: `(url, headers) -> Result<Response, Error>`.",
+        },
+        StdItem {
+            name: "options",
+            kind: StdItemKind::Function,
+            doc: "One-shot OPTIONS: `(url, headers) -> Result<Response, Error>`.",
         },
         // HTTP/2 surface — folded in per the Go model.
         StdItem {

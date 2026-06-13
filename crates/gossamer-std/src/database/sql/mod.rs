@@ -20,8 +20,8 @@ pub mod pool;
 pub mod query;
 
 pub use gossamer_runtime::sql::{
-    ConnectionImpl, Driver, DriverError, DriverErrorKind, Error, IsolationLevel, Kind, RowsImpl,
-    StatementImpl, TransactionImpl, Value, drivers, register,
+    ConnectionImpl, Driver, DriverError, DriverErrorKind, Error, IsolationLevel, Kind,
+    Notification, RowsImpl, StatementImpl, TransactionImpl, Value, drivers, register,
 };
 pub use pool::{Pool, PoolConfig, PooledConn};
 pub use query::Select;
@@ -113,6 +113,34 @@ impl Conn {
         self.inner.interrupt();
     }
 
+    /// Bulk-loads `data` through the dialect's copy mechanism
+    /// (`COPY … FROM STDIN` on `PostgreSQL`); returns rows written.
+    pub fn copy_in(&mut self, sql: &str, data: &[u8]) -> Result<u64, Error> {
+        self.inner.copy_in(sql, data)
+    }
+
+    /// Bulk-extracts rows through the dialect's copy mechanism
+    /// (`COPY … TO STDOUT` on `PostgreSQL`); returns the raw bytes.
+    pub fn copy_out(&mut self, sql: &str) -> Result<Vec<u8>, Error> {
+        self.inner.copy_out(sql)
+    }
+
+    /// Subscribes this connection to notifications on `channel`.
+    pub fn listen(&mut self, channel: &str) -> Result<(), Error> {
+        self.inner.listen(channel)
+    }
+
+    /// Unsubscribes this connection from `channel`.
+    pub fn unlisten(&mut self, channel: &str) -> Result<(), Error> {
+        self.inner.unlisten(channel)
+    }
+
+    /// Returns the next pending notification, waiting up to
+    /// `timeout_ms` (0 = poll without waiting).
+    pub fn poll_notification(&mut self, timeout_ms: i64) -> Result<Option<Notification>, Error> {
+        self.inner.poll_notification(timeout_ms)
+    }
+
     /// Runs `execute` while honouring `ctx`. If `ctx` is already
     /// cancelled, returns [`Error::Cancelled`] immediately. While the
     /// statement runs, a watchdog goroutine listens on `ctx.done()`
@@ -158,6 +186,12 @@ impl Conn {
     /// Closes the connection.
     pub fn close(mut self) -> Result<(), Error> {
         self.inner.close()
+    }
+
+    /// The raw driver connection, for the runtime-level helpers
+    /// (`sql_migrate`, the C-ABI shims).
+    pub fn as_impl_mut(&mut self) -> &mut dyn ConnectionImpl {
+        self.inner.as_mut()
     }
 }
 
@@ -238,6 +272,16 @@ impl Tx {
     /// Executes a parameterless statement inside the tx.
     pub fn execute(&mut self, sql: &str) -> Result<u64, Error> {
         self.inner.execute(sql)
+    }
+    /// Executes a statement with positional bindings inside the tx.
+    pub fn execute_params(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
+        self.inner.execute_params(sql, params)
+    }
+    /// Runs a query with positional bindings inside the tx.
+    pub fn query_params(&mut self, sql: &str, params: &[Value]) -> Result<Rows, Error> {
+        Ok(Rows {
+            inner: self.inner.query_params(sql, params)?,
+        })
     }
     /// Establishes a savepoint named `name` inside this transaction.
     pub fn savepoint(&mut self, name: &str) -> Result<(), Error> {

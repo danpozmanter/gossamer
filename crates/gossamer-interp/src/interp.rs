@@ -86,7 +86,7 @@ impl GoroutinePool {
         });
         for _ in 0..num_workers {
             let p = Arc::clone(&pool);
-            let _ = std::thread::Builder::new()
+            let spawned = std::thread::Builder::new()
                 .name("gossamer-worker".to_string())
                 .spawn(move || {
                     p.workers.fetch_add(1, Ordering::Relaxed);
@@ -117,6 +117,12 @@ impl GoroutinePool {
                         }
                     }
                 });
+            if let Err(e) = spawned {
+                // A pool below its requested size starves blocking
+                // goroutines (e.g. `go http::serve`); say so instead
+                // of failing silently.
+                eprintln!("gossamer-worker spawn failed: {e}");
+            }
         }
         pool
     }
@@ -182,6 +188,12 @@ pub struct Interpreter {
     /// per-statement hook in `eval_stmt` short-circuits to a
     /// single global-flag load in that case.
     source_map: Option<std::sync::Arc<gossamer_lex::SourceMap>>,
+    /// Type interner handle, set by the VM when it bundles this
+    /// walker for `Op::EvalDeferred`. Lets the walker resolve cast
+    /// target types so `as` follows the same scalar semantics as the
+    /// bytecode and compiled tiers. `None` for standalone walkers
+    /// (REPL): those keep the legacy value-preserving behaviour.
+    tcx: Option<std::sync::Arc<gossamer_types::TyCtxt>>,
 }
 
 impl Interpreter {
@@ -199,7 +211,15 @@ impl Interpreter {
             globals,
             call_stack: Vec::new(),
             source_map: None,
+            tcx: None,
         }
+    }
+
+    /// Hands the walker the program's type interner so cast targets
+    /// resolve to concrete kinds. Called by `Vm::load` on the bundled
+    /// walker; the `Arc` outlives the VM's own JIT snapshot release.
+    pub fn set_type_context(&mut self, tcx: std::sync::Arc<gossamer_types::TyCtxt>) {
+        self.tcx = Some(tcx);
     }
 
     /// Sets the source map the coverage hook resolves spans against.
@@ -531,8 +551,19 @@ impl Interpreter {
 
     fn apply(&mut self, callee: &Value, args: Vec<Value>) -> RuntimeResult<Value> {
         match callee {
-            Value::Builtin(inner) => (inner.call)(&args),
-            Value::Native(inner) => (inner.call)(self, &args),
+            // Builtins take aggregates by value and return any
+            // mutation as a fresh value — unwrap write-back cells so
+            // a `&mut`-typed argument reaching a builtin presents as
+            // the plain aggregate it expects (the cell then simply
+            // returns the unchanged value to the caller).
+            Value::Builtin(inner) => {
+                let args = unwrap_mut_cells(args);
+                (inner.call)(&args)
+            }
+            Value::Native(inner) => {
+                let args = unwrap_mut_cells(args);
+                (inner.call)(self, &args)
+            }
             Value::Closure(closure) => self.apply_closure(closure, args),
             // Calling a zero-field variant value acts as that
             // variant's constructor: `Circle(1.5)` produces
@@ -609,7 +640,19 @@ impl Interpreter {
         } else {
             None
         };
+        // Write-back cell protocol: a `MutCell` argument binds as its
+        // inner value; the cell remembers the binding name so the
+        // final parameter value flows back to the caller on return.
+        let mut ref_cells: Vec<(&str, Arc<parking_lot::Mutex<Value>>)> = Vec::new();
         for (param, arg) in closure.params.iter().zip(args) {
+            if let Value::MutCell(cell) = &arg {
+                if let HirPatKind::Binding { name, .. } = &param.pattern.kind {
+                    let inner = cell.lock().clone();
+                    ref_cells.push((name.name.as_str(), Arc::clone(cell)));
+                    bind_pattern(&mut env, &param.pattern, inner)?;
+                    continue;
+                }
+            }
             bind_pattern(&mut env, &param.pattern, arg)?;
         }
         let result = match self.eval_expr(&closure.body, &mut env)? {
@@ -619,6 +662,11 @@ impl Interpreter {
                 return Err(RuntimeError::Panic("continue outside of loop".to_string()));
             }
         };
+        for (name, cell) in ref_cells {
+            if let Some(final_value) = env.lookup(name) {
+                *cell.lock() = final_value.clone();
+            }
+        }
         let mutated_self = self_param_name.and_then(|name| env.lookup(name).cloned());
         Ok((result, mutated_self))
     }
@@ -699,19 +747,26 @@ impl Interpreter {
                 Ok(Flow::Value(Value::Tuple(Arc::new(parts))))
             }
             HirExprKind::Array(arr) => self.eval_array(arr, env),
-            HirExprKind::Cast { value, .. } => {
-                // Without a TyCtxt handle on the tree-walker we
-                // cannot resolve the target's `Ty` to a concrete
-                // kind, so the cast is a runtime no-op for the
-                // tree-walker — every numeric cast we care about
-                // (i64↔f64, etc.) is handled directly by the
-                // bytecode VM's `compile_cast`. To stay sound when
-                // the tree-walker IS the executor (fallback or
-                // explicit `--tree-walker`), promote `Int`→`Float`
-                // and `Float`→`Int` based on the receiving operator
-                // at use sites — see `eval_binary` for the
-                // arithmetic auto-promotion that compensates.
-                Ok(Flow::Value(self.eval_expr_to_value(value, env)?))
+            HirExprKind::Cast { value, ty } => {
+                let v = self.eval_expr_to_value(value, env)?;
+                // With a `TyCtxt` handle (always present when this
+                // walker is the VM's bundled fallback) the cast
+                // applies the same scalar semantics as the bytecode
+                // `Op::CastScalar` and the compiled tiers. A
+                // standalone walker (REPL) has no interner; it keeps
+                // the legacy value-preserving behaviour, compensated
+                // by the arithmetic auto-promotion in `eval_binary`.
+                if let Some(target) = self
+                    .tcx
+                    .as_deref()
+                    .and_then(|tcx| tcx.kind(*ty))
+                    .and_then(crate::cast::CastTarget::of)
+                {
+                    if let Some(result) = crate::cast::cast_scalar(&v, target) {
+                        return Ok(Flow::Value(result));
+                    }
+                }
+                Ok(Flow::Value(v))
             }
             HirExprKind::Range {
                 start,
@@ -835,7 +890,30 @@ impl Interpreter {
             // capture `provider::xxx` paths and silently downgrade
             // the call's return to the captured value.
             if segments.len() > 1 {
-                let joined: String = segments
+                // Module-relative prefixes (`super::` / `crate::` /
+                // `self::`) address the flat global table: globals are
+                // keyed by their unqualified (or module-joined) name,
+                // so strip the prefix segments before joining.
+                // `super::decode_payload` inside a `#[cfg(test)] mod
+                // tests` must resolve the top-level `decode_payload`.
+                let mut tail_segments: &[Ident] = segments;
+                while let Some(head) = tail_segments.first() {
+                    if tail_segments.len() > 1
+                        && matches!(head.name.as_str(), "super" | "crate" | "self")
+                    {
+                        tail_segments = &tail_segments[1..];
+                    } else {
+                        break;
+                    }
+                }
+                if tail_segments.len() == 1 {
+                    let name = tail_segments[0].name.as_str();
+                    if let Some(value) = self.globals.get(name) {
+                        return Ok(Flow::Value(value.clone()));
+                    }
+                    return Err(RuntimeError::UnresolvedName(name.to_string()));
+                }
+                let joined: String = tail_segments
                     .iter()
                     .map(|s| s.name.as_str())
                     .collect::<Vec<_>>()
@@ -843,14 +921,29 @@ impl Interpreter {
                 if let Some(value) = self.globals.get(&joined) {
                     return Ok(Flow::Value(value.clone()));
                 }
+                let segments = tail_segments;
                 if let Some(last) = segments.last() {
                     if let Some(value) = self.globals.get(&last.name) {
-                        return Ok(Flow::Value(value.clone()));
+                        // The tail fallback exists for
+                        // constructor-shaped globals registered under
+                        // their bare name (enum variants, struct
+                        // ctors). Callable globals must resolve
+                        // through the joined path — otherwise an
+                        // unresolved module fn (e.g. a
+                        // `[rust-bindings]` item whose runner never
+                        // engaged) silently hijacks an unrelated
+                        // builtin sharing the tail name
+                        // (`brotli::decode` calling pem's `decode`).
+                        if matches!(value, Value::Variant(_) | Value::Struct(_)) {
+                            return Ok(Flow::Value(value.clone()));
+                        }
                     }
                 }
                 // Multi-segment path whose head and tail are both
                 // unknown — degrade to Unit so opaque-argument
                 // shapes (e.g. `Ordering::Relaxed`) keep flowing.
+                // Calling the Unit stub is a hard error in
+                // `eval_call`.
                 return Ok(Flow::Value(Value::Unit));
             }
             if let Some(value) = env.lookup(&first.name) {
@@ -878,10 +971,40 @@ impl Interpreter {
         // Gossamer code that compiles through every tier. Nothing to
         // intercept here anymore.)
         let callee_value = self.eval_expr_to_value(callee, env)?;
+        // A multi-segment callee that resolved to nothing rides
+        // `eval_path`'s opaque-value Unit degrade. Calling that stub
+        // must be loud, not a silent no-op: a declared-but-unresolved
+        // binding fn (e.g. a `[rust-bindings]` module whose runner
+        // never engaged) would otherwise return Unit and "pass"
+        // tests. GX0002, matching the bytecode VM.
+        if matches!(callee_value, Value::Unit) {
+            if let HirExprKind::Path { segments, .. } = &callee.kind {
+                if segments.len() > 1 {
+                    let joined: String = segments
+                        .iter()
+                        .map(|s| s.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    return Err(RuntimeError::UnresolvedName(joined));
+                }
+            }
+        }
         let mut arg_values = Vec::with_capacity(args.len());
+        // `&mut Vec<T>` / `&mut [T]` arguments ride the write-back
+        // cell protocol (mirrors the bytecode `Op::CellNew` /
+        // `Op::CellTake` pair): pass the value inside a cell, then
+        // store the callee's final parameter value back into the
+        // argument's place after the call.
+        let mut cell_writebacks: Vec<(&HirExpr, Arc<parking_lot::Mutex<Value>>)> = Vec::new();
         for arg in args {
             match self.eval_expr(arg, env)? {
                 Flow::Value(v) => {
+                    if let Some(place) = self.mut_ref_arg_place(arg) {
+                        let cell = Arc::new(parking_lot::Mutex::new(v));
+                        cell_writebacks.push((place, Arc::clone(&cell)));
+                        arg_values.push(Value::MutCell(cell));
+                        continue;
+                    }
                     // 0.7.0 flag::Cell auto-deref at the call
                     // boundary — same rule the VM applies in
                     // `Op::Call`. Walker fallback hit by complex
@@ -906,6 +1029,10 @@ impl Interpreter {
                     gossamer_runtime::sigquit::stack_pop();
                     self.call_stack.pop();
                 }
+                for (place, cell) in cell_writebacks {
+                    let final_value = cell.lock().clone();
+                    self.write_back(place, final_value, env)?;
+                }
                 Ok(Flow::Value(value))
             }
             Err(err) => {
@@ -914,6 +1041,43 @@ impl Interpreter {
                 }
                 Err(err)
             }
+        }
+    }
+
+    /// Returns the place expression behind a `&mut Vec<T>` /
+    /// `&mut [T]` call argument — the operand of an explicit
+    /// `&mut place`, or the argument itself when it forwards a
+    /// `&mut`-typed binding. `None` for everything else (the
+    /// ordinary pass-by-value path). Requires the type context the
+    /// VM installs on its bundled walker; a standalone walker
+    /// returns `None` and keeps legacy clone semantics.
+    fn mut_ref_arg_place<'e>(&self, arg: &'e HirExpr) -> Option<&'e HirExpr> {
+        let tcx = self.tcx.as_deref()?;
+        let is_mut_ref_vec = |ty: gossamer_types::Ty| {
+            let Some(gossamer_types::TyKind::Ref {
+                mutability: gossamer_types::Mutbl::Mut,
+                inner,
+            }) = tcx.kind(ty)
+            else {
+                return false;
+            };
+            matches!(
+                tcx.kind(*inner),
+                Some(gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_))
+            )
+        };
+        if !is_mut_ref_vec(arg.ty) {
+            return None;
+        }
+        match &arg.kind {
+            HirExprKind::Unary {
+                op: HirUnaryOp::RefMut,
+                operand,
+            } => Some(operand),
+            HirExprKind::Path { .. } | HirExprKind::Field { .. } | HirExprKind::Index { .. } => {
+                Some(arg)
+            }
+            _ => None,
         }
     }
 
@@ -1011,11 +1175,34 @@ impl Interpreter {
         // Builtin / Native / surrogate dispatch — preserve the
         // existing maybe_writeback shape for in-place mutators
         // like `xs.push(v)`.
+        //
+        // `pop` evaluates to `Option<last>` while the writeback
+        // shortens the receiver. `builtin_pop` only returns the
+        // new aggregate, so capture the Option through the
+        // non-mutating `last` builtin before the mutating call.
+        let popped = if method_name == "pop"
+            && arg_values.is_empty()
+            && matches!(
+                receiver_value,
+                Value::Array(_) | Value::IntArray(_) | Value::FloatVec(_) | Value::FloatArray(_)
+            ) {
+            self.globals
+                .get("last")
+                .cloned()
+                .map(|f| self.apply(&f, vec![receiver_value.clone()]))
+                .transpose()?
+        } else {
+            None
+        };
         let mut call_args = Vec::with_capacity(arg_values.len() + 1);
         call_args.push(receiver_value);
         call_args.extend(arg_values);
         let result = self.apply(method, call_args)?;
-        self.maybe_writeback(receiver, method_name, result, env)
+        let flow = self.maybe_writeback(receiver, method_name, result, env)?;
+        match popped {
+            Some(option_value) => Ok(Flow::Value(option_value)),
+            None => Ok(flow),
+        }
     }
 
     /// Threads the result of a method call back through the
@@ -2430,6 +2617,19 @@ fn literal_matches(lit: &HirLiteral, value: &Value) -> bool {
     }
 }
 
+/// Replaces any `MutCell` argument with a clone of its inner value.
+/// Builtins and natives have no parameter table, so they receive the
+/// plain aggregate; user functions keep the cell for write-back.
+pub(crate) fn unwrap_mut_cells(mut args: Vec<Value>) -> Vec<Value> {
+    for arg in &mut args {
+        if let Value::MutCell(cell) = arg {
+            let inner = cell.lock().clone();
+            *arg = inner;
+        }
+    }
+    args
+}
+
 fn classify(value: &Value) -> &'static str {
     match value {
         Value::NativeEnum(o) => o.shape.enum_name,
@@ -2454,6 +2654,7 @@ fn classify(value: &Value) -> &'static str {
         Value::IntMap(_) => "map",
         Value::Uint(_) => "uint",
         Value::Weak(_) => "weak",
+        Value::MutCell(_) => "mut-cell",
         Value::Void => "void",
     }
 }

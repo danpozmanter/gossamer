@@ -163,6 +163,8 @@ impl ReverseProxy {
                     status: upstream.status,
                     headers: upstream.headers,
                     body: upstream.body,
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 };
                 strip_hop_by_hop_headers(&mut downstream.headers);
                 if let Some(modifier) = &self.modify_response {
@@ -180,6 +182,8 @@ impl ReverseProxy {
                     status: StatusCode(502),
                     headers,
                     body: format!("bad gateway: {err}").into_bytes(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 }
             }
         }
@@ -298,6 +302,8 @@ mod tests {
                     status: StatusCode(200),
                     headers: Headers::new(),
                     body: body.into_bytes(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 }
             });
         });
@@ -325,6 +331,8 @@ mod tests {
                 status: StatusCode(503),
                 headers: Headers::new(),
                 body: b"custom 503".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             });
         let resp = proxy.serve(&empty_request());
         assert_eq!(resp.status, StatusCode(503));

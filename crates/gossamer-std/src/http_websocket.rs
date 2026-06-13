@@ -160,6 +160,8 @@ pub fn accept(request: &Request) -> Result<Upgrade, Error> {
             status: StatusCode(101),
             headers,
             body: Vec::new(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         },
     })
 }

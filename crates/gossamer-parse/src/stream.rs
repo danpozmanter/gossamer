@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use gossamer_lex::{FileId, Keyword, Lexer, Punct, Span, Token, TokenKind};
+use gossamer_lex::{FileId, Keyword, LexError, Lexer, Punct, Span, Token, TokenKind};
 
 /// Classification of a comment preserved from the raw token stream. The
 /// parser does not consume doc-comment semantics yet, but keeping the
@@ -37,6 +37,9 @@ pub struct TokenStream {
     eof_span: Span,
     /// Stored comments in source order for later diagnostic/doc work.
     comments: Vec<StoredComment>,
+    /// Tokenization errors collected while buffering; drained once by
+    /// the parser and surfaced as parse diagnostics.
+    lex_errors: Vec<LexError>,
 }
 
 impl TokenStream {
@@ -74,7 +77,13 @@ impl TokenStream {
             position: 0,
             eof_span,
             comments,
+            lex_errors: lexer.take_diagnostics(),
         }
+    }
+
+    /// Drains the tokenization errors collected while buffering.
+    pub fn take_lex_errors(&mut self) -> Vec<LexError> {
+        std::mem::take(&mut self.lex_errors)
     }
 
     /// Returns the file id the stream was built for.

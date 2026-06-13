@@ -84,7 +84,10 @@ pub enum ProjectIdError {
     #[error("project identifier is empty")]
     Empty,
     /// The DNS-prefix portion was malformed.
-    #[error("invalid domain segment {0:?}")]
+    #[error(
+        "invalid domain segment {0:?}: project ids start with a dotted lowercase domain \
+         (e.g. \"example.com/app\"); bare single-segment ids are reserved for the standard library"
+    )]
     InvalidDomain(String),
     /// A path segment after the domain was malformed.
     #[error("invalid path segment {0:?}")]

@@ -1,0 +1,58 @@
+// Cross-tier regression for lifted-closure parameter typing: a
+// closure passed to a combinator row WITHOUT a parameter annotation
+// must have its param pinned from the payload type, so String /
+// Error payloads print as text on the compiled tiers instead of as
+// raw pointers. Covers map_err / option::map / iter::map / filter /
+// result::default_with over String payloads, the
+// `map_err(errors::new)` eta shape (std fn as a value), a live
+// `http::request(...).map_err(|e| format!(...))` against a refused
+// loopback port (23907 — reserved, never bound), and a GT-clean
+// is_ok / is_err bool print.
+
+use std::{errors, http, iter, option, result, strings}
+
+fn main() {
+    let bad: Result<i64, String> = Err("boom")
+    let wrapped = bad.map_err(|e| format!("wrapped: {e}"))
+    if let Err(msg) = wrapped {
+        println!("map_err={}", msg)
+    }
+
+    let name: Option<String> = Some("ada")
+    let loud = name |> option::map(|s| strings::to_upper(&s)) |> option::default("none")
+    println!("option_map={}", loud)
+
+    let words = ["alpha", "be", "gamma"]
+    let banged = words |> iter::map(|w| w + "!")
+    for w in banged {
+        println!("iter_map={}", w)
+    }
+    let long = words |> iter::filter(|w| w.len() > 2)
+    for w in long {
+        println!("iter_filter={}", w)
+    }
+
+    let failing: Result<i64, errors::Error> = Err(errors::new("nope"))
+    failing |> result::default_with(|e| println!("default_with={e}"))
+
+    let eta: Result<i64, String> = Err("raw")
+    let lifted = eta.map_err(errors::new)
+    if let Err(e) = lifted {
+        println!("eta={}", e.message())
+    }
+
+    match http::request("GET", "http://127.0.0.1:23907/never", "", []) {
+        Ok(r) => println!("unexpected status={}", r.status),
+        Err(e) => {
+            let rendered = format!("net: {e}")
+            println!(
+                "refused_prefix={} refused_class={}",
+                strings::starts_with(&rendered, "net: http: transport:"),
+                strings::contains(&rendered, "onnection refused")
+            )
+        }
+    }
+
+    let good: Result<i64, String> = Ok(1)
+    println!("is_ok={} is_err={}", good |> result::is_ok, bad |> result::is_err)
+}

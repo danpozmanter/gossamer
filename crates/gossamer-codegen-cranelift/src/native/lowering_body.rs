@@ -235,121 +235,25 @@ pub(super) fn lower_body(
         callees_by_name.insert(name.clone(), func_ref);
     }
 
-    // Legacy GcRef-handle shadow stack — `gos_rt_gc_shadow_save` /
-    // `gos_rt_gc_shadow_restore` from `gossamer-runtime::gc`. Used by
-    // the opt-in rooted-allocation API. Production codegen does not
-    // push anything onto it today; keeping the frame at 0 makes the
-    // matching restore a no-op.
-    let shadow_frame_var = builder.declare_var(types::I64);
-    // Raw-pointer tracing-GC shadow stack — `gos_rt_gc_root_save` /
-    // `gos_rt_gc_root_restore` from `gossamer-runtime::c_abi`.
-    // Codegen emits a `gos_rt_gc_root_push(ptr)` after every aggregate
-    // allocation site, and `gos_rt_gc_root_restore(raw_frame)` at
-    // every return.
-    let raw_shadow_frame_var = builder.declare_var(types::I64);
-
-    // Pre-scan the body to identify loop-header blocks (blocks that
-    // are the target of a back-edge — a jump from a successor whose
-    // id is >= the target's). Codegen emits a `gos_rt_gc_safepoint`
-    // at the start of each such block so long-running loops give
-    // the collector a chance to advance.
-    let mut loop_headers: std::collections::HashSet<u32> = std::collections::HashSet::new();
-    for src in &body.blocks {
-        let src_id = src.id.as_u32();
-        match &src.terminator {
-            Terminator::Goto { target } if target.as_u32() <= src_id => {
-                loop_headers.insert(target.as_u32());
-            }
-            Terminator::SwitchInt { arms, default, .. } => {
-                for (_, t) in arms {
-                    if t.as_u32() <= src_id {
-                        loop_headers.insert(t.as_u32());
-                    }
-                }
-                if default.as_u32() <= src_id {
-                    loop_headers.insert(default.as_u32());
-                }
-            }
-            Terminator::Call {
-                target: Some(t), ..
-            } if t.as_u32() <= src_id => {
-                loop_headers.insert(t.as_u32());
-            }
-            Terminator::Assert { target, .. } | Terminator::Drop { target, .. }
-                if target.as_u32() <= src_id =>
-            {
-                loop_headers.insert(target.as_u32());
-            }
-            _ => {}
-        }
-    }
-
     let cleanup_plan = gossamer_mir::plan_cleanup_with_summary(body, capture_summary);
     let entry_block_id = body.blocks.first().map(|b| b.id.as_u32());
-    let mut emitted_prologue = false;
-    // Elide the GC prologue (shadow-stack save + safepoint hook) for
-    // bodies that can't allocate. The safepoint call is opaque to
-    // the optimiser and dominates the cost of pure leaf math
-    // functions (the spectral-norm / n-body inner helpers are called
-    // > 10⁹ times). Allocation-driven safepoint dispatch handles
-    // any function whose body actually touches the heap.
-    // The raw-pointer tracing GC is retired (RC owns heap lifetime), so
-    // the per-call shadow-stack save + safepoint hook is dead work. Never
-    // emit it.
-    let needs_gc_prologue = false;
-    // `loop_headers` retained for the future inline-safepoint pass.
-    let _ = &loop_headers;
+    let mut entry_block_filled = false;
     for block in &body.blocks {
         let cl_block = blocks[&block.id.as_u32()];
         // The entry block is already current from the parameter-
         // binding section above. Cranelift's debug-assert trips if we
         // call `switch_to_block` on an unfilled current block, so skip
         // the redundant switch on that one iteration.
-        if Some(block.id.as_u32()) != entry_block_id || emitted_prologue {
+        if Some(block.id.as_u32()) != entry_block_id || entry_block_filled {
             builder.switch_to_block(cl_block);
         }
 
-        // Initialise both shadow-frame variables in the entry block,
-        // immediately after parameter binding and before any user
-        // statement runs. Legacy frame stays at 0; the raw frame
-        // captures the calling thread's current shadow-stack depth so
-        // we can restore to it at return.
-        if !emitted_prologue {
-            let zero = builder.ins().iconst(types::I64, 0);
-            builder.def_var(shadow_frame_var, zero);
-            if needs_gc_prologue {
-                let save_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_root_save")?;
-                let save_ref = module.declare_func_in_func(save_id, builder.func);
-                let call = builder.ins().call(save_ref, &[]);
-                let frame = builder.inst_results(call)[0];
-                builder.def_var(raw_shadow_frame_var, frame);
-                // Function-prologue safepoint: cheap atomic-load + compare
-                // in the common (under-threshold) case.
-                let safepoint_id = intrinsics.extern_fn_by_name(module, "gos_rt_gc_safepoint")?;
-                let safepoint_ref = module.declare_func_in_func(safepoint_id, builder.func);
-                builder.ins().call(safepoint_ref, &[]);
-            } else {
-                // No prologue — keep the variable initialised to 0 so
-                // the matching restore (which is also skipped) doesn't
-                // observe an undefined slot if a later refactor toggles
-                // the gate at one end without the other.
-                builder.def_var(raw_shadow_frame_var, zero);
-            }
-            // No per-call call-stack instrumentation: panic traces and
-            // SIGQUIT dumps for the compiled tier come from unwinding
-            // the real machine stack on demand. A push/pop pair on
-            // every function entry blocks leaf-function inlining and
-            // serialises on a global lock — unacceptable in hot loops.
-            emitted_prologue = true;
-        }
-
-        // Loop-back-edge safepoints are elided: a runtime call on
-        // every iteration is opaque to the optimiser and blocks
-        // vectorisation of tight numeric inner loops. Allocation-
-        // driven safepoint dispatch (`gos_rt_aggr_alloc` updates
-        // the byte-pressure counter; the next function-prologue
-        // safepoint collects when the threshold trips) is
-        // sufficient.
+        // No per-call call-stack instrumentation: panic traces and
+        // SIGQUIT dumps for the compiled tier come from unwinding
+        // the real machine stack on demand. A push/pop pair on
+        // every function entry blocks leaf-function inlining and
+        // serialises on a global lock — unacceptable in hot loops.
+        entry_block_filled = true;
 
         if !cleanup_plan.is_empty() {
             for entry in cleanup_plan.at_block_entry(block.id) {
@@ -387,8 +291,6 @@ pub(super) fn lower_body(
             &block.terminator,
             intrinsics,
             block.id.as_u32(),
-            shadow_frame_var,
-            raw_shadow_frame_var,
         )?;
     }
 

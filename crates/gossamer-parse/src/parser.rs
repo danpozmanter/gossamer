@@ -57,11 +57,28 @@ impl<'src> Parser<'src> {
         // editors emit a BOM by default; `SourceMap`'s `SourceFile::new`
         // strips the same prefix so diagnostic line/columns stay aligned.
         let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+        let mut tokens = TokenStream::new(source, file);
+        // Tokenization errors (unterminated comment/string, bad escape,
+        // ...) become parse diagnostics here; dropping them with the
+        // lexer made a file with an unterminated `/*` parse as an
+        // empty-but-valid source file.
+        let diagnostics = tokens
+            .take_lex_errors()
+            .into_iter()
+            .map(|err| {
+                ParseDiagnostic::new(
+                    ParseError::Lex {
+                        message: err.to_string(),
+                    },
+                    err.span(),
+                )
+            })
+            .collect();
         Self {
             source,
-            tokens: TokenStream::new(source, file),
+            tokens,
             ids: NodeIdGenerator::new(),
-            diagnostics: Vec::new(),
+            diagnostics,
             no_struct_literal_depth: 0,
             pattern_pipe_depth: 0,
             recursion_depth: 0,
@@ -257,6 +274,19 @@ impl<'src> Parser<'src> {
     #[must_use]
     pub(crate) const fn struct_literal_forbidden(&self) -> bool {
         self.no_struct_literal_depth > 0
+    }
+
+    /// Suspends the no-struct-literal restriction for the duration of
+    /// `f`. Delimited contexts (call arguments, parentheses, brackets,
+    /// blocks, struct-literal fields) re-allow struct literals even
+    /// inside a `match` scrutinee or `if`/`while` condition — the
+    /// surrounding delimiter removes the `{` ambiguity the restriction
+    /// exists to resolve.
+    pub(crate) fn with_struct_literals_allowed<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let saved = std::mem::take(&mut self.no_struct_literal_depth);
+        let out = f(self);
+        self.no_struct_literal_depth = saved;
+        out
     }
 
     /// Enters a scope where `|` denotes a pattern alternative.

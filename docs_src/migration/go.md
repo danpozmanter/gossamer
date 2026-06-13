@@ -453,6 +453,7 @@ Gossamer:
 let mut conn = database::sql::open("sqlite", ":memory:")?
 let mut rows = conn.query("SELECT id, body FROM notes WHERE id = $1",
                           &[database::sql::Value::Int(1)])?
+defer rows.close()                 // like Go's defer rows.Close()
 while let Some(row) = rows.next_row()? {
     let id   = row.get_i64("id")?
     let body = row.get_string("body")?

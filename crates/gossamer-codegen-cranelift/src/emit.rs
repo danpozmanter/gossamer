@@ -106,13 +106,6 @@ fn emit_statement(out: &mut String, stmt: &gossamer_mir::Statement) {
             emit_place(out, place);
             let _ = writeln!(out, ", {variant}");
         }
-        StatementKind::GcWriteBarrier { place, value } => {
-            let _ = write!(out, "    gc_write_barrier ");
-            emit_place(out, place);
-            out.push_str(", ");
-            emit_operand(out, value);
-            out.push('\n');
-        }
         StatementKind::Nop => {
             out.push_str("    nop\n");
         }

@@ -87,6 +87,57 @@ impl<'a> Builder<'a> {
             target: Some(next),
         });
         self.set_current(next);
+        // Result / Option returns arrive as a binding-ABI
+        // `*mut GosVariant`; convert to the runtime's packed i128
+        // result (string payloads become runtime strings) and type
+        // the converted local as the real Result / Option Adt so
+        // match / `?` / fmt downstream see the standard shape.
+        let converted = self.convert_binding_variant_return(dest, &item.ret, span);
+        Some(converted.unwrap_or(dest))
+    }
+
+    /// Emits the `gos_rt_binding_variant_to_result` conversion for a
+    /// binding call whose declared return is `Result` / `Option`.
+    /// Returns `None` for every other return shape.
+    fn convert_binding_variant_return(
+        &mut self,
+        raw: Local,
+        ret: &gossamer_resolve::BindingType,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_resolve::BindingType as B;
+        use gossamer_types::TyKind;
+        let adt_ty = match ret {
+            B::Result(ok, err) => {
+                let ok_ty = self.binding_type_to_mir(ok);
+                let err_ty = self.binding_type_to_mir(err);
+                let substs = gossamer_types::Substs::from_types([ok_ty, err_ty]);
+                self.tcx.intern(TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                })
+            }
+            B::Option(inner) => {
+                let inner_ty = self.binding_type_to_mir(inner);
+                let substs = gossamer_types::Substs::from_types([inner_ty]);
+                self.tcx.intern(TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                    substs,
+                })
+            }
+            _ => return None,
+        };
+        let dest = self.fresh(adt_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(
+                "gos_rt_binding_variant_to_result".to_string(),
+            )),
+            args: vec![Operand::Copy(Place::local(raw))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
         Some(dest)
     }
 

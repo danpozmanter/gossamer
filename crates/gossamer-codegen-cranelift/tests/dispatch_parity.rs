@@ -121,26 +121,10 @@ const RUST_ONLY: &[&str] = &[
     // whose layout differs from the runtime's `GosMap`. Never
     // emitted from MIR.
     "gos_rt_binding_map_free",
-    // Raw-pointer tracing-GC plumbing. Codegen emits
-    // `gos_rt_gc_safepoint`, `gos_rt_gc_root_save`,
-    // `gos_rt_gc_root_push`, and `gos_rt_gc_root_restore` directly;
-    // the helpers below are called only from Rust:
-    //
-    // - `gos_rt_gc_alloc_count`: test/diagnostic hook.
-    // - `gos_rt_gc_collect`: invoked from `gos_rt_gc_raw_safepoint`
-    //   when the threshold trips, and from test code.
-    // - `gos_rt_gc_raw_safepoint`: called from
-    //   `gossamer-runtime::gc::gos_rt_gc_safepoint` so the unified
-    //   safepoint hook drives the raw-pointer collector too.
+    // No-op compatibility shims retained from the retired tracing
+    // GC (see `c_abi::gc`); never emitted from MIR.
     "gos_rt_gc_alloc_count",
-    "gos_rt_gc_assert_consistent",
     "gos_rt_gc_collect",
-    "gos_rt_gc_raw_safepoint",
-    // Future concurrent-mark write barrier. Exported so codegen
-    // can flip to barrier-routed pointer stores when
-    // GOSSAMER_WRITE_BARRIER=1; production codegen does not emit
-    // calls today.
-    "gos_rt_write_barrier_ptr",
     // test/diagnostic hook. Not emitted from
     // MIR — called only by tests asserting clean goroutine
     // shutdown.

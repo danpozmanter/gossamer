@@ -98,7 +98,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::process`](process.md) | Spawn child processes, exit the current process (Rust std::process shape). |
 | [`std::regex`](regex.md) | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc. |
-| [`std::runtime`](runtime.md) | Goroutine / GC / scheduler introspection and tuning. |
+| [`std::runtime`](runtime.md) | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](slog.md) | Structured, levelled logging. |
 | [`std::sort`](sort.md) | Slice sorting and binary search. |
 | [`std::strconv`](strconv.md) | Conversions between strings and primitive numeric types. |

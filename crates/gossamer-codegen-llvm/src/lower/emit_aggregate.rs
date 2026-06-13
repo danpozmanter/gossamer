@@ -75,15 +75,6 @@ use gossamer_mir::{
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
 impl<'a> Lowerer<'a> {
-    /// Emits a `gos_rt_write_barrier` call for `value`, which must have
-    /// LLVM type `i64` (a GcRef index stored in the flat ABI). Callers
-    /// must ensure `ptr`-typed values are filtered out before reaching here.
-    /// No-op: the concurrent tracing collector this barrier fed is
-    /// retired in favour of reference counting, so pointer stores no
-    /// longer need a barrier. Kept as a call site to leave the
-    /// aggregate-store path structurally unchanged.
-    pub(crate) fn emit_write_barrier(&mut self, _value: &str) {}
-
     /// Populates an aggregate stack slot (the destination
     /// `place`'s flat layout) with each operand in order.
     /// Each operand occupies one i64-wide slot for scalar
@@ -344,10 +335,12 @@ impl<'a> Lowerer<'a> {
                 .unwrap();
             }
             ConcatKind::ErrorMessage => {
-                declare_rt(&mut self.runtime_refs, "gos_rt_error_message");
+                // Display renders the colon-joined cause chain;
+                // `.message()` keeps `gos_rt_error_message`.
+                declare_rt(&mut self.runtime_refs, "gos_rt_error_display");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_error_message(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_error_display(ptr {value})"
                 )
                 .unwrap();
             }

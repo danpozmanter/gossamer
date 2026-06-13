@@ -742,9 +742,25 @@ pub(crate) fn native_iter_count_by(
     let key = args.first().cloned().unwrap_or(Value::Unit);
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let mut counts: rustc_hash::FxHashMap<MapKey, i64> = rustc_hash::FxHashMap::default();
+    let mut all_int_keys = true;
     for x in xs {
         let k = dispatch.call_value(&key, vec![x])?;
+        all_int_keys &= matches!(k, Value::Int(_));
         *counts.entry(MapKey::from_value(&k)).or_insert(0) += 1;
+    }
+    // An i64-keyed count map must come back as the typed IntMap: the
+    // bytecode compiler's fast path emits IntMapGetOr/IntMapInc for
+    // `HashMap<i64, i64>`-typed receivers, and those ops hard-fail on
+    // a generic Value::Map (the "receiver lost typed invariant" bug).
+    if all_int_keys {
+        let typed: rustc_hash::FxHashMap<i64, i64> = counts
+            .into_iter()
+            .filter_map(|(k, v)| match k {
+                MapKey::Int(n) => Some((n, v)),
+                _ => None,
+            })
+            .collect();
+        return Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(typed))));
     }
     let map: rustc_hash::FxHashMap<MapKey, Value> = counts
         .into_iter()

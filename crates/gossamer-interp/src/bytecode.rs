@@ -927,6 +927,40 @@ pub enum Op {
         /// Source i64 register.
         src_i: Reg,
     },
+    /// `registers[dst] = cast_scalar(registers[src], target)`.
+    /// Whitelisted scalar cast over Value registers — the combos the
+    /// typed-register cast ops don't reach (f32 / bool / char sources,
+    /// `char` and `f32` targets). Keeps every GT0005-whitelisted cast
+    /// native so none falls back to the walker's no-op.
+    CastScalar {
+        /// Destination Value register.
+        dst: Reg,
+        /// Source Value register.
+        src: Reg,
+        /// Resolved cast destination shape.
+        target: crate::cast::CastTarget,
+    },
+    /// `registers[dst] = MutCell(registers[src])` — wraps a
+    /// `&mut Vec<T>` / `&mut [T]` call argument in a shared
+    /// write-back cell. The callee unwraps it at frame entry and
+    /// publishes the final parameter value back on return, giving
+    /// the caller write-through semantics under the VM's
+    /// clone-on-write value model.
+    CellNew {
+        /// Destination Value register (holds the cell during the call).
+        dst: Reg,
+        /// Register holding the aggregate to share.
+        src: Reg,
+    },
+    /// `registers[dst] = cell.inner` — reads a write-back cell's
+    /// final value into the argument's home register after the
+    /// call returns.
+    CellTake {
+        /// Destination Value register (the argument's home register).
+        dst: Reg,
+        /// Register holding the `MutCell` created by [`Op::CellNew`].
+        cell: Reg,
+    },
     /// `dst = (src is Value::Variant with name == consts[name_idx]
     /// and field count == arity)`. Drives native `match` arm tests
     /// on enum / tuple-struct patterns. The name is interned the
@@ -1136,6 +1170,14 @@ pub struct FnChunk {
     /// (`Op::FieldGet` sites). PEP 659-style per-instruction
     /// inline caching for struct field reads.
     pub field_cache_count: u16,
+    /// Parameter registers declared as `&mut Vec<T>` / `&mut [T]`.
+    /// When a caller passes a [`Value::MutCell`](crate::value::Value)
+    /// for one of these, the frame unwraps it at entry and publishes
+    /// the final register value back into the cell on every return
+    /// path (write-through `&mut` parameter semantics). Empty for
+    /// the vast majority of chunks, so the entry probe is one
+    /// `is_empty` test.
+    pub mut_ref_params: Vec<Reg>,
 }
 
 /// One adaptive-arith inline-cache slot. Tier C2 of the interp

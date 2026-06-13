@@ -135,7 +135,10 @@ impl<'a> Iterator for Chain<'a> {
 }
 
 /// `errors::join(iter)` — collects every error in `iter` into one
-/// pipe-separated error. Go's `errors.Join` equivalent.
+/// semicolon-separated error. Go's `errors.Join` equivalent. The
+/// "; " separator matches the interp builtin and the compiled
+/// tiers' `gos_rt_errors_join*` shims so joined messages render
+/// identically on every tier.
 #[must_use]
 pub fn join<I: IntoIterator<Item = Error>>(iter: I) -> Option<Error> {
     let mut parts = Vec::new();
@@ -145,7 +148,7 @@ pub fn join<I: IntoIterator<Item = Error>>(iter: I) -> Option<Error> {
     if parts.is_empty() {
         None
     } else {
-        Some(Error::new(parts.join(" | ")))
+        Some(Error::new(parts.join("; ")))
     }
 }
 
@@ -190,8 +193,8 @@ mod tests {
     }
 
     #[test]
-    fn join_pipe_separates() {
+    fn join_semicolon_separates_matching_runtime_tiers() {
         let joined = join(vec![Error::new("a"), Error::new("b")]).unwrap();
-        assert_eq!(joined.message(), "a | b");
+        assert_eq!(joined.message(), "a; b");
     }
 }

@@ -1,0 +1,28 @@
+// result::default across payload shapes: the Ok payload passes
+// through, the fallback replaces an Err — for i64, f64, and String
+// payloads, both direct-call and |>-piped spellings.
+
+use std::result
+
+fn ok_int() -> Result<i64, String> { Ok(42) }
+fn err_int() -> Result<i64, String> { Err("nope") }
+fn ok_str() -> Result<String, String> { Ok("payload") }
+fn err_str() -> Result<String, String> { Err("nope") }
+fn ok_float() -> Result<f64, String> { Ok(2.5) }
+fn err_float() -> Result<f64, String> { Err("nope") }
+
+fn main() {
+    println!("{}", ok_int() |> result::default(-1))
+    println!("{}", err_int() |> result::default(-1))
+    println!("{}", ok_str() |> result::default("fallback"))
+    println!("{}", err_str() |> result::default("fallback"))
+    println!("{}", ok_float() |> result::default(0.5))
+    println!("{}", err_float() |> result::default(0.5))
+
+    let direct = result::default(7, err_int())
+    println!("{}", direct)
+
+    let bound = ok_str() |> result::default("unused")
+    let twice = bound + "!"
+    println!("{}", twice)
+}

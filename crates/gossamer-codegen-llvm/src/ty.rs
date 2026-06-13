@@ -11,16 +11,32 @@ use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
 /// LLVM type rendering for a MIR type. Returns the short
 /// textual form (`i64`, `double`, `i1`, `ptr`, `void`).
+///
+/// Canonical integer model: every integer type up to 64 bits is a
+/// 64-bit runtime value, matching the bytecode VM (which computes
+/// all integer arithmetic at i64 width) and the 8-byte GosVec /
+/// flat-slot storage convention. Narrow declared widths (u8/i8/
+/// u16/i16/u32/i32) only matter at explicit `as` casts, which mask
+/// to the target width — see `lower_cast`. Rendering them as
+/// narrow LLVM types made arithmetic wrap at the declared width
+/// (`sum += b` over `[u8]` gave sum mod 256) and produced invalid
+/// mixed-width IR when MIR pairs an i64 local with a u8 operand.
 pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
     match tcx.kind(ty) {
         Some(TyKind::Unit) => "void".to_string(),
         Some(TyKind::Bool) => "i1".to_string(),
-        Some(TyKind::Int(IntTy::I8 | IntTy::U8)) => "i8".to_string(),
-        Some(TyKind::Int(IntTy::I16 | IntTy::U16)) => "i16".to_string(),
-        Some(TyKind::Int(IntTy::I32 | IntTy::U32)) => "i32".to_string(),
-        Some(TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize)) => {
-            "i64".to_string()
-        }
+        Some(TyKind::Int(
+            IntTy::I8
+            | IntTy::U8
+            | IntTy::I16
+            | IntTy::U16
+            | IntTy::I32
+            | IntTy::U32
+            | IntTy::I64
+            | IntTy::U64
+            | IntTy::Isize
+            | IntTy::Usize,
+        )) => "i64".to_string(),
         Some(TyKind::Int(IntTy::I128 | IntTy::U128)) => "i128".to_string(),
         Some(TyKind::Float(FloatTy::F32)) => "float".to_string(),
         Some(TyKind::Float(FloatTy::F64)) => "double".to_string(),

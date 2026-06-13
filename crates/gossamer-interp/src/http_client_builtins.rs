@@ -1,29 +1,31 @@
 //! Interpreter hooks for `std::http::Client`.
 //!
-//! - The legacy GET-only slice (`Client::new` / `Client::get` /
-//!   `Request::send` for `method == "GET"`) is preserved verbatim:
-//!   the existing TCP-only tests still route through the
-//!   lightweight `gossamer_pkg::transport::HttpsTransport` path
-//!   below.
-//! - The richer client surface (`Client::post` / `put` / `options` /
-//!   `delete` / `head`, plus the free functions `http::get`,
-//!   `http::post`, `http::put`, `http::options`, `http::delete`,
-//!   `http::head`, `http::request`, and `http::stream`) wraps
-//!   `gossamer_std::http::Client` — ureq-backed: HTTPS via rustls
-//!   (Mozilla roots), redirects, cookies, gzip decode, connection
-//!   pool — all on the shared blocking I/O pool so per-goroutine
-//!   workers stay free.
+//! Every client entry point — the method-style surface
+//! (`Client::get` / `post` / `put` / `options` / `delete` / `head`
+//! plus `Request::send`) and the free functions (`http::get`,
+//! `http::post`, `http::put`, `http::options`, `http::delete`,
+//! `http::head`, `http::request`, `http::request_bytes`,
+//! `http::stream`) — wraps `gossamer_std::http::Client`:
+//! ureq-backed, HTTPS via rustls (Mozilla roots), 10 redirects,
+//! cookies, gzip decode, connection pool — all on the shared
+//! blocking I/O pool so per-goroutine workers stay free.
 //!
-//! Codegen note: only the bytecode VM dispatches the new method-
-//! parameterised builtins by name. The Cranelift / LLVM tiers
-//! still resolve `client.post(...)` etc. through the existing
-//! `gos_rt_http_client_*` runtime symbols (GET-only today);
-//! `http::request`, `http::stream`, and `ResponseStream::next_line`
-//! have no native runtime helpers yet. Programs that exercise these
-//! on the JIT / AOT tiers fall back to bytecode dispatch. Wiring
-//! native helpers means extending
-//! `gossamer-mir/src/lower.rs::intrinsic_runtime_call` and adding
-//! matching entries to `gossamer-runtime/src/c_abi.rs`.
+//! `http::Client::builder().max_redirects(n).timeout_ms(t).build()`
+//! produces a policy-carrying client whose `request` /
+//! `request_bytes` honor the configuration: `max_redirects(0)`
+//! never follows (3xx returned raw — the proxy-correct mode),
+//! exceeding a non-zero budget is a "too many redirects" transport
+//! error.
+//!
+//! Codegen note: the free-function surface (`http::get`,
+//! `http::request`, `http::request_bytes`, `http::stream`,
+//! `ResponseStream::next_line`), the chained builder surface
+//! (`client.<verb>(url).header(..).body(..).send()`), and the
+//! configured-client surface (`Client::builder` chain +
+//! `client.request` / `request_bytes`) are also native on the
+//! Cranelift / LLVM tiers via the matching `gos_rt_http_*` runtime
+//! shims; `Request::send` returns the same `Result<Response, _>`
+//! shape on every tier.
 //!
 //! Kept in its own module so the main `builtins.rs` file stays
 //! under the 2000-line hard limit defined in `GUIDELINES.md`.
@@ -31,7 +33,6 @@
 // Builtins return `RuntimeResult<Value>` to match the dispatcher's
 // expected signature even when they never fail.
 #![allow(clippy::unnecessary_wraps)]
-use gossamer_pkg::transport::{HttpsTransport, Transport};
 use std::sync::Arc;
 
 use gossamer_ast::Ident;
@@ -47,16 +48,146 @@ fn as_str(value: &Value) -> Option<&str> {
 
 // ------------------------------------------------------------------
 // HTTP client builtins
-//
-// Minimal GET-only client over `std::net::TcpStream`.  HTTPS is
-// unsupported; programs that hit it get `Err(...)` which
-// the test programs already handle gracefully.
+
+/// Default redirect-following budget, matching `Client::new()`.
+const DEFAULT_MAX_REDIRECTS: i64 = 10;
+/// Default per-request timeout in milliseconds, matching `Client::new()`.
+const DEFAULT_TIMEOUT_MS: i64 = 30_000;
 
 pub(crate) fn builtin_http_client_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_(
         "Client",
         Arc::unwrap_or_clone(crate::value::empty_struct_fields()),
     ))
+}
+
+fn config_fields(max_redirects: i64, timeout_ms: i64) -> Vec<(Ident, Value)> {
+    vec![
+        (Ident::new("max_redirects"), Value::Int(max_redirects)),
+        (Ident::new("timeout_ms"), Value::Int(timeout_ms)),
+    ]
+}
+
+fn int_field(inner: &crate::value::StructInner, name: &str) -> Option<i64> {
+    inner
+        .fields
+        .iter()
+        .find(|(ident, _)| ident.name == name)
+        .and_then(|(_, v)| match v {
+            Value::Int(n) => Some(*n),
+            _ => None,
+        })
+}
+
+/// Receiver guard for the `ClientBuilder` chain builtins.
+fn expect_builder<'a>(
+    args: &'a [Value],
+    label: &str,
+) -> RuntimeResult<&'a crate::value::StructInner> {
+    match args.first() {
+        Some(Value::Struct(inner)) if inner.name == "ClientBuilder" => Ok(inner),
+        _ => Err(RuntimeError::Type(format!(
+            "{label}: expected ClientBuilder"
+        ))),
+    }
+}
+
+/// Normalises a `max_redirects` setting: negatives clamp to 0
+/// (never follow), values past `u32::MAX` clamp to `u32::MAX`.
+fn clamp_max_redirects(n: i64) -> i64 {
+    n.clamp(0, i64::from(u32::MAX))
+}
+
+/// Normalises a `timeout_ms` setting: zero or negative values fall
+/// back to the 30 s default.
+fn clamp_timeout_ms(t: i64) -> i64 {
+    if t <= 0 { DEFAULT_TIMEOUT_MS } else { t }
+}
+
+/// `http::Client::builder() -> ClientBuilder` — starts a client
+/// configuration chain with `Client::new()`'s defaults (10
+/// redirects, 30 s timeout).
+pub(crate) fn builtin_http_client_builder(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::struct_(
+        "ClientBuilder",
+        config_fields(DEFAULT_MAX_REDIRECTS, DEFAULT_TIMEOUT_MS),
+    ))
+}
+
+/// `ClientBuilder::max_redirects(n) -> ClientBuilder` — rebuilt
+/// immutably, like `Request::header`. `0` disables
+/// redirect-following entirely (3xx responses are returned raw).
+pub(crate) fn builtin_http_client_builder_max_redirects(args: &[Value]) -> RuntimeResult<Value> {
+    let inner = expect_builder(args, "ClientBuilder::max_redirects")?;
+    let n = match args.get(1) {
+        Some(Value::Int(n)) => clamp_max_redirects(*n),
+        _ => DEFAULT_MAX_REDIRECTS,
+    };
+    let timeout_ms = int_field(inner, "timeout_ms").unwrap_or(DEFAULT_TIMEOUT_MS);
+    Ok(Value::struct_(
+        "ClientBuilder",
+        config_fields(n, timeout_ms),
+    ))
+}
+
+/// `ClientBuilder::timeout_ms(t) -> ClientBuilder` — rebuilt
+/// immutably; non-positive values fall back to the 30 s default.
+pub(crate) fn builtin_http_client_builder_timeout_ms(args: &[Value]) -> RuntimeResult<Value> {
+    let inner = expect_builder(args, "ClientBuilder::timeout_ms")?;
+    let t = match args.get(1) {
+        Some(Value::Int(t)) => clamp_timeout_ms(*t),
+        _ => DEFAULT_TIMEOUT_MS,
+    };
+    let max_redirects = int_field(inner, "max_redirects").unwrap_or(DEFAULT_MAX_REDIRECTS);
+    Ok(Value::struct_(
+        "ClientBuilder",
+        config_fields(max_redirects, t),
+    ))
+}
+
+/// `ClientBuilder::build() -> Client` — carries the configured
+/// policy on the Client struct. The configured Client still works
+/// with the legacy `get`/`post` pending-request chain (those
+/// builtins dispatch by struct name and ignore extra fields).
+pub(crate) fn builtin_http_client_builder_build(args: &[Value]) -> RuntimeResult<Value> {
+    let inner = expect_builder(args, "ClientBuilder::build")?;
+    let max_redirects = int_field(inner, "max_redirects").unwrap_or(DEFAULT_MAX_REDIRECTS);
+    let timeout_ms = int_field(inner, "timeout_ms").unwrap_or(DEFAULT_TIMEOUT_MS);
+    Ok(Value::struct_(
+        "Client",
+        config_fields(max_redirects, timeout_ms),
+    ))
+}
+
+/// Reads the redirect/timeout policy off a `Client` receiver. A
+/// legacy `Client::new()` receiver (no config fields) gets the
+/// defaults, so both constructors share the request builtins.
+fn client_config(receiver: Option<&Value>) -> (u32, u64) {
+    let (mut max_redirects, mut timeout_ms) = (DEFAULT_MAX_REDIRECTS, DEFAULT_TIMEOUT_MS);
+    if let Some(Value::Struct(inner)) = receiver {
+        if inner.name == "Client" {
+            if let Some(n) = int_field(inner, "max_redirects") {
+                max_redirects = clamp_max_redirects(n);
+            }
+            if let Some(t) = int_field(inner, "timeout_ms") {
+                timeout_ms = clamp_timeout_ms(t);
+            }
+        }
+    }
+    // Both values are clamped to their unsigned ranges above.
+    (max_redirects as u32, timeout_ms as u64)
+}
+
+/// Builds a `gossamer_std` client carrying the receiver's policy.
+/// The default builder configures no custom TLS, so `build()`
+/// cannot fail; failures are surfaced as Err anyway to keep the
+/// builtin total.
+fn configured_std_client(max_redirects: u32, timeout_ms: u64) -> Result<StdClient, String> {
+    StdClient::builder()
+        .max_redirects(max_redirects)
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|e| format!("{e}"))
 }
 
 pub(crate) fn builtin_http_client_get(args: &[Value]) -> RuntimeResult<Value> {
@@ -70,48 +201,86 @@ pub(crate) fn builtin_http_client_get(args: &[Value]) -> RuntimeResult<Value> {
     ))
 }
 
-pub(crate) fn builtin_http_request_send(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Struct(inner)) = args.first() else {
-        return Err(RuntimeError::Type(
-            "Request::send: expected Request".to_string(),
-        ));
-    };
-    if inner.name != "Request" {
-        return Err(RuntimeError::Type(
-            "Request::send: expected Request".to_string(),
-        ));
+/// Receiver guard shared by the `Request` builder builtins: the
+/// leading argument must be a `Request` struct value.
+fn expect_request<'a>(
+    args: &'a [Value],
+    label: &str,
+) -> RuntimeResult<&'a crate::value::StructInner> {
+    match args.first() {
+        Some(Value::Struct(inner)) if inner.name == "Request" => Ok(inner),
+        _ => Err(RuntimeError::Type(format!("{label}: expected Request"))),
     }
-    let url = inner
-        .fields
-        .iter()
-        .find(|(ident, _)| ident.name == "url")
-        .and_then(|(_, v)| as_str(v))
-        .unwrap_or("")
-        .to_string();
-    let method = inner
-        .fields
-        .iter()
-        .find(|(ident, _)| ident.name == "method")
-        .and_then(|(_, v)| as_str(v))
+}
+
+/// `Request::header(name, value) -> Request` — returns a new Request
+/// with the pair appended to its `headers` array-of-tuples field.
+pub(crate) fn builtin_http_request_header(args: &[Value]) -> RuntimeResult<Value> {
+    let inner = expect_request(args, "Request::header")?;
+    let name = args.get(1).and_then(as_str).unwrap_or("");
+    let value = args.get(2).and_then(as_str).unwrap_or("");
+    let pair = Value::Tuple(Arc::new(vec![
+        Value::String(SmolStr::from(name.to_string())),
+        Value::String(SmolStr::from(value.to_string())),
+    ]));
+    let mut fields = inner.fields.clone();
+    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| ident.name == "headers") {
+        let mut items = match slot {
+            Value::Array(existing) => existing.as_ref().clone(),
+            _ => Vec::new(),
+        };
+        items.push(pair);
+        *slot = Value::Array(Arc::new(items));
+    } else {
+        fields.push((Ident::new("headers"), Value::Array(Arc::new(vec![pair]))));
+    }
+    Ok(Value::struct_("Request", fields))
+}
+
+/// `Request::body(text) -> Request` — returns a new Request whose
+/// `body` field holds the given string.
+pub(crate) fn builtin_http_request_body(args: &[Value]) -> RuntimeResult<Value> {
+    let inner = expect_request(args, "Request::body")?;
+    let body = args.get(1).and_then(as_str).unwrap_or("");
+    let body_value = Value::String(SmolStr::from(body.to_string()));
+    let mut fields = inner.fields.clone();
+    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| ident.name == "body") {
+        *slot = body_value;
+    } else {
+        fields.push((Ident::new("body"), body_value));
+    }
+    Ok(Value::struct_("Request", fields))
+}
+
+pub(crate) fn builtin_http_request_send(args: &[Value]) -> RuntimeResult<Value> {
+    let inner = expect_request(args, "Request::send")?;
+    let field = |name: &str| {
+        inner
+            .fields
+            .iter()
+            .find(|(ident, _)| ident.name == name)
+            .map(|(_, v)| v)
+    };
+    let url = field("url").and_then(as_str).unwrap_or("").to_string();
+    let method = field("method")
+        .and_then(as_str)
         .unwrap_or("GET")
         .to_string();
-    if method.eq_ignore_ascii_case("GET") {
-        // Legacy fast path: GET stays on the lightweight TCP/TLS
-        // implementation that the early HTTP test programs used since
-        // the start. The full ureq-backed path is only paid for when
-        // the user actually picks a non-GET method.
-        return match http_get(&url) {
-            Ok(response) => Ok(crate::builtins::ok_variant(response)),
-            Err(err) => Ok(crate::builtins::err_variant(err)),
-        };
-    }
     let Some(parsed) = gossamer_std::http::Method::parse(&method) else {
         return Ok(crate::builtins::err_variant(format!(
             "Request::send: unknown method `{method}`"
         )));
     };
+    let header_pairs = extract_header_pairs(field("headers"));
+    let headers = header_refs(&header_pairs);
+    let body = field("body").and_then(as_str).unwrap_or("").to_string();
+    let body_opt: Option<&[u8]> = if body.is_empty() {
+        None
+    } else {
+        Some(body.as_bytes())
+    };
     let client = gossamer_std::http::Client::new();
-    match client.do_request(parsed, &url, None, &[]) {
+    match client.do_request(parsed, &url, body_opt, &headers) {
         Ok(resp) => Ok(crate::builtins::ok_variant(lift_response(resp))),
         Err(e) => Ok(crate::builtins::err_variant(format!("{e}"))),
     }
@@ -136,158 +305,6 @@ pub(crate) fn builtin_http_response_bytes(args: &[Value]) -> RuntimeResult<Value
         .unwrap_or_default();
     let bytes: Vec<Value> = body.bytes().map(|b| Value::Int(i64::from(b))).collect();
     Ok(crate::builtins::ok_variant(Value::Array(Arc::new(bytes))))
-}
-
-/// Minimal HTTP(S) GET. HTTPS uses `gossamer-pkg`'s TLS transport;
-/// HTTP uses a plain TCP socket. 3xx redirects (`301` / `302` /
-/// `303` / `307` / `308`) are followed up to five hops, so callers
-/// that hit the common `http://…` → `https://…` migration get the
-/// final body instead of an empty redirect stub.
-fn http_get(url: &str) -> Result<Value, String> {
-    let mut current = url.to_string();
-    for _ in 0..6 {
-        let response = if current.starts_with("https://") {
-            http_get_tls(&current)?
-        } else {
-            http_get_plain(&current)?
-        };
-        let Value::Struct(inner) = &response else {
-            return Ok(response);
-        };
-        let status = inner
-            .fields
-            .iter()
-            .find(|(ident, _)| ident.name == "status")
-            .and_then(|(_, v)| match v {
-                Value::Int(n) => Some(*n),
-                _ => None,
-            })
-            .unwrap_or(0);
-        if !(300..=399).contains(&status) {
-            return Ok(response);
-        }
-        let location = inner
-            .fields
-            .iter()
-            .find(|(ident, _)| ident.name == "location")
-            .and_then(|(_, v)| as_str(v));
-        let Some(loc) = location else {
-            return Ok(response);
-        };
-        current = absolute_redirect(&current, loc);
-    }
-    Err(format!("too many redirects fetching `{url}`"))
-}
-
-/// Resolves `location` against `from` when the redirect target is
-/// relative (`/path`) rather than absolute (`https://host/...`).
-pub(crate) fn absolute_redirect(from: &str, location: &str) -> String {
-    if location.starts_with("http://") || location.starts_with("https://") {
-        return location.to_string();
-    }
-    let scheme_end = from.find("://").map_or(0, |i| i + 3);
-    let host_end = from[scheme_end..]
-        .find('/')
-        .map_or(from.len(), |i| scheme_end + i);
-    if location.starts_with('/') {
-        format!("{}{}", &from[..host_end], location)
-    } else {
-        format!("{}/{}", &from[..host_end], location)
-    }
-}
-
-fn http_get_tls(url: &str) -> Result<Value, String> {
-    let transport = HttpsTransport::new_mozilla_roots();
-    let body = transport.get(url).map_err(|e| format!("{e}"))?;
-    let body_str = String::from_utf8_lossy(&body).into_owned();
-    let raw: Vec<Value> = body.iter().map(|b| Value::Int(i64::from(*b))).collect();
-    let fields = vec![
-        (Ident::new("status"), Value::Int(200)),
-        (Ident::new("body"), Value::String(body_str.into())),
-        (Ident::new("raw_bytes"), Value::Array(Arc::new(raw))),
-        (
-            Ident::new("content_type"),
-            Value::String(SmolStr::from("text/plain".to_string())),
-        ),
-        (
-            Ident::new("location"),
-            Value::String(SmolStr::from(String::new())),
-        ),
-    ];
-    Ok(Value::struct_(
-        "Response",
-        Arc::unwrap_or_clone(Arc::new(fields)),
-    ))
-}
-
-fn http_get_plain(url: &str) -> Result<Value, String> {
-    let (host, path) = parse_http_url(url).ok_or_else(|| format!("unsupported URL: {url}"))?;
-    let (host_part, port) = match host.split_once(':') {
-        Some((h, p)) => (h, p),
-        None => (host.as_str(), "80"),
-    };
-    let address = format!("{host_part}:{port}");
-    let mut stream =
-        std::net::TcpStream::connect(&address).map_err(|e| format!("connect {address}: {e}"))?;
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
-        .ok();
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host_part}\r\nUser-Agent: gos/{version}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
-        version = env!("CARGO_PKG_VERSION"),
-    );
-    std::io::Write::write_all(&mut stream, request.as_bytes())
-        .map_err(|e| format!("write: {e}"))?;
-    let mut response = Vec::new();
-    std::io::Read::read_to_end(&mut stream, &mut response).map_err(|e| format!("read: {e}"))?;
-    let response_str = String::from_utf8_lossy(&response);
-    let Some((header_block, body)) = response_str.split_once("\r\n\r\n") else {
-        return Err("invalid HTTP response".to_string());
-    };
-    let status_line = header_block.lines().next().unwrap_or("");
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(0);
-    let mut location = String::new();
-    for hline in header_block.lines().skip(1) {
-        if let Some((name, value)) = hline.split_once(':') {
-            if name.trim().eq_ignore_ascii_case("location") {
-                location = value.trim().to_string();
-                break;
-            }
-        }
-    }
-    let body_bytes: Vec<u8> = body.as_bytes().to_vec();
-    let body_str = body.to_string();
-    let raw: Vec<Value> = body_bytes
-        .iter()
-        .map(|b| Value::Int(i64::from(*b)))
-        .collect();
-    let fields = vec![
-        (Ident::new("status"), Value::Int(status)),
-        (Ident::new("body"), Value::String(body_str.into())),
-        (Ident::new("raw_bytes"), Value::Array(Arc::new(raw))),
-        (
-            Ident::new("content_type"),
-            Value::String(SmolStr::from("text/plain".to_string())),
-        ),
-        (Ident::new("location"), Value::String(location.into())),
-    ];
-    Ok(Value::struct_(
-        "Response",
-        Arc::unwrap_or_clone(Arc::new(fields)),
-    ))
-}
-
-pub(crate) fn parse_http_url(url: &str) -> Option<(String, String)> {
-    let rest = url.strip_prefix("http://")?;
-    let (host, path) = match rest.split_once('/') {
-        Some((h, p)) => (h.to_string(), format!("/{p}")),
-        None => (rest.to_string(), "/".to_string()),
-    };
-    Some((host, path))
 }
 
 // ------------------------------------------------------------------
@@ -335,6 +352,54 @@ fn stream_lookup(handle: i64) -> Option<Arc<parking_lot::Mutex<StreamResponse>>>
     reg.get(handle as usize).and_then(std::clone::Clone::clone)
 }
 
+/// Streams already claimed by a `Response::stream(...)` value and
+/// waiting to be drained to a client by the server writer. Keyed by
+/// the original registry handle; `stream_take_for_serve` is one-shot.
+static PENDING_SERVE: parking_lot::Mutex<Vec<(i64, Arc<parking_lot::Mutex<StreamResponse>>)>> =
+    parking_lot::Mutex::new(Vec::new());
+
+/// Moves `handle` from the client registry into the pending-serve
+/// registry. After this, `next_line` / `next_chunk` on the same
+/// `ResponseStream` yield `None` — the stream now belongs to the
+/// response. No-op when the handle was already consumed.
+pub(crate) fn stream_consume_for_response(handle: i64) {
+    if handle < 0 {
+        return;
+    }
+    let taken = {
+        let mut reg = STREAM_REGISTRY.lock();
+        reg.get_mut(handle as usize).and_then(Option::take)
+    };
+    if let Some(arc) = taken {
+        PENDING_SERVE.lock().push((handle, arc));
+    }
+}
+
+/// Takes the pending stream for `handle` — one-shot, so serving the
+/// same streamed response twice drains an empty body the second time.
+pub(crate) fn stream_take_for_serve(
+    handle: i64,
+) -> Option<Arc<parking_lot::Mutex<StreamResponse>>> {
+    let mut pending = PENDING_SERVE.lock();
+    let idx = pending.iter().position(|(h, _)| *h == handle)?;
+    Some(pending.swap_remove(idx).1)
+}
+
+/// Extracts the `__handle` of a `ResponseStream` value.
+pub(crate) fn response_stream_handle(value: &Value) -> Option<i64> {
+    handle_field(value, "ResponseStream")
+}
+
+/// `Read` adapter over a registry stream so the server writer can
+/// drain it as a [`gossamer_std::http::BodyStream`].
+pub(crate) struct StreamBody(pub(crate) Arc<parking_lot::Mutex<StreamResponse>>);
+
+impl std::io::Read for StreamBody {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.lock().read_raw(buf)
+    }
+}
+
 fn handle_field(value: &Value, expected_name: &str) -> Option<i64> {
     let Value::Struct(inner) = value else {
         return None;
@@ -352,9 +417,9 @@ fn handle_field(value: &Value, expected_name: &str) -> Option<i64> {
     None
 }
 
-/// Lifts a `gossamer_std::http::Response` into the same Gossamer
-/// `Response` struct shape used by the legacy GET path
-/// (`status`, `body`, `raw_bytes`, `content_type`, `location`).
+/// Lifts a `gossamer_std::http::Response` into the Gossamer
+/// `Response` struct shape (`status`, `body`, `raw_bytes`,
+/// `content_type`, `location`, `headers`).
 fn lift_response(resp: gossamer_std::http::Response) -> Value {
     let body_str = String::from_utf8_lossy(&resp.body).into_owned();
     let raw: Vec<Value> = resp
@@ -369,7 +434,7 @@ fn lift_response(resp: gossamer_std::http::Response) -> Value {
         .to_string();
     let location = resp.headers.get("location").unwrap_or("").to_string();
     let status = i64::from(resp.status.0);
-    let fields = vec![
+    let mut fields = vec![
         (Ident::new("status"), Value::Int(status)),
         (Ident::new("body"), Value::String(body_str.into())),
         (Ident::new("raw_bytes"), Value::Array(Arc::new(raw))),
@@ -382,7 +447,31 @@ fn lift_response(resp: gossamer_std::http::Response) -> Value {
             Value::String(SmolStr::from(location)),
         ),
     ];
-    Value::struct_("Response", Arc::unwrap_or_clone(Arc::new(fields)))
+    // The wire sequence (order + duplicates — `set-cookie` repeats)
+    // is what the compiled tiers lift, so prefer it; the sorted
+    // dedup `Headers` view is the fallback for responses built
+    // without a transport (e.g. tests constructing `Response`).
+    let headers: Vec<Value> = if resp.raw_header_pairs.is_empty() {
+        resp.headers
+            .iter()
+            .map(|(name, value)| header_pair_value(name, value))
+            .collect()
+    } else {
+        resp.raw_header_pairs
+            .iter()
+            .map(|(name, value)| header_pair_value(name, value))
+            .collect()
+    };
+    fields.push((Ident::new("headers"), Value::Array(Arc::new(headers))));
+    Value::struct_("Response", fields)
+}
+
+/// `(name, value)` header tuple in the lifted `Response.headers` shape.
+fn header_pair_value(name: &str, value: &str) -> Value {
+    Value::Tuple(Arc::new(vec![
+        Value::String(SmolStr::from(name)),
+        Value::String(SmolStr::from(value)),
+    ]))
 }
 
 fn extract_header_pairs(value: Option<&Value>) -> Vec<(String, String)> {
@@ -425,6 +514,47 @@ pub(crate) fn builtin_http_request(args: &[Value]) -> RuntimeResult<Value> {
         None
     } else {
         Some(body.as_bytes())
+    };
+    let client = StdClient::new();
+    match client.do_request(method, url, body_opt, &headers) {
+        Ok(resp) => Ok(crate::builtins::ok_variant(lift_response(resp))),
+        Err(e) => Ok(crate::builtins::err_variant(format!("{e}"))),
+    }
+}
+
+/// `http::request_bytes(method, url, body: [u8], headers) -> Result<Response, String>`.
+pub(crate) fn builtin_http_request_bytes(args: &[Value]) -> RuntimeResult<Value> {
+    let method_str = args.first().and_then(as_str).unwrap_or("");
+    let Some(method) = Method::parse(method_str) else {
+        return Ok(crate::builtins::err_variant(format!(
+            "http::request_bytes: unknown method `{method_str}`"
+        )));
+    };
+    let url = args.get(1).and_then(as_str).unwrap_or("");
+    // The tree-walker hands `[104, 105]` over as `Value::Array` of
+    // Ints; the bytecode VM specialises int vectors to
+    // `Value::IntArray`. Both must decode or the VM tier silently
+    // uploads an empty body.
+    let body: Vec<u8> = match args.get(2) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|b| match b {
+                Value::Int(n) => u8::try_from(*n).ok(),
+                _ => None,
+            })
+            .collect(),
+        Some(Value::IntArray(items)) => {
+            items.iter().filter_map(|n| u8::try_from(*n).ok()).collect()
+        }
+        Some(Value::String(s)) => s.as_bytes().to_vec(),
+        _ => Vec::new(),
+    };
+    let header_pairs = extract_header_pairs(args.get(3));
+    let headers = header_refs(&header_pairs);
+    let body_opt: Option<&[u8]> = if body.is_empty() {
+        None
+    } else {
+        Some(body.as_slice())
     };
     let client = StdClient::new();
     match client.do_request(method, url, body_opt, &headers) {
@@ -572,6 +702,32 @@ pub(crate) fn builtin_response_stream_next_line(args: &[Value]) -> RuntimeResult
     }
 }
 
+/// `ResponseStream::next_chunk(max_bytes) -> Option<[u8]>`. Bytes
+/// lift as an Array of Ints, matching the `resp.raw_bytes`
+/// convention; EOF and I/O failure both surface as `None`.
+pub(crate) fn builtin_response_stream_next_chunk(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(handle) = args.first().and_then(|v| handle_field(v, "ResponseStream")) else {
+        return Err(RuntimeError::Type(
+            "ResponseStream::next_chunk: receiver must be ResponseStream".to_string(),
+        ));
+    };
+    let max_bytes = match args.get(1) {
+        Some(Value::Int(n)) => usize::try_from(*n).unwrap_or(0),
+        _ => 0,
+    };
+    let Some(arc) = stream_lookup(handle) else {
+        return Ok(crate::builtins::none_variant());
+    };
+    let mut guard = arc.lock();
+    match guard.next_chunk(max_bytes) {
+        Ok(Some(bytes)) => {
+            let elems: Vec<Value> = bytes.iter().map(|b| Value::Int(i64::from(*b))).collect();
+            Ok(crate::builtins::some_variant(Value::Array(Arc::new(elems))))
+        }
+        Ok(None) | Err(_) => Ok(crate::builtins::none_variant()),
+    }
+}
+
 // ------------------------------------------------------------------
 // Method-style API: Client::post / put / options / delete / head /
 // request — matching the existing `Client::get` call shape. The
@@ -617,4 +773,577 @@ pub(crate) fn builtin_http_client_delete(args: &[Value]) -> RuntimeResult<Value>
 pub(crate) fn builtin_http_client_head(args: &[Value]) -> RuntimeResult<Value> {
     let url = args.get(1).and_then(as_str).unwrap_or("");
     Ok(pending_request("HEAD", url))
+}
+
+/// `Client::request(method, url, body, headers) -> Result<Response, String>`
+/// — same semantics and error strings as the free `http::request`,
+/// except the receiver's configured redirect/timeout policy is
+/// honored. `max_redirects(0)` returns 3xx responses raw; exceeding
+/// a non-zero budget is a transport error ("too many redirects").
+pub(crate) fn builtin_http_client_request(args: &[Value]) -> RuntimeResult<Value> {
+    let method_str = args.get(1).and_then(as_str).unwrap_or("");
+    let Some(method) = Method::parse(method_str) else {
+        return Ok(crate::builtins::err_variant(format!(
+            "Client::request: unknown method `{method_str}`"
+        )));
+    };
+    let url = args.get(2).and_then(as_str).unwrap_or("");
+    let body = args.get(3).and_then(as_str).unwrap_or("");
+    let header_pairs = extract_header_pairs(args.get(4));
+    let headers = header_refs(&header_pairs);
+    let body_opt: Option<&[u8]> = if body.is_empty() {
+        None
+    } else {
+        Some(body.as_bytes())
+    };
+    let (max_redirects, timeout_ms) = client_config(args.first());
+    let client = match configured_std_client(max_redirects, timeout_ms) {
+        Ok(c) => c,
+        Err(e) => return Ok(crate::builtins::err_variant(e)),
+    };
+    match client.do_request(method, url, body_opt, &headers) {
+        Ok(resp) => Ok(crate::builtins::ok_variant(lift_response(resp))),
+        Err(e) => Ok(crate::builtins::err_variant(format!("{e}"))),
+    }
+}
+
+/// `Client::request_bytes(method, url, body: [u8], headers) ->
+/// Result<Response, String>` — binary-body sibling of
+/// `Client::request`, honoring the configured policy.
+pub(crate) fn builtin_http_client_request_bytes(args: &[Value]) -> RuntimeResult<Value> {
+    let method_str = args.get(1).and_then(as_str).unwrap_or("");
+    let Some(method) = Method::parse(method_str) else {
+        return Ok(crate::builtins::err_variant(format!(
+            "Client::request_bytes: unknown method `{method_str}`"
+        )));
+    };
+    let url = args.get(2).and_then(as_str).unwrap_or("");
+    // Same dual Array/IntArray decode as `http::request_bytes`:
+    // tree-walker hands Value::Array of Ints, the bytecode VM
+    // specialises to Value::IntArray.
+    let body: Vec<u8> = match args.get(3) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|b| match b {
+                Value::Int(n) => u8::try_from(*n).ok(),
+                _ => None,
+            })
+            .collect(),
+        Some(Value::IntArray(items)) => {
+            items.iter().filter_map(|n| u8::try_from(*n).ok()).collect()
+        }
+        Some(Value::String(s)) => s.as_bytes().to_vec(),
+        _ => Vec::new(),
+    };
+    let header_pairs = extract_header_pairs(args.get(4));
+    let headers = header_refs(&header_pairs);
+    let body_opt: Option<&[u8]> = if body.is_empty() {
+        None
+    } else {
+        Some(body.as_slice())
+    };
+    let (max_redirects, timeout_ms) = client_config(args.first());
+    let client = match configured_std_client(max_redirects, timeout_ms) {
+        Ok(c) => c,
+        Err(e) => return Ok(crate::builtins::err_variant(e)),
+    };
+    match client.do_request(method, url, body_opt, &headers) {
+        Ok(resp) => Ok(crate::builtins::ok_variant(lift_response(resp))),
+        Err(e) => Ok(crate::builtins::err_variant(format!("{e}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_field<'a>(req: &'a Value, name: &str) -> Option<&'a Value> {
+        let Value::Struct(inner) = req else {
+            return None;
+        };
+        inner
+            .fields
+            .iter()
+            .find(|(ident, _)| ident.name == name)
+            .map(|(_, v)| v)
+    }
+
+    #[test]
+    fn request_header_and_body_chain_rebuilds_request_fields() {
+        let req = pending_request("POST", "http://127.0.0.1:1/x");
+        let req = builtin_http_request_header(&[
+            req,
+            Value::String("x-a".into()),
+            Value::String("1".into()),
+        ])
+        .unwrap();
+        let req = builtin_http_request_header(&[
+            req,
+            Value::String("x-b".into()),
+            Value::String("2".into()),
+        ])
+        .unwrap();
+        let req = builtin_http_request_body(&[req, Value::String("payload".into())]).unwrap();
+        let Some(Value::Array(headers)) = request_field(&req, "headers") else {
+            panic!("chained request must carry a headers array");
+        };
+        assert_eq!(headers.len(), 2);
+        let Value::Tuple(first) = &headers[0] else {
+            panic!("header entries must be tuples");
+        };
+        assert_eq!(as_str(&first[0]), Some("x-a"));
+        assert_eq!(as_str(&first[1]), Some("1"));
+        assert_eq!(
+            request_field(&req, "body").and_then(as_str),
+            Some("payload")
+        );
+        assert_eq!(request_field(&req, "method").and_then(as_str), Some("POST"));
+    }
+
+    #[test]
+    fn request_send_honors_chained_header_and_body() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 4096];
+            let mut req = Vec::new();
+            loop {
+                let n = stream.read(&mut buf).expect("read");
+                req.extend_from_slice(&buf[..n]);
+                if n == 0 || req.windows(7).any(|w| w == b"payload") {
+                    break;
+                }
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                )
+                .expect("write");
+            String::from_utf8_lossy(&req).into_owned()
+        });
+        let req = pending_request("POST", &format!("http://{addr}/echo"));
+        let req = builtin_http_request_header(&[
+            req,
+            Value::String("x-test".into()),
+            Value::String("vm".into()),
+        ])
+        .unwrap();
+        let req = builtin_http_request_body(&[req, Value::String("payload".into())]).unwrap();
+        let sent = builtin_http_request_send(&[req]).unwrap();
+        let Value::Variant(variant) = &sent else {
+            panic!("send must return a Result variant, got {sent:?}");
+        };
+        assert_eq!(variant.name, "Ok");
+        let request_text = server.join().expect("server thread");
+        assert!(request_text.starts_with("POST /echo HTTP/1.1"));
+        assert!(request_text.to_ascii_lowercase().contains("x-test: vm"));
+        assert!(request_text.ends_with("payload"));
+    }
+
+    #[test]
+    fn request_send_transport_failure_is_err_with_client_error_display() {
+        let req = pending_request("GET", "http://127.0.0.1:1/refused");
+        let sent = builtin_http_request_send(&[req]).unwrap();
+        let Value::Variant(variant) = &sent else {
+            panic!("send must return a Result variant, got {sent:?}");
+        };
+        assert_eq!(variant.name, "Err");
+        // `err_variant` wraps the message in an `errors::Error`
+        // struct whose `message` field carries the rendered text.
+        let Some(Value::Struct(err)) = variant.fields.first() else {
+            panic!("Err payload must be an errors::Error struct");
+        };
+        let msg = err
+            .fields
+            .iter()
+            .find(|(ident, _)| ident.name == "message")
+            .and_then(|(_, v)| as_str(v))
+            .unwrap_or("");
+        assert!(
+            msg.starts_with("http: transport:") && msg.contains("Connection refused"),
+            "unexpected transport error shape: {msg}"
+        );
+    }
+
+    fn struct_field<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
+        let Value::Struct(inner) = value else {
+            return None;
+        };
+        inner
+            .fields
+            .iter()
+            .find(|(ident, _)| ident.name == name)
+            .map(|(_, v)| v)
+    }
+
+    fn int_field_of(value: &Value, name: &str) -> Option<i64> {
+        match struct_field(value, name) {
+            Some(Value::Int(n)) => Some(*n),
+            _ => None,
+        }
+    }
+
+    fn ok_payload(result: &Value) -> &Value {
+        let Value::Variant(variant) = result else {
+            panic!("expected a Result variant, got {result:?}");
+        };
+        assert_eq!(variant.name, "Ok", "expected Ok, got {variant:?}");
+        variant.fields.first().expect("Ok payload")
+    }
+
+    fn err_message(result: &Value) -> String {
+        let Value::Variant(variant) = result else {
+            panic!("expected a Result variant, got {result:?}");
+        };
+        assert_eq!(variant.name, "Err", "expected Err, got {variant:?}");
+        let Some(Value::Struct(err)) = variant.fields.first() else {
+            panic!("Err payload must be an errors::Error struct");
+        };
+        err.fields
+            .iter()
+            .find(|(ident, _)| ident.name == "message")
+            .and_then(|(_, v)| as_str(v))
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// Serves a 2-hop redirect chain on a loopback listener:
+    /// `/one` → 302 `/two` → 302 `/three` → 200 "landed". Handles
+    /// up to `connections` sequential requests, then exits.
+    fn spawn_redirect_chain_server(connections: usize) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+        let handle = std::thread::spawn(move || {
+            for _ in 0..connections {
+                let Ok((stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut reader = BufReader::new(stream);
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    continue;
+                }
+                // Drain the header section so the client can reuse
+                // its connection logic cleanly.
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) if line == "\r\n" || line == "\n" => break,
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+                let path = request_line.split_whitespace().nth(1).unwrap_or("/");
+                let response = match path {
+                    "/one" => "HTTP/1.1 302 Found\r\nLocation: /two\r\nContent-Length: 0\r\n\
+                         Connection: close\r\n\r\n"
+                        .to_string(),
+                    "/two" => "HTTP/1.1 302 Found\r\nLocation: /three\r\nContent-Length: 0\r\n\
+                         Connection: close\r\n\r\n"
+                        .to_string(),
+                    _ => "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nlanded"
+                        .to_string(),
+                };
+                let mut stream = reader.into_inner();
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    fn configured_client(max_redirects: i64, timeout_ms: i64) -> Value {
+        let b = builtin_http_client_builder(&[]).unwrap();
+        let b = builtin_http_client_builder_max_redirects(&[b, Value::Int(max_redirects)]).unwrap();
+        let b = builtin_http_client_builder_timeout_ms(&[b, Value::Int(timeout_ms)]).unwrap();
+        builtin_http_client_builder_build(&[b]).unwrap()
+    }
+
+    #[test]
+    fn builder_chain_rebuilds_immutably_and_build_produces_client() {
+        let b = builtin_http_client_builder(&[]).unwrap();
+        assert_eq!(int_field_of(&b, "max_redirects"), Some(10));
+        assert_eq!(int_field_of(&b, "timeout_ms"), Some(30_000));
+        let b2 = builtin_http_client_builder_max_redirects(&[b.clone(), Value::Int(0)]).unwrap();
+        // The original builder is untouched (immutably rebuilt).
+        assert_eq!(int_field_of(&b, "max_redirects"), Some(10));
+        assert_eq!(int_field_of(&b2, "max_redirects"), Some(0));
+        let b3 = builtin_http_client_builder_timeout_ms(&[b2, Value::Int(5000)]).unwrap();
+        let client = builtin_http_client_builder_build(&[b3]).unwrap();
+        let Value::Struct(inner) = &client else {
+            panic!("build must produce a Client struct");
+        };
+        assert_eq!(inner.name, "Client");
+        assert_eq!(int_field_of(&client, "max_redirects"), Some(0));
+        assert_eq!(int_field_of(&client, "timeout_ms"), Some(5000));
+    }
+
+    #[test]
+    fn client_request_default_policy_follows_redirect_chain() {
+        let (base, server) = spawn_redirect_chain_server(3);
+        let client = builtin_http_client_builder(&[])
+            .and_then(|b| builtin_http_client_builder_build(&[b]))
+            .unwrap();
+        let sent = builtin_http_client_request(&[
+            client,
+            Value::String("GET".into()),
+            Value::String(format!("{base}/one").into()),
+            Value::String("".into()),
+            Value::Array(Arc::new(Vec::new())),
+        ])
+        .unwrap();
+        let resp = ok_payload(&sent);
+        assert_eq!(int_field_of(resp, "status"), Some(200));
+        assert_eq!(struct_field(resp, "body").and_then(as_str), Some("landed"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn client_request_max_redirects_zero_returns_raw_302_with_location() {
+        let (base, server) = spawn_redirect_chain_server(1);
+        let client = configured_client(0, 30_000);
+        let sent = builtin_http_client_request(&[
+            client,
+            Value::String("GET".into()),
+            Value::String(format!("{base}/one").into()),
+            Value::String("".into()),
+            Value::Array(Arc::new(Vec::new())),
+        ])
+        .unwrap();
+        let resp = ok_payload(&sent);
+        assert_eq!(int_field_of(resp, "status"), Some(302));
+        assert_eq!(
+            struct_field(resp, "location").and_then(as_str),
+            Some("/two")
+        );
+        server.join().unwrap();
+    }
+
+    /// ureq hop counting (empirically pinned): `max_redirects(1)` on
+    /// a 2-hop chain follows the first redirect, then hits the second
+    /// 3xx with the budget exhausted and fails the request with a
+    /// "too many redirects" transport error — it does NOT return the
+    /// intermediate 3xx. Only `max_redirects(0)` returns 3xx raw.
+    #[test]
+    fn client_request_max_redirects_one_on_two_hop_chain_is_too_many_redirects() {
+        let (base, server) = spawn_redirect_chain_server(2);
+        let client = configured_client(1, 30_000);
+        let sent = builtin_http_client_request(&[
+            client,
+            Value::String("GET".into()),
+            Value::String(format!("{base}/one").into()),
+            Value::String("".into()),
+            Value::Array(Arc::new(Vec::new())),
+        ])
+        .unwrap();
+        let msg = err_message(&sent);
+        assert!(
+            msg.starts_with("http: transport:") && msg.contains("too many redirects"),
+            "unexpected redirect-overflow error shape: {msg}"
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn client_request_unknown_method_names_the_method() {
+        let client = configured_client(0, 30_000);
+        let sent = builtin_http_client_request(&[
+            client.clone(),
+            Value::String("BREW".into()),
+            Value::String("http://127.0.0.1:1/never".into()),
+            Value::String("".into()),
+            Value::Array(Arc::new(Vec::new())),
+        ])
+        .unwrap();
+        assert_eq!(err_message(&sent), "Client::request: unknown method `BREW`");
+        let sent = builtin_http_client_request_bytes(&[
+            client,
+            Value::String("BREW".into()),
+            Value::String("http://127.0.0.1:1/never".into()),
+            Value::Array(Arc::new(Vec::new())),
+            Value::Array(Arc::new(Vec::new())),
+        ])
+        .unwrap();
+        assert_eq!(
+            err_message(&sent),
+            "Client::request_bytes: unknown method `BREW`"
+        );
+    }
+
+    #[test]
+    fn legacy_client_new_receiver_gets_default_policy() {
+        let (base, server) = spawn_redirect_chain_server(3);
+        let legacy = builtin_http_client_new(&[]).unwrap();
+        let sent = builtin_http_client_request(&[
+            legacy,
+            Value::String("GET".into()),
+            Value::String(format!("{base}/one").into()),
+            Value::String("".into()),
+            Value::Array(Arc::new(Vec::new())),
+        ])
+        .unwrap();
+        let resp = ok_payload(&sent);
+        assert_eq!(int_field_of(resp, "status"), Some(200));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn client_request_timeout_ms_aborts_a_stalled_response() {
+        use std::io::Read;
+        // A listener that accepts the connection, reads the request,
+        // and never responds: the configured 100 ms global timeout
+        // must abort the request with a timeout transport error.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            // Hold the socket open until the client gives up: read
+            // until EOF (the client closing on timeout ends this).
+            let mut buf = [0u8; 1024];
+            while let Ok(n) = stream.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+            }
+        });
+        let client = configured_client(10, 100);
+        let sent = builtin_http_client_request(&[
+            client,
+            Value::String("GET".into()),
+            Value::String(format!("http://{addr}/stall").into()),
+            Value::String("".into()),
+            Value::Array(Arc::new(Vec::new())),
+        ])
+        .unwrap();
+        let msg = err_message(&sent);
+        assert!(
+            msg.starts_with("http: transport:") && msg.contains("timeout"),
+            "unexpected timeout error shape: {msg}"
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn lift_response_exposes_headers_as_tuple_array() {
+        let mut headers = gossamer_std::http::Headers::new();
+        headers.insert("content-type", "application/json");
+        headers.insert("x-request-id", "abc123");
+        let resp = gossamer_std::http::Response {
+            status: gossamer_std::http::StatusCode(200),
+            headers,
+            body: b"{}".to_vec(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
+        };
+        let Value::Struct(lifted) = lift_response(resp) else {
+            panic!("lift_response must produce a struct value");
+        };
+        let (_, headers_val) = lifted
+            .fields
+            .iter()
+            .find(|(ident, _)| ident.name == "headers")
+            .expect("lifted Response must carry a `headers` field");
+        let Value::Array(items) = headers_val else {
+            panic!("`headers` must be an array, got {headers_val:?}");
+        };
+        assert_eq!(items.len(), 2);
+        // `Headers` is keyed by lowercase name in a BTreeMap, so the
+        // lifted pairs come back in sorted-by-name order.
+        let expected = [
+            ("content-type", "application/json"),
+            ("x-request-id", "abc123"),
+        ];
+        for (item, (name, value)) in items.iter().zip(expected) {
+            let Value::Tuple(pair) = item else {
+                panic!("each header entry must be a tuple, got {item:?}");
+            };
+            assert_eq!(pair.len(), 2);
+            assert_eq!(as_str(&pair[0]), Some(name));
+            assert_eq!(as_str(&pair[1]), Some(value));
+        }
+    }
+
+    #[test]
+    fn lift_response_lowercases_mixed_case_header_names() {
+        let mut headers = gossamer_std::http::Headers::new();
+        headers.insert("X-MiXeD-CaSe", "v");
+        let resp = gossamer_std::http::Response {
+            status: gossamer_std::http::StatusCode(200),
+            headers,
+            body: b"ok".to_vec(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
+        };
+        let Value::Struct(lifted) = lift_response(resp) else {
+            panic!("lift_response must produce a struct value");
+        };
+        let (_, headers_val) = lifted
+            .fields
+            .iter()
+            .find(|(ident, _)| ident.name == "headers")
+            .expect("lifted Response must carry a `headers` field");
+        let Value::Array(items) = headers_val else {
+            panic!("`headers` must be an array, got {headers_val:?}");
+        };
+        let Value::Tuple(pair) = &items[0] else {
+            panic!("each header entry must be a tuple");
+        };
+        // Same canonical lowercase name the compiled tier lifts.
+        assert_eq!(as_str(&pair[0]), Some("x-mixed-case"));
+        assert_eq!(as_str(&pair[1]), Some("v"));
+    }
+
+    #[test]
+    fn lift_response_prefers_raw_pairs_keeping_duplicate_set_cookie_order() {
+        // The `Headers` map collapses repeated names, but the wire
+        // sequence keeps both `set-cookie` pairs — and the compiled
+        // tiers lift the wire sequence, so the interp must too.
+        let mut headers = gossamer_std::http::Headers::new();
+        headers.insert("set-cookie", "b=2");
+        headers.insert("content-type", "text/plain");
+        let resp = gossamer_std::http::Response {
+            status: gossamer_std::http::StatusCode(200),
+            headers,
+            body: b"ok".to_vec(),
+            raw_header_pairs: vec![
+                ("set-cookie".to_string(), "a=1".to_string()),
+                ("set-cookie".to_string(), "b=2".to_string()),
+                ("content-type".to_string(), "text/plain".to_string()),
+            ],
+            body_stream: None,
+        };
+        let Value::Struct(lifted) = lift_response(resp) else {
+            panic!("lift_response must produce a struct value");
+        };
+        let (_, headers_val) = lifted
+            .fields
+            .iter()
+            .find(|(ident, _)| ident.name == "headers")
+            .expect("lifted Response must carry a `headers` field");
+        let Value::Array(items) = headers_val else {
+            panic!("`headers` must be an array, got {headers_val:?}");
+        };
+        let pairs: Vec<(&str, &str)> = items
+            .iter()
+            .map(|item| {
+                let Value::Tuple(pair) = item else {
+                    panic!("each header entry must be a tuple, got {item:?}");
+                };
+                (as_str(&pair[0]).unwrap(), as_str(&pair[1]).unwrap())
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("set-cookie", "a=1"),
+                ("set-cookie", "b=2"),
+                ("content-type", "text/plain"),
+            ],
+        );
+    }
 }

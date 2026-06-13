@@ -374,9 +374,16 @@ fn try_native_build(
     } else {
         find_runtime_lib()?
     };
-    let bindings_archive = build_static_bindings_lib(opts.release).map_err(|err| {
-        NativeBuildError::LinkerMissing(format!("rust-bindings staticlib: {err}"))
-    })?;
+    // The bindings staticlib must match the main link's libc: a
+    // static-musl release link cannot take a glibc-built archive
+    // (undefined __res_init / open64 / gnu_get_libc_version).
+    let bindings_target = opts
+        .want_static_musl()
+        .then_some("x86_64-unknown-linux-musl");
+    let bindings_archive =
+        build_static_bindings_lib(opts.release, bindings_target).map_err(|err| {
+            NativeBuildError::LinkerMissing(format!("rust-bindings staticlib: {err}"))
+        })?;
     let mut extra_archives: Vec<PathBuf> = Vec::new();
     if let Some(p) = bindings_archive {
         extra_archives.push(p);
@@ -547,6 +554,7 @@ fn find_clang_rt_profile() -> Option<PathBuf> {
 /// or `None` when bindings are absent.
 fn build_static_bindings_lib(
     release: bool,
+    cargo_target: Option<&str>,
 ) -> std::result::Result<Option<PathBuf>, gossamer_driver::binding_runner::BindingRunnerError> {
     use gossamer_driver::binding_runner::{Profile as RunnerProfile, StaticBindingsLib};
     use gossamer_pkg::{Manifest, find_manifest};
@@ -560,8 +568,18 @@ fn build_static_bindings_lib(
     let Ok(manifest_text) = fs::read_to_string(&manifest_path) else {
         return Ok(None);
     };
-    let Ok(manifest) = Manifest::parse(&manifest_text) else {
-        return Ok(None);
+    // Mirror `dispatch_runner_if_needed`: a malformed manifest must
+    // not silently degrade to "no bindings".
+    let manifest = match Manifest::parse(&manifest_text) {
+        Ok(m) => m,
+        Err(err) => {
+            return Err(
+                gossamer_driver::binding_runner::BindingRunnerError::Manifest(format!(
+                    "{}: {err}",
+                    manifest_path.display()
+                )),
+            );
+        }
     };
     if manifest.rust_bindings.is_empty() {
         return Ok(None);
@@ -583,6 +601,7 @@ fn build_static_bindings_lib(
     else {
         return Ok(None);
     };
+    let lib = lib.with_cargo_target(cargo_target.map(str::to_string));
     let archive = lib.ensure_built()?;
     Ok(Some(archive))
 }

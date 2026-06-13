@@ -109,6 +109,21 @@ fn empty_block_fires_on_bare_brace_pair() {
 }
 
 #[test]
+fn empty_block_silent_on_else_less_if_let() {
+    // The implicit else arm of an else-less `if let` is a
+    // parser-synthesized empty block, not a user mistake.
+    let diags = lint("fn main() { let m = Some(1i64) if let Some(n) = m { let _y: i64 = n } }\n");
+    assert!(!has_code(&diags, "GL0010"), "{:?}", diags_codes(&diags));
+}
+
+#[test]
+fn empty_block_still_fires_on_user_written_empty_else() {
+    let diags =
+        lint("fn main() { let m = Some(1i64) if let Some(n) = m { let _y: i64 = n } else { } }\n");
+    assert!(has_code(&diags, "GL0010"), "{:?}", diags_codes(&diags));
+}
+
+#[test]
 fn panic_in_main_fires_on_direct_call() {
     let diags = lint("fn main() { panic(\"bad\") }\n");
     assert!(has_code(&diags, "GL0011"), "{:?}", diags_codes(&diags));

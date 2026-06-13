@@ -1,0 +1,8 @@
+[project]
+id = "example.com/clipboard_rust"
+version = "0.1.0"
+
+[dependencies]
+
+[rust-bindings]
+cliplib = { path = "cliplib" }

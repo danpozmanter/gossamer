@@ -309,20 +309,34 @@ impl<'a> Lowerer<'a> {
             operand_llvm = "i64".to_string();
             kind = NumericKind::Int(gossamer_types::IntTy::I64);
         }
+        // All ≤64-bit integer types are signed-i64 runtime values
+        // (VM reference: `wrapping_div` / `wrapping_shr` / signed
+        // compares on `i64`), so the declared signedness only
+        // selects the instruction for the 128-bit types.
+        let op_signed = |i: gossamer_types::IntTy| int_width(i) <= 64 || int_signed(i);
+        // LLVM `shl`/`ashr` produce poison for shift amounts >= the
+        // operand width; the VM masks the amount with `& 63`. Mask
+        // i64 shift amounts the same way so `1 << 70` is `1 << 6`
+        // on every tier.
+        if matches!(op, BinOp::Shl | BinOp::Shr) && operand_llvm == "i64" {
+            let masked = self.fresh();
+            writeln!(self.out, "  {masked} = and i64 {rhs_v}, 63").unwrap();
+            rhs_v = masked;
+        }
         let tmp = self.fresh();
         let instr = match (op, kind) {
             (BinOp::Add, NumericKind::Int(_)) => format!("add {operand_llvm}"),
             (BinOp::Sub, NumericKind::Int(_)) => format!("sub {operand_llvm}"),
             (BinOp::Mul, NumericKind::Int(_)) => format!("mul {operand_llvm}"),
             (BinOp::Div, NumericKind::Int(i)) => {
-                if int_signed(i) {
+                if op_signed(i) {
                     format!("sdiv {operand_llvm}")
                 } else {
                     format!("udiv {operand_llvm}")
                 }
             }
             (BinOp::Rem, NumericKind::Int(i)) => {
-                if int_signed(i) {
+                if op_signed(i) {
                     format!("srem {operand_llvm}")
                 } else {
                     format!("urem {operand_llvm}")
@@ -333,7 +347,7 @@ impl<'a> Lowerer<'a> {
             (BinOp::BitXor, _) => format!("xor {operand_llvm}"),
             (BinOp::Shl, _) => format!("shl {operand_llvm}"),
             (BinOp::Shr, NumericKind::Int(i)) => {
-                if int_signed(i) {
+                if op_signed(i) {
                     format!("ashr {operand_llvm}")
                 } else {
                     format!("lshr {operand_llvm}")
@@ -345,7 +359,7 @@ impl<'a> Lowerer<'a> {
             (BinOp::Div, NumericKind::Float(_)) => format!("fdiv {operand_llvm}"),
             (BinOp::Rem, NumericKind::Float(_)) => format!("frem {operand_llvm}"),
             (cmp, NumericKind::Int(i)) if is_cmp(cmp) => {
-                let pred = int_cmp_pred(cmp, int_signed(i));
+                let pred = int_cmp_pred(cmp, op_signed(i));
                 format!("icmp {pred} {operand_llvm}")
             }
             (cmp, NumericKind::Float(_)) if is_cmp(cmp) => {
@@ -435,13 +449,98 @@ impl<'a> Lowerer<'a> {
         _dest_local: Local,
     ) -> Result<String, BuildError> {
         let src_v = self.lower_operand(operand)?;
-        let src_ty = self.operand_ty(operand);
-        let src_kind = numeric_kind(self.tcx, src_ty);
+        // Numeric constants classify directly: `operand_ty` resolves
+        // a const's type by borrowing a same-kinded local's Ty, and
+        // a body with no integer local would misclassify an Int
+        // const as the unit return type (non-numeric).
+        let (src_kind, src_llvm) = match operand {
+            Operand::Const(ConstValue::Int(_)) => (
+                NumericKind::Int(gossamer_types::IntTy::I64),
+                "i64".to_string(),
+            ),
+            Operand::Const(ConstValue::Float(_)) => {
+                (NumericKind::Float(FloatTy::F64), "double".to_string())
+            }
+            // Bool / char consts classify directly for the same
+            // reason as Int / Float above — `true as i64` in a body
+            // with no bool local must not misclassify.
+            Operand::Const(ConstValue::Bool(_)) => (NumericKind::Other, "i1".to_string()),
+            Operand::Const(ConstValue::Char(_)) => (NumericKind::Other, "i32".to_string()),
+            _ => {
+                let src_ty = self.operand_ty(operand);
+                (numeric_kind(self.tcx, src_ty), render_ty(self.tcx, src_ty))
+            }
+        };
         let dst_kind = numeric_kind(self.tcx, target);
-        let src_llvm = render_ty(self.tcx, src_ty);
         let dst_llvm = render_ty(self.tcx, target);
+        // Int → narrow int under the i64 runtime model: both sides
+        // render as i64, but the cast is the language's single
+        // masking point (VM parity: `300 as u8` == 44, `200 as i8`
+        // == -56). Truncate to the declared width and extend back
+        // by the target's signedness.
+        if let (NumericKind::Int(_), NumericKind::Int(b)) = (src_kind, dst_kind)
+            && src_llvm == "i64"
+            && dst_llvm == "i64"
+            && int_width(b) < 64
+        {
+            return Ok(self.mask_to_int_width(&src_v, b));
+        }
+        // Float → int is saturating at i64 width with no narrow
+        // mask, on every tier: the VM and Cranelift (`fcvt_to_
+        // sint_sat`) both produce `300.7 as u8 == 300`, `-1.5 as
+        // u8 == -1`, `1e20 as i64 == i64::MAX`. A plain `fptosi`
+        // is poison for out-of-range inputs, which `opt -O3`
+        // folds into garbage.
+        if let (NumericKind::Float(f), NumericKind::Int(_)) = (src_kind, dst_kind)
+            && dst_llvm == "i64"
+        {
+            let src_float = match f {
+                FloatTy::F32 => "float",
+                FloatTy::F64 => "double",
+            };
+            let intrinsic = match f {
+                FloatTy::F32 => "llvm.fptosi.sat.i64.f32",
+                FloatTy::F64 => "llvm.fptosi.sat.i64.f64",
+            };
+            self.runtime_refs
+                .insert(format!("declare i64 @{intrinsic}({src_float})"));
+            let v = if src_llvm == src_float {
+                src_v
+            } else {
+                self.coerce_llvm_value(&src_v, &src_llvm, src_float)
+            };
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = call i64 @{intrinsic}({src_float} {v})").unwrap();
+            return Ok(tmp);
+        }
         if src_llvm == dst_llvm {
             return Ok(src_v);
+        }
+        // `bool` / `char` → integer and `u8` → `char` complete the
+        // GT0005 whitelist on this tier (bool = i1, char = i32, every
+        // ≤64-bit int = i64 at runtime). The source zero-extends to
+        // the 64-bit runtime value; a narrow declared target then
+        // masks like any int → int cast. `u8 as char` masks to the
+        // declared u8 width before narrowing into the char's i32
+        // code-point slot — matching the VM's `cast_scalar`.
+        if let (NumericKind::Other, NumericKind::Int(b)) = (src_kind, dst_kind)
+            && (src_llvm == "i1" || src_llvm == "i32")
+        {
+            let wide = self.fresh();
+            writeln!(self.out, "  {wide} = zext {src_llvm} {src_v} to i64").unwrap();
+            if int_width(b) < 64 {
+                return Ok(self.mask_to_int_width(&wide, b));
+            }
+            return Ok(wide);
+        }
+        if let (NumericKind::Int(_), NumericKind::Other) = (src_kind, dst_kind)
+            && dst_llvm == "i32"
+        {
+            let masked = self.fresh();
+            writeln!(self.out, "  {masked} = and i64 {src_v}, 255").unwrap();
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = trunc i64 {masked} to i32").unwrap();
+            return Ok(tmp);
         }
         let tmp = self.fresh();
         let instr = match (src_kind, dst_kind) {
@@ -460,7 +559,11 @@ impl<'a> Lowerer<'a> {
                 }
             }
             (NumericKind::Int(i), NumericKind::Float(_)) => {
-                if int_signed(i) {
+                // Every ≤64-bit int (u64/usize included) lives as a
+                // signed i64 value at runtime, so the conversion is
+                // signed (VM parity: `(0u64 - 1) as f64 == -1.0`).
+                // Only u128 takes the unsigned conversion.
+                if int_signed(i) || int_width(i) <= 64 {
                     format!("sitofp {src_llvm} {src_v} to {dst_llvm}")
                 } else {
                     format!("uitofp {src_llvm} {src_v} to {dst_llvm}")

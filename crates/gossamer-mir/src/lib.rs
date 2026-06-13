@@ -9,15 +9,11 @@
 
 mod cleanup;
 mod escape;
-mod gc_barrier;
-mod gc_safepoints;
 mod ir;
 mod lower;
 mod monomorph;
 mod opt;
 pub mod verify;
-
-pub use gc_barrier::insert_gc_barriers;
 
 pub use cleanup::{
     CleanupEntry, CleanupPlan, DropAt, HEAP_ALLOCATOR_PAIRS, plan as plan_cleanup,
@@ -27,10 +23,10 @@ pub use escape::{
     CaptureSummary, EscapeSet, analyse as analyse_escape,
     analyse_with_summary as analyse_escape_with_summary, build_capture_summary,
 };
-pub use gc_safepoints::body_might_allocate;
 pub use ir::{
     AggregateKind, AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl,
     Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator, UnOp,
+    local_is_uint_cast,
 };
 pub use lower::{lower_program, mangle_callable_shape};
 pub use monomorph::{check_generic_layouts, mangled_name, monomorphise};

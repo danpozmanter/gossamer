@@ -200,6 +200,167 @@ pub(crate) fn collect_fn_returns(program: &HirProgram) -> HashMap<gossamer_resol
     out
 }
 
+/// Declared return types keyed by callable name: free functions by
+/// bare name, impl methods by their `Struct::method` mangled name.
+/// Drives the bare-`http::Response` handler thunk lookup at HTTP
+/// handler registration sites.
+pub(crate) fn collect_fn_ret_names(program: &HirProgram) -> HashMap<String, Ty> {
+    let mut out = HashMap::new();
+    for item in &program.items {
+        match &item.kind {
+            HirItemKind::Fn(decl) => {
+                if let Some(ret) = decl.ret {
+                    out.insert(decl.name.name.clone(), ret);
+                }
+            }
+            HirItemKind::Impl(decl) => {
+                if let Some(prefix) = decl.self_name.as_ref() {
+                    for method in &decl.methods {
+                        if let Some(ret) = method.ret {
+                            out.insert(format!("{}::{}", prefix.name, method.name.name), ret);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// True when `ty` is the bare `http::Response` shape — not wrapped in
+/// `Result` / `Option`.
+pub(crate) fn is_bare_response_ty(tcx: &TyCtxt, ty: Ty) -> bool {
+    use gossamer_types::TyKind;
+    match tcx.kind_of(ty) {
+        // Result / Option sentinels: already packed at the C-ABI.
+        TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1 => false,
+        // The checker pins `http::Response` annotations to the
+        // sentinel Response Adt (`u32::MAX - 5`), which renders as a
+        // bare `adt#…` placeholder — match the def id directly.
+        TyKind::Adt { def, .. } if def.local == u32::MAX - 5 => true,
+        // Fallback for paths the checker kept in printable form
+        // (e.g. the JsonValue stdlib default). Mirrors the rendered
+        // last-segment probe `lower_fn` uses for parameter kinds.
+        // This arm depends on the checker's struct-literal pinning:
+        // unpinned `http::Response` annotations only reach here in
+        // printable form because `check_struct_literal` pins the
+        // sentinel Adt (gossamer-types/src/checker.rs,
+        // `register_stdlib_struct_fields` + the path-tail probe in
+        // the struct-literal arm); a user-defined type that merely
+        // ends in `::Response` also matches and gets wrapped.
+        _ => {
+            let rendered = gossamer_types::printer::render_ty(tcx, ty);
+            rendered.rsplit("::").next().unwrap_or(&rendered) == "Response"
+        }
+    }
+}
+
+/// Symbol name of the synthesized Ok-packing handler thunk for `fn_name`.
+pub(crate) fn handler_ok_wrap_name(fn_name: &str) -> String {
+    format!("{fn_name}::__ok_wrap")
+}
+
+/// Synthesizes the `(args…) -> Result<Response, Error>` adapter body for a
+/// handler that declares a bare `http::Response` return. The HTTP runtime
+/// invokes every registered handler through the packed-Result i128 C-ABI
+/// (`extract_response_into` reads the `gos_rt_result_new` encoding), so a
+/// bare-Response handler's pointer return would be misread as a Result
+/// discriminant. The thunk calls the user function and packs its return
+/// into `Ok`, keeping the handler ABI uniformly Result-shaped.
+fn handler_ok_wrap_body(
+    tcx: &mut TyCtxt,
+    wrapped_name: &str,
+    param_tys: &[Ty],
+    ret_ty: Ty,
+    span: Span,
+) -> Body {
+    let e = tcx.dyn_error_ty();
+    let substs = gossamer_types::Substs::from_types([ret_ty, e]);
+    let result_ty = tcx.intern(gossamer_types::TyKind::Adt {
+        def: gossamer_resolve::DefId::local(u32::MAX),
+        substs,
+    });
+    let decl = |ty: Ty| LocalDecl {
+        ty,
+        debug_name: None,
+        mutable: false,
+        region: false,
+    };
+    let mut locals = vec![decl(result_ty)];
+    locals.extend(param_tys.iter().map(|ty| decl(*ty)));
+    let resp_local = Local(u32::try_from(locals.len()).expect("local overflow"));
+    locals.push(decl(ret_ty));
+    let args = (1..=param_tys.len())
+        .map(|i| Operand::Copy(Place::local(Local(i as u32))))
+        .collect();
+    let call_block = BasicBlock {
+        id: BlockId(0),
+        stmts: Vec::new(),
+        terminator: Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(wrapped_name.to_string())),
+            args,
+            destination: Place::local(resp_local),
+            target: Some(BlockId(1)),
+        },
+        span,
+    };
+    let pack_block = BasicBlock {
+        id: BlockId(1),
+        stmts: vec![Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(Local::RETURN),
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "gos_rt_result_new",
+                    args: vec![
+                        Operand::Const(ConstValue::Int(0)),
+                        Operand::Copy(Place::local(resp_local)),
+                    ],
+                },
+            },
+            span,
+        }],
+        terminator: Terminator::Return,
+        span,
+    };
+    Body {
+        name: handler_ok_wrap_name(wrapped_name),
+        def: None,
+        arity: u32::try_from(param_tys.len()).expect("arity overflow"),
+        locals,
+        blocks: vec![call_block, pack_block],
+        span,
+    }
+}
+
+/// Pushes the Ok-packing handler thunk for `decl` when its declared
+/// return is a bare `http::Response` and its arity matches a handler
+/// shape (`fn(Request)` free fn or `fn(&self, Request)` serve method).
+/// Limitation: only named `fn` items are scanned, so a closure
+/// registered as a handler with a bare-`Response` body is NOT
+/// wrapped — closure handlers must return `Result<Response, Error>`
+/// themselves until closure declarations flow through this pass.
+fn maybe_push_handler_ok_wrap(
+    decl: &HirFn,
+    expected_arity: usize,
+    tcx: &mut TyCtxt,
+    span: Span,
+    out: &mut Vec<Body>,
+) {
+    let Some(ret) = decl.ret else { return };
+    if decl.params.len() != expected_arity || !is_bare_response_ty(tcx, ret) {
+        return;
+    }
+    let param_tys: Vec<Ty> = decl.params.iter().map(|p| p.ty).collect();
+    out.push(handler_ok_wrap_body(
+        tcx,
+        &decl.name.name,
+        &param_tys,
+        ret,
+        span,
+    ));
+}
+
 pub(crate) fn collect_struct_fields(
     program: &HirProgram,
 ) -> (
@@ -300,7 +461,14 @@ pub(crate) fn stdlib_struct_shapes() -> &'static [(&'static str, &'static [&'sta
         // purely for source-level field-name lookup.
         (
             "Response",
-            &["status", "body", "raw_bytes", "content_type", "location"],
+            &[
+                "status",
+                "body",
+                "raw_bytes",
+                "content_type",
+                "location",
+                "headers",
+            ],
         ),
     ]
 }
@@ -500,6 +668,7 @@ pub(crate) fn collect_item(
     struct_defs: &HashMap<gossamer_resolve::DefId, String>,
     enums: &EnumIndex,
     impl_methods: &HashMap<String, Option<Ty>>,
+    fn_ret_names: &HashMap<String, Ty>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
@@ -523,12 +692,14 @@ pub(crate) fn collect_item(
                 struct_defs,
                 enums,
                 impl_methods,
+                fn_ret_names,
                 fn_returns,
                 fn_inputs,
                 consts,
                 region_unsafe,
             ) {
                 out.push(body);
+                maybe_push_handler_ok_wrap(decl, 1, tcx, item.span, out);
             }
         }
         HirItemKind::Impl(decl) => {
@@ -554,12 +725,16 @@ pub(crate) fn collect_item(
                     struct_defs,
                     enums,
                     impl_methods,
+                    fn_ret_names,
                     fn_returns,
                     fn_inputs,
                     consts,
                     region_unsafe,
                 ) {
                     out.push(body);
+                    if method.name.name == "serve" {
+                        maybe_push_handler_ok_wrap(&mangled, 2, tcx, item.span, out);
+                    }
                 }
             }
         }
@@ -575,6 +750,7 @@ pub(crate) fn collect_item(
                         struct_defs,
                         enums,
                         impl_methods,
+                        fn_ret_names,
                         fn_returns,
                         fn_inputs,
                         consts,
@@ -730,6 +906,7 @@ pub(crate) fn lower_fn(
     struct_defs: &HashMap<gossamer_resolve::DefId, String>,
     enums: &EnumIndex,
     impl_methods: &HashMap<String, Option<Ty>>,
+    fn_ret_names: &HashMap<String, Ty>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
@@ -744,6 +921,7 @@ pub(crate) fn lower_fn(
         struct_defs,
         enums,
         impl_methods,
+        fn_ret_names,
         fn_returns,
         fn_inputs,
         consts,

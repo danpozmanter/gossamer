@@ -40,6 +40,7 @@ impl<'tcx> FnBuilder<'tcx> {
             next_cache_idx: 0,
             next_arith_cache_idx: 0,
             next_field_cache_idx: 0,
+            mut_ref_params: Vec::new(),
         }
     }
 
@@ -78,6 +79,7 @@ impl<'tcx> FnBuilder<'tcx> {
             call_cache_count: self.next_cache_idx,
             arith_cache_count: self.next_arith_cache_idx,
             field_cache_count: self.next_field_cache_idx,
+            mut_ref_params: self.mut_ref_params,
         };
         // Release growth-by-doubling slack on every Vec field
         // unconditionally — any code path that produces a chunk

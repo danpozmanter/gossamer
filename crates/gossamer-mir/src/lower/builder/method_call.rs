@@ -484,6 +484,26 @@ impl<'a> Builder<'a> {
                 receiver_kind_flat = kind;
             }
         }
+        // `r.query.len()` / other methods on a field of an opaque
+        // runtime-kind struct (`http::Request` / `http::Response`):
+        // the field expression's HIR type is an inference Var (the
+        // structs are checker-opaque), but the field-accessor table
+        // knows the static type. Without this, `.len()` falls to the
+        // len-prefixed `gos_rt_len` and dereferences a c-string —
+        // a misaligned-pointer abort on the first proxied request.
+        if matches!(receiver_kind_flat, TyKind::Var(_))
+            && let HirExprKind::Field {
+                receiver: obj,
+                name: fname,
+            } = &receiver.kind
+            && let Some(rk) = self
+                .receiver_local_from_path(obj)
+                .and_then(|l| self.local_runtime_kind.get(&l).copied())
+                .or_else(|| self.expr_runtime_kind(obj))
+            && let Some(field_ty) = self.runtime_field_static_ty(rk, fname.name.as_str())
+        {
+            receiver_kind_flat = self.tcx.kind_of(field_ty).clone();
+        }
         // `args[i].method()` — when typeck resolves the Index
         // expression to its base collection (Vec / Slice / Array)
         // instead of the element type (a multi-module typeck
@@ -641,6 +661,24 @@ impl<'a> Builder<'a> {
         // (currently `.to_string()` / `.clone()` on any scalar or
         // string-shaped receiver — the GC already aliases the
         // buffer).
+        // `.len()` on a fixed-size `[T; N]` array is a compile-time
+        // constant — the inline stack aggregate has no GosVec header
+        // for `gos_rt_len` to read (routing it there returned header
+        // garbage, e.g. `[1, 2, 3].len() == 1` natively).
+        if method.name.as_str() == "len"
+            && args.is_empty()
+            && let TyKind::Array { len, .. } = &receiver_kind_flat
+        {
+            let n = *len;
+            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+            let dest = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::Use(Operand::Const(ConstValue::Int(n as i128))),
+                span,
+            );
+            return Some(dest);
+        }
         let mut runtime_symbol: Option<&'static str> = match method.name.as_str() {
             // `.to_string()` routes to the runtime numeric
             // formatter for integer / float receivers. String
@@ -947,6 +985,11 @@ impl<'a> Builder<'a> {
             // helper reads the leading i64 (the handle) and pops
             // one line from the registered Vec.
             "next_line" => Some("gos_rt_http_stream_next_line"),
+            // `ResponseStream::next_chunk(max_bytes) ->
+            // Option<[u8]>` — same blob receiver as `next_line`;
+            // the Some payload is a packed `elem_bytes = 1` byte
+            // vec (the `raw_bytes` representation contract).
+            "next_chunk" => Some("gos_rt_http_stream_next_chunk"),
             // http::Response getters.
             "status" => Some("gos_rt_http_response_status"),
             "body" => Some("gos_rt_http_response_body"),
@@ -957,6 +1000,9 @@ impl<'a> Builder<'a> {
             // because channel sends are far more common in user
             // code than untagged-http requests.
             "header" => Some("gos_rt_http_request_header"),
+            // Chainable server-response builder: replace-then-push
+            // a header and return the same response pointer.
+            "with_header" => Some("gos_rt_http_response_with_header"),
             "send" => Some("gos_rt_chan_send"),
             // string parsing — `text.parse()` for an i64 binding
             // routes to gos_rt_parse_i64 with a discarded ok flag.
@@ -974,8 +1020,9 @@ impl<'a> Builder<'a> {
             // would feed an i8 to a `*mut GosResult` parameter and
             // trip the cranelift verifier.
             "map_err" => {
-                if matches!(&receiver_kind_flat, TyKind::Adt { .. })
-                    && self.is_result_or_option_adt(receiver_ty)
+                if (matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                    && self.is_result_or_option_adt(receiver_ty))
+                    || self.expr_is_send_result(receiver)
                 {
                     Some("gos_rt_result_map_err")
                 } else {
@@ -983,8 +1030,9 @@ impl<'a> Builder<'a> {
                 }
             }
             "map" => {
-                if matches!(&receiver_kind_flat, TyKind::Adt { .. })
-                    && self.is_result_or_option_adt(receiver_ty)
+                if (matches!(&receiver_kind_flat, TyKind::Adt { .. })
+                    && self.is_result_or_option_adt(receiver_ty))
+                    || self.expr_is_send_result(receiver)
                 {
                     Some("gos_rt_result_map")
                 } else {
@@ -994,7 +1042,7 @@ impl<'a> Builder<'a> {
             "to_lowercase" | "to_lower" => Some("gos_rt_str_to_lower"),
             "to_uppercase" | "to_upper" => Some("gos_rt_str_to_upper"),
             "push" => Some("gos_rt_vec_push"),
-            "pop" => Some("gos_rt_vec_pop"),
+            "pop" => Some("gos_rt_vec_pop_opt"),
             "sort" => Some("gos_rt_vec_sort_i64"),
             "iter" => match &receiver_kind_flat {
                 // HashMap `.iter()` is handled before the helper-name
@@ -1055,7 +1103,24 @@ impl<'a> Builder<'a> {
             "recv_ctx" => Some("gos_rt_chan_recv_ctx_option"),
             "try_send" => Some("gos_rt_chan_try_send"),
             "try_recv" => Some("gos_rt_chan_try_recv_option"),
-            "close" => Some("gos_rt_chan_close"),
+            // `close` is also a user-facing method on structs (the
+            // injected sql `Rows` / `Conn` wrappers). Route to the
+            // channel helper only when the receiver is not a struct
+            // carrying its own `close` impl — the same receiver gate
+            // as `insert` / `get` below. Without it, `rows.close()`
+            // closed a bogus channel handle instead of dispatching
+            // to `__gos_sql_Rows::close`.
+            "close" => {
+                let user_close = self
+                    .struct_name_of(receiver_ty)
+                    .or_else(|| self.struct_name_from_expr(receiver))
+                    .is_some_and(|s| self.impl_methods.contains_key(&format!("{s}::close")));
+                if user_close {
+                    None
+                } else {
+                    Some("gos_rt_chan_close")
+                }
+            }
             // Stream methods (on `io::stdout()` / `io::stderr()`
             // / `io::stdin()` handles). Mirrors Rust's `Write` /
             // `BufRead` trait surface.
@@ -1256,11 +1321,25 @@ impl<'a> Builder<'a> {
                 (Some("http::Proxy"), "forward") => Some("gos_rt_proxy_forward"),
                 (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
                 (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
+                (Some("http::Client"), "put") => Some("gos_rt_http_client_put"),
+                (Some("http::Client"), "options") => Some("gos_rt_http_client_options"),
+                (Some("http::Client"), "delete") => Some("gos_rt_http_client_delete"),
+                (Some("http::Client"), "head") => Some("gos_rt_http_client_head"),
+                (Some("http::Client"), "request") => Some("gos_rt_http_client_request"),
+                (Some("http::Client"), "request_bytes") => Some("gos_rt_http_client_request_bytes"),
+                (Some("http::ClientBuilder"), "max_redirects") => {
+                    Some("gos_rt_http_client_builder_max_redirects")
+                }
+                (Some("http::ClientBuilder"), "timeout_ms") => {
+                    Some("gos_rt_http_client_builder_timeout_ms")
+                }
+                (Some("http::ClientBuilder"), "build") => Some("gos_rt_http_client_builder_build"),
                 (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
                 (Some("http::Request"), "body") => Some("gos_rt_http_request_body"),
                 (Some("http::Request"), "send") => Some("gos_rt_http_request_send"),
                 (Some("http::Request"), "path") => Some("gos_rt_http_request_path"),
                 (Some("http::Request"), "method") => Some("gos_rt_http_request_method"),
+                (Some("http::Response"), "with_header") => Some("gos_rt_http_response_with_header"),
                 (Some("http::Response"), "status") => Some("gos_rt_http_response_status"),
                 (Some("http::Response"), "body") => Some("gos_rt_http_response_body"),
                 (Some("bufio::Scanner"), "scan") => Some("gos_rt_bufio_scanner_scan"),
@@ -1346,9 +1425,27 @@ impl<'a> Builder<'a> {
                     }
                 }
             } else {
+                // `Client::request` / `request_bytes` take Vec-shaped
+                // body/header args; coerce `[a, b]` array literals to
+                // the heap GosVec shape the runtime ABI expects (same
+                // treatment as the free `http::request` lowering).
+                let coerce_vec_args = matches!(
+                    rt,
+                    "gos_rt_http_client_request" | "gos_rt_http_client_request_bytes"
+                );
                 for arg in args {
                     let a = self.lower_expr(arg)?;
                     let a = self.auto_deref_cell(a, span);
+                    let a = if coerce_vec_args {
+                        let lt = self.locals[a.0 as usize].ty;
+                        if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
+                            self.coerce_array_to_vec(a, elem, len, span)
+                        } else {
+                            a
+                        }
+                    } else {
+                        a
+                    };
                     arg_operands.push(Operand::Copy(Place::local(a)));
                 }
             }
@@ -1411,16 +1508,30 @@ impl<'a> Builder<'a> {
                 "gos_rt_sync_map_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                 "gos_rt_sync_map_contains" => self.tcx.bool_ty(),
                 "gos_rt_sync_map_set" | "gos_rt_sync_map_delete" => self.tcx.unit(),
+                "gos_rt_http_request_send"
+                | "gos_rt_http_client_request"
+                | "gos_rt_http_client_request_bytes" => self.result_response_error_adt_ty(),
                 _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
             };
             let dest = self.fresh(pinned);
             // Tag chained dest locals so further method calls
-            // dispatch correctly: get/post return Request, send
-            // returns Response, header/body return Request again.
+            // dispatch correctly: get/post return Request, and
+            // header/body return Request again. `send` returns a
+            // Result<Response, errors::Error> Adt (no tag — the
+            // sentinel Ok payload drives downstream dispatch, same
+            // as `http::get`).
             let dest_kind: Option<&'static str> = match rt {
-                "gos_rt_http_client_get" | "gos_rt_http_client_post" => Some("http::Request"),
+                "gos_rt_http_client_get"
+                | "gos_rt_http_client_post"
+                | "gos_rt_http_client_put"
+                | "gos_rt_http_client_options"
+                | "gos_rt_http_client_delete"
+                | "gos_rt_http_client_head" => Some("http::Request"),
                 "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
-                "gos_rt_http_request_send" => Some("http::Response"),
+                "gos_rt_http_client_builder_max_redirects"
+                | "gos_rt_http_client_builder_timeout_ms" => Some("http::ClientBuilder"),
+                "gos_rt_http_client_builder_build" => Some("http::Client"),
+                "gos_rt_http_response_with_header" => Some("http::Response"),
                 "gos_rt_flag_set_string" => Some("flag::Cell::String"),
                 "gos_rt_flag_set_int" => Some("flag::Cell::Int"),
                 "gos_rt_flag_set_uint" => Some("flag::Cell::Uint"),
@@ -1517,11 +1628,25 @@ impl<'a> Builder<'a> {
             (Some("http::Proxy"), "forward") => Some("gos_rt_proxy_forward"),
             (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
             (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
+            (Some("http::Client"), "put") => Some("gos_rt_http_client_put"),
+            (Some("http::Client"), "options") => Some("gos_rt_http_client_options"),
+            (Some("http::Client"), "delete") => Some("gos_rt_http_client_delete"),
+            (Some("http::Client"), "head") => Some("gos_rt_http_client_head"),
+            (Some("http::Client"), "request") => Some("gos_rt_http_client_request"),
+            (Some("http::Client"), "request_bytes") => Some("gos_rt_http_client_request_bytes"),
+            (Some("http::ClientBuilder"), "max_redirects") => {
+                Some("gos_rt_http_client_builder_max_redirects")
+            }
+            (Some("http::ClientBuilder"), "timeout_ms") => {
+                Some("gos_rt_http_client_builder_timeout_ms")
+            }
+            (Some("http::ClientBuilder"), "build") => Some("gos_rt_http_client_builder_build"),
             (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
             (Some("http::Request"), "body") => Some("gos_rt_http_request_body"),
             (Some("http::Request"), "send") => Some("gos_rt_http_request_send"),
             (Some("http::Request"), "path") => Some("gos_rt_http_request_path"),
             (Some("http::Request"), "method") => Some("gos_rt_http_request_method"),
+            (Some("http::Response"), "with_header") => Some("gos_rt_http_response_with_header"),
             (Some("http::Response"), "status") => Some("gos_rt_http_response_status"),
             (Some("http::Response"), "body") => Some("gos_rt_http_response_body"),
             (Some("bufio::Scanner"), "scan") => Some("gos_rt_bufio_scanner_scan"),
@@ -1597,9 +1722,27 @@ impl<'a> Builder<'a> {
                     }
                 }
             } else {
+                // `Client::request` / `request_bytes` take Vec-shaped
+                // body/header args; coerce `[a, b]` array literals to
+                // the heap GosVec shape the runtime ABI expects (same
+                // treatment as the free `http::request` lowering).
+                let coerce_vec_args = matches!(
+                    rt,
+                    "gos_rt_http_client_request" | "gos_rt_http_client_request_bytes"
+                );
                 for arg in args {
                     let a = self.lower_expr(arg)?;
                     let a = self.auto_deref_cell(a, span);
+                    let a = if coerce_vec_args {
+                        let lt = self.locals[a.0 as usize].ty;
+                        if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
+                            self.coerce_array_to_vec(a, elem, len, span)
+                        } else {
+                            a
+                        }
+                    } else {
+                        a
+                    };
                     arg_operands.push(Operand::Copy(Place::local(a)));
                 }
             }
@@ -1687,13 +1830,24 @@ impl<'a> Builder<'a> {
                 "gos_rt_sync_map_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                 "gos_rt_sync_map_contains" => self.tcx.bool_ty(),
                 "gos_rt_sync_map_set" | "gos_rt_sync_map_delete" => self.tcx.unit(),
+                "gos_rt_http_request_send"
+                | "gos_rt_http_client_request"
+                | "gos_rt_http_client_request_bytes" => self.result_response_error_adt_ty(),
                 _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
             };
             let dest = self.fresh(pinned);
             let dest_kind: Option<&'static str> = match rt {
-                "gos_rt_http_client_get" | "gos_rt_http_client_post" => Some("http::Request"),
+                "gos_rt_http_client_get"
+                | "gos_rt_http_client_post"
+                | "gos_rt_http_client_put"
+                | "gos_rt_http_client_options"
+                | "gos_rt_http_client_delete"
+                | "gos_rt_http_client_head" => Some("http::Request"),
                 "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
-                "gos_rt_http_request_send" => Some("http::Response"),
+                "gos_rt_http_client_builder_max_redirects"
+                | "gos_rt_http_client_builder_timeout_ms" => Some("http::ClientBuilder"),
+                "gos_rt_http_client_builder_build" => Some("http::Client"),
+                "gos_rt_http_response_with_header" => Some("http::Response"),
                 "gos_rt_flag_set_string" => Some("flag::Cell::String"),
                 "gos_rt_flag_set_int" => Some("flag::Cell::Int"),
                 "gos_rt_flag_set_uint" => Some("flag::Cell::Uint"),

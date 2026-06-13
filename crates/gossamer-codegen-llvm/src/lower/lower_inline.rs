@@ -399,10 +399,19 @@ impl<'a> Lowerer<'a> {
         // Word-stride elements skip the header `elem_bytes` load: the
         // index scales by a constant 8 that folds into the address
         // mode, instead of a dependent load + mul on every access.
-        let off = if word_elem {
+        // Other vecs read the stride from the header and pick the
+        // load width to match: shims like `fs::read` / `crypto::
+        // rand_bytes` / HTTP `raw_bytes` hand out packed
+        // `elem_bytes == 1` byte buffers, where an i64-wide load
+        // would pull in neighbouring bytes (and read past the
+        // buffer tail on the last elements).
+        let loaded = if word_elem {
             let off = self.fresh();
             writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
-            off
+            let ea = self.vec_elem_addr(&vec_ptr, &off);
+            let loaded = self.fresh();
+            writeln!(self.out, "  {loaded} = load i64, ptr {ea}").unwrap();
+            loaded
         } else {
             let eb_addr = self.fresh();
             writeln!(
@@ -416,20 +425,38 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
             let off = self.fresh();
             writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
-            off
+            let ea = self.vec_elem_addr(&vec_ptr, &off);
+            let (byte_b, word_b, join_b) = (
+                format!("vg_byte_{s}"),
+                format!("vg_word_{s}"),
+                format!("vg_join_{s}"),
+            );
+            let is_byte = self.fresh();
+            writeln!(self.out, "  {is_byte} = icmp eq i64 {eb}, 1").unwrap();
+            writeln!(
+                self.out,
+                "  br i1 {is_byte}, label %{byte_b}, label %{word_b}"
+            )
+            .unwrap();
+            writeln!(self.out, "{byte_b}:").unwrap();
+            let b8 = self.fresh();
+            writeln!(self.out, "  {b8} = load i8, ptr {ea}").unwrap();
+            let b64 = self.fresh();
+            writeln!(self.out, "  {b64} = zext i8 {b8} to i64").unwrap();
+            writeln!(self.out, "  br label %{join_b}").unwrap();
+            writeln!(self.out, "{word_b}:").unwrap();
+            let w64 = self.fresh();
+            writeln!(self.out, "  {w64} = load i64, ptr {ea}").unwrap();
+            writeln!(self.out, "  br label %{join_b}").unwrap();
+            writeln!(self.out, "{join_b}:").unwrap();
+            let loaded = self.fresh();
+            writeln!(
+                self.out,
+                "  {loaded} = phi i64 [ {b64}, %{byte_b} ], [ {w64}, %{word_b} ]"
+            )
+            .unwrap();
+            loaded
         };
-        let dptr_addr = self.fresh();
-        writeln!(
-            self.out,
-            "  {dptr_addr} = getelementptr i8, ptr {vec_ptr}, i64 24"
-        )
-        .unwrap();
-        let dptr = self.fresh();
-        writeln!(self.out, "  {dptr} = load ptr, ptr {dptr_addr}").unwrap();
-        let ea = self.fresh();
-        writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
-        let loaded = self.fresh();
-        writeln!(self.out, "  {loaded} = load i64, ptr {ea}").unwrap();
         self.store_i64_as(&loaded, &dest_ty, &dest_slot);
         writeln!(self.out, "  br label %{cont}").unwrap();
         writeln!(self.out, "{dflt}:").unwrap();
@@ -487,10 +514,16 @@ impl<'a> Lowerer<'a> {
         // Word-stride elements skip the header `elem_bytes` load: the
         // index scales by a constant 8 that folds into the address
         // mode, instead of a dependent load + mul on every access.
-        let off = if word_elem {
+        // Other vecs match the store width to the header stride —
+        // an i64-wide store into a packed `elem_bytes == 1` byte
+        // buffer (`fs::read` / `crypto::rand_bytes` / HTTP
+        // `raw_bytes`) would clobber the seven neighbouring bytes
+        // and write past the buffer tail on the last elements.
+        if word_elem {
             let off = self.fresh();
             writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
-            off
+            let ea = self.vec_elem_addr(&vec_ptr, &off);
+            writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
         } else {
             let eb_addr = self.fresh();
             writeln!(
@@ -504,8 +537,33 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
             let off = self.fresh();
             writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
-            off
-        };
+            let ea = self.vec_elem_addr(&vec_ptr, &off);
+            let (byte_b, word_b) = (format!("vs_byte_{s}"), format!("vs_word_{s}"));
+            let is_byte = self.fresh();
+            writeln!(self.out, "  {is_byte} = icmp eq i64 {eb}, 1").unwrap();
+            writeln!(
+                self.out,
+                "  br i1 {is_byte}, label %{byte_b}, label %{word_b}"
+            )
+            .unwrap();
+            writeln!(self.out, "{byte_b}:").unwrap();
+            let v8 = self.fresh();
+            writeln!(self.out, "  {v8} = trunc i64 {val} to i8").unwrap();
+            writeln!(self.out, "  store i8 {v8}, ptr {ea}").unwrap();
+            writeln!(self.out, "  br label %{cont}").unwrap();
+            writeln!(self.out, "{word_b}:").unwrap();
+            writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
+        }
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{cont}:").unwrap();
+        let _ = destination;
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Emits the element address for a GosVec: loads the data
+    /// pointer from header offset 24 and offsets it by `off` bytes.
+    fn vec_elem_addr(&mut self, vec_ptr: &str, off: &str) -> String {
         let dptr_addr = self.fresh();
         writeln!(
             self.out,
@@ -516,12 +574,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  {dptr} = load ptr, ptr {dptr_addr}").unwrap();
         let ea = self.fresh();
         writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
-        writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
-        writeln!(self.out, "  br label %{cont}").unwrap();
-        writeln!(self.out, "{cont}:").unwrap();
-        let _ = destination;
-        emit_terminator_branch(&mut self.out, target);
-        Ok(())
+        ea
     }
 
     /// Store an i64 SSA value into `dest_slot` coerced to `dest_ty`.

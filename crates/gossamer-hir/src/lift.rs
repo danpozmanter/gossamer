@@ -36,11 +36,20 @@ use crate::tree::{
 #[must_use]
 pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) -> HirProgram {
     let env_ty = tcx.int_ty(gossamer_types::IntTy::I64);
+    let scalar_tys = ScalarTys {
+        unit: tcx.unit(),
+        boolean: tcx.bool_ty(),
+        i64: env_ty,
+        f64: tcx.float_ty(gossamer_types::FloatTy::F64),
+        character: tcx.char_ty(),
+        string: tcx.string_ty(),
+    };
     let mut lifter = Lifter {
         next_id: 0,
         lifted: Vec::new(),
         ids: HirIdGenerator::new(),
         env_ty,
+        scalar_tys,
     };
     for item in &mut program.items {
         if let HirItemKind::Fn(decl) = &mut item.kind {
@@ -211,6 +220,19 @@ struct Lifter {
     /// of capturing closures so the lifted body sees env as a
     /// pointer-sized register, not a byte / sub-word.
     env_ty: gossamer_types::Ty,
+    /// Scalar Ty handles for eta-expanding `[rust-bindings]`
+    /// references; minted once so the visitor does not need `tcx`.
+    scalar_tys: ScalarTys,
+}
+
+/// Pre-minted Ty handles for the binding-declared scalar types.
+struct ScalarTys {
+    unit: gossamer_types::Ty,
+    boolean: gossamer_types::Ty,
+    i64: gossamer_types::Ty,
+    f64: gossamer_types::Ty,
+    character: gossamer_types::Ty,
+    string: gossamer_types::Ty,
 }
 
 impl Lifter {
@@ -247,7 +269,13 @@ impl Lifter {
         // before we process the outer one.
         match &mut expr.kind {
             HirExprKind::Call { callee, args } => {
-                self.visit_expr(callee);
+                // A path used as the direct callee stays a direct
+                // call — only value-position references eta-expand,
+                // so skip the callee when it is a bare path (its
+                // visit was a no-op before eta-expansion existed).
+                if !matches!(callee.kind, HirExprKind::Path { .. }) {
+                    self.visit_expr(callee);
+                }
                 for arg in args {
                     self.visit_expr(arg);
                 }
@@ -351,6 +379,15 @@ impl Lifter {
             | HirExprKind::Placeholder => {}
         }
 
+        // A value-position reference to a `[rust-bindings]` function
+        // becomes an equivalent closure (`set_text` →
+        // `|a0| set_text(a0)`) so the closed-closure lift below gives
+        // it a real callable body on every tier; the inner call then
+        // flows through the standard binding-call lowering with its
+        // argument / return conversions, which a raw symbol
+        // reference would skip.
+        self.eta_expand_binding_ref(expr);
+
         if let HirExprKind::Closure { params, ret, body } = &expr.kind {
             let mut bound: HashSet<String> = HashSet::new();
             for param in params {
@@ -380,6 +417,95 @@ impl Lifter {
                 }
             }
         }
+    }
+
+    /// Ty for a binding-declared parameter / return. Scalars map to
+    /// their real types; tagged unions and handles flow as the same
+    /// ptr-sized i64 the MIR binding layer uses.
+    fn binding_ty(&self, t: &gossamer_resolve::BindingType) -> gossamer_types::Ty {
+        use gossamer_resolve::BindingType as B;
+        match t {
+            B::Unit => self.scalar_tys.unit,
+            B::Bool => self.scalar_tys.boolean,
+            B::I64 => self.scalar_tys.i64,
+            B::F64 => self.scalar_tys.f64,
+            B::Char => self.scalar_tys.character,
+            B::String => self.scalar_tys.string,
+            _ => self.env_ty,
+        }
+    }
+
+    /// Rewrites a value-position path that names a `[rust-bindings]`
+    /// function into the closure `|a0, ..| f(a0, ..)`. Direct callees
+    /// never reach here (the `Call` arm skips path callees), so only
+    /// genuine value uses pay the wrapper.
+    fn eta_expand_binding_ref(&mut self, expr: &mut HirExpr) {
+        let HirExprKind::Path { segments, .. } = &expr.kind else {
+            return;
+        };
+        // The AST→HIR lowering expands use-imported binding names to
+        // their full `module::item` spelling, so a binding reference
+        // always has 2+ segments here.
+        if segments.len() < 2 {
+            return;
+        }
+        let qualified = segments
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        let Some(item) = gossamer_resolve::lookup_external_item(&qualified) else {
+            return;
+        };
+        let span = expr.span;
+        let mut params = Vec::with_capacity(item.params.len());
+        let mut args = Vec::with_capacity(item.params.len());
+        for (index, binding_param) in item.params.iter().enumerate() {
+            let ty = self.binding_ty(binding_param);
+            let name = Ident::new(format!("__binding_arg{index}"));
+            params.push(HirParam {
+                pattern: HirPat {
+                    id: self.ids.next(),
+                    span,
+                    ty,
+                    kind: HirPatKind::Binding {
+                        name: name.clone(),
+                        mutable: false,
+                    },
+                },
+                ty,
+            });
+            args.push(HirExpr {
+                id: self.ids.next(),
+                span,
+                ty,
+                kind: HirExprKind::Path {
+                    segments: vec![name],
+                    def: None,
+                },
+            });
+        }
+        let ret_ty = self.binding_ty(&item.ret);
+        let callee = HirExpr {
+            id: self.ids.next(),
+            span,
+            ty: expr.ty,
+            kind: expr.kind.clone(),
+        };
+        let body = HirExpr {
+            id: self.ids.next(),
+            span,
+            ty: ret_ty,
+            kind: HirExprKind::Call {
+                callee: Box::new(callee),
+                args,
+            },
+        };
+        expr.kind = HirExprKind::Closure {
+            params,
+            ret: Some(ret_ty),
+            body: Box::new(body),
+        };
     }
 
     fn lift_closed(

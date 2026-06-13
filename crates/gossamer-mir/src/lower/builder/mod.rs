@@ -57,6 +57,9 @@ pub(crate) struct Builder<'a> {
     pub(crate) struct_defs: &'a HashMap<gossamer_resolve::DefId, String>,
     pub(crate) enums: &'a EnumIndex,
     pub(crate) impl_methods: &'a HashMap<String, Option<Ty>>,
+    /// Declared return types by callable name (free fns bare,
+    /// impl methods mangled). See `collect_fn_ret_names`.
+    pub(crate) fn_ret_names: &'a HashMap<String, Ty>,
     pub(crate) fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
     pub(crate) fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     pub(crate) consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
@@ -171,8 +174,6 @@ mod expr_field;
 mod expr_array;
 
 mod stdlib_json;
-
-mod stdlib_sql;
 
 mod stdlib_free;
 

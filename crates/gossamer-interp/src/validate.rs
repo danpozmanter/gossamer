@@ -433,6 +433,18 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_i(op_idx, dst_i)?;
                 check_i(op_idx, src_i)?;
             }
+            Op::CastScalar { dst, src, .. } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, src)?;
+            }
+            Op::CellNew { dst, src } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, src)?;
+            }
+            Op::CellTake { dst, cell } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, cell)?;
+            }
             Op::IntArrayGetI64 {
                 dst_i,
                 base,
@@ -1063,6 +1075,7 @@ mod tests {
             call_cache_count: 0,
             arith_cache_count: 0,
             field_cache_count: 0,
+            mut_ref_params: Vec::new(),
         }
     }
 

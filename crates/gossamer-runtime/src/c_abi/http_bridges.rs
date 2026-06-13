@@ -431,6 +431,8 @@ fn router_404_result() -> i128 {
         body: SyncRawPtr::new(alloc_cstring(b"not found")),
         headers: Vec::new(),
         body_bytes: None,
+        content_type: "text/plain; charset=utf-8".to_string(),
+        stream_handle: -1,
     }));
     crate::c_abi::vec::pack_result(0, resp as i64)
 }
@@ -491,6 +493,8 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
                     body: SyncRawPtr::new(alloc_cstring(b"forbidden")),
                     headers: Vec::new(),
                     body_bytes: None,
+                    content_type: "text/plain; charset=utf-8".to_string(),
+                    stream_handle: -1,
                 })) as i64,
             );
         }
@@ -508,6 +512,8 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
                         body: SyncRawPtr::new(body_cstr),
                         headers,
                         body_bytes: Some(bytes),
+                        content_type: mime.to_string(),
+                        stream_handle: -1,
                     })) as i64,
                 )
             }

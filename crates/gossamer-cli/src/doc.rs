@@ -9,6 +9,28 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::paths::read_source;
 
+/// Separates the generated head of a stdlib/language doc page from
+/// hand-maintained prose. `--emit-stdlib` rewrites only the head and
+/// keeps everything from the marker onward; `--check` compares only
+/// the head, so extended documentation lives in the page without
+/// tripping the drift gate.
+pub(crate) const HANDWRITTEN_MARKER: &str =
+    "<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->";
+
+/// Portion of a docs page above the handwritten marker (the whole
+/// page when no marker is present).
+fn generated_head(page: &str) -> &str {
+    page.split(HANDWRITTEN_MARKER).next().unwrap_or(page)
+}
+
+/// Generated body joined with the on-disk page's handwritten tail.
+fn merge_handwritten(body: &str, on_disk: &str) -> String {
+    on_disk.find(HANDWRITTEN_MARKER).map_or_else(
+        || body.to_string(),
+        |idx| format!("{body}{}", &on_disk[idx..]),
+    )
+}
+
 /// Emits one Markdown page per stdlib module under `out_dir`, plus
 /// one page per documented language feature under a sibling
 /// `language/` directory derived from `out_dir`'s parent. Both
@@ -32,14 +54,14 @@ pub(crate) fn cmd_emit_stdlib(out_dir: &Path, check: bool) -> Result<()> {
         for (slug, body) in &stdlib_pages {
             let path = out_dir.join(format!("{slug}.md"));
             let on_disk = fs::read_to_string(&path).unwrap_or_default();
-            if on_disk.trim_end() != body.trim_end() {
+            if generated_head(&on_disk).trim_end() != body.trim_end() {
                 drift.push(format!("{}", path.display()));
             }
         }
         for (slug, body) in &language_pages {
             let path = language_dir.join(format!("{slug}.md"));
             let on_disk = fs::read_to_string(&path).unwrap_or_default();
-            if on_disk.trim_end() != body.trim_end() {
+            if generated_head(&on_disk).trim_end() != body.trim_end() {
                 drift.push(format!("{}", path.display()));
             }
         }
@@ -60,11 +82,15 @@ pub(crate) fn cmd_emit_stdlib(out_dir: &Path, check: bool) -> Result<()> {
             .with_context(|| format!("creating {}", language_dir.display()))?;
         for (slug, body) in &stdlib_pages {
             let path = out_dir.join(format!("{slug}.md"));
-            fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
+            let on_disk = fs::read_to_string(&path).unwrap_or_default();
+            fs::write(&path, merge_handwritten(body, &on_disk))
+                .with_context(|| format!("writing {}", path.display()))?;
         }
         for (slug, body) in &language_pages {
             let path = language_dir.join(format!("{slug}.md"));
-            fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
+            let on_disk = fs::read_to_string(&path).unwrap_or_default();
+            fs::write(&path, merge_handwritten(body, &on_disk))
+                .with_context(|| format!("writing {}", path.display()))?;
         }
         println!(
             "doc: wrote {} stdlib pages to {}, {} language pages to {}",

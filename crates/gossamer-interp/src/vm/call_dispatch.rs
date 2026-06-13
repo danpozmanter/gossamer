@@ -146,8 +146,16 @@ impl Vm {
                 result
             }
             Global::Value(value) => match value {
-                Value::Builtin(inner) => (inner.call)(&args),
+                // Builtins / natives take aggregates by value —
+                // unwrap any `&mut` write-back cell so they see the
+                // plain aggregate (the unchanged value flows back to
+                // the caller through the cell afterwards).
+                Value::Builtin(inner) => {
+                    let args = crate::interp::unwrap_mut_cells(args);
+                    (inner.call)(&args)
+                }
                 Value::Native(inner) => {
+                    let args = crate::interp::unwrap_mut_cells(args);
                     let mut walker = self.walker.borrow_mut();
                     (inner.call)(&mut *walker, &args)
                 }
@@ -179,6 +187,7 @@ impl Vm {
         let mir_bodies = self.mir_bodies.clone();
         let tcx_snapshot = self.tcx_snapshot.clone();
         let enum_shape_defs = self.enum_shape_defs.clone();
+        let walker_proto = self.walker_proto.clone();
         crate::interp::pool().spawn(Box::new(move || {
             // Per-worker `Vm`, lazily built on first task. Reused
             // across every subsequent goroutine landing on this
@@ -195,12 +204,18 @@ impl Vm {
                 let vm_cell = cell.get_or_init(|| std::cell::RefCell::new(None));
                 let mut slot = vm_cell.borrow_mut();
                 if slot.is_none() {
-                    *slot = Some(Vm::with_globals(
-                        globals,
-                        mir_bodies,
-                        tcx_snapshot,
-                        enum_shape_defs,
-                    ));
+                    let vm = Vm::with_globals(globals, mir_bodies, tcx_snapshot, enum_shape_defs);
+                    if let Some(proto) = walker_proto {
+                        // Seed the worker's walker with the loaded fn
+                        // table and keep the proto so nested `go`
+                        // spawns from this worker propagate it.
+                        *vm.walker.borrow_mut() = (*proto).clone();
+                        let mut vm = vm;
+                        vm.walker_proto = Some(proto);
+                        *slot = Some(vm);
+                    } else {
+                        *slot = Some(vm);
+                    }
                 }
                 let vm = slot.as_mut().expect("THREAD_VM init");
                 if let Err(err) = vm.dispatch_call(&callee, args) {
@@ -218,7 +233,10 @@ impl Vm {
 
     pub(crate) fn dispatch_call(&self, callee: &Value, args: Vec<Value>) -> RuntimeResult<Value> {
         match callee {
-            Value::Builtin(inner) => (inner.call)(&args),
+            Value::Builtin(inner) => {
+                let args = crate::interp::unwrap_mut_cells(args);
+                (inner.call)(&args)
+            }
             Value::String(name) => {
                 let entry = self
                     .globals

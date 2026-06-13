@@ -58,6 +58,15 @@ pub mod vec_elem_kind {
     /// releases each element's guarded children, and `gos_rt_vec_push`
     /// retains them when the element bytes are copied in.
     pub const AGGR_GUARDED: u8 = 5;
+    /// Element is a multi-slot struct/tuple stored inline whose slots
+    /// embed heap pointers (runtime strings / nested vecs) OWNED by the
+    /// vec. The per-vec slot layout lives in the side table
+    /// ([`super::vec::vec_slot_children`]); `gos_rt_vec_free` deep-frees
+    /// each live child even when the vec was never iterated (the
+    /// early-`break` path), and `gos_rt_vec_push` retains the copied
+    /// slot's children. Set via [`super::vec::vec_set_slot_children`] by
+    /// runtime materializer shims — never by codegen.
+    pub const AGGR_OWNED: u8 = 6;
 }
 
 #[repr(C)]
@@ -117,6 +126,193 @@ pub(crate) fn vec_elem_meta(v: *const GosVec) -> *const i64 {
 
 pub(crate) fn vec_elem_meta_remove(v: *const GosVec) {
     VEC_ELEM_METAS.lock().remove(&(v as usize));
+    VEC_SLOT_CHILDREN.lock().remove(&(v as usize));
+}
+
+/// One owned heap child inside each element slot of an
+/// [`vec_elem_kind::AGGR_OWNED`] vec.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VecSlotChild {
+    /// Discriminant value under which the child word holds a live
+    /// pointer (`0` = Ok/Some side); negative means unconditional.
+    pub gate: i64,
+    /// Word index (8-byte units) of the discriminant within the slot.
+    /// Ignored when `gate` is negative.
+    pub disc_word: usize,
+    /// Word index of the child pointer within the slot.
+    pub word: usize,
+    /// Child kind — [`vec_elem_kind::STRING`] or [`vec_elem_kind::VEC`]
+    /// — selecting the free / retain routine.
+    pub kind: u8,
+}
+
+/// Per-vec owned-slot-children layouts, keyed by the stable `GosVec`
+/// header pointer. Only vecs tagged `vec_elem_kind::AGGR_OWNED` have
+/// entries; the tag byte gates every lookup. Entries are removed when
+/// the vec is reclaimed, so a reused header address cannot inherit a
+/// stale layout.
+static VEC_SLOT_CHILDREN: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<usize, &'static [VecSlotChild]>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+
+/// Slot-children layout of an `AGGR_OWNED` vec, or `None` for any
+/// other vec.
+pub fn vec_slot_children(v: *const GosVec) -> Option<&'static [VecSlotChild]> {
+    VEC_SLOT_CHILDREN.lock().get(&(v as usize)).copied()
+}
+
+/// Tags `v` as an [`vec_elem_kind::AGGR_OWNED`] vec and records where
+/// the owned heap children live inside each element slot, so
+/// `gos_rt_vec_free` deep-frees them even when the vec was never
+/// (or only partially) iterated.
+///
+/// Materializer shims MUST call this AFTER their construction pushes:
+/// a freshly `alloc_cstring`'d child's initial reference is the vec's
+/// own share, while `gos_rt_vec_push` retains the children of every
+/// slot pushed onto an already-tagged vec (the push-site source keeps
+/// its own share, mirroring the `AGGR_GUARDED` contract).
+///
+/// No-op for null / region vecs (region storage is freed wholesale at
+/// `arena_pop` and never walked).
+pub fn vec_set_slot_children(v: *mut GosVec, children: &'static [VecSlotChild]) {
+    if v.is_null() {
+        return;
+    }
+    // SAFETY: callers hand a live header they just allocated.
+    let vec = unsafe { &mut *v };
+    if vec_is_region(vec) {
+        return;
+    }
+    vec.elem_kind = vec_elem_kind::AGGR_OWNED;
+    VEC_SLOT_CHILDREN.lock().insert(v as usize, children);
+}
+
+/// Calls `f` with each live, non-null child pointer (and its kind)
+/// inside the element slot at `slot`, per the `AGGR_OWNED` layout.
+unsafe fn visit_slot_children(
+    slot: *const u8,
+    children: &[VecSlotChild],
+    mut f: impl FnMut(*mut u8, u8),
+) {
+    for c in children {
+        if c.gate >= 0 {
+            let disc = unsafe { slot.add(c.disc_word * 8).cast::<i64>().read_unaligned() };
+            if disc != c.gate {
+                continue;
+            }
+        }
+        let child = unsafe { slot.add(c.word * 8).cast::<*mut u8>().read_unaligned() };
+        if !child.is_null() {
+            f(child, c.kind);
+        }
+    }
+}
+
+/// Retain the owned children of the element slot at `slot` of the
+/// `AGGR_OWNED` vec `v` (a slot copy that now shares them).
+pub(crate) unsafe fn vec_retain_slot_children(v: *const GosVec, slot: *const u8) {
+    let Some(children) = vec_slot_children(v) else {
+        return;
+    };
+    unsafe {
+        visit_slot_children(slot, children, |child, kind| match kind {
+            vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_retain(child.cast()),
+            vec_elem_kind::VEC => vec_retain_header(child.cast()),
+            _ => {}
+        });
+    }
+}
+
+/// Release the owned children of every element of an `AGGR_OWNED`
+/// vec. Called by `gos_rt_vec_free` before the buffer is reclaimed,
+/// closing the early-`break` leak: slots the consumer never walked
+/// still drop their strings / nested vecs here.
+pub(crate) unsafe fn vec_release_owned_children(v: &GosVec) {
+    let Some(children) = vec_slot_children(v) else {
+        return;
+    };
+    if v.ptr.is_null() {
+        return;
+    }
+    let stride = v.elem_bytes as usize;
+    if stride == 0 {
+        return;
+    }
+    for i in 0..v.len.max(0) as usize {
+        unsafe {
+            visit_slot_children(v.ptr.add(i * stride), children, |child, kind| match kind {
+                vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_free(child.cast()),
+                vec_elem_kind::VEC => crate::c_abi::map::gos_rt_vec_free(child.cast()),
+                _ => {}
+            });
+        }
+    }
+}
+
+/// Bump a non-region `GosVec`'s strong count by one (the header-RC
+/// counterpart of `gos_rt_str_retain` for nested-vec children).
+pub(crate) unsafe fn vec_retain_header(v: *mut GosVec) {
+    if v.is_null() {
+        return;
+    }
+    let vec = unsafe { &mut *v };
+    if vec_is_region(vec) {
+        return;
+    }
+    // Headers from constructors that never wrote a count read 0;
+    // `gos_rt_vec_free` treats 0 and 1 identically ("last reference"),
+    // so a retain must land on 2 either way or the second release
+    // would free a live header.
+    let rc = vec_rc(vec).max(1);
+    vec_set_rc(vec, rc.saturating_add(1));
+}
+
+/// Propagates ownership-bearing element kinds from `src` to `out`
+/// after `out` received a raw copy of (some of) `src`'s slots:
+/// re-tags `out` and retains each copied slot's heap children so both
+/// vecs own their shares. Covers `STRING`, `VEC` and `AGGR_OWNED`
+/// element kinds; `AGGR_GUARDED` keeps its dedicated copy-blob path at
+/// the existing call sites. No-op for primitive / region / null vecs.
+pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosVec) {
+    if src.is_null() || out.is_null() {
+        return;
+    }
+    let s = unsafe { &*src };
+    let o = unsafe { &mut *out };
+    match s.elem_kind {
+        vec_elem_kind::STRING | vec_elem_kind::VEC if s.elem_bytes == 8 => {
+            o.elem_kind = s.elem_kind;
+            for i in 0..o.len.max(0) as usize {
+                let child = unsafe { o.ptr.add(i * 8).cast::<*mut u8>().read_unaligned() };
+                if child.is_null() {
+                    continue;
+                }
+                match s.elem_kind {
+                    vec_elem_kind::STRING => unsafe {
+                        crate::c_abi::string::gos_rt_str_retain(child.cast());
+                    },
+                    _ => unsafe { vec_retain_header(child.cast()) },
+                }
+            }
+        }
+        vec_elem_kind::AGGR_OWNED => {
+            if let Some(children) = vec_slot_children(src) {
+                vec_set_slot_children(out, children);
+                let stride = o.elem_bytes as usize;
+                if stride == 0 || o.ptr.is_null() {
+                    return;
+                }
+                for i in 0..o.len.max(0) as usize {
+                    unsafe { vec_retain_slot_children(out, o.ptr.add(i * stride)) };
+                }
+            } else {
+                // Layout unknown (cannot happen for live vecs; defensive):
+                // fall back to a shallow copy that never double-frees.
+                o.elem_kind = vec_elem_kind::PRIMITIVE;
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Tags `v` as holding guarded aggregate elements and records the
@@ -160,6 +356,48 @@ pub(crate) unsafe fn vec_release_guarded_elements(v: &GosVec) {
 #[inline]
 pub fn vec_is_region(v: &GosVec) -> bool {
     v._reserved[0] == VEC_REGION_FLAG
+}
+
+/// Reads element `idx` of `v` as an i64, honoring the header's
+/// `elem_bytes` (packed byte vecs zero-extend, word vecs read the
+/// full 8 bytes). `idx` must already be bounds-checked by the
+/// caller. 16-byte elements are regex-internal and never reach the
+/// scalar helpers; reading their first word is a safe fallback.
+pub(crate) unsafe fn vec_elem_load_i64(v: &GosVec, idx: i64) -> i64 {
+    let p = unsafe { v.ptr.add((idx as usize) * (v.elem_bytes as usize)) };
+    match v.elem_bytes {
+        1 => i64::from(unsafe { p.read() }),
+        2 => i64::from(unsafe { p.cast::<u16>().read_unaligned() }),
+        4 => i64::from(unsafe { p.cast::<u32>().read_unaligned() }),
+        _ => {
+            debug_assert!(
+                v.elem_bytes >= 8,
+                "vec_elem_load_i64: unexpected elem_bytes {}",
+                v.elem_bytes
+            );
+            unsafe { p.cast::<i64>().read_unaligned() }
+        }
+    }
+}
+
+/// Writes `value` to element `idx` of `v`, truncating to the
+/// header's `elem_bytes`. Same preconditions as
+/// [`vec_elem_load_i64`].
+pub(crate) unsafe fn vec_elem_store_i64(v: &GosVec, idx: i64, value: i64) {
+    let p = unsafe { v.ptr.add((idx as usize) * (v.elem_bytes as usize)) };
+    match v.elem_bytes {
+        1 => unsafe { p.write(value as u8) },
+        2 => unsafe { p.cast::<u16>().write_unaligned(value as u16) },
+        4 => unsafe { p.cast::<u32>().write_unaligned(value as u32) },
+        _ => {
+            debug_assert!(
+                v.elem_bytes >= 8,
+                "vec_elem_store_i64: unexpected elem_bytes {}",
+                v.elem_bytes
+            );
+            unsafe { p.cast::<i64>().write_unaligned(value) };
+        }
+    }
 }
 
 /// Strong refcount of a non-region Vec, stored as a little-endian `u16` in the
@@ -236,14 +474,19 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> 
         let mut buf: Vec<u8> = vec![0u8; bytes];
         let ptr = buf.as_mut_ptr();
         std::mem::forget(buf);
-        Box::into_raw(Box::new(GosVec {
+        // Ledger + initial strong count, symmetric with `alloc_vec_header`
+        // (gos_rt_vec_free always decrements the ledger).
+        crate::c_abi::ledger::vec_inc();
+        let mut v = GosVec {
             len: 0,
             cap,
             elem_bytes,
             elem_kind: vec_elem_kind::PRIMITIVE,
             _reserved: [0; 3],
             ptr: SyncRawPtr::new(ptr),
-        }))
+        };
+        vec_set_rc(&mut v, 1);
+        Box::into_raw(Box::new(v))
     })
 }
 
@@ -274,14 +517,18 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity_typed(
         let mut buf: Vec<u8> = vec![0u8; bytes];
         let ptr = buf.as_mut_ptr();
         std::mem::forget(buf);
-        Box::into_raw(Box::new(GosVec {
+        // Ledger + initial strong count, symmetric with `alloc_vec_header`.
+        crate::c_abi::ledger::vec_inc();
+        let mut v = GosVec {
             len: 0,
             cap,
             elem_bytes,
             elem_kind: kind,
             _reserved: [0; 3],
             ptr: SyncRawPtr::new(ptr),
-        }))
+        };
+        vec_set_rc(&mut v, 1);
+        Box::into_raw(Box::new(v))
     })
 }
 
@@ -313,14 +560,18 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
             std::mem::forget(buf);
             p
         };
-        Box::into_raw(Box::new(GosVec {
+        // Ledger + initial strong count, symmetric with `alloc_vec_header`.
+        crate::c_abi::ledger::vec_inc();
+        let mut v = GosVec {
             len,
             cap: len,
             elem_bytes,
             elem_kind: vec_elem_kind::PRIMITIVE,
             _reserved: [0; 3],
             ptr: SyncRawPtr::new(buf_ptr),
-        }))
+        };
+        vec_set_rc(&mut v, 1);
+        Box::into_raw(Box::new(v))
     })
 }
 
@@ -495,6 +746,11 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
                 unsafe { crate::c_abi::rc::gos_rt_aggr_retain_children(dst, meta) };
             }
         }
+        // Same sharing contract for owned-slot-children vecs: the source
+        // slot keeps its share, the vec's copy holds its own.
+        if vec.elem_kind == vec_elem_kind::AGGR_OWNED {
+            unsafe { vec_retain_slot_children(v, dst) };
+        }
     });
 }
 
@@ -554,6 +810,42 @@ pub extern "C" fn gos_rt_result_new_f64(disc: i64, payload: f64) -> i128 {
     pack_result(disc, payload.to_bits() as i64)
 }
 
+/// Converts a `[rust-bindings]` `*mut GosVariant` (the binding ABI's
+/// `Result` / `Option` wire shape, tag `1` = Ok/Some) into the
+/// runtime's packed i128 result (disc `0` = Ok/Some). String payloads
+/// arrive as bare NUL-terminated arena bytes and are re-allocated as
+/// header'd runtime strings; every other payload word passes through
+/// bit-exact (i64/bool/char values, f64 bits, GosVec / nested
+/// pointers).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_binding_variant_to_result(p: *const u8) -> i128 {
+    ffi_entry!(0i128, {
+        if p.is_null() {
+            return pack_result(1, 0);
+        }
+        // GosVariant layout (repr(C) in gossamer-binding):
+        // tag i32 | payload_len i32 | payload *mut GosVariantValue.
+        let tag = unsafe { *p.cast::<i32>() };
+        let payload_len = unsafe { *p.add(4).cast::<i32>() };
+        let payload_ptr = unsafe { *p.add(8).cast::<*const u8>() };
+        let disc = i64::from(tag != 1);
+        if payload_len <= 0 || payload_ptr.is_null() {
+            return pack_result(disc, 0);
+        }
+        // GosVariantValue layout: tag i32 | (pad) | data union at +8.
+        // Value tag 4 = string; see `gossamer-binding::native`.
+        let value_tag = unsafe { *payload_ptr.cast::<i32>() };
+        let word = unsafe { *payload_ptr.add(8).cast::<i64>() };
+        let payload = if value_tag == 4 && word != 0 {
+            let c = unsafe { std::ffi::CStr::from_ptr(word as *const std::ffi::c_char) };
+            super::string::alloc_cstring(c.to_bytes()) as i64
+        } else {
+            word
+        };
+        pack_result(disc, payload)
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_result_disc(r: i128) -> i64 {
     result_disc_of(r)
@@ -575,6 +867,28 @@ pub extern "C" fn gos_rt_result_payload(r: i128) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_result_payload_f64(r: i128) -> f64 {
     f64::from_bits(result_payload_of(r) as u64)
+}
+
+/// Payload extractor for payloads that are themselves a 2-word
+/// by-value enum (`Result<Option<T>, E>`, nested Results, inline
+/// user enums). Construction heap-copied the inner 2-word value and
+/// stored its address in the payload word; this loads it back by
+/// value so the destination local holds `[disc, payload]` directly.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_payload_i128(r: i128) -> i128 {
+    let addr = result_payload_of(r);
+    if addr == 0 {
+        return 0;
+    }
+    // SAFETY: the payload word of an enum-payload Result/Option is a
+    // pointer to the live 16-byte heap copy made at construction
+    // (`gos_rt_result_new` aggregate path).
+    unsafe {
+        let p = addr as usize as *const i64;
+        let lo = (*p) as u64 as u128;
+        let hi = (*p.add(1)) as u64 as u128;
+        ((hi << 64) | lo) as i128
+    }
 }
 
 /// `result.unwrap()` / `option.unwrap()`. Returns the payload on the happy

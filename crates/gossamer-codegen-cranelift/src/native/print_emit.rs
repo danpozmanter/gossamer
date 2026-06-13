@@ -340,7 +340,9 @@ pub(super) fn emit_per_arg_print(
                 intrinsics,
             )?,
             PrintKind::ErrorMessage => {
-                let error_msg_fn = intrinsics.extern_fn_by_name(module, "gos_rt_error_message")?;
+                // Display renders the colon-joined cause chain;
+                // `.message()` keeps `gos_rt_error_message`.
+                let error_msg_fn = intrinsics.extern_fn_by_name(module, "gos_rt_error_display")?;
                 let fref = module.declare_func_in_func(error_msg_fn, builder.func);
                 let call = builder.ins().call(fref, &[value]);
                 let msg = builder.inst_results(call)[0];
@@ -565,7 +567,9 @@ pub(super) fn emit_args_to_concat_string(
                 builder.ins().call(fref, &[s]);
             }
             PrintKind::ErrorMessage => {
-                let error_msg_fn = intrinsics.extern_fn_by_name(module, "gos_rt_error_message")?;
+                // Display renders the colon-joined cause chain;
+                // `.message()` keeps `gos_rt_error_message`.
+                let error_msg_fn = intrinsics.extern_fn_by_name(module, "gos_rt_error_display")?;
                 let err_ref = module.declare_func_in_func(error_msg_fn, builder.func);
                 let call = builder.ins().call(err_ref, &[value]);
                 let s = builder.inst_results(call)[0];

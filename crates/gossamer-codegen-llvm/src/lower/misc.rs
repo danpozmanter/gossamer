@@ -265,6 +265,42 @@ impl<'a> Lowerer<'a> {
         self.maybe_heap_copy_aggregate_with(arg, /* leak */ false)
     }
 
+    /// Heap-copies a 2-word by-value enum payload (sentinel
+    /// `Option` / `Result` or inline user enum) passed to
+    /// `gos_rt_result_new`, returning the heap address as an i64
+    /// SSA value. The payload word then carries a pointer that the
+    /// symmetric `gos_rt_result_payload_i128` extractor
+    /// dereferences. Without this, the i128 operand would truncate
+    /// to its low (discriminant) word at the i64 call boundary.
+    pub(crate) fn maybe_heap_copy_value_enum(&mut self, arg: &Operand) -> Option<String> {
+        let Operand::Copy(place) = arg else {
+            return None;
+        };
+        if !place.projection.is_empty() {
+            return None;
+        }
+        let local_ty = self.body.local_ty(place.local);
+        let is_value_enum = matches!(
+            self.tcx.kind(local_ty),
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX || def.local == u32::MAX - 1
+        ) || self.tcx.is_inline_enum_ty(local_ty);
+        if !is_value_enum {
+            return None;
+        }
+        declare_rt(&mut self.runtime_refs, "gos_rt_aggr_alloc");
+        let heap = self.fresh();
+        writeln!(self.out, "  {heap} = call ptr @gos_rt_aggr_alloc(i64 16)").unwrap();
+        let src = local_slot(place.local);
+        writeln!(
+            self.out,
+            "  call void @llvm.memcpy.p0.p0.i64(ptr {heap}, ptr {src}, i64 16, i1 false)"
+        )
+        .unwrap();
+        let heap_i64 = self.fresh();
+        writeln!(self.out, "  {heap_i64} = ptrtoint ptr {heap} to i64").unwrap();
+        Some(heap_i64)
+    }
+
     /// Same shape as [`Self::maybe_heap_copy_aggregate`] but routes the
     /// heap allocation through `gos_rt_aggr_alloc_leak` instead of
     /// the GC-tracked `gos_rt_aggr_alloc`. Used when the surviving
@@ -415,9 +451,6 @@ impl<'a> Lowerer<'a> {
         declare_rt(&mut self.runtime_refs, helper);
         let heap = self.fresh();
         writeln!(self.out, "  {heap} = call ptr @{helper}(i64 {bytes})").unwrap();
-        if !leak {
-            self.emit_gc_root_push(&heap);
-        }
         let src = local_slot(place.local);
         writeln!(
             self.out,
@@ -445,7 +478,23 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::Float(_)) => ConcatKind::Float,
                     Some(TyKind::String | TyKind::Ref { .. }) => ConcatKind::StrPtr,
                     Some(TyKind::Int(int_ty)) => {
-                        if int_ty_is_unsigned_llvm(*int_ty) {
+                        // Every ≤64-bit int lives as a signed i64 at
+                        // runtime and prints signed — the VM renders
+                        // `0u64 - 1` as `-1`. The one exception the
+                        // VM makes is display provenance: a value
+                        // produced by an explicit `as u64`/`as usize`
+                        // cast becomes `Value::Uint` and prints
+                        // unsigned. Mirror that statically: route a
+                        // local through the unsigned printer only
+                        // when all its writers are such casts.
+                        // u128 keeps the unsigned printer outright.
+                        let uint_provenance = int_width(*int_ty) <= 64
+                            && int_ty_is_unsigned_llvm(*int_ty)
+                            && p.projection.is_empty()
+                            && gossamer_mir::local_is_uint_cast(self.body, self.tcx, p.local);
+                        if uint_provenance
+                            || (int_ty_is_unsigned_llvm(*int_ty) && int_width(*int_ty) > 64)
+                        {
                             ConcatKind::Uint
                         } else {
                             ConcatKind::Int
@@ -624,6 +673,21 @@ impl<'a> Lowerer<'a> {
             return v.to_string();
         }
         tmp
+    }
+
+    /// Masks an i64 SSA value to the declared width of `target`
+    /// and extends it back to i64 by the target's signedness.
+    /// This is the single point where a narrow integer type's
+    /// width becomes observable under the i64 runtime model:
+    /// `as u8` zero-extends the low byte, `as i8` sign-extends it.
+    pub(crate) fn mask_to_int_width(&mut self, value: &str, target: IntTy) -> String {
+        let width = int_width(target);
+        let narrow = self.fresh();
+        writeln!(self.out, "  {narrow} = trunc i64 {value} to i{width}").unwrap();
+        let ext = if int_signed(target) { "sext" } else { "zext" };
+        let widened = self.fresh();
+        writeln!(self.out, "  {widened} = {ext} i{width} {narrow} to i64").unwrap();
+        widened
     }
 
     /// Inserts the LLVM cast that brings `value` (of type
@@ -835,11 +899,13 @@ impl<'a> Lowerer<'a> {
     /// string-byte reads without needing to mint a fresh
     /// interner entry.
     pub(crate) fn borrow_i64_ty(&self) -> Option<Ty> {
+        // Any ≤64-bit integer local works: they all render as
+        // `i64` and classify as `NumericKind::Int`, which is all
+        // callers use the borrowed Ty for.
         for decl in &self.body.locals {
-            if matches!(
-                self.tcx.kind(decl.ty),
-                Some(TyKind::Int(gossamer_types::IntTy::I64))
-            ) {
+            if let Some(TyKind::Int(i)) = self.tcx.kind(decl.ty)
+                && int_width(*i) <= 64
+            {
                 return Some(decl.ty);
             }
         }

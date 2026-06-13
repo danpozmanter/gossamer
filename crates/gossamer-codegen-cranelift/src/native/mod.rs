@@ -181,9 +181,6 @@ pub use bounds_check::*;
 mod cleanup_emit;
 pub use cleanup_emit::*;
 
-mod gc_root;
-pub use gc_root::*;
-
 mod name_lookup;
 pub use name_lookup::*;
 

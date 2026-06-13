@@ -315,14 +315,19 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
             std::mem::forget(buf);
             p
         };
-        let out = Box::into_raw(Box::new(GosVec {
+        // Ledger + initial strong count, symmetric with `alloc_vec_header`
+        // (gos_rt_vec_free always decrements the ledger).
+        crate::c_abi::ledger::vec_inc();
+        let mut cloned = GosVec {
             len: s.len,
             cap: s.len,
             elem_bytes: s.elem_bytes,
             elem_kind: s.elem_kind,
             _reserved: [0; 3],
             ptr: SyncRawPtr::new(data),
-        }));
+        };
+        crate::c_abi::vec::vec_set_rc(&mut cloned, 1);
+        let out = Box::into_raw(Box::new(cloned));
         // A clone of a guarded-aggregate vec shares every element's
         // copy-blob children with the source; register the same meta and
         // give the clone its own shares.
@@ -338,6 +343,10 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
                 }
             }
         }
+        // STRING / VEC / AGGR_OWNED elements: the raw byte copy above
+        // shares every element's heap children with the source; give
+        // the clone its own shares so both deep-frees are balanced.
+        unsafe { crate::c_abi::vec::vec_share_owned_elements(src, out) };
         out
     })
 }
@@ -431,7 +440,10 @@ pub unsafe extern "C" fn gos_rt_os_read_dir(path: *const c_char) -> *mut GosVec 
             }
             Err(_) => Vec::new(),
         };
-        let out = unsafe { gos_rt_vec_new(8) };
+        // STRING-typed: the vec owns the entry-name strings.
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::STRING)
+        };
         for name in entries {
             let cs = alloc_cstring(name.as_bytes()) as i64;
             unsafe {
@@ -1142,7 +1154,15 @@ pub unsafe extern "C" fn gos_rt_str_split(s: *const c_char, sep: *const c_char) 
         } else {
             s.split(sep).map(|p| alloc_cstring(p.as_bytes())).collect()
         };
-        let vec = unsafe { gos_rt_vec_with_capacity(8, parts.len() as i64) };
+        // STRING-typed: the vec owns the pieces, so `gos_rt_vec_free`
+        // reclaims them even when a consumer loop breaks early.
+        let vec = unsafe {
+            crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+                8,
+                parts.len() as i64,
+                crate::c_abi::vec::vec_elem_kind::STRING,
+            )
+        };
         for p in &parts {
             let pv = *p as i64;
             unsafe {
@@ -1204,7 +1224,14 @@ pub unsafe extern "C" fn gos_rt_str_lines(s: *const c_char) -> *mut GosVec {
             unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
         };
         let parts: Vec<*mut c_char> = s.lines().map(|l| alloc_cstring(l.as_bytes())).collect();
-        let vec = unsafe { gos_rt_vec_with_capacity(8, parts.len() as i64) };
+        // STRING-typed — same ownership contract as `gos_rt_str_split`.
+        let vec = unsafe {
+            crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+                8,
+                parts.len() as i64,
+                crate::c_abi::vec::vec_elem_kind::STRING,
+            )
+        };
         for p in &parts {
             let pv = *p as i64;
             unsafe {
@@ -1343,6 +1370,34 @@ pub unsafe extern "C" fn gos_rt_result_default_with(result: i128, closure: *cons
         }
         let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
         f(closure as i64, gos_rt_result_payload(result))
+    })
+}
+
+/// `result::default(fallback, result)` — returns the `Ok` payload,
+/// or `fallback` when the Result is `Err`. The returned `i64` is the
+/// unwrapped `T` (a scalar value or a pointer, depending on `T`).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_default(fallback: i64, result: i128) -> i64 {
+    ffi_entry!(0, {
+        if gos_rt_result_disc(result) == 0 {
+            gos_rt_result_payload(result)
+        } else {
+            fallback
+        }
+    })
+}
+
+/// `result::default(fallback, result)` specialised for f64 payloads:
+/// the stored payload word is reinterpreted as its IEEE-754 bit
+/// pattern, and the fallback rides the float register directly.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_default_f64(fallback: f64, result: i128) -> f64 {
+    ffi_entry!(0.0, {
+        if gos_rt_result_disc(result) == 0 {
+            f64::from_bits(gos_rt_result_payload(result) as u64)
+        } else {
+            fallback
+        }
     })
 }
 

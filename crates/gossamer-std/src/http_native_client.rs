@@ -729,6 +729,8 @@ mod tests {
             status: StatusCode(200),
             headers: HttpHeaders::new(),
             body: format!("hello {}", req.path).into_bytes(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         });
 
         let client = NativeClient::new();
@@ -757,6 +759,8 @@ mod tests {
                 status: StatusCode(201),
                 headers: HttpHeaders::new(),
                 body: b"created".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         });
 
@@ -782,6 +786,8 @@ mod tests {
                 status: StatusCode(200),
                 headers,
                 body: b"one two three".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         });
         let client = NativeClient::new();
@@ -800,6 +806,8 @@ mod tests {
                 status: StatusCode(204),
                 headers: HttpHeaders::new(),
                 body: Vec::new(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         });
         let client = NativeClient::new();

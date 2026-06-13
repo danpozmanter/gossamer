@@ -143,6 +143,8 @@ pub fn recoverer<H: Handler + std::panic::RefUnwindSafe + 'static>(inner: H) -> 
                     status: StatusCode(500),
                     headers,
                     body: b"internal server error".to_vec(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 }
             }
         }
@@ -228,6 +230,8 @@ pub fn cors<H: Handler + 'static>(config: CorsConfig, inner: H) -> impl Handler 
                 status: StatusCode(204),
                 headers,
                 body: Vec::new(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             };
         }
         let mut resp = inner.serve(req, params);
@@ -289,6 +293,8 @@ where
             status: StatusCode(401),
             headers,
             body: b"unauthorized".to_vec(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         }
     }
 }
@@ -404,6 +410,8 @@ fn payload_too_large() -> Response {
         status: StatusCode(413),
         headers: h,
         body: b"payload too large".to_vec(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 
@@ -443,6 +451,8 @@ fn gateway_timeout() -> Response {
         status: StatusCode(504),
         headers: h,
         body: b"gateway timeout".to_vec(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 
@@ -741,6 +751,8 @@ pub fn etag<H: Handler + 'static>(inner: H) -> impl Handler {
                 status: StatusCode(304),
                 headers: h,
                 body: Vec::new(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             };
         }
         resp.headers.insert("etag", &tag);
@@ -815,6 +827,8 @@ fn unauthorized_bearer(realm: &str, error: Option<&str>) -> Response {
         status: StatusCode(401),
         headers: h,
         body: b"unauthorized".to_vec(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 
@@ -922,6 +936,8 @@ fn too_many_requests() -> Response {
         status: StatusCode(429),
         headers: h,
         body: b"too many requests".to_vec(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 
@@ -967,6 +983,8 @@ mod tests {
             status: StatusCode(status),
             headers: Headers::new(),
             body: body.as_bytes().to_vec(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         }
     }
 
@@ -1091,6 +1109,8 @@ mod tests {
             status: StatusCode(200),
             headers: Headers::new(),
             body: payload_cloned.clone(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         };
         let wrapped = compress_gzip(64, inner);
         let mut r = req(Method::Get, "/x");
@@ -1125,6 +1145,8 @@ mod tests {
             status: StatusCode(200),
             headers: Headers::new(),
             body: payload_cloned.clone(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         };
         let wrapped = compress_gzip(64, inner);
         let resp = wrapped.serve(&req(Method::Get, "/x"), &Params::default());
@@ -1230,6 +1252,8 @@ mod tests {
                 status: StatusCode(200),
                 headers: h,
                 body: Vec::new(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         };
         let wrapped = security_headers(SecurityHeaders::strict(), inner);

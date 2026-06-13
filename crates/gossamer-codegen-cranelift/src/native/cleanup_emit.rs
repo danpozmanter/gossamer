@@ -214,7 +214,6 @@ pub(super) fn clone_aggregate_value(
     let bytes_v = builder.ins().iconst(types::I64, bytes as i64);
     let call = builder.ins().call(alloc_ref, &[bytes_v]);
     let dst = builder.inst_results(call)[0];
-    emit_root_push(module, builder, intrinsics, dst)?;
     let src_ptr = match value_type(src, builder) {
         t if t == ptr_ty => src,
         t if t == types::I64 && ptr_ty == types::I32 => builder.ins().ireduce(ptr_ty, src),

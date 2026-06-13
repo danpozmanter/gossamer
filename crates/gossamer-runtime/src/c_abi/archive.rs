@@ -73,8 +73,27 @@ unsafe fn read_name_data_pairs(v: *const GosVec) -> Vec<(String, Vec<u8>)> {
     out
 }
 
+/// Slot layout of [`build_entry_vec`] elements: the entry name string
+/// at word 0 and the data byte-vec at word 1, both owned by the vec.
+static ENTRY_SLOT_CHILDREN: [crate::c_abi::vec::VecSlotChild; 2] = [
+    crate::c_abi::vec::VecSlotChild {
+        gate: -1,
+        disc_word: 0,
+        word: 0,
+        kind: crate::c_abi::vec::vec_elem_kind::STRING,
+    },
+    crate::c_abi::vec::VecSlotChild {
+        gate: -1,
+        disc_word: 0,
+        word: 1,
+        kind: crate::c_abi::vec::vec_elem_kind::VEC,
+    },
+];
+
 /// Builds the `[(String, [u8], bool)]` result Vec: 24-byte inline
-/// 3-slot elements `[name_ptr, data_vec_ptr, is_dir]`.
+/// 3-slot elements `[name_ptr, data_vec_ptr, is_dir]`. The vec owns
+/// the name strings and data vecs (slot-children layout registered
+/// after the pushes), so `gos_rt_vec_free` deep-frees them.
 fn build_entry_vec(entries: &[(String, Vec<u8>, bool)]) -> *mut GosVec {
     let v = unsafe { gos_rt_vec_with_capacity(24, entries.len() as i64) };
     for (name, data, is_dir) in entries {
@@ -85,6 +104,7 @@ fn build_entry_vec(entries: &[(String, Vec<u8>, bool)]) -> *mut GosVec {
         ];
         unsafe { gos_rt_vec_push(v, tup.as_ptr().cast::<u8>()) };
     }
+    crate::c_abi::vec::vec_set_slot_children(v, &ENTRY_SLOT_CHILDREN);
     v
 }
 

@@ -268,7 +268,7 @@ impl<'a> Builder<'a> {
             _ => {
                 let handler_ty = self.locals[handler_local.0 as usize].ty;
                 let handler_struct = self.struct_name_of(handler_ty)?;
-                format!("{handler_struct}::serve")
+                self.handler_dispatch_symbol(format!("{handler_struct}::serve"))
             }
         };
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -281,8 +281,14 @@ impl<'a> Builder<'a> {
             },
             span,
         );
-        let unit_ty = self.tcx.unit();
-        let dest = self.fresh(unit_ty);
+        // The runtime shim returns the packed `Result<(), Error>`
+        // directly: `Err` on bind failure, `Ok(())` when the accept
+        // loop exits. Typing the destination as the Result ADT keeps
+        // `match http::serve(..) { Err(e) => println!("{}", e) }`
+        // lowering with a DynError-typed `e` instead of a void
+        // binding (the LLVM `sext void` regression).
+        let result_ty = self.result_unit_error_adt_ty();
+        let dest = self.fresh(result_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str("gos_rt_http_serve".to_string())),
@@ -309,7 +315,7 @@ impl<'a> Builder<'a> {
         let handler_local = self.lower_expr(handler_expr)?;
         let handler_ty = self.locals[handler_local.0 as usize].ty;
         let handler_struct = self.struct_name_of(handler_ty)?;
-        let serve_fn_name = format!("{handler_struct}::serve");
+        let serve_fn_name = self.handler_dispatch_symbol(format!("{handler_struct}::serve"));
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let fn_addr_local = self.fresh(i64_ty);
         self.emit_assign(
@@ -320,8 +326,9 @@ impl<'a> Builder<'a> {
             },
             span,
         );
-        let unit_ty = self.tcx.unit();
-        let dest = self.fresh(unit_ty);
+        // Same Result-typed destination shape as `lower_http_serve`.
+        let result_ty = self.result_unit_error_adt_ty();
+        let dest = self.fresh(result_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str("gos_rt_http2_bind_and_run_h2c".to_string())),
@@ -548,6 +555,11 @@ impl<'a> Builder<'a> {
             Rvalue::Use(Operand::Const(ConstValue::Int(0))),
             span,
         );
+        // Pin the dest to the i128 Result/Option representation even
+        // when inference left `ty` an unresolved `Var` (else the
+        // i128 truncates through a `ptr` slot) — mirrors
+        // `lower_result_ctor`.
+        let ty = self.result_repr_ty(ty);
         let dest = self.fresh(ty);
         self.emit_assign(
             Place::local(dest),

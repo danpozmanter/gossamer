@@ -831,6 +831,8 @@ where
                 status: StatusCode(500),
                 headers: Headers::new(),
                 body: b"internal server error".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             },
         };
 
@@ -890,6 +892,17 @@ where
     H: Handler + Clone,
 {
     let listener = std::net::TcpListener::bind(addr).map_err(Error::Io)?;
+    run_h2c(listener, handler, config)
+}
+
+/// Runs the h2c accept loop over an already-bound listener. Split
+/// from [`bind_and_run_h2c`] so callers that must report a bind
+/// failure synchronously (the interpreter's `http::serve_h2c`)
+/// can bind first and hand the listener over.
+pub fn run_h2c<H>(listener: std::net::TcpListener, handler: H, config: Config) -> Result<(), Error>
+where
+    H: Handler + Clone,
+{
     listener.set_nonblocking(false).map_err(Error::Io)?;
     loop {
         let (stream, _peer) = listener.accept().map_err(Error::Io)?;
@@ -1123,6 +1136,8 @@ mod tests {
             status: StatusCode(200),
             headers: Headers::new(),
             body: Vec::new(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         });
         let r = h.serve(Request {
             method: Method::Get,

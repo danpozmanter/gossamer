@@ -748,6 +748,8 @@ fn ok_handler(_req: Request) -> Response {
             h
         },
         body: b"ok".to_vec(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 
@@ -760,6 +762,8 @@ fn echo_handler(req: Request) -> Response {
             h
         },
         body: req.body,
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 
@@ -782,6 +786,8 @@ fn header_dump_handler(req: Request) -> Response {
         status: StatusCode(200),
         headers: Headers::new(),
         body: body.into_bytes(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 
@@ -803,6 +809,8 @@ fn request_trailer_observer(req: Request) -> Response {
         status: StatusCode(200),
         headers,
         body: body.into_bytes(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 

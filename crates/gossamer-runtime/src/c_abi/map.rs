@@ -1056,7 +1056,6 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
             return;
         }
         crate::c_abi::ledger::vec_dec();
-        crate::c_abi::vec::vec_elem_meta_remove(v);
         let boxed = unsafe { Box::from_raw(v) };
         if !boxed.ptr.is_null() && boxed.cap > 0 {
             // Deep-free pointer-bearing element payloads BEFORE
@@ -1069,6 +1068,12 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
             // buffer goes away.
             if boxed.elem_kind == vec_elem_kind::AGGR_GUARDED {
                 unsafe { crate::c_abi::vec::vec_release_guarded_elements(&boxed) };
+            }
+            // Owned-slot-children elements (materializer shims): free
+            // each live embedded string / nested vec, including slots a
+            // consumer loop never reached (the early-`break` path).
+            if boxed.elem_kind == vec_elem_kind::AGGR_OWNED {
+                unsafe { crate::c_abi::vec::vec_release_owned_children(&boxed) };
             }
             if boxed.elem_kind != vec_elem_kind::PRIMITIVE && boxed.elem_bytes as usize == 8 {
                 let count = boxed.len.max(0) as usize;
@@ -1111,6 +1116,11 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
                 let _ = Vec::from_raw_parts(boxed.ptr.as_ptr(), bytes, bytes);
             }
         }
+        // Side-table entries are keyed by the header address `boxed`
+        // still occupies; removal must run AFTER the deep-free walks
+        // above (which look the metas up by that address) and before
+        // the header drops, so a reused address cannot inherit them.
+        crate::c_abi::vec::vec_elem_meta_remove(v);
         drop(boxed);
     });
 }
@@ -1203,7 +1213,9 @@ pub unsafe extern "C" fn gos_rt_map_values_i64(m: *const GosMap) -> *mut GosVec 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_keys_str(m: *const GosMap) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let out = unsafe { gos_rt_vec_new(8) };
+        // STRING-typed: the snapshot owns its key strings, so
+        // `gos_rt_vec_free` reclaims them even on early `break`.
+        let out = unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(8, vec_elem_kind::STRING) };
         if m.is_null() {
             return out;
         }
@@ -1236,7 +1248,8 @@ pub unsafe extern "C" fn gos_rt_map_keys_str(m: *const GosMap) -> *mut GosVec {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_values_str(m: *const GosMap) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let out = unsafe { gos_rt_vec_new(8) };
+        // STRING-typed — same ownership contract as `gos_rt_map_keys_str`.
+        let out = unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(8, vec_elem_kind::STRING) };
         if m.is_null() {
             return out;
         }

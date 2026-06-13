@@ -328,34 +328,6 @@ pub(super) fn lower_statement(
                 ir::immediates::Offset32::new(0),
             );
         }
-        // GcWriteBarrier: emit a call to the runtime's barrier
-        // entry point so the concurrent collector's mark phase
-        // greys the target GcRef. The runtime helper takes a u32
-        // GcRef index (the flat-ABI shape); only i64-encoded
-        // value operands reach this path. Raw pointer-typed
-        // values (Vec / String / HashMap / etc) are tracked
-        // through the GC's allocation registry without an
-        // explicit barrier.
-        StatementKind::GcWriteBarrier { value, .. } => {
-            let operand_ty = operand_cl_type(body, tcx, value, module);
-            if operand_ty == Some(types::I64) {
-                let v = lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    value,
-                    Some(types::I64),
-                    intrinsics,
-                )?;
-                let truncated = builder.ins().ireduce(types::I32, v);
-                let barrier_fn =
-                    intrinsics.extern_fn(module, "gos_rt_write_barrier", &[types::I32], &[])?;
-                let fref = module.declare_func_in_func(barrier_fn, builder.func);
-                let _ = builder.ins().call(fref, &[truncated]);
-            }
-        }
     }
     Ok(())
 }
@@ -372,16 +344,9 @@ pub(super) fn lower_terminator(
     terminator: &Terminator,
     intrinsics: &mut IntrinsicContext,
     src_block: u32,
-    shadow_frame_var: Variable,
-    raw_shadow_frame_var: Variable,
 ) -> Result<()> {
     match terminator {
         Terminator::Goto { target } => {
-            // Loop-back-edge safepoint elided — see the matching
-            // comment in the block-prefix lowering. Allocation-
-            // driven safepoint dispatch keeps the collector
-            // responsive without an opaque runtime call on every
-            // iteration that would block inner-loop vectorisation.
             let _ = src_block;
             let block = blocks[&target.as_u32()];
             builder.ins().jump(block, &[]);
@@ -391,12 +356,6 @@ pub(super) fn lower_terminator(
             // a per-call shadow stack (see the matching note in
             // `lowering_body::lower_body`). Backtraces come from real
             // stack unwinding on panic / SIGQUIT.
-            // The tracing-GC shadow stacks (legacy GcRef-handle and
-            // raw-pointer) are retired in favour of reference counting,
-            // so there is nothing to restore at return. The prologue no
-            // longer pushes/saves, and emitting these FFI calls on every
-            // return is dead work that dominates deep-recursion cost.
-            let _ = (shadow_frame_var, raw_shadow_frame_var);
             // Emit cleanup calls for every owning heap-typed local
             // identified by `gossamer_mir::plan_cleanup`. Each entry
             // is a `(local, free_fn)` pair where the local was
@@ -405,8 +364,7 @@ pub(super) fn lower_terminator(
             // escape analysis confirmed the value never leaves this
             // body. Without this loop the `_free` symbols ship in
             // the runtime but are never called — every owning Vec /
-            // Channel leaks to process exit (C2 in
-            // `~/dev/contexts/lang/adversarial_analysis.md`).
+            // Channel leaks to process exit.
             let cleanup = gossamer_mir::plan_cleanup(body);
             if !cleanup.is_empty() {
                 let ptr_ty = module.target_config().pointer_type();
@@ -480,13 +438,6 @@ pub(super) fn lower_terminator(
                             ir::immediates::Offset32::new(off),
                         );
                     }
-                    // Aggregate-return: push the heap copy onto the
-                    // shadow stack AFTER the function's restore so
-                    // the entry persists into the caller's frame.
-                    // The caller's own `gos_rt_gc_root_restore` at
-                    // its return will pop this entry alongside its
-                    // own pushes.
-                    emit_root_push(module, builder, intrinsics, heap)?;
                     builder.ins().return_(&[heap]);
                 }
             } else {

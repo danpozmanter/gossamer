@@ -179,6 +179,9 @@ impl<'a> Builder<'a> {
             if let Some(local) = self.try_lower_option_call(&joined, args, ty, span) {
                 return Some(local);
             }
+            if let Some(local) = self.try_lower_combinator_call(&joined, args, ty, span) {
+                return Some(local);
+            }
         }
         // When the callee's `DefId` is known and its declared
         // return type is on record, prefer the callee's return

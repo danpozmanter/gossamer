@@ -88,8 +88,20 @@ pub fn dispatch_runner_if_needed(args: &[OsString]) -> DispatchOutcome {
     let Ok(manifest_text) = std::fs::read_to_string(&manifest_path) else {
         return DispatchOutcome::InProcess;
     };
-    let Ok(manifest) = Manifest::parse(&manifest_text) else {
-        return DispatchOutcome::InProcess;
+    // A present-but-malformed manifest is a hard error, never a
+    // silent "no bindings": a bare `id = "name"` used to skip the
+    // binding runner here while check/test kept passing, leaving
+    // every binding call unbound at runtime.
+    let manifest = match Manifest::parse(&manifest_text) {
+        Ok(m) => m,
+        Err(err) => {
+            return DispatchOutcome::Failed(
+                gossamer_driver::binding_runner::BindingRunnerError::Manifest(format!(
+                    "{}: {err}",
+                    manifest_path.display()
+                )),
+            );
+        }
     };
     if manifest.rust_bindings.is_empty() {
         return DispatchOutcome::InProcess;
@@ -215,8 +227,16 @@ pub fn ensure_external_signatures() -> Result<usize, BindingRunnerError> {
     let Ok(manifest_text) = std::fs::read_to_string(&manifest_path) else {
         return Ok(0);
     };
-    let Ok(manifest) = Manifest::parse(&manifest_text) else {
-        return Ok(0);
+    // Mirror `dispatch_runner_if_needed`: a malformed manifest must
+    // not silently degrade to "no bindings".
+    let manifest = match Manifest::parse(&manifest_text) {
+        Ok(m) => m,
+        Err(err) => {
+            return Err(BindingRunnerError::Manifest(format!(
+                "{}: {err}",
+                manifest_path.display()
+            )));
+        }
     };
     if manifest.rust_bindings.is_empty() {
         return Ok(0);

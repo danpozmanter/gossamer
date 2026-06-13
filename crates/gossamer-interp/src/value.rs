@@ -116,6 +116,14 @@ pub enum Value {
     /// `w.upgrade()` yields `Some` while a strong reference survives and
     /// `None` once the last one is dropped.
     Weak(WeakValue),
+    /// Write-back cell carrying a `&mut Vec<T>` / `&mut [T]` call
+    /// argument. The caller wraps the aggregate at the call site,
+    /// the callee unwraps it at frame entry and stores the final
+    /// parameter value back on return, and the caller then reads it
+    /// out — write-through `&mut` parameter semantics on top of the
+    /// VM's clone-on-write value model. Never escapes the call
+    /// protocol: no user-visible op ever observes a `MutCell`.
+    MutCell(Arc<parking_lot::Mutex<Value>>),
     /// Poisoned / uninitialised sentinel.
     Void,
 }
@@ -927,6 +935,10 @@ impl Value {
     pub fn to_raw(&self) -> GossamerValue {
         match self {
             Self::NativeEnum(o) => native_enum_to_variant(o).to_raw(),
+            // Write-back cells never escape the call protocol; if a
+            // boundary serialises one anyway, its current inner value
+            // is the only meaningful payload.
+            Self::MutCell(c) => c.lock().to_raw(),
             Self::Unit => from_singleton(SINGLETON_UNIT),
             Self::Bool(false) => from_singleton(SINGLETON_FALSE),
             Self::Bool(true) => from_singleton(SINGLETON_TRUE),
@@ -1071,6 +1083,12 @@ impl fmt::Display for Value {
         // byte-identical text. the parity plan.
         match self {
             Self::NativeEnum(o) => fmt::Display::fmt(&native_enum_to_variant(o), out),
+            // Cells render as their inner value — they are a call-
+            // protocol artifact, never a user-visible shape.
+            Self::MutCell(c) => {
+                let inner = c.lock().clone();
+                fmt::Display::fmt(&inner, out)
+            }
             Self::Unit => out.write_str(gossamer_runtime::builtins::format_unit()),
             Self::Bool(b) => out.write_str(gossamer_runtime::builtins::format_bool(*b)),
             Self::Int(i) => out.write_str(&gossamer_runtime::builtins::format_int(*i)),
@@ -1095,13 +1113,12 @@ impl fmt::Display for Value {
                 if inner.name == "<stub>" {
                     return out.write_str("<value>");
                 }
-                // `errors::Error` prints as its message field so
-                // user code that surfaces an error via `?`
-                // propagation or `format!("{}", e)` matches the
-                // documented behaviour (the runtime's
-                // `gos_rt_error_message`-equivalent path). Other
-                // structs keep the default `Name { f: v, … }`
-                // shape used everywhere else.
+                // `errors::Error` prints Go-style as its colon-joined
+                // cause chain ("outer: mid: root") so `format!("{}", e)`
+                // and `?`-surfaced errors match the compiled tiers'
+                // `gos_rt_error_display` path. `.message()` stays
+                // top-level-only. Other structs keep the default
+                // `Name { f: v, … }` shape used everywhere else.
                 if inner.name == "errors::Error" {
                     if let Some(msg) = inner
                         .fields
@@ -1109,7 +1126,37 @@ impl fmt::Display for Value {
                         .find(|(n, _)| n.name.as_str() == "message")
                         .map(|(_, v)| v.clone())
                     {
-                        return write!(out, "{msg}");
+                        write!(out, "{msg}")?;
+                        let mut cursor = inner
+                            .fields
+                            .iter()
+                            .find(|(n, _)| n.name.as_str() == "cause")
+                            .map(|(_, v)| v.clone());
+                        while let Some(Self::Variant(link)) = cursor {
+                            if link.name != "Some" || link.fields.is_empty() {
+                                break;
+                            }
+                            let Self::Struct(cause) = &link.fields[0] else {
+                                break;
+                            };
+                            if cause.name != "errors::Error" {
+                                break;
+                            }
+                            let Some((_, m)) = cause
+                                .fields
+                                .iter()
+                                .find(|(n, _)| n.name.as_str() == "message")
+                            else {
+                                break;
+                            };
+                            write!(out, ": {m}")?;
+                            cursor = cause
+                                .fields
+                                .iter()
+                                .find(|(n, _)| n.name.as_str() == "cause")
+                                .map(|(_, v)| v.clone());
+                        }
+                        return Ok(());
                     }
                 }
                 write_struct(out, inner.name, &inner.fields)

@@ -35,28 +35,18 @@ pub(crate) fn lex_comment(cursor: &mut Cursor<'_>) -> CommentOutcome {
 }
 
 /// Lexes a `/* ... */` block comment, consuming up to and including the
-/// closing `*/`. Block comments **nest**: `/* a /* b */ c */` is a
-/// single comment. Returns `Unterminated` if the input ends before
-/// every open `/*` has been closed.
+/// closing `*/`. Block comments do **not** nest (SPEC §"Comments"):
+/// the first `*/` terminates the comment regardless of any `/*`
+/// sequences inside it. Returns `Unterminated` if the input ends
+/// before the closing `*/`.
 fn lex_block_comment(cursor: &mut Cursor<'_>) -> CommentOutcome {
     cursor.bump();
     cursor.bump();
-    let mut depth: usize = 1;
     while !cursor.is_eof() {
         let current = cursor.bump().unwrap_or(EOF_CHAR);
-        match (current, cursor.peek()) {
-            ('/', '*') => {
-                cursor.bump();
-                depth += 1;
-            }
-            ('*', '/') => {
-                cursor.bump();
-                depth -= 1;
-                if depth == 0 {
-                    return CommentOutcome::Lexed(TokenKind::BlockComment);
-                }
-            }
-            _ => {}
+        if current == '*' && cursor.peek() == '/' {
+            cursor.bump();
+            return CommentOutcome::Lexed(TokenKind::BlockComment);
         }
     }
     CommentOutcome::Unterminated

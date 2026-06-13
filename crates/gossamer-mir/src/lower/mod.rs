@@ -163,6 +163,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     let enums = collect_enum_variants(program);
     register_inline_enums(program, tcx);
     let impl_methods = collect_impl_methods(program);
+    let fn_ret_names = collect_fn_ret_names(program);
     let fn_returns = collect_fn_returns(program);
     let fn_inputs = collect_fn_inputs(program);
     let consts = collect_const_values(program);
@@ -177,6 +178,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             &struct_defs,
             &enums,
             &impl_methods,
+            &fn_ret_names,
             &fn_returns,
             &fn_inputs,
             &consts,
@@ -206,6 +208,16 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         insert_vec_elem_metas(body, tcx);
         insert_early_releases(body, tcx);
         hoist_loop_carried_releases(body, tcx);
+        if std::env::var("GOS_DUMP_MIR_RC").is_ok() {
+            eprintln!("=== MIR(post-rc) {} ===", body.name);
+            for block in &body.blocks {
+                eprintln!("  bb{}:", block.id.as_u32());
+                for stmt in &block.stmts {
+                    eprintln!("    {:?}", stmt.kind);
+                }
+                eprintln!("    term: {:?}", block.terminator);
+            }
+        }
     }
     #[cfg(debug_assertions)]
     crate::verify::debug_verify_program(&bodies, tcx);

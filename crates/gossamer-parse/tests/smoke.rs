@@ -164,3 +164,45 @@ fn nested_generics_closing_shift_right_parses() {
     );
     assert_eq!(sf.items.len(), 1, "expected exactly one item (`fn f`)");
 }
+
+/// Regression: the match-scrutinee / loop-condition struct-literal
+/// restriction must be suspended inside delimited sub-expressions —
+/// call arguments, parentheses, index brackets, array literals, and
+/// blocks. `match http::serve("addr", App { }) { .. }` used to fail
+/// with "unexpected `{`, expected `)` to close argument list".
+#[test]
+fn struct_literal_in_delimited_scrutinee_positions_parses() {
+    let source = concat!(
+        "struct App { n: i64 }\n",
+        "fn pick(a: App) -> i64 { a.n }\n",
+        "fn f() -> i64 {\n",
+        "    match pick(App { n: 1 }) {\n",
+        "        1 => 10,\n",
+        "        _ => 0,\n",
+        "    }\n",
+        "}\n",
+        "fn g() -> i64 {\n",
+        "    if pick(App { n: 2 }) == 2 { 1 } else { 0 }\n",
+        "}\n",
+        "fn h() -> i64 {\n",
+        "    while pick(App { n: 0 }) == 99 { }\n",
+        "    match (pick(App { n: 3 }), [pick(App { n: 4 })]) {\n",
+        "        (3, _) => 3,\n",
+        "        _ => 0,\n",
+        "    }\n",
+        "}\n",
+    );
+    let mut map = SourceMap::new();
+    let file = map.add_file("struct_lit_scrutinee.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    for diag in &diags {
+        eprintln!("  {diag}");
+    }
+    assert!(
+        diags.is_empty(),
+        "struct literals inside delimited scrutinee sub-expressions must parse; \
+         got {} diag(s)",
+        diags.len()
+    );
+    assert_eq!(sf.items.len(), 5, "expected five items");
+}

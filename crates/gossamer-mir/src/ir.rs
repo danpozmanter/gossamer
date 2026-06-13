@@ -157,7 +157,7 @@ pub enum StatementKind {
     /// Marks `local` as live. Emitted at block entry for temporaries.
     StorageLive(Local),
     /// Marks `local` as dead. Emitted when a temporary goes out of
-    /// scope so the GC doesn't spuriously trace it.
+    /// scope.
     StorageDead(Local),
     /// Sets the active discriminant of an enum place to `variant`.
     SetDiscriminant {
@@ -165,18 +165,6 @@ pub enum StatementKind {
         place: Place,
         /// Variant index within the enum's declaration order.
         variant: u32,
-    },
-    /// GC write barrier recording a pointer store for the concurrent
-    /// mark phase. `place` is the mutated object; `value` is the
-    /// reference being stored. The lowerer must emit this for **every**
-    /// field or index assignment that may store a heap pointer so that
-    /// both the interpreter and the native backend share the same
-    /// collector invariants.
-    GcWriteBarrier {
-        /// Destination being mutated.
-        place: Place,
-        /// Reference that was just written.
-        value: Operand,
     },
     /// No-op preserved for alignment with rustc-style MIR dumps.
     Nop,
@@ -467,4 +455,65 @@ pub enum UnOp {
     Neg,
     /// `!x`.
     Not,
+}
+
+/// Returns `true` when every write to `local` is an `as u64` /
+/// `as usize` cast result (or a copy of another such local) — the
+/// static analog of the VM's `Value::Uint` display provenance, used
+/// by the compiled backends to decide between the signed and the
+/// unsigned integer printer.
+#[must_use]
+pub fn local_is_uint_cast(body: &Body, tcx: &gossamer_types::TyCtxt, local: Local) -> bool {
+    fn is_uint_ty(tcx: &gossamer_types::TyCtxt, ty: Ty) -> bool {
+        matches!(
+            tcx.kind(ty),
+            Some(gossamer_types::TyKind::Int(
+                gossamer_types::IntTy::U64 | gossamer_types::IntTy::Usize
+            ))
+        )
+    }
+    fn check(
+        body: &Body,
+        tcx: &gossamer_types::TyCtxt,
+        local: Local,
+        visited: &mut Vec<Local>,
+    ) -> bool {
+        if visited.contains(&local) {
+            return true;
+        }
+        visited.push(local);
+        // The return slot and parameters have writers this body
+        // cannot see.
+        if local.0 <= body.arity {
+            return false;
+        }
+        let mut saw_cast = false;
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                    continue;
+                };
+                if place.local != local || !place.projection.is_empty() {
+                    continue;
+                }
+                match rvalue {
+                    Rvalue::Cast { target, .. } if is_uint_ty(tcx, *target) => saw_cast = true,
+                    Rvalue::Use(Operand::Copy(src)) if src.projection.is_empty() => {
+                        if !check(body, tcx, src.local, visited) {
+                            return false;
+                        }
+                        saw_cast = true;
+                    }
+                    _ => return false,
+                }
+            }
+            if let Terminator::Call { destination, .. } = &block.terminator
+                && destination.local == local
+            {
+                return false;
+            }
+        }
+        saw_cast
+    }
+    check(body, tcx, local, &mut Vec::new())
 }

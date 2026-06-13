@@ -173,6 +173,8 @@ impl Health {
                 status,
                 headers,
                 body,
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         }
     }
@@ -189,6 +191,8 @@ impl Health {
                 status: StatusCode::OK,
                 headers,
                 body: br#"{"status":"ok"}"#.to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         }
     }

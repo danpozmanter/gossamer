@@ -1518,19 +1518,14 @@ fn local_var_shadowing_module_does_not_capture_qualified_path() {
 }
 
 #[test]
-fn tracing_gc_runs_aggregate_loop_under_collect() {
+fn aggregate_alloc_loop_reclaims_deterministically() {
     // Stress: a tight loop that allocates a heap aggregate every
-    // iteration and discards it. With the tracing GC wired into
-    // both backends and the runtime tracking every aggregate via
-    // the registry, the byte-allocation threshold trips inside
-    // the loop and `gos_rt_gc_collect` reclaims the unrooted
-    // aggregates from prior iterations. GOS_GC_THRESHOLD is set
-    // small so the collector fires several times during a
-    // 10_000-iteration loop. The test verifies:
-    //   - the loop produces the correct numeric result (the GC
-    //     does not corrupt rooted values held in locals);
-    //   - the process exits with status 0 (no segfault during
-    //     collect, no double-free in the drop pass);
+    // iteration and discards it. The MIR drop pass must emit a
+    // matching `gos_rt_aggr_free` per iteration. The test verifies:
+    //   - the loop produces the correct numeric result (the drop
+    //     pass does not free values still held in locals);
+    //   - the process exits with status 0 (no segfault, no
+    //     double-free in the drop pass);
     //   - all three tiers agree.
     let src = "struct Pair { a: i64, b: i64 }\n\
                fn make(i: i64) -> Pair { Pair { a: i, b: i * 2 } }\n\
@@ -1553,7 +1548,6 @@ fn tracing_gc_runs_aggregate_loop_under_collect() {
         let child = Command::new(gos_bin())
             .arg("run")
             .arg(&path)
-            .env("GOS_GC_THRESHOLD", "8192")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1576,7 +1570,6 @@ fn tracing_gc_runs_aggregate_loop_under_collect() {
     let bin = build_native(&path, &scratch).expect("build debug");
     let out = {
         let child = Command::new(&bin)
-            .env("GOS_GC_THRESHOLD", "8192")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1601,7 +1594,6 @@ fn tracing_gc_runs_aggregate_loop_under_collect() {
     let bin = build_native_release(&path, &scratch).expect("build release");
     let out = {
         let child = Command::new(&bin)
-            .env("GOS_GC_THRESHOLD", "8192")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1625,18 +1617,13 @@ fn tracing_gc_runs_aggregate_loop_under_collect() {
 }
 
 #[test]
-fn tracing_gc_aggregate_return_chain_survives_collect() {
-    // Stresses the aggregate-return shadow-stack discipline:
-    // every iteration calls a function that allocates an
-    // aggregate on the callee's frame, copies it to the heap at
-    // return, pushes the returned pointer onto the shadow stack
-    // AFTER the callee's restore (so the entry persists into
-    // the caller's frame), and the caller uses both fields of
-    // the returned tuple. Under aggressive GC pressure
-    // (`GOS_GC_THRESHOLD` set to a tiny value) the collector
-    // fires many times during the loop and must NOT reclaim
-    // the just-returned aggregate before the caller consumes
-    // its fields. Verifies the post-restore push.
+fn aggregate_return_chain_outlives_callee_frame() {
+    // Stresses the aggregate-return heap-copy discipline: every
+    // iteration calls a function that builds an aggregate on the
+    // callee's frame; codegen copies it to the heap at return so
+    // the pointer outlives the popped frame, and the caller uses
+    // both fields of the returned tuple. The just-returned
+    // aggregate must stay intact until the caller consumes it.
     let src = "fn pair_of(i: i64) -> (i64, i64) {\n\
                    (i, i * 7)\n\
                }\n\
@@ -1658,7 +1645,6 @@ fn tracing_gc_aggregate_return_chain_survives_collect() {
         let child = Command::new(gos_bin())
             .arg("run")
             .arg(&path)
-            .env("GOS_GC_THRESHOLD", "4096")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1684,7 +1670,6 @@ fn tracing_gc_aggregate_return_chain_survives_collect() {
     let bin = build_native_release(&path, &scratch).expect("build release");
     let out = {
         let child = Command::new(&bin)
-            .env("GOS_GC_THRESHOLD", "4096")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

@@ -11,6 +11,7 @@
 pub mod autoderive;
 mod diagnostic;
 mod expressions;
+mod format;
 mod generics;
 mod items;
 mod parser;
@@ -22,6 +23,7 @@ mod types;
 mod use_decls;
 
 pub use diagnostic::{ParseDiagnostic, ParseError};
+pub use format::{FormatError, format_source};
 pub use parser::Parser;
 pub use stream::{DocKind, StoredComment, TokenStream};
 

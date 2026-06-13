@@ -482,7 +482,9 @@ fn const_int_locals(body: &Body) -> HashMap<u32, i128> {
 }
 
 /// Folds `BinaryOp` / `UnaryOp` rvalues whose operands are both
-/// [`Operand::Const`].
+/// [`Operand::Const`], and `BinaryOp`s where one operand is a
+/// constant identity / absorbing element (`x + 0`, `x * 1`, `x & 0`,
+/// `b | true`, ...).
 pub fn const_fold(body: &mut Body) {
     for block in &mut body.blocks {
         for stmt in &mut block.stmts {
@@ -492,6 +494,8 @@ pub fn const_fold(body: &mut Body) {
             {
                 if let Some(folded) = try_fold(rv) {
                     *rv = Rvalue::Use(Operand::Const(folded));
+                } else if let Some(simplified) = try_identity_fold(rv) {
+                    *rv = simplified;
                 }
             }
         }
@@ -538,6 +542,68 @@ fn fold_binary(op: BinOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<ConstVal
             BinOp::BitAnd => Some(ConstValue::Bool(*x && *y)),
             BinOp::BitOr => Some(ConstValue::Bool(*x || *y)),
             BinOp::BitXor => Some(ConstValue::Bool(x ^ y)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Simplifies a `BinaryOp` whose lhs or rhs is a constant identity
+/// or absorbing element, rewriting to a plain `Use` of the surviving
+/// operand (or the absorbed constant). Integer and bool shapes only:
+/// float identities are unsound under IEEE-754 (`-0.0 + 0.0 == +0.0`,
+/// `x * 0.0` with NaN/∞), and a non-constant divisor keeps its
+/// runtime division so `0 / x` still faults when `x == 0`. Width
+/// independence: only the constants `0` and `1` qualify — an
+/// all-ones mask (`x & !0`) would depend on the operand's bit width,
+/// which `ConstValue::Int(i128)` does not carry.
+fn try_identity_fold(rvalue: &Rvalue) -> Option<Rvalue> {
+    let Rvalue::BinaryOp { op, lhs, rhs } = rvalue else {
+        return None;
+    };
+    if let Operand::Const(c) = rhs {
+        if let Some(rv) = identity_fold_with_const(*op, lhs, c, true) {
+            return Some(rv);
+        }
+    }
+    if let Operand::Const(c) = lhs {
+        if let Some(rv) = identity_fold_with_const(*op, rhs, c, false) {
+            return Some(rv);
+        }
+    }
+    None
+}
+
+/// One side of [`try_identity_fold`]: `other OP c` when `const_is_rhs`,
+/// `c OP other` otherwise.
+fn identity_fold_with_const(
+    op: BinOp,
+    other: &Operand,
+    c: &ConstValue,
+    const_is_rhs: bool,
+) -> Option<Rvalue> {
+    let keep = || Some(Rvalue::Use(other.clone()));
+    let int_const = |n: i128| Some(Rvalue::Use(Operand::Const(ConstValue::Int(n))));
+    let bool_const = |b: bool| Some(Rvalue::Use(Operand::Const(ConstValue::Bool(b))));
+    match c {
+        ConstValue::Int(n) => match (op, *n) {
+            (BinOp::Add | BinOp::BitOr | BinOp::BitXor, 0) => keep(),
+            (BinOp::Mul, 1) => keep(),
+            (BinOp::Mul, 0) => int_const(0),
+            (BinOp::BitAnd, 0) => int_const(0),
+            // Right-hand-side-only identities: subtraction and
+            // division are not commutative, and a zero shift *amount*
+            // is an identity while a zero shifted *value* would erase
+            // the runtime shift-amount check.
+            (BinOp::Sub | BinOp::Shl | BinOp::Shr, 0) if const_is_rhs => keep(),
+            (BinOp::Div, 1) if const_is_rhs => keep(),
+            (BinOp::Rem, 1) if const_is_rhs => int_const(0),
+            _ => None,
+        },
+        ConstValue::Bool(b) => match (op, *b) {
+            (BinOp::BitAnd, true) | (BinOp::BitOr | BinOp::BitXor, false) => keep(),
+            (BinOp::BitAnd, false) => bool_const(false),
+            (BinOp::BitOr, true) => bool_const(true),
             _ => None,
         },
         _ => None,

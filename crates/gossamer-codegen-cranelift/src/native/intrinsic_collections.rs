@@ -456,17 +456,15 @@ pub(super) fn lower_intrinsic_call_collections(
             Ok(true)
         }
         // `std::http::serve(addr, handler)` — start a blocking
-        // TCP listener on `addr`. The handler is ignored today;
-        // every request gets a static 200 response. The runtime
-        // function itself never returns, but we leave the outer
-        // terminator path (jump to next block) in place so
-        // Cranelift's verifier stays happy — the jump is dead.
+        // TCP listener on `addr` and dispatch requests through the
+        // handler fn-ptr. Returns the packed `Result<(), Error>`:
+        // `Err` on bind failure, `Ok(())` if the accept loop exits.
         "http::serve" | "gos_rt_http_serve" => {
             let rt_fn = intrinsics.extern_fn(
                 module,
                 "gos_rt_http_serve",
                 &[ptr_ty, ptr_ty, types::I64],
-                &[],
+                &[types::I128],
             )?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let addr = match args.first() {
@@ -510,14 +508,14 @@ pub(super) fn lower_intrinsic_call_collections(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let fn_ptr64 = coerce_arg_to(builder, fn_ptr, types::I64)?;
-            let _ = builder.ins().call(fref, &[addr, env_ptr, fn_ptr64]);
-            let unit = builder.ins().iconst(types::I64, 0);
+            let call = builder.ins().call(fref, &[addr, env_ptr, fn_ptr64]);
+            let result = builder.inst_results(call)[0];
             define_var_to(
                 builder,
                 locals,
                 &intrinsics.body_cl_types,
                 destination.local,
-                unit,
+                result,
             );
             Ok(true)
         }
@@ -527,7 +525,7 @@ pub(super) fn lower_intrinsic_call_collections(
                 module,
                 "gos_rt_http2_bind_and_run_h2c",
                 &[ptr_ty, ptr_ty, types::I64],
-                &[],
+                &[types::I128],
             )?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let addr = match args.first() {
@@ -571,14 +569,14 @@ pub(super) fn lower_intrinsic_call_collections(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let fn_ptr64 = coerce_arg_to(builder, fn_ptr, types::I64)?;
-            let _ = builder.ins().call(fref, &[addr, env_ptr, fn_ptr64]);
-            let unit = builder.ins().iconst(types::I64, 0);
+            let call = builder.ins().call(fref, &[addr, env_ptr, fn_ptr64]);
+            let result = builder.inst_results(call)[0];
             define_var_to(
                 builder,
                 locals,
                 &intrinsics.body_cl_types,
                 destination.local,
-                unit,
+                result,
             );
             Ok(true)
         }

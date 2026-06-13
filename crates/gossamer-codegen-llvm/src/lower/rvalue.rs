@@ -261,7 +261,9 @@ impl<'a> Lowerer<'a> {
             let a_v = self.lower_operand(arg)?;
             if result_new_heap_copy
                 && i == 1
-                && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
+                && let Some(heap_v) = self
+                    .maybe_heap_copy_value_enum(arg)
+                    .or_else(|| self.maybe_heap_copy_aggregate(arg))
             {
                 let _ = write!(arg_text, "i64 {heap_v}");
                 continue;

@@ -21,6 +21,8 @@
 
 #![allow(missing_docs)]
 
+mod common;
+
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
@@ -112,6 +114,206 @@ fn assert_release_stdout_eq(name: &str, body: &str, expected: &str) {
 // honour and has been confirmed working at the time of writing.
 // A red light here means a recent change broke something.
 // ---------------------------------------------------------------
+
+#[test]
+fn release_request_field_string_methods_dispatch_correctly() {
+    let _server_window = common::ServerPortLock::acquire();
+    // Catches method-dispatch regressions on opaque http::Request
+    // fields: `r.query` / `r.path` are checker-opaque (inference
+    // Vars), and without the MIR field-type promotion `.len()`
+    // lands on the len-prefixed `gos_rt_len`, dereferencing the
+    // c-string pointer — a misaligned-pointer abort on the first
+    // request (the locurlfwd proxy crash shape).
+    assert_release_stdout_eq(
+        "request_field_methods",
+        r#"
+use std::http
+use std::process
+use std::strings
+use std::time
+
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&self, r: http::Request) -> http::Response {
+        let q = &r.query
+        let line = format!(
+            "qlen={} plen={} starts={} has={} blen={}",
+            r.query.len(),
+            r.path.len(),
+            strings::starts_with(q, "k="),
+            strings::contains(q, "n=2"),
+            r.body.len(),
+        )
+        http::Response::text(200, line)
+    }
+}
+
+fn run_server() {
+    if let Err(e) = http::serve("127.0.0.1:23924", App { }) {
+        eprintln!("serve failed: {}", e)
+    }
+}
+
+fn await_ready() {
+    let none: [(String, String)] = []
+    let mut tries = 0
+    while tries < 400 {
+        if let Ok(_) = http::get("http://127.0.0.1:23924/probe", none) {
+            return
+        }
+        time::sleep(25)
+        tries += 1
+    }
+}
+
+fn main() {
+    go run_server()
+    await_ready()
+    let none: [(String, String)] = []
+    match http::get("http://127.0.0.1:23924/echo?k=1&n=2", none) {
+        Ok(r) => println!("status={} body={}", r.status, r.body),
+        Err(e) => println!("error: {}", e),
+    }
+    process::exit(0)
+}
+"#,
+        "status=200 body=qlen=7 plen=5 starts=true has=true blen=0\n",
+    );
+}
+
+#[test]
+fn release_http_bare_response_handler_serves_200() {
+    let _server_window = common::ServerPortLock::acquire();
+    // Catches handler-ABI regressions: a serve method declaring a
+    // bare `http::Response` return (no `Result` wrapper) is adapted
+    // to the packed-Result handler C-ABI by the MIR-synthesized
+    // `::__ok_wrap` thunk. Without it the release server misreads
+    // the Response pointer as a Result discriminant and answers 500.
+    assert_release_stdout_eq(
+        "bare_handler",
+        r#"
+use std::http
+use std::process
+use std::time
+
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&self, _r: http::Request) -> http::Response {
+        http::Response::text(200, "bare ok")
+    }
+}
+
+fn run_server() {
+    if let Err(e) = http::serve("127.0.0.1:23921", App { }) {
+        eprintln!("serve failed: {e}")
+    }
+}
+
+// Polls until the server goroutine accepts connections; binding is
+// asynchronous, so readiness is observable only by connecting.
+fn await_ready(url: &String) {
+    let mut tries = 0
+    while tries < 400 {
+        if let Ok(_) = http::get(url, []) {
+            return
+        }
+        time::sleep(25)
+        tries += 1
+    }
+}
+
+fn main() {
+    go run_server()
+    await_ready(&"http://127.0.0.1:23921/x")
+    match http::get("http://127.0.0.1:23921/x", []) {
+        Ok(r) => println!("status={} body={}", r.status, r.body),
+        Err(e) => println!("error: {}", e),
+    }
+    process::exit(0)
+}
+"#,
+        "status=200 body=bare ok\n",
+    );
+}
+
+#[test]
+fn release_proxy_stream_passthrough_serves_chunked_body() {
+    let _server_window = common::ServerPortLock::acquire();
+    // Catches streamed-response regressions in the release
+    // pipeline: a proxy handler returns
+    // `http::Response::stream(up.status, up.content_type, up)` and
+    // the native server drains the upstream reader to the client as
+    // chunked frames (the locurlfwd proxy-passthrough shape).
+    assert_release_stdout_eq(
+        "proxy_stream",
+        r#"
+use std::http
+use std::process
+use std::time
+
+struct Upstream { }
+
+impl http::Handler for Upstream {
+    fn serve(&self, _r: http::Request) -> Result<http::Response, http::Error> {
+        Ok(http::Response::text(200, "release streamed body"))
+    }
+}
+
+struct Proxy { }
+
+impl http::Handler for Proxy {
+    fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
+        match http::stream(&r.method, "http://127.0.0.1:23922/data", &r.body, []) {
+            Ok(up) => Ok(http::Response::stream(up.status, up.content_type, up)),
+            Err(_) => Ok(http::Response::text(502, "bad upstream")),
+        }
+    }
+}
+
+fn run_upstream() {
+    if let Err(e) = http::serve("127.0.0.1:23922", Upstream { }) {
+        eprintln!("serve failed: {e}")
+    }
+}
+
+fn run_proxy() {
+    if let Err(e) = http::serve("127.0.0.1:23923", Proxy { }) {
+        eprintln!("serve failed: {e}")
+    }
+}
+
+// Polls until the server goroutine accepts connections; binding is
+// asynchronous, so readiness is observable only by connecting.
+// Upstream is probed before the proxy: the proxy answers 502
+// (an Ok response) while the upstream is still down.
+fn await_ready(url: &String) {
+    let mut tries = 0
+    while tries < 400 {
+        if let Ok(_) = http::get(url, []) {
+            return
+        }
+        time::sleep(25)
+        tries += 1
+    }
+}
+
+fn main() {
+    go run_upstream()
+    go run_proxy()
+    await_ready(&"http://127.0.0.1:23922/data")
+    await_ready(&"http://127.0.0.1:23923/x")
+    match http::get("http://127.0.0.1:23923/x", []) {
+        Ok(r) => println!("status={} ct={} body={}", r.status, r.content_type, r.body),
+        Err(e) => println!("error: {}", e),
+    }
+    process::exit(0)
+}
+"#,
+        "status=200 ct=text/plain; charset=utf-8 body=release streamed body\n",
+    );
+}
 
 #[test]
 fn release_recursive_enum_walks_full_list() {
@@ -646,22 +848,25 @@ fn main() {
 }
 
 #[test]
-fn release_u64_max_prints_unsigned() {
-    // Until 2026-04-30 the print path always sign-extended to
-    // i64 and called `gos_rt_print_i64`, so a `u64` value
-    // >= 2^63 printed with a leading `-`. The fix routes
-    // unsigned ints through `gos_rt_print_u64` /
-    // `gos_rt_concat_u64` / `gos_rt_u64_to_str`. This test
-    // gates against re-collapsing the dispatch.
+fn release_u64_values_print_like_the_vm() {
+    // Under the i64 runtime model every <=64-bit int is a signed
+    // i64 value, so a `u64` literal at 2^64-1 aliases `-1` and
+    // prints signed — matching the VM. The single exception is
+    // display provenance: a value produced by an explicit
+    // `as u64` / `as usize` cast renders unsigned (the VM's
+    // `Value::Uint`). This test gates both halves of the
+    // contract.
     assert_release_stdout_eq(
         "u64_max",
         r#"
 fn main() {
     let n: u64 = 18446744073709551615u64
     println!("{}", n)
+    let c = (0 - 1) as u64
+    println!("{}", c)
 }
 "#,
-        "18446744073709551615\n",
+        "-1\n18446744073709551615\n",
     );
 }
 
@@ -756,5 +961,268 @@ fn main() {
 }
 "#,
         "one\ntwo\nother-ok\nerr\nten\ntwenty\nnone\n",
+    );
+}
+
+#[test]
+fn release_byte_vec_literal_sums_at_i64_width() {
+    // `sum` infers as u8 from `sum += b`, but the runtime integer
+    // model is i64 on every tier: 200+200+60+4 must print 464, not
+    // 464 mod 256 = 208. Regression gate for the LLVM (and JIT)
+    // narrow-width arithmetic miscompile.
+    assert_release_stdout_eq(
+        "byte_vec_sum",
+        r#"
+fn main() {
+    let body: [u8] = [200, 200, 60, 4]
+    let mut sum = 0
+    for b in body {
+        sum += b
+    }
+    println!("sum: {}", sum)
+    println!("idx: {} {} {}", body[0], body[1], body[3])
+}
+"#,
+        "sum: 464\nidx: 200 200 4\n",
+    );
+}
+
+#[test]
+fn release_read_file_bytes_for_loop_mixed_width_sum() {
+    // `total: i64 += b: u8` used to emit `add i64 %a, %b` with an
+    // i8 operand — invalid IR that failed the `opt` stage. The
+    // file roundtrip also hands the compiled tier a packed
+    // elem_bytes=1 vec, so indexing and element writes must honour
+    // the header stride.
+    assert_release_stdout_eq(
+        "read_file_bytes_sum",
+        r#"
+use std::errors
+use std::os
+use std::path
+
+fn main() -> Result<(), errors::Error> {
+    let payload: [u8] = [0, 255, 1, 254]
+    let tmp = path::join(&os::temp_dir(), &"gos_rel_byte_sum_probe.bin")
+    os::write_file(&tmp, &payload)?
+    let mut bytes = os::read_file(&tmp)?
+    os::remove_file(&tmp)?
+    let mut total: i64 = 0
+    for b in bytes {
+        total += b as i64
+    }
+    println!("total: {}", total)
+    bytes[2] = 9
+    let mut sum = 0
+    for b in bytes {
+        sum += b
+    }
+    println!("sum: {}", sum)
+    println!("idx: {} {} {} {}", bytes[0], bytes[1], bytes[2], bytes[3])
+    Ok(())
+}
+"#,
+        "total: 510\nsum: 518\nidx: 0 255 9 254\n",
+    );
+}
+
+#[test]
+fn release_narrow_casts_mask_and_float_casts_saturate() {
+    // `as` is the single masking point for narrow int types
+    // (`300 as u8` == 44, `200 as i8` == -56); arithmetic between
+    // narrow values runs at i64 width (200u8 + 200u8 == 400); and
+    // float -> int saturates at i64 width with no narrow mask
+    // (`300.7 as u8` == 300, `1e20 as i64` == i64::MAX). All match
+    // the bytecode VM.
+    assert_release_stdout_eq(
+        "narrow_casts",
+        r#"
+fn main() {
+    let x = 300
+    println!("{}", x as u8)
+    let y = 200
+    println!("{}", y as i8)
+    let z: u8 = 200
+    println!("{}", z + z)
+    let f = 300.7
+    println!("{}", f as u8)
+    let g = -1.5
+    println!("{}", g as u8)
+    let h = 1e20
+    println!("{}", h as i64)
+}
+"#,
+        "44\n-56\n400\n300\n-1\n9223372036854775807\n",
+    );
+}
+
+#[test]
+fn release_packed_byte_vec_helpers_honor_stride() {
+    // `os::read_file` hands the compiled tiers a packed
+    // elem_bytes=1 vec. The Vec helper surface (`first` / `last` /
+    // `index_of` / `count_of` / `contains` / `reversed` / `pop`)
+    // must honor the header stride instead of reading 8 bytes per
+    // element, and `pop` must return `Option<last>` while
+    // shortening the receiver. Expected values match the VM run.
+    assert_release_stdout_eq(
+        "packed_byte_vec_helpers",
+        r#"
+use std::errors
+use std::os
+use std::path
+
+fn main() -> Result<(), errors::Error> {
+    let payload: [u8] = [9, 3, 7, 3, 1]
+    let tmp = path::join(&os::temp_dir(), &"gos_rel_packed_helpers.bin")
+    os::write_file(&tmp, &payload)?
+    let mut bytes = os::read_file(&tmp)?
+    os::remove_file(&tmp)?
+    if let Some(f) = bytes.first() {
+        println!("first = {}", f)
+    }
+    if let Some(l) = bytes.last() {
+        println!("last = {}", l)
+    }
+    if let Some(i) = bytes.index_of(&7) {
+        println!("index_of 7 = {}", i)
+    }
+    println!("count_of 3 = {}", bytes.count_of(&3))
+    println!("contains 9 = {}", bytes.contains(&9))
+    println!("contains 8 = {}", bytes.contains(&8))
+    let r = bytes.reversed()
+    println!("reversed = {} {} {} {} {}", r[0], r[1], r[2], r[3], r[4])
+    if let Some(p) = bytes.pop() {
+        println!("pop = {}", p)
+    }
+    println!("len after pop = {}", bytes.len())
+    Ok(())
+}
+"#,
+        "first = 9\nlast = 1\nindex_of 7 = 2\ncount_of 3 = 2\ncontains 9 = true\ncontains 8 = false\nreversed = 1 3 7 3 9\npop = 1\nlen after pop = 4\n",
+    );
+}
+
+#[test]
+fn release_http_surface_offline_probe_is_byte_exact() {
+    // The offline HTTP surface fixture (constructed Response +
+    // chained with_header read-back, the struct-literal Response,
+    // Client::builder configuration, and http::request's
+    // unknown-method error text) must hold byte-exact in the
+    // release tier. Reuses the tier-parity fixture source so the
+    // two gates cannot drift apart.
+    assert_release_stdout_eq(
+        "http_surface_offline",
+        include_str!("../../../feature-testing-examples/http_surface.gos"),
+        "r_status=201 r_body=made r_ct=text/plain; charset=utf-8\n\
+         x-tag=v2 x-extra=e\n\
+         s_status=202 s_body=lit s_ct=text/x-custom\n\
+         client=built\n\
+         err=http::request: unknown method `BOGUS`\n",
+    );
+}
+
+#[test]
+fn release_error_chain_renders_outer_mid_root() {
+    // `errors::wrap` chains must Display as "outer: mid: root" on
+    // the release tier — the cause chain renders colon-separated
+    // from the outermost wrap inward, matching the VM.
+    assert_release_stdout_eq(
+        "error_chain_render",
+        r#"
+use std::errors
+
+fn main() {
+    let e = errors::wrap(errors::wrap(errors::new("root"), "mid"), "outer")
+    println!("{}", e)
+    println!("msg={} is_root={}", e.message(), errors::is(&e, "root"))
+}
+"#,
+        "outer: mid: root\nmsg=outer is_root=true\n",
+    );
+}
+
+// ---------------------------------------------------------------
+// Rejection gates: programs the toolchain must REFUSE to build,
+// with the right diagnostic code. A silent acceptance here means
+// the compiled tiers would run the program at wrong semantics
+// (64-bit i128, pointer-printed payloads, missing symbols).
+// ---------------------------------------------------------------
+
+/// Asserts `gos build --release` refuses `body` and the stderr
+/// names diagnostic `code`.
+fn assert_release_build_rejects(name: &str, body: &str, code: &str) {
+    let dir = fresh_dir(name);
+    let source = dir.join(format!("{name}.gos"));
+    std::fs::write(&source, body).expect("write source");
+    let out = Command::new(gos_bin())
+        .arg("build")
+        .arg("--release")
+        .arg(&source)
+        .output()
+        .expect("spawn gos build --release");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !out.status.success(),
+        "{name}: expected the build to be refused, got success\n--- stderr ---\n{stderr}"
+    );
+    assert!(
+        stderr.contains(code),
+        "{name}: refusal must carry {code}\n--- stderr ---\n{stderr}"
+    );
+}
+
+#[test]
+fn release_rejects_i128_with_gt0014() {
+    assert_release_build_rejects(
+        "reject_i128",
+        r#"
+fn main() {
+    let n: i128 = 1
+    println!("{}", n)
+}
+"#,
+        "GT0014",
+    );
+}
+
+#[test]
+fn release_rejects_untabled_std_fn_value_with_gt0015() {
+    // `strings::repeat` is not in the std-fn-value table, so it
+    // cannot be passed as a first-class value: the compiled tiers
+    // have no symbol to take the address of.
+    assert_release_build_rejects(
+        "reject_std_fn_value",
+        r#"
+use std::strings
+
+fn main() {
+    let r: Result<i64, String> = Err("x")
+    let m = r.map_err(strings::repeat)
+    if let Err(e) = m { println!("{}", e) }
+}
+"#,
+        "GT0015",
+    );
+}
+
+#[test]
+fn release_rejects_unrowed_combinator_closure_with_gt0013() {
+    // `iter::count` exists but has no checker signature row, so a
+    // closure argument's parameter type cannot be inferred — the
+    // realistic mistake is reaching for `count` where `count_by`
+    // is the predicate-taking form.
+    assert_release_build_rejects(
+        "reject_closure_param",
+        r#"
+use std::iter
+
+fn main() {
+    let xs = [1, 2, 3]
+    let n = iter::count(|x: i64| x > 1, xs)
+    println!("{}", n)
+}
+"#,
+        "GT0013",
     );
 }

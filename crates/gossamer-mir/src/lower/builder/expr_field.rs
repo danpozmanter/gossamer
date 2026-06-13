@@ -94,6 +94,22 @@ impl<'a> Builder<'a> {
                 variant_enum_name = Some(enum_name);
             }
         }
+        // `http::Response { … }` — the type is an opaque runtime handle
+        // on the compiled tiers (a `GosHttpResponse` ptr), so the
+        // generic aggregate lowering can't apply (it would emit an
+        // undefined `__struct` call). Lower to the runtime constructor
+        // + setter chain instead. "Response" is always present in
+        // `self.structs` via `stdlib_struct_shapes`, so the stdlib
+        // route applies unless the USER declared a `Response` struct
+        // (visible as a non-sentinel entry in `struct_defs`).
+        let user_defined_response = struct_name == "Response"
+            && self
+                .struct_defs
+                .iter()
+                .any(|(def, name)| name == "Response" && def.local < u32::MAX - 16);
+        if variant_idx.is_none() && struct_name == "Response" && !user_defined_response {
+            return self.lower_http_response_literal(pairs, span);
+        }
         let order = self
             .structs
             .get(struct_name)
@@ -248,6 +264,20 @@ impl<'a> Builder<'a> {
                             self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
                         ))
                     }
+                    ("http::Response", "headers") => {
+                        let s = self.tcx.string_ty();
+                        let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                        Some((
+                            "gos_rt_http_response_headers",
+                            self.tcx.intern(gossamer_types::TyKind::Vec(tup)),
+                        ))
+                    }
+                    ("http::Response", "content_type") => {
+                        Some(("gos_rt_http_response_content_type", self.tcx.string_ty()))
+                    }
+                    ("http::Response", "location") => {
+                        Some(("gos_rt_http_response_location", self.tcx.string_ty()))
+                    }
                     ("http::Request", "method") => {
                         Some(("gos_rt_http_request_method", self.tcx.string_ty()))
                     }
@@ -259,6 +289,21 @@ impl<'a> Builder<'a> {
                     }
                     ("http::Request", "body") => {
                         Some(("gos_rt_http_request_body_str", self.tcx.string_ty()))
+                    }
+                    ("http::Request", "raw_body") => {
+                        let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                        Some((
+                            "gos_rt_http_request_raw_body",
+                            self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                        ))
+                    }
+                    ("http::Request", "headers") => {
+                        let s = self.tcx.string_ty();
+                        let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                        Some((
+                            "gos_rt_http_request_headers",
+                            self.tcx.intern(gossamer_types::TyKind::Vec(tup)),
+                        ))
                     }
                     ("errors::Error", "message") => {
                         Some(("gos_rt_error_message", self.tcx.string_ty()))
@@ -448,6 +493,20 @@ impl<'a> Builder<'a> {
                         self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
                     ))
                 }
+                ("http::Response", "headers") => {
+                    let s = self.tcx.string_ty();
+                    let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                    Some((
+                        "gos_rt_http_response_headers",
+                        self.tcx.intern(gossamer_types::TyKind::Vec(tup)),
+                    ))
+                }
+                ("http::Response", "content_type") => {
+                    Some(("gos_rt_http_response_content_type", self.tcx.string_ty()))
+                }
+                ("http::Response", "location") => {
+                    Some(("gos_rt_http_response_location", self.tcx.string_ty()))
+                }
                 ("http::Request", "method") => {
                     Some(("gos_rt_http_request_method", self.tcx.string_ty()))
                 }
@@ -459,6 +518,21 @@ impl<'a> Builder<'a> {
                 }
                 ("http::Request", "body") => {
                     Some(("gos_rt_http_request_body_str", self.tcx.string_ty()))
+                }
+                ("http::Request", "raw_body") => {
+                    let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                    Some((
+                        "gos_rt_http_request_raw_body",
+                        self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                    ))
+                }
+                ("http::Request", "headers") => {
+                    let s = self.tcx.string_ty();
+                    let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                    Some((
+                        "gos_rt_http_request_headers",
+                        self.tcx.intern(gossamer_types::TyKind::Vec(tup)),
+                    ))
                 }
                 ("errors::Error", "message") => {
                     Some(("gos_rt_error_message", self.tcx.string_ty()))
@@ -554,5 +628,374 @@ impl<'a> Builder<'a> {
         };
         self.emit_assign(Place::local(dest), Rvalue::Use(Operand::Copy(place)), span);
         Some(dest)
+    }
+
+    /// Emits a single runtime-helper call and returns its destination local.
+    fn emit_rt_call_local(
+        &mut self,
+        rt_name: &str,
+        args: Vec<Operand>,
+        ret_ty: Ty,
+        span: Span,
+    ) -> Local {
+        let dest = self.fresh(ret_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(rt_name.to_string())),
+            args,
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        dest
+    }
+
+    /// Lowers an `http::Response { status, body, content_type, headers }`
+    /// struct literal to the runtime constructor + setter chain the
+    /// compiled tiers understand:
+    ///
+    /// `gos_rt_http_response_text_new(status, body)` →
+    /// `gos_rt_http_response_set_body_bytes` (byte-array bodies) →
+    /// `gos_rt_http_response_set_content_type` (explicit content_type) →
+    /// `gos_rt_http_response_with_header` per header pair (unrolled for
+    /// literal arrays, a MIR-level loop for dynamic ones).
+    ///
+    /// Field subsets mirror the interp's `value_to_response`: every
+    /// field is optional — status defaults to 200, body to empty,
+    /// content_type to text/plain (via `text_new`), headers to none.
+    /// Unknown fields are evaluated and discarded, and a functional
+    ///-update `..base` fills omitted fields by reading them back off
+    /// the base response through the accessor shims.
+    pub(crate) fn lower_http_response_literal(
+        &mut self,
+        pairs: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let string_ty = self.tcx.string_ty();
+        let unit_ty = self.tcx.unit();
+
+        let mut status_expr: Option<&HirExpr> = None;
+        let mut body_expr: Option<&HirExpr> = None;
+        let mut ct_expr: Option<&HirExpr> = None;
+        let mut headers_expr: Option<&HirExpr> = None;
+        let mut base_expr: Option<&HirExpr> = None;
+        for chunk in pairs.chunks_exact(2) {
+            let HirExprKind::Literal(HirLiteral::String(field)) = &chunk[0].kind else {
+                return None;
+            };
+            match field.as_str() {
+                "status" => status_expr = Some(&chunk[1]),
+                "body" => body_expr = Some(&chunk[1]),
+                "content_type" => ct_expr = Some(&chunk[1]),
+                "headers" => headers_expr = Some(&chunk[1]),
+                "__base" => base_expr = Some(&chunk[1]),
+                // The interp evaluates then ignores unknown fields.
+                _ => {
+                    let _ = self.lower_expr(&chunk[1]);
+                }
+            }
+        }
+
+        let base_local: Option<Local> = match base_expr {
+            Some(b) => Some(self.lower_expr(b)?),
+            None => None,
+        };
+
+        let status_local = if let Some(e) = status_expr {
+            self.lower_expr(e)?
+        } else if let Some(base) = base_local {
+            self.emit_rt_call_local(
+                "gos_rt_http_response_status",
+                vec![Operand::Copy(Place::local(base))],
+                i64_ty,
+                span,
+            )
+        } else {
+            let l = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(l),
+                Rvalue::Use(Operand::Const(ConstValue::Int(200))),
+                span,
+            );
+            l
+        };
+
+        // String bodies feed `text_new` directly; byte-array bodies
+        // construct with an empty string and route through
+        // `set_body_bytes` (the interp's `value_to_response` accepts
+        // both shapes).
+        let mut body_bytes_local: Option<Local> = None;
+        let body_str_local = if let Some(e) = body_expr {
+            let v = self.lower_expr(e)?;
+            let vt = self.locals[v.0 as usize].ty;
+            match self.tcx.kind_of(vt).clone() {
+                TyKind::Array { elem, len } if matches!(self.tcx.kind_of(elem), TyKind::Int(_)) => {
+                    body_bytes_local = Some(self.coerce_array_to_vec(v, elem, len, span));
+                    self.empty_string_local(string_ty, span)
+                }
+                TyKind::Vec(elem) | TyKind::Slice(elem)
+                    if matches!(self.tcx.kind_of(elem), TyKind::Int(_)) =>
+                {
+                    body_bytes_local = Some(v);
+                    self.empty_string_local(string_ty, span)
+                }
+                _ => v,
+            }
+        } else if let Some(base) = base_local {
+            self.emit_rt_call_local(
+                "gos_rt_http_response_body",
+                vec![Operand::Copy(Place::local(base))],
+                string_ty,
+                span,
+            )
+        } else {
+            self.empty_string_local(string_ty, span)
+        };
+
+        let resp = self.emit_rt_call_local(
+            "gos_rt_http_response_text_new",
+            vec![
+                Operand::Copy(Place::local(status_local)),
+                Operand::Copy(Place::local(body_str_local)),
+            ],
+            i64_ty,
+            span,
+        );
+        self.local_runtime_kind.insert(resp, "http::Response");
+
+        if let Some(bytes) = body_bytes_local {
+            let _ = self.emit_rt_call_local(
+                "gos_rt_http_response_set_body_bytes",
+                vec![
+                    Operand::Copy(Place::local(resp)),
+                    Operand::Copy(Place::local(bytes)),
+                ],
+                unit_ty,
+                span,
+            );
+        }
+
+        let ct_local: Option<Local> = if let Some(e) = ct_expr {
+            Some(self.lower_expr(e)?)
+        } else {
+            // Without a base the `text_new` constructor already
+            // records the text/plain default — matching the interp's
+            // no-content_type behavior.
+            base_local.map(|base| {
+                self.emit_rt_call_local(
+                    "gos_rt_http_response_content_type",
+                    vec![Operand::Copy(Place::local(base))],
+                    string_ty,
+                    span,
+                )
+            })
+        };
+        if let Some(ct) = ct_local {
+            let _ = self.emit_rt_call_local(
+                "gos_rt_http_response_set_content_type",
+                vec![
+                    Operand::Copy(Place::local(resp)),
+                    Operand::Copy(Place::local(ct)),
+                ],
+                unit_ty,
+                span,
+            );
+        }
+
+        if let Some(e) = headers_expr {
+            // Peel a leading `&` so `headers: &pairs` iterates the
+            // underlying array/vec.
+            let e = match &e.kind {
+                HirExprKind::Unary {
+                    op: HirUnaryOp::RefShared | HirUnaryOp::RefMut,
+                    operand,
+                    ..
+                } => operand.as_ref(),
+                _ => e,
+            };
+            if let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) = &e.kind {
+                // Literal array — unroll one `with_header` per pair.
+                for elem in elems {
+                    let (k, v) = if let HirExprKind::Tuple(items) = &elem.kind {
+                        if items.len() != 2 {
+                            continue;
+                        }
+                        (self.lower_expr(&items[0])?, self.lower_expr(&items[1])?)
+                    } else {
+                        let t = self.lower_expr(elem)?;
+                        let k = self.fresh(string_ty);
+                        self.emit_assign(
+                            Place::local(k),
+                            Rvalue::Use(Operand::Copy(Place {
+                                local: t,
+                                projection: vec![crate::ir::Projection::Field(0)],
+                            })),
+                            span,
+                        );
+                        let v = self.fresh(string_ty);
+                        self.emit_assign(
+                            Place::local(v),
+                            Rvalue::Use(Operand::Copy(Place {
+                                local: t,
+                                projection: vec![crate::ir::Projection::Field(1)],
+                            })),
+                            span,
+                        );
+                        (k, v)
+                    };
+                    let _ = self.emit_rt_call_local(
+                        "gos_rt_http_response_with_header",
+                        vec![
+                            Operand::Copy(Place::local(resp)),
+                            Operand::Copy(Place::local(k)),
+                            Operand::Copy(Place::local(v)),
+                        ],
+                        i64_ty,
+                        span,
+                    );
+                }
+            } else {
+                // Dynamic header list — loop over the runtime vec.
+                let hv = self.lower_expr(e)?;
+                let hv_ty = self.locals[hv.0 as usize].ty;
+                let hv = if let TyKind::Array { elem, len } = self.tcx.kind_of(hv_ty).clone() {
+                    self.coerce_array_to_vec(hv, elem, len, span)
+                } else {
+                    hv
+                };
+                self.emit_response_header_copy_loop(resp, hv, span);
+            }
+        } else if let Some(base) = base_local {
+            let s = string_ty;
+            let tup = self.tcx.intern(TyKind::Tuple(vec![s, s]));
+            let vec_ty = self.tcx.intern(TyKind::Vec(tup));
+            let hv = self.emit_rt_call_local(
+                "gos_rt_http_response_headers",
+                vec![Operand::Copy(Place::local(base))],
+                vec_ty,
+                span,
+            );
+            self.emit_response_header_copy_loop(resp, hv, span);
+        }
+
+        Some(resp)
+    }
+
+    /// Materialises an empty-string constant local.
+    fn empty_string_local(&mut self, string_ty: Ty, span: Span) -> Local {
+        let l = self.fresh(string_ty);
+        self.emit_assign(
+            Place::local(l),
+            Rvalue::Use(Operand::Const(ConstValue::Str(String::new()))),
+            span,
+        );
+        l
+    }
+
+    /// Emits a counter loop over a `Vec<(String, String)>` of header
+    /// pairs, attaching each to `resp` via
+    /// `gos_rt_http_response_with_header`. Same element-access recipe
+    /// as `lower_for_vec`'s tuple destructure: `gos_rt_vec_get_ptr`
+    /// for the 16-byte slot, `gos_load` at word offsets 0 / 8 for the
+    /// name / value c-strings (borrowed — `with_header` copies).
+    fn emit_response_header_copy_loop(&mut self, resp: Local, headers_vec: Local, span: Span) {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let string_ty = self.tcx.string_ty();
+        let bool_ty = self.tcx.bool_ty();
+
+        let len_local = self.emit_rt_call_local(
+            "gos_rt_vec_len",
+            vec![Operand::Copy(Place::local(headers_vec))],
+            i64_ty,
+            span,
+        );
+        let counter = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+
+        let header = self.new_block(span);
+        let body_block = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let cmp = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(cmp),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(len_local)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(cmp)),
+            arms: vec![(0, exit)],
+            default: body_block,
+        });
+
+        self.set_current(body_block);
+        let slot_ptr = self.emit_rt_call_local(
+            "gos_rt_vec_get_ptr",
+            vec![
+                Operand::Copy(Place::local(headers_vec)),
+                Operand::Copy(Place::local(counter)),
+            ],
+            i64_ty,
+            span,
+        );
+        let field_local = |b: &mut Self, offset: i64| -> Local {
+            let off = b.fresh(i64_ty);
+            b.emit_assign(
+                Place::local(off),
+                Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(offset)))),
+                span,
+            );
+            b.emit_rt_call_local(
+                "gos_load",
+                vec![
+                    Operand::Copy(Place::local(slot_ptr)),
+                    Operand::Copy(Place::local(off)),
+                ],
+                string_ty,
+                span,
+            )
+        };
+        let k = field_local(self, 0);
+        let v = field_local(self, 8);
+        let _ = self.emit_rt_call_local(
+            "gos_rt_http_response_with_header",
+            vec![
+                Operand::Copy(Place::local(resp)),
+                Operand::Copy(Place::local(k)),
+                Operand::Copy(Place::local(v)),
+            ],
+            i64_ty,
+            span,
+        );
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
     }
 }

@@ -1,6 +1,7 @@
-//! `gos fmt [PATH] [--check]` — re-renders source files through
-//! the AST formatter. With no path, walks every `.gos` under the
-//! project root.
+//! `gos fmt [PATH] [--check]` — re-renders source files through the
+//! token-stream formatter, which preserves comments, macro calls, and
+//! authored line structure while normalising spacing and indentation.
+//! With no path, walks every `.gos` under the project root.
 
 use std::fs;
 use std::path::PathBuf;
@@ -50,28 +51,27 @@ fn run(file: &PathBuf, check_only: bool) -> Result<()> {
     let source = read_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
-    let (sf, diags) = gossamer_parse::parse_source_file(&source, file_id);
-    if !diags.is_empty() {
-        let render_opts = gossamer_diagnostics::RenderOptions {
-            colour: crate::paths::stderr_supports_colour(),
-        };
-        for diag in &diags {
-            let structured = diag.to_diagnostic();
-            eprintln!(
-                "{}",
-                gossamer_diagnostics::render(&structured, &map, render_opts)
-            );
+    let formatted = match gossamer_parse::format_source(&source, file_id) {
+        Ok(formatted) => formatted,
+        Err(gossamer_parse::FormatError::Parse(diags)) => {
+            let render_opts = gossamer_diagnostics::RenderOptions {
+                colour: crate::paths::stderr_supports_colour(),
+            };
+            for diag in &diags {
+                let structured = diag.to_diagnostic();
+                eprintln!(
+                    "{}",
+                    gossamer_diagnostics::render(&structured, &map, render_opts)
+                );
+            }
+            return Err(anyhow!(
+                "{} parse error(s); refusing to format",
+                diags.len()
+            ));
         }
-        return Err(anyhow!(
-            "{} parse error(s); refusing to format",
-            diags.len()
-        ));
-    }
-    let formatted = format!("{sf}");
-    let formatted = if formatted.ends_with('\n') {
-        formatted
-    } else {
-        formatted + "\n"
+        Err(err @ gossamer_parse::FormatError::SelfCheck(_)) => {
+            return Err(anyhow!("fmt: {}: {err}", file.display()));
+        }
     };
     if check_only {
         if formatted == source {

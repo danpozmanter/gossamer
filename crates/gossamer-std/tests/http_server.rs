@@ -51,6 +51,8 @@ fn server_responds_to_a_real_http_request() {
                 status: StatusCode::OK,
                 headers,
                 body: b"ok".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         })
         .unwrap();
@@ -119,6 +121,8 @@ fn server_skips_date_and_server_when_handler_set_them() {
                 status: StatusCode::OK,
                 headers,
                 body: b"ok".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         })
         .unwrap();
@@ -192,6 +196,8 @@ fn server_splits_path_and_query() {
                 status: StatusCode::OK,
                 headers: Headers::new(),
                 body: b"ok".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         })
         .unwrap();
@@ -305,6 +311,8 @@ fn server_decodes_chunked_request_body() {
                 status: StatusCode::OK,
                 headers: Headers::new(),
                 body: b"ok".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         })
         .unwrap();
@@ -400,6 +408,8 @@ fn server_writes_100_continue_before_reading_expect_body() {
                 status: StatusCode::OK,
                 headers: Headers::new(),
                 body: b"received".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         })
         .unwrap();
@@ -471,6 +481,8 @@ fn server_emits_chunked_response_when_handler_requests() {
                 status: StatusCode::OK,
                 headers,
                 body: b"hello chunked world".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         })
         .unwrap();
@@ -535,6 +547,8 @@ fn graceful_shutdown_drains_in_flight_handler() {
                 status: StatusCode::OK,
                 headers: Headers::new(),
                 body: b"done".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         });
     });
@@ -609,6 +623,8 @@ fn handler_request_context_cancels_on_shutdown() {
                         status: StatusCode::OK,
                         headers: Headers::new(),
                         body: b"cancelled".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
                     };
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -617,6 +633,8 @@ fn handler_request_context_cancels_on_shutdown() {
                 status: StatusCode::OK,
                 headers: Headers::new(),
                 body: b"timed-out".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             }
         });
     });
@@ -820,4 +838,157 @@ fn server_request_context_is_not_cancelled_by_default() {
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).unwrap();
     server.join().unwrap();
+}
+
+/// Splits a raw HTTP/1.1 response into (head, body-bytes).
+fn split_head(raw: &[u8]) -> (String, Vec<u8>) {
+    let pos = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("header terminator");
+    (
+        String::from_utf8_lossy(&raw[..pos + 4]).into_owned(),
+        raw[pos + 4..].to_vec(),
+    )
+}
+
+#[test]
+fn streamed_response_writes_chunked_frames_without_content_length() {
+    let (listener, actual_addr) = bind_loopback();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        read_timeout: Some(Duration::from_secs(2)),
+        max_requests: Some(1),
+        shutdown: Arc::clone(&shutdown),
+        server_name: Some("gossamer-test".to_string()),
+        ..Config::default()
+    };
+
+    // > 8 KiB so the drain emits more than one chunk frame.
+    let payload: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+    let payload_for_handler = payload.clone();
+    let server = thread::spawn(move || {
+        run(listener, &config, move |_request: Request| {
+            Response::stream(
+                StatusCode::OK,
+                "application/octet-stream",
+                std::io::Cursor::new(payload_for_handler.clone()),
+            )
+        })
+        .unwrap();
+    });
+
+    thread::sleep(Duration::from_millis(50));
+    let mut stream = TcpStream::connect(actual_addr).unwrap();
+    stream
+        .write_all(b"GET /big HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+
+    let mut raw = Vec::new();
+    BufReader::new(stream).read_to_end(&mut raw).unwrap();
+    server.join().unwrap();
+
+    let (head, body) = split_head(&raw);
+    let head_lower = head.to_ascii_lowercase();
+    assert!(
+        head_lower.starts_with("http/1.1 200"),
+        "status line: {head}"
+    );
+    assert!(
+        head_lower.contains("transfer-encoding: chunked"),
+        "head must declare chunked framing: {head}"
+    );
+    assert!(
+        !head_lower.contains("content-length"),
+        "chunked response must not carry Content-Length: {head}"
+    );
+    assert!(
+        head_lower.contains("content-type: application/octet-stream"),
+        "head: {head}"
+    );
+    assert!(
+        body.ends_with(b"0\r\n\r\n"),
+        "clean drain must end with the zero-length terminal frame"
+    );
+    let decoded = gossamer_std::http_chunked::decode_all(&body).expect("valid chunked body");
+    assert_eq!(decoded, payload, "de-chunked payload must round-trip");
+}
+
+/// Body reader that yields one chunk and then fails, modelling an
+/// upstream connection dying mid-proxy.
+struct FailAfterFirstRead {
+    first: Option<Vec<u8>>,
+}
+
+impl Read for FailAfterFirstRead {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self.first.take() {
+            Some(bytes) => {
+                buf[..bytes.len()].copy_from_slice(&bytes);
+                Ok(bytes.len())
+            }
+            None => Err(std::io::Error::other("upstream died")),
+        }
+    }
+}
+
+#[test]
+fn streamed_response_mid_stream_error_truncates_without_terminal_frame() {
+    let (listener, actual_addr) = bind_loopback();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        read_timeout: Some(Duration::from_secs(2)),
+        max_requests: Some(1),
+        shutdown: Arc::clone(&shutdown),
+        server_name: Some("gossamer-test".to_string()),
+        ..Config::default()
+    };
+
+    let server = thread::spawn(move || {
+        run(listener, &config, move |_request: Request| {
+            Response::stream(
+                StatusCode::OK,
+                "text/plain",
+                FailAfterFirstRead {
+                    first: Some(b"partial".to_vec()),
+                },
+            )
+        })
+        .unwrap();
+    });
+
+    thread::sleep(Duration::from_millis(50));
+    let mut stream = TcpStream::connect(actual_addr).unwrap();
+    stream
+        .write_all(b"GET /dying HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+
+    let mut raw = Vec::new();
+    BufReader::new(stream).read_to_end(&mut raw).unwrap();
+    server.join().unwrap();
+
+    let (head, body) = split_head(&raw);
+    let head_lower = head.to_ascii_lowercase();
+    assert!(
+        head_lower.contains("transfer-encoding: chunked"),
+        "head: {head}"
+    );
+    let body_text = String::from_utf8_lossy(&body);
+    assert!(
+        body_text.contains("partial"),
+        "the first chunk must reach the wire: {body_text:?}"
+    );
+    assert!(
+        !body.ends_with(b"0\r\n\r\n"),
+        "a truncated stream must NOT write the terminal frame — closing \
+         early is the RFC 7230 §4.1 truncation signal"
+    );
+    assert!(
+        gossamer_std::http_chunked::decode_all(&body).is_err(),
+        "clients de-chunking the body must observe the truncation"
+    );
 }

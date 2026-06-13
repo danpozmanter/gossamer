@@ -1,0 +1,66 @@
+// Canonical i64 integer model for narrow int types (u8/i8/u16/
+// i16/u32/i32): every tier computes integer arithmetic at 64-bit
+// width, narrows only at explicit `as` casts (trunc + sign/zero
+// extend by the target's signedness), and converts float -> int
+// by saturating at i64 width with no narrow mask. Regression
+// fixture for the LLVM/Cranelift miscompiles where `sum += b`
+// over a `[u8]` wrapped at 8 bits (sum mod 256) and a `for` loop
+// over `os::read_file` bytes emitted invalid mixed-width IR.
+
+use std::errors
+use std::os
+use std::path
+
+fn main() -> Result<(), errors::Error> {
+    // [u8] literal: accumulation must run at 64-bit width even
+    // though `sum` infers as u8 (200+200+60+4 = 464, not 208).
+    let body: [u8] = [200, 200, 60, 4]
+    let mut sum = 0
+    for b in body {
+        sum += b
+    }
+    println!("lit sum = {}", sum)
+    println!("lit idx = {} {} {}", body[0], body[1], body[3])
+
+    // Mixed-width accumulator: i64 total += u8 element. The LLVM
+    // lowerer used to emit `add i64 %a, %b` with an i8 operand,
+    // which opt rejects.
+    let mut total: i64 = 0
+    for b in body {
+        total += b as i64
+    }
+    println!("cast sum = {}", total)
+
+    // Narrow casts are the single masking point.
+    let x = 300
+    println!("300 as u8 = {}", x as u8)
+    let y = 200
+    println!("200 as i8 = {}", y as i8)
+    let z: u8 = 200
+    println!("u8 200+200 = {}", z + z)
+
+    // Float -> int saturates at i64 width, no narrow mask.
+    let f = 300.7
+    println!("300.7 as u8 = {}", f as u8)
+    let g = -1.5
+    println!("-1.5 as u8 = {}", g as u8)
+    let h = 1e20
+    println!("1e20 as i64 = {}", h as i64)
+
+    // Byte-file roundtrip: compiled tiers receive a packed
+    // elem_bytes=1 vec from the runtime; indexing, element
+    // writes, and for-loops must honour the header stride.
+    let payload: [u8] = [0, 255, 1, 254]
+    let tmp = path::join(&os::temp_dir(), &"gos_byte_vec_i64_model.bin")
+    os::write_file(&tmp, &payload)?
+    let mut bytes = os::read_file(&tmp)?
+    os::remove_file(&tmp)?
+    bytes[1] = 9
+    let mut fsum = 0
+    for b in bytes {
+        fsum += b
+    }
+    println!("file sum = {}", fsum)
+    println!("file idx = {} {} {} {}", bytes[0], bytes[1], bytes[2], bytes[3])
+    Ok(())
+}

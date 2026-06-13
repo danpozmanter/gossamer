@@ -202,16 +202,26 @@ mod tests {
             *result_for_g.lock().unwrap() = Some(v);
             done_for_g.store(true, Ordering::Release);
         }));
-        // 15s ceiling tolerates an overloaded scheduler running
-        // hundreds of concurrent tests; the future itself
-        // resolves in ~30ms once the scheduler picks the wake.
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        // The property under test is wake DELIVERY, not latency: a
+        // lost wake leaves the goroutine parked forever, so only a
+        // deadlock-sized ceiling distinguishes "machine saturated by
+        // a full-workspace test run" (fine, resolves in ~30ms once
+        // scheduled) from "wake genuinely lost" (regression — see the
+        // retired-inbox handoff tests in sched/multi.rs). A tight
+        // wall-clock bound here flakes under `cargo test --workspace`
+        // load without indicating any scheduler bug.
+        let deadline = std::time::Instant::now() + Duration::from_mins(2);
         while std::time::Instant::now() < deadline {
             if done.load(Ordering::Acquire) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+        assert!(
+            done.load(Ordering::Acquire),
+            "external wake not delivered within 120s — parked goroutine \
+             likely lost its wake (see sched/multi.rs retired-inbox invariant)"
+        );
         assert_eq!(*result.lock().unwrap(), Some(7));
     }
 }

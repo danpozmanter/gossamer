@@ -18,6 +18,8 @@
 
 #![allow(missing_docs)]
 
+mod common;
+
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -208,6 +210,7 @@ const SPECS: &[Spec] = &[
     spec("examples/word_count.gos"),
     // --- feature-testing-examples/ ---
     spec("feature-testing-examples/array_bounds_probe.gos"),
+    spec("feature-testing-examples/byte_vec_i64_model.gos"),
     spec("feature-testing-examples/channel_close_drain.gos"),
     Spec {
         nondeterministic: true,
@@ -215,9 +218,15 @@ const SPECS: &[Spec] = &[
     },
     spec("feature-testing-examples/closure_capture_mutation.gos"),
     spec("feature-testing-examples/closure_lifetime_inference.gos"),
+    spec("feature-testing-examples/closure_payload_typing.gos"),
+    spec("feature-testing-examples/combinator_sweep.gos"),
+    spec("feature-testing-examples/mut_ref_params.gos"),
+    spec("feature-testing-examples/http_surface.gos"),
     spec("feature-testing-examples/select_multiplex.gos"),
     spec("feature-testing-examples/let_else_binding.gos"),
     spec("feature-testing-examples/slice_param_coercion.gos"),
+    spec("feature-testing-examples/enum_param_rc_repro.gos"),
+    spec("feature-testing-examples/sql_driverless.gos"),
     spec("feature-testing-examples/struct_copy_reclaim.gos"),
     spec("feature-testing-examples/struct_copy_followups.gos"),
     spec("feature-testing-examples/struct_container_reclaim.gos"),
@@ -232,6 +241,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/arena_regions.gos"),
     spec("feature-testing-examples/auto_regions.gos"),
     spec("feature-testing-examples/defer_unwind_order.gos"),
+    spec("feature-testing-examples/early_break_materializers.gos"),
     spec("feature-testing-examples/empty_vec_growth.gos"),
     spec("feature-testing-examples/vec_multislot_growth.gos"),
     spec("feature-testing-examples/doc_test_vs_unit_test_drift.gos"),
@@ -239,6 +249,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/error_question_mark_propagation.gos"),
     spec("feature-testing-examples/float_cast_drift.gos"),
     spec("feature-testing-examples/format_precision_padding.gos"),
+    spec("feature-testing-examples/fs_error_text.gos"),
     spec("feature-testing-examples/fs_temp_file_lifecycle.gos"),
     spec("feature-testing-examples/generic_function_monomorphization.gos"),
     spec("feature-testing-examples/goroutine_panic_isolation.gos"),
@@ -248,6 +259,63 @@ const SPECS: &[Spec] = &[
     },
     spec("feature-testing-examples/http2_push.gos"),
     spec("feature-testing-examples/http2_trailers.gos"),
+    Spec {
+        skip_all: Some(
+            "binds fixed loopback ports — covered serially by \
+             http_bare_handler_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_bare_handler.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_next_chunk_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_next_chunk.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds fixed loopback ports — covered serially by \
+             http_proxy_stream_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_proxy_stream.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_raw_bytes_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_raw_bytes.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_redirect_policy_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_redirect_policy.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_request_headers_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_request_headers.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_response_headers_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_response_headers.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds fixed loopback ports — covered serially by \
+             http_roundtrip_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_roundtrip.gos")
+    },
+    spec("feature-testing-examples/http_serve_err_binding.gos"),
     spec("feature-testing-examples/integer_overflow_edges.gos"),
     spec("feature-testing-examples/iter_combinator_chain.gos"),
     spec("feature-testing-examples/json_round_trip_fuzz.gos"),
@@ -255,7 +323,9 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/mutex_poison_recovery.gos"),
     spec("feature-testing-examples/mutex_vs_channel_counter.gos"),
     spec("feature-testing-examples/numeric_conversion_matrix.gos"),
+    spec("feature-testing-examples/option_default.gos"),
     spec("feature-testing-examples/option_unwrap_chain.gos"),
+    spec("feature-testing-examples/result_default.gos"),
     spec("feature-testing-examples/try_option_propagation.gos"),
     spec("feature-testing-examples/try_err_conversion.gos"),
     spec("feature-testing-examples/crypto_sha_hex.gos"),
@@ -659,6 +729,220 @@ fn web_server_smoke_llvm() {
     server_smoke(Tier::Llvm);
 }
 
+/// Runs a self-terminating loopback client+server fixture (server
+/// goroutines + client in `main` + explicit `process::exit`) on
+/// all three tiers sequentially and demands identical stdout and
+/// exit codes. These fixtures bind fixed loopback ports, so they
+/// are excluded from the parallel SPECS walks (`skip_all`) and
+/// serialised under [`SERVER_PORT_LOCK`] here instead.
+/// `expect_contains` guards against an all-tiers-identically-broken
+/// pass (e.g. every tier printing the same connection error).
+fn self_terminating_server_parity(path: &'static str, expect_contains: &[&str]) {
+    let _port_guard = SERVER_PORT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _server_window = common::ServerPortLock::acquire();
+    let fixture = spec(path);
+    let vm = run_tier(&fixture, Tier::Vm).expect("vm run");
+    assert_eq!(
+        vm.code,
+        Some(0),
+        "{path}: vm exit={:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        vm.code,
+        vm.stdout,
+        vm.stderr,
+    );
+    for needle in expect_contains {
+        assert!(
+            vm.stdout.contains(needle),
+            "{path}: vm stdout missing {needle:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            vm.stdout,
+            vm.stderr,
+        );
+    }
+    for tier in [Tier::Cranelift, Tier::Llvm] {
+        let run = run_tier(&fixture, tier)
+            .unwrap_or_else(|e| panic!("{path}: {} error: {e}", tier.label()));
+        if let Some(d) = divergence(&fixture, (Tier::Vm, &vm), (tier, &run)) {
+            panic!("{d}\n--- {} stderr ---\n{}", tier.label(), run.stderr);
+        }
+    }
+}
+
+/// Bare-`http::Response` handlers (no `Result` wrapper) must serve
+/// identically on every tier: the MIR-synthesized `::__ok_wrap`
+/// thunk adapts them to the packed-Result handler C-ABI. Covers
+/// the `impl http::Handler` env path and the Router bare-fn path.
+#[test]
+fn http_bare_handler_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_bare_handler.gos",
+        &[
+            "struct status=200 body=bare struct ok",
+            "route status=200 body=bare route ok",
+        ],
+    );
+}
+
+/// `match http::serve(..) { Err(e) => println!("{}", e) }` must
+/// compile and run identically on every tier. The serve expression
+/// is `Result<(), errors::Error>`-typed (the Err binding used to
+/// lower as void and break LLVM with "sext void to i64"), and a
+/// bind failure is the caller's `Err` value — printed via the match
+/// arm and exit 0 on every tier.
+#[test]
+fn http_serve_err_binding_parity_across_tiers() {
+    let fixture = spec("feature-testing-examples/http_serve_err_binding.gos");
+    let expected_stdout = "about to bind\nError: http::serve: invalid socket address\n";
+    for tier in [Tier::Vm, Tier::Cranelift, Tier::Llvm] {
+        let run =
+            run_tier(&fixture, tier).unwrap_or_else(|e| panic!("{} error: {e}", tier.label()));
+        assert_eq!(
+            run.code,
+            Some(0),
+            "{} must exit 0 — serve failure is the caller's Err value, not a panic\n\
+             --- stdout ---\n{}\n--- stderr ---\n{}",
+            tier.label(),
+            run.stdout,
+            run.stderr,
+        );
+        assert_eq!(run.stdout, expected_stdout, "{} stdout", tier.label());
+        assert!(
+            !run.stderr.contains("GX0005"),
+            "{} must not panic on serve failure\n--- stderr ---\n{}",
+            tier.label(),
+            run.stderr,
+        );
+    }
+}
+
+/// Inbound server request headers must be readable identically on
+/// every tier: `for (name, value) in r.headers` (the historical
+/// MIR-lowering panic / first-request segfault shape), borrowed
+/// `&r.headers` lookups, the lowercase/dedupe/name-sorted interp
+/// `Headers` view, and `r.path` query-stripping + `r.query` parity.
+#[test]
+fn http_request_headers_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_request_headers.gos",
+        &[
+            "status=200",
+            "custom=2 alpha=a1 beta=b2 path=/echo query=k=1&n=2",
+        ],
+    );
+}
+
+/// Handler-set response headers must reach the wire identically on
+/// every tier: `Response::with_header` is replace-then-push (the
+/// second same-name attach wins, case-insensitively) and the
+/// constructor's content type survives alongside custom headers
+/// (explicit header > `content_type` field > text/plain default).
+#[test]
+fn http_response_headers_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_response_headers.gos",
+        &[
+            "status=201 body=created",
+            "x-a=2",
+            "x-b=3",
+            "content-type=text/plain; charset=utf-8",
+        ],
+    );
+}
+
+/// Programmer-selectable redirect policy must behave identically on
+/// every tier: the default `Client::builder().build()` follows the
+/// 302 to the final 200 body, `max_redirects(0)` returns the 302 raw
+/// with its Location header intact, and `request_bytes` honors the
+/// same configured client.
+#[test]
+fn http_redirect_policy_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_redirect_policy.gos",
+        &[
+            "a_status=200 a_body=landed",
+            "b_status=302 b_location=/data",
+            "c_status=200 c_body=hi",
+        ],
+    );
+}
+
+/// `ResponseStream::next_chunk(max)` must drain a streamed body in
+/// identical byte chunks on every tier: the Some payload is a
+/// packed `elem_bytes=1` `GosVec` (the `raw_bytes` representation
+/// contract), consumed through the canonical `while let
+/// Some(chunk)` shape with len / indexing / for-loop sum /
+/// `hex::encode` all reading byte-stride.
+#[test]
+fn http_next_chunk_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_next_chunk.gos",
+        &[
+            "len=4 b0=65 hex=41c3bfe2",
+            "len=4 b0=132 hex=84a27a41",
+            "len=2 b0=66 hex=4243",
+            "total=10 sum=1291",
+        ],
+    );
+}
+
+/// Streamed server responses (`Response::stream` — the
+/// proxy-passthrough shape) must behave identically on every tier:
+/// the proxy opens a fresh upstream `http::stream` per request, the
+/// server drains it as chunked frames, and constructing the
+/// response consumes the `ResponseStream` handle (`next_chunk`
+/// yields `None` afterwards — the /consumed handler answers 500 if
+/// it ever sees leftover data).
+#[test]
+fn http_proxy_stream_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_proxy_stream.gos",
+        &[
+            "first status=200 ct=text/plain; charset=utf-8 len=37 \
+             body=upstream payload: the quick brown fox",
+            "second status=200 ct=text/plain; charset=utf-8 len=37 \
+             body=upstream payload: the quick brown fox",
+            "consumed status=200 ct=text/plain; charset=utf-8 len=37 \
+             body=upstream payload: the quick brown fox",
+        ],
+    );
+}
+
+/// Integration fixture chaining the closed client/server gaps like
+/// a real proxy session: binary `request_bytes` upload observed via
+/// the server's `r.raw_body` (NUL byte included), a NUL-embedded
+/// byte-array response body served in full by the native h1 writer
+/// (`body_bytes` preferred over the c-string mirror), handler
+/// `with_header` reaching the wire and read back through the
+/// client's `resp.headers` then forwarded by a proxy hop, a 302
+/// held raw under `max_redirects(0)`, and a `next_chunk` drain of a
+/// `Response::stream` passthrough.
+#[test]
+fn http_roundtrip_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_roundtrip.gos",
+        &[
+            "echo status=200 body=len=4 first=1 last=255 sum=258",
+            "nul status=200 len=5 hex=4100420043",
+            "hop status=302 location=/data",
+            "fwd status=200 body=fwd:landed-data x-up=u1",
+            "stream total=31 chunks=4 first_hex=73747265616d6564",
+        ],
+    );
+}
+
+/// `resp.raw_bytes` is a packed `elem_bytes=1` `GosVec`; every
+/// consumer op (indexing, for-loop, `first` / `last` / `contains`
+/// / `count_of` / `index_of`, `hex::encode`, element writes) must
+/// read byte-stride identically on every tier.
+#[test]
+fn http_raw_bytes_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_raw_bytes.gos",
+        &["hex=41c3bfe284a27a", "mutated_v0=66 hex2=42c3bfe284a27a"],
+    );
+}
+
 /// Serialises the `web_server.gos` smoke tests across all three
 /// tiers. The example hardcodes `0.0.0.0:8080`; running the three
 /// `#[test]` variants in parallel races on that port and produces
@@ -670,6 +954,7 @@ fn server_smoke(tier: Tier) {
     let _port_guard = SERVER_PORT_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _server_window = common::ServerPortLock::acquire();
     let spec = SPECS
         .iter()
         .find(|s| s.path == "examples/web_server.gos")

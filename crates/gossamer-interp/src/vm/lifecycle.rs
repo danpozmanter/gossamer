@@ -9,6 +9,7 @@ impl Vm {
             globals: Arc::new(rustc_hash::FxHashMap::default()),
             prelude: builtins::prelude_globals(),
             walker: RefCell::new(Interpreter::new()),
+            walker_proto: None,
             pool: RefCell::new(FramePool::default()),
             mir_bodies: None,
             tcx_snapshot: None,
@@ -45,10 +46,21 @@ impl Vm {
         tcx_snapshot: Option<Arc<TyCtxt>>,
         enum_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
     ) -> Self {
+        let walker = {
+            let mut w = Interpreter::new();
+            // Goroutine VMs need the interner too — deferred casts in
+            // spawned bodies resolve their targets the same way the
+            // parent's bundled walker does.
+            if let Some(tcx) = &tcx_snapshot {
+                w.set_type_context(Arc::clone(tcx));
+            }
+            w
+        };
         Self {
             globals,
             prelude: builtins::prelude_globals(),
-            walker: RefCell::new(Interpreter::new()),
+            walker: RefCell::new(walker),
+            walker_proto: None,
             pool: RefCell::new(FramePool::default()),
             mir_bodies,
             tcx_snapshot,
@@ -272,10 +284,22 @@ impl Vm {
             // with an empty interner when it used `mem::take` on a
             // borrow. By-value ownership makes the consume explicit and
             // costs neither.
-            self.tcx_snapshot = Some(Arc::new(tcx));
+            let tcx_arc = Arc::new(tcx);
+            self.walker
+                .borrow_mut()
+                .set_type_context(Arc::clone(&tcx_arc));
+            self.tcx_snapshot = Some(tcx_arc);
         } else {
             self.jit.write().compiled = JitCompileState::Failed;
+            // No JIT snapshot to retain — the walker still needs the
+            // interner so deferred casts resolve their target kinds.
+            self.walker.borrow_mut().set_type_context(Arc::new(tcx));
         }
+        // Snapshot the loaded walker for goroutine pool workers —
+        // their per-thread `Vm` clones this fn table (plus the
+        // type-context handle just installed) once at first use
+        // instead of starting from an empty walker.
+        self.walker_proto = Some(Arc::new(self.walker.borrow().clone()));
         // End-of-load compaction: every item is registered, so the
         // overlay HashMap has reached its steady-state size. Release
         // hashbrown's growth-by-doubling slack.

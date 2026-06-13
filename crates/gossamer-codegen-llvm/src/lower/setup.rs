@@ -88,18 +88,7 @@ impl<'a> Lowerer<'a> {
             current_block: None,
             preempt_seq: 0,
             capture_summary: gossamer_mir::CaptureSummary::default(),
-            loop_headers: std::collections::HashSet::new(),
-            gc_prologue_emitted: false,
         }
-    }
-
-    /// Per-function alloca slot name holding the calling thread's
-    /// raw-pointer shadow-stack depth at function entry. The slot
-    /// is read at every `Terminator::Return` to compute the
-    /// restore frame and at the aggregate-return heap-copy site so
-    /// the returned pointer outlives the restore.
-    pub(crate) fn gc_frame_slot_name() -> &'static str {
-        "%gc_root_frame_slot"
     }
 
     /// Main entry point — emits the function's IR text in its
@@ -136,7 +125,6 @@ impl<'a> Lowerer<'a> {
         // through the same pipeline as user functions and the
         // generated `define`s become visible to the IR-shape
         // gates.
-        self.compute_loop_headers();
         self.emit_prelude();
         // Entry block opens with `alloca`s for every local.
         self.emit_allocas();
@@ -145,10 +133,6 @@ impl<'a> Lowerer<'a> {
         // `local_slot`. MIR reserves `_1..=_arity` as
         // parameter locals.
         self.emit_param_stores();
-        // Raw-pointer tracing-GC prologue: alloca a frame slot,
-        // record the current shadow-stack depth, then run the
-        // unified safepoint hook.
-        self.emit_gc_prologue();
         // No per-call call-stack instrumentation: panic traces and
         // SIGQUIT dumps for the compiled tier come from unwinding the
         // real machine stack on demand (see `gos_rt_panic` /

@@ -1,0 +1,84 @@
+// std::database::sql language surface without a driver: registry
+// queries, the unknown-driver error path through `?`, Value /
+// IsolationLevel construction and matching. Exercises the injected
+// real-struct wrappers identically on every tier.
+use std::database::sql
+use std::errors
+
+fn try_open() -> Result<i64, sql::Error> {
+    let mut db = sql::open("nope", "host=x")?
+    db.ping()?
+    Ok(1)
+}
+
+fn show_row(row: sql::Row) {
+    println!("row width {}", row.width())
+}
+
+// query_each: cursor opened, drained, and closed inside one call —
+// here the no-driver open fails first, but the whole body (defer,
+// let-else drain loop, Fn-param callback) must lower on every tier.
+fn try_query_each() -> Result<(), sql::Error> {
+    let mut db = sql::open("nope", "host=x")?
+    db.query_each("select 1", &[], show_row)?
+    Ok(())
+}
+
+// rows.close() is idempotent (a released or never-live handle is
+// Ok); next_row on a released handle reports an error.
+fn cursor_safety() -> String {
+    let mut rows = sql::Rows { __handle: 0 }
+    let closed = match rows.close() {
+        Ok(_) => "close-ok",
+        Err(_) => "close-err",
+    }
+    let advanced = match rows.next_row() {
+        Ok(_) => "next-ok",
+        Err(_) => "next-err",
+    }
+    format!("{} {}", closed, advanced)
+}
+
+fn describe(v: &sql::Value) -> String {
+    match v {
+        sql::Value::Null => "null",
+        sql::Value::Bool(b) => if b { "true" } else { "false" },
+        sql::Value::Int(n) => format!("int:{}", n),
+        sql::Value::Float(f) => format!("float:{}", f),
+        sql::Value::Text(s) => format!("text:{}", s),
+        sql::Value::Blob(b) => format!("blob:{}", b.len()),
+    }
+}
+
+fn main() {
+    println!("drivers: {}", sql::drivers().len())
+    match try_open() {
+        Ok(_) => println!("opened"),
+        Err(e) => println!("error: {}", e),
+    }
+    let vals = [sql::Value::Int(7), sql::Value::Text("abc"), sql::Value::Null,
+        sql::Value::Bool(true), sql::Value::Float(1.5), sql::Value::Blob([1, 2, 3])]
+    println!("vals: {}", vals.len())
+    for v in &vals {
+        println!("{}", describe(v))
+    }
+    match sql::IsolationLevel::Serializable {
+        sql::IsolationLevel::Serializable => println!("iso: serializable"),
+        _ => println!("iso: other"),
+    }
+    match try_query_each() {
+        Ok(_) => println!("query_each ok"),
+        Err(e) => println!("query_each error: {}", e),
+    }
+    println!("cursor: {}", cursor_safety())
+    let sel = sql::Select::new("players").columns(&["id", "name"]).where_eq("score", sql::Value::Int(90)).where_eq("name", sql::Value::Text("alice")).order_by("id", true).limit(10).offset(5)
+    println!("select: {}", sel.render())
+    println!("select params: {}", sel.params().len())
+    match sql::Pool::open("nope", "x", 4) {
+        Ok(pool) => match pool.acquire() {
+            Ok(_) => println!("pool: unexpected conn"),
+            Err(e) => println!("pool get error: {}", e),
+        },
+        Err(e) => println!("pool open error: {}", e),
+    }
+}

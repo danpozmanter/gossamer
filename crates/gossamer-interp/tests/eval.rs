@@ -64,7 +64,7 @@ fn block_comments_are_lexed_and_skipped() {
     let source = r#"
 /* banner comment */
 fn main() {
-    /* a /* nested */ comment */
+    /* an inner /* opener does not nest; first close ends it */
     println(1i64 /* inline */ + 2i64)
 }
 "#;

@@ -97,6 +97,51 @@ fn emit_stdlib_check_fails_on_drift() {
 }
 
 #[test]
+fn emit_stdlib_preserves_handwritten_tail_and_check_ignores_it() {
+    let dir = tmp("handwritten");
+    Command::new(gos_bin())
+        .args(["doc", "--emit-stdlib"])
+        .arg(&dir)
+        .output()
+        .expect("emit");
+    let page = dir.join("io.md");
+    let head = std::fs::read_to_string(&page).unwrap();
+    let marker = "<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->";
+    std::fs::write(
+        &page,
+        format!("{head}{marker}\n\n## Notes\n\nHandwritten prose.\n"),
+    )
+    .unwrap();
+
+    // The drift check compares only the generated head.
+    let check = Command::new(gos_bin())
+        .args(["doc", "--emit-stdlib"])
+        .arg(&dir)
+        .arg("--check")
+        .output()
+        .expect("check");
+    assert!(
+        check.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    // Re-emitting rewrites the head and keeps the handwritten tail.
+    Command::new(gos_bin())
+        .args(["doc", "--emit-stdlib"])
+        .arg(&dir)
+        .output()
+        .expect("re-emit");
+    let after = std::fs::read_to_string(&page).unwrap();
+    assert!(after.starts_with(&head), "generated head must be rewritten");
+    assert!(
+        after.contains("Handwritten prose."),
+        "handwritten tail must survive re-emit"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn doc_without_file_or_emit_stdlib_errors() {
     let out = Command::new(gos_bin())
         .args(["doc"])

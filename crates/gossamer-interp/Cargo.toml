@@ -17,7 +17,6 @@ gossamer-codegen-cranelift = { workspace = true }
 gossamer-hir = { workspace = true }
 gossamer-lex = { workspace = true }
 gossamer-mir = { workspace = true }
-gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-runtime = { workspace = true }
 gossamer-std = { workspace = true }

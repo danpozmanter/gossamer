@@ -1,6 +1,6 @@
 //! `gos bench [PATH] [--parallel N]` — discovers every
 //! `#[bench]`-annotated function under `PATH` and times each one,
-//! reporting `ns/op` and `allocs/op` per benchmark.
+//! reporting `ns/op` per benchmark.
 //!
 //! Mirrors the discovery flow used by `gos test` (see
 //! [`crate::cmd::attr_walk`] and [`crate::cmd::test`]): `PATH` may
@@ -15,8 +15,8 @@
 //!
 //! Output format:
 //! ```text
-//! benchmark::add_two_ints          ... 23 ns/op    0 allocs/op
-//! benchmark::create_thousand_keys  ... 1240 ns/op  3 allocs/op
+//! benchmark::add_two_ints          ... 23 ns/op
+//! benchmark::create_thousand_keys  ... 1240 ns/op
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -65,11 +65,6 @@ struct BenchRecord {
     label: String,
     /// Mean nanoseconds per call.
     ns_per_op: u128,
-    /// Net `GcStats.bytes_allocated` delta divided by total ops,
-    /// rounded down. The interp's GC-tracked allocation path is
-    /// the only one accounted for; non-tracked allocations (e.g.
-    /// interp `Rc`/`Vec`) read zero.
-    allocs_per_op: u64,
     /// Total iterations the harness settled on after calibration.
     iterations: u64,
 }
@@ -124,12 +119,11 @@ pub(crate) fn run_with_opts(opts: BenchOpts) -> Result<()> {
         .unwrap_or(1);
     for record in &records {
         println!(
-            "{label:<lw$} ... {ns:>nw$} ns/op    {allocs} allocs/op",
+            "{label:<lw$} ... {ns:>nw$} ns/op",
             label = record.label,
             lw = label_width,
             ns = record.ns_per_op,
             nw = ns_width,
-            allocs = record.allocs_per_op,
         );
     }
     eprintln!(
@@ -193,7 +187,6 @@ fn run_one(target: &BenchTarget) -> Result<BenchRecord> {
     interp.load(&program);
 
     let iterations = auto_tune_iterations(&mut interp, &target.name)?;
-    let allocs_before = gossamer_runtime::gc::stats().bytes_allocated;
     let started = Instant::now();
     for _ in 0..iterations {
         interp
@@ -201,7 +194,6 @@ fn run_one(target: &BenchTarget) -> Result<BenchRecord> {
             .map_err(|e| anyhow!("bench {} failed: {e}", target.name))?;
     }
     let elapsed = started.elapsed();
-    let allocs_after = gossamer_runtime::gc::stats().bytes_allocated;
 
     let total_nanos = elapsed.as_nanos();
     let ns_per_op = if iterations == 0 {
@@ -209,12 +201,6 @@ fn run_one(target: &BenchTarget) -> Result<BenchRecord> {
     } else {
         total_nanos / u128::from(iterations)
     };
-    let allocs_delta = allocs_after.saturating_sub(allocs_before);
-    let allocs_per_op = u64::try_from(allocs_delta)
-        .unwrap_or(u64::MAX)
-        .checked_div(iterations)
-        .unwrap_or(0);
-
     let label = format!(
         "{}::{}",
         target
@@ -227,7 +213,6 @@ fn run_one(target: &BenchTarget) -> Result<BenchRecord> {
     Ok(BenchRecord {
         label,
         ns_per_op,
-        allocs_per_op,
         iterations,
     })
 }

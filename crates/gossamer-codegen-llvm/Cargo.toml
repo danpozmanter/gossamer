@@ -15,6 +15,7 @@ workspace = true
 anyhow = { workspace = true }
 gossamer-abi = { workspace = true }
 gossamer-mir = { workspace = true }
+gossamer-resolve = { workspace = true }
 gossamer-types = { workspace = true }
 gossamer-runtime = { workspace = true }
 parking_lot = { workspace = true }
@@ -23,6 +24,5 @@ parking_lot = { workspace = true }
 gossamer-lex = { workspace = true }
 gossamer-parse = { workspace = true }
 gossamer-hir = { workspace = true }
-gossamer-resolve = { workspace = true }
 gossamer-types = { workspace = true }
 insta = { workspace = true }

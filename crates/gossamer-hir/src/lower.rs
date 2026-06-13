@@ -39,6 +39,7 @@ pub fn lower_source_file(
         ids: HirIdGenerator::new(),
         recursion_depth: 0,
         current_fn_ret_ty: None,
+        import_targets: collect_import_targets(&source.uses),
     };
     let mut items = Vec::new();
     let mut module_path: Vec<String> = Vec::new();
@@ -77,6 +78,43 @@ fn lower_items(
     }
 }
 
+/// Builds the per-`use` map of bound name → full target path consumed
+/// by `lower_path_expr`'s imported-binding expansion. One declaration
+/// can bind several names (`use m::{a, b as c}`), so entries carry the
+/// bound spelling (alias when present) alongside the full segments.
+fn collect_import_targets(
+    uses: &[gossamer_ast::UseDecl],
+) -> std::collections::HashMap<NodeId, Vec<(String, Vec<Ident>)>> {
+    let mut map = std::collections::HashMap::new();
+    for use_decl in uses {
+        let gossamer_ast::UseTarget::Module(path) = &use_decl.target else {
+            continue;
+        };
+        let base: Vec<Ident> = path.segments.clone();
+        let mut entries: Vec<(String, Vec<Ident>)> = Vec::new();
+        if let Some(list) = &use_decl.list {
+            for entry in list {
+                let bound = entry.alias.as_ref().unwrap_or(&entry.name).name.clone();
+                let mut full = base.clone();
+                full.push(entry.name.clone());
+                entries.push((bound, full));
+            }
+        } else {
+            let bound = use_decl.alias.as_ref().map_or_else(
+                || base.last().map(|s| s.name.clone()),
+                |alias| Some(alias.name.clone()),
+            );
+            if let Some(bound) = bound {
+                entries.push((bound, base.clone()));
+            }
+        }
+        if !entries.is_empty() {
+            map.insert(use_decl.id, entries);
+        }
+    }
+    map
+}
+
 /// Hard limit on HIR-lowering recursion depth. Mirrors the parser /
 /// type-checker guards and stops adversarial input (or front-end bugs
 /// that produce one) from blowing the C stack during AST→HIR lowering.
@@ -108,6 +146,11 @@ struct Lowerer<'a> {
     /// `?` propagation works across different error types — the
     /// SPEC §4.5 `E: Into<E2>` semantic.
     current_fn_ret_ty: Option<gossamer_types::Ty>,
+    /// Per-`use`-declaration map of bound name → full target path,
+    /// keyed by the declaration's `NodeId`. Read by `lower_path_expr`
+    /// to expand a single-segment imported name to its qualified
+    /// path when it targets a `[rust-bindings]` item.
+    import_targets: std::collections::HashMap<NodeId, Vec<(String, Vec<Ident>)>>,
 }
 
 impl Lowerer<'_> {
@@ -1344,7 +1387,29 @@ impl Lowerer<'_> {
     }
 
     fn lower_path_expr(&mut self, node: NodeId, path: &gossamer_ast::PathExpr) -> HirExprKind {
-        let segments: Vec<Ident> = path.segments.iter().map(|s| s.name.clone()).collect();
+        let mut segments: Vec<Ident> = path.segments.iter().map(|s| s.name.clone()).collect();
+        // A single-segment name bound by `use` and targeting a
+        // `[rust-bindings]` item expands to its full qualified path.
+        // Several binding modules can expose the same leaf (eight
+        // tuigoose modules each define `with_block`); the bare-leaf
+        // dispatch tables disambiguate by arity only, so an imported
+        // name must carry its module to dispatch to the item the
+        // program actually imported. std / user imports are
+        // untouched — the gate is a registered external item.
+        if segments.len() == 1
+            && let Some(Resolution::Import { use_id }) = self.resolutions.get(node)
+            && let Some(entries) = self.import_targets.get(&use_id)
+            && let Some((_, full)) = entries.iter().find(|(bound, _)| *bound == segments[0].name)
+        {
+            let qualified = full
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            if gossamer_resolve::lookup_external_item(&qualified).is_some() {
+                segments = full.clone();
+            }
+        }
         // For a multi-segment path whose head only resolves to a
         // module (no qualified-name registration), the resolver
         // leaves the resolution as the `Mod` def. The MIR /

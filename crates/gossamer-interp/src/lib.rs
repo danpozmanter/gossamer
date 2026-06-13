@@ -17,6 +17,7 @@
 
 mod builtins;
 mod bytecode;
+mod cast;
 mod compile;
 mod env;
 pub mod external_natives;

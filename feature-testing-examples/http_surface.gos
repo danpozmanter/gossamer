@@ -1,0 +1,56 @@
+// Offline cross-tier probe of the constructible HTTP surface — no
+// sockets, no server. Covers: `Response::text` + chained
+// `with_header` (replace-then-push, case-insensitive) read back via
+// field access on the constructed value; the `http::Response { … }`
+// struct literal (native-capable since the compiled-tier literal
+// lowering landed); `Client::builder()` configuration; and the
+// unknown-method error text of `http::request`, which fails before
+// any connection is dialed.
+//
+// Deterministic output — registered as a plain SPECS row in
+// crates/gossamer-cli/tests/tier_parity.rs and gated byte-exact by
+// `release_http_surface_offline_probe` in
+// crates/gossamer-cli/tests/release_stability.rs.
+
+use std::http
+
+fn header_of(headers: &[(String, String)], want: String) -> String {
+    let mut found = ""
+    for (name, value) in headers {
+        if name.to_lower() == want {
+            found = value
+        }
+    }
+    found
+}
+
+fn main() {
+    let r = http::Response::text(201, "made")
+        .with_header("X-Tag", "v1")
+        .with_header("x-tag", "v2")
+        .with_header("x-extra", "e")
+    println!("r_status={} r_body={} r_ct={}", r.status, r.body, r.content_type)
+    let headers = r.headers
+    println!(
+        "x-tag={} x-extra={}",
+        header_of(&headers, "x-tag"),
+        header_of(&headers, "x-extra")
+    )
+
+    let s = http::Response {
+        status: 202,
+        body: "lit",
+        content_type: "text/x-custom",
+        headers: [("x-k", "kv")],
+    }
+    println!("s_status={} s_body={} s_ct={}", s.status, s.body, s.content_type)
+
+    let strict = http::Client::builder().max_redirects(0).timeout_ms(5000).build()
+    let _ = strict
+    println!("client=built")
+
+    match http::request("BOGUS", "http://127.0.0.1:23905/never", "", []) {
+        Ok(resp) => println!("unexpected status={}", resp.status),
+        Err(e) => println!("err={}", e),
+    }
+}

@@ -261,7 +261,7 @@ const STATUS_VOCABULARY: &[&str] = &[
 const REQUIRED_BANNERS: &[(&str, &[&str])] = &[
     ("3.1", &["partial", "not-in-0.5.0"]),
     ("3.10", &["partial", "scaffolded"]),
-    ("7.2", &["scaffolded"]),
+    ("7.2", &["implemented"]),
     ("7.4", &["scaffolded"]),
     ("7.5", &["not-in-0.5.0"]),
     ("8.6", &["implemented"]),
@@ -1059,7 +1059,7 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
         Coverage::Full,
         Coverage::Full,
         Coverage::Full,
-        "max_procs, set_max_procs, num_cpus, mem_stats (live_bytes and next_gc_bytes fully populated), caller, stack, set_finalizer.",
+        "max_procs, set_max_procs, num_cpus, caller, stack, set_finalizer.",
     ),
     item(
         "std::tls",

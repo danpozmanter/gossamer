@@ -92,6 +92,14 @@ pub enum ParseError {
         /// Configured recursion limit at which this error was raised.
         limit: u32,
     },
+    /// A tokenization error (unterminated comment/string, bad escape,
+    /// ...) surfaced through the parse diagnostics so it reaches the
+    /// driver instead of being dropped with the lexer.
+    #[error("{message}")]
+    Lex {
+        /// Rendered lexer diagnostic.
+        message: String,
+    },
 }
 
 /// A diagnostic with its source location.
@@ -210,6 +218,7 @@ impl ParseDiagnostic {
                 format!("expression nests beyond {limit} levels"),
                 Some("split the expression into smaller helpers".to_string()),
             ),
+            ParseError::Lex { message } => ("GP0018", message.clone(), None),
         };
         let mut out = Diagnostic::error(Code(code), title.clone()).with_primary(location, title);
         if let Some(help) = help {

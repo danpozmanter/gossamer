@@ -354,3 +354,366 @@ fn nested_vec_literal_with_differing_inner_lengths_checks() {
     let checked = run("fn main() { let g: Vec<Vec<i64>> = [[1, 2], [3]] }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
+
+#[test]
+fn assignment_value_array_literal_adopts_vec_shape() {
+    // `v = [2, 3]` where `v: Vec<i64>` must record the literal as a
+    // heap Vec — a fixed `[i64; 2]` record desyncs the value layout
+    // from the Vec-typed slot on the compiled tiers.
+    let checked = run("fn main() { let mut v: Vec<i64> = [1]\n v = [2, 3] }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let ItemKind::Fn(decl) = &checked.source.items[0].kind else {
+        panic!("expected fn");
+    };
+    let body = decl.body.as_ref().unwrap();
+    let ExprKind::Block(block) = &body.kind else {
+        panic!("expected block");
+    };
+    let assign = block.tail.as_ref().expect("assign tail");
+    let ExprKind::Assign { value, .. } = &assign.kind else {
+        panic!("expected assign");
+    };
+    let ty = checked.table.get(value.id).expect("assign value typed");
+    assert!(
+        matches!(checked.tcx.kind(ty), Some(TyKind::Vec(_))),
+        "assign-value literal must adopt the place's Vec shape, got {:?}",
+        checked.tcx.kind(ty)
+    );
+}
+
+#[test]
+fn some_payload_array_literal_adopts_vec_shape() {
+    // `Some([1, 2])` bound to `Option<Vec<i64>>` must record the
+    // payload literal as a Vec, not a fixed `[i64; 2]`.
+    let checked = run("fn main() { let x: Option<Vec<i64>> = Some([1, 2]) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let ItemKind::Fn(decl) = &checked.source.items[0].kind else {
+        panic!("expected fn");
+    };
+    let body = decl.body.as_ref().unwrap();
+    let ExprKind::Block(block) = &body.kind else {
+        panic!("expected block");
+    };
+    let StmtKind::Let { init, .. } = &block.stmts[0].kind else {
+        panic!("expected let");
+    };
+    let init = init.as_ref().unwrap();
+    let ExprKind::Call { args, .. } = &init.kind else {
+        panic!("expected Some(..) call");
+    };
+    let ty = checked.table.get(args[0].id).expect("payload typed");
+    assert!(
+        matches!(checked.tcx.kind(ty), Some(TyKind::Vec(_))),
+        "Some(..) payload literal must adopt the expected Vec shape, got {:?}",
+        checked.tcx.kind(ty)
+    );
+}
+
+/// Recursively finds the first closure expression nested in `expr`.
+fn find_closure(expr: &gossamer_ast::Expr) -> Option<&gossamer_ast::Expr> {
+    match &expr.kind {
+        ExprKind::Closure { .. } => Some(expr),
+        ExprKind::Call { callee, args } => {
+            find_closure(callee).or_else(|| args.iter().find_map(find_closure))
+        }
+        ExprKind::MethodCall { receiver, args, .. } => {
+            find_closure(receiver).or_else(|| args.iter().find_map(find_closure))
+        }
+        ExprKind::Binary { lhs, rhs, .. } => find_closure(lhs).or_else(|| find_closure(rhs)),
+        _ => None,
+    }
+}
+
+/// Init expression of the `stmt_idx`-th statement (a `let`) in `fn_name`.
+fn let_init<'a>(checked: &'a Checked, fn_name: &str, stmt_idx: usize) -> &'a gossamer_ast::Expr {
+    for item in &checked.source.items {
+        if let ItemKind::Fn(decl) = &item.kind {
+            if decl.name.name == fn_name {
+                let body = decl.body.as_ref().expect("fn body");
+                let ExprKind::Block(block) = &body.kind else {
+                    panic!("expected block body");
+                };
+                let StmtKind::Let { init, .. } = &block.stmts[stmt_idx].kind else {
+                    panic!("expected let statement");
+                };
+                return init.as_ref().expect("let init");
+            }
+        }
+    }
+    panic!("fn `{fn_name}` not found");
+}
+
+/// Resolved first-parameter type of the first closure nested in `root`.
+fn closure_param_kind(checked: &Checked, root: &gossamer_ast::Expr) -> TyKind {
+    let closure = find_closure(root).expect("closure expr");
+    let ty = checked.table.get(closure.id).expect("closure typed");
+    match checked.tcx.kind(ty).expect("closure ty kind") {
+        TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+            let input = *sig.inputs.first().expect("closure has a param");
+            checked.tcx.kind(input).expect("param ty kind").clone()
+        }
+        other => panic!("closure typed as {other:?}, expected a fn type"),
+    }
+}
+
+#[test]
+fn map_err_method_closure_param_pins_to_err_payload_type() {
+    let checked = run("fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
+         fn main() { let r = fail().map_err(|e| format!(\"w: {e}\")) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let init = let_init(&checked, "main", 0);
+    assert!(
+        matches!(closure_param_kind(&checked, init), TyKind::String),
+        "map_err closure param must pin to the Err payload String"
+    );
+    // The call itself types as Result<i64, String> (format! output).
+    let call_ty = checked.table.get(init.id).expect("call typed");
+    let Some(TyKind::Adt { def, substs }) = checked.tcx.kind(call_ty) else {
+        panic!("map_err call must type as a Result Adt");
+    };
+    assert_eq!(checked.tcx.def_name(*def), Some("Result"));
+    let payloads = substs.types();
+    assert!(matches!(
+        checked.tcx.kind(payloads[0]),
+        Some(TyKind::Int(gossamer_types::IntTy::I64))
+    ));
+    assert!(matches!(
+        checked.tcx.kind(payloads[1]),
+        Some(TyKind::String)
+    ));
+}
+
+#[test]
+fn option_map_method_closure_param_pins_to_payload_type() {
+    let checked = run("fn main() { let o: Option<String> = Some(\"x\")\n\
+         let m = o.map(|s| format!(\"<{s}>\")) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let init = let_init(&checked, "main", 1);
+    assert!(
+        matches!(closure_param_kind(&checked, init), TyKind::String),
+        "Option::map closure param must pin to the payload String"
+    );
+    let call_ty = checked.table.get(init.id).expect("call typed");
+    let Some(TyKind::Adt { def, substs }) = checked.tcx.kind(call_ty) else {
+        panic!("Option::map call must type as an Option Adt");
+    };
+    assert_eq!(checked.tcx.def_name(*def), Some("Option"));
+    assert!(matches!(
+        checked.tcx.kind(substs.types()[0]),
+        Some(TyKind::String)
+    ));
+}
+
+#[test]
+fn iter_map_free_fn_closure_param_pins_to_elem_type() {
+    let checked = run("use std::iter\n\
+         fn main() { let xs: Vec<String> = [\"a\"]\n\
+         let ys = iter::map(|s| format!(\"[{s}]\"), xs) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let init = let_init(&checked, "main", 1);
+    assert!(
+        matches!(closure_param_kind(&checked, init), TyKind::String),
+        "iter::map closure param must pin to the Vec element String"
+    );
+    let call_ty = checked.table.get(init.id).expect("call typed");
+    let Some(TyKind::Vec(elem)) = checked.tcx.kind(call_ty) else {
+        panic!("iter::map call must type as Vec");
+    };
+    assert!(matches!(checked.tcx.kind(*elem), Some(TyKind::String)));
+}
+
+#[test]
+fn piped_iter_map_closure_param_pins_to_elem_type() {
+    let checked = run("use std::iter\n\
+         fn main() { let xs: Vec<String> = [\"a\"]\n\
+         let ys = xs |> iter::map(|s| format!(\"({s})\")) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let init = let_init(&checked, "main", 1);
+    assert!(
+        matches!(closure_param_kind(&checked, init), TyKind::String),
+        "piped iter::map closure param must pin to the Vec element String"
+    );
+    let pipe_ty = checked.table.get(init.id).expect("pipe typed");
+    let Some(TyKind::Vec(elem)) = checked.tcx.kind(pipe_ty) else {
+        panic!("piped iter::map must type as Vec");
+    };
+    assert!(matches!(checked.tcx.kind(*elem), Some(TyKind::String)));
+}
+
+#[test]
+fn piped_result_default_with_closure_param_pins_to_err_type() {
+    let checked = run("use std::result\n\
+         fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
+         fn main() { let v = fail() |> result::default_with(|e| println!(\"{e}\")) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let init = let_init(&checked, "main", 0);
+    assert!(
+        matches!(closure_param_kind(&checked, init), TyKind::String),
+        "result::default_with closure param must pin to the Err payload String"
+    );
+}
+
+#[test]
+fn unknown_std_combinator_with_closure_errors_loudly() {
+    // `iter::mystery` has no checker signature row. A closure passed
+    // there is uninferrable, which the compiled tiers would render as
+    // a pointer-formatting bug — the checker must reject loudly.
+    // (The resolver flags the unknown name separately; this test
+    // bypasses the resolve assertion on purpose.)
+    let source = "use std::iter\n\
+                  fn main() { let xs: Vec<String> = [\"a\"]\n\
+                  let ys = iter::mystery(|x| x, xs) }\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("test.gos", source.to_string());
+    let (sf, parse_diags) = parse_source_file(source, file);
+    assert!(parse_diags.is_empty(), "parse errors: {parse_diags:?}");
+    let (resolutions, _) = resolve_source_file(&sf);
+    let mut tcx = TyCtxt::new();
+    let (_, diagnostics) = typecheck_source_file(&sf, &resolutions, &mut tcx);
+    assert!(
+        diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::ClosureParamUninferred { combinator } if combinator == "iter::mystery"
+        )),
+        "expected ClosureParamUninferred for iter::mystery, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn i128_type_annotation_rejected_with_gt0014() {
+    let checked = run("fn main() { let x: i128 = 1 }\n");
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::Int128Unsupported { ty } if ty == "i128")),
+        "expected Int128Unsupported for `i128`, got {:?}",
+        checked.diagnostics,
+    );
+}
+
+#[test]
+fn u128_param_and_return_rejected_with_gt0014() {
+    let checked = run("fn f(x: u128) -> u128 { x }\nfn main() { }\n");
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::Int128Unsupported { ty } if ty == "u128")),
+        "expected Int128Unsupported for `u128`, got {:?}",
+        checked.diagnostics,
+    );
+}
+
+#[test]
+fn i128_literal_suffix_rejected_with_gt0014() {
+    let checked = run("fn main() { let y = 1i128 }\n");
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::Int128Unsupported { ty } if ty == "i128")),
+        "expected Int128Unsupported for the `1i128` suffix, got {:?}",
+        checked.diagnostics,
+    );
+}
+
+#[test]
+fn cast_target_i128_rejected_with_gt0014() {
+    let checked = run("fn main() { let z = 1 as i128 }\n");
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::Int128Unsupported { ty } if ty == "i128")),
+        "expected Int128Unsupported for `as i128`, got {:?}",
+        checked.diagnostics,
+    );
+}
+
+#[test]
+fn bool_and_char_casts_pass_the_whitelist() {
+    let checked = run("fn main() {\n\
+         let a = true as i64\n\
+         let b = 'a' as u8\n\
+         let c = 65 as u8 as char\n\
+         let d = false as u64\n\
+         }\n");
+    assert!(
+        checked.diagnostics.is_empty(),
+        "whitelisted bool/char casts must typecheck: {:?}",
+        checked.diagnostics,
+    );
+}
+
+// ---------------------------------------------------------------
+// Task 22 — std fns as first-class values (GT0015 + tabled set).
+// ---------------------------------------------------------------
+
+fn diagnostics_for(source: &str) -> Vec<gossamer_types::TypeDiagnostic> {
+    let mut map = SourceMap::new();
+    let file = map.add_file("test.gos", source.to_string());
+    let (sf, parse_diags) = parse_source_file(source, file);
+    assert!(parse_diags.is_empty(), "parse errors: {parse_diags:?}");
+    let (resolutions, _) = resolve_source_file(&sf);
+    let mut tcx = TyCtxt::new();
+    let (_, diagnostics) = typecheck_source_file(&sf, &resolutions, &mut tcx);
+    diagnostics
+}
+
+#[test]
+fn untabled_std_fn_as_value_errors_with_gt0015() {
+    let source = "use std::{iter, strings}\n\
+                  fn main() { let out = [\"ab\"] |> iter::map(strings::repeat)\n\
+                  let _ = out }\n";
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::StdFnValueUnsupported { path } if path == "strings::repeat"
+        )),
+        "expected StdFnValueUnsupported for strings::repeat, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn tabled_std_fn_as_value_typechecks_clean() {
+    let source = "use std::errors\n\
+                  fn main() { let r: Result<i64, String> = Err(\"boom\")\n\
+                  let m = r.map_err(errors::new)\nlet _ = m }\n";
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        diagnostics.is_empty(),
+        "tabled std fn value must typecheck clean, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn std_fn_in_callee_position_stays_legal() {
+    // Call and pipe-rhs positions are the normal stdlib call shapes;
+    // GT0015 only fires on genuine value positions.
+    let source = "use std::strings\n\
+                  fn main() { let a = strings::repeat(\"ab\", 2)\n\
+                  let b = \"x\" |> strings::repeat(2)\nlet _ = a\nlet _ = b }\n";
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::StdFnValueUnsupported { .. })),
+        "callee positions must not trip GT0015, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn bare_std_path_as_pipe_rhs_stays_legal() {
+    let source = "use std::option\n\
+                  fn main() { let o: Option<i64> = Some(1)\n\
+                  let v = o |> option::is_some\nlet _ = v }\n";
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::StdFnValueUnsupported { .. })),
+        "pipe-rhs bare std paths must not trip GT0015, got {diagnostics:?}"
+    );
+}

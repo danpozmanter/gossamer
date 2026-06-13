@@ -1,0 +1,14 @@
+[package]
+name = "cliplib"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+arboard = { version = "3", default-features = false }
+gossamer-binding = { path = "../../../crates/gossamer-binding" }

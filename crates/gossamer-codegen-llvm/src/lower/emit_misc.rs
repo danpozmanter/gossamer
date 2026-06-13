@@ -402,6 +402,7 @@ impl<'a> Lowerer<'a> {
             "gos_rt_map_insert_i64_i64" | "gos_rt_map_insert_str_i64"
         );
         let mut arg_text = String::new();
+        let mut arg_tys_for_decl: Vec<String> = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 arg_text.push_str(", ");
@@ -410,7 +411,9 @@ impl<'a> Lowerer<'a> {
             let (a_v, mut a_ty) = self.lower_call_arg(arg, want)?;
             if result_new_heap_copy
                 && i == 1
-                && let Some(heap_v) = self.maybe_heap_copy_aggregate(arg)
+                && let Some(heap_v) = self
+                    .maybe_heap_copy_value_enum(arg)
+                    .or_else(|| self.maybe_heap_copy_aggregate(arg))
             {
                 let _ = write!(arg_text, "i64 {heap_v}");
                 continue;
@@ -484,6 +487,7 @@ impl<'a> Lowerer<'a> {
                     continue;
                 }
             }
+            arg_tys_for_decl.push(a_ty.clone());
             let _ = write!(arg_text, "{a_ty} {a_v}");
         }
         let dest_ty_mir = self.body.local_ty(destination.local);
@@ -531,6 +535,24 @@ impl<'a> Lowerer<'a> {
         };
         let dest_is_void = dest_ty == "void" || is_unit(self.tcx, dest_ty_mir);
         let registry_says_void = registry_ret.as_deref() == Some("void");
+        if symbol.starts_with("gos_binding_") {
+            // External `[rust-bindings]` symbols are defined in the
+            // linked per-project staticlib, not in this module —
+            // synthesize the `declare` from the call-site types (the
+            // MIR binding lowering typed the args from the binding's
+            // signature metadata, so every call site agrees). Only
+            // the default arg path runs for binding symbols, so
+            // `arg_tys_for_decl` covers every argument.
+            let ret = if dest_is_void {
+                "void"
+            } else {
+                dest_ty.as_str()
+            };
+            self.runtime_refs.insert(format!(
+                "declare {ret} @{symbol}({})",
+                arg_tys_for_decl.join(", ")
+            ));
+        }
         if dest_is_void || registry_says_void {
             // Either the destination is unit-typed (caller
             // discards the return) or the registry declares the

@@ -82,6 +82,21 @@ pub unsafe extern "C" fn gos_rt_os_remove_file(path: *const c_char) -> i64 {
     })
 }
 
+/// Mirrors `gossamer_std::io::IoError::from_std` classification so the
+/// native fs error text matches the interp tier byte-for-byte
+/// (`not found: {path}` / `permission denied: {path}` / `io: {path}: {err}`).
+/// `gossamer-runtime` cannot depend on `gossamer-std` (the dependency
+/// points the other way), so the three-arm mapping is replicated here;
+/// the cross-tier fixture suite pins the parity.
+fn classify_io_error(err: &std::io::Error, context: &str) -> String {
+    use std::io::ErrorKind;
+    match err.kind() {
+        ErrorKind::NotFound => format!("not found: {context}"),
+        ErrorKind::PermissionDenied => format!("permission denied: {context}"),
+        _ => format!("io: {context}: {err}"),
+    }
+}
+
 /// `os::write_file(path, contents) -> Result<(), IoError>` — Result
 /// shape. Used when the call site chains `.map_err(...)` (askq's
 /// `save_history`); the bool-returning `gos_rt_fs_write` would
@@ -103,7 +118,7 @@ pub unsafe extern "C" fn gos_rt_os_write_file_result(
         match std::fs::write(&p, &c) {
             Ok(()) => unsafe { gos_rt_result_new(0, 0) },
             Err(e) => {
-                let msg = format!("write_file({p}): {e}");
+                let msg = classify_io_error(&e, &p);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
@@ -155,7 +170,7 @@ pub unsafe extern "C" fn gos_rt_os_write_file_bytes_result(
         match std::fs::write(&p, bytes) {
             Ok(()) => unsafe { gos_rt_result_new(0, 0) },
             Err(e) => {
-                let msg = format!("write_file({p}): {e}");
+                let msg = classify_io_error(&e, &p);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
@@ -199,7 +214,7 @@ pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> i12
                 unsafe { gos_rt_result_new(0, v as i64) }
             }
             Err(e) => {
-                let msg = format!("read_file({p}): {e}");
+                let msg = classify_io_error(&e, &p);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
@@ -222,7 +237,7 @@ pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> i128
         match std::fs::create_dir_all(&p) {
             Ok(()) => unsafe { gos_rt_result_new(0, 0) },
             Err(e) => {
-                let msg = format!("mkdir_all({p}): {e}");
+                let msg = classify_io_error(&e, &p);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
@@ -244,7 +259,7 @@ pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) ->
         match std::fs::remove_dir_all(&p) {
             Ok(()) => unsafe { gos_rt_result_new(0, 0) },
             Err(e) => {
-                let msg = format!("remove_all({p}): {e}");
+                let msg = classify_io_error(&e, &p);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
@@ -266,7 +281,7 @@ pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i1
         match std::fs::remove_file(&p) {
             Ok(()) => unsafe { gos_rt_result_new(0, 0) },
             Err(e) => {
-                let msg = format!("remove_file({p}): {e}");
+                let msg = classify_io_error(&e, &p);
                 let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
@@ -509,7 +524,8 @@ pub unsafe extern "C" fn gos_rt_fs_copy(src: *const c_char, dst: *const c_char) 
         match std::fs::copy(&src, &dst) {
             Ok(n) => unsafe { gos_rt_result_new(0, i64::try_from(n).unwrap_or(i64::MAX)) },
             Err(e) => {
-                let cs = std::ffi::CString::new(format!("{e}")).unwrap_or_default();
+                let msg = classify_io_error(&e, &format!("{src} -> {dst}"));
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
@@ -533,7 +549,8 @@ pub unsafe extern "C" fn gos_rt_fs_canonicalize(path: *const c_char) -> i128 {
                 unsafe { gos_rt_result_new(0, ptr) }
             }
             Err(e) => {
-                let cs = std::ffi::CString::new(format!("{e}")).unwrap_or_default();
+                let msg = classify_io_error(&e, &p);
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
@@ -542,8 +559,16 @@ pub unsafe extern "C" fn gos_rt_fs_canonicalize(path: *const c_char) -> i128 {
 }
 
 /// Builds a `Result::Ok(*mut GosVec)` carrying owned strings.
+/// STRING-typed: the vec owns each element, so `gos_rt_vec_free`
+/// deep-frees them.
 fn ok_str_vec(parts: &[String]) -> i128 {
-    let vec = unsafe { gos_rt_vec_with_capacity(8, parts.len() as i64) };
+    let vec = unsafe {
+        crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+            8,
+            parts.len() as i64,
+            crate::c_abi::vec::vec_elem_kind::STRING,
+        )
+    };
     for p in parts {
         let pv = alloc_cstring(p.as_bytes()) as i64;
         unsafe { gos_rt_vec_push(vec, std::ptr::addr_of!(pv).cast::<u8>()) };

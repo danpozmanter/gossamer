@@ -31,13 +31,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // Recursive heap enums are reference counted (see `c_abi::rc`);
 // the raw-pointer tracing collector that formerly backstopped
 // escaped aggregates was removed — it could not discover live
-// roots precisely under optimised LLVM (`0100_GC.md` §0). Today an
-// aggregate that escapes the drop pass's analysis (stored in a
-// long-lived container, returned through an opaque chain) leaks
-// until process exit rather than being unsoundly collected.
-// Converting these container/string/closure types onto the RC
-// header is the remaining bounded-memory work
-// (`~/dev/contexts/gos/remaining_gc_work.md`).
+// roots precisely under optimised LLVM. Today an aggregate that
+// escapes the drop pass's analysis (stored in a long-lived
+// container, returned through an opaque chain) leaks until process
+// exit rather than being unsoundly collected. Converting these
+// container/string/closure types onto the RC header is the
+// remaining bounded-memory work.
 
 /// `Layout::from_size_align` rejected the size + alignment pair
 /// (zero size, or rounded size exceeded `isize::MAX`). Recovered to

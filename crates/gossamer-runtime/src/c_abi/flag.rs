@@ -557,7 +557,14 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
             set.positional.push(arg);
             i += 1;
         }
-        let out = unsafe { gos_rt_vec_with_capacity(8, set.positional.len() as i64) };
+        // STRING-typed: the rest vec owns its fresh positional strings.
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+                8,
+                set.positional.len() as i64,
+                crate::c_abi::vec::vec_elem_kind::STRING,
+            )
+        };
         for s in &set.positional {
             let bytes = s.as_bytes();
             let cstr = alloc_cstring(bytes);

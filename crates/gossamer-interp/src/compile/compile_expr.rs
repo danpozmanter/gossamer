@@ -32,6 +32,13 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(tr) = self.try_intrinsic_call(callee, args)? {
                     return Ok(tr);
                 }
+                if self.call_has_nonlocal_mut_ref_arg(args) {
+                    let reg = self.compile_deferred(expr)?;
+                    return Ok(TypedReg {
+                        reg,
+                        kind: RegKind::Value,
+                    });
+                }
                 let reg = self.compile_call_ex(callee, args, expr.ty)?;
                 Ok(TypedReg {
                     reg,
@@ -128,6 +135,26 @@ impl<'tcx> FnBuilder<'tcx> {
                         })
                     }
                     _ => {
+                        // Remaining whitelisted combos — f32 / bool /
+                        // char sources, `char` / `f32` targets — lower
+                        // to the generic scalar-cast op so no
+                        // GT0005-whitelisted cast ever reaches the
+                        // walker's legacy no-op. Only unresolved
+                        // target types still defer.
+                        if let Some(target) = self
+                            .tcx
+                            .kind(*target_ty)
+                            .and_then(crate::cast::CastTarget::of)
+                        {
+                            let src_tr = self.compile_expr_ex(value)?;
+                            let src = self.as_value(src_tr);
+                            let dst = self.alloc_reg();
+                            self.emit(Op::CastScalar { dst, src, target });
+                            return Ok(TypedReg {
+                                reg: dst,
+                                kind: RegKind::Value,
+                            });
+                        }
                         let reg = self.compile_deferred(expr)?;
                         Ok(TypedReg {
                             reg,
@@ -266,6 +293,12 @@ impl<'tcx> FnBuilder<'tcx> {
                     let intr = self.try_intrinsic_call(callee, args)?;
                     if let Some(tr) = intr {
                         tr
+                    } else if self.call_has_nonlocal_mut_ref_arg(args) {
+                        let reg = self.compile_deferred(expr)?;
+                        TypedReg {
+                            reg,
+                            kind: RegKind::Value,
+                        }
                     } else {
                         let reg = self.compile_call_ex(callee, args, expr.ty)?;
                         TypedReg {
@@ -1283,6 +1316,60 @@ impl<'tcx> FnBuilder<'tcx> {
             }
         }
         let receiver_reg = self.compile_expr(receiver)?;
+        // `xs.pop()` evaluates to `Option<last>` while the mutating
+        // writeback shortens the receiver. `builtin_pop` only
+        // returns the shortened aggregate, so capture `Some(last)`
+        // / `None` via the non-mutating `last` builtin first, then
+        // run the mutating call + writeback as usual.
+        // Unresolved receiver types (`Var` / missing) still take the
+        // sequence: the dominant producer is a stdlib call like
+        // `os::read_file` whose Vec result type the checker leaves
+        // open; user receivers with their own `pop` are `Adt`-typed
+        // and excluded.
+        if name.name == "pop"
+            && args.is_empty()
+            && matches!(
+                self.tcx.kind(receiver.ty),
+                None | Some(
+                    TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } | TyKind::Var(_)
+                )
+            )
+        {
+            let opt_dst = self.alloc_reg();
+            let last_idx = self.global_idx("last");
+            let last_cache = self.alloc_cache_idx();
+            self.emit(Op::MethodCall {
+                dst: opt_dst,
+                receiver: receiver_reg,
+                name_idx: last_idx,
+                args: self.next_reg,
+                argc: 0,
+                cache_idx: last_cache,
+            });
+            let pop_dst = self.alloc_reg();
+            let pop_idx = self.global_idx("pop");
+            let pop_cache = self.alloc_cache_idx();
+            self.emit(Op::MethodCall {
+                dst: pop_dst,
+                receiver: receiver_reg,
+                name_idx: pop_idx,
+                args: self.next_reg,
+                argc: 0,
+                cache_idx: pop_cache,
+            });
+            if let HirExprKind::Path { segments, .. } = &receiver.kind
+                && segments.len() == 1
+                && let Some(target) = self.lookup_local(&segments[0].name)
+                && target.kind == RegKind::Value
+                && target.reg == receiver_reg
+            {
+                self.emit(Op::Move {
+                    dst: target.reg,
+                    src: pop_dst,
+                });
+            }
+            return Ok(opt_dst);
+        }
         // Super-instruction fast path for `<stream>.write_byte(<b>)`.
         // The runtime handler in `vm.rs::Op::StreamWriteByte`
         // verifies the receiver is a Stream and the byte is an
@@ -1443,9 +1530,26 @@ impl<'tcx> FnBuilder<'tcx> {
             .next_reg
             .checked_add(argc)
             .expect("register overflow reserving call args");
+        // `&mut Vec<T>` / `&mut [T]` arguments ride the write-back
+        // cell protocol: wrap the local's current value in a cell,
+        // pass the cell, and read the callee's final value back into
+        // the local after the call. `(home register, cell register)`
+        // pairs collected here drive the post-call `CellTake`s.
+        let mut cell_takes: Vec<(Reg, Reg)> = Vec::new();
         let arg_regs: Vec<Reg> = args
             .iter()
-            .map(|arg| self.compile_expr(arg))
+            .map(|arg| {
+                if let Some(home) = self.mut_ref_arg_home(arg) {
+                    let cell = self.alloc_reg();
+                    self.emit(Op::CellNew {
+                        dst: cell,
+                        src: home,
+                    });
+                    cell_takes.push((home, cell));
+                    return Ok(cell);
+                }
+                self.compile_expr(arg)
+            })
             .collect::<RuntimeResult<Vec<_>>>()?;
         for (i, arg_reg) in arg_regs.iter().enumerate() {
             let slot = args_start
@@ -1465,6 +1569,63 @@ impl<'tcx> FnBuilder<'tcx> {
             argc,
             cache_idx,
         });
+        for (home, cell) in cell_takes {
+            self.emit(Op::CellTake { dst: home, cell });
+        }
         Ok(dst)
+    }
+
+    /// Returns the home register of a `&mut Vec<T>` / `&mut [T]`
+    /// call argument when the argument is a plain local place —
+    /// either `&mut x` over a local or a bare path forwarding a
+    /// `&mut` parameter. Non-local places (fields, indexes) and
+    /// non-`&mut`-vec types return `None` and take the ordinary
+    /// pass-by-value path.
+    fn mut_ref_arg_home(&self, arg: &HirExpr) -> Option<Reg> {
+        if !crate::compile::is_mut_ref_vec(self.tcx, arg.ty) {
+            return None;
+        }
+        let place = match &arg.kind {
+            HirExprKind::Unary {
+                op: HirUnaryOp::RefMut,
+                operand,
+            } => operand,
+            HirExprKind::Path { .. } => arg,
+            _ => return None,
+        };
+        let HirExprKind::Path { segments, .. } = &place.kind else {
+            return None;
+        };
+        let [seg] = segments.as_slice() else {
+            return None;
+        };
+        let tr = self.lookup_local(seg.name.as_str())?;
+        (tr.kind == RegKind::Value).then_some(tr.reg)
+    }
+
+    /// `true` when a call carries a `&mut Vec<T>` / `&mut [T]`
+    /// argument whose place is not a plain local (`&mut s.field`,
+    /// `&mut grid[i]`). Such calls route through the walker, whose
+    /// generic `write_back` handles field / index places — keeping
+    /// write-through semantics instead of silently cloning.
+    pub(crate) fn call_has_nonlocal_mut_ref_arg(&self, args: &[HirExpr]) -> bool {
+        args.iter().any(|arg| {
+            if !crate::compile::is_mut_ref_vec(self.tcx, arg.ty)
+                || self.mut_ref_arg_home(arg).is_some()
+            {
+                return false;
+            }
+            let place = match &arg.kind {
+                HirExprKind::Unary {
+                    op: HirUnaryOp::RefMut,
+                    operand,
+                } => operand,
+                _ => arg,
+            };
+            matches!(
+                place.kind,
+                HirExprKind::Path { .. } | HirExprKind::Field { .. } | HirExprKind::Index { .. }
+            )
+        })
     }
 }

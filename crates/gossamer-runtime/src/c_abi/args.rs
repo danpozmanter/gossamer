@@ -434,8 +434,17 @@ pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> i128 {
         let out = unsafe { gos_rt_vec_new(8) };
         let mut stack: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(&root)];
         while let Some(dir) = stack.pop() {
-            let Ok(read) = std::fs::read_dir(&dir) else {
-                continue;
+            // An unreadable directory (including a missing root) is an
+            // Err, matching the VM tier's walk; skipping it silently
+            // would hand back Ok([]) for a nonexistent root.
+            let read = match std::fs::read_dir(&dir) {
+                Ok(read) => read,
+                Err(e) => {
+                    let msg = format!("{e}");
+                    let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                    return unsafe { gos_rt_result_new(1, err as i64) };
+                }
             };
             let mut entries: Vec<std::fs::DirEntry> = read.flatten().collect();
             entries.sort_by_key(std::fs::DirEntry::file_name);

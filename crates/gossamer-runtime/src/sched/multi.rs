@@ -463,6 +463,10 @@ impl MultiScheduler {
     /// recorded in `pre_unpark`. The worker that's about to park the
     /// task checks this set and, if the gid is present, re-ejects
     /// the task to the injector instead of leaving it parked.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "called for its side effect; the bool (found-parked vs pre-unpark) is informational and most call sites are fire-and-forget"
+    )]
     pub fn unpark(&self, gid: Gid) -> bool {
         // Hold the `parked` guard across the `pre_unpark.insert()`
         // below so the worker's symmetric "insert into parked, then
@@ -482,24 +486,36 @@ impl MultiScheduler {
         };
         drop(parked);
         let home = entry.home;
-        let preferred = {
-            let workers = self.inner.workers.lock();
-            workers.get(home).map(Arc::clone)
-        };
-        if let Some(slot) = preferred {
-            // Pin the resumed goroutine to the home worker —
-            // stackful coroutines are not safe to migrate across
-            // OS threads while suspended. Push onto the worker's
-            // private inbox; the worker drains it before its main
-            // deque on the next iteration.
-            slot.inbox.push(entry.task);
-            slot.wake();
-        } else {
-            // Home worker retired; fall back to the global
-            // injector. (This only happens during shutdown or a
-            // shrinking pool resize.)
-            self.inner.injector.push(entry.task);
-            self.wake_any();
+        // INVARIANT (retired-inbox handoff): an inbox push for a
+        // worker slot is legal only while holding the `workers`
+        // lock AND having observed `slot.retired == false` under
+        // that lock. A retiring worker drains its inbox to the
+        // global injector under the same lock after `retired` was
+        // set, so every push either happens before the drain (and
+        // is moved by it) or observes `retired == true` and routes
+        // to the injector directly. Violating this strands the
+        // task in a dead slot's inbox — a permanently lost wake.
+        let workers = self.inner.workers.lock();
+        match workers.get(home) {
+            Some(slot) if !slot.retired.load(Ordering::Acquire) => {
+                // Pin the resumed goroutine to the home worker —
+                // stackful coroutines are not safe to migrate across
+                // OS threads while suspended. Push onto the worker's
+                // private inbox; the worker drains it before its main
+                // deque on the next iteration.
+                slot.inbox.push(entry.task);
+                let slot = Arc::clone(slot);
+                drop(workers);
+                slot.wake();
+            }
+            _ => {
+                // Home worker retired or gone (pool shrink, slot
+                // replacement, shutdown). Hand the task to the
+                // global injector so any live worker picks it up.
+                drop(workers);
+                self.inner.injector.push(entry.task);
+                self.wake_any();
+            }
         }
         self.inner.stats.unparks.fetch_add(1, Ordering::Relaxed);
         true
@@ -695,6 +711,45 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
         .store(now_micros_since_start(), Ordering::Release);
     loop {
         if slot.retired.load(Ordering::Acquire) {
+            // Hand off every task still queued for this worker
+            // before the thread exits — anything left behind would
+            // never run again (a permanently lost wake). The inbox
+            // drain holds the `workers` lock to pair with the
+            // retired-inbox handoff invariant in
+            // [`MultiScheduler::unpark`]: pushes happen under that
+            // lock only after observing `retired == false`, so this
+            // drain (which runs after `retired` was set, under the
+            // same lock) sees every push that did not already
+            // divert to the injector. The local deque only ever
+            // receives pushes from this thread, so draining it here
+            // is race-free by construction.
+            let mut handed_off = false;
+            {
+                let _workers = shared.workers.lock();
+                loop {
+                    match slot.inbox.steal() {
+                        Steal::Success(task) => {
+                            shared.injector.push(task);
+                            handed_off = true;
+                        }
+                        Steal::Empty => break,
+                        Steal::Retry => {}
+                    }
+                }
+            }
+            while let Some(task) = deque.pop() {
+                shared.injector.push(task);
+                handed_off = true;
+            }
+            if handed_off {
+                let workers = shared.workers.lock();
+                for peer in workers.iter() {
+                    if peer.parked.load(Ordering::Acquire) {
+                        peer.wake();
+                        break;
+                    }
+                }
+            }
             // Zero the handle before exiting so the watchdog cannot
             // call pthread_kill on a thread that has already exited.
             slot.thread_handle.store(0, Ordering::Release);
@@ -1022,6 +1077,62 @@ mod tests {
         assert!(sched.unpark(gid));
         assert_eq!(sched.parked_count(), 0);
         let _ = sched.run();
+    }
+
+    #[test]
+    fn unpark_after_home_worker_retired_still_runs_task() {
+        let sched = MultiScheduler::new(4);
+        sched.start();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let task: SendTask = Box::new(CountTask {
+            counter: Arc::clone(&counter),
+            budget: 1,
+        });
+        let gid = Gid(7);
+        // Park with home = 3, then retire that worker before the
+        // wake arrives — the exact interleaving `set_max_procs`
+        // round-trips produce while a goroutine is parked.
+        sched.park(gid, ParkReason::Io, 3, task);
+        sched.set_worker_count(1);
+        assert!(sched.unpark(gid));
+        // The resurrected task must still run even though its home
+        // worker is retired. Bounded condition-poll, same idiom as
+        // the sched_global spawn tests.
+        for _ in 0..400 {
+            if counter.load(Ordering::Relaxed) == 1 {
+                sched.shutdown();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("unparked task stranded after its home worker retired");
+    }
+
+    #[test]
+    fn retiring_worker_does_not_strand_inbox_tasks() {
+        let sched = MultiScheduler::new(2);
+        sched.start();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let task: SendTask = Box::new(CountTask {
+            counter: Arc::clone(&counter),
+            budget: 1,
+        });
+        // Push directly into worker 1's inbox, then retire it before
+        // it necessarily noticed the push — the task must migrate to
+        // a surviving worker instead of dying with the slot.
+        {
+            let workers = sched.inner.workers.lock();
+            workers[1].inbox.push(task);
+        }
+        sched.set_worker_count(1);
+        for _ in 0..400 {
+            if counter.load(Ordering::Relaxed) == 1 {
+                sched.shutdown();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("inbox task stranded on retired worker");
     }
 
     #[test]

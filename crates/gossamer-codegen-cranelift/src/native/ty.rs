@@ -150,13 +150,16 @@ pub(super) fn cl_type_of(tcx: &TyCtxt, ty: Ty, module: &dyn Module) -> ir::Type 
     match tcx.kind_of(ty) {
         TyKind::Bool => types::I8,
         TyKind::Char => types::I32,
-        TyKind::Int(int) => match int {
-            IntTy::I8 | IntTy::U8 => types::I8,
-            IntTy::I16 | IntTy::U16 => types::I16,
-            IntTy::I32 | IntTy::U32 => types::I32,
-            IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize => types::I64,
-            IntTy::I128 | IntTy::U128 => types::I64,
-        },
+        // Canonical integer model: every integer type is a 64-bit
+        // runtime value, matching the bytecode VM (which computes
+        // all integer arithmetic at i64 width) and the C-ABI map
+        // in `mir_ty_to_cabi`. Narrow declared widths only become
+        // observable at explicit `as` casts, which mask to the
+        // target width — see the `Rvalue::Cast` lowering. Modelling
+        // narrow ints as I8/I16/I32 made arithmetic wrap at the
+        // declared width (`sum += b` over `[u8]` gave sum mod 256
+        // once the JIT tiered up), diverging from the VM.
+        TyKind::Int(_) => types::I64,
         TyKind::Float(float) => match float {
             FloatTy::F32 => types::F32,
             FloatTy::F64 => types::F64,

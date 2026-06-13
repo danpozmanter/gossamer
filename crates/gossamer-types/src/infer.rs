@@ -322,8 +322,11 @@ impl InferCtxt {
             {
                 self.unify(tcx, *ae, *be)
             }
-            (TyKind::Slice(a), TyKind::Slice(b))
-            | (TyKind::Vec(a), TyKind::Vec(b))
+            // `[T]` and `Vec<T>` are the same growable heap container
+            // at runtime; the surface spellings are interchangeable
+            // (`fn f() -> [i64]` returning an `iter::map` Vec), so
+            // the two kinds cross-unify.
+            (TyKind::Slice(a) | TyKind::Vec(a), TyKind::Slice(b) | TyKind::Vec(b))
             | (TyKind::Sender(a), TyKind::Sender(b))
             | (TyKind::Receiver(a), TyKind::Receiver(b))
             | (TyKind::JoinHandle(a), TyKind::JoinHandle(b)) => self.unify(tcx, *a, *b),

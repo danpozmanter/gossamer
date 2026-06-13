@@ -117,6 +117,34 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                        appropriate when the operation is best-effort.\n\n\
                      SPEC §9 requires every `Result` value to be handled."
         }
+        "GT0013" => {
+            "A closure was passed to a std combinator the type checker has\n\
+                     no signature row for, so the closure's parameter type cannot\n\
+                     be inferred. The VM would run it, but the compiled tiers pin\n\
+                     untyped closure params to i64 and read String / Error heap\n\
+                     payloads as raw integers — so the program is rejected\n\
+                     uniformly instead. Annotate the closure parameter with its\n\
+                     concrete type (`|x: String| ...`) or bind the payload through\n\
+                     a typed `match`."
+        }
+        "GT0014" => {
+            "`i128` / `u128` have no 128-bit runtime representation on any\n\
+                     tier: the runtime integer model is i64-word-sized (VM, JIT,\n\
+                     and LLVM), so a 128-bit binding would silently truncate to\n\
+                     64-bit width. The checker rejects the type instead. Use\n\
+                     `i64` / `u64`, or split the value into two 64-bit halves."
+        }
+        "GT0015" => {
+            "A std free function was used as a first-class value (for\n\
+                     example `r.map_err(strings::repeat)`) but is not in the\n\
+                     supported table. The VM models every std builtin as a\n\
+                     callable value, but the compiled tiers need a concrete\n\
+                     runtime symbol to take the address of; only the tabled set\n\
+                     (errors::new, the strings:: case/trim helpers, the\n\
+                     strconv:: parse/format helpers) can be passed directly.\n\
+                     Wrap the call in a closure instead: `|x| module::fn(x)`\n\
+                     works on every tier."
+        }
         "GM0001" => {
             "Generic monomorphization received a type substitution that the\n\
                      compiler does not yet support — typically a generic parameter\n\

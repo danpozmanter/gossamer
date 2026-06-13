@@ -162,6 +162,23 @@ impl Error {
     }
 }
 
+/// An asynchronous notification (`LISTEN` / `NOTIFY`) delivered to a
+/// connection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notification {
+    /// Channel the notification was sent on.
+    pub channel: String,
+    /// Payload string (may be empty).
+    pub payload: String,
+    /// Backend process id of the notifying session, or 0 when the
+    /// driver does not report one.
+    pub process_id: i64,
+}
+
+fn unsupported(op: &str) -> Error {
+    Error::driver("sql", format!("{op} is not supported by this driver"))
+}
+
 /// Driver trait — concrete drivers implement [`open`] and return a
 /// [`Box<dyn ConnectionImpl>`] backed by their own state.
 pub trait Driver: Send + Sync {
@@ -200,6 +217,36 @@ pub trait ConnectionImpl: Send {
     /// connection should be cancelled. `SQLite` calls
     /// `sqlite3_interrupt`; default is a no-op.
     fn interrupt(&self) {}
+    /// Bulk-loads `data` through the dialect's copy mechanism
+    /// (`COPY … FROM STDIN` on `PostgreSQL`); returns rows written.
+    /// Capability-gated: the default reports the operation as
+    /// unsupported.
+    fn copy_in(&mut self, _sql: &str, _data: &[u8]) -> Result<u64, Error> {
+        Err(unsupported("copy_in"))
+    }
+    /// Bulk-extracts rows through the dialect's copy mechanism
+    /// (`COPY … TO STDOUT` on `PostgreSQL`); returns the raw bytes.
+    /// Capability-gated: the default reports the operation as
+    /// unsupported.
+    fn copy_out(&mut self, _sql: &str) -> Result<Vec<u8>, Error> {
+        Err(unsupported("copy_out"))
+    }
+    /// Subscribes this connection to notifications on `channel`.
+    /// Capability-gated: the default reports the operation as
+    /// unsupported.
+    fn listen(&mut self, _channel: &str) -> Result<(), Error> {
+        Err(unsupported("listen"))
+    }
+    /// Unsubscribes this connection from `channel`.
+    fn unlisten(&mut self, _channel: &str) -> Result<(), Error> {
+        Err(unsupported("unlisten"))
+    }
+    /// Returns the next pending notification, waiting up to
+    /// `timeout_ms` (0 = poll without waiting). `Ok(None)` means no
+    /// notification arrived within the window.
+    fn poll_notification(&mut self, _timeout_ms: i64) -> Result<Option<Notification>, Error> {
+        Err(unsupported("poll_notification"))
+    }
     /// Closes the connection. Subsequent calls return [`Error::Closed`].
     fn close(&mut self) -> Result<(), Error>;
 }
@@ -221,6 +268,18 @@ pub trait TransactionImpl: Send {
     fn rollback(&mut self) -> Result<(), Error>;
     /// Executes raw SQL inside the transaction (no parameters).
     fn execute(&mut self, sql: &str) -> Result<u64, Error>;
+    /// Executes a statement with positional bindings inside the
+    /// transaction; returns rows affected. Capability-gated: the
+    /// default reports the operation as unsupported.
+    fn execute_params(&mut self, _sql: &str, _params: &[Value]) -> Result<u64, Error> {
+        Err(unsupported("execute_params in a transaction"))
+    }
+    /// Runs a query with positional bindings inside the transaction.
+    /// Capability-gated: the default reports the operation as
+    /// unsupported.
+    fn query_params(&mut self, _sql: &str, _params: &[Value]) -> Result<Box<dyn RowsImpl>, Error> {
+        Err(unsupported("query_params in a transaction"))
+    }
     /// Creates a savepoint named `name` inside this transaction.
     /// Default implementation runs `SAVEPOINT name` as raw SQL.
     fn savepoint(&mut self, name: &str) -> Result<(), Error> {
@@ -249,12 +308,18 @@ pub trait RowsImpl: Send {
 
 // --- registry ------------------------------------------------------
 
-static REGISTRY: Mutex<Vec<Arc<dyn Driver>>> = Mutex::new(Vec::new());
+// The storage lives in `c_abi::sql` behind an unmangled symbol so a
+// `gos build` binary that links two gossamer-runtime copies (runtime
+// staticlib + rust-bindings staticlib, `--allow-multiple-definition`)
+// still shares ONE registry; see `c_abi::sql::driver_registry`.
+fn registry() -> &'static Mutex<Vec<Arc<dyn Driver>>> {
+    crate::c_abi::sql::driver_registry()
+}
 
 /// Registers a driver so [`open`] can find it. Idempotent on driver
 /// name — re-registering replaces the previous handle.
 pub fn register(driver: Arc<dyn Driver>) {
-    let mut reg = REGISTRY.lock();
+    let mut reg = registry().lock();
     let name = driver.name().to_string();
     reg.retain(|d| d.name() != name);
     reg.push(driver);
@@ -264,7 +329,7 @@ pub fn register(driver: Arc<dyn Driver>) {
 /// [`Error::UnknownDriver`] if no driver is registered under that
 /// name.
 pub fn open(name: &str, url: &str) -> Result<Box<dyn ConnectionImpl>, Error> {
-    let reg = REGISTRY.lock();
+    let reg = registry().lock();
     for driver in reg.iter() {
         if driver.name() == name {
             let driver = Arc::clone(driver);
@@ -279,7 +344,7 @@ pub fn open(name: &str, url: &str) -> Result<Box<dyn ConnectionImpl>, Error> {
 /// order.
 #[must_use]
 pub fn drivers() -> Vec<String> {
-    REGISTRY
+    registry()
         .lock()
         .iter()
         .map(|d| d.name().to_string())

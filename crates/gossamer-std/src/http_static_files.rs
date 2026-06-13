@@ -184,6 +184,8 @@ impl FileServer {
                     status: StatusCode(416),
                     headers,
                     body: Vec::new(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 };
             }
             None => match fs::read(path) {
@@ -217,6 +219,8 @@ impl FileServer {
             status,
             headers,
             body,
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         }
     }
 }
@@ -228,6 +232,8 @@ fn not_found() -> Response {
         status: StatusCode(404),
         headers,
         body: b"not found".to_vec(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 
@@ -245,6 +251,8 @@ fn not_modified(etag: &str, mtime: Option<std::time::SystemTime>) -> Response {
         status: StatusCode(304),
         headers,
         body: Vec::new(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 

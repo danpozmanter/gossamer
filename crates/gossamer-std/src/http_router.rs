@@ -322,6 +322,8 @@ impl Router {
                 status: StatusCode(405),
                 headers: Headers::new(),
                 body: b"method not allowed".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             };
         }
         if let Some(h) = &self.not_found {
@@ -331,6 +333,8 @@ impl Router {
             status: StatusCode(404),
             headers: Headers::new(),
             body: b"not found".to_vec(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         }
     }
 }
@@ -426,6 +430,8 @@ mod tests {
             status: StatusCode(status),
             headers: Headers::new(),
             body: body.as_bytes().to_vec(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         }
     }
 

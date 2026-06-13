@@ -696,9 +696,29 @@ pub unsafe extern "C" fn gos_rt_pem_decode_raw(s: *const c_char) -> i128 {
     })
 }
 
+/// Slot layout of the [`gos_rt_pem_decode_all_raw`] Ok-payload vec:
+/// the block label string at word 0 and the body byte-vec at word 1,
+/// both owned by the vec.
+static PEM_SLOT_CHILDREN: [crate::c_abi::vec::VecSlotChild; 2] = [
+    crate::c_abi::vec::VecSlotChild {
+        gate: -1,
+        disc_word: 0,
+        word: 0,
+        kind: crate::c_abi::vec::vec_elem_kind::STRING,
+    },
+    crate::c_abi::vec::VecSlotChild {
+        gate: -1,
+        disc_word: 0,
+        word: 1,
+        kind: crate::c_abi::vec::vec_elem_kind::VEC,
+    },
+];
+
 /// `__gos_pem_decode_all_raw(s) -> Result<[(String, [u8])], errors::Error>`.
 /// The Ok payload is a `GosVec` of inline 2-slot `(String, [u8])`
-/// tuples (16 bytes each: `[label_ptr, bytes_vec_ptr]`).
+/// tuples (16 bytes each: `[label_ptr, bytes_vec_ptr]`); the vec owns
+/// both children per slot (slot-children layout registered after the
+/// pushes), so `gos_rt_vec_free` deep-frees them.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_pem_decode_all_raw(s: *const c_char) -> i128 {
     ffi_entry!(0i128, {
@@ -736,6 +756,7 @@ pub unsafe extern "C" fn gos_rt_pem_decode_all_raw(s: *const c_char) -> i128 {
             }
             remaining = &remaining[consumed..];
         }
+        super::vec::vec_set_slot_children(out, &PEM_SLOT_CHILDREN);
         unsafe { super::vec::gos_rt_result_new(0, out as i64) }
     })
 }

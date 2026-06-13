@@ -27,6 +27,10 @@ strip = "debuginfo"
 [dependencies]
 gossamer-cli     = { path = '{{ gossamer_root }}/crates/gossamer-cli' }
 gossamer-binding = { path = '{{ gossamer_root }}/crates/gossamer-binding' }
+# time 0.3.48 breaks cookie 0.18.1 (E0119: conflicting From impls with
+# cookie's blanket Expiration conversion). Pin until cookie ships a fix;
+# fresh-resolving generated workspaces hit it without this.
+time = "=0.3.47"
 {{#each bindings}}
 {{ this.cargo_dep_line }}
 {{/each}}

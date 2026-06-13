@@ -116,7 +116,11 @@ pub unsafe extern "C" fn gos_rt_btmap_len(m: *const GosBtMap) -> i64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_btmap_keys(m: *const GosBtMap) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let v = unsafe { gos_rt_vec_new(8) };
+        // STRING-typed: the snapshot owns its key strings, so
+        // `gos_rt_vec_free` reclaims them even on early `break`.
+        let v = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::STRING)
+        };
         if m.is_null() {
             return v;
         }

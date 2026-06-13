@@ -15,7 +15,7 @@ use std::os::raw::c_char;
 
 use super::errors::gos_rt_error_new;
 use super::string::alloc_cstring;
-use super::vec::{GosVec, gos_rt_result_new, gos_rt_vec_push, gos_rt_vec_with_capacity};
+use super::vec::{GosVec, gos_rt_result_new, gos_rt_vec_push};
 
 /// Reads a `GosVec<String>` (elements are c-string pointers) into
 /// owned strings.
@@ -42,9 +42,16 @@ unsafe fn read_str_vec(v: *const GosVec) -> Vec<String> {
         .collect()
 }
 
-/// Builds a `GosVec<String>` from owned strings.
+/// Builds a `GosVec<String>` from owned strings. STRING-typed: the
+/// vec owns each element, so `gos_rt_vec_free` deep-frees them.
 fn build_str_vec(parts: &[String]) -> *mut GosVec {
-    let vec = unsafe { gos_rt_vec_with_capacity(8, parts.len() as i64) };
+    let vec = unsafe {
+        crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+            8,
+            parts.len() as i64,
+            crate::c_abi::vec::vec_elem_kind::STRING,
+        )
+    };
     for p in parts {
         let pv = alloc_cstring(p.as_bytes()) as i64;
         unsafe { gos_rt_vec_push(vec, std::ptr::addr_of!(pv).cast::<u8>()) };
@@ -114,7 +121,16 @@ pub unsafe extern "C" fn gos_rt_csv_read(input: *const c_char) -> i128 {
             rows.push(parse_line(line));
         }
         // Build the outer GosVec of inner GosVec<String> pointers.
-        let outer = unsafe { gos_rt_vec_with_capacity(8, rows.len() as i64) };
+        // VEC-typed: the outer vec owns each row, so `gos_rt_vec_free`
+        // cascades through unvisited rows (the early-`break` path)
+        // instead of leaking them and their field strings.
+        let outer = unsafe {
+            crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+                8,
+                rows.len() as i64,
+                crate::c_abi::vec::vec_elem_kind::VEC,
+            )
+        };
         for row in &rows {
             let inner = build_str_vec(row) as i64;
             unsafe { gos_rt_vec_push(outer, std::ptr::addr_of!(inner).cast::<u8>()) };
@@ -163,4 +179,67 @@ pub unsafe extern "C" fn gos_rt_csv_write(records: *const GosVec) -> *mut c_char
         }
         alloc_cstring(out.as_bytes())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Refcount word of an `alloc_cstring` builder-layout string:
+    /// `[rc:u32][cap:u32][len:u32][tag][content][NUL]`, body at +13.
+    unsafe fn str_rc(s: *const c_char) -> u32 {
+        let hdr = unsafe { s.cast::<u8>().sub(13) };
+        u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] })
+    }
+
+    #[test]
+    fn csv_read_outer_vec_is_vec_typed_and_deep_frees_unvisited_rows() {
+        let input = std::ffi::CString::new("a,b\nc,d\ne,f").unwrap();
+        let r = unsafe { gos_rt_csv_read(input.as_ptr()) };
+        assert_eq!(crate::c_abi::vec::gos_rt_result_disc(r), 0);
+        let outer = crate::c_abi::vec::gos_rt_result_payload(r) as *mut GosVec;
+        assert!(!outer.is_null());
+        let o = unsafe { &*outer };
+        assert_eq!(o.len, 3);
+        assert_eq!(o.elem_kind, crate::c_abi::vec::vec_elem_kind::VEC);
+        // Probe-share row 1's first field, then free the outer WITHOUT
+        // iterating (the ABI shape of `for row in rows { break }`): the
+        // cascade must release exactly one share — rc 2 -> 1, not 2
+        // (leak) and not 0 (double free).
+        let row1 = unsafe { (o.ptr.add(8) as *const *mut GosVec).read_unaligned() };
+        let field = unsafe { ((*row1).ptr.as_ptr() as *const *mut c_char).read_unaligned() };
+        unsafe { crate::c_abi::string::gos_rt_str_retain(field) };
+        assert_eq!(unsafe { str_rc(field) }, 2);
+        unsafe { crate::c_abi::map::gos_rt_vec_free(outer) };
+        assert_eq!(
+            unsafe { str_rc(field) },
+            1,
+            "outer free must cascade exactly once"
+        );
+        assert_eq!(unsafe { CStr::from_ptr(field) }.to_str().unwrap(), "c");
+        unsafe { crate::c_abi::string::gos_rt_str_free(field) };
+    }
+
+    #[test]
+    fn csv_read_borrow_all_rows_then_free_is_balanced() {
+        let input = std::ffi::CString::new("x,y\nz,w").unwrap();
+        let r = unsafe { gos_rt_csv_read(input.as_ptr()) };
+        assert_eq!(crate::c_abi::vec::gos_rt_result_disc(r), 0);
+        let outer = crate::c_abi::vec::gos_rt_result_payload(r) as *mut GosVec;
+        let o = unsafe { &*outer };
+        // Full-iteration consumer shape: every read is an interior
+        // borrow (the drop pass never releases container loads), so a
+        // single outer free afterwards is the only release.
+        let mut fields = Vec::new();
+        for i in 0..o.len as usize {
+            let row = unsafe { (o.ptr.add(i * 8) as *const *mut GosVec).read_unaligned() };
+            let rv = unsafe { &*row };
+            for j in 0..rv.len as usize {
+                let f = unsafe { (rv.ptr.add(j * 8) as *const *mut c_char).read_unaligned() };
+                fields.push(unsafe { CStr::from_ptr(f) }.to_str().unwrap().to_string());
+            }
+        }
+        assert_eq!(fields, ["x", "y", "z", "w"]);
+        unsafe { crate::c_abi::map::gos_rt_vec_free(outer) };
+    }
 }

@@ -272,6 +272,107 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // Retains to emit at the end of a block (just before a consuming
     // terminator call), `(block, local)`.
     let mut terminator_retains: Vec<(usize, Local)> = Vec::new();
+    // By-value enum locals loaded from a container slot the CONTAINER
+    // still owns (`row[i]` via `gos_rt_vec_get_i128`, `xs.first()`,
+    // `xs.last()`): their payload word is an interior borrow of the
+    // vec's element, not the transferred single reference a consumed
+    // `Result` hands to `?` / `unwrap()`. A `String` payload extracted
+    // from one of these must RETAIN (the binding takes its own share;
+    // the vec's `elem_kind` deep-free keeps the vec's), never move —
+    // moving released the vec's only share and the deep-free at
+    // `gos_rt_vec_free` then double-freed it.
+    let mut borrowed_enum_src = vec![false; n_locals];
+    for block in &body.blocks {
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            destination,
+            ..
+        } = &block.terminator
+            && destination.projection.is_empty()
+            && (destination.local.0 as usize) < n_locals
+            && matches!(
+                name.as_str(),
+                "gos_rt_vec_get_i128" | "gos_rt_vec_first" | "gos_rt_vec_last"
+            )
+        {
+            borrowed_enum_src[destination.local.0 as usize] = true;
+        }
+    }
+    // Propagate forward through plain copies (`let opt = row[0]` then
+    // matching on a scrutinee temp copied from `opt`).
+    {
+        let copy_edges: Vec<(usize, usize)> = body
+            .blocks
+            .iter()
+            .flat_map(|b| &b.stmts)
+            .filter_map(|stmt| {
+                if let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Copy(p)),
+                } = &stmt.kind
+                    && place.projection.is_empty()
+                    && p.projection.is_empty()
+                    && (place.local.0 as usize) < n_locals
+                    && (p.local.0 as usize) < n_locals
+                {
+                    Some((place.local.0 as usize, p.local.0 as usize))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &(dest, src) in &copy_edges {
+                if borrowed_enum_src[src] && !borrowed_enum_src[dest] {
+                    borrowed_enum_src[dest] = true;
+                    changed = true;
+                }
+            }
+        }
+    }
+    let enum_arg_is_borrowed = |args: &[Operand]| -> bool {
+        matches!(
+            args.first(),
+            Some(Operand::Copy(p))
+                if p.projection.is_empty()
+                    && (p.local.0 as usize) < n_locals
+                    && borrowed_enum_src[p.local.0 as usize]
+        )
+    };
+    // Word-slot element loads out of a vec the CONTAINER still owns: the
+    // `gos_rt_vec_get_i64` destination of a for-loop / index read. When the
+    // loop lowering's element-type pin did not reach (`for s in
+    // strings::split(...)` — a free-call iter expression), the destination
+    // local is typed i64 and `rc_operand` cannot see the String underneath,
+    // so the copy into a String-typed binding neither mints a share nor
+    // schedules a release. The binding's release (or the caller's, when the
+    // value is returned) then collides with the vec's `elem_kind` deep-free
+    // — a double free. The retain/owned arms below mint a share for any
+    // String-typed binding copied from one of these destinations, mirroring
+    // the `borrowed_enum_src` extraction contract.
+    let mut borrowed_word_elem_src = vec![false; n_locals];
+    for block in &body.blocks {
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            destination,
+            ..
+        } = &block.terminator
+            && destination.projection.is_empty()
+            && (destination.local.0 as usize) < n_locals
+            && name.as_str() == "gos_rt_vec_get_i64"
+        {
+            borrowed_word_elem_src[destination.local.0 as usize] = true;
+        }
+    }
+    let is_string_local = |l: Local| -> bool {
+        (l.0 as usize) < n_locals
+            && matches!(
+                tcx.kind_of(body.locals[l.0 as usize].ty),
+                gossamer_types::TyKind::String
+            )
+    };
     // Locals holding a `String` payload freshly extracted from a consumed
     // by-value `Result`/`Option` (`f()?`, `r.unwrap()`). The extraction yields
     // the single owning reference the enum held, so copying it into the binding
@@ -354,9 +455,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 };
                 match rvalue {
                     Rvalue::CallIntrinsic { name, args } => {
+                        // Borrowed-slot extractions are NOT moves — see
+                        // `borrowed_enum_src`.
                         if *name == "gos_rt_result_payload"
                             && place.projection.is_empty()
                             && is_str(place.local)
+                            && !enum_arg_is_borrowed(args)
                         {
                             extraction_results[place.local.0 as usize] = true;
                         }
@@ -386,11 +490,13 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             if let Terminator::Call {
                 callee: Operand::Const(ConstValue::Str(name)),
                 destination,
+                args,
                 ..
             } = &block.terminator
                 && *name == "gos_rt_result_unwrap"
                 && destination.projection.is_empty()
                 && is_str(destination.local)
+                && !enum_arg_is_borrowed(args)
             {
                 extraction_results[destination.local.0 as usize] = true;
             }
@@ -455,6 +561,23 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         && !skip_extraction_move
                     {
                         retain_sites.push((block_idx, stmt_idx, l, 1));
+                    }
+                    // A String-typed binding copied from an untyped borrowed
+                    // word-slot element (see `borrowed_word_elem_src`): mint
+                    // the binding's share here — the vec's deep-free keeps
+                    // the container's. `rc_operand` is None for these (the
+                    // source local is typed i64), so this never doubles the
+                    // retain above.
+                    if rc_operand(op).is_none()
+                        && let Operand::Copy(p) = op
+                        && p.projection.is_empty()
+                        && (p.local.0 as usize) < n_locals
+                        && borrowed_word_elem_src[p.local.0 as usize]
+                        && place.projection.is_empty()
+                        && is_string_local(place.local)
+                        && !copyback_sites.contains(&(block_idx, stmt_idx))
+                    {
+                        retain_sites.push((block_idx, stmt_idx, p.local, 1));
                     }
                 }
                 // Storing an RC child into a heap object — the object
@@ -556,6 +679,41 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             }
         }
     }
+    // A `String` payload extracted out of a BORROWED container slot
+    // (see `borrowed_enum_src`) into a binding this frame will own and
+    // release (the `owned` `gos_rt_result_payload` arm below) needs its
+    // own share: retain at the extraction site so the binding's release
+    // and the container's element deep-free are both balanced. The
+    // gating mirrors that `owned` arm exactly — retain iff a release
+    // will be scheduled.
+    for (block_idx, block) in body.blocks.iter().enumerate() {
+        for (stmt_idx, stmt) in block.stmts.iter().enumerate() {
+            if let StatementKind::Assign {
+                place,
+                rvalue: Rvalue::CallIntrinsic { name, args },
+            } = &stmt.kind
+                && *name == "gos_rt_result_payload"
+                && place.projection.is_empty()
+                && (place.local.0 as usize) < n_locals
+                && !copy_sourced[place.local.0 as usize]
+                && matches!(
+                    tcx.kind_of(body.locals[place.local.0 as usize].ty),
+                    gossamer_types::TyKind::String
+                )
+                && enum_arg_is_borrowed(args)
+                && match args.first() {
+                    Some(Operand::Copy(p)) if p.projection.is_empty() => {
+                        let e = p.local.0 as usize;
+                        e >= n_locals || (!copy_sourced[e] && !copy_target[e])
+                    }
+                    _ => true,
+                }
+            {
+                retain_sites.push((block_idx, stmt_idx, place.local, 1));
+            }
+        }
+    }
+
     let mut owned = vec![false; n_locals];
     for block in &body.blocks {
         for stmt in &block.stmts {
@@ -613,6 +771,22 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         if p.projection.is_empty()
                             && (p.local.0 as usize) < n_locals
                             && tcx.is_rc_managed(body.locals[p.local.0 as usize].ty) =>
+                    {
+                        owned[i] = true;
+                    }
+                    // A String binding copied from an untyped borrowed
+                    // word-slot element: the retain arm above minted its
+                    // share, so the frame owns and releases it like any
+                    // RC copy (the source local is typed i64, so the
+                    // rc-managed arm above cannot see it).
+                    Rvalue::Use(Operand::Copy(p))
+                        if p.projection.is_empty()
+                            && (p.local.0 as usize) < n_locals
+                            && borrowed_word_elem_src[p.local.0 as usize]
+                            && matches!(
+                                tcx.kind_of(body.locals[i].ty),
+                                gossamer_types::TyKind::String
+                            ) =>
                     {
                         owned[i] = true;
                     }
@@ -1212,6 +1386,8 @@ fn mints_owned_string(name: &str) -> bool {
             | "gos_rt_str_replacen"
             | "gos_rt_str_pad_left"
             | "gos_rt_str_pad_right"
+            | "gos_rt_http_response_content_type"
+            | "gos_rt_http_response_location"
     )
 }
 
@@ -2045,19 +2221,6 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
                             &mut mention_stmt,
                             &mut mention_term,
                         );
-                        continue;
-                    }
-                    StatementKind::GcWriteBarrier { place, value } => {
-                        mark(
-                            place.local,
-                            bi,
-                            Some(si),
-                            &mut mention_stmt,
-                            &mut mention_term,
-                        );
-                        if let Operand::Copy(p) = value {
-                            mark(p.local, bi, Some(si), &mut mention_stmt, &mut mention_term);
-                        }
                         continue;
                     }
                 };

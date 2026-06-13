@@ -347,15 +347,22 @@ pub struct Block {
     pub stmts: Vec<Stmt>,
     /// Optional tail expression that becomes the block's value.
     pub tail: Option<Box<Expr>>,
+    /// True for parser-synthesized blocks with no source spelling
+    /// (the implicit empty else arm of an else-less `if let`).
+    /// Lints must not attribute these to the user.
+    #[serde(default)]
+    pub synthetic: bool,
 }
 
 impl Block {
-    /// Constructs an empty block with no statements or tail expression.
+    /// Constructs an empty parser-synthesized block (no statements,
+    /// no tail, no source spelling).
     #[must_use]
     pub fn empty() -> Self {
         Self {
             stmts: Vec::new(),
             tail: None,
+            synthetic: true,
         }
     }
 }

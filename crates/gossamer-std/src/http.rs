@@ -326,8 +326,18 @@ fn decode_query_component(s: &str) -> String {
     out
 }
 
+/// Lazily-read response body — the server drains it to the wire in
+/// chunked frames instead of buffering it in memory.
+pub struct BodyStream(pub Box<dyn std::io::Read + Send>);
+
+impl std::fmt::Debug for BodyStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BodyStream(..)")
+    }
+}
+
 /// Outgoing HTTP response.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Response {
     /// Status code.
     pub status: StatusCode,
@@ -335,6 +345,18 @@ pub struct Response {
     pub headers: Headers,
     /// Response body.
     pub body: Vec<u8>,
+    /// Streamed body. When `Some`, the server ignores `body` and
+    /// drains this reader to the client as `Transfer-Encoding:
+    /// chunked` frames without buffering — the proxy-passthrough
+    /// shape. A stream can only be served once, so `Response` is
+    /// deliberately not `Clone`.
+    pub body_stream: Option<BodyStream>,
+    /// Raw response header sequence exactly as received on the wire:
+    /// lowercase names, original order, duplicates preserved
+    /// (`set-cookie` legally repeats). Populated only by the client
+    /// transport; empty for server-constructed responses, whose
+    /// canonical view is the deduplicating `headers` map.
+    pub raw_header_pairs: Vec<(String, String)>,
 }
 
 impl Response {
@@ -349,6 +371,8 @@ impl Response {
             status,
             headers,
             body: body.into_bytes(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
         }
     }
 
@@ -363,6 +387,28 @@ impl Response {
             status,
             headers,
             body,
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
+        }
+    }
+
+    /// Builds a streamed response: the server writes `status` +
+    /// headers + `Transfer-Encoding: chunked`, then drains `reader`
+    /// to the client in 8 KiB frames without buffering the body.
+    #[must_use]
+    pub fn stream(
+        status: StatusCode,
+        content_type: &str,
+        reader: impl std::io::Read + Send + 'static,
+    ) -> Self {
+        let mut headers = Headers::new();
+        headers.insert("content-type", content_type);
+        Self {
+            status,
+            headers,
+            body: Vec::new(),
+            raw_header_pairs: Vec::new(),
+            body_stream: Some(BodyStream(Box::new(reader))),
         }
     }
 }
@@ -443,7 +489,7 @@ pub mod server {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    use super::{Method, Request, Response};
+    use super::{BodyStream, Method, Request, Response};
 
     /// Configuration passed to [`run`].
     #[derive(Debug, Clone)]
@@ -906,7 +952,7 @@ pub mod server {
                             }
                             if let Err(err) = write_response(
                                 reader.get_mut(),
-                                &response,
+                                &mut response,
                                 config.server_name.as_deref(),
                             ) {
                                 if !is_ignorable(&err) {
@@ -1119,27 +1165,10 @@ pub mod server {
 
     fn write_response(
         stream: &mut TcpStream,
-        response: &Response,
+        response: &mut Response,
         server_name: Option<&str>,
     ) -> io::Result<()> {
         write_response_generic(stream, response, server_name)
-    }
-
-    fn canonical_header_name(lower: &str) -> String {
-        let mut out = String::with_capacity(lower.len());
-        let mut capitalise = true;
-        for ch in lower.chars() {
-            if capitalise {
-                out.extend(ch.to_uppercase());
-                capitalise = false;
-            } else {
-                out.push(ch);
-            }
-            if ch == '-' {
-                capitalise = true;
-            }
-        }
-        out
     }
 
     /// Convenience wrapper for the common single-threaded path: bind
@@ -1412,7 +1441,7 @@ pub mod server {
                             }
                             if write_response_generic(
                                 reader.get_mut(),
-                                &response,
+                                &mut response,
                                 config.server_name.as_deref(),
                             )
                             .is_err()
@@ -1434,14 +1463,21 @@ pub mod server {
 
     fn write_response_generic<W: Write>(
         stream: &mut W,
-        response: &Response,
+        response: &mut Response,
         server_name: Option<&str>,
     ) -> io::Result<()> {
         let reason = response.status.reason().unwrap_or("OK");
         let mut headers = response.headers.clone();
-        let chunked = headers
-            .get("transfer-encoding")
-            .is_some_and(|v| v.eq_ignore_ascii_case("chunked"));
+        let streamed = response.body_stream.is_some();
+        let chunked = streamed
+            || headers
+                .get("transfer-encoding")
+                .is_some_and(|v| v.eq_ignore_ascii_case("chunked"));
+        if streamed {
+            // The streamed body's length is unknown up front, so
+            // the wire framing is always chunked.
+            headers.insert("transfer-encoding", "chunked");
+        }
         if !chunked && !headers.contains("content-length") {
             headers.insert("content-length", &response.body.len().to_string());
         }
@@ -1451,6 +1487,10 @@ pub mod server {
             // both, preferring the explicit chunked intent.
             headers.remove("content-length");
         }
+        debug_assert!(
+            !(chunked && headers.contains("content-length")),
+            "chunked response must not carry Content-Length"
+        );
         // RFC 9110 §6.6.1: origin servers SHOULD insert a Date
         // header in every response. Skip only if the handler set
         // one explicitly.
@@ -1469,14 +1509,21 @@ pub mod server {
         // Connection header is set by the worker based on the
         // request's HTTP version and the peer's / handler's intent.
         let mut out = format!("HTTP/1.1 {} {}\r\n", response.status.as_u16(), reason);
+        // Canonical wire casing is lowercase on every tier (the
+        // HTTP/2 rule applied to h1 too): `Headers` stores names
+        // lowercased, and the compiled-tier writer normalizes the
+        // same way, so both tiers emit byte-identical header names.
         for (name, value) in headers.iter() {
-            let cased = canonical_header_name(name);
-            out.push_str(&cased);
+            out.push_str(name);
             out.push_str(": ");
             out.push_str(value);
             out.push_str("\r\n");
         }
         out.push_str("\r\n");
+        if let Some(BodyStream(mut reader)) = response.body_stream.take() {
+            stream.write_all(out.as_bytes())?;
+            return drain_chunked(stream, reader.as_mut());
+        }
         let body = &response.body;
         if chunked {
             stream.write_all(out.as_bytes())?;
@@ -1499,6 +1546,57 @@ pub mod server {
             stream.write_all(&combined)?;
         }
         stream.flush()
+    }
+
+    /// Drains `reader` to `stream` as chunked frames of at most
+    /// 8 KiB each (`{len:x}\r\n{bytes}\r\n`), ending with the
+    /// `0\r\n\r\n` terminal frame on clean EOF. Each frame is
+    /// flushed so proxy passthrough delivers bytes as the upstream
+    /// produces them rather than after the body completes.
+    ///
+    /// On a mid-stream read error the connection is aborted WITHOUT
+    /// the terminal frame — per RFC 7230 §4.1 a chunked message that
+    /// ends before the zero-length chunk is incomplete, so closing
+    /// early is the standard signal that lets clients detect
+    /// truncation instead of mistaking a partial body for success.
+    fn drain_chunked<W: Write>(stream: &mut W, reader: &mut dyn io::Read) -> io::Result<()> {
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = reader
+                .read(&mut buf)
+                .map_err(|e| io::Error::new(e.kind(), format!("streamed body read failed: {e}")))?;
+            if n == 0 {
+                stream.write_all(b"0\r\n\r\n")?;
+                return stream.flush();
+            }
+            let mut frame = Vec::with_capacity(n + 16);
+            frame.extend_from_slice(format!("{n:x}\r\n").as_bytes());
+            frame.extend_from_slice(&buf[..n]);
+            frame.extend_from_slice(b"\r\n");
+            stream.write_all(&frame)?;
+            stream.flush()?;
+        }
+    }
+
+    #[cfg(test)]
+    mod wire_tests {
+        use super::*;
+
+        #[test]
+        fn response_writer_emits_lowercase_header_names() {
+            let mut response = Response::text(super::super::StatusCode(200), "ok");
+            response.headers.insert("X-MiXeD-CaSe", "v");
+            let mut wire: Vec<u8> = Vec::new();
+            write_response_generic(&mut wire, &mut response, Some("gossamer")).unwrap();
+            let text = String::from_utf8(wire).unwrap();
+            assert!(text.contains("x-mixed-case: v\r\n"), "wire: {text}");
+            assert!(text.contains("content-type: text/plain; charset=utf-8\r\n"));
+            assert!(text.contains("content-length: 2\r\n"));
+            assert!(
+                !text.contains("X-Mixed-Case") && !text.contains("Content-Type"),
+                "no canonical-cased names on the wire: {text}"
+            );
+        }
     }
 }
 
@@ -1764,9 +1862,15 @@ fn move_owned(
             .map_err(|e| ClientError::Transport(e.to_string()))?;
         let status = StatusCode(resp.status().as_u16());
         let mut headers = Headers::new();
+        // `raw_header_pairs` keeps the wire sequence (order +
+        // duplicates — `set-cookie` repeats); the `Headers` map is
+        // the deduplicating lookup view of the same pairs. Names are
+        // lowercased to match the compiled tiers' client shims.
+        let mut raw_header_pairs = Vec::new();
         for (name, value) in resp.headers() {
             if let Ok(v) = value.to_str() {
                 headers.insert(name.as_str(), v);
+                raw_header_pairs.push((name.as_str().to_ascii_lowercase(), v.to_string()));
             }
         }
         let mut body = Vec::new();
@@ -1778,6 +1882,8 @@ fn move_owned(
             status,
             headers,
             body,
+            raw_header_pairs,
+            body_stream: None,
         })
     }
 }
@@ -1828,6 +1934,32 @@ impl StreamResponse {
             }
             Err(e) => Err(ClientError::Io(e.to_string())),
         }
+    }
+
+    /// Reads the next raw chunk of the body, at most `max_bytes`
+    /// long (clamped to 1..=1 MiB), blocking until data arrives.
+    /// Returns `Ok(None)` at EOF, `Err` on I/O failure. Reads
+    /// through the same buffered reader as [`Self::next_line`], so
+    /// interleaving line and chunk reads stays coherent.
+    pub fn next_chunk(&mut self, max_bytes: usize) -> Result<Option<Vec<u8>>, ClientError> {
+        let cap = max_bytes.clamp(1, 1 << 20);
+        let mut buf = vec![0u8; cap];
+        match self.reader.read(&mut buf) {
+            Ok(0) => Ok(None),
+            Ok(n) => {
+                buf.truncate(n);
+                Ok(Some(buf))
+            }
+            Err(e) => Err(ClientError::Io(e.to_string())),
+        }
+    }
+
+    /// Raw `Read` access to the buffered body reader — the adapter
+    /// hook for [`BodyStream`] proxy passthrough. Reads share the
+    /// same `BufReader` as [`Self::next_line`] / [`Self::next_chunk`],
+    /// so interleaving stays coherent.
+    pub fn read_raw(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
     }
 }
 
@@ -2080,6 +2212,55 @@ mod tests {
     }
 
     #[test]
+    fn client_keeps_duplicate_set_cookie_pairs_in_wire_order() {
+        // RFC 6265 servers legally repeat `Set-Cookie`. The dedup
+        // `Headers` map keeps only the last value, so the transport
+        // must also surface the raw wire sequence — order and
+        // duplicates intact — through `raw_header_pairs` (the view
+        // the interp tier lifts, matching the compiled tiers).
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let mut request = Vec::new();
+            loop {
+                let n = stream.read(&mut buf).unwrap();
+                request.extend_from_slice(&buf[..n]);
+                if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\n\
+                      Set-Cookie: a=1\r\n\
+                      Set-Cookie: b=2\r\n\
+                      Content-Length: 2\r\n\
+                      Connection: close\r\n\r\nok",
+                )
+                .unwrap();
+        });
+        let resp = super::get(&format!("http://{addr}/cookies"), &[]).expect("loopback get");
+        server.join().unwrap();
+        let cookies: Vec<&str> = resp
+            .raw_header_pairs
+            .iter()
+            .filter(|(k, _)| k == "set-cookie")
+            .map(|(_, v)| v.as_str())
+            .collect();
+        assert_eq!(
+            cookies,
+            vec!["a=1", "b=2"],
+            "raw pairs: {:?}",
+            resp.raw_header_pairs
+        );
+        // The dedup map view collapses to a single slot.
+        assert_eq!(resp.headers.get("set-cookie"), Some("b=2"));
+    }
+
+    #[test]
     fn client_builder_round_trips_settings() {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(5))
@@ -2168,6 +2349,42 @@ mod tests {
             ClientError::Transport(msg) => assert!(msg.contains("FROBNICATE"), "msg: {msg}"),
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    fn stream_over(bytes: &'static [u8]) -> StreamResponse {
+        StreamResponse {
+            status: StatusCode::OK,
+            headers: Headers::new(),
+            reader: std::io::BufReader::new(
+                Box::new(std::io::Cursor::new(bytes)) as Box<dyn Read + Send + Sync + 'static>
+            ),
+        }
+    }
+
+    #[test]
+    fn next_chunk_reads_at_most_max_bytes_until_eof() {
+        let mut s = stream_over(b"0123456789");
+        assert_eq!(s.next_chunk(4).unwrap().as_deref(), Some(&b"0123"[..]));
+        assert_eq!(s.next_chunk(4).unwrap().as_deref(), Some(&b"4567"[..]));
+        assert_eq!(s.next_chunk(4).unwrap().as_deref(), Some(&b"89"[..]));
+        assert_eq!(s.next_chunk(4).unwrap(), None);
+    }
+
+    #[test]
+    fn next_chunk_clamps_zero_max_to_one_byte() {
+        let mut s = stream_over(b"ab");
+        assert_eq!(s.next_chunk(0).unwrap().as_deref(), Some(&b"a"[..]));
+        assert_eq!(s.next_chunk(0).unwrap().as_deref(), Some(&b"b"[..]));
+        assert_eq!(s.next_chunk(0).unwrap(), None);
+    }
+
+    #[test]
+    fn next_line_then_next_chunk_share_one_buffered_cursor() {
+        let mut s = stream_over(b"alpha\nbeta!");
+        assert_eq!(s.next_line().unwrap().as_deref(), Some("alpha"));
+        assert_eq!(s.next_chunk(4).unwrap().as_deref(), Some(&b"beta"[..]));
+        assert_eq!(s.next_chunk(4).unwrap().as_deref(), Some(&b"!"[..]));
+        assert_eq!(s.next_chunk(4).unwrap(), None);
     }
 
     #[test]

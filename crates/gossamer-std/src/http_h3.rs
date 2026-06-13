@@ -273,6 +273,8 @@ where
                 status: StatusCode(500),
                 headers: Headers::new(),
                 body: b"internal server error".to_vec(),
+                raw_header_pairs: Vec::new(),
+                body_stream: None,
             },
         };
 
@@ -679,6 +681,8 @@ async fn do_request_async(
         status,
         headers: out_headers,
         body: body_bytes.to_vec(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     })
 }
 
@@ -769,6 +773,8 @@ mod tests {
                     status: StatusCode(200),
                     headers: Headers::new(),
                     body: b"hello h3".to_vec(),
+                    raw_header_pairs: Vec::new(),
+                    body_stream: None,
                 }
             };
             let _ = serve(&server_addr, &server_cert, &server_key, handler);

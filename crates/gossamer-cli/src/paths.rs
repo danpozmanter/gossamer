@@ -254,27 +254,97 @@ pub(crate) fn default_test_root() -> Result<PathBuf> {
     std::env::current_dir().context("read current directory")
 }
 
-/// Default entry point for whole-project run/build commands. Picks
-/// `<project-root>/src/main.gos` when reachable; returns `Err`
-/// otherwise so the caller can surface a useful diagnostic.
+/// Default entry point for whole-project run/build commands.
+/// Resolves via [`resolve_project_entry`] from the nearest project
+/// root; returns `Err` with a useful diagnostic otherwise.
 pub(crate) fn default_main_entry() -> Result<PathBuf> {
     let root = find_project_root().ok_or_else(|| {
         anyhow!(
             "no project.toml found above the current directory; pass a path or run from inside a project"
         )
     })?;
-    let candidate = root.join("src").join("main.gos");
-    if candidate.is_file() {
-        return Ok(candidate);
+    resolve_project_entry(&root)
+}
+
+/// Entry-point resolution for a project root, in order:
+/// `src/main.gos`, `main.gos`, the manifest-id-named source
+/// (`src/<id-tail>.gos`, then `<id-tail>.gos`), and finally a sole
+/// `.gos` candidate under `src/` or the root. A directory with
+/// several nameless candidates is an error that lists them.
+pub(crate) fn resolve_project_entry(root: &Path) -> Result<PathBuf> {
+    let canonical = root.join("src").join("main.gos");
+    if canonical.is_file() {
+        return Ok(canonical);
     }
     let bare = root.join("main.gos");
     if bare.is_file() {
         return Ok(bare);
     }
+    if let Some(tail) = manifest_id_tail(root) {
+        let named = root.join("src").join(format!("{tail}.gos"));
+        if named.is_file() {
+            return Ok(named);
+        }
+        let named = root.join(format!("{tail}.gos"));
+        if named.is_file() {
+            return Ok(named);
+        }
+    }
+    for dir in [root.join("src"), root.to_path_buf()] {
+        match entry_candidates(&dir).as_slice() {
+            [] => {}
+            [sole] => return Ok(sole.clone()),
+            many => {
+                let names: Vec<String> = many
+                    .iter()
+                    .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .collect();
+                return Err(anyhow!(
+                    "project root {} has no src/main.gos (or main.gos), and {} holds several candidates ({}); pass a path explicitly",
+                    root.display(),
+                    dir.display(),
+                    names.join(", ")
+                ));
+            }
+        }
+    }
     Err(anyhow!(
-        "project root {} has no src/main.gos (or main.gos); pass a path explicitly",
+        "project root {} has no src/main.gos (or main.gos) and no .gos source to run; pass a path explicitly",
         root.display()
     ))
+}
+
+/// Last segment of the manifest's `[project] id`, when the root's
+/// `project.toml` parses.
+fn manifest_id_tail(root: &Path) -> Option<String> {
+    let text = fs::read_to_string(root.join("project.toml")).ok()?;
+    let manifest = gossamer_pkg::Manifest::parse(&text).ok()?;
+    Some(manifest.project.id.tail().to_string())
+}
+
+/// `.gos` files in `dir` that qualify as an entry point, sorted by
+/// name. Skips `_`-prefixed scratch files and `*_test.gos` (the
+/// same exclusions the sibling auto-bundler applies).
+fn entry_candidates(dir: &Path) -> Vec<PathBuf> {
+    let Ok(read) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = Vec::new();
+    for dirent in read.flatten() {
+        let path = dirent.path();
+        if !path.is_file() || path.extension().and_then(|s| s.to_str()) != Some("gos") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if stem.starts_with('_') || stem.ends_with("_test") {
+            continue;
+        }
+        out.push(path);
+    }
+    out.sort();
+    out
 }
 
 /// Recursively gathers every `.gos` file under `root`. If `root`
@@ -401,4 +471,67 @@ pub(crate) fn repl_history_path() -> Option<PathBuf> {
         return Some(path);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_project(tag: &str, manifest: &str, files: &[&str]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("gos-entry-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("project.toml"), manifest).unwrap();
+        for file in files {
+            let path = root.join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "fn main() { }\n").unwrap();
+        }
+        root
+    }
+
+    const MANIFEST: &str = "[project]\nid = \"example.com/widget\"\nversion = \"0.1.0\"\n";
+
+    #[test]
+    fn entry_prefers_src_main() {
+        let root = scratch_project("srcmain", MANIFEST, &["src/main.gos", "widget.gos"]);
+        assert_eq!(
+            resolve_project_entry(&root).unwrap(),
+            root.join("src").join("main.gos")
+        );
+    }
+
+    #[test]
+    fn entry_falls_back_to_manifest_id_name() {
+        let root = scratch_project("idname", MANIFEST, &["widget.gos", "helper.gos"]);
+        assert_eq!(
+            resolve_project_entry(&root).unwrap(),
+            root.join("widget.gos")
+        );
+    }
+
+    #[test]
+    fn entry_uses_sole_candidate() {
+        let root = scratch_project(
+            "sole",
+            MANIFEST,
+            &["tool.gos", "_scratch.gos", "x_test.gos"],
+        );
+        assert_eq!(resolve_project_entry(&root).unwrap(), root.join("tool.gos"));
+    }
+
+    #[test]
+    fn entry_ambiguity_lists_candidates() {
+        let root = scratch_project("ambig", MANIFEST, &["alpha.gos", "beta.gos"]);
+        let err = resolve_project_entry(&root).unwrap_err().to_string();
+        assert!(err.contains("alpha.gos"), "missing candidate in: {err}");
+        assert!(err.contains("beta.gos"), "missing candidate in: {err}");
+    }
+
+    #[test]
+    fn entry_errors_when_no_sources() {
+        let root = scratch_project("empty", MANIFEST, &[]);
+        let err = resolve_project_entry(&root).unwrap_err().to_string();
+        assert!(err.contains("no .gos source"), "unexpected: {err}");
+    }
 }

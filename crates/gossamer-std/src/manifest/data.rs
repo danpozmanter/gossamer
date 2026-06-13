@@ -96,7 +96,7 @@ pub const DATABASE_SQL: StdModule = StdModule {
         StdItem {
             name: "Conn",
             kind: StdItemKind::Type,
-            doc: "Open database connection. `prepare`, `execute`, `query`, `begin`, `begin_with`, `ping`, `execute_many`, `execute_ctx`, `query_ctx`, `interrupt`.",
+            doc: "Open database connection. `prepare`, `execute`, `query`, `query_each`, `begin`, `begin_with`, `ping`, `execute_many`, `execute_ctx`, `query_ctx`, `interrupt`, `close` (closing sweeps any cursors still open on the connection).",
         },
         StdItem {
             name: "Tx",
@@ -111,12 +111,12 @@ pub const DATABASE_SQL: StdModule = StdModule {
         StdItem {
             name: "Rows",
             kind: StdItemKind::Type,
-            doc: "Result-set iterator. `next_row`, `columns`.",
+            doc: "Result-set cursor. `next_row`, `columns`, `close` (idempotent). Advancing frees the previous Row; a full drain reclaims everything. For early exits, `defer rows.close()`.",
         },
         StdItem {
             name: "Row",
             kind: StdItemKind::Type,
-            doc: "Current row inside a `Rows` walk. Typed `get_i64`, `get_f64`, `get_bool`, `get_text`, `get_blob` plus `get_opt_*` and `is_null`.",
+            doc: "Current row inside a `Rows` walk; valid until the cursor advances or closes. Typed `get_i64`, `get_f64`, `get_bool`, `get_text`, `get_blob` plus `get_opt_*` and `is_null`.",
         },
         StdItem {
             name: "Value",
