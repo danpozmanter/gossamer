@@ -91,7 +91,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 webpki-roots = "1"
-rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 
 [features]
 # Opt-in flag the integration suites consult to enable their full

@@ -153,7 +153,7 @@ unicode-segmentation = { workspace = true }
 [dev-dependencies]
 # Self-signed PEM keypair generation for `http_h3` round-trip
 # tests. Never compiled into the shipped crate.
-rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 
 [target.'cfg(unix)'.dependencies]
 # Signal delivery + process-group control for `std::exec`.
